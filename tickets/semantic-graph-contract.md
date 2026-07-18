@@ -1,7 +1,7 @@
 ---
 id: semantic-graph-contract
 title: Define the semantic tensor graph contract
-status: todo
+status: review
 priority: p0
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [research/semantic-graph]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1784423588
 ---
 Specify what operations, values, result ports, constants, parameters, and named graph outputs mean in Tiler's target-independent logical representation. Resolve multi-result operations, multiple externally visible outputs, purity, acyclicity, ownership, and validation boundaries without introducing schedule choices.
 
