@@ -1,0 +1,69 @@
+schema_version = 1
+tickets_dir = "tickets"
+default_base = "main"
+
+[guard]
+# A declared-area overlap with an open sibling is a non-failing WARN by default
+# (exit 0); an under-declaration (scope escape) always fails (exit 6). Set true
+# (or pass `guard --strict`) to make an overlap gate too.
+# gate_collisions = false
+
+[language]
+# "none" = path-glob scopes only; "rust" = also expand via the cargo crate graph.
+backend = "none"
+
+# Map abstract scope names to path globs. Tickets reference these stable names.
+[scopes]
+"research/semantic-graph" = ["docs/research/semantic-graph/**"]
+"research/shapes" = ["docs/research/shapes/**"]
+"research/extensions" = ["docs/research/extensions/**", "spikes/extensions/**"]
+"research/numerics" = ["docs/research/numerics/**", "spikes/numerics/**"]
+"research/region-search" = ["docs/research/region-search/**", "spikes/region-search/**"]
+"research/scheduling" = ["docs/research/scheduling/**", "spikes/scheduling/**"]
+"research/target-profiles" = ["docs/research/target-profiles/**", "spikes/target-profiles/**"]
+"research/cost-model" = ["docs/research/cost-model/**", "spikes/cost-model/**"]
+"research/reference" = ["docs/research/reference/**", "spikes/reference/**"]
+"research/indexing" = ["docs/research/indexing/**", "spikes/indexing/**"]
+"research/kernel-ir" = ["docs/research/kernel-ir/**", "spikes/kernel-ir/**"]
+"research/program-planning" = ["docs/research/program-planning/**", "spikes/program-planning/**"]
+"research/artifacts" = ["docs/research/artifacts/**"]
+"research/cache" = ["docs/research/cache/**", "spikes/cache/**"]
+"research/apple-targets" = ["docs/research/apple-targets/**", "spikes/apple-targets/**"]
+"research/macro-environment" = ["docs/research/macro-environment/**", "spikes/macro-environment/**"]
+"research/embedding" = ["docs/research/embedding/**", "spikes/embedding/**"]
+"research/runtime" = ["docs/research/runtime/**", "spikes/runtime/**"]
+"contracts/core" = [
+  "docs/README.md",
+  "docs/vision.md",
+  "docs/architecture.md",
+  "docs/ir.md",
+  "docs/operation-extensions.md",
+  "docs/glossary.md",
+  "docs/open-questions.md",
+  "docs/roadmap.md",
+  "docs/decisions/**",
+]
+"contracts/compiler" = [
+  "docs/compiler/**",
+  "docs/numerical-semantics.md",
+  "docs/correctness-and-testing.md",
+]
+"contracts/artifacts" = ["docs/artifact-abi.md", "docs/backends/**"]
+"contracts/integrations" = ["docs/integration/**"]
+
+# Optionally map a scope to its owning crate so the Rust backend can expand
+# reverse-dependents (requires `cargo` at runtime).
+[scope_crates]
+# "core" = "my-core-crate"
+
+# Name a forked/external dependency (pinned via `git = … rev = …`) as a scope.
+# The guard flags a branch that bumps the pin (matched by `repo`) or edits an
+# in-tree fork `paths` glob, against tickets declaring the same scope.
+[external_scopes]
+# "sqlparser-fork" = { repo = "tomsanbear/sqlparser", paths = [] }
+
+# Tune how costly an exclusive overlap on a scope is for tracks/next
+# (--max-overlap): weight 0 = free to co-edit (an additive hub), higher =
+# riskier. Default 1; a shared-by-both claim is always free.
+[scope_policy]
+# "core" = { weight = 0 }

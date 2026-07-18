@@ -1,0 +1,269 @@
+# Proposed Metal artifact and kernel ABI profile
+
+**Status:** proposed
+
+This document describes the proposed first-backend Metal profile of Tiler's
+target-neutral artifact concepts. `MetallibBundle`, Metal binding indices, and
+direct Rust embedding are profile-specific; the compiler core must also admit
+other target payloads and delivery mechanisms.
+
+A metallib alone is not executable safely. The Metal profile pairs compiled code with a
+versioned, machine-checkable contract describing executable plans, bindings,
+formulas, guards, routing, numerical behavior, and target requirements.
+
+## Artifact hierarchy
+
+```text
+Bundle
+  = metallib bytes + canonical bundle manifest
+Program plan
+  = semantic input/output contract + complete physical plan alternatives
+Plan variant
+  = guards + temporaries + ordered/dependent kernel steps
+Kernel entry
+  = exactly one Metal symbol, ABI, and dispatch contract
+Pipeline specialization
+  = kernel entry + function-constant values + Metal device
+```
+
+Routing chooses among complete plan variants, not merely individual kernels.
+This represents one-kernel fusion, materialized split plans, layout enforcers,
+and multi-pass reductions with the same execution model. Every kernel entry has
+one symbol and ABI; separately emitted scalar/vector kernels are separate
+entries referenced by different plan variants or steps.
+
+## Conceptual schema
+
+```rust
+struct MetallibBundle {
+    format_version: u32,
+    ir_version: u32,
+    codegen_version: String,
+    target: MetalTarget,
+    target_profile_id: String,
+    cost_model_version: String,
+    compiler: CompilerFingerprint,
+    manifest_hash: Hash256,
+    metallib_hash: Hash256,
+    bundle_hash: Hash256,
+    metallib: Bytes,
+    kernels: Vec<KernelEntry>,
+    programs: Vec<ProgramPlan>,
+}
+
+struct ProgramPlan {
+    semantic_hash: Hash256,
+    inputs: Vec<TensorSpec>,
+    outputs: Vec<TensorSpec>,
+    semantic_constraints: Vec<SemanticConstraint>,
+    numeric_contract: NumericContract,
+    variants: Vec<PlanVariant>,
+    routing: RoutingPolicy,
+}
+
+struct PlanVariant {
+    plan_hash: Hash256,
+    applicability_guards: Vec<RuntimeGuard>,
+    buffer_plan: BufferPlan,
+    temporaries: Vec<TemporaryTensor>,
+    steps: Vec<KernelStep>,
+}
+
+struct BufferPlan {
+    allocations: Vec<Allocation>,
+    value_bindings: Vec<ValueAllocationBinding>,
+    lifetime_intervals: Vec<LifetimeInterval>,
+}
+
+struct KernelStep {
+    kernel_entry: KernelEntryId,
+    tensor_bindings: Vec<PlanValueId>,
+    dependencies: Vec<StepId>,
+}
+
+struct KernelEntry {
+    scheduled_hash: Hash256,
+    symbol: String,
+    bindings: Vec<Binding>,
+    dispatch: DispatchFormula,
+    function_constants: Vec<FunctionConstantSpec>,
+    static_threadgroup_bytes: u32,
+}
+```
+
+This is illustrative, not a committed Rust API or serialization format. The
+Milestone 2 one-kernel path is a program with one variant, no temporaries, and
+one step.
+
+## ABI expression language
+
+Shapes, metadata values, bounds, constraints, guards, dispatch, temporary
+allocation, and routing need an executable representation. Tiler defines one
+small, versioned, typed, side-effect-free `AbiExpr` language over:
+
+- literals;
+- input dimensions and element strides;
+- a view's start element and allocation byte length;
+- dtype byte size and admitted target/device properties;
+- checked `u64` add, subtract, multiply, min, and max;
+- floor, exact, and ceiling division plus remainder/divisibility;
+- comparison, boolean composition, and conditional select;
+- explicit checked narrowing to target fields.
+
+Subtraction underflow, non-exact division, division by zero, invalid references,
+overflow, and failed narrowing are typed evaluation failures. Conditional
+evaluation supports zero-sized bounds without evaluating an invalid branch.
+Parser expression depth and collection lengths are bounded. Shape formulas,
+accessible ranges, metadata, allocation, dispatch, and routing reuse this
+evaluator.
+
+## Constraint, guard, and error outcomes
+
+The runtime distinguishes three outcomes:
+
+```text
+semantic constraint failure
+  -> invalid user/input operation; return a semantic error
+
+plan applicability failure
+  -> try the next plan variant or a compatible Tensor-level fallback
+
+artifact/launch invariant failure
+  -> fail closed; do not reinterpret it as an applicability miss
+```
+
+A split-axis factorization is a semantic constraint. Alignment required by a
+vectorized plan is an applicability guard. A corrupt binding table or launch
+overflow after plan selection is an invariant failure. Their provenance is
+encoded and preserved in diagnostics.
+
+## Binding contract
+
+Every kernel binding states:
+
+- stable plan-value identity and Metal buffer index;
+- buffer, metadata block, or scalar role;
+- storage dtype and scalar width/signedness;
+- read, write, or read/write access;
+- address space and required alignment;
+- alias/access-range constraints;
+- explicit metadata layout and minimum accessible byte range.
+
+Every metadata field states its `AbiExpr` source, byte offset, scalar type,
+size, alignment, and encoding. Host packing and MSL declarations are generated
+from the same layout; Rust `repr(C)` is not the cross-language contract.
+Boolean representation and inline-bytes versus constant-buffer transport are
+explicit.
+
+The initial buffer convention is:
+
+- bind the Metal allocation buffer at byte offset zero;
+- pass logical `start_element` as typed metadata;
+- access maps add it exactly once and produce allocation-relative element
+  offsets;
+- metadata strides are measured in elements;
+- validate the derived allocation-relative range against allocation bytes.
+
+There is no untyped integer “offset,” and the encoder does not also apply the
+view start as a byte offset. A future binding-offset variant is a distinct ABI
+convention. Negative-stride views are initially unsupported.
+
+## Plan execution and dispatch
+
+A plan variant declares all temporary tensor shapes, dtypes, allocation-size
+formulas, allocation identities, value/view bindings, and lifetimes. The
+initial profile assigns one allocation per output or temporary and permits no
+temporary reuse, suballocation, in-place assignment, or output/input aliasing.
+Inputs may alias one another. Steps form an acyclic dependency graph and carry a
+canonical topological order. The initial execution profile uses one ordered
+device command stream; incomparable DAG nodes are not implicitly concurrent.
+Every output is fully initialized before it escapes, and temporary buffers
+remain alive through their last GPU use.
+
+Each kernel dispatch formula distinguishes total threads from threadgroup
+counts, grid dimensions, threads per threadgroup, dynamic threadgroup memory,
+zero-work behavior, and device-limit preconditions. It is evaluated with
+`AbiExpr`; launch configuration is never reconstructed from output element
+count alone.
+
+## Routing and preparation
+
+When several plan variants are applicable, a canonical routing policy selects
+by piecewise cost, constraint region, or stable explicit priority. All variants
+in one program have the same semantic and numerical contract. Routing is
+versioned, explainable, and independent of manifest serialization order.
+
+Before any allocation or encoding, runtime preparation creates or retrieves all
+pipelines required by the chosen plan. A pipeline-specific capability failure
+may reject that plan and try the next semantically identical preflight-valid
+variant. After allocation/encoding begins, the runtime does not retry another
+plan or execute fallback.
+
+## Embedding contract
+
+The proc macro embeds the canonical manifest and metallib as byte-string literal
+tokens in its returned Rust expression. Runtime artifact construction borrows
+those static byte slices; it does not open source files, compiler-cache paths,
+or consumer `OUT_DIR`.
+
+The embedding representation is deterministic and versioned. Artifact identity
+is independent of the absolute compiler-cache location. Direct embedding size,
+rustc memory, incremental behavior, and repeated-literal binary duplication are
+measured and bounded. A later linker-level deduplication mechanism may change
+storage without changing bundle semantics or call-site DX.
+
+One embedded bundle contains all `KernelEntry` values required by that macro
+invocation's plan portfolio. It is not required to contain kernels from other
+invocations or crates.
+
+## Specialization policy
+
+Good expansion-time specialization dimensions include expression graph, rank,
+storage/accumulation dtype, reduction axes, schedule family, a small set of
+vector/tile choices, and layout family. Prefer runtime ABI values for extents,
+strides, start offsets, and counts to avoid exact-shape artifact explosion.
+
+Function constants are reserved for small choices that materially alter code.
+Each specification includes Metal index/name/type, legal values, source
+expression, default behavior, and related guards. Values participate in
+pipeline-cache identity.
+
+## Artifact identity
+
+Expansion compilation identity includes canonical scheduled IR and complete program plans,
+ABIs, guards, routing, dispatch, numerical contract, translation-unit
+membership, schema/helper/codegen versions, target/profile, compiler, and flags.
+
+```text
+semantic_hash  = H(canonical semantic program + operation contract)
+scheduled_hash = H(semantic_hash + scheduled IR + target/profile/policy)
+plan_hash       = H(semantic_hash + canonical steps/temps/guards)
+manifest_hash  = H(canonical embedded manifest payload with hash fields and metallib
+                   byte payload excluded)
+metallib_hash  = H(raw metallib bytes)
+bundle_hash    = H(format tag || manifest_hash || metallib_hash)
+```
+
+Stable canonical IR, MSL, manifest, and cache keys are required. Byte-identical
+metallibs are promised only within a verified pinned toolchain/environment.
+
+## Loading and validation
+
+Before execution, the runtime validates:
+
+1. schema versions and parser resource limits;
+2. manifest, metallib, and bundle hashes;
+3. target/profile compatibility;
+4. semantic constraints;
+5. plan graph, temporary lifetimes, and binding references;
+6. symbol availability and compiler-established ABI consistency;
+7. storage ranges, plan guards, routing, and launch limits.
+
+Manifest/schema/hash inspection does not require a device. Symbol existence and
+optional pipeline reflection do. Manifest and MSL are generated from the same
+verified typed binding table; tests may compare Metal reflection where
+available.
+
+Unknown required features fail closed. Compatibility rules for optional fields
+and compiler/runtime version skew must be decided before the format is exposed
+outside a lockstep release.

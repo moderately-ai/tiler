@@ -1,0 +1,32 @@
+# Architecture decision records
+
+ADRs record choices that constrain several components or would be expensive to
+reverse. Proposed ADRs and design text remain non-decisions until explicitly
+accepted. Unresolved questions are collected in
+[open questions](../open-questions.md).
+
+## Index
+
+- [0001: Separate semantic planning from physical scheduling](0001-separate-semantic-and-physical-plans.md) — proposed
+- [0002: Generate Metal artifacts ahead of time](0002-aot-metal-artifacts.md) — proposed
+- [0003: Keep the compiler independent of Candle](0003-candle-is-an-integration.md) — proposed
+- [0004: Treat each inline macro invocation as an AOT bundle](0004-inline-macro-aot-bundles.md) — proposed
+- [0005: Expose a public semantic graph and extension boundary](0005-public-semantic-tensor-graph.md) — accepted
+- [0006: Model semantic programs as operation/value graphs](0006-operation-value-graph.md) — proposed
+- [0007: Make normalized hardware schedules first-class IR](0007-first-class-kernel-schedules.md) — proposed
+
+## Template
+
+```markdown
+# NNNN: Decision title
+
+**Status:** proposed | accepted | superseded
+
+## Context
+
+## Decision
+
+## Consequences
+
+## Alternatives considered
+```

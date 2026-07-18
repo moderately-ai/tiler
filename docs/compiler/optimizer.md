@@ -1,0 +1,244 @@
+# Optimizer model
+
+**Status:** proposed
+
+Tiler borrows selected techniques from property-aware database optimizers while
+using a tensor operation/value DAG, access-aware fusion regions, and explicit
+GPU schedules. DataFusion is useful vocabulary for semantic/executable
+separation and boundary enforcement, but it is not the structural template for
+Tiler's graph or search algorithm.
+
+## Planning model
+
+```text
+SemanticTensorGraph
+  -> deterministic normalization
+  -> bounded logical exploration
+  -> overlapping RegionCandidates
+  -> bounded ImplementationFrontier per region
+  -> compatible RegionPartition + implementations
+  -> KernelProgram or guarded ProgramPortfolio
+```
+
+The optimizer must distinguish:
+
+- **logical equivalence:** expressions compute the same tensor under a stated
+  numerical policy;
+- **fusion legality:** a region can be implemented correctly as one kernel;
+- **physical feasibility:** a schedule fits target capabilities and resources;
+- **profitability:** the complete plan is preferable to legal alternatives.
+
+## Bounded hierarchical search
+
+A Cascades-style memo is one possible implementation technique, not a committed
+architecture. The durable concepts are contract-conforming semantic
+alternatives, explicit region candidates, bounded implementation frontiers,
+and deterministic complete-program selection. The term `memo` is reserved for
+an implementation that actually groups equivalence classes and performs
+goal-directed property search.
+
+Examples of equivalent expressions include:
+
+- consecutive reindexes versus one composed access map;
+- a pointwise operation before or after a reindex when domains permit;
+- alternative contraction associations for future multi-input einsum.
+
+Recomputation, materialization, fusion, and register residency are physical
+implementations of one logical DAG. They do not create new logical equivalence
+groups.
+
+The first implementation should use bounded exploration: canonical operation
+and value keys, deterministic rule order, small alternative sets, dominance
+pruning, and explicit search budgets. Tiny graphs should have an exhaustive
+oracle in tests so heuristic completeness and plan quality can be measured
+before a memo architecture is chosen.
+
+## Rule classes
+
+### Semantic normalization
+
+Normalization chooses a canonical form and must terminate deterministically:
+
+- resolve axis names and ellipses;
+- canonicalize reductions and output-axis policy;
+- compose permutations and legal split/merge chains;
+- canonicalize explicit broadcast/repeat axis mappings;
+- eliminate identity reindexes and no-op casts;
+- normalize constants and dtypes;
+- remove dead values.
+
+Normalization must not silently change floating-point evaluation order.
+
+### Logical exploration
+
+These rules add alternatives:
+
+- push a view through a pointwise expression;
+- add contract-conforming alternatives over named pointwise operations;
+- choose alternative contraction associations;
+- reassociate arithmetic or reductions only when numerical policy permits.
+
+### Region-candidate formation
+
+Region rules propose, but do not automatically select, candidates with explicit
+member operations, boundary values, retained results, materialized edges, and
+duplication policy:
+
+- pointwise plus pointwise;
+- reindex plus pointwise;
+- pointwise prologue into a reduction;
+- pointwise epilogue after a reduction;
+- compatible sibling consumers as a future multi-output kernel;
+- supported prologue/epilogue around a semantic operation with an opaque
+  library implementation;
+- an explicit split/materialize alternative at eligible edges.
+
+Producer duplication, region boundaries, and materialization belong to this
+physical exploration phase rather than logical rewrite identity. A hypergraph
+may index overlapping candidates internally, but membership alone is not a
+complete region identity.
+
+### Physical implementation
+
+Implementation rules produce schedules such as:
+
+- scalar or vectorized flat loops;
+- rank-aware strided loops;
+- direct or tiled rearrangement;
+- serial, subgroup, threadgroup, or multi-pass reduction;
+- direct or GEMM-backed contraction.
+
+### Enforcers
+
+An enforcer supplies a missing required property at a cost:
+
+- contiguous materialization;
+- layout conversion;
+- dtype cast;
+
+Scalar alignment-safe execution and bounds masking are schedule alternatives or
+proof obligations, not enforcers. A partial buffer plus second pass is a
+multi-kernel reduction implementation.
+
+### Cleanup
+
+After program selection, local passes perform index-expression CSE,
+loop-invariant motion, strength reduction, constant folding, bounds-check
+elimination, and dead-code elimination. Schedule-affecting normalization
+finishes before `ScheduledRegion` identity is formed. Later structured-kernel
+cleanup is independently canonicalized and committed through codegen/artifact
+identity; it must not silently mutate the already-hashed schedule.
+
+## Boundary requirements and guarantees
+
+A downstream region implementation requests boundary properties and each
+producer implementation advertises what it guarantees. Initial boundary
+contracts include:
+
+- storage layout class and contiguous axes;
+- alignment and vectorizable width;
+- materialized buffer, alias/view, or opaque runtime value;
+- device and address space.
+
+Logical shape, accumulation semantics, and numerical policy are semantic traits
+or optimization-context constraints, not properties supplied by a schedule.
+Target capabilities, runtime guards, resource use, schedule invariants, and
+cost estimates are also distinct concepts rather than entries in one universal
+property bag. Iteration order and register residency are region-internal unless
+they affect a boundary value.
+
+For example, a vectorized reduction may require a unit-stride reduction axis,
+16-byte alignment, and an extent divisible by four. The optimizer compares a
+contiguous-materialization enforcer followed by that reduction against a
+generic strided reduction.
+
+The boundary-contract system defines canonical keys, satisfaction and
+subsumption (for
+example, 16-byte alignment satisfies a 4-byte requirement), child requirement
+derivation, and dominance. Enforcer insertion is cycle-checked. Interesting
+boundary properties such as useful unit-stride axes are retained on a bounded
+Pareto frontier even when they are not locally cheapest.
+
+One implementation dominates another only within the same semantic and
+constraint region when its applicability covers the other's, its target and
+boundary requirements are no stronger, its guarantees are at least as strong,
+its hard resources are no worse where relevant, and its symbolic cost is no
+worse throughout the compared constraint cell and strictly better somewhere.
+Otherwise both remain or the constraint space is partitioned. Cost alone may
+not prune the only implementation valid for a runtime region.
+
+## Possible memo contract
+
+If a bounded memo is adopted, its conceptual key is:
+
+```text
+semantic group key = canonical semantic expression
+optimization key = (group, boundary requirements, target profile,
+                    numerical policy, constraint region)
+candidate = region implementation + child boundary requirements
+            + boundary guarantees
+```
+
+It would store a bounded Pareto set, track shared DAG cost without charging a
+materialized producer once per parent, detect cycles, and retain structured
+rule/candidate provenance. Search-budget exhaustion returns the best complete
+plan found under deterministic fallback heuristics.
+
+Before global DAG planning is implemented, the same interfaces may be backed by
+a trivial region builder for a narrow semantic graph; this staged shortcut is
+explicit rather than a second optimizer architecture.
+
+## Symbolic parameters and routing
+
+The optimizer consumes a constraint environment describing exact/ranged
+extents, divisibility, equalities, and optionally common profiled values. Costs
+may be symbolic or piecewise over this environment. The selected result can be
+a portfolio of AOT variants plus a deterministic routing decision tree or
+crossover formula. Guards establish validity; routing chooses profitability
+when several variants are valid. Routing policy participates in `EXPLAIN` and
+artifact identity.
+
+## Rule interface
+
+Semantic rules conceptually provide:
+
+```text
+match(expression) -> bindings
+check(bindings, semantic_context) -> proof or rejection
+apply(bindings) -> equivalent expression(s)
+```
+
+Implementation rules conceptually provide:
+
+```text
+implement(group, boundary_requirements) -> candidate {
+    implementation,
+    child_requirements,
+    boundary_guarantees,
+    legality_constraints,
+    estimated_resources
+}
+```
+
+Every rule needs a stable name, declared numerical preconditions, positive and
+negative tests, deterministic search behavior, and explain-trace output.
+
+## Explainability
+
+An `EXPLAIN` report should show:
+
+```text
+logical input
+normalization rules fired
+equivalent alternatives retained
+fusion regions considered
+boundary requirements/guarantees
+enforcers inserted
+schedules considered and rejected
+selected cost and assumptions
+runtime guards and fallback
+```
+
+Structured rejection reasons are important: “threadgroup reduction rejected:
+shared memory exceeds target limit” is actionable; a later MSL compiler error
+is not.
