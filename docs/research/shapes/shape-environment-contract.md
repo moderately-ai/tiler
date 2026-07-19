@@ -317,3 +317,23 @@ This makes graph composition capture-avoiding and permits diagnostic renaming
 without changing computation identity. Serialization and cloning must preserve
 or consistently remap IDs. Explanation output should retain optional readable
 names and disambiguate collisions when necessary.
+
+## Accepted decision: extent width and domain newtypes
+
+**Accepted by Tom on 2026-07-19:** root extent parameters and final tensor
+extents have a portable `u64` value domain. Rust `usize` is not part of the
+semantic shape contract. Signed intermediate evaluation uses a wider checked
+representation whose concrete width remains to be selected.
+
+Index width is a physical-plan decision. A `u32` indexing alternative is legal
+only when proofs or pre-dispatch guards cover every relevant extent, product,
+stride, and maximum reachable storage offset; otherwise the planner must use a
+wider legal alternative or fall back.
+
+These domains use semantic newtypes rather than exposing interchangeable
+primitive integers. At minimum, extent values, signed shape intermediates,
+symbol IDs, axis indices, input indices, host shape-parameter indices, and
+physical index widths must not be accidentally mixed merely because their
+representations are integer types. Conversion across domains is explicit and
+checked. This is a correctness and readability invariant, not only an API-style
+preference.
