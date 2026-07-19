@@ -83,18 +83,21 @@ decision procedure.
 
 Source: [Z3 arithmetic guide](https://microsoft.github.io/z3guide/docs/theories/Arithmetic/).
 
-### Fixed-width caveat
+### Accepted arithmetic boundary
 
-Tiler has provisionally chosen `u64` final extents and has not yet chosen the
-bounded representation for signed intermediates. If every value is ultimately
-modeled as a fixed-width bit vector, the state space is finite and every
-formula is theoretically decidable. Exact bit-vector multiplication and
-division can be encoded by SMT solvers.
+Tiler has chosen mathematical-integer semantics for semantic `ShapeExpr`
+intermediates and checked conversion to a final `Extent(u64)`. Logical
+rewrites therefore do not observe overflow from an arbitrary compiler integer
+width. The evaluator never wraps or saturates and rejects an unrepresentable
+final extent before allocation or device work.
 
-That fact does not produce a realistic completeness guarantee: exhaustive
-state spaces are enormous, checked-overflow behavior must be encoded, and even
-the decidable affine algorithms need protections against constraint explosion.
-Tiler still needs deterministic budgets and an `Unknown` result.
+Physical and ABI domains may use explicit fixed-width arithmetic. If every
+value in one of those domains is modeled as a fixed-width bit vector, its state
+space is finite and its formulas are theoretically decidable. Exact bit-vector
+multiplication and division can be encoded by SMT solvers, but the enormous
+state space still does not make exhaustive solving a realistic strategy.
+Semantic proving likewise retains deterministic resource budgets and
+`Unknown(ResourceLimit)`.
 
 Sources:
 
@@ -106,7 +109,10 @@ Sources:
 - JAX export performs useful but incomplete symbolic reasoning. It documents
   `InconclusiveDimensionOperation`, cases such as `b >= b % 3` that it cannot
   currently prove, and runtime checks that concrete arguments satisfy symbolic
-  specifications.
+  specifications. It also documents an intentionally total but unsound
+  equality behavior used for practical object hashing; Tiler's typed
+  `Proved`/`Disproved`/`Unknown` result must not copy that shortcut into proof
+  semantics.
   [JAX shape polymorphism](https://docs.jax.dev/en/latest/export/shape_poly.html)
 - PyTorch `ShapeEnv` propagates symbolic expressions and records guards for
   assumptions made while tracing or optimizing. Export may also retain

@@ -226,7 +226,7 @@ remainder and divisibility; comparisons; min/max; and a typed conditional.
 
 ## Accepted decision: signed intermediate arithmetic
 
-**Accepted by Tom on 2026-07-19:** shape expressions may contain checked signed
+**Accepted by Tom on 2026-07-19:** shape expressions may contain signed
 intermediate values even though a tensor extent is always nonnegative.
 
 ```text
@@ -239,10 +239,31 @@ unsigned-only rewrites. Signed division and rounding behavior must be explicit
 for each relevant primitive.
 
 Every expression exported as a tensor extent must evaluate to a nonnegative,
-representable extent. Checked-arithmetic overflow, division by zero, or a
-negative final extent is a typed shape-evaluation failure with constraint and
-origin context. The concrete bounded integer representation and overflow
-width remain a separate decision.
+representable extent. Division by zero or a negative final extent is a typed
+shape-evaluation failure with constraint and origin context. The arithmetic
+domain and bounded conversion contract are defined below.
+
+## Accepted decision: mathematical shape arithmetic
+
+**Accepted by Tom on 2026-07-19:** semantic `ShapeExpr` arithmetic has
+mathematical-integer semantics. It does not wrap, saturate, or expose overflow
+from an arbitrary compiler intermediate width.
+
+```text
+ExactDiv(A * B, B) == A  // when B != 0, even if A*B exceeds u64/i128
+```
+
+This makes algebraic equivalence independent of an implementation integer
+width. Conversion of a final nonnegative result to `Extent(u64)` is explicit
+and checked; an unrepresentable result is rejected before allocation or device
+work. Physical and ABI expressions may instead define bounded-width arithmetic
+because machine representation is part of those domains' contracts.
+
+The exact evaluator and prover use deterministic expression-size,
+integer-magnitude, and reasoning budgets. Exhausting a budget produces a typed
+resource-limit diagnostic or `Unknown(ResourceLimit)`, as appropriate; it
+never produces an approximate, wrapped, or saturated value. Concrete evaluator
+strategy and arbitrary-precision representation are implementation choices.
 
 ## Accepted decision: explicit division modes
 
@@ -322,8 +343,8 @@ names and disambiguate collisions when necessary.
 
 **Accepted by Tom on 2026-07-19:** root extent parameters and final tensor
 extents have a portable `u64` value domain. Rust `usize` is not part of the
-semantic shape contract. Signed intermediate evaluation uses a wider checked
-representation whose concrete width remains to be selected.
+semantic shape contract. Signed shape intermediates use the mathematical
+semantics above rather than exposing a bounded primitive representation.
 
 Index width is a physical-plan decision. A `u32` indexing alternative is legal
 only when proofs or pre-dispatch guards cover every relevant extent, product,
