@@ -476,3 +476,25 @@ context, so a generic predicate can still report a specialized diagnostic such
 as incompatible broadcast dimensions. New predicate primitives require the
 same versioned semantic treatment as new shape-expression primitives; arbitrary
 callbacks remain excluded.
+
+## Accepted decision: explicit divisibility predicate
+
+**Accepted by Tom on 2026-07-19:** the shape language provides both a numeric
+`Remainder` expression and a specialized `Divisible` predicate.
+
+```text
+Remainder(N, 8)  // produces a numeric value
+Divisible(N, 8)  // states a proof/validation condition
+```
+
+Canonicalization maps `Remainder(x, d) == 0` to `Divisible(x, d)` so equivalent
+spellings have one canonical identity. The specialized predicate preserves
+intent for proof evidence and produces direct diagnostics such as "extent N
+must be divisible by 8." It also names the precondition required by
+`ExactDiv`.
+
+Concrete evaluation supports a well-typed nonzero symbolic divisor. Constant
+divisors belong to the initial prover's supported congruence fragment; a
+symbolic divisor crosses the affine boundary and may produce a structured
+`Unknown` during static proof. A zero divisor is a typed evaluation or
+statically detected construction/validation error, as applicable.
