@@ -32,6 +32,12 @@ backend = "none"
 "research/macro-environment" = ["docs/research/macro-environment/**", "spikes/macro-environment/**"]
 "research/embedding" = ["docs/research/embedding/**", "spikes/embedding/**"]
 "research/runtime" = ["docs/research/runtime/**", "spikes/runtime/**"]
+"research/placement" = ["docs/research/placement/**", "spikes/placement/**"]
+"research/transfers" = ["docs/research/transfers/**", "spikes/transfers/**"]
+"research/distributed" = ["docs/research/distributed/**", "spikes/distributed/**"]
+"research/external-storage" = ["docs/research/external-storage/**", "spikes/external-storage/**"]
+"research/metal-transfers" = ["docs/research/metal-transfers/**", "spikes/metal-transfers/**"]
+"research/cuda-transfers" = ["docs/research/cuda-transfers/**", "spikes/cuda-transfers/**"]
 "contracts/core" = [
   "docs/README.md",
   "docs/vision.md",
