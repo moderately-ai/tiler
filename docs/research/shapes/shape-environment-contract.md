@@ -574,6 +574,27 @@ symbolic divisor crosses the affine boundary and may produce a structured
 `Unknown` during static proof. A zero divisor is a typed evaluation or
 statically detected construction/validation error, as applicable.
 
+## Accepted decision: inferred extents require a unique solution
+
+**Accepted by Tom on 2026-07-19:** extent inference succeeds only when the
+available semantic constraints determine exactly one nonnegative extent.
+Underdetermined or ambiguous inference is rejected with a typed diagnostic;
+the solver must not choose an arbitrary conventional value.
+
+```text
+input shape [0], requested [inferred]    -> uniquely inferred as [0]
+input shape [0], requested [0, inferred] -> ambiguous because 0 == 0 * x
+input shape [0], requested [0, 7]        -> explicit and valid
+```
+
+An inference sentinel is frontend or construction syntax, not a semantic
+extent value in the logical IR. A frontend may deliberately implement a
+documented convention for an ambiguous source language, but it must resolve
+that convention to an explicit extent before producing Tiler's semantic
+graph. The selected value and its frontend provenance therefore become
+visible to validation, hashing, and explanation rather than being hidden
+inside the constraint solver.
+
 ## Deferred decision: construction and commitment lifecycle
 
 The discussion established that local, environment-relative, and graph-wide
