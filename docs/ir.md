@@ -217,6 +217,10 @@ specified in [Operation extensions](operation-extensions.md).
   Operations with intrinsic mixed precision, such as reductions and
   contractions, declare computation precision, accumulator/result types, and
   relevant order or algorithm contracts through their specialized semantics.
+- Every numeric conversion carries a resolved, typed conversion contract for
+  its conversion family. Source and destination dtype alone are not a complete
+  conversion, and canonical IR does not inherit ambient rounding or exceptional
+  value behavior.
 - Every root extent symbol has exactly one typed binding whose source class and
   availability phase are supported by every semantic factor that consumes it.
 - Target-property bindings use stable versioned keys and cannot depend on a

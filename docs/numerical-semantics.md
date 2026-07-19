@@ -136,17 +136,37 @@ behavior. Simplification passes preserve these semantics.
 
 ## Casts
 
-Casts state source and destination dtype and define behavior for:
+Casts are semantic operations with resolved, typed conversion contracts. Source
+and destination dtype alone are insufficient to define the result. A contract
+contains only the dimensions relevant to its conversion family; it is not one
+universal bag of optional fields.
+
+Initial conversion families include:
+
+- floating-point widening and narrowing;
+- floating-point to integer and integer to floating-point;
+- integer widening and narrowing;
+- quantization and dequantization;
+- bit reinterpretation, as an operation distinct from numeric conversion.
+
+As applicable, their contracts define:
 
 - out-of-range float-to-integer conversion;
 - NaN to integer;
 - narrowing integer conversion;
 - floating-point rounding;
+- overflow behavior, signed-zero preservation, NaN handling, and subnormal
+  handling;
 - backend feature-dependent formats.
 
-Numeric conversion and bit reinterpretation are distinct semantic operations.
-A cast or quantization boundary is observable even if fusion removes a physical
-store/reload that would otherwise have realized it.
+Named presets may provide concise frontend ergonomics, but canonicalization
+resolves them to versioned typed contracts before semantic optimization. No
+conversion inherits ambient frontend, compiler, or device defaults.
+
+A cast or quantization boundary is observable even if fusion removes a
+physical store/reload that would otherwise have realized it. A backend must
+implement the resolved contract natively, emulate it exactly, use an already
+permitted relaxation, or reject the plan.
 
 ## Backend numerical feasibility
 
