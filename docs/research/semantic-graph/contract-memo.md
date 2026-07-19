@@ -446,10 +446,12 @@ Validation should be staged so each failure identifies its owner:
 ## Decisions requested
 
 The evidence supports the operation/value graph strongly. Two identity choices
-remain material:
+are material:
 
-1. Accept separate computation and interface identities, with optional names
-   excluded from computation identity.
+1. **Accepted by Tom on 2026-07-18:** maintain separate computation and
+   interface/artifact identities. Optional input and result names are excluded
+   from computation identity. They participate in interface/artifact identity
+   only where the binding or ABI exposes them.
 2. Decide whether initial normalization performs capability-gated pure CSE, or
    whether structural sharing remains identity-bearing until CSE is designed.
 
