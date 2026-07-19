@@ -452,8 +452,13 @@ are material:
    interface/artifact identities. Optional input and result names are excluded
    from computation identity. They participate in interface/artifact identity
    only where the binding or ABI exposes them.
-2. Decide whether initial normalization performs capability-gated pure CSE, or
-   whether structural sharing remains identity-bearing until CSE is designed.
+2. **Accepted by Tom on 2026-07-18:** normalize identical referentially
+   transparent operation invocations to one semantic value before computation
+   identity. Equality requires the same operation key, operands, canonical
+   attributes, numerical contract, and inferred result types. Source origins
+   are preserved for explanation but excluded from equality. Physical planning
+   may still recompute the shared value independently when that is cheaper than
+   reuse or materialization.
 
-Neither choice changes the operation/value shape of the graph, but both affect
-cache identity, deterministic serialization, and explain output.
+These choices do not change the operation/value shape of the graph, but they do
+define cache identity, deterministic serialization, and explain output.
