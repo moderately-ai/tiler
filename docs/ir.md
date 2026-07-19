@@ -234,6 +234,8 @@ specified in [Operation extensions](operation-extensions.md).
 - Reduction semantic nodes constrain the legal evaluation-order or result
   class, while concrete reduction trees, partitioning, and multi-pass topology
   belong to selected physical plans and artifact identity.
+- Determinism guarantees name their stability scope. Canonical contracts do
+  not contain an unqualified deterministic boolean.
 - The canonical graph contains only the transitive closure reachable from all
   program results; dead pure operations are removed before identity is formed.
 - Stable serialization and hashing do not depend on arena IDs, insertion order,

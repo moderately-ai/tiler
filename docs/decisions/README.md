@@ -19,6 +19,7 @@ accepted. Unresolved questions are collected in
 - [0010: Make conversion behavior a typed semantic contract](0010-typed-conversion-contracts.md) — accepted
 - [0011: Resolve numerical permissions per operation](0011-per-operation-numerical-permissions.md) — accepted
 - [0012: Keep reduction topology in physical plans](0012-physical-reduction-topology.md) — accepted
+- [0013: Scope deterministic numerical guarantees](0013-scoped-determinism.md) — accepted
 
 ## Template
 

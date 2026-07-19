@@ -144,8 +144,19 @@ Changing from a serial reduction to a SIMD or threadgroup tree is a physical
 alternative only when the numerical policy permits its evaluation order. F16
 or BF16 inputs do not imply low-precision accumulation; promotion is explicit.
 
-The stability scope promised by a deterministically selected order remains a
-separate decision; `deterministic` alone is not yet a complete public contract.
+An unqualified `deterministic` boolean is not a complete contract. The initial
+scoped guarantee is **plan deterministic**: identical input bits and runtime
+bindings, executed through the same artifact digest and selected plan variant
+in the same declared target environment, produce identical output bits. The
+physical plan must reject timing-dependent atomics or other execution choices
+that can violate this promise.
+
+**Portable bitwise** is a separate, stronger conformance level: identical
+inputs produce identical output bits across every target conforming to that
+contract. It may substantially restrict legal operations, elementary
+functions, and physical schedules. Recompilation may select a different
+deterministic topology, so plan determinism does not promise equal results
+across different artifact identities.
 
 ## Min and max
 
@@ -226,6 +237,8 @@ expand the program's permissions.
 conformance level such as:
 
 - **portable bitwise:** same bits across conforming targets;
+- **plan deterministic:** same bits for identical inputs and bindings under
+  the same artifact, selected variant, and declared target environment;
 - **toolchain bitwise:** same bits for a pinned target/toolchain contract;
 - **backend elementary:** operation graph is preserved but elementary function
   results follow the backend contract;

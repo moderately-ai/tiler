@@ -29,8 +29,8 @@ schedule is legal only when its evaluation is contained by the semantic order
 contract. The selected topology participates in physical-plan and artifact
 identity.
 
-The stability scope of a deterministic order is a separate unresolved
-contract. This decision does not use `deterministic` as an unqualified promise.
+Deterministic order uses a separately defined, explicit stability scope. This
+decision does not use `deterministic` as an unqualified promise.
 
 ## Consequences
 
