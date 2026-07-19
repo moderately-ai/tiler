@@ -42,6 +42,7 @@ accepted. Unresolved questions are collected in
 - [0033: Separate semantic validation from physical enforcement](0033-semantic-validation-enforcement.md) — accepted
 - [0034: Govern admitted built-in dtype keys in Tiler](0034-tiler-governed-built-in-dtype-keys.md) — accepted
 - [0035: Recognize IEEE decimal floating-point formats](0035-recognize-ieee-decimal-floating-formats.md) — accepted
+- [0036: Recognize standard binary and microscaling scalar formats](0036-recognize-standard-binary-and-microscaling-formats.md) — accepted
 
 ## Template
 

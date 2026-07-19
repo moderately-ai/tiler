@@ -59,13 +59,21 @@ change updates provider provenance.
 - signed `i2/i4/i8/i16/i32/i64`;
 - unsigned `u2/u4/u8/u16/u32/u64`.
 
-### Standards-backed candidates for built-in admission
+### Accepted standards-backed Tiler built-ins
 
 - IEEE binary16, binary32, binary64, and binary128;
-- bfloat16, pinned to a public exact cross-architecture definition;
+- bfloat16, pinned to the ratified RISC-V BF16 operand-format value contract;
 - OCP OFP8 E4M3 and E5M2;
 - OCP MX E2M3, E3M2, E2M1, and E8M0 constituents;
 - OCP MX block-format scheme identities, separately from scalar `TypeKey`s.
+
+ADR 0036 records the scalar-format admissions. Compound OCP MX schemes use
+separate `QuantSchemeKey`s and still require their own catalog decision; a
+scale or element constituent never implies the compound scheme.
+
+Format descriptors classify encoded values and special-value bit patterns.
+They do not import an ISA's arithmetic propagation, canonical-NaN, exception,
+or conversion behavior; those remain explicit operation-policy contracts.
 
 IEEE decimal32/64/128 are accepted built-ins under ADR 0035. Their weak current
 tensor/GPU adoption affects capability support, not recognized identity. DPD

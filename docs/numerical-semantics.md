@@ -75,6 +75,11 @@ dtypes. Their DPD and BID representations are explicit storage encodings, not
 separate dtype identities. Recognition does not imply arithmetic or backend
 support; see ADR 0035.
 
+IEEE binary16/32/64/128, BF16, OCP OFP8 E4M3/E5M2, and the OCP MX
+FP6/FP4/E8M0 constituents are also built-in recognized logical formats under
+ADR 0036. Compound MX tensors remain scheme-typed quantized values rather than
+scalar dtypes, and TF32 remains an execution-precision contract.
+
 ### Optimization permissions
 
 The program carries a granular policy ceiling: the maximum numerical freedoms
