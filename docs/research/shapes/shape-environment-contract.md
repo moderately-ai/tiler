@@ -498,6 +498,36 @@ as incompatible broadcast dimensions. New predicate primitives require the
 same versioned semantic treatment as new shape-expression primitives; arbitrary
 callbacks remain excluded.
 
+## Accepted decision: binding-kind capabilities
+
+**Accepted by Tom on 2026-07-19:** `ShapeEnv` is generic over the admitted root
+binding kinds already defined by this contract, while each operation or
+semantic factor position explicitly declares which binding classes it
+supports.
+
+```text
+global root kinds:
+  Static | InputDimension | ShapeParameter
+
+example operation capability:
+  split factor: StaticOnly
+
+later operation capability:
+  split factor: HostEvaluable
+```
+
+The common IR can therefore represent a runtime semantic factor such as
+`N == A * B` when `A` and `B` are host-sourceable, without requiring every
+initial operation implementation to support every binding kind. Validation
+checks an expression's transitive sources against the declared capability and
+rejects unsupported combinations with a typed explanation naming the
+operation, factor position, observed binding kinds, and supported set.
+
+This separates architectural expressiveness from vertical operation support.
+Adding runtime support to a factor can extend an operation capability without
+inventing a new shape representation; it still requires the operation's
+validation, lowering, ABI, and tests to support that case.
+
 ## Accepted decision: explicit divisibility predicate
 
 **Accepted by Tom on 2026-07-19:** the shape language provides both a numeric
