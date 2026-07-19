@@ -499,37 +499,18 @@ symbolic divisor crosses the affine boundary and may produce a structured
 `Unknown` during static proof. A zero divisor is a typed evaluation or
 statically detected construction/validation error, as applicable.
 
-## Accepted decision: incrementally validated construction and immutable seal
+## Deferred decision: construction and commitment lifecycle
 
-**Accepted by Tom on 2026-07-19:** graph construction validates incrementally
-at the scope of each mutation, then crosses an explicit immutable sealing
-boundary before optimization.
+The discussion established that local, environment-relative, and graph-wide
+invariants can all be maintained incrementally; "whole graph" describes the
+scope of an invariant, not necessarily a nonincremental validation algorithm.
+It also established requirements for multiple frontend/DX surfaces, reusable
+intermediate representations, consumer-side caching, and a stable point at
+which a graph may be treated as a complete program.
 
-```text
-frontend-specific API
-    -> GraphBuilder
-       - local smart-constructor checks
-       - environment-relative checks
-       - incrementally maintained graph/proof consistency
-    -> seal declared program results
-    -> immutable SemanticTensorGraph
-    -> optimizer or another consumer
-```
-
-Validation is not divided into "incremental" and "whole graph" algorithms:
-local, environment-relative, and graph-wide invariants may all be maintained
-incrementally. Sealing is instead a commitment boundary. It declares the
-program complete, fixes its possibly multiple results, resolves pending
-references and obligations, establishes canonical identity inputs, and
-produces an immutable snapshot.
-
-This permits multiple frontend and library DX surfaces to target the same
-builder/seal contract. Consumers may inspect, serialize, cache, explain, or
-optimize a sealed graph without requiring immediate compilation. Immutability
-makes its identity stable for caching and safe concurrent consumption. A later
-change creates and seals a new snapshot rather than mutating a graph already
-being optimized or used as a cache key.
-
-Smart constructors remain responsible for the earliest precise local errors.
-Deserialized or extension-produced structures enter through the same checked
-construction/sealing boundary and cannot masquerade as sealed semantic IR.
+No mandatory `GraphBuilder`, `.build()`, `.seal()`, immutable snapshot type, or
+canonicalization transition is accepted yet. Those are possible
+implementations of the requirements, but choosing among them is deferred until
+the remaining semantic shape contracts are settled. "Sealing" may be used as
+informal terminology for a completeness/commitment boundary without implying
+a particular public API or Rust type-state design.
