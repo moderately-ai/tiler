@@ -80,6 +80,10 @@ tensor/GPU adoption affects capability support, not recognized identity. DPD
 and BID are separate storage encodings of each corresponding logical format,
 not separate dtypes.
 
+The nominal parameterized family `tiler::complex@1<ComponentTypeKey>` is also
+accepted under ADR 0037, initially for f16, f32, and f64 components. Width-based
+framework names remain aliases.
+
 ### Recognized external owner-namespaced candidates
 
 - MLIR/StableHLO IEEE-convention `f8E3M4` and `f8E4M3`;

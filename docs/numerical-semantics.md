@@ -80,6 +80,12 @@ FP6/FP4/E8M0 constituents are also built-in recognized logical formats under
 ADR 0036. Compound MX tensors remain scheme-typed quantized values rather than
 scalar dtypes, and TF32 remains an execution-precision contract.
 
+Complex uses the nominal parameterized identity
+`tiler::complex@1<ComponentTypeKey>`. The initial admitted component types are
+f16, f32, and f64. Width-based frontend names are aliases, storage layout is a
+physical contract, and operation support remains specific to the complete
+complex instance and signature; see ADR 0037.
+
 ### Optimization permissions
 
 The program carries a granular policy ceiling: the maximum numerical freedoms

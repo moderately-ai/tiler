@@ -221,7 +221,9 @@ and [GCC decimal floating types](https://gcc.gnu.org/onlinedocs/gcc/Decimal-Floa
 ### Complex scalars
 
 Complex is a compound logical scalar parameterized by a component floating
-format, not a new exponent/significand encoding.
+format, not a new exponent/significand encoding. ADR 0037 admits the nominal
+family `tiler::complex@1<ComponentTypeKey>`, initially for f16, f32, and f64.
+Other components require an explicit later catalog admission.
 
 | Ecosystem spelling requiring frontend-specific resolution | Canonical structural identity | Maturity |
 |---|---|---|
