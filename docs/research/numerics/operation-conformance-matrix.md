@@ -43,6 +43,9 @@ the first executable slice.
 | `Fma` | Required correctly rounded fused result under round-to-nearest-ties-even | No decomposition unless exact emulation or an authorized relaxation proves compatibility | Per-dtype native/emulated support |
 | `Multiply` then `Add` | Two semantic rounding boundaries | Contraction permission may admit FMA; reassociation does not imply contraction | Backend flag and generated-code verification |
 | Numeric conversions | Typed conversion family defines rounding and exceptional-value behavior | Only freedoms named by that conversion contract | Concrete initial family matrix, especially float-to-int and quantization |
+| Affine `Quantize` / `Dequantize` | Positive finite scales, in-range codes/zero points, widened difference, explicit evaluation dtype/order, nearest-even encoding, endpoint saturation | Exceptional-input and subnormal behavior only through the resolved conversion family | Decide NaN mapping and initial dtype/profile subset |
+| Affine `Requantize` | Source decode followed by destination encode in an explicit intermediate dtype, preserving both conversion boundaries | Direct integer realization only with an equivalence proof | Initial intermediate dtype/profile subset |
+| Integer `Rescale` | Named multiplier/shift widths, integer rounding algorithm, zero-point interpretation, clip range, and intermediate widths | Approximate result only under a separately declared bounded-error family | Initial exact algorithms and imported-dialect profiles |
 | `Minimum` / `Maximum` | NaN-propagating; deterministic `-0.0 < +0.0` | NaN-absence and signed-zero relaxations remain independent | Exact Metal fixup and cost measurement |
 | `MinimumNumber` / `MaximumNumber` | Prefer the number when exactly one operand is NaN; deterministic zero ordering | Signed-zero and NaN assumptions remain independent | Exact Metal fixup and reduction conformance |
 | Transcendentals | Per-operation accuracy, domain, special-value, and subnormal contract | Approximate implementation only when its bound satisfies the contract or consumes permission | Initial metric vocabulary and supported operation subset are open |
@@ -62,6 +65,7 @@ Each supported floating dtype uses exact bit-pattern inputs where representable.
 | Signed zero | Both operand orders of `-0`/`+0`; add/subtract/multiply/divide; extrema; clamp/ReLU patterns |
 | Subnormals | Smallest/largest subnormal as input; smallest normal boundary; newly produced subnormal; all four input/result preserve/flush combinations |
 | Conversion | Exact, halfway, just-out-of-range, NaN, infinities, signed zero, subnormal, and integer extrema |
+| Quantization | Every code endpoint; widened subtraction; zero-point neighborhood; parameter-grid sentinels; invalid scale/code/zero point; saturation thresholds; QDQ and requantize double-rounding witnesses |
 | Reduction order | Three-element reassociation witness; operand permutations; serial/SIMD/threadgroup/multi-pass trees; repeated executions |
 | Empty and seeded reduction | Empty result; identity-less empty rejection; dynamic non-empty guard; non-identity seed included exactly once; singleton `[-0]` without injected `+0` |
 | Extrema reduction | All-NaN; one numeric plus NaNs; opposite-signed zeros in every order and tree; infinities |

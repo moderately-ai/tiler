@@ -491,6 +491,12 @@ physical store/reload that would otherwise have realized it. A backend must
 implement the resolved contract natively, emulate it exactly, use an already
 permitted relaxation, or reject the plan.
 
+The researched [affine quantization numerical baseline](research/numerics/affine-quantization-semantics.md)
+requires positive finite scales, in-range codes and zero points, widened
+subtraction, explicit evaluation dtype/order, nearest-even encoding, endpoint
+saturation, and distinct logical `Requantize` and integer `Rescale` families.
+The first built-in NaN-input behavior remains an explicit pending decision.
+
 ## Backend numerical feasibility
 
 For a resolved operation signature, a backend reports one of these semantic

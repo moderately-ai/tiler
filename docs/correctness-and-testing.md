@@ -63,6 +63,9 @@ Generate combinations of:
 - supported strided layouts;
 - deliberately unsupported layouts that must fall back;
 - NaN, infinities, signed zero, and extreme finite values;
+- quantization scales at zero, negative, subnormal, normal, maximum finite,
+  infinity, and NaN; code and zero-point endpoints; per-axis/block parameter
+  grids with distinct sentinel values;
 - shape products near index-width boundaries.
 
 The cross-operation coverage, adversarial numerical atoms, and backend compiler
