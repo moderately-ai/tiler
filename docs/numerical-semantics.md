@@ -70,6 +70,10 @@ API name such as `DType::F32` denotes the durable identity `tiler::f32@1`; it is
 not a distinct identity system. Structural descriptions such as bit width,
 exponent width, and fraction width are descriptor facts and are not sufficient
 identity because formats can differ in bias, special values, and encoding.
+IEEE decimal32, decimal64, and decimal128 are built-in recognized logical
+dtypes. Their DPD and BID representations are explicit storage encodings, not
+separate dtype identities. Recognition does not imply arithmetic or backend
+support; see ADR 0035.
 
 ### Optimization permissions
 

@@ -209,9 +209,11 @@ and [NVIDIA TensorRT accuracy considerations](https://docs.nvidia.com/deeplearni
 
 IEEE permits densely packed decimal and binary-integer-decimal encodings for
 the same logical decimal formats, so storage encoding must remain explicit.
-These types are reasonable extension/reservation candidates for a mature type
-system, but current GPU tensor arithmetic does not justify silently treating
-them as core binary-float variants.
+ADR 0035 admits all three as built-in recognized logical dtypes. Current GPU
+tensor arithmetic does not imply execution support or justify treating them as
+core binary-float variants. DPD and BID are separate storage encodings, and a
+bit-preserving operation or ABI must distinguish them even though they encode
+the same logical decimal format.
 
 Primary sources: [IEEE 754-2019](https://standards.ieee.org/ieee/754/6210/)
 and [GCC decimal floating types](https://gcc.gnu.org/onlinedocs/gcc/Decimal-Float.html).

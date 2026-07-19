@@ -41,6 +41,7 @@ accepted. Unresolved questions are collected in
 - [0032: Fix strict affine quantization evaluation](0032-strict-affine-quantization-evaluation.md) — accepted
 - [0033: Separate semantic validation from physical enforcement](0033-semantic-validation-enforcement.md) — accepted
 - [0034: Govern admitted built-in dtype keys in Tiler](0034-tiler-governed-built-in-dtype-keys.md) — accepted
+- [0035: Recognize IEEE decimal floating-point formats](0035-recognize-ieee-decimal-floating-formats.md) — accepted
 
 ## Template
 

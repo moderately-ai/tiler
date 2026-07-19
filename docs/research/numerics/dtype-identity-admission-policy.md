@@ -67,9 +67,10 @@ change updates provider provenance.
 - OCP MX E2M3, E3M2, E2M1, and E8M0 constituents;
 - OCP MX block-format scheme identities, separately from scalar `TypeKey`s.
 
-IEEE decimal32/64/128 meet the stability test but have weaker tensor/GPU
-relevance. Whether they enter the initial built-in catalog is product scope,
-not a semantic ambiguity.
+IEEE decimal32/64/128 are accepted built-ins under ADR 0035. Their weak current
+tensor/GPU adoption affects capability support, not recognized identity. DPD
+and BID are separate storage encodings of each corresponding logical format,
+not separate dtypes.
 
 ### Recognized external owner-namespaced candidates
 
@@ -144,3 +145,12 @@ Forward-compatibility rules:
 These rules are recorded in ADR 0034. Namespace registration and collision
 governance for external providers remain an API-design task, but the ownership
 direction is fixed.
+
+## Accepted decimal-format admission
+
+**Accepted by Tom on 2026-07-19:** IEEE decimal32, decimal64, and decimal128
+enter the built-in recognized catalog as `tiler::decimal32@1`,
+`tiler::decimal64@1`, and `tiler::decimal128@1`. Recognition does not require
+initial arithmetic, reference evaluation, ABI, or backend support. Their DPD
+and BID representations remain explicit `StorageEncodingKey`s. ADR 0035 records
+the durable contract.
