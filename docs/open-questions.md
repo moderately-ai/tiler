@@ -7,7 +7,6 @@ ADR when evidence is sufficient.
 
 - What exact and fast numerical modes are exposed?
 - Which transformations may reassociate floating-point work?
-- What are min/max NaN and signed-zero semantics?
 - Which input, accumulation, and output dtype combinations are supported?
 - Does exact mode require deterministic reduction order across schedules?
 

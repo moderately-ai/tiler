@@ -29,6 +29,7 @@ accepted. Unresolved questions are collected in
 - [0020: Use value-only floating-point exceptions initially](0020-value-only-floating-point-exceptions.md) — accepted
 - [0021: Require proof or runtime validation for value assumptions](0021-validated-value-assumptions.md) — accepted
 - [0022: Define reduction identities and initial values](0022-reduction-identities-and-initial-values.md) — accepted
+- [0023: Separate propagating and number-preferring extrema](0023-floating-point-extrema-semantics.md) — accepted
 
 ## Template
 

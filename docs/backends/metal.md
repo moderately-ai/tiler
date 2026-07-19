@@ -39,6 +39,14 @@ There is no final generic `BlockReduce`. A scheduled reduction is an explicit
 algorithm with convergence, lane-visibility, extent, dtype, and capability
 requirements.
 
+Native MSL spelling does not establish semantic compatibility. MSL `fmin` and
+`fmax` prefer a numeric operand over NaN and select an equal operand in a way
+that can make opposite-signed-zero results operand-order-dependent. Strict
+Tiler `Minimum`/`Maximum` propagate NaN, while strict `MinimumNumber`/
+`MaximumNumber` still order `-0.0 < +0.0`. Metal lowering therefore emits a
+semantic fixup or rejects the native alternative unless the operation's
+resolved numerical permissions explicitly admit the native behavior.
+
 ## Target profiles
 
 Offline scheduling uses a named conservative target profile, not assumptions

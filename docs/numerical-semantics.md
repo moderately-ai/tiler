@@ -362,10 +362,38 @@ runtime rejects an unsupported future model rather than interpreting it as
 
 ## Min and max
 
-Backends differ in their treatment of NaN and signed zero. Tiler must define
-whether min/max are propagating, number-preferring, or follow another named
-contract, and then emit or synthesize matching behavior. A backend intrinsic is
-not selected until its semantics are known to agree.
+Tiler represents two distinct floating-point operation families:
+
+```text
+Minimum / Maximum
+    if either operand is NaN: NaN
+
+MinimumNumber / MaximumNumber
+    if exactly one operand is NaN: the numeric operand
+    if both operands are NaN: NaN
+```
+
+Both families deterministically order `-0.0 < +0.0`. Therefore minimum of
+opposite-signed zeros is `-0.0`, and maximum is `+0.0`. Under portable-bitwise
+conformance, a produced NaN follows the canonical arithmetic-NaN contract.
+
+These are separate semantic operations, not one `Min`/`Max` operation with a
+backend-selected mode. Number preference changes observable results and is not
+merely permission to assume NaNs absent. A separate signed-zero relaxation may
+permit either zero where authorized, but it does not change the operation's
+canonical strict semantics.
+
+Elementwise and reduction forms name the same scalar semantic family while
+retaining their separate reduction identity, seed, and order contracts. Rewrite
+rules declare the exact family they preserve. Operand commutation, tree
+selection, clamp formation, and ReLU recognition may proceed only when NaN and
+zero-tie behavior remain valid.
+
+A backend intrinsic is selected only when its full behavior agrees. In
+particular, Metal `fmin`/`fmax` are number-preferring and their signed-zero
+result can depend on operand order; they are not an exact implementation of
+strict `Minimum`/`Maximum` or deterministic-zero `MinimumNumber`/
+`MaximumNumber` without a fixup or a matching authorized relaxation.
 
 ## Constants
 
