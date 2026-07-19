@@ -622,6 +622,28 @@ encoding, alias, or effect semantics and corresponding physical interfaces;
 they do not enter the system by silently turning layout observations into
 ordinary `ShapeEnv` facts.
 
+## Accepted decision: guaranteed bounds are not profile hints
+
+**Accepted by Tom on 2026-07-19:** a guaranteed shape bound and a statistical
+optimization profile are different contracts even when they contain similar
+numbers.
+
+```text
+SemanticRequirement(1 <= N && N <= 4096) // violation is invalid input
+ProfileHint(N usually lies in 128..=512)  // cost guidance only
+```
+
+Guaranteed bounds are typed `ShapeEnv` constraints with provenance. The
+solver may use them to prove semantic legality, arithmetic safety, and the
+applicability of a physical alternative. Profile hints belong to a separate
+optimization-profile domain: they may influence estimated frequency, expected
+cost, portfolio ordering, or specialization choices, but they must never
+prove a requirement, discharge a guard, or remove a correct general path.
+
+This separation leaves room for later histograms, observed distributions,
+feedback-directed profiles, and confidence or freshness metadata without
+changing logical program validity or contaminating canonical semantic facts.
+
 ## Deferred decision: construction and commitment lifecycle
 
 The discussion established that local, environment-relative, and graph-wide
