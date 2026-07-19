@@ -184,7 +184,8 @@ built-ins include:
 
 ```text
 Constant    Cast           Reindex     Broadcast
-Add         Multiply       Gelu
+FloatAdd    WrappingAdd    CheckedAdd  Multiply
+SaturatingAdd              WideningAdd Gelu
 Reduce
 ```
 

@@ -38,6 +38,7 @@ the first executable slice.
 |---|---|---|---|
 | Constants, views, bit-preserving copies | Preserve declared/selected bits, including NaN payload and signed zero | N/A | Supported dtype/encoding subset |
 | `Add`, `Subtract`, `Multiply` | Resolved homogeneous computation/result type, round-to-nearest-ties-even, and distinct operation rounding | Reassociation, operand permutation where capable, signed-zero/NaN assumptions, subnormal handling | Per-dtype backend vectors; built-in capability table |
+| Integer add, subtract, multiply | Explicit wrapping, saturating, checked, or widening family; no ambient overflow behavior | Required-no-overflow only with a discharged proof or runtime-validation obligation | Initial supported family/width matrix; MIN/MAX and sub-byte vectors |
 | Floating `Divide` | IEEE resolved value results under round-to-nearest-ties-even, including zero/NaN/infinity cases | Reciprocal transform and approximation are independent permissions | Exact per-dtype backend behavior and reciprocal error contracts |
 | Integer division/remainder | Signedness, quotient rounding, overflow, and zero-divisor behavior are typed operation semantics | Only explicitly proven algebraic rewrites | Concrete initial typed families and supported widths |
 | `Fma` | Required correctly rounded fused result under round-to-nearest-ties-even | No decomposition unless exact emulation or an authorized relaxation proves compatibility | Per-dtype native/emulated support |

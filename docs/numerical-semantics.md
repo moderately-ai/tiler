@@ -91,6 +91,13 @@ not scalar dtypes. Their element codes and shared E8M0 scales are ordinary
 graph operands of one first-class encoded value; block membership and
 scale-selection semantics are part of the scheme contract. See ADR 0038.
 
+Fixed-width integer add, subtract, and multiply use explicit overflow-
+specialized semantic families. Initial recognized contracts include wrapping,
+saturating, checked, and widening forms. Required-no-overflow is a discharged
+proof or runtime-validation obligation, never ambient undefined behavior or
+poison. See ADR 0039 and the
+[precedent review](research/numerics/integer-overflow-precedents.md).
+
 ### Optimization permissions
 
 The program carries a granular policy ceiling: the maximum numerical freedoms
@@ -470,6 +477,10 @@ payloads. Text source round-tripping must not silently alter a constant's value.
 ## Integer and index arithmetic
 
 Data-operation overflow and address/index overflow are separate policies.
+Fixed-width data arithmetic names an explicit wrapping, saturating, checked,
+widening, or future versioned operation family. Required-no-overflow is a
+proven or runtime-validated precondition, not poison or undefined behavior.
+The operation-extension mechanism is not sealed to the initial family set.
 Index expressions must not wrap into a valid-looking address. Shape products,
 stride products, offset additions, and narrowing conversions are checked
 statically or protected by runtime guards.
