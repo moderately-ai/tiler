@@ -130,6 +130,16 @@ type identities. Backend compilation separately proves the selected storage
 encoding, ABI, and realization for every operation/type combination in the
 physical plan.
 
+Built-in and extension element types share one durable nominal identity model.
+Conceptually, a type key contains a namespace, name, and semantic version:
+`tiler::f32@1` and `acme::fp8_special@1` differ by identity even if some
+structural facts coincide. Built-ins may have ergonomic Rust spellings such as
+`DType::F32`, but canonical hashing, serialization, registry lookup, and
+capability diagnostics use the durable key rather than a Rust enum
+discriminant, `TypeId`, or address. A canonical type descriptor supplies the
+format's structural and value-semantic facts; those facts do not replace its
+nominal identity.
+
 The graph initially contains atomic named tensor operations. Representative
 built-ins include:
 

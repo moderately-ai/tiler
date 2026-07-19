@@ -60,6 +60,24 @@ attestation. Changing output-affecting behavior without changing the declared
 revision is a provider bug. Compiler and capability-API versions also
 participate in identity.
 
+Element types follow the same durable identity principle. A conceptual
+`TypeKey { namespace, name, semantic_version }` identifies a canonical dtype
+for both built-ins and extensions. Built-ins may expose convenient constants or
+enum-like spellings, but durable IR never substitutes Rust discriminants,
+`TypeId`, implementation addresses, or unversioned display names for the type
+key. The descriptor attached to a key defines structural and value semantics;
+provider identity separately records the implementation that supplies
+capabilities for it.
+
+A canonical type key is not rewritten when its support level changes. If Tiler
+later bundles support for `acme::fp8_special@1`, it supports that existing
+identity rather than relabeling it as a new `tiler` type. Frontend aliases may
+improve spelling, but aliases resolve to a canonical key before semantic
+admission and never create identity equivalence implicitly. Namespace
+ownership, collision handling, provider compatibility, and durable descriptor
+encoding require the same deterministic registry discipline as operations;
+their exact Rust API remains open.
+
 ## Host-owned canonical attributes
 
 Durable attributes use a bounded canonical value model and encoder owned by

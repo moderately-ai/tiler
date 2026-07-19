@@ -58,6 +58,13 @@ without implying that arbitrary arithmetic, reference evaluation, optimization,
 or backend lowering exists for it. Each operation admits a complete typed
 signature; unsupported combinations are rejected with the missing capability.
 
+All canonical dtypes, including Tiler built-ins and third-party extensions,
+use the same namespaced, versioned nominal identity mechanism. An ergonomic
+API name such as `DType::F32` denotes the durable identity `tiler::f32@1`; it is
+not a distinct identity system. Structural descriptions such as bit width,
+exponent width, and fraction width are descriptor facts and are not sufficient
+identity because formats can differ in bias, special values, and encoding.
+
 ### Optimization permissions
 
 The program carries a granular policy ceiling: the maximum numerical freedoms

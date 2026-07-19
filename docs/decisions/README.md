@@ -33,6 +33,7 @@ accepted. Unresolved questions are collected in
 - [0024: Use round-to-nearest ties-to-even for initial arithmetic](0024-initial-arithmetic-rounding.md) — accepted
 - [0025: Separate reduction empty results from physical padding](0025-reduction-empty-results-and-padding.md) — accepted
 - [0026: Separate dtype representability from operation support](0026-dtype-representability-vs-operation-support.md) — accepted
+- [0027: Use uniform nominal identities for built-in and extension dtypes](0027-uniform-nominal-dtype-identity.md) — accepted
 
 ## Template
 

@@ -482,6 +482,14 @@ an operation only when that operation explicitly admits its full typed
 signature. Representability never implies reference evaluation, optimizer, or
 backend support.
 
+**Accepted by Tom on 2026-07-19:** built-in and extension dtypes use one
+namespaced, versioned nominal identity mechanism. Public Rust APIs may retain
+ergonomic built-in spellings such as `DType::F32`, while durable identity,
+hashing, serialization, capability lookup, and diagnostics resolve that
+spelling to a key such as `tiler::f32@1`. Descriptor facts do not replace the
+nominal key. Officially bundling support for an existing external type does not
+rename its canonical key; aliases are conveniences, not identity migration.
+
 ## Inventory conclusions, not support decisions
 
 1. Tiler needs nominal float format identities; `{bits, exponent, mantissa}` is
@@ -501,6 +509,9 @@ backend support.
    boundaries outside numeric tensor scalar IR.
 9. The target-independent catalog must be broader than every backend's native
    subset, while each product profile remains vertically constrained.
+10. Built-ins and extensions share a durable nominal identity model; ergonomic
+    API variants are spellings over those identities rather than a second type
+    system.
 
 The next phase is a review of omissions and naming, followed by explicit
 selection of Tiler's recognized, representable, reference, optimizer, backend,
