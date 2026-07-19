@@ -295,3 +295,25 @@ identity by shape, and risks compile-time and artifact proliferation. The
 symbolic-first direction is therefore the prototype default, not yet a durable
 policy: experiments must determine which specializations pay for their guard,
 compile-time, and artifact-size costs and how the portfolio is bounded.
+
+## Accepted decision: scoped symbol identity
+
+**Accepted by Tom on 2026-07-19:** frontend identifiers such as `M`, `K`, and
+`N` use ordinary lexical binding. A frontend resolves them to scoped internal
+symbol IDs; the IDs, not diagnostic strings, establish equality in the
+semantic IR.
+
+```text
+graph_a: [B, 128]  -> [symbol_a, 128]
+graph_b: [B, 128]  -> [symbol_b, 128]
+```
+
+Composing these graphs keeps `symbol_a` and `symbol_b` independent unless the
+composition explicitly connects them or adds an equality constraint. Within
+one scope, repeated use of `B` naturally resolves to the same ID and asserts
+equality.
+
+This makes graph composition capture-avoiding and permits diagnostic renaming
+without changing computation identity. Serialization and cloning must preserve
+or consistently remap IDs. Explanation output should retain optional readable
+names and disambiguate collisions when necessary.
