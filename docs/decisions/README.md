@@ -28,6 +28,7 @@ accepted. Unresolved questions are collected in
 - [0019: Separate subnormal input and result handling](0019-split-subnormal-handling.md) — accepted
 - [0020: Use value-only floating-point exceptions initially](0020-value-only-floating-point-exceptions.md) — accepted
 - [0021: Require proof or runtime validation for value assumptions](0021-validated-value-assumptions.md) — accepted
+- [0022: Define reduction identities and initial values](0022-reduction-identities-and-initial-values.md) — accepted
 
 ## Template
 

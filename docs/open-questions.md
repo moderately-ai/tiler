@@ -9,7 +9,6 @@ ADR when evidence is sufficient.
 - Which transformations may reassociate floating-point work?
 - What are min/max NaN and signed-zero semantics?
 - Which input, accumulation, and output dtype combinations are supported?
-- What are empty-reduction identities and output behavior?
 - Does exact mode require deterministic reduction order across schedules?
 
 ## Semantic graph and operation extensions

@@ -247,6 +247,34 @@ Changing from a serial reduction to a SIMD or threadgroup tree is a physical
 alternative only when the numerical policy permits its evaluation order. F16
 or BF16 inputs do not imply low-precision accumulation; promotion is explicit.
 
+### Empty domains and initial values
+
+Each reduction operation declares whether it has an intrinsic identity for its
+resolved accumulator dtype and numerical contract. An empty reduction returns
+that identity when one exists. Representative contracts include additive zero,
+multiplicative one, `true` for `all`, and `false` for `any`; the exact typed
+identity is operation semantics, not a backend default.
+
+An optional explicit `initial` is a true reduction seed, not an empty-only
+fallback. It is converted according to the resolved reduction signature and is
+one logical contributor for every output reduction domain, including non-empty
+domains. Thus `minimum([20], initial=10)` produces `10`, and a sum with
+`initial=10` adds ten exactly once.
+
+This distinction constrains physical scheduling. A non-identity seed cannot be
+copied into every SIMD lane, threadgroup, or partial reduction. A true intrinsic
+identity may be replicated where the operation contract proves it neutral; an
+arbitrary initial value remains exactly one logical contributor even when the
+permitted topology reassociates work.
+
+An identity-less reduction such as the initial `minimum`/`maximum` contract is
+valid only with an explicit initial value or a proven/runtime-validated
+non-empty domain. Otherwise a statically empty graph is rejected during
+verification and a dynamically empty semantic precondition produces a precise
+invalid-input error before dependent work begins. Empty-only fallback behavior,
+if later needed, is a separate explicitly named operation or conditional rather
+than an alternate meaning of `initial`.
+
 An unqualified `deterministic` boolean is not a complete contract. The initial
 scoped guarantee is **plan deterministic**: identical input bits and runtime
 bindings, executed through the same artifact digest and selected plan variant
