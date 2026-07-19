@@ -498,3 +498,38 @@ divisors belong to the initial prover's supported congruence fragment; a
 symbolic divisor crosses the affine boundary and may produce a structured
 `Unknown` during static proof. A zero divisor is a typed evaluation or
 statically detected construction/validation error, as applicable.
+
+## Accepted decision: incrementally validated construction and immutable seal
+
+**Accepted by Tom on 2026-07-19:** graph construction validates incrementally
+at the scope of each mutation, then crosses an explicit immutable sealing
+boundary before optimization.
+
+```text
+frontend-specific API
+    -> GraphBuilder
+       - local smart-constructor checks
+       - environment-relative checks
+       - incrementally maintained graph/proof consistency
+    -> seal declared program results
+    -> immutable SemanticTensorGraph
+    -> optimizer or another consumer
+```
+
+Validation is not divided into "incremental" and "whole graph" algorithms:
+local, environment-relative, and graph-wide invariants may all be maintained
+incrementally. Sealing is instead a commitment boundary. It declares the
+program complete, fixes its possibly multiple results, resolves pending
+references and obligations, establishes canonical identity inputs, and
+produces an immutable snapshot.
+
+This permits multiple frontend and library DX surfaces to target the same
+builder/seal contract. Consumers may inspect, serialize, cache, explain, or
+optimize a sealed graph without requiring immediate compilation. Immutability
+makes its identity stable for caching and safe concurrent consumption. A later
+change creates and seals a new snapshot rather than mutating a graph already
+being optimized or used as a cache key.
+
+Smart constructors remain responsible for the earliest precise local errors.
+Deserialized or extension-produced structures enter through the same checked
+construction/sealing boundary and cannot masquerade as sealed semantic IR.
