@@ -50,7 +50,23 @@ The evidence and cross-system differences behind this boundary are recorded in
 
 ### Optimization permissions
 
-The program carries granular permissions such as:
+The program carries a granular policy ceiling: the maximum numerical freedoms
+the user authorizes anywhere in the program. Every operation also carries its
+resolved effective permissions for the dimensions applicable to that
+operation. An operation's permissions may be stricter than the program ceiling
+but can never exceed it.
+
+Conceptually, resolution combines the program ceiling, any tighter per-operation
+request, and the operation's declared capabilities:
+
+```text
+effective_permissions(op)
+  = program_ceiling
+  ∩ per_operation_restrictions(op)
+  ∩ operation_capabilities(op)
+```
+
+The resulting canonical contract is granular, for example:
 
 ```rust
 struct NumericPolicy {
@@ -64,9 +80,15 @@ struct NumericPolicy {
 ```
 
 The example is descriptive rather than a committed API. A user-facing named
-mode may expand into a complete permission set, but an overlapping `fast_math`
-boolean is avoided. Backend flags are derived from the permissions and must not
-silently enable additional transformations.
+mode may initialize the program ceiling, but an overlapping `fast_math`
+boolean is avoided. Frontends may expose per-region or per-operation controls;
+those controls resolve to the same canonical per-operation representation.
+
+Every rewrite and physical alternative declares the effective permission it
+requires. Explain output identifies the program ceiling, the operation's
+resolved permission, and the restriction that rejected an otherwise applicable
+alternative. Backend flags are derived from the resolved operations and must
+not silently enable additional transformations.
 
 ### Execution guarantees
 
