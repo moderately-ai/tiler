@@ -476,6 +476,12 @@ earlier semantics/representation facts but do not follow from them:
 representable FP8 may be matrix-operand native, storage-only for an elementwise
 operation, and widened/emulated for another.
 
+**Accepted by Tom on 2026-07-19:** representable element types may be broader
+than executable operation support. A recognized exact type can participate in
+an operation only when that operation explicitly admits its full typed
+signature. Representability never implies reference evaluation, optimizer, or
+backend support.
+
 ## Inventory conclusions, not support decisions
 
 1. Tiler needs nominal float format identities; `{bits, exponent, mantissa}` is

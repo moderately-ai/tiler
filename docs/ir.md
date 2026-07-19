@@ -117,6 +117,19 @@ artifact-packaging policy and must not silently change semantic identity.
 Whether input names participate in identity follows the same unresolved policy
 as result names.
 
+Element-type representability is intentionally broader than executable
+operation support. A tensor may carry a recognized exact element type through
+operations whose declared semantics support it, such as a bit-preserving view,
+without implying that arithmetic, the reference evaluator, every optimizer
+pass, or any backend supports that type. Verification checks each operation's
+complete typed signature and required capabilities.
+
+A representable type is still known, versioned, and canonical; this is not an
+unknown-type escape hatch. Initial verified graphs reject unregistered nominal
+type identities. Backend compilation separately proves the selected storage
+encoding, ABI, and realization for every operation/type combination in the
+physical plan.
+
 The graph initially contains atomic named tensor operations. Representative
 built-ins include:
 
@@ -220,6 +233,10 @@ specified in [Operation extensions](operation-extensions.md).
 - Every tensor value has a resolved value dtype, and every operation has a
   resolved numerical signature. Canonical semantic IR contains no ambient
   frontend promotion, weak-scalar, default-dtype, or autocast decision.
+- A resolved dtype need only be representable at the value boundary. Every
+  operation separately proves that its full typed signature is semantically
+  admitted; representability alone grants no evaluator, optimizer, or backend
+  capability.
 - Ordinary elementwise mixed-dtype inputs use explicit semantic conversions.
   Operations with intrinsic mixed precision, such as reductions and
   contractions, declare computation precision, accumulator/result types, and

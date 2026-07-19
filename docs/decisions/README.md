@@ -32,6 +32,7 @@ accepted. Unresolved questions are collected in
 - [0023: Separate propagating and number-preferring extrema](0023-floating-point-extrema-semantics.md) — accepted
 - [0024: Use round-to-nearest ties-to-even for initial arithmetic](0024-initial-arithmetic-rounding.md) — accepted
 - [0025: Separate reduction empty results from physical padding](0025-reduction-empty-results-and-padding.md) — accepted
+- [0026: Separate dtype representability from operation support](0026-dtype-representability-vs-operation-support.md) — accepted
 
 ## Template
 

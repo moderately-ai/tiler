@@ -52,6 +52,12 @@ interpretations, and storage encodings is maintained separately in the
 [mature tensor dtype taxonomy](research/numerics/mature-dtype-taxonomy.md); that
 inventory is not an implementation support promise.
 
+Representability and operation support are separate. A recognized dtype may
+appear on tensor values and participate in explicitly compatible operations
+without implying that arbitrary arithmetic, reference evaluation, optimization,
+or backend lowering exists for it. Each operation admits a complete typed
+signature; unsupported combinations are rejected with the missing capability.
+
 ### Optimization permissions
 
 The program carries a granular policy ceiling: the maximum numerical freedoms
