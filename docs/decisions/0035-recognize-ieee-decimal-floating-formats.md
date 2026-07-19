@@ -24,9 +24,12 @@ Tiler's built-in recognized dtype catalog includes:
 - `tiler::decimal128@1`, normatively defined by IEEE 754 decimal128.
 
 The canonical descriptors pin the applicable IEEE 754 revision/profile and
-the complete logical value contract, including precision, exponent range,
-finite values, signed zeros, infinities, and NaNs. This follows the namespace
-and descriptor governance of ADR 0034.
+the complete logical datum contract, including precision, exponent range,
+finite coefficient/exponent cohort members and quantum, signed zeros,
+infinities, and NaNs. Numerically equal cohort members are never collapsed in
+the logical datum; exponent- and quantum-sensitive IEEE decimal operations are
+one reason this distinction matters. This follows the namespace and descriptor
+governance of ADR 0034.
 
 Recognition is not an execution promise. Arithmetic, literals, conversions,
 reference evaluation, optimization, ABI support, and backend lowering remain
@@ -36,8 +39,11 @@ required by this decision.
 DPD and BID are distinct `StorageEncodingKey` identities for the corresponding
 logical decimal format, not distinct `TypeKey`s. A materialized decimal value
 must have a compatible explicit storage encoding. A conversion between DPD and
-BID that preserves the logical value is a storage transcode, not a numerical
-dtype conversion.
+BID that preserves the complete logical decimal datum—including cohort
+member/quantum and defined special-value information—is a storage transcode,
+not a numerical dtype conversion. A transformation that preserves only
+numerical equality is instead an explicit decimal conversion and cannot be
+substituted for bit- or quantum-preserving behavior.
 
 ## Consequences
 

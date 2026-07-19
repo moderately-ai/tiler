@@ -43,7 +43,8 @@ the first executable slice.
 | Integer division/remainder | Explicit signed truncating, floor, Euclidean, ceiling, or unsigned family; nonzero divisor and representable quotient are proven/validated preconditions; standalone `MIN rem -1` is valid zero | Exact division adds a divisibility precondition; future total/masked families remain distinct | Initial supported family/width matrix and validation realization |
 | `Fma` | Required correctly rounded fused result under round-to-nearest-ties-even | No decomposition unless exact emulation or an authorized relaxation proves compatibility | Per-dtype native/emulated support |
 | `Multiply` then `Add` | Two semantic rounding boundaries | Contraction permission may admit FMA; reassociation does not imply contraction | Backend flag and generated-code verification |
-| Numeric conversions | Typed conversion family defines rounding and exceptional-value behavior | Only freedoms named by that conversion contract | Concrete initial family matrix, especially float-to-int and quantization |
+| Numeric conversions | Typed conversion family defines rounding and exceptional-value behavior | Only freedoms named by that conversion contract | Concrete initial family/dtype/backend capability matrix |
+| Float-to-integer | Explicit strict rounded, exact, ordered-saturating, or total saturating NaN-to-zero family; validation applies after mathematical rounding | Future named replacement/mask/fill families remain distinct | Initial enabled family/rounding/dtype matrix and enforcement measurements |
 | Affine `Quantize` / `Dequantize` | Positive finite scales, in-range codes/zero points, widened difference, explicit evaluation dtype/order, strict subnormal preservation, clamp then nearest-even conversion, endpoint/infinity saturation; strict `Quantize` rejects NaN | Alternative NaN mappings, computation dtypes, rounding, or subnormal behavior only through a separately resolved conversion family | Initial dtype/profile subset and validation realization |
 | Affine `Requantize` | Source decode followed by destination encode in an explicit intermediate dtype, preserving both conversion boundaries | Direct integer realization only with an equivalence proof | Initial product-profile subset |
 | Integer `Rescale` | Named multiplier/shift widths, integer rounding algorithm, zero-point interpretation, clip range, and intermediate widths | Approximate result only under a separately declared bounded-error family | Initial exact algorithms and imported-dialect profiles |
@@ -109,8 +110,7 @@ The unresolved work is now concrete rather than architectural:
 
 1. choose the first vertically supported operation/dtype combinations;
 2. define initial transcendental error metric types and operations;
-3. finish float-to-integer conversion families;
-4. enumerate algebraic capabilities for each built-in operation;
-5. run and publish Metal flag/intrinsic/device conformance measurements; and
-6. choose ergonomic frontend policy presets, which expand into the already
+3. enumerate algebraic capabilities for each built-in operation;
+4. run and publish Metal flag/intrinsic/device conformance measurements; and
+5. choose ergonomic frontend policy presets, which expand into the already
    resolved canonical representation.

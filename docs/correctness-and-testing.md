@@ -69,6 +69,14 @@ Generate combinations of:
 - strict affine quantization rejecting qNaN and sNaN before committing an
   observable result, plus separate conformance vectors for every explicitly
   admitted alternative NaN mapping;
+- float-to-integer values on both sides of every rounded destination boundary,
+  signed zeros, subnormals, infinities, and qNaN/sNaN; strict/exact rejection,
+  ordered saturation, and explicit NaN-to-zero totalization remain distinct;
+- checked integer arithmetic returning wrapped low bits plus the correct
+  overflow predicate, and widening signatures rejecting every result dtype
+  that cannot represent the full mathematical domain;
+- IEEE decimal cohort members with equal numerical value but different quantum,
+  including DPD/BID transcodes that preserve every admitted observable;
 - proof-elided, host-check, device-pre-scan, and transactional validation paths
   producing the same success/error contract; private failed results discarded;
   no dependent publication or fallback after device enforcement begins;

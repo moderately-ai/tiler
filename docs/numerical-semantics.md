@@ -509,6 +509,14 @@ Initial conversion families include:
 - quantization and dequantization;
 - bit reinterpretation, as an operation distinct from numeric conversion.
 
+Float-to-integer conversion distinguishes strict rounded, exact, ordered
+saturating, and explicit total saturating NaN-to-zero families. Rounding is
+named independently. Saturation determines endpoint behavior for ordered
+values and infinities but does not by itself determine a NaN mapping. Rejecting
+families use semantic preconditions and ADR 0033 enforcement; NaN-to-zero is a
+separate compatibility contract. See ADR 0041 and the
+[precedent review](research/numerics/float-to-integer-conversion-precedents.md).
+
 As applicable, their contracts define:
 
 - out-of-range float-to-integer conversion;

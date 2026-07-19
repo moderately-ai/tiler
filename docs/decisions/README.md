@@ -47,6 +47,7 @@ accepted. Unresolved questions are collected in
 - [0038: Recognize OCP microscaling schemes as compound values](0038-recognize-ocp-mx-schemes.md) — accepted
 - [0039: Make integer overflow explicit in operation identity](0039-explicit-integer-overflow-operations.md) — accepted
 - [0040: Specialize integer division and remainder families](0040-specialize-integer-division-families.md) — accepted
+- [0041: Separate float-to-integer conversion families](0041-separate-float-to-integer-conversion-families.md) — accepted
 
 ## Template
 

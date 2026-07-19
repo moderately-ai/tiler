@@ -27,8 +27,9 @@ The recognized families include:
   coincide for a nonzero divisor; and
 - unsigned ceiling division.
 
-Canonical descriptors state the quotient rounding, matched remainder identity
-`a = q*b + r`, remainder sign/range, and signedness. Frontend spellings such as
+Division descriptors state quotient rounding and signedness. Remainder and
+paired `DivRem` descriptors additionally state the matched identity
+`a = q*b + r` and remainder sign/range. Frontend spellings such as
 `/`, `%`, `//`, `fmod`, `remainder`, and `div_euclid` are resolved by their
 source-language contract and never determine semantics by spelling alone.
 

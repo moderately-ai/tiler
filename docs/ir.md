@@ -16,7 +16,8 @@ Every durable Tiler representation must satisfy these rules:
 3. Serialized forms carry a schema version.
 4. Values have a statically known kind and dtype.
 5. Extents and indices have an explicit integer type.
-6. Narrowing conversions are checked and represented explicitly.
+6. Narrowing conversions have explicit typed behavior and are represented
+   explicitly; rejecting families are proven or runtime-validated.
 7. Runtime assumptions appear as guards, not comments.
 8. Malformed IR is rejected before source generation.
 9. Passes state the numerical equivalence relation they preserve.

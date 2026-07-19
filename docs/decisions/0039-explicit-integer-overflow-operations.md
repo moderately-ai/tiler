@@ -21,10 +21,18 @@ versioned overflow semantic identity. The initial built-in families include:
 - wrapping add, subtract, and multiply, evaluated modulo `2^N`;
 - saturating add, subtract, and multiply, with bounds determined by the
   resolved signed or unsigned dtype;
-- checked add, subtract, and multiply, producing the fixed-width result and an
-  overflow predicate as explicit results; and
+- checked add, subtract, and multiply, producing the same wrapped low `N` bits
+  as the wrapping family plus an overflow predicate as explicit results; and
 - widening add, subtract, and multiply, whose resolved result dtype represents
   the required wider mathematical range.
+
+A widening signature is admitted only when its explicit result dtype can
+represent the full mathematical result domain for that operation and operand
+types. This is verified per signature: for example, unsigned subtraction needs
+a signed result, while add and multiply require enough additional magnitude
+bits. If no admitted result dtype is wide enough, such as many initial 64-bit
+signatures without i128/u128 support, the widening signature is unsupported
+rather than silently narrowed.
 
 These are specialized semantic operations, not one generic integer operation
 whose meaning comes from an ambient compiler setting. They may share traits,
@@ -55,6 +63,8 @@ explicit overflow family as well; accumulator dtype alone is insufficient.
   execution.
 - Modular algebraic rewrites do not leak into saturating or checked operations.
 - Checked arithmetic naturally exercises first-class multi-result operations.
+- The checked value remains defined on overflow, so consumers may use the
+  wrapped result and predicate without conditional-value or poison semantics.
 - Widening remains explicit in the resolved signature and cannot be confused
   with saturation or overflow reporting.
 - Sub-byte and future integer widths reuse the same families when their
