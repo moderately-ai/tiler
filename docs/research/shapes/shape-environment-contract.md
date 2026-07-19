@@ -79,6 +79,29 @@ This decision does not permit a frontend to silently choose an arbitrary rank:
 the selected ranked graph or guarded portfolio is part of compilation and
 interface identity and must be visible in explanation output.
 
+## Accepted decision: axes are value-local positions
+
+**Accepted by Tom on 2026-07-19:** the semantic tensor type identifies an axis
+by a newtyped, value-local `AxisIndex` in the ordered range `0..rank`. It does
+not assign graph-global semantic identity to an axis.
+
+Operations explicitly describe how result coordinates relate to operand
+coordinates. This is one-to-one for a permutation, but may be one-to-many,
+many-to-one, introduced, or removed for split, merge, broadcast, and reduction:
+
+```text
+Transpose: result[0] <- operand[1], result[1] <- operand[0]
+Flatten:   result[0] <- combine(operand[0], operand[1])
+Broadcast: result[0] is introduced; operand[0] <- result[1]
+Reduce:    operand[axis] has no result-axis identity
+```
+
+Frontends and compiler passes may retain names and axis-lineage records for
+diagnostics and `EXPLAIN`. That lineage is non-authoritative provenance: it
+does not establish shape equality, graph identity, or rewrite legality.
+Semantic relationships come from typed operation attributes, shape
+constraints, and explicit coordinate/access maps.
+
 ## Consequences for later shape decisions
 
 With fixed rank, `ShapeEnv` reasons over a finite set of declared extent
