@@ -265,3 +265,12 @@ language is proved during compilation.
 The remaining product decision is how much of the affine/Presburger lane is a
 first implementation requirement: only an integration-ready interface, a
 small internal subset, or a fuller bounded solver.
+
+## Known documentation consequence
+
+The proposed ABI contract currently describes checked `u64` arithmetic for its
+shared expression evaluator. That no longer fully matches the accepted shape
+decision permitting signed intermediate expressions. Synthesis must decide
+whether `ShapeExpr` and `AbiExpr` share one signed-capable core or remain
+distinct typed languages with an explicit checked lowering boundary. The ABI
+contract should not be updated until that choice is made.
