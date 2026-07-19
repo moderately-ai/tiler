@@ -74,8 +74,10 @@ struct NumericPolicy {
     contraction: Contraction,
     approximate_intrinsics: ApproximateIntrinsics,
     reciprocal_math: ReciprocalMath,
-    preserve_nan: bool,
-    preserve_signed_zero: bool,
+    nan_assumptions: NaNAssumptions,
+    infinity_assumptions: InfinityAssumptions,
+    signed_zero: SignedZeroPolicy,
+    subnormals: SubnormalContract,
 }
 ```
 
@@ -89,6 +91,13 @@ requires. Explain output identifies the program ceiling, the operation's
 resolved permission, and the restriction that rejected an otherwise applicable
 alternative. Backend flags are derived from the resolved operations and must
 not silently enable additional transformations.
+
+NaN-result semantics are distinct from permission to assume NaNs absent.
+Infinity assumptions, signed-zero distinctions, reciprocal replacement,
+approximate elementary functions, reassociation, and contraction are likewise
+independent. One permission never implies another. A backend compiler switch
+that couples several freedoms is usable only when every freedom it enables is
+already authorized for the affected operations.
 
 ### Execution guarantees
 
@@ -248,6 +257,28 @@ Other conformance modes may explicitly request operand-payload propagation or
 permit any quiet NaN. Those choices are typed operation contracts and affect
 plan feasibility, reference evaluation, determinism, and artifact identity.
 No mode inherits NaN payload behavior from a backend default.
+
+## Subnormal inputs and results
+
+Subnormal handling has two independent dimensions:
+
+```text
+SubnormalContract {
+  inputs:  Preserve | FlushToZero,
+  results: Preserve | FlushToZero,
+}
+```
+
+Input flushing treats an existing subnormal operand as zero before arithmetic.
+Result flushing replaces a newly produced subnormal result with zero. The zero
+sign follows the resolved signed-zero and subnormal contract rather than an
+ambient target mode.
+
+Portable-bitwise execution preserves both input and result subnormals. Other
+contracts may permit either or both forms of flushing. Some targets expose only
+a coupled mode or cannot realize every combination; that is reported as native,
+emulated, relaxed-only, or unsupported backend feasibility rather than
+collapsing the semantic dimensions.
 
 ## Min and max
 

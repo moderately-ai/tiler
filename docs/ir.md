@@ -252,6 +252,9 @@ specified in [Operation extensions](operation-extensions.md).
 - Portable-bitwise arithmetic uses a versioned canonical quiet-NaN result per
   dtype. Bit-preserving operations retain source bits, and other NaN behaviors
   must be explicit operation contracts.
+- Subnormal input treatment and subnormal result treatment are independently
+  resolved. Portable-bitwise contracts preserve both; a backend's coupled
+  flush mode cannot widen operation permissions.
 - The canonical graph contains only the transitive closure reachable from all
   program results; dead pure operations are removed before identity is formed.
 - Stable serialization and hashing do not depend on arena IDs, insertion order,

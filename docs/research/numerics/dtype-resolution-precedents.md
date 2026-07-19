@@ -89,6 +89,22 @@ backend concerns?
   without granting arbitrary reassociation.
   [LLVM language reference](https://llvm.org/docs/LangRef.html).
 
+### Floating-point environment and subnormal behavior are explicit boundaries
+
+- StableHLO specifies IEEE-754 default results while continuing execution
+  without raising floating-point status flags. This is value semantics similar
+  to `raiseNoFlag`, not an observable floating-point environment.
+  [StableHLO floating-point exceptions](https://openxla.org/stablehlo/spec#floating-point-exceptions).
+- LLVM's default environment assumes traps are disabled and status flags are
+  unobservable. Its `denormal_fpenv` attribute independently describes result
+  and input subnormal handling; older one-field syntax couples them only for
+  compatibility.
+  [LLVM floating-point environment](https://llvm.org/docs/LangRef.html#floating-point-environment).
+- CUDA documents no trap handlers or status flags for GPU floating-point
+  exceptions. Exceptional operations return their masked/default values, and
+  compiler controls separately affect flush-to-zero and operation precision.
+  [CUDA floating-point computation](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/mathematical-functions.html).
+
 ## Inferences for Tiler
 
 1. One `dtype` field cannot define a tensor operation. Value dtype,

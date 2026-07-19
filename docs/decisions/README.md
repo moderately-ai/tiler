@@ -25,6 +25,7 @@ accepted. Unresolved questions are collected in
 - [0016: Resolve transcendental accuracy per operation](0016-transcendental-accuracy-contracts.md) — accepted
 - [0017: Separate local semantics from region accuracy goals](0017-local-vs-region-accuracy.md) — accepted
 - [0018: Canonicalize arithmetic NaNs for portable bitwise results](0018-portable-bitwise-nans.md) — accepted
+- [0019: Separate subnormal input and result handling](0019-split-subnormal-handling.md) — accepted
 
 ## Template
 
