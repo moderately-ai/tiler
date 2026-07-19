@@ -37,6 +37,7 @@ accepted. Unresolved questions are collected in
 - [0028: Recognize standardized sub-byte integer types](0028-recognize-sub-byte-integers.md) — accepted
 - [0029: Generalize affine quantization granularity with parameter index maps](0029-affine-quantization-parameter-maps.md) — accepted
 - [0030: Represent quantized tensors as first-class assembled values](0030-first-class-quantized-values.md) — accepted
+- [0031: Reject NaN in strict affine quantization](0031-strict-affine-quantization-rejects-nan.md) — accepted
 
 ## Template
 

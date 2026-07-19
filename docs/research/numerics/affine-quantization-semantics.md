@@ -1,6 +1,6 @@
 # Affine quantization numerical semantics
 
-**Status:** researched baseline; exceptional-input policy remains open  
+**Status:** researched baseline; strict NaN policy accepted
 **Reviewed:** 2026-07-19
 
 ## Why the formula is insufficient
@@ -139,10 +139,21 @@ Semantic invalidity never becomes a plan guard. Conversely, lack of backend
 support for a valid per-axis or per-block scheme does not make the graph
 invalid.
 
-## Remaining atomic decision
+## Accepted NaN policy
 
 The mature precedents do not define one portable behavior for a NaN input to
-integer affine quantization. Tiler must choose whether its first built-in exact
-contract rejects NaN as an invalid runtime value, maps it to the zero point, or
-maps it to a selected endpoint. This is user-observable and can require a data
-validation scan, so it is not inferred here.
+integer affine quantization.
+
+**Accepted by Tom on 2026-07-19:** the initial strict affine `Quantize`
+conversion rejects NaN as invalid semantic input. It does not silently map NaN
+to the zero point or an endpoint. A frontend or extension may select a separate,
+explicitly named conversion family such as `NaNToZeroPoint` or a scheme-defined
+reserved-code mapping; that choice participates in semantic and artifact
+identity.
+
+For dynamic values, NaN absence must be proven or validated before the strict
+conversion can successfully commit an observable result. Failure is a semantic
+input error, not a physical-plan miss and not permission to retry with a
+different mapping. The exact validation execution strategy remains a runtime
+design question constrained by the no-hidden-semantic-change and no-unsafe-
+partial-fallback rules.

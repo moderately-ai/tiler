@@ -495,7 +495,8 @@ The researched [affine quantization numerical baseline](research/numerics/affine
 requires positive finite scales, in-range codes and zero points, widened
 subtraction, explicit evaluation dtype/order, nearest-even encoding, endpoint
 saturation, and distinct logical `Requantize` and integer `Rescale` families.
-The first built-in NaN-input behavior remains an explicit pending decision.
+Strict affine `Quantize` rejects NaN input. Alternative NaN mappings are
+separate typed conversion families and never backend-selected behavior.
 
 ## Backend numerical feasibility
 

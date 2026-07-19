@@ -66,6 +66,9 @@ Generate combinations of:
 - quantization scales at zero, negative, subnormal, normal, maximum finite,
   infinity, and NaN; code and zero-point endpoints; per-axis/block parameter
   grids with distinct sentinel values;
+- strict affine quantization rejecting qNaN and sNaN before committing an
+  observable result, plus separate conformance vectors for every explicitly
+  admitted alternative NaN mapping;
 - shape products near index-width boundaries.
 
 The cross-operation coverage, adversarial numerical atoms, and backend compiler
