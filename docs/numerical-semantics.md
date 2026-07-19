@@ -153,9 +153,27 @@ operation contract or consumes a separately authorized relaxation. Backend
 feasibility may report exact native support, exact emulation, relaxed-only
 support, or rejection.
 
-This decision defines local operation contracts. It does not yet decide whether
-Tiler will support redistributing an end-to-end error budget across several
-operations.
+Local operation contracts are mandatory and authoritative. The initial
+optimizer does not redistribute an end-to-end error budget across operations.
+
+A future optional region/output accuracy layer is additive rather than a
+replacement for local semantics. A region goal must identify an observable
+output, explicit reference semantics, an input and shape domain, an error metric
+and tolerance, and its evidence class. It is a hard feasibility constraint:
+cost optimization occurs only among plans demonstrated or explicitly accepted
+to meet it.
+
+No region goal silently overrides a local operation contract. Any future
+delegation of internal accuracy to a region goal must be explicit and scoped.
+Proof, empirical validation under a named test definition, and unknown status
+remain distinct; empirical evidence cannot satisfy a sound-proof contract.
+
+Tiler preserves the information a future analysis needs: semantic casts and
+materialization boundaries, reduction topology, input/shape assumptions,
+reference provenance, and resolved local numerical permissions. General graph
+budget analysis remains out of initial scope because local ULP or relative
+bounds do not compose safely through cancellation, sensitivity, correlation,
+branches, or unbounded reductions.
 
 ## Reductions
 

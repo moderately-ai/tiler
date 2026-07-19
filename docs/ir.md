@@ -230,6 +230,10 @@ specified in [Operation extensions](operation-extensions.md).
 - Every transcendental operation carries a resolved accuracy contract. No
   canonical operation inherits transcendental accuracy from backend defaults
   or ambient compiler flags.
+- The initial optimizer enforces local numerical contracts and does not
+  redistribute a graph-level error budget. Reference provenance, input/shape
+  assumptions, casts, materialization boundaries, and reduction topology remain
+  available to a future explicit region-accuracy analysis.
 - Every root extent symbol has exactly one typed binding whose source class and
   availability phase are supported by every semantic factor that consumes it.
 - Target-property bindings use stable versioned keys and cannot depend on a
