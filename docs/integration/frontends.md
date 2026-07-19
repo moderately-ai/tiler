@@ -220,6 +220,13 @@ or no compiled plan applies. It preserves output shape, dtype, numerical
 contract, and autograd behavior. Existing Candle operations are valid only
 where those contracts match.
 
+For an explicitly environment-parameterized program, generated compiled and
+fallback expressions share one typed semantic root-binding environment. A
+frontend may not substitute a conventional value when an admitted target
+property is unavailable or let fallback observe a different value. If neither
+path can bind the declared semantic interface, execution returns a typed
+interface/binding error rather than silently changing the computation.
+
 Artifact compilation errors on a supported native Metal build are compile-time
 errors rather than silent fallback; otherwise broken generated code could ship
 unnoticed. Runtime applicability misses may use fallback before custom-op

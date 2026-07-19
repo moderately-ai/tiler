@@ -11,7 +11,8 @@ runtime dimension values originate, which constraints are semantic, and which
 shape expressions the host must be able to evaluate before dispatch.
 
 Facts, inferences, proposals, accepted decisions, and measurements are labeled
-separately. The existing contract documents remain unchanged until synthesis.
+separately. Accepted cross-layer synthesis is recorded in ADR 0008 and the
+relevant contract documents.
 
 ## Evidence: ranked versus unranked compilation
 
@@ -95,28 +96,43 @@ symbols and expressions. Remaining questions are:
 
 These decisions are intentionally not inferred from the fixed-rank decision.
 
-## Accepted decision: root extent sources
+## Accepted decision: extent symbols and typed root bindings
 
-**Accepted by Tom on 2026-07-19:** a runtime root extent may be bound from an
-input tensor dimension or from an explicitly declared host integer shape
-parameter.
+**Revised and accepted by Tom on 2026-07-19:** shape expressions reference
+scoped extent symbols, while `ShapeEnv` separately declares how every root
+symbol is bound. Value algebra and value provenance are not encoded as the
+same concept.
 
 ```text
-ExtentSource =
-    Static(u64)
+ShapeExpr root reference = Symbol(ExtentSymbolId)
+
+RootBinding =
+    Static(Extent)
   | InputDimension { input: InputIndex, axis: AxisIndex }
-  | ShapeParameter { parameter: ShapeParameterIndex }
+  | InterfaceParameter { parameter: InterfaceParameterIndex }
+  | TargetProperty {
+        property: TargetPropertyKey,
+        phase: TargetBindingPhase,
+    }
 ```
 
-A `ShapeParameter` is part of the program interface. It is an immutable,
+An `InterfaceParameter` is part of the program interface. It is an immutable,
 nonnegative host integer available before allocation, routing, or dispatch. It
 has a stable declaration, type, optional diagnostic name, and semantic
 constraints. It is not:
 
 - a rank-zero tensor value whose contents may reside on a device;
 - an operation attribute fixed during compilation;
-- an ambient callback, environment variable, or consumer-global value;
+- an ambient callback, environment variable, or undeclared consumer-global
+  value;
 - a derived solver fact without an interface binding.
+
+A `TargetProperty` is also explicit program-interface provenance, not a new
+arithmetic primitive or an implicit backend query. Its stable, versioned key
+defines the property's meaning and integer domain; its binding phase states
+when a provider must make the value available. Compiler core stores and
+validates this declaration without depending on a live target object or a
+Metal-specific runtime API.
 
 JAX export currently requires dimension variables to be solvable from input
 tensor shapes; its documented workaround for a runtime `top_k` parameter is a
@@ -134,9 +150,20 @@ Optional diagnostic names follow the accepted split identity rule: they are
 excluded from computation identity unless external binding is name-based, but
 included in an artifact/interface identity whenever the ABI exposes them.
 
+The unbound graph is a function over its declared symbols. Binding provenance
+closes part of that interface, and a concrete specialization may additionally
+bind a value. These identities remain distinguishable:
+
+```text
+graph identity:       histogram(input, W)
+interface identity:   W <- TargetProperty(SubgroupWidth)
+specialized identity: W = 32
+```
+
 Every non-root extent is a canonical expression over declared roots and
-constants. Free symbols, ambiguous bindings, multiple incompatible bindings,
-and references to tensor element data are invalid in the initial `ShapeEnv`.
+constants. Free symbols, missing or ambiguous bindings, multiple incompatible
+bindings, undeclared target queries, and references to tensor element data are
+invalid in the initial `ShapeEnv`.
 
 ## Accepted decision: pre-dispatch host evaluability
 
@@ -144,9 +171,19 @@ and references to tensor element data are invalid in the initial `ShapeEnv`.
 allocation size, applicability guard, routing expression, and launch expression
 must be evaluable on the host before any device work begins.
 
-The allowed inputs are static constants, input tensor metadata, explicit host
-shape parameters, and admitted host-visible target properties. Tensor element
-data and values produced by a device dispatch are not initial extent sources.
+The allowed bindings are static constants, input tensor metadata, explicit
+host interface parameters, and admitted target properties available from a
+compile profile or live-device preflight. Tensor element data, values produced
+by a device dispatch, and properties available only after selecting or
+preparing a pipeline are not initial extent sources.
+
+`TargetBindingPhase` initially distinguishes at least `CompileProfile`,
+`LiveDevicePreflight`, and reserved `PreparedPipeline` provenance. The first
+two may bind semantic extents when the target-property contract makes the
+value deterministic and available in time. `PreparedPipeline` cannot initially
+determine semantic output shapes: doing so would create a dependency from
+shape to plan/pipeline and back to shape. Supporting it later requires an
+explicit acyclic two-phase or fixed-point execution contract.
 
 Data-dependent shapes such as `NonZero`, `Unique`, and variable-length
 selection require a future explicit shape/discovery program and two-phase
@@ -436,8 +473,11 @@ language merely because their implementations need many of the same arithmetic
 operations.
 
 ```text
-ShapeExpr sources: extent symbols, input dimensions, shape parameters
-AbiExpr sources:   lowered extents, strides, buffer sizes, target properties
+ShapeExpr sources: scoped extent symbols
+ShapeEnv bindings: static, input dimensions, interface parameters,
+                   admitted target properties
+AbiExpr sources:   lowered extents, strides, buffer sizes, physical-only
+                   target properties
 ```
 
 The implementations should be composed from atomic shared components for
@@ -524,33 +564,40 @@ callbacks remain excluded.
 
 ## Accepted decision: binding-kind capabilities
 
-**Accepted by Tom on 2026-07-19:** `ShapeEnv` is generic over the admitted root
-binding kinds already defined by this contract, while each operation or
-semantic factor position explicitly declares which binding classes it
+**Revised and accepted by Tom on 2026-07-19:** `ShapeEnv` is generic over the
+typed root bindings defined by this contract, while each operation or semantic
+factor position explicitly declares which transitive binding classes it
 supports.
 
 ```text
-global root kinds:
-  Static | InputDimension | ShapeParameter
+initial binding classes:
+  Static
+  InputMetadata
+  InterfaceHost
+  TargetCompileProfile
+  TargetDevicePreflight
 
 example operation capability:
   split factor: StaticOnly
 
 later operation capability:
-  split factor: HostEvaluable
+  split factor: HostEvaluableBeforeAllocation
 ```
 
 The common IR can therefore represent a runtime semantic factor such as
-`N == A * B` when `A` and `B` are host-sourceable, without requiring every
-initial operation implementation to support every binding kind. Validation
-checks an expression's transitive sources against the declared capability and
+`N == A * B` when `A` and `B` are sourceable before allocation, including an
+explicit target-derived factor where admitted, without requiring every initial
+operation implementation to support every binding class. Validation checks an
+expression's transitive root bindings against the declared capability and
 rejects unsupported combinations with a typed explanation naming the
-operation, factor position, observed binding kinds, and supported set.
+operation, factor position, observed binding classes and phases, and supported
+set.
 
 This separates architectural expressiveness from vertical operation support.
-Adding runtime support to a factor can extend an operation capability without
-inventing a new shape representation; it still requires the operation's
-validation, lowering, ABI, and tests to support that case.
+Adding another binding class to a factor can extend an operation capability
+without inventing a new shape representation; it still requires the
+operation's validation, lowering, ABI, reference/fallback behavior, and tests
+to support that case.
 
 ## Accepted decision: explicit divisibility predicate
 

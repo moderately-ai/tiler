@@ -54,6 +54,13 @@ CompilationRequest {
 }
 ```
 
+The semantic graph remains backend-neutral. `shape_environment` contains the
+typed root-binding environment for its extent symbols, including explicitly
+admitted target-property bindings. It contains stable declarations and values
+available at their declared binding phase, never live backend objects or
+implicit callbacks. Physical-only target facts remain target-profile or ABI
+inputs rather than semantic bindings.
+
 The result is one or more target-specific `KernelProgram`/`ProgramPortfolio`
 values expressed in target-independent compiler schemas, plus diagnostics and
 provenance. Backend compilation, packaging, cache publication,

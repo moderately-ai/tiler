@@ -11,11 +11,14 @@ submit complete computation graphs to shared optimization and code generation.
 
 ## Decision
 
-Tiler's primary public input is an experimental, target-independent semantic
-tensor graph. Frontends lower their syntax and APIs into this graph. Compiler
-passes, target backends, artifact packaging, and runtime adapters consume later
-verified representations without depending on the originating frontend or
-consumer runtime.
+Tiler's primary public input is an experimental, backend-neutral semantic
+tensor graph. Frontends lower their syntax and APIs into this graph. The graph
+describes a function over explicit inputs and extent symbols; a typed semantic
+interface declares how root symbols are bound when a program is compiled or
+executed. Target-dependent semantics are permitted only through those explicit
+bindings, as refined by ADR 0008. Compiler passes, target backends, artifact
+packaging, and runtime adapters consume later verified representations without
+depending on the originating frontend or consumer runtime.
 
 The public API includes an experimental vertical operation-extension contract.
 Built-in and third-party tensor operations use the same extension path, with
@@ -36,6 +39,10 @@ implementation, and explanation traits remains proposed and may evolve.
   path available to external dialects.
 - Compiler-core crates cannot depend on frontend syntax, runtime tensor
   objects, or target device objects.
+- Backend-neutral does not mean that every closed program has identical
+  observable shapes on every target. A program may explicitly bind a semantic
+  parameter from a versioned target property while keeping target queries and
+  device objects outside the graph's arithmetic IR.
 
 ## Alternatives considered
 

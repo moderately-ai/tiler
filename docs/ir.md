@@ -44,10 +44,17 @@ Required properties include:
 ## Layer 1: public semantic tensor graph
 
 `SemanticTensorGraph` is the public, frontend-neutral semantic representation.
-It is a pure, target-independent operation/value DAG describing what tensor
-values mean. Frontends construct this graph; no frontend syntax, consumer
-runtime object, storage layout, kernel boundary, or target schedule belongs in
-it.
+It is a pure, backend-neutral operation/value DAG describing what tensor values
+mean. Frontends construct this graph; no frontend syntax, consumer runtime
+object, storage layout, kernel boundary, target schedule, or live device object
+belongs in it. Its extent expressions reference scoped symbols. A separate
+typed semantic interface binds those symbols from static values, input
+metadata, caller parameters, or admitted versioned target properties.
+
+This permits explicitly target-parameterized semantics without making target
+queries into tensor operations or shape-expression primitives. The graph is a
+function over its unbound symbols; the graph plus binding environment is the
+closed semantic program interface used for validation and compilation.
 
 The initial compilation unit is one straight-line graph with ordered inputs and
 results. It has no semantic functions/calls, recursion, region-bearing control
@@ -203,6 +210,10 @@ specified in [Operation extensions](operation-extensions.md).
 - Operation results and program results are ordered and individually typed.
 - Result names are unique; result values exist and match their contracts.
 - Output shapes and dtypes are derived rather than trusted assertions.
+- Every root extent symbol has exactly one typed binding whose source class and
+  availability phase are supported by every semantic factor that consumes it.
+- Target-property bindings use stable versioned keys and cannot depend on a
+  selected or prepared physical pipeline in the initial execution model.
 - Binary operations use explicit broadcasting.
 - Reindex mappings are total over their output domain.
 - Reductions name valid axes and explicit accumulation/output dtypes.
@@ -220,13 +231,14 @@ extent equalities, divisibility, nonnegativity, intervals, and factorization
 relationships. Facts record provenance: statically proven, frontend-required,
 or runtime-validated.
 
-Every extent symbol has one declaration and one static or runtime source;
-equal spelling in different scopes never implies equality, and free symbols
-are invalid. Contradictory semantic constraints reject the graph. Inferred or
-proven facts may not silently become additional frontend-required semantics.
-Canonical identity includes symbol declarations, source bindings, and semantic
-constraints but excludes derived solver caches. The solver algorithm and exact
-supported arithmetic fragment remain implementation choices.
+Every extent symbol has one declaration and one typed static or runtime root
+binding; equal spelling in different scopes never implies equality, and free
+symbols are invalid. Contradictory semantic constraints reject the graph.
+Inferred or proven facts may not silently become additional frontend-required
+semantics. Canonical identity includes symbol declarations, root-binding
+provenance, and semantic constraints but excludes derived solver caches. The
+solver algorithm and exact supported arithmetic fragment remain implementation
+choices.
 
 A **semantic input constraint** is required for the expression to be defined,
 such as a split-axis factorization. A **variant guard** is required only for a

@@ -5,7 +5,7 @@ status: in-progress
 priority: p0
 dependencies: []
 related: []
-scopes: [research/shapes]
+scopes: [research/shapes, contracts/core, contracts/artifacts, contracts/integrations]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research]

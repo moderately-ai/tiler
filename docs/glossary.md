@@ -56,13 +56,15 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Reindex | Logical output-to-input coordinate transformation; it does not imply a storage copy. |
 | Reduction domain | Coordinates combined to produce one logical output value. |
 | Schedule trace | Non-authoritative history of scheduling transforms, parameters, preconditions, and rejections retained for explain/replay. |
-| Semantic tensor graph | Public target-independent operation/value DAG describing tensor values and named program results. |
+| Root binding | Typed declaration mapping a semantic extent symbol to a static value, input dimension, interface parameter, or admitted target property. |
+| Semantic tensor graph | Public backend-neutral operation/value DAG describing tensor values and named program results as a function over explicit inputs and extent symbols. |
 | Shape constraint | Equality, divisibility, interval, or factorization fact required by tensor semantics. |
 | Shape environment | Scoped symbolic extent declarations, static/runtime source bindings, semantic constraints, and derived facts. |
 | SIMD group | Hardware subgroup of lanes that execute and cooperate; Metal uses this term where CUDA commonly uses warp. |
 | Source origin | Diagnostic mapping from canonical IR back to frontend source. |
 | Storage layout | Base offset and physical strides associated with a logical shape. |
 | Target profile | Conservative capabilities and cost parameters used for scheduling. |
+| Target property binding | Explicit semantic root binding to a stable, versioned target property available at a declared phase; distinct from an implicit device query or a physical-only target fact. |
 | Target requirement | Machine-checkable capability predicate required by a selected implementation. |
 | Tensor expression | Pure semantic operation that produces a logical tensor value. |
 | Tensor view | Logical shape, strides, and start position over an allocation. |

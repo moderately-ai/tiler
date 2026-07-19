@@ -10,10 +10,11 @@ depend on Metal lane mappings, threadgroup sizes, or local-memory algorithms.
 
 ## Decision
 
-Tiler will represent target-independent semantic tensor plans separately from
-target-aware physical schedules. A global optimizer selects fusion and
-materialization alternatives; a local scheduler maps each candidate region to
-hardware. Scheduled programs lower into a typed structured kernel IR.
+Tiler will represent backend-neutral, explicitly environment-parameterized
+semantic tensor plans separately from target-aware physical schedules. A
+global optimizer selects fusion and materialization alternatives; a local
+scheduler maps each candidate region to hardware. Scheduled programs lower
+into a typed structured kernel IR.
 
 ## Consequences
 
@@ -27,4 +28,3 @@ hardware. Scheduled programs lower into a typed structured kernel IR.
 
 A single GPU-oriented IR is initially smaller but makes target decisions part
 of tensor meaning and encourages backend compilation to become validation.
-

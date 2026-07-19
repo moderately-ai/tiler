@@ -55,6 +55,7 @@ struct ProgramPlan {
     semantic_hash: Hash256,
     inputs: Vec<TensorSpec>,
     outputs: Vec<TensorSpec>,
+    semantic_root_bindings: Vec<SemanticRootBinding>,
     semantic_constraints: Vec<SemanticConstraint>,
     numeric_contract: NumericContract,
     variants: Vec<PlanVariant>,
@@ -138,6 +139,20 @@ overflow after plan selection is an invariant failure. Their provenance is
 encoded and preserved in diagnostics.
 
 ## Binding contract
+
+Before evaluating output shapes, semantic constraints, routing, allocation, or
+dispatch expressions, the runtime constructs the program's bound semantic
+environment from the manifest's `semantic_root_bindings`. Each binding records
+the stable extent-symbol identity, binding class, declared value domain, and
+source provenance. A target-property source additionally records its versioned
+property key, required availability phase, and compatible provider contract.
+
+Semantic root binding is distinct from kernel argument binding. A missing or
+invalid semantic binding means the declared program interface cannot be
+instantiated; it is not a physical-plan applicability miss. Fallback is legal
+only when it consumes the same successfully bound semantic environment. An
+artifact cannot reinterpret a target property as an ordinary plan guard when
+that property changes observable tensor semantics.
 
 Every kernel binding states:
 
@@ -230,12 +245,14 @@ pipeline-cache identity.
 
 ## Artifact identity
 
-Expansion compilation identity includes canonical scheduled IR and complete program plans,
-ABIs, guards, routing, dispatch, numerical contract, translation-unit
-membership, schema/helper/codegen versions, target/profile, compiler, and flags.
+Expansion compilation identity includes canonical scheduled IR and complete
+program plans, semantic root-binding declarations, ABIs, guards, routing,
+dispatch, numerical contract, translation-unit membership,
+schema/helper/codegen versions, target/profile, compiler, and flags.
 
 ```text
-semantic_hash  = H(canonical semantic program + operation contract)
+semantic_hash  = H(canonical semantic graph + semantic root-binding interface
+                   + operation contract)
 scheduled_hash = H(semantic_hash + scheduled IR + target/profile/policy)
 plan_hash       = H(semantic_hash + canonical steps/temps/guards)
 manifest_hash  = H(canonical embedded manifest payload with hash fields and metallib
@@ -253,11 +270,12 @@ Before execution, the runtime validates:
 
 1. schema versions and parser resource limits;
 2. manifest, metallib, and bundle hashes;
-3. target/profile compatibility;
-4. semantic constraints;
-5. plan graph, temporary lifetimes, and binding references;
-6. symbol availability and compiler-established ABI consistency;
-7. storage ranges, plan guards, routing, and launch limits.
+3. target/profile compatibility and semantic root-binding provider support;
+4. root-binding declarations and the bound semantic environment;
+5. semantic constraints;
+6. plan graph, temporary lifetimes, and binding references;
+7. symbol availability and compiler-established ABI consistency;
+8. storage ranges, plan guards, routing, and launch limits.
 
 Manifest/schema/hash inspection does not require a device. Symbol existence and
 optional pipeline reflection do. Manifest and MSL are generated from the same

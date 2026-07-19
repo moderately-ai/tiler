@@ -18,10 +18,16 @@ Fallback selection and artifact launch occur at different abstraction levels.
 ### Tensor-level preflight
 
 Before applying a custom op, a frontend/runtime wrapper inspects Tensor-visible
-device, dtype, shape, and layout facts, evaluates all available preflight
-guards, and chooses either an ordered set of applicable compiled plan variants
-or the ordinary Candle expression. This is where semantic fallback is safe and
-expressible.
+device, dtype, shape, and layout facts; binds every semantic extent root from
+input metadata, interface arguments, and admitted target-property providers;
+then evaluates semantic requirements and available preflight guards. It chooses
+either an ordered set of applicable compiled plan variants or the ordinary
+Candle expression. This is where semantic fallback is safe and expressible.
+
+The same bound semantic environment is passed to compiled and fallback paths.
+Failure to bind a target property that affects output semantics is not a plan
+miss: fallback is permitted only if it can realize that identical binding and
+semantic result.
 
 Guards requiring backend-only allocation facts are classified as launch-time
 assertions. The integration should minimize these; failure after custom-op
@@ -32,17 +38,18 @@ selection normally returns an error rather than rebuilding a Tensor graph.
 For an already selected output-producing custom operation, the adapter:
 
 1. converts Candle storage and `Layout` into runtime tensor-view descriptors;
-2. computes and validates the output shape;
-3. validates launch-time guards and routes to a plan variant;
-4. prepares all required per-device library/function/pipeline objects, trying a
+2. constructs and validates the bound semantic extent environment;
+3. computes and validates the output shape and semantic requirements;
+4. validates launch-time guards and routes to a plan variant;
+5. prepares all required per-device library/function/pipeline objects, trying a
    later preflight-valid plan only if preparation fails before device work;
-5. allocates output and declared temporary storage through the input
+6. allocates output and declared temporary storage through the input
    `MetalDevice`/Candle allocator;
-6. for each dependency-ordered step, binds allocation buffers and checked
+7. for each dependency-ordered step, binds allocation buffers and checked
    view-start metadata, packs scalars, evaluates dispatch, and encodes on
    Candle's current command encoder;
-7. retains temporary storage through its last encoded GPU use;
-8. returns `(MetalStorage, Shape)` without committing or synchronously waiting.
+8. retains temporary storage through its last encoded GPU use;
+9. returns `(MetalStorage, Shape)` without committing or synchronously waiting.
 
 Output device matches the inputs, allocation arithmetic is checked, zero-size
 behavior is explicit, and the plan fully initializes the one returned output.

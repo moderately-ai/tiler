@@ -53,6 +53,14 @@ runtime assertions. A bundle may contain a conservative generic portfolio plus
 device-family variants with explicit compatibility guards. Profile and
 cost-model version are compilation provenance and scheduled identity.
 
+Metal may also implement a versioned provider for a semantic target-property
+binding declared by the backend-neutral program interface. Compile-profile and
+live-device-preflight properties may bind initial semantic extents when their
+contracts are deterministic and available before allocation. Pipeline-derived
+properties remain physical assertions in the initial model; they cannot feed
+semantic output shapes merely because the backend can query them after
+pipeline creation.
+
 ## MSL emission
 
 A macro-local translation unit should:
