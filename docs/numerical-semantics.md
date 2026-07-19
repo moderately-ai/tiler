@@ -17,6 +17,37 @@ identity and empty-domain behavior, division/modulo behavior, and min/max NaN
 and signed-zero contract. These are properties of the operation, not global
 optimizer switches.
 
+## Resolved numerical typing
+
+Every compilable semantic tensor value has a resolved value dtype. Every
+operation has a resolved numerical signature sufficient to define its
+observable computation. Tiler does not apply an ambient global promotion table
+after semantic admission.
+
+Ordinary elementwise operations are homogeneous by default. Frontends may
+offer PyTorch-like, JAX-like, strict, or custom promotion, weak-scalar, and
+autocast policies, but they lower the result to explicitly typed constants,
+conversions, operands, and results before optimization.
+
+Operations with intrinsic mixed-precision behavior use specialized typed
+signatures. Depending on the operation, these may distinguish:
+
+- tensor value dtype;
+- per-operand computation or input precision;
+- accumulator dtype;
+- result value dtype;
+- conversion and rounding behavior;
+- reduction-order or contraction permissions;
+- a required numerical algorithm.
+
+These are semantic roles rather than one universal `dtype` field or a bag of
+optional attributes attached to every operation. Physical storage encoding is
+separate again: a fused implementation may avoid materializing a typed edge,
+but it must still reproduce every semantic conversion on that edge.
+
+The evidence and cross-system differences behind this boundary are recorded in
+[Dtype resolution and mixed-precision precedent](research/numerics/dtype-resolution-precedents.md).
+
 ### Optimization permissions
 
 The program carries granular permissions such as:
@@ -73,6 +104,9 @@ A reduction definition includes:
 - NaN and signed-zero behavior;
 - deterministic or implementation-dependent result policy.
 
+Accumulator dtype does not determine reduction semantics by itself. The order
+contract independently states which serial or tree evaluations are permitted.
+
 Changing from a serial reduction to a SIMD or threadgroup tree is a physical
 alternative only when the numerical policy permits its evaluation order. F16
 or BF16 inputs do not imply low-precision accumulation; promotion is explicit.
@@ -109,6 +143,26 @@ Casts state source and destination dtype and define behavior for:
 - narrowing integer conversion;
 - floating-point rounding;
 - backend feature-dependent formats.
+
+Numeric conversion and bit reinterpretation are distinct semantic operations.
+A cast or quantization boundary is observable even if fusion removes a physical
+store/reload that would otherwise have realized it.
+
+## Backend numerical feasibility
+
+For a resolved operation signature, a backend reports one of these semantic
+outcomes rather than silently choosing a nearby instruction:
+
+```text
+SupportedExactly
+SupportedWithExactEmulation
+SupportedOnlyUnderDeclaredRelaxation
+Unsupported
+```
+
+Target defaults such as TF32 input precision, reduced-precision accumulation,
+floating-point contraction, flush-to-zero, or conversion rounding cannot
+expand the program's permissions.
 
 ## Conformance levels
 

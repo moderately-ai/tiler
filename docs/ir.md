@@ -210,6 +210,13 @@ specified in [Operation extensions](operation-extensions.md).
 - Operation results and program results are ordered and individually typed.
 - Result names are unique; result values exist and match their contracts.
 - Output shapes and dtypes are derived rather than trusted assertions.
+- Every tensor value has a resolved value dtype, and every operation has a
+  resolved numerical signature. Canonical semantic IR contains no ambient
+  frontend promotion, weak-scalar, default-dtype, or autocast decision.
+- Ordinary elementwise mixed-dtype inputs use explicit semantic conversions.
+  Operations with intrinsic mixed precision, such as reductions and
+  contractions, declare computation precision, accumulator/result types, and
+  relevant order or algorithm contracts through their specialized semantics.
 - Every root extent symbol has exactly one typed binding whose source class and
   availability phase are supported by every semantic factor that consumes it.
 - Target-property bindings use stable versioned keys and cannot depend on a
