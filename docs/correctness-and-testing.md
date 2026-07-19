@@ -65,6 +65,10 @@ Generate combinations of:
 - NaN, infinities, signed zero, and extreme finite values;
 - shape products near index-width boundaries.
 
+The cross-operation coverage, adversarial numerical atoms, and backend compiler
+verification protocol are maintained in the
+[operation conformance matrix](research/numerics/operation-conformance-matrix.md).
+
 Random programs should be small enough to shrink into useful counterexamples.
 Every optimizer rule needs positive tests, negative precondition tests, and a
 semantic equivalence property.
@@ -77,6 +81,8 @@ Reduction tests explicitly cover:
 - more than one SIMD group;
 - ragged and non-power-of-two tails;
 - zero and one-length domains under documented identities;
+- singleton negative zero under a positive-zero empty result, proving that
+  empty results are not automatically legal per-lane padding;
 - every supported accumulator dtype;
 - serial, SIMD-group, threadgroup, and multi-pass strategies;
 - result visibility to consuming lanes;

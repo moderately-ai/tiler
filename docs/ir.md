@@ -248,10 +248,12 @@ specified in [Operation extensions](operation-extensions.md).
 - Binary operations use explicit broadcasting.
 - Reindex mappings are total over their output domain.
 - Reductions name valid axes and explicit accumulation/output dtypes.
-- Every reduction declares a typed intrinsic identity or the absence of one.
-  An explicit initial value is one logical contributor for every reduction
-  domain, not an empty-only fallback; schedules may replicate only a proven
-  neutral identity, never an arbitrary seed.
+- Every reduction declares a typed empty-domain result or rejects empty input.
+  Empty result, algebraic identity, and replicable physical padding are
+  separate capabilities. An explicit initial value is one logical contributor
+  for every reduction domain, not an empty-only fallback; schedules may inject
+  only padding proven neutral under the selected conformance contract and may
+  never replicate an arbitrary seed.
 - Reduction semantic nodes constrain the legal evaluation-order or result
   class, while concrete reduction trees, partitioning, and multi-pass topology
   belong to selected physical plans and artifact identity.

@@ -5,10 +5,14 @@ ADR when evidence is sufficient.
 
 ## Semantic and numerical policy
 
-- What exact and fast numerical modes are exposed?
-- Which transformations may reassociate floating-point work?
+- Which ergonomic numerical-policy presets are exposed, and to which canonical
+  per-operation ceilings and restrictions do they expand?
+- Which built-in operations declare reassociation and commutativity
+  capabilities under each resolved dtype/signature?
 - Which input, accumulation, and output dtype combinations are supported?
-- Does exact mode require deterministic reduction order across schedules?
+- Which transcendental error metrics and operation subset are supported first?
+- Which integer division/remainder and float-to-integer conversion families are
+  supported first?
 
 ## Semantic graph and operation extensions
 

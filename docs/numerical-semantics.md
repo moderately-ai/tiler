@@ -146,6 +146,21 @@ Relaxed policies may permit:
 Every rule declares which permission it requires. The optimizer cannot infer a
 relaxed policy from a backend's default compiler flags.
 
+## Initial arithmetic rounding
+
+Initial ordinary floating-point `Add`, `Subtract`, `Multiply`, and `Divide`
+contracts use round-to-nearest, ties-to-even for each semantic operation.
+Required `Fma` uses the correctly rounded fused result under the same direction.
+Separate multiply and add operations retain two such rounding boundaries unless
+their resolved contraction permission authorizes fusion.
+
+This is an explicit operation contract, not an ambient hardware rounding mode.
+Numeric conversions and transcendental operations continue to use their own
+specialized rounding or accuracy contracts. Future directed-rounding arithmetic
+can be added as new typed operation contracts; existing operations retain their
+round-to-nearest, ties-to-even meaning, and older consumers reject unsupported
+rounding contracts.
+
 ## Fused multiply-add and contraction
 
 Tiler distinguishes a required fused multiply-add from optional contraction:
@@ -249,11 +264,19 @@ or BF16 inputs do not imply low-precision accumulation; promotion is explicit.
 
 ### Empty domains and initial values
 
-Each reduction operation declares whether it has an intrinsic identity for its
-resolved accumulator dtype and numerical contract. An empty reduction returns
-that identity when one exists. Representative contracts include additive zero,
+Each reduction operation declares its empty-domain result or declares an empty
+domain invalid. Representative empty results include additive zero,
 multiplicative one, `true` for `all`, and `false` for `any`; the exact typed
-identity is operation semantics, not a backend default.
+value is operation semantics, not a backend default.
+
+Empty result, algebraic identity, and safe physical padding are separate facts.
+A schedule may inject or replicate a padding value only when the operation
+contract proves that doing so preserves the required observable semantics. For
+example, strict floating sum may return `+0.0` for an empty domain, but adding
+`+0.0` to the singleton value `-0.0` under round-to-nearest produces `+0.0`.
+Therefore `+0.0` is not bitwise-neutral padding for that strict reduction even
+though it is its empty result. Such a schedule tracks nonempty partials or uses
+another proven construction; a signed-zero relaxation may admit more choices.
 
 An optional explicit `initial` is a true reduction seed, not an empty-only
 fallback. It is converted according to the resolved reduction signature and is
@@ -262,10 +285,10 @@ domains. Thus `minimum([20], initial=10)` produces `10`, and a sum with
 `initial=10` adds ten exactly once.
 
 This distinction constrains physical scheduling. A non-identity seed cannot be
-copied into every SIMD lane, threadgroup, or partial reduction. A true intrinsic
-identity may be replicated where the operation contract proves it neutral; an
-arbitrary initial value remains exactly one logical contributor even when the
-permitted topology reassociates work.
+copied into every SIMD lane, threadgroup, or partial reduction. A proven
+replicable padding value may be copied only under the conformance contract for
+which neutrality was established; an arbitrary initial value remains exactly
+one logical contributor even when the permitted topology reassociates work.
 
 An identity-less reduction such as the initial `minimum`/`maximum` contract is
 valid only with an explicit initial value or a proven/runtime-validated

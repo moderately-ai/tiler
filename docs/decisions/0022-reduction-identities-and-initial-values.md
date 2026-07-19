@@ -2,6 +2,9 @@
 
 **Status:** accepted
 
+The identity terminology in this decision is refined by ADR 0025: an empty
+result is not automatically a bitwise-neutral, replicable padding value.
+
 ## Context
 
 Empty reductions need defined behavior. Some operations have a typed
@@ -19,16 +22,18 @@ duplicated across partial reductions.
 
 ## Decision
 
-Each reduction operation declares a typed intrinsic identity or explicitly has
-none. An empty domain returns the identity when one exists.
+Each reduction operation declares a typed empty-domain result or explicitly
+rejects an empty domain. It separately declares any algebraic-identity and
+replicable-padding capabilities under its resolved conformance contract.
 
 An optional explicit `initial` is a true reduction seed. It contributes exactly
 once to each logical output reduction domain whether that domain is empty or
 non-empty. It is not an empty-only fallback.
 
-A physical schedule may replicate an intrinsic identity only when the resolved
-operation contract proves it neutral. It may not replicate an arbitrary initial
-value per lane, partition, threadgroup, or reduction pass.
+A physical schedule may inject or replicate a padding value only when the
+resolved operation contract proves it observably neutral. It may not infer that
+property from the empty result, nor replicate an arbitrary initial value per
+lane, partition, threadgroup, or reduction pass.
 
 An identity-less reduction requires either an explicit initial value or a
 proven/runtime-validated non-empty domain. Static violations fail graph
