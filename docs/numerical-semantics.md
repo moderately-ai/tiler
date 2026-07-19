@@ -99,6 +99,29 @@ independent. One permission never implies another. A backend compiler switch
 that couples several freedoms is usable only when every freedom it enables is
 already authorized for the affected operations.
 
+## Value assumptions and validation
+
+Every value-domain fact used for correctness has explicit provenance:
+
+- **compiler-proven:** derived soundly from verified producers, constants, or
+  analysis and usable without a runtime check;
+- **runtime-validated:** established by a guard or validation computation before
+  any plan that relies on it executes;
+- **caller-declared but unvalidated:** recorded and explainable, but initially
+  ineligible to justify a correctness-sensitive rewrite.
+
+For example, replacing `x / x` with `1` requires more than a caller's unchecked
+claim: the required nonzero, finite, non-NaN domain must be proven or validated.
+Validation of tensor contents may require a full scan and is itself a costed
+operation, not a free scalar guard.
+
+An optimization guard changes only physical eligibility. If it fails, dispatch
+selects another valid plan or the general fallback before dependent work begins.
+It does not make a semantically valid input invalid. A semantic input
+precondition is different: it defines the program's admitted domain, and its
+failure produces a precise invalid-input diagnostic. The two kinds of predicate
+remain distinct in IR, explanation, artifact routing, and testing.
+
 ### Execution guarantees
 
 Execution guarantees state reduction-order constraints, determinism, index

@@ -279,6 +279,13 @@ extent equalities, divisibility, nonnegativity, intervals, and factorization
 relationships. Facts record provenance: statically proven, frontend-required,
 or runtime-validated.
 
+Value-domain facts use the same provenance discipline but are not shape facts.
+The initial optimizer may consume compiler-proven or runtime-validated value
+facts for correctness-sensitive transformations. It records caller-declared,
+unvalidated value assumptions for diagnostics and future policy evolution but
+does not trust them for legality. A tensor-content validation may be a costed
+preflight computation rather than a scalar dispatch predicate.
+
 Every extent symbol has one declaration and one typed static or runtime root
 binding; equal spelling in different scopes never implies equality, and free
 symbols are invalid. Contradictory semantic constraints reject the graph.
@@ -293,6 +300,9 @@ such as a split-axis factorization. A **variant guard** is required only for a
 particular optimization, such as 16-byte alignment. They are not
 interchangeable. Later guards also record provenance as storage-applicability,
 schedule-applicability, target-compatibility, or dispatch-safety predicates.
+Failure of a semantic input constraint is an invalid-input diagnostic. Failure
+of a variant guard selects another valid plan or fallback before dependent work
+begins.
 
 ## Layer 2: index and iteration IR
 

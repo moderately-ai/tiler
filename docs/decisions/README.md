@@ -27,6 +27,7 @@ accepted. Unresolved questions are collected in
 - [0018: Canonicalize arithmetic NaNs for portable bitwise results](0018-portable-bitwise-nans.md) — accepted
 - [0019: Separate subnormal input and result handling](0019-split-subnormal-handling.md) — accepted
 - [0020: Use value-only floating-point exceptions initially](0020-value-only-floating-point-exceptions.md) — accepted
+- [0021: Require proof or runtime validation for value assumptions](0021-validated-value-assumptions.md) — accepted
 
 ## Template
 
