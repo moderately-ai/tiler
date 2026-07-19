@@ -86,6 +86,11 @@ f16, f32, and f64. Width-based frontend names are aliases, storage layout is a
 physical contract, and operation support remains specific to the complete
 complex instance and signature; see ADR 0037.
 
+OCP MXFP8, MXFP6, MXFP4, and MXINT8 are built-in compound scheme identities,
+not scalar dtypes. Their element codes and shared E8M0 scales are ordinary
+graph operands of one first-class encoded value; block membership and
+scale-selection semantics are part of the scheme contract. See ADR 0038.
+
 ### Optimization permissions
 
 The program carries a granular policy ceiling: the maximum numerical freedoms

@@ -68,8 +68,9 @@ change updates provider provenance.
 - OCP MX block-format scheme identities, separately from scalar `TypeKey`s.
 
 ADR 0036 records the scalar-format admissions. Compound OCP MX schemes use
-separate `QuantSchemeKey`s and still require their own catalog decision; a
-scale or element constituent never implies the compound scheme.
+separate `QuantSchemeKey`s; ADR 0038 admits the OCP version 1.0 MXFP8, MXFP6,
+MXFP4, and MXINT8 schemes. A scale or element constituent never implies the
+compound scheme.
 
 Format descriptors classify encoded values and special-value bit patterns.
 They do not import an ISA's arithmetic propagation, canonical-NaN, exception,

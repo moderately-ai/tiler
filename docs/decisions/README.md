@@ -44,6 +44,7 @@ accepted. Unresolved questions are collected in
 - [0035: Recognize IEEE decimal floating-point formats](0035-recognize-ieee-decimal-floating-formats.md) — accepted
 - [0036: Recognize standard binary and microscaling scalar formats](0036-recognize-standard-binary-and-microscaling-formats.md) — accepted
 - [0037: Parameterize complex dtype identity by component type](0037-parameterize-complex-dtype-identity.md) — accepted
+- [0038: Recognize OCP microscaling schemes as compound values](0038-recognize-ocp-mx-schemes.md) — accepted
 
 ## Template
 

@@ -161,4 +161,9 @@ block of low-precision elements sharing an E8M0 scale, and a NaN scale gives
 block-wide semantics. It is a compound numerical value, not an alias for an FP4
 or FP8 scalar and not merely a nibble-packing convention.
 
+ADR 0038 admits the OCP version 1.0 MXFP8, MXFP6, MXFP4, and MXINT8 families as
+built-in `QuantSchemeKey`s. Their canonical descriptors pin the constituent
+types, 32-element block, scale-selection map, and normative numerical rules;
+recognition remains separate from execution capabilities.
+
 Primary source: [OCP Microscaling Formats specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf).
