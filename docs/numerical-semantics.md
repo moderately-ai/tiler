@@ -129,9 +129,23 @@ A reduction definition includes:
 Accumulator dtype does not determine reduction semantics by itself. The order
 contract independently states which serial or tree evaluations are permitted.
 
+The semantic order contract constrains the legal evaluation orders or result
+set; it does not encode a concrete SIMD, threadgroup, or multi-pass reduction
+tree. It must be able to distinguish concepts such as an ordered fold, a
+deterministically selected legal order, and a reassociation-permitted result
+set. Those names are illustrative rather than a frozen public enum.
+
+The selected physical plan records the actual reduction topology, including
+partitioning, tree shape, synchronization, and intermediate passes. That
+topology participates in physical-plan and artifact identity. A scheduler may
+choose it only when it satisfies the semantic order contract.
+
 Changing from a serial reduction to a SIMD or threadgroup tree is a physical
 alternative only when the numerical policy permits its evaluation order. F16
 or BF16 inputs do not imply low-precision accumulation; promotion is explicit.
+
+The stability scope promised by a deterministically selected order remains a
+separate decision; `deterministic` alone is not yet a complete public contract.
 
 ## Min and max
 

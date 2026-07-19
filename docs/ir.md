@@ -231,6 +231,9 @@ specified in [Operation extensions](operation-extensions.md).
 - Binary operations use explicit broadcasting.
 - Reindex mappings are total over their output domain.
 - Reductions name valid axes and explicit accumulation/output dtypes.
+- Reduction semantic nodes constrain the legal evaluation-order or result
+  class, while concrete reduction trees, partitioning, and multi-pass topology
+  belong to selected physical plans and artifact identity.
 - The canonical graph contains only the transitive closure reachable from all
   program results; dead pure operations are removed before identity is formed.
 - Stable serialization and hashing do not depend on arena IDs, insertion order,
