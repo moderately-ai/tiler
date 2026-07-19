@@ -444,3 +444,35 @@ forms for padding/slicing/clamping formulas, and allow bounds reasoning without
 introducing an artificial proof case split. Their evaluator or lowering may
 reuse the same atomic implementation components as `Select`; that code reuse
 does not erase their distinct IR identity.
+
+## Accepted decision: typed Boolean shape predicates
+
+**Accepted by Tom on 2026-07-19:** shape constraints and guards use a closed,
+typed, extensible `ShapePredicate` language rather than only an implicit
+conjunction of comparisons.
+
+```text
+Compare(...)
+All([...])
+Any([...])
+Not(...)
+```
+
+This permits alternative-validity rules such as dynamic broadcasting:
+
+```text
+Any([A == B, A == 1, B == 1])
+```
+
+`All` and `Any` use short-circuit concrete evaluation and canonicalize by
+flattening nested instances, removing identities and duplicates, and assigning
+a deterministic operand order. `Not` is typed and normalized where doing so
+does not cause uncontrolled expansion. Proving disjunctions or negations may
+case-split only within deterministic budgets and otherwise returns structured
+`Unknown`.
+
+The enclosing typed constraint retains operation-specific provenance and error
+context, so a generic predicate can still report a specialized diagnostic such
+as incompatible broadcast dimensions. New predicate primitives require the
+same versioned semantic treatment as new shape-expression primitives; arbitrary
+callbacks remain excluded.
