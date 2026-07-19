@@ -94,3 +94,46 @@ symbols and expressions. Remaining questions are:
 7. how overflow and index-width proofs are represented.
 
 These decisions are intentionally not inferred from the fixed-rank decision.
+
+## Accepted decision: root extent sources
+
+**Accepted by Tom on 2026-07-19:** a runtime root extent may be bound from an
+input tensor dimension or from an explicitly declared host integer shape
+parameter.
+
+```text
+ExtentSource =
+    Static(u64)
+  | InputDimension { input: InputIndex, axis: AxisIndex }
+  | ShapeParameter { parameter: ShapeParameterIndex }
+```
+
+A `ShapeParameter` is part of the program interface. It is an immutable,
+nonnegative host integer available before allocation, routing, or dispatch. It
+has a stable declaration, type, optional diagnostic name, and semantic
+constraints. It is not:
+
+- a rank-zero tensor value whose contents may reside on a device;
+- an operation attribute fixed during compilation;
+- an ambient callback, environment variable, or consumer-global value;
+- a derived solver fact without an interface binding.
+
+JAX export currently requires dimension variables to be solvable from input
+tensor shapes; its documented workaround for a runtime `top_k` parameter is a
+dummy tensor with shape `(0, k)`. Tiler will model that input explicitly rather
+than encode metadata as a tensor shape.
+[JAX sourceability restriction](https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes).
+
+The same integer may participate in tensor semantics as runtime metadata when
+an operation definition declares that use. Its shape-source role remains
+typed, and the host and generated kernel ABI derive their encoding from one
+declaration.
+
+Root bindings participate in semantic computation and interface identity.
+Optional diagnostic names follow the accepted split identity rule: they are
+excluded from computation identity unless external binding is name-based, but
+included in an artifact/interface identity whenever the ABI exposes them.
+
+Every non-root extent is a canonical expression over declared roots and
+constants. Free symbols, ambiguous bindings, multiple incompatible bindings,
+and references to tensor element data are invalid in the initial `ShapeEnv`.
