@@ -595,6 +595,33 @@ graph. The selected value and its frontend provenance therefore become
 visible to validation, hashing, and explanation rather than being hidden
 inside the constraint solver.
 
+## Accepted decision: shape is upstream of access, not physical planning
+
+**Accepted by Tom on 2026-07-19:** under Tiler's pure tensor-value semantics,
+`ShapeEnv` describes logical rank and extents independently of storage layout.
+Iteration and access representations may reference shape expressions and
+proved shape facts; storage layout must not redefine logical tensor meaning or
+make an otherwise valid logical computation invalid.
+
+This is an architectural dependency direction, not a claim that physical
+planning is a one-way pipeline. Producer and consumer layout requirements and
+guarantees may propagate in both directions while the physical planner jointly
+chooses fusion, schedules, layouts, views, and materializations. A conflict
+rejects a physical alternative or introduces a conversion/materialization; it
+does not change semantic shape facts.
+
+Runtime tensor descriptors bind related but distinct facts: dimensions bind
+logical extents, while strides, offsets, allocation ranges, and alignment bind
+access/layout properties. Access validity is checked using the dimensions,
+but allocation metadata is not used to invent or revise logical extents.
+
+This initial separation must not prevent richer future contracts. Sparse or
+encoded storage, returned views, required aliasing, and mutation/in-place
+behavior may make representation observable. Such features require explicit
+encoding, alias, or effect semantics and corresponding physical interfaces;
+they do not enter the system by silently turning layout observations into
+ordinary `ShapeEnv` facts.
+
 ## Deferred decision: construction and commitment lifecycle
 
 The discussion established that local, environment-relative, and graph-wide
