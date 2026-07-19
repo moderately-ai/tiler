@@ -350,6 +350,14 @@ unvalidated value assumptions for diagnostics and future policy evolution but
 does not trust them for legality. A tensor-content validation may be a costed
 preflight computation rather than a scalar dispatch predicate.
 
+Semantic operation preconditions use a proof/witness contract independent of
+their physical enforcement. Static proof erases the obligation; otherwise the
+physical plan must name a supported enforcement and publication boundary, such
+as host validation, device pre-scan, or transactional fused validation. A
+semantic validation failure is never a plan miss. An explicitly trusted
+assumption is a separate future policy, not another enforcement of strict
+semantics.
+
 Every extent symbol has one declaration and one typed static or runtime root
 binding; equal spelling in different scopes never implies equality, and free
 symbols are invalid. Contradictory semantic constraints reject the graph.

@@ -69,6 +69,9 @@ Generate combinations of:
 - strict affine quantization rejecting qNaN and sNaN before committing an
   observable result, plus separate conformance vectors for every explicitly
   admitted alternative NaN mapping;
+- proof-elided, host-check, device-pre-scan, and transactional validation paths
+  producing the same success/error contract; private failed results discarded;
+  no dependent publication or fallback after device enforcement begins;
 - shape products near index-width boundaries.
 
 The cross-operation coverage, adversarial numerical atoms, and backend compiler

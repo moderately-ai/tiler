@@ -138,6 +138,14 @@ vectorized plan is an applicability guard. A corrupt binding table or launch
 overflow after plan selection is an invariant failure. Their provenance is
 encoded and preserved in diagnostics.
 
+Residual tensor-value preconditions are semantic validation obligations. A
+plan records whether each is discharged by proof, host validation, device
+pre-scan, or a transactional device result, plus its witness dependencies,
+temporary/error-record roles, completion observation, and publication boundary.
+The validation result is not encoded as an applicability predicate. A runtime
+profile that cannot provide the required observability reports the semantic
+operation as unsupported before device work begins.
+
 ## Binding contract
 
 Before evaluating output shapes, semantic constraints, routing, allocation, or
@@ -289,6 +297,10 @@ Before execution, the runtime validates:
 6. plan graph, temporary lifetimes, and binding references;
 7. symbol availability and compiler-established ABI consistency;
 8. storage ranges, plan guards, routing, and launch limits.
+
+For the selected plan, preparation also verifies that every residual semantic
+validation obligation has a supported enforcement and that no logical result
+or dependent public work can escape before its witness succeeds.
 
 Manifest/schema/hash inspection does not require a device. Symbol existence and
 optional pipeline reflection do. Manifest and MSL are generated from the same

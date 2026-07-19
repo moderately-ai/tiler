@@ -1,0 +1,72 @@
+# 0033: Separate semantic validation from physical enforcement
+
+**Status:** accepted
+
+## Context
+
+Some strict semantic operations require predicates over runtime tensor values.
+For example, strict affine quantization rejects NaN. Enforcing such a predicate
+may require no work when compiler-proven, a host check, a device scan, or fused
+detection whose private result is published only after success.
+
+These mechanisms have different traffic, synchronization, temporary-storage,
+and error-latency costs. Baking one mechanism into semantic IR would make
+runtime capabilities part of program meaning. Treating the predicate as an
+ordinary plan guard would instead allow invalid input to select a different
+meaning.
+
+## Decision
+
+A semantic operation declares typed `SemanticPrecondition`s. Verification
+either proves each precondition or emits a residual validation obligation.
+Dependent semantic results conceptually require its validation witness.
+
+The physical plan selects an `EnforcementPlan` for every residual obligation
+from mechanisms supported by its runtime profile, including:
+
+- host-known validation;
+- device pre-scan plus completion observation;
+- fused detection into an error record with private result publication only
+  after successful validation;
+- a future error-as-data transaction whose result cannot escape independently;
+- explicit unsupported classification.
+
+Static proof removes the enforcement. The selected mechanism, error-record and
+temporary roles, witness dependencies, observability point, transaction scope,
+and publication boundary participate in plan, explanation, artifact, and cost
+identity, but do not change semantic identity.
+
+A failed semantic validation returns the operation's invalid-input error. It is
+never an applicability miss and never authorizes a different semantic mapping.
+Plan selection, pipeline preparation, and fallback selection complete before
+device enforcement begins. Once device validation or transactional work begins,
+ordinary fallback does not run. Private incomplete output may be discarded; no
+logical result or dependent public work may escape before its witness succeeds.
+
+Validation covers the logical view, excluding padding, unused packed bits, and
+unreachable allocation bytes. Diagnostics use deterministic logical-index and
+error-code priority rather than schedule-dependent first-writer order.
+
+An explicitly trusted assumption is a separate future semantic policy with its
+own invalid-input behavior. It is not an enforcement plan for strict semantics.
+
+## Consequences
+
+- Compiler proofs eliminate validation cost without changing the graph.
+- Runtimes can choose scans or transactions according to capability and cost.
+- A narrow runtime may reject an unprovable strict operation without weakening
+  its semantics or constraining compiler core.
+- Transactional GPU validation requires private outputs, explicit completion,
+  and publication machinery.
+- Validation results can be reused only with sound immutability/version
+  provenance.
+- Runtime integrations need conformance tests for error timing, discarded
+  output, dependent-work suppression, and no fallback after enforcement starts.
+
+## Alternatives considered
+
+Always pre-scanning is simple but can double traffic and force synchronization.
+Always fusing a flag cannot report failure before computation and is unsafe when
+output escapes. Treating validation as a plan guard confuses invalid input with
+optimization applicability. Trusting the caller avoids cost but permits silent
+semantic violation and therefore requires a distinct policy.
