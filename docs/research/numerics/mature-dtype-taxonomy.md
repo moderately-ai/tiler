@@ -557,5 +557,6 @@ selections.
 
 The follow-up [dtype identity admission policy](dtype-identity-admission-policy.md)
 defines proposed admission gates and a preliminary built-in/external/extension
-classification. Namespace authority for standards-backed built-ins remains the
-blocking governance decision.
+classification. Standards-backed formats admitted to the built-in vocabulary
+use Tiler-governed keys with mandatory normative references; published
+project/vendor identities remain external.

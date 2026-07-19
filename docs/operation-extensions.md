@@ -78,6 +78,15 @@ ownership, collision handling, provider compatibility, and durable descriptor
 encoding require the same deterministic registry discipline as operations;
 their exact Rust API remains open.
 
+Tiler-governed built-in type descriptors contain mandatory normative source
+references but Tiler owns their IR-key compatibility. Published descriptors are
+immutable. A semantically compatible later standards revision may add
+non-semantic provenance/equivalence evidence; a meaning change requires a new
+semantic key version. Admission rejects a new built-in key when an existing
+external canonical identity already owns that exact format. External
+equivalence mappings are explicit, versioned, and conformance-tested rather
+than inferred from names or structural fields.
+
 Quantization and other encoded numeric interpretations have a separate
 namespaced, versioned scheme identity. A `QuantSchemeKey` is neither the
 primitive code/expressed `TypeKey` nor a physical `StorageEncodingKey`.

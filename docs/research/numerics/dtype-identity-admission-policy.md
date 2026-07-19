@@ -1,6 +1,6 @@
 # Dtype identity admission policy
 
-**Status:** researched proposal; namespace governance remains open
+**Status:** namespace governance accepted
 
 ## Problem
 
@@ -102,9 +102,9 @@ suffixes or widths never establish identity.
 Extension-only means a registered provider may make the identity fully
 verifiable and executable. It does not mean opaque or permanently unsupported.
 
-## Open namespace decision
+## Accepted namespace policy
 
-Two coherent canonical-key policies remain:
+Two coherent canonical-key policies were considered:
 
 1. Tiler-governed built-in keys such as `tiler::f32@1`, whose canonical
    descriptor contains a mandatory normative reference to IEEE 754-2019.
@@ -115,6 +115,32 @@ Two coherent canonical-key policies remain:
 A project-controlled URI-style authority registry is a third spelling of the
 second approach, but it retains the same governance burden.
 
-The choice affects serialized identity, namespace collision rules, standards
-revision handling, imports, and who is understood to own compatibility. It
-must be decided before the candidate classification becomes an ADR.
+**Accepted by Tom on 2026-07-19:** formats deliberately admitted into Tiler's
+built-in vocabulary use Tiler-governed canonical keys. Their immutable
+canonical descriptors carry mandatory normative-definition references. Actual
+project/vendor-owned published identities retain their external keys even when
+Tiler bundles first-party support.
+
+Forward-compatibility rules:
+
+- a published key resolves to one immutable semantic descriptor;
+- an incompatible meaning change requires a new key semantic version;
+- a later standards revision proven semantically identical may be recorded as
+  additional provenance/equivalence evidence without changing the key;
+- aliases and source-format spellings are frontend/import metadata, not
+  canonical identities;
+- before minting a built-in key, admission checks that Tiler has not already
+  recognized an external canonical identity for the same format;
+- an already-published external identity is supported in place and is never
+  rekeyed into the Tiler namespace;
+- exact external equivalence is explicit, versioned, and conformance-tested;
+  equal width, name, or descriptor shape is insufficient;
+- canonical serialization records the key and validates the registered
+  descriptor fingerprint; Rust enum discriminants and provider addresses never
+  participate;
+- namespace display syntax and exact Rust structures may evolve without
+  changing the abstract identity tuple.
+
+These rules are recorded in ADR 0034. Namespace registration and collision
+governance for external providers remain an API-design task, but the ownership
+direction is fixed.

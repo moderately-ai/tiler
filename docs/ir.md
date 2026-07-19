@@ -140,6 +140,14 @@ discriminant, `TypeId`, or address. A canonical type descriptor supplies the
 format's structural and value-semantic facts; those facts do not replace its
 nominal identity.
 
+Formats admitted into Tiler's built-in vocabulary use Tiler-governed keys whose
+immutable descriptors carry mandatory normative-definition references. A new
+standards document revision does not automatically change type identity:
+semantically identical revisions may add provenance, while an incompatible
+meaning requires a new key version. Already-published external project/vendor
+identities remain external when Tiler adds support and are never silently
+rekeyed.
+
 The built-in recognized integer catalog includes two-valued `bool` and the
 signed and unsigned widths 2, 4, 8, 16, 32, and 64. Recognition of `i2`, `u2`,
 `i4`, and `u4` does not imply unpacked storage or general arithmetic support;
