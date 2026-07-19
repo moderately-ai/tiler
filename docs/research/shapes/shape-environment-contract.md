@@ -400,6 +400,31 @@ without changing computation identity. Serialization and cloning must preserve
 or consistently remap IDs. Explanation output should retain optional readable
 names and disambiguate collisions when necessary.
 
+## Accepted decision: equality does not erase source identity
+
+**Accepted by Tom on 2026-07-19:** extent symbols with different declared root
+bindings remain distinct when equality between their values is required or
+proved.
+
+```text
+A: [M, K_left]      K_left <- InputDimension(A, 1)
+B: [K_right, N]     K_right <- InputDimension(B, 0)
+
+MatMul contributes SemanticRequirement(K_left == K_right)
+```
+
+The solver may maintain an internal equivalence class or choose a temporary
+representative for efficient reasoning, substitution, and canonicalization.
+That internal representative does not rewrite the semantic interface, erase
+either binding, or change graph identity. Proof and diagnostic provenance can
+therefore report both observed sources when a runtime equality requirement
+fails.
+
+Repeated references to the same declared source use the same symbol from the
+outset. Distinct sources that happen to have equal values retain distinct
+symbols plus an explicit equality fact. Equality is knowledge about values;
+it is not retroactive identity of their declarations.
+
 ## Accepted decision: extent width and domain newtypes
 
 **Accepted by Tom on 2026-07-19:** root extent parameters and final tensor
@@ -414,11 +439,11 @@ wider legal alternative or fall back.
 
 These domains use semantic newtypes rather than exposing interchangeable
 primitive integers. At minimum, extent values, signed shape intermediates,
-symbol IDs, axis indices, input indices, host shape-parameter indices, and
-physical index widths must not be accidentally mixed merely because their
-representations are integer types. Conversion across domains is explicit and
-checked. This is a correctness and readability invariant, not only an API-style
-preference.
+symbol IDs, axis indices, input indices, interface-parameter indices, target
+property keys, binding phases, and physical index widths must not be
+accidentally mixed merely because their representations are primitive types.
+Conversion across domains is explicit and checked. This is a correctness and
+readability invariant, not only an API-style preference.
 
 ## Accepted decision: three-outcome semantic validation
 
