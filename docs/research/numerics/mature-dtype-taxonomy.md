@@ -490,6 +490,20 @@ spelling to a key such as `tiler::f32@1`. Descriptor facts do not replace the
 nominal key. Officially bundling support for an existing external type does not
 rename its canonical key; aliases are conveniences, not identity migration.
 
+**Accepted by Tom on 2026-07-19:** Tiler's built-in recognized catalog includes
+`bool` and signed and unsigned integer widths 2, 4, 8, 16, 32, and 64. In
+particular, `i2`, `u2`, `i4`, and `u4` are canonical built-in identities rather
+than frontend-specific extensions. Their recognized status does not promise
+literal, packing, arithmetic, reference, optimizer, storage, or backend
+capabilities. Wide `i128`/`u128` and arbitrary-width integers remain available
+through the nominal extension boundary rather than the initial built-in
+catalog.
+
+Quantized formats remain a required product capability, but an integer storage
+identity is not a complete quantization contract. The placement and semantics
+of expressed type, scale, zero point, per-axis or block granularity, and
+quantize/dequantize transitions require a separate decision.
+
 ## Inventory conclusions, not support decisions
 
 1. Tiler needs nominal float format identities; `{bits, exponent, mantissa}` is
@@ -512,6 +526,9 @@ rename its canonical key; aliases are conveniences, not identity migration.
 10. Built-ins and extensions share a durable nominal identity model; ergonomic
     API variants are spellings over those identities rather than a second type
     system.
+11. Standardized two- and four-bit signed and unsigned integers are recognized
+    built-ins even when a product profile supports only a subset of their
+    capabilities.
 
 The next phase is a review of omissions and naming, followed by explicit
 selection of Tiler's recognized, representable, reference, optimizer, backend,

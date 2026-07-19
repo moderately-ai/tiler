@@ -140,6 +140,14 @@ discriminant, `TypeId`, or address. A canonical type descriptor supplies the
 format's structural and value-semantic facts; those facts do not replace its
 nominal identity.
 
+The built-in recognized integer catalog includes two-valued `bool` and the
+signed and unsigned widths 2, 4, 8, 16, 32, and 64. Recognition of `i2`, `u2`,
+`i4`, and `u4` does not imply unpacked storage or general arithmetic support;
+packing, literals, operations, evaluation, and target lowering remain explicit
+capabilities. Quantized tensors are not identified by their integer storage
+type alone: scale, zero point, axis/block structure, expressed type, and their
+operation semantics require an explicit quantization contract.
+
 The graph initially contains atomic named tensor operations. Representative
 built-ins include:
 

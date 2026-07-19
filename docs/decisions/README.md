@@ -34,6 +34,7 @@ accepted. Unresolved questions are collected in
 - [0025: Separate reduction empty results from physical padding](0025-reduction-empty-results-and-padding.md) — accepted
 - [0026: Separate dtype representability from operation support](0026-dtype-representability-vs-operation-support.md) — accepted
 - [0027: Use uniform nominal identities for built-in and extension dtypes](0027-uniform-nominal-dtype-identity.md) — accepted
+- [0028: Recognize standardized sub-byte integer types](0028-recognize-sub-byte-integers.md) — accepted
 
 ## Template
 
