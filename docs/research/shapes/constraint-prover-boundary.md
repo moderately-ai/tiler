@@ -238,8 +238,9 @@ enum UnknownReason {
 
 These illustrative types require the accepted semantic newtype discipline in
 an implementation. Proof evidence records the rule or solver lane, premises,
-and relevant provenance; derived solver caches remain outside canonical graph
-identity.
+and relevant provenance. Canonical derived facts are durable `ShapeEnv`
+members under the accepted solver-exchange contract; incidental solver caches,
+search state, and proof memoization remain outside canonical program identity.
 
 The proposed staged engine is:
 

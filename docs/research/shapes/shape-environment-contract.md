@@ -206,6 +206,30 @@ An inferred fact must never silently become a new user-facing semantic
 requirement, and an optimization guard must never redefine program validity.
 Explanation output reports both the predicate and its provenance.
 
+## Accepted decision: closed solver exchange and durable derived facts
+
+**Accepted by Tom on 2026-07-19:** the closed expression and predicate
+vocabulary is the public language exchanged with the constraint solver, not
+merely a format produced by it. Operations contribute typed expressions,
+semantic requirements, and known facts in that language. The solver returns
+typed proof outcomes, contradictions, residual host checks, structured
+`Unknown` reasons, and any derived facts that it can establish. It does not
+expose opaque callbacks or solver-specific formulas to the optimizer.
+
+Derived facts become durable, canonical members of the `ShapeEnv`. Each keeps
+its proof/source provenance and is deduplicated by canonical identity, so
+later validation and optimization can reuse it and explanation output can
+reconstruct why a decision was legal. This does not require incidental solver
+state, search traces, or memoization caches to become part of the semantic
+program or its content identity.
+
+Solver implementations may use richer private representations internally,
+but optimizer and artifact layers consume only the stable typed result
+contract. Expression arity is an implementation property rather than the
+public semantic classification: for example, `Not` is unary, `Equal` is
+binary, `Select` is ternary, and canonical `Add`, `All`, or `Any` may be
+n-ary.
+
 ## Accepted decision: closed shape-expression language
 
 **Accepted by Tom on 2026-07-19:** the initial `ShapeEnv` uses a closed,
