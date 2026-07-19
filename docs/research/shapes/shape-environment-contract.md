@@ -427,3 +427,20 @@ on an unresolved condition only within a deterministic case budget; otherwise
 it returns a structured `Unknown(ResourceLimit)`. This represents common
 piecewise shape semantics without requiring specialized primitives for every
 operation or separate logical graphs for each metadata case.
+
+## Accepted decision: specialized min and max expressions
+
+**Accepted by Tom on 2026-07-19:** `Min` and `Max` are explicit shape-expression
+primitives even though either can be represented using `Select` and a
+comparison.
+
+```text
+Min(A, B)  // not canonicalized into Select(A <= B, A, B)
+Max(A, B)  // not canonicalized into Select(A >= B, A, B)
+```
+
+The specialized nodes preserve common mathematical intent, provide canonical
+forms for padding/slicing/clamping formulas, and allow bounds reasoning without
+introducing an artificial proof case split. Their evaluator or lowering may
+reuse the same atomic implementation components as `Select`; that code reuse
+does not erase their distinct IR identity.
