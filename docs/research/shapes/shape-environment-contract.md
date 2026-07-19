@@ -243,3 +243,27 @@ representable extent. Checked-arithmetic overflow, division by zero, or a
 negative final extent is a typed shape-evaluation failure with constraint and
 origin context. The concrete bounded integer representation and overflow
 width remain a separate decision.
+
+## Accepted decision: explicit division modes
+
+**Accepted by Tom on 2026-07-19:** the shape language has semantically distinct
+exact, floor, and ceiling division operations. It has no ambiguous generic
+division operation.
+
+```text
+ExactDiv(12, 4) = 3
+ExactDiv(10, 4) = error
+FloorDiv(-3, 2) = -2
+CeilDiv(-3, 2) = -1
+```
+
+All modes reject a zero divisor. `ExactDiv` additionally requires zero
+remainder. `FloorDiv` rounds toward negative infinity and `CeilDiv` toward
+positive infinity, including for negative operands. These distinctions are
+part of expression semantics, canonical identity, diagnostics, and
+serialization.
+
+The operations may share implementation modules or internal helpers. A future
+unified representation is compatible only if it retains the division mode
+explicitly and preserves these observable semantics; public constructors and
+serialized formats would require ordinary compatibility/versioning treatment.
