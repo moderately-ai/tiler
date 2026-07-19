@@ -405,3 +405,25 @@ typed, and checked.
 Code organization is separate from IR architecture: shared Rust modules or
 generic internals do not imply shared semantic identity, and distinct IR types
 do not require duplicated code.
+
+## Accepted decision: typed lazy shape selection
+
+**Accepted by Tom on 2026-07-19:** the initial shape language includes a typed
+conditional expression whose condition is a host-evaluable shape predicate and
+whose branches have the same shape-expression type.
+
+```text
+Select(A == 1, B, A)                    // dynamic broadcast extent
+Select(N == 0, 0, CeilDiv(N, chunk))    // zero-aware shape formula
+```
+
+`Select` is shape-metadata computation. It is not tensor `where`, general
+logical-graph control flow, or a device branch. Concrete evaluation is lazy:
+only the selected branch is evaluated, so an invalid operation in an
+unselected branch does not fail evaluation.
+
+Canonicalization eliminates a statically selected branch. The prover may split
+on an unresolved condition only within a deterministic case budget; otherwise
+it returns a structured `Unknown(ResourceLimit)`. This represents common
+piecewise shape semantics without requiring specialized primitives for every
+operation or separate logical graphs for each metadata case.
