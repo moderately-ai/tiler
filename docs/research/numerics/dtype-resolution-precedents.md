@@ -78,6 +78,17 @@ backend concerns?
   be written to global memory.
   [MLIR `truncf`](https://mlir.llvm.org/docs/Dialects/ArithOps/#arithtruncf-arithtruncfop).
 
+### Required FMA differs from optional contraction
+
+- Rust's stable `f32::mul_add` guarantees the rounded infinite-precision
+  multiply-add result and demonstrates an input where it differs from separate
+  multiplication and addition.
+  [Rust `f32::mul_add`](https://doc.rust-lang.org/stable/std/primitive.f32.html#method.mul_add).
+- LLVM represents required fused multiply-add with `llvm.fma`, while its
+  `contract` permission allows eligible multiply/add instructions to be fused
+  without granting arbitrary reassociation.
+  [LLVM language reference](https://llvm.org/docs/LangRef.html).
+
 ## Inferences for Tiler
 
 1. One `dtype` field cannot define a tensor operation. Value dtype,
@@ -98,6 +109,9 @@ backend concerns?
 6. Advisory backend precision preferences are not exact requirements. A
    backend must demonstrate that a physical implementation realizes the
    declared contract or reject it.
+7. Required single-rounding FMA semantics and permission to contract two
+   separately rounded operations are different contracts and require different
+   semantic representations.
 
 ## Accepted initial decision
 
@@ -136,4 +150,3 @@ support only under a declared relaxed policy, and unsupported contracts. A
 backend cannot silently substitute TF32 input precision, narrower
 accumulation, another rounding mode, contraction, or additional reduction-order
 freedom.
-

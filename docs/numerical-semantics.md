@@ -114,6 +114,26 @@ Relaxed policies may permit:
 Every rule declares which permission it requires. The optimizer cannot infer a
 relaxed policy from a backend's default compiler flags.
 
+## Fused multiply-add and contraction
+
+Tiler distinguishes a required fused multiply-add from optional contraction:
+
+```text
+Fma(a, b, c)       // one semantic rounding after a*b+c
+Add(Mul(a, b), c)  // separate semantic multiply and add roundings
+```
+
+`Fma` is a dedicated semantic operation. A backend implements its
+single-rounding contract natively, emulates it exactly, uses an already
+permitted relaxation, or rejects the plan. It cannot lower required FMA to
+separately rounded multiply and add merely because that is cheaper.
+
+`Mul` followed by `Add` remains two semantic operations. Its resolved
+contraction permission may authorize a rewrite or physical implementation using
+FMA. Contraction is independent of reassociation: permission to contract the
+existing pattern does not authorize algebraic regrouping to manufacture a new
+pattern.
+
 ## Reductions
 
 A reduction definition includes:

@@ -224,6 +224,9 @@ specified in [Operation extensions](operation-extensions.md).
 - Every operation's effective numerical optimization permissions are resolved
   and no more permissive than the program policy ceiling. Optimizer and
   scheduling rules must name the effective permission they consume.
+- Required single-rounding fused multiply-add is a dedicated semantic
+  operation. Separate multiply and add operations remain separate rounding
+  boundaries unless their resolved contraction permission authorizes fusion.
 - Every root extent symbol has exactly one typed binding whose source class and
   availability phase are supported by every semantic factor that consumes it.
 - Target-property bindings use stable versioned keys and cannot depend on a
