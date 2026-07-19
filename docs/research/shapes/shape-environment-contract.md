@@ -337,3 +337,28 @@ physical index widths must not be accidentally mixed merely because their
 representations are integer types. Conversion across domains is explicit and
 checked. This is a correctness and readability invariant, not only an API-style
 preference.
+
+## Accepted decision: three-outcome semantic validation
+
+**Accepted by Tom on 2026-07-19:** validation classifies every semantic shape
+requirement as proved, disproved, or unresolved under the facts available at
+compile time.
+
+```text
+MatMul([M, K1], [K2, N]) requires K1 == K2
+
+proved      -> accept and retain the proof as a derived fact
+disproved   -> reject during compilation with a typed diagnostic
+unresolved  -> emit a typed host-side pre-dispatch requirement
+```
+
+At invocation time an unresolved semantic requirement is evaluated after root
+extent binding but before allocation or device work. Failure means the runtime
+input is invalid for the logical program. It must not be reclassified as a
+physical guard, select another kernel as though semantics were still valid, or
+permit fallback to execute an equally invalid operation.
+
+The artifact/interface contract includes the remaining runtime requirements
+and enough provenance to produce the same structured diagnostic category as
+compile-time validation. This permits independently supplied dynamic inputs
+without requiring every valid relationship to be statically provable.
