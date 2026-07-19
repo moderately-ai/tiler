@@ -229,6 +229,26 @@ functions, and physical schedules. Recompilation may select a different
 deterministic topology, so plan determinism does not promise equal results
 across different artifact identities.
 
+## NaN result bit patterns
+
+Portable-bitwise arithmetic canonicalizes NaN results to one dtype-specific,
+versioned quiet-NaN bit pattern. Exact payload propagation is not implicitly
+part of that conformance level. This makes arithmetic that produces NaN
+portable and bitwise testable rather than allowing a backend to select any NaN
+payload.
+
+Canonicalization applies according to each operation's semantic family; it is
+not a blanket rewrite of stored tensor bits. Operations defined to preserve or
+select existing bits, including views and bit-preserving copies, preserve an
+input NaN payload. Numeric conversions use their resolved conversion contract.
+Constants retain their declared bit pattern until an operation's semantics
+produce a new value.
+
+Other conformance modes may explicitly request operand-payload propagation or
+permit any quiet NaN. Those choices are typed operation contracts and affect
+plan feasibility, reference evaluation, determinism, and artifact identity.
+No mode inherits NaN payload behavior from a backend default.
+
 ## Min and max
 
 Backends differ in their treatment of NaN and signed zero. Tiler must define

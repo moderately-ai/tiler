@@ -249,6 +249,9 @@ specified in [Operation extensions](operation-extensions.md).
   capability before a schedule may consume it.
 - Determinism guarantees name their stability scope. Canonical contracts do
   not contain an unqualified deterministic boolean.
+- Portable-bitwise arithmetic uses a versioned canonical quiet-NaN result per
+  dtype. Bit-preserving operations retain source bits, and other NaN behaviors
+  must be explicit operation contracts.
 - The canonical graph contains only the transitive closure reachable from all
   program results; dead pure operations are removed before identity is formed.
 - Stable serialization and hashing do not depend on arena IDs, insertion order,
