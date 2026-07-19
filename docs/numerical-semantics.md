@@ -280,6 +280,35 @@ a coupled mode or cannot realize every combination; that is reported as native,
 emulated, relaxed-only, or unsupported backend feasibility rather than
 collapsing the semantic dimensions.
 
+## Floating-point exception observation
+
+The initial numerical contract is explicitly value-only: floating-point
+exception cases produce the operation's resolved result value and do not expose
+an ambient status flag or synchronous trap. This is a `RaiseNoFlag`-style
+contract, not an omission whose meaning may be inherited from a host language,
+compiler, or device. Division by zero, invalid operations, overflow, and similar
+cases still have defined value semantics through the operation's NaN, infinity,
+signed-zero, conversion, and conformance contracts.
+
+Diagnostics that are ordinary data can remain pure. For example, a future
+`DivideWithStatus` operation could return `(result_tensor, exception_mask)` as
+two explicit tensor results. Because the status is a value, ordinary use-def,
+fusion, and dead-code rules remain sufficient.
+
+True observation or mutation of a floating-point environment is different. A
+sticky flag, trap, or ordered clear/read operation is an effect: it introduces
+ordering, liveness, and partial-execution obligations that tensor dataflow alone
+cannot represent. Supporting it later requires an explicit versioned
+effect/resource-token value kind and effect signature, plus corresponding
+optimizer, verifier, runtime, ABI, and artifact rules.
+
+The initial pure graph does not implement those rules, but its compatibility
+contract reserves them as additive extensions. Existing tensor values and pure
+operations retain their current meaning. Serialized programs and artifacts
+identify the exception-observation/effect model they use; an older compiler or
+runtime rejects an unsupported future model rather than interpreting it as
+`RaiseNoFlag`.
+
 ## Min and max
 
 Backends differ in their treatment of NaN and signed zero. Tiler must define

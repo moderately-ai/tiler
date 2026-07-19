@@ -98,6 +98,21 @@ obligations; it cannot generally prove arbitrary replacement mathematics.
 Conformance vectors, reference evaluation, differential tests, and negative
 precondition tests are therefore mandatory evidence.
 
+### Purity and future effects
+
+Initial extension operations must declare and satisfy the pure operation
+contract. In particular, floating-point exception cases may return resolved
+values or explicit tensor diagnostics, but may not observe or mutate hidden
+status flags, trap state, or another ambient floating-point environment.
+
+This is a capability boundary rather than a permanent exclusion. The durable
+operation and value model reserves a separately versioned effect signature and
+resource/effect-token value kinds. Adding them requires host-owned ordering,
+liveness, verification, lowering, ABI, and partial-execution rules. Existing
+pure operation keys keep their meaning; an effectful revision uses a new
+compatible identity/schema, and a compiler lacking that capability rejects it.
+No extension may smuggle an effect through a `pure` declaration.
+
 ## Transactional rewrites and termination
 
 Extension rules do not receive unrestricted mutable graph access. A rule

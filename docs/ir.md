@@ -105,7 +105,11 @@ Whether result names participate in semantic identity remains open; ordered
 result arity, value references, and result contracts do participate.
 
 All initial semantic values are tensors; rank-zero tensors represent scalar
-data. `ProgramInput` covers runtime tensor parameters and immutable weights.
+data. This initial restriction is not a claim that every future graph value
+must be a tensor. A later effect model may add explicitly kinded resource or
+effect-token values without reinterpreting existing tensor values. Unsupported
+value kinds are rejected at schema and capability boundaries. `ProgramInput`
+covers runtime tensor parameters and immutable weights.
 `Constant` owns a shape plus canonical typed bit payload included in semantic
 identity. Shape/index metadata scalars are not tensor values and instead enter
 through declared symbolic sources. Externalizing a large constant is an
@@ -202,11 +206,14 @@ specified in [Operation extensions](operation-extensions.md).
 - The initial graph is pure, immutable, acyclic tensor SSA with statically known
   rank and optionally dynamic extents. Stateful effects,
   mutation, hidden randomness, and I/O are rejected until explicit effect or
-  resource tokens are designed.
+  resource tokens are designed. Floating-point exception cases initially have
+  explicit value-only, no-observable-flag semantics rather than hidden effects.
 - Every operand references an existing, type-compatible value, and every
   non-input value has exactly one definition.
-- Every semantic operation produces one or more ordered, individually typed
-  results. Zero-result operations are reserved for a future effect/token model.
+- Every initial semantic operation produces one or more ordered, individually
+  typed tensor results. A future effect model may add non-tensor token results
+  and, if justified, zero-result operations through a new versioned capability;
+  it cannot silently broaden the meaning of an existing pure operation.
 - Operation results and program results are ordered and individually typed.
 - Result names are unique; result values exist and match their contracts.
 - Output shapes and dtypes are derived rather than trusted assertions.
@@ -255,6 +262,9 @@ specified in [Operation extensions](operation-extensions.md).
 - Subnormal input treatment and subnormal result treatment are independently
   resolved. Portable-bitwise contracts preserve both; a backend's coupled
   flush mode cannot widen operation permissions.
+- Every initial floating-point operation uses the explicit value-only
+  exception-observation contract. Unknown future effect signatures or
+  exception-observation modes are rejected rather than treated as pure.
 - The canonical graph contains only the transitive closure reachable from all
   program results; dead pure operations are removed before identity is formed.
 - Stable serialization and hashing do not depend on arena IDs, insertion order,

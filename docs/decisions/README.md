@@ -26,6 +26,7 @@ accepted. Unresolved questions are collected in
 - [0017: Separate local semantics from region accuracy goals](0017-local-vs-region-accuracy.md) — accepted
 - [0018: Canonicalize arithmetic NaNs for portable bitwise results](0018-portable-bitwise-nans.md) — accepted
 - [0019: Separate subnormal input and result handling](0019-split-subnormal-handling.md) — accepted
+- [0020: Use value-only floating-point exceptions initially](0020-value-only-floating-point-exceptions.md) — accepted
 
 ## Template
 
