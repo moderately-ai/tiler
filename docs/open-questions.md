@@ -9,7 +9,9 @@ ADR when evidence is sufficient.
   per-operation ceilings and restrictions do they expand?
 - Which built-in operations declare reassociation and commutativity
   capabilities under each resolved dtype/signature?
-- Which input, accumulation, and output dtype combinations are supported?
+- After taxonomy review, which dtypes are recognized, representable,
+  reference-evaluable, optimizable per operation, backend-realizable, and
+  enabled in the first product profile?
 - Which transcendental error metrics and operation subset are supported first?
 - Which integer division/remainder and float-to-integer conversion families are
   supported first?

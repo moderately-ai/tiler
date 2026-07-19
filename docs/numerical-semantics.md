@@ -47,6 +47,10 @@ but it must still reproduce every semantic conversion on that edge.
 
 The evidence and cross-system differences behind this boundary are recorded in
 [Dtype resolution and mixed-precision precedent](research/numerics/dtype-resolution-precedents.md).
+The broader inventory of scalar types, computation formats, numeric
+interpretations, and storage encodings is maintained separately in the
+[mature tensor dtype taxonomy](research/numerics/mature-dtype-taxonomy.md); that
+inventory is not an implementation support promise.
 
 ### Optimization permissions
 
