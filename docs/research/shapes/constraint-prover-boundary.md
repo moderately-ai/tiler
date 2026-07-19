@@ -281,11 +281,15 @@ extensions driven by recorded proof misses. The prototype must expose a stable
 prover boundary that can admit them without changing expression semantics or
 the three-outcome validation contract.
 
-## Known documentation consequence
+## Accepted resolution of the expression-layer boundary
 
 The proposed ABI contract currently describes checked `u64` arithmetic for its
 shared expression evaluator. That no longer fully matches the accepted shape
-decision permitting signed intermediate expressions. Synthesis must decide
-whether `ShapeExpr` and `AbiExpr` share one signed-capable core or remain
-distinct typed languages with an explicit checked lowering boundary. The ABI
-contract should not be updated until that choice is made.
+decision permitting signed intermediate expressions.
+
+**Accepted by Tom on 2026-07-19:** `ShapeExpr` and `AbiExpr` remain distinct,
+newtyped domain IRs with an explicit checked lowering boundary. Their
+implementations compose shared atomic arithmetic/evaluation components where
+semantics coincide; code reuse does not collapse the IR layers. Synthesis must
+update the proposed ABI contract to reflect the checked lowering and any
+signed-capable primitives it actually needs.

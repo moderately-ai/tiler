@@ -382,3 +382,26 @@ structured `Unknown` reasons and exercise the validation/guard paths; a
 prover-shaped interface that returns `Unknown` universally is insufficient.
 Fuller Presburger and nonlinear capabilities remain measurement-driven
 extensions behind the same proof contract.
+
+## Accepted decision: domain-specific expression IRs over shared components
+
+**Accepted by Tom on 2026-07-19:** `ShapeExpr` and runtime/artifact `AbiExpr`
+are distinct, newtyped domain IRs. They do not become one universal expression
+language merely because their implementations need many of the same arithmetic
+operations.
+
+```text
+ShapeExpr sources: extent symbols, input dimensions, shape parameters
+AbiExpr sources:   lowered extents, strides, buffer sizes, target properties
+```
+
+The implementations should be composed from atomic shared components for
+checked arithmetic, division modes, evaluation, canonicalization,
+serialization support, and testing where their semantics truly coincide. Each
+domain still defines its own admitted sources, result types, validation rules,
+identity, and versioning. Lowering from `ShapeExpr` to `AbiExpr` is explicit,
+typed, and checked.
+
+Code organization is separate from IR architecture: shared Rust modules or
+generic internals do not imply shared semantic identity, and distinct IR types
+do not require duplicated code.
