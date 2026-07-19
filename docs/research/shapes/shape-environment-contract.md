@@ -667,6 +667,34 @@ graph. The selected value and its frontend provenance therefore become
 visible to validation, hashing, and explanation rather than being hidden
 inside the constraint solver.
 
+## Accepted decision: existential extents are construction-only
+
+**Accepted by Tom on 2026-07-19:** frontend construction and operation shape
+inference may temporarily introduce an existential extent symbol and relations
+that are intended to determine it. Before a graph is eligible for semantic
+optimization or compilation, every such symbol must be uniquely eliminated
+into an explicit host-evaluable expression over bound roots.
+
+```text
+temporary inference state:
+  K is existential
+  K == M * N
+
+compilable shape:
+  output extent = Mul(M, N)
+```
+
+The resolution retains proof and source provenance. If the relations are
+ambiguous, contradictory, outside the supported proof fragment, or exhaust a
+proof budget, the current compiler cannot accept that inferred interface. A
+frontend may instead provide an explicit valid expression; the compiler must
+not invent a value or turn absence of a binding source into an ordinary runtime
+semantic check.
+
+This is a completeness invariant for compilable semantic input, not a decision
+about a mandatory `.build()`, `.seal()`, type-state, or other public commitment
+API. Those lifecycle mechanics remain deferred.
+
 ## Accepted decision: shape is upstream of access, not physical planning
 
 **Accepted by Tom on 2026-07-19:** under Tiler's pure tensor-value semantics,
