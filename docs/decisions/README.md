@@ -38,6 +38,7 @@ accepted. Unresolved questions are collected in
 - [0029: Generalize affine quantization granularity with parameter index maps](0029-affine-quantization-parameter-maps.md) — accepted
 - [0030: Represent quantized tensors as first-class assembled values](0030-first-class-quantized-values.md) — accepted
 - [0031: Reject NaN in strict affine quantization](0031-strict-affine-quantization-rejects-nan.md) — accepted
+- [0032: Fix strict affine quantization evaluation](0032-strict-affine-quantization-evaluation.md) — accepted
 
 ## Template
 

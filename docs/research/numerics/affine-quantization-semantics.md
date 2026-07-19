@@ -1,6 +1,7 @@
 # Affine quantization numerical semantics
 
-**Status:** researched baseline; strict NaN policy accepted
+**Status:** strict baseline accepted
+
 **Reviewed:** 2026-07-19
 
 ## Why the formula is insufficient
@@ -71,8 +72,7 @@ sections 1.12 and 2.13.2.
 
 ## Derived initial affine baseline
 
-The following choices follow current Tiler invariants and mature precedent; no
-product judgment is required:
+The following choices follow current Tiler invariants and mature precedent:
 
 - scale is positive and finite;
 - zero point and logical codes are within the declared logical code range;
@@ -87,11 +87,12 @@ product judgment is required:
 - integer encoding cannot preserve an input signed zero; decoding `code ==
   zero_point` produces the contract's canonical positive zero;
 - subnormal input, scale, intermediate, and output behavior is explicit and
-  never inherited from a backend default;
+  never inherited from a backend default; the strict family preserves
+  subnormals at every named boundary;
 - every contract field participates in semantic, explanation, plan, and
   artifact identity.
 
-The exact evaluation form is conceptually:
+The accepted strict evaluation form is conceptually:
 
 ```text
 decode(code, scale, zero_point):
@@ -101,13 +102,18 @@ decode(code, scale, zero_point):
 encode(value, scale, zero_point):
     scaled = convert<compute>(value) / convert<compute>(scale)
     shifted = scaled + convert<compute>(zero_point)
-    rounded = round_ties_even(shifted)
-    return saturating_convert<code>(rounded, qmin, qmax)
+    require_not_nan(shifted)
+    clamped = clamp(shifted, convert<compute>(qmin), convert<compute>(qmax))
+    rounded = round_ties_even(clamped)
+    return exact_convert<code>(rounded)
 ```
 
-The final contract will state where endpoint clamping occurs relative to
-rounding. For finite values, the baseline must make the chosen order and all
-intermediate rounding observable.
+The computation dtype is a resolved field rather than inferred from the
+backend. Conversion into it and any conversion from it are separate typed
+boundaries. Strict decoding of `code == zero_point` produces canonical positive
+zero; integer encoding collapses both input zero signs to the zero-point code.
+Positive and negative infinity clamp to the upper and lower endpoints
+respectively.
 
 ## Requantize and integer Rescale are distinct
 
@@ -157,3 +163,7 @@ input error, not a physical-plan miss and not permission to retry with a
 different mapping. The exact validation execution strategy remains a runtime
 design question constrained by the no-hidden-semantic-change and no-unsafe-
 partial-fallback rules.
+
+These strict evaluation choices are recorded durably in ADR 0032. Other
+computation dtypes, subnormal policies, rounding modes, or exceptional mappings
+are separate typed conversion families rather than backend discretion.

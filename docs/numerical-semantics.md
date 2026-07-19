@@ -497,6 +497,11 @@ subtraction, explicit evaluation dtype/order, nearest-even encoding, endpoint
 saturation, and distinct logical `Requantize` and integer `Rescale` families.
 Strict affine `Quantize` rejects NaN input. Alternative NaN mappings are
 separate typed conversion families and never backend-selected behavior.
+Strict affine evaluation widens code-minus-zero-point before subtraction, uses
+an explicit computation dtype and operation order, preserves subnormals at
+named boundaries, clamps before nearest-even integer conversion, saturates
+infinities, and makes logical requantization an observable decode followed by
+encode.
 
 ## Backend numerical feasibility
 
