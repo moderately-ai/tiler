@@ -137,3 +137,20 @@ included in an artifact/interface identity whenever the ABI exposes them.
 Every non-root extent is a canonical expression over declared roots and
 constants. Free symbols, ambiguous bindings, multiple incompatible bindings,
 and references to tensor element data are invalid in the initial `ShapeEnv`.
+
+## Accepted decision: pre-dispatch host evaluability
+
+**Accepted by Tom on 2026-07-19:** every initial output shape, temporary
+allocation size, applicability guard, routing expression, and launch expression
+must be evaluable on the host before any device work begins.
+
+The allowed inputs are static constants, input tensor metadata, explicit host
+shape parameters, and admitted host-visible target properties. Tensor element
+data and values produced by a device dispatch are not initial extent sources.
+
+Data-dependent shapes such as `NonZero`, `Unique`, and variable-length
+selection require a future explicit shape/discovery program and two-phase
+execution contract. They are rejected from the initial compilable graph with a
+specific sourceability diagnostic rather than treated as an ordinary dynamic
+extent. This preserves complete allocation and pipeline preflight before
+partial execution and keeps fallback transactional.
