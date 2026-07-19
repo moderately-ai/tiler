@@ -15,6 +15,10 @@ ADR when evidence is sufficient.
 - Which transcendental error metrics and operation subset are supported first?
 - Which integer division/remainder and float-to-integer conversion families are
   supported first?
+- How does a first-class quantized value interpretation durably own static or
+  runtime scale, zero-point, or codebook tensor bindings without putting
+  graph-local value handles inside a dtype or allowing metadata to detach from
+  the code value?
 
 ## Semantic graph and operation extensions
 

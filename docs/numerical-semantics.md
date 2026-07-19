@@ -52,6 +52,11 @@ interpretations, and storage encodings is maintained separately in the
 [mature tensor dtype taxonomy](research/numerics/mature-dtype-taxonomy.md); that
 inventory is not an implementation support promise.
 
+The focused [quantization IR precedent review](research/numerics/quantization-ir-precedents.md)
+recommends, but does not yet accept, a hybrid of first-class quantized value
+interpretations and explicit conversion/rescale operations. The ownership of
+static and runtime parameter bindings remains an open graph-contract decision.
+
 Representability and operation support are separate. A recognized dtype may
 appear on tensor values and participate in explicitly compatible operations
 without implying that arbitrary arithmetic, reference evaluation, optimization,

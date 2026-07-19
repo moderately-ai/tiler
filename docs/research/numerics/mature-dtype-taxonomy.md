@@ -273,10 +273,15 @@ AffineQuantized {
     expressed_float,
     storage_min,
     storage_max,
-    parameters: Static(scales, zero_points) | GraphValues(scale_ids, zero_point_ids),
+    parameter_roles: ScaleAndOptionalZeroPoint,
     granularity: PerTensor | PerAxis(axis) | PerBlock(mapping),
     rounding,
     overflow_or_saturation,
+}
+
+bindings {
+    scales: TensorValue,
+    zero_points: Optional<TensorValue>,
 }
 ```
 
@@ -299,6 +304,14 @@ optimization instead of inheriting those ambiguities.
 Primary sources: [StableHLO quantized tensor types](https://openxla.org/stablehlo/spec#quantized-tensor-types),
 [MLIR Quant dialect](https://mlir.llvm.org/docs/Dialects/QuantDialect/), and
 [ONNX `QuantizeLinear`](https://onnx.ai/onnx/operators/onnx__QuantizeLinear.html).
+
+The focused review in
+[Quantization representation in tensor IRs](quantization-ir-precedents.md)
+finds that dtype-only and operation-only models each lose an important
+capability. The researched recommendation is a first-class quantized value
+interpretation plus explicit quantize, dequantize, requantize, and native
+quantized operation contracts. Exact ownership of graph-value parameter
+bindings remains unresolved.
 
 ### Fixed-point, normalized integer, and decimal fixed-point
 
@@ -514,8 +527,9 @@ quantize/dequantize transitions require a separate decision.
 4. Complex is structural over an explicitly admitted component dtype.
 5. Quantization and fixed-point are numeric interpretations, not aliases for
    their integer storage.
-6. Packing and block scaling belong to storage/encoding contracts with layout
-   and metadata.
+6. Packing belongs to storage/encoding contracts. Block scaling spans a
+   semantic numeric interpretation and a physical encoding; neither layer alone
+   is a complete contract.
 7. TF32 and similar reduced product precision belong to operation/physical
    compute contracts unless an explicit tensor interchange use case proves
    otherwise.
