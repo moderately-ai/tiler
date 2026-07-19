@@ -373,6 +373,12 @@ ordinary tensor operations such as reshape.
 
 The detailed precedent, tractability boundary, initial-versus-later capability
 matrix, and proposed staged proof architecture are recorded in
-[Shape constraint prover boundary](constraint-prover-boundary.md). No solver
-scope is accepted yet. The next decision is how much affine/Presburger
-reasoning belongs in the first implementation requirement.
+[Shape constraint prover boundary](constraint-prover-boundary.md).
+
+**Accepted by Tom on 2026-07-19:** the minimally viable prototype includes a
+working native prover for canonical equality, substitution, intervals,
+constants, and common divisibility consequences. It must produce evidence and
+structured `Unknown` reasons and exercise the validation/guard paths; a
+prover-shaped interface that returns `Unknown` universally is insufficient.
+Fuller Presburger and nonlinear capabilities remain measurement-driven
+extensions behind the same proof contract.

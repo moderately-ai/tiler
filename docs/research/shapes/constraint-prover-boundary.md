@@ -1,6 +1,6 @@
 # Shape constraint prover boundary
 
-**Status:** research finding and proposed direction; not an accepted decision  
+**Status:** research finding with an accepted prototype scope
 **Ticket:** `shape-environment-contract`  
 **Question:** is shape-constraint reasoning realistically bounded, and what
 would an intentionally incomplete initial prover omit?
@@ -155,7 +155,8 @@ requires proving `not-P` for every binding allowed by `F`.
 
 ## Capability stages
 
-The exact staging is proposed, not accepted.
+The detailed later staging is proposed. The minimally viable initial prover
+scope below is accepted.
 
 | Obligation | Exact evaluator | Initial canonical rules | Presburger lane | Targeted nonlinear rules |
 |---|---:|---:|---:|---:|
@@ -262,9 +263,23 @@ Tiler should promise:
 It should not promise that every true proposition over the admitted shape
 language is proved during compilation.
 
-The remaining product decision is how much of the affine/Presburger lane is a
-first implementation requirement: only an integration-ready interface, a
-small internal subset, or a fuller bounded solver.
+## Accepted prototype scope
+
+**Accepted by Tom on 2026-07-19:** constraint proving is a core part of Tiler,
+and the minimally viable prototype must contain a functioning prover. An
+interface whose implementation returns `Unknown` for every nonconstant query
+is not an adequate proof of concept.
+
+The initial native prover covers canonical equality, constant folding,
+equality substitution, nonnegative extent facts, checked intervals, and common
+constant-divisibility consequences. It emits typed proof evidence and
+structured `Unknown` reasons and exercises compile-time rejection, runtime
+semantic checks, physical guards, and guard elimination end to end.
+
+A fuller Presburger engine and targeted nonlinear rules remain incremental
+extensions driven by recorded proof misses. The prototype must expose a stable
+prover boundary that can admit them without changing expression semantics or
+the three-outcome validation contract.
 
 ## Known documentation consequence
 
