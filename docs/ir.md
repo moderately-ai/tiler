@@ -227,6 +227,9 @@ specified in [Operation extensions](operation-extensions.md).
 - Required single-rounding fused multiply-add is a dedicated semantic
   operation. Separate multiply and add operations remain separate rounding
   boundaries unless their resolved contraction permission authorizes fusion.
+- Every transcendental operation carries a resolved accuracy contract. No
+  canonical operation inherits transcendental accuracy from backend defaults
+  or ambient compiler flags.
 - Every root extent symbol has exactly one typed binding whose source class and
   availability phase are supported by every semantic factor that consumes it.
 - Target-property bindings use stable versioned keys and cannot depend on a

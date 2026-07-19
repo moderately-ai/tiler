@@ -30,3 +30,24 @@ Use IREE parameter resources/archives, IREE Stream/HAL, MLIR bufferization and
 ownership, TVM Relax, and JAX host offloading as primary precedents. Produce a
 scope ADR; default to deferral unless measurements demonstrate an initial
 whole-program requirement.
+
+## Initial research synthesis
+
+The first pass on 2026-07-19 supports deferring general out-of-core planning.
+IREE models parameter archives as external, asynchronously accessible,
+device-aware resources and may realize them through mapping, caches, device
+I/O, or staged reads. The file representation uses opaque aligned byte ranges
+rather than making file paths part of tensor semantics. JAX host offloading
+similarly combines placement and rematerialization policy above kernel code.
+
+Tiler should reserve external resource identity, asynchronous availability,
+and staging interfaces, but should not initially own file handles, persistence,
+eviction, or disk scheduling. Those require a broader orchestration lifetime
+than a macro-local compiled tensor program.
+
+Primary starting points:
+
+- https://iree.dev/reference/mlir-dialects/IOParameters/
+- https://iree.dev/guides/parameters/
+- https://iree.dev/reference/mlir-dialects/Stream/
+- https://docs.jax.dev/en/latest/notebooks/host-offloading.html

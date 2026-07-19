@@ -32,3 +32,26 @@ Use StableHLO collectives, OpenXLA Shardy, XLA Send/Recv, IREE
 Flow/Stream/HAL, CUDA peer topology, and Metal multi-device restrictions as
 primary precedent. Produce a scope ADR and follow-up tickets only for the
 admitted milestone.
+
+## Initial research synthesis
+
+The first pass on 2026-07-19 found that explicit semantic collectives and
+compiler-inserted collectives occupy different layers. StableHLO collectives
+define global tensor results, whereas OpenXLA Shardy represents distribution
+over symbolic meshes and physical planning may insert resharding or
+communication. IREE then lowers target affinities into explicit asynchronous
+resources and execution dependencies.
+
+The current single-device `KernelProgram` remains a sound initial boundary.
+Multi-device support is a program-level extension requiring topology,
+multi-resource lifetime, queues/timepoints, communication costs, collective
+numerics, partial-failure semantics, and likely multiple target artifacts. It
+must not be smuggled into `KernelSchedule` as another coordinate dimension.
+
+Primary starting points:
+
+- https://openxla.org/stablehlo/spec#collectives
+- https://openxla.org/shardy/sharding_representation
+- https://openxla.org/shardy/propagation
+- https://openxla.org/xla/operation_semantics#send
+- https://iree.dev/reference/mlir-dialects/Stream/

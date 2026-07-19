@@ -22,6 +22,7 @@ accepted. Unresolved questions are collected in
 - [0013: Scope deterministic numerical guarantees](0013-scoped-determinism.md) — accepted
 - [0014: Separate reassociation from operand permutation](0014-reassociation-vs-permutation.md) — accepted
 - [0015: Distinguish required FMA from optional contraction](0015-fma-vs-contraction.md) — accepted
+- [0016: Resolve transcendental accuracy per operation](0016-transcendental-accuracy-contracts.md) — accepted
 
 ## Template
 

@@ -134,6 +134,29 @@ FMA. Contraction is independent of reassociation: permission to contract the
 existing pattern does not authorize algebraic regrouping to manufacture a new
 pattern.
 
+## Transcendental accuracy
+
+Every transcendental operation carries a resolved, operation-specific accuracy
+contract. `Exp`, `Log`, `Sin`, and similar operations do not inherit an
+accuracy choice from ambient compiler flags or a backend's default math
+library.
+
+Illustrative contract forms include correctly rounded results, a bounded ULP
+or absolute/relative error model over a stated input domain, and a versioned
+backend-elementary contract. The actual metric vocabulary remains to be
+decided; an opaque `approximate` boolean is insufficient.
+
+A frontend may expose named accuracy presets, but it resolves them before
+canonical semantic admission. A rewrite, fusion choice, or backend intrinsic
+is legal only when it proves that its implementation satisfies the resolved
+operation contract or consumes a separately authorized relaxation. Backend
+feasibility may report exact native support, exact emulation, relaxed-only
+support, or rejection.
+
+This decision defines local operation contracts. It does not yet decide whether
+Tiler will support redistributing an end-to-end error budget across several
+operations.
+
 ## Reductions
 
 A reduction definition includes:
