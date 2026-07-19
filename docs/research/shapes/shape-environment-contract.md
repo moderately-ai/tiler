@@ -223,3 +223,23 @@ typing, overflow, canonicalization, serialization, and evaluation semantics.
 The exact initial primitive set remains to be decided. Candidate needs include
 constants and roots; checked arithmetic; exact, floor, and ceiling division;
 remainder and divisibility; comparisons; min/max; and a typed conditional.
+
+## Accepted decision: signed intermediate arithmetic
+
+**Accepted by Tom on 2026-07-19:** shape expressions may contain checked signed
+intermediate values even though a tensor extent is always nonnegative.
+
+```text
+conv_output = floor_div(N + 2P - D * (K - 1) - 1, S) + 1
+```
+
+This permits tensor formulas such as convolution, cropping, padding, and
+slicing to retain their natural mathematical structure instead of requiring
+unsigned-only rewrites. Signed division and rounding behavior must be explicit
+for each relevant primitive.
+
+Every expression exported as a tensor extent must evaluate to a nonnegative,
+representable extent. Checked-arithmetic overflow, division by zero, or a
+negative final extent is a typed shape-evaluation failure with constraint and
+origin context. The concrete bounded integer representation and overflow
+width remain a separate decision.
