@@ -1,7 +1,7 @@
 ---
 id: define-initial-affine-quantization-semantics
 title: Define initial affine quantization semantics
-status: in-progress
+status: review
 priority: p0
 dependencies: []
 related: [numerical-policy-contract, define-quantized-value-binding-contract]
@@ -22,4 +22,10 @@ ADR 0031 resolves strict NaN handling as semantic rejection while preserving exp
 ADR 0032 resolves strict evaluation order, widened subtraction, explicit
 computation dtype, subnormal preservation, endpoint handling, and the separation
 of logical `Requantize` from integer `Rescale`. The initial portable dtype and
-backend profile remains to be selected.
+backend profile is the remaining scope item.
+
+The initial semantic/reference profile is now `i4/u4/i8/u8` codes with `f32`
+expressed, scale, computation, and requantization-intermediate values across
+per-tensor, per-axis, and per-block maps. The first physical proof requires one
+8-bit path and one packed 4-bit block path; individual backend cells remain
+capability-gated.

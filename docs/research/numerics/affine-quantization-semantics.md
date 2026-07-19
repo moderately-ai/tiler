@@ -167,3 +167,27 @@ partial-fallback rules.
 These strict evaluation choices are recorded durably in ADR 0032. Other
 computation dtypes, subnormal policies, rounding modes, or exceptional mappings
 are separate typed conversion families rather than backend discretion.
+
+## Initial proof profile
+
+The initial backend-neutral semantic and reference profile is deliberately
+narrow but exercises the architecture's difficult dimensions:
+
+- strict affine scheme;
+- `i4`, `u4`, `i8`, and `u8` logical code dtypes;
+- `f32` expressed, scale, computation, and requantization-intermediate dtype;
+- optional zero point in the code dtype;
+- per-tensor, per-axis, and per-block parameter maps;
+- constant and runtime parameter operands in semantic IR;
+- `AssembleQuantized`, `Quantize`, `Dequantize`, and `Requantize` reference
+  semantics and validation.
+
+This is a support target for semantic verification and the reference evaluator,
+not a claim that the first backend lowers every cell. Backend capabilities
+remain explicit. The first physical proof must include at least one 8-bit path
+and one packed 4-bit block path; otherwise it would not validate the separation
+between logical codes, parameter maps, and storage encoding.
+
+Unproven dynamic full-data validation may remain unsupported in a narrow
+runtime profile until it implements an ADR 0033 enforcement plan. Constants and
+compiler-proven values still exercise the same semantic operations.

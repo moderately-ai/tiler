@@ -80,6 +80,23 @@ construction order.
 **Exit criterion:** a useful einops-derived chain executes correctly with fewer
 dispatches or intermediates than the reference path.
 
+## Milestone 2Q: quantized-value vertical proof
+
+- Verify and reference-evaluate strict affine `i4/u4/i8/u8` code tensors with
+  `f32` expressed, scale, computation, and requantization-intermediate values.
+- Cover per-tensor, per-axis, and per-block parameter maps with constant and
+  runtime graph operands.
+- Implement `AssembleQuantized`, `Quantize`, `Dequantize`, and `Requantize`
+  contracts independently of physical packing.
+- Lower at least one 8-bit path and one packed 4-bit block path, with complete
+  component-role ABI and storage-encoding validation.
+- Exercise proof-elided semantic validation; measure runtime enforcement
+  separately rather than weakening strict semantics for an integration.
+
+**Exit criterion:** logical code type, quantized interpretation, parameter map,
+and packed storage remain independently verified while a representative 8-bit
+and 4-bit program agree with the strict reference evaluator.
+
 ## Milestone 3: physical properties and alternatives
 
 - Required/provided layout, alignment, vector width, and materialization.
