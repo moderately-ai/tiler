@@ -1,7 +1,7 @@
 ---
 id: shape-environment-contract
 title: Define symbolic shape and extent sourceability
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [research/shapes]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1784444575
 ---
 Determine the scope and invariants of ShapeEnv: static rank, symbolic extents, equality and divisibility constraints, where runtime extent values originate, and which host-side shape and launch expressions are derivable. Bound or defer data-dependent shapes explicitly.
 
