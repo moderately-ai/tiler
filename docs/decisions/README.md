@@ -20,6 +20,7 @@ accepted. Unresolved questions are collected in
 - [0011: Resolve numerical permissions per operation](0011-per-operation-numerical-permissions.md) — accepted
 - [0012: Keep reduction topology in physical plans](0012-physical-reduction-topology.md) — accepted
 - [0013: Scope deterministic numerical guarantees](0013-scoped-determinism.md) — accepted
+- [0014: Separate reassociation from operand permutation](0014-reassociation-vs-permutation.md) — accepted
 
 ## Template
 

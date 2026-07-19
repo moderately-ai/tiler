@@ -87,6 +87,9 @@ A proposed fusion region is legal only when all of the following hold.
 - Operation and reduction order satisfy the selected policy.
 - A concrete reduction topology is a physical-plan decision proven to satisfy
   the semantic reduction's allowed evaluation-order or result class.
+- Reduction scheduling proves reassociation and operand-permutation legality
+  independently; a permission or algebraic capability for one is not evidence
+  for the other.
 - NaN, signed-zero, empty-domain, cast, and overflow semantics are preserved.
 
 Legality failure produces a structured split or fallback reason.

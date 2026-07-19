@@ -128,6 +128,16 @@ A reduction definition includes:
 
 Accumulator dtype does not determine reduction semantics by itself. The order
 contract independently states which serial or tree evaluations are permitted.
+It represents reassociation and operand permutation as independent dimensions:
+
+- **reassociation** changes grouping while preserving logical operand order;
+- **permutation** changes logical operand order.
+
+Granting reassociation does not grant permutation. Reassociation requires both
+an operation capability supporting regrouping and an effective numerical
+permission to use it. Permutation independently requires a commutative
+operation capability and an effective numerical permission to reorder. A
+physical schedule proves both properties separately.
 
 The semantic order contract constrains the legal evaluation orders or result
 set; it does not encode a concrete SIMD, threadgroup, or multi-pass reduction

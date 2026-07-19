@@ -234,6 +234,9 @@ specified in [Operation extensions](operation-extensions.md).
 - Reduction semantic nodes constrain the legal evaluation-order or result
   class, while concrete reduction trees, partitioning, and multi-pass topology
   belong to selected physical plans and artifact identity.
+- Reduction contracts distinguish regrouping from operand permutation. Neither
+  permission implies the other, and each requires the corresponding operation
+  capability before a schedule may consume it.
 - Determinism guarantees name their stability scope. Canonical contracts do
   not contain an unqualified deterministic boolean.
 - The canonical graph contains only the transitive closure reachable from all
