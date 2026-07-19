@@ -267,3 +267,31 @@ The operations may share implementation modules or internal helpers. A future
 unified representation is compatible only if it retains the division mode
 explicitly and preserves these observable semantics; public constructors and
 serialized formats would require ordinary compatibility/versioning treatment.
+
+## Provisional decision: specialization boundary
+
+**Accepted provisionally by Tom on 2026-07-19:** runtime extents remain symbolic
+in the logical plan by default. Specializing an extent to a concrete value is a
+physical-planning decision.
+
+```text
+logical extent: batch
+
+physical alternatives:
+  batch == 1       -> shape-specialized kernel
+  batch % 8 == 0   -> guarded vectorized kernel
+  otherwise        -> generic plan or fallback
+```
+
+This preserves one logical computation across shape profiles and allows the
+physical optimizer to build a bounded, costed portfolio. It does not prevent
+constant folding or specialization: a frontend-declared static extent is
+already constant, and a physical alternative may introduce an explicit guard
+that makes a symbolic extent constant within that alternative.
+
+Specializing in the logical plan would expose constants earlier and can
+simplify shape-specific reasoning, but it discards generality, splits logical
+identity by shape, and risks compile-time and artifact proliferation. The
+symbolic-first direction is therefore the prototype default, not yet a durable
+policy: experiments must determine which specializations pay for their guard,
+compile-time, and artifact-size costs and how the portfolio is bounded.
