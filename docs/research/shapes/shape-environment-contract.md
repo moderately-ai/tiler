@@ -154,3 +154,24 @@ execution contract. They are rejected from the initial compilable graph with a
 specific sourceability diagnostic rather than treated as an ordinary dynamic
 extent. This preserves complete allocation and pipeline preflight before
 partial execution and keeps fallback transactional.
+
+## Accepted decision: zero extents
+
+**Accepted by Tom on 2026-07-19:** zero is a valid axis extent in `ShapeEnv`.
+The graph does not impose a global strictly-positive extent invariant.
+
+```text
+tensor<4 x 0 x 8 x f32>       // valid tensor shape, zero elements
+Gelu(x)                       // valid; produces an empty tensor
+ReduceSum(x, axis = 1)        // valid only if the op defines its empty domain
+```
+
+Each operation definition must specify its empty-domain semantics or reject an
+empty domain with a semantic precondition. Physical plans must handle zero
+work explicitly; they may not rely on launching a zero-sized grid. Shape and
+index expressions must also avoid evaluating otherwise irrelevant division or
+modulo operations whose divisor becomes zero.
+
+The main complications are therefore operation semantics, launch legality,
+and checked shape arithmetic—not a reason to reject zero-sized tensors. A
+zero extent is not an unknown extent or a sentinel value.
