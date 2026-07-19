@@ -180,3 +180,30 @@ The chosen model must prove:
 
 This carrier/ownership question should be resolved before accepting a
 quantization IR ADR.
+
+## Accepted granularity direction
+
+**Accepted by Tom on 2026-07-19:** affine quantization granularity is modeled
+through a bounded mapping from data-tensor coordinates to parameter-tensor
+coordinates. Per-tensor, per-axis, and per-block quantization are built-in
+forms over that common concept rather than unrelated representations:
+
+```text
+data coordinate [i, j] -> parameter coordinate
+
+per-tensor: []
+per-axis:   [j]
+per-block:  [floor_div(i, block_i), floor_div(j, block_j)]
+```
+
+The exact mapping language remains to be designed and bounded. It must be
+canonical, shape-checkable, and expressive enough for the admitted built-in
+forms without becoming arbitrary executable code.
+
+Representation, structural verification, reference evaluation, optimization,
+and backend lowering remain separate capabilities. The first vertically
+executable backend slice need not lower every admitted granularity. A backend
+may reject a verified per-axis or per-block program with a precise missing-
+capability diagnostic without preventing later support. New quantization
+scheme families such as codebook quantization use the versioned extension
+boundary rather than overloading affine granularity.

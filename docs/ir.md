@@ -148,6 +148,13 @@ capabilities. Quantized tensors are not identified by their integer storage
 type alone: scale, zero point, axis/block structure, expressed type, and their
 operation semantics require an explicit quantization contract.
 
+Affine quantization maps each data coordinate to a coordinate in its scale and
+optional zero-point parameter tensors through a bounded canonical parameter
+index map. Per-tensor, per-axis, and per-block quantization are built-in forms
+of that mapping. The mapping is semantic and shape-verified; physical packing
+and addressing remain storage decisions. Representability and verification of
+a mapping do not imply reference, optimizer, or backend support for it.
+
 The graph initially contains atomic named tensor operations. Representative
 built-ins include:
 

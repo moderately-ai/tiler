@@ -517,6 +517,12 @@ identity is not a complete quantization contract. The placement and semantics
 of expressed type, scale, zero point, per-axis or block granularity, and
 quantize/dequantize transitions require a separate decision.
 
+**Accepted by Tom on 2026-07-19:** affine per-tensor, per-axis, and per-block
+granularities are built-in forms over a bounded data-index-to-parameter-index
+mapping. Capability support may progress independently from representation and
+verification through reference evaluation, optimization, and backend lowering.
+The architecture must not encode scale as an inherently scalar field.
+
 ## Inventory conclusions, not support decisions
 
 1. Tiler needs nominal float format identities; `{bits, exponent, mantissa}` is
