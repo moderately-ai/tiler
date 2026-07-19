@@ -149,23 +149,27 @@ rounding, and saturation contracts are known. Rewrites between QDQ and native
 forms require those contracts to match; backend convenience is not proof of
 equivalence.
 
-This direction is compatible with current ADRs but is not yet accepted. In
-particular, it does not decide the exact ownership model described below.
+ADR 0029 accepts the general parameter-map direction, and ADR 0030 accepts the
+first-class value carrier resolved below.
 
-## Remaining architectural decision
+## Carrier resolution
 
-The unresolved issue is how a value's first-class quantization interpretation
-owns or references its parameter bindings.
+The follow-up review resolved how a value's first-class quantization
+interpretation owns parameter bindings.
 
-A tensor type cannot simply contain graph-local `ValueId`s: those handles are
-not durable identities, and doing so would blur the current type/operand
-boundary. A detached specification is also insufficient because transformations
-could lose the association. Candidate designs include a graph-owned
-interpretation instance referenced by the value, a dependent value contract
-whose bindings are operation result roles, or another host-owned relation with
-canonical graph-topology identity.
+A tensor's static semantic type/refinement carries the versioned scheme,
+component-role schema, primitive types, parameter maps, and numerical contract.
+It contains neither graph-local `ValueId`s nor concrete parameter tensors. A
+dedicated assembly or quantization operation receives code and parameter
+tensors as ordered operands and produces one first-class quantized tensor value.
+This makes the relationship part of ordinary use-def structure while keeping
+type identity durable.
 
-The chosen model must prove:
+The complete contract and transformation rules are recorded in
+[Quantized value and transformation contract](quantized-value-and-transform-contract.md)
+and ADR 0030.
+
+The model must prove:
 
 - scale and zero-point bindings cannot become detached from their code value;
 - constants and runtime tensors use one typed operand-role model;
@@ -178,8 +182,8 @@ The chosen model must prove:
 - unsupported transformations reject or insert an explicit semantic
   conversion rather than silently changing the interpretation.
 
-This carrier/ownership question should be resolved before accepting a
-quantization IR ADR.
+The exact Rust API and serialized spelling remain open implementation design,
+not semantic architecture.
 
 ## Accepted granularity direction
 

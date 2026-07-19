@@ -53,9 +53,10 @@ interpretations, and storage encodings is maintained separately in the
 inventory is not an implementation support promise.
 
 The focused [quantization IR precedent review](research/numerics/quantization-ir-precedents.md)
-recommends, but does not yet accept, a hybrid of first-class quantized value
-interpretations and explicit conversion/rescale operations. The ownership of
-static and runtime parameter bindings remains an open graph-contract decision.
+and [quantized value contract](research/numerics/quantized-value-and-transform-contract.md)
+define a hybrid of first-class quantized tensor values and explicit
+assembly/conversion operations. Static scheme structure belongs to the type
+contract; concrete static or runtime parameters remain graph operands.
 
 Representability and operation support are separate. A recognized dtype may
 appear on tensor values and participate in explicitly compatible operations

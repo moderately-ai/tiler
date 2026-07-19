@@ -78,6 +78,23 @@ ownership, collision handling, provider compatibility, and durable descriptor
 encoding require the same deterministic registry discipline as operations;
 their exact Rust API remains open.
 
+Quantization and other encoded numeric interpretations have a separate
+namespaced, versioned scheme identity. A `QuantSchemeKey` is neither the
+primitive code/expressed `TypeKey` nor a physical `StorageEncodingKey`.
+Providers declare a bounded static scheme schema, ordered typed component
+roles, coordinate maps, normative decode and optional encode semantics,
+transformation capabilities, operation support, canonical conformance vectors,
+and provider revision.
+
+The host owns component operand ordering, canonical encoding, graph dependency
+tracking, shape/value constraints, resource bounds, and explanation. Extension
+schemes may describe multiple scale levels, codebooks, nested encoded metadata,
+or multi-component payloads, but composition is bounded and acyclic. They may
+not hide parameter data or mutable calibration state inside callbacks.
+Physical encoding providers separately describe packing, buffers, interleaving,
+alignment, padding, memory space, and ABI realization without changing the
+scheme's numerical meaning.
+
 ## Host-owned canonical attributes
 
 Durable attributes use a bounded canonical value model and encoder owned by

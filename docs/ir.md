@@ -155,6 +155,22 @@ of that mapping. The mapping is semantic and shape-verified; physical packing
 and addressing remain storage decisions. Representability and verification of
 a mapping do not imply reference, optimizer, or backend support for it.
 
+A quantized tensor is one first-class semantic tensor value even when its
+runtime representation has several components. Its static type contract names
+the versioned scheme, code and expressed dtypes, component roles, coordinate
+maps, and resolved numerical behavior. Concrete code, scale, zero-point,
+codebook, or other component tensors are ordered operands to a dedicated
+assembly or conversion operation; graph-local value handles and parameter
+payloads never enter the static type.
+
+`AssembleQuantized` associates existing components without numeric conversion.
+`Quantize`, `Dequantize`, and `Requantize` are observable numeric conversions.
+Component extraction is explicit, and physical packing remains a later storage
+decision. Canonical program identity includes the producing operation and its
+canonical operand identities, not incidental arena IDs. Artifact lowering may
+expand one logical quantized argument or result into several verified physical
+bindings.
+
 The graph initially contains atomic named tensor operations. Representative
 built-ins include:
 

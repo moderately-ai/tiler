@@ -308,10 +308,10 @@ Primary sources: [StableHLO quantized tensor types](https://openxla.org/stablehl
 The focused review in
 [Quantization representation in tensor IRs](quantization-ir-precedents.md)
 finds that dtype-only and operation-only models each lose an important
-capability. The researched recommendation is a first-class quantized value
-interpretation plus explicit quantize, dequantize, requantize, and native
-quantized operation contracts. Exact ownership of graph-value parameter
-bindings remains unresolved.
+capability. The follow-up
+[quantized value and transformation contract](quantized-value-and-transform-contract.md)
+resolves this with a first-class statically described quantized tensor value
+assembled from ordinary code and parameter operands.
 
 ### Fixed-point, normalized integer, and decimal fixed-point
 

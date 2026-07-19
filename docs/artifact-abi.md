@@ -164,6 +164,19 @@ Every kernel binding states:
 - alias/access-range constraints;
 - explicit metadata layout and minimum accessible byte range.
 
+A first-class semantic tensor may lower to multiple physical bindings. A
+quantized tensor, for example, may require code, scale, zero-point, codebook, or
+other scheme components. The plan records one logical value-to-component
+expansion with stable ordered roles; every kernel ABI binding references the
+logical plan value and component role. No backend may infer component meaning
+from binding order alone.
+
+Semantic scheme identity, component roles, parameter maps, and numerical
+contracts participate in semantic and plan identity. Bit packing, component
+interleaving, alignment, padding, and physical scale layout participate in
+storage/ABI and artifact identity. Runtime component bindings are validated as
+one logical value before any plan dispatch begins.
+
 Every metadata field states its `AbiExpr` source, byte offset, scalar type,
 size, alignment, and encoding. Host packing and MSL declarations are generated
 from the same layout; Rust `repr(C)` is not the cross-language contract.
