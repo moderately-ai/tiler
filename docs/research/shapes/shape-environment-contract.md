@@ -175,3 +175,33 @@ modulo operations whose divisor becomes zero.
 The main complications are therefore operation semantics, launch legality,
 and checked shape arithmetic—not a reason to reject zero-sized tensors. A
 zero extent is not an unknown extent or a sentinel value.
+
+## Accepted decision: typed constraint provenance
+
+**Accepted by Tom on 2026-07-19:** shape predicates are strongly typed by why
+they exist and what failure means. They are not stored as an undifferentiated
+list of boolean expressions.
+
+```text
+SemanticRequirement(N % 4 == 0) // false => program/input is invalid
+DerivedFact(A == B)              // proved by validation or inference
+PhysicalGuard(C % 4 == 0)        // false => this plan is inapplicable
+```
+
+At minimum, each constraint carries its category, canonical predicate, origin
+(such as an operation, input declaration, inference rule, or physical
+alternative), and structured diagnostic context. Operation extensions may
+define precise invalid-shape diagnostics without weakening the common
+classification or requiring the compiler to parse human-readable messages.
+
+The categories remain behaviorally distinct:
+
+- a failed semantic requirement rejects the graph or runtime invocation;
+- a derived fact is evidence available to later reasoning and must retain its
+  proof/source provenance;
+- a failed physical guard rejects only that physical alternative, allowing
+  another plan or fallback.
+
+An inferred fact must never silently become a new user-facing semantic
+requirement, and an optimization guard must never redefine program validity.
+Explanation output reports both the predicate and its provenance.
