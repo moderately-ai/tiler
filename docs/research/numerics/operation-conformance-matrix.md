@@ -40,7 +40,7 @@ the first executable slice.
 | `Add`, `Subtract`, `Multiply` | Resolved homogeneous computation/result type, round-to-nearest-ties-even, and distinct operation rounding | Reassociation, operand permutation where capable, signed-zero/NaN assumptions, subnormal handling | Per-dtype backend vectors; built-in capability table |
 | Integer add, subtract, multiply | Explicit wrapping, saturating, checked, or widening family; no ambient overflow behavior | Required-no-overflow only with a discharged proof or runtime-validation obligation | Initial supported family/width matrix; MIN/MAX and sub-byte vectors |
 | Floating `Divide` | IEEE resolved value results under round-to-nearest-ties-even, including zero/NaN/infinity cases | Reciprocal transform and approximation are independent permissions | Exact per-dtype backend behavior and reciprocal error contracts |
-| Integer division/remainder | Signedness, quotient rounding, overflow, and zero-divisor behavior are typed operation semantics | Only explicitly proven algebraic rewrites | Concrete initial typed families and supported widths |
+| Integer division/remainder | Explicit signed truncating, floor, Euclidean, ceiling, or unsigned family; nonzero divisor and representable quotient are proven/validated preconditions; standalone `MIN rem -1` is valid zero | Exact division adds a divisibility precondition; future total/masked families remain distinct | Initial supported family/width matrix and validation realization |
 | `Fma` | Required correctly rounded fused result under round-to-nearest-ties-even | No decomposition unless exact emulation or an authorized relaxation proves compatibility | Per-dtype native/emulated support |
 | `Multiply` then `Add` | Two semantic rounding boundaries | Contraction permission may admit FMA; reassociation does not imply contraction | Backend flag and generated-code verification |
 | Numeric conversions | Typed conversion family defines rounding and exceptional-value behavior | Only freedoms named by that conversion contract | Concrete initial family matrix, especially float-to-int and quantization |
@@ -109,7 +109,7 @@ The unresolved work is now concrete rather than architectural:
 
 1. choose the first vertically supported operation/dtype combinations;
 2. define initial transcendental error metric types and operations;
-3. finish integer division/remainder and float-to-integer conversion families;
+3. finish float-to-integer conversion families;
 4. enumerate algebraic capabilities for each built-in operation;
 5. run and publish Metal flag/intrinsic/device conformance measurements; and
 6. choose ergonomic frontend policy presets, which expand into the already

@@ -46,6 +46,7 @@ accepted. Unresolved questions are collected in
 - [0037: Parameterize complex dtype identity by component type](0037-parameterize-complex-dtype-identity.md) — accepted
 - [0038: Recognize OCP microscaling schemes as compound values](0038-recognize-ocp-mx-schemes.md) — accepted
 - [0039: Make integer overflow explicit in operation identity](0039-explicit-integer-overflow-operations.md) — accepted
+- [0040: Specialize integer division and remainder families](0040-specialize-integer-division-families.md) — accepted
 
 ## Template
 

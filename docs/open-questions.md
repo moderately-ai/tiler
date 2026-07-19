@@ -13,8 +13,7 @@ ADR when evidence is sufficient.
   reference-evaluable, optimizable per operation, backend-realizable, and
   enabled in the first product profile?
 - Which transcendental error metrics and operation subset are supported first?
-- Which integer division/remainder and float-to-integer conversion families are
-  supported first?
+- Which float-to-integer conversion families are supported first?
 - Which built-in quantization scheme families and exact conversion contracts
   are enabled in the first product profile beyond the extensible affine model?
 

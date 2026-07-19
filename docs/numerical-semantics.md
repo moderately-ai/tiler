@@ -485,8 +485,14 @@ Index expressions must not wrap into a valid-looking address. Shape products,
 stride products, offset additions, and narrowing conversions are checked
 statically or protected by runtime guards.
 
-Division and modulo define signedness, rounding direction, and zero-divisor
-behavior. Simplification passes preserve these semantics.
+Division and remainder use explicit signed truncating, floor, Euclidean,
+ceiling, or canonical unsigned families. Their quotient rounding, matched
+remainder sign/range, zero-divisor behavior, and signed quotient overflow are
+semantic contracts. Exact division adds a validated divisibility precondition.
+Standalone signed `MIN rem -1` is valid zero even when a target's combined
+divide/remainder instruction cannot implement it directly. Simplification
+passes preserve these semantics. See ADR 0040 and the
+[precedent review](research/numerics/integer-division-precedents.md).
 
 ## Casts
 
