@@ -554,3 +554,8 @@ The next phase is a review of omissions and naming, followed by explicit
 selection of Tiler's recognized, representable, reference, optimizer, backend,
 and first-product-profile sets. This document intentionally makes none of those
 selections.
+
+The follow-up [dtype identity admission policy](dtype-identity-admission-policy.md)
+defines proposed admission gates and a preliminary built-in/external/extension
+classification. Namespace authority for standards-backed built-ins remains the
+blocking governance decision.

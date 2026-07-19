@@ -17,6 +17,9 @@ ADR when evidence is sufficient.
   supported first?
 - Which built-in quantization scheme families and exact conversion contracts
   are enabled in the first product profile beyond the extensible affine model?
+- Do standards-backed built-in dtypes use Tiler-governed canonical keys with
+  mandatory normative references, or authority-qualified keys whose namespace
+  Tiler does not control?
 
 ## Semantic graph and operation extensions
 
