@@ -205,3 +205,21 @@ The categories remain behaviorally distinct:
 An inferred fact must never silently become a new user-facing semantic
 requirement, and an optimization guard must never redefine program validity.
 Explanation output reports both the predicate and its provenance.
+
+## Accepted decision: closed shape-expression language
+
+**Accepted by Tom on 2026-07-19:** the initial `ShapeEnv` uses a closed,
+canonical shape-expression language. Extensions construct expressions from
+the admitted primitives; they cannot inject arbitrary Rust callbacks, opaque
+functions, or custom evaluation behavior.
+
+This strict boundary is part of the prototype contract. It ensures the same
+expression can be validated, normalized, compared, reasoned about, serialized,
+hashed, evaluated on the host, and rendered in explanation output without
+extension-specific code. New primitives may be added later only when a concrete
+operation cannot be represented cleanly and the primitive receives defined
+typing, overflow, canonicalization, serialization, and evaluation semantics.
+
+The exact initial primitive set remains to be decided. Candidate needs include
+constants and roots; checked arithmetic; exact, floor, and ceiling division;
+remainder and divisibility; comparisons; min/max; and a typed conditional.
