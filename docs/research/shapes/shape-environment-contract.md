@@ -362,3 +362,17 @@ The artifact/interface contract includes the remaining runtime requirements
 and enough provenance to produce the same structured diagnostic category as
 compile-time validation. This permits independently supplied dynamic inputs
 without requiring every valid relationship to be statically provable.
+
+## Research finding: proof scope is not expression scope
+
+The closed shape-expression language guarantees deterministic representation
+and concrete evaluation, but not complete static proof. Affine/Presburger
+integer constraints provide a substantial decidable core; products and
+division between symbolic values introduce nonlinear obligations required by
+ordinary tensor operations such as reshape.
+
+The detailed precedent, tractability boundary, initial-versus-later capability
+matrix, and proposed staged proof architecture are recorded in
+[Shape constraint prover boundary](constraint-prover-boundary.md). No solver
+scope is accepted yet. The next decision is how much affine/Presburger
+reasoning belongs in the first implementation requirement.
