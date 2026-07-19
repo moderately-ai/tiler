@@ -5,7 +5,7 @@ status: in-progress
 priority: p0
 dependencies: []
 related: []
-scopes: [research/numerics, contracts/compiler, contracts/core, contracts/artifacts]
+scopes: [research/numerics, contracts/compiler, contracts/core, contracts/artifacts, research/runtime]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research, numerics]
