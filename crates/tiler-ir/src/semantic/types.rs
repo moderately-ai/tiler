@@ -47,6 +47,10 @@ impl TypeKey {
     pub const fn semantic_version(&self) -> u32 {
         self.0.semantic_version
     }
+
+    pub(super) fn encode(&self, output: &mut Vec<u8>) {
+        self.0.encode(output);
+    }
 }
 
 impl fmt::Display for TypeKey {

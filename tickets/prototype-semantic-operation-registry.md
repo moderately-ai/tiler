@@ -1,7 +1,7 @@
 ---
 id: prototype-semantic-operation-registry
 title: Implement the canonical semantic operation registry
-status: todo
+status: done
 priority: p0
 dependencies: [prototype-semantic-type-authority-v2]
 related: [prototype-semantic-reference-slice]
@@ -34,3 +34,19 @@ Add deterministic projection of only reached semantic authorities for later
 compilation provenance. Keep decomposition, lowering, rewriting, costing, and
 target capabilities reserved behind separate registries; do not implement
 them here.
+
+## Outcome
+
+Implemented the canonical semantic-operation path in `tiler-ir`. Durable graph
+nodes now store `OpKey`, bounded canonical attributes, ordered operands, and
+registry-derived results. Host-owned schemas check arity and attribute kinds
+before immutable provider inference, and the host revalidates all inferred
+types, shapes, and result counts before a transactional commit.
+
+The governed constant, multiply, add, and strict serial Sum definitions carry
+explicit numerical facts and conformance identities. External operations use
+the identical registration and graph-admission path. Program identity now
+preserves multi-result sharing and includes only deterministically projected
+reached semantic authority. Tests cover external authority, missing/invalid
+applications, rollback, projection, and multi-result identity; strict Clippy,
+tests, and doctests pass.

@@ -7,7 +7,7 @@ topics: ["extensions", "semantics", "rust", "reference"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 evidence_classes: ["executable-model", "primary-source-synthesis"]
 informs: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.operation-extensions"]
 adopted_by: ["ADR-0065", "ADR-0066"]

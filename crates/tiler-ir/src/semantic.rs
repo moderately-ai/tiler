@@ -25,12 +25,17 @@ pub use interface::{
     ProgramOutputRef,
 };
 pub use operation::{
-    CANONICAL_F32_ARITHMETIC_NAN_BITS, Definition, OperationKind, OperationRef, ResultIndex,
-    ValueRef,
+    CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalValueKind, Definition, F32_CONSTANT_BITS_ATTRIBUTE,
+    MAX_OPERATION_ATTRIBUTES, OpKey, OperationArity, OperationAttributeSchema, OperationAttributes,
+    OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
+    OperationInferenceError, OperationInferencer, OperationRef, OperationSchema,
+    OperationSchemaError, REDUCTION_AXES_ATTRIBUTE, ResultIndex, ValueFact, ValueRef, add_f32_op,
+    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
 pub use registry::{
-    CanonicalSemanticRegistryIdentity, F32, FrozenSemanticRegistry, NormativeDefinitionRef,
+    CanonicalSemanticAuthorityProjection, CanonicalSemanticRegistryIdentity, F32,
+    FrozenSemanticRegistry, NormativeDefinitionRef, OperationApplicationRejection,
     ProviderIdentity, RegistryError, RegistryLookupError, SemanticRegistryBuilder,
     SemanticRegistryProvider, SemanticRegistryRegistrar, TypeDefinitionFacts, TypeInstanceError,
     TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey, ValueTypeInstanceValidator,

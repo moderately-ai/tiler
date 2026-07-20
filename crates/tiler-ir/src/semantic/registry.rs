@@ -1,11 +1,21 @@
 use std::any::{TypeId, type_name};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
+use crate::shape::Axis;
+
+use super::operation::{
+    CanonicalValueKind, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationArity,
+    OperationAttributeSchema, OperationAttributes, OperationConformance, OperationDefinition,
+    OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
+    OperationSchema, REDUCTION_AXES_ATTRIBUTE, ValueFact, add_f32_op, constant_f32_op,
+    multiply_f32_op, strict_serial_sum_f32_op,
+};
 use super::types::{
-    CanonicalField, CanonicalValue, QuantSchemeKey, ResolvedValueType, TypeIdentityError, TypeKey,
+    CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey, ResolvedValueType,
+    TypeIdentityError, TypeKey,
 };
 
 const MAX_DEFINITION_REFERENCE_BYTES: usize = 4 * 1024;
@@ -333,6 +343,12 @@ struct RegisteredValueType {
     provider: ProviderIdentity,
 }
 
+#[derive(Clone)]
+struct RegisteredOperation {
+    definition: OperationDefinition,
+    provider: ProviderIdentity,
+}
+
 /// A statically linked source of semantic definitions and optional marker bindings.
 ///
 /// The provider callback runs only while a registration batch is staged. It is
@@ -353,6 +369,7 @@ pub trait SemanticRegistryProvider: Send + Sync + 'static {
 #[derive(Default)]
 pub struct SemanticRegistryBuilder {
     definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
+    operations: BTreeMap<OpKey, RegisteredOperation>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
 }
 
@@ -361,6 +378,7 @@ impl fmt::Debug for SemanticRegistryBuilder {
         formatter
             .debug_struct("SemanticRegistryBuilder")
             .field("definition_count", &self.definitions.len())
+            .field("operation_count", &self.operations.len())
             .field("marker_count", &self.marker_bindings.len())
             .finish()
     }
@@ -375,6 +393,7 @@ struct MarkerBinding {
 #[derive(Default)]
 struct RegistrationBatch {
     definitions: BTreeMap<ValueTypeDefinitionKey, ValueTypeDefinition>,
+    operations: BTreeMap<OpKey, OperationDefinition>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
 }
 
@@ -393,7 +412,7 @@ impl SemanticRegistryBuilder {
     /// provider contract.
     pub fn standard() -> Result<Self, RegistryError> {
         let mut builder = Self::new();
-        builder.register_provider(&StandardValueTypes)?;
+        builder.register_provider(&StandardSemantics)?;
         Ok(builder)
     }
 
@@ -410,12 +429,22 @@ impl SemanticRegistryBuilder {
         let identity = provider.identity();
         let mut batch = RegistrationBatch::default();
         provider.register(&mut SemanticRegistryRegistrar { batch: &mut batch })?;
-        if batch.definitions.is_empty() && batch.marker_bindings.is_empty() {
+        if batch.definitions.is_empty()
+            && batch.operations.is_empty()
+            && batch.marker_bindings.is_empty()
+        {
             return Err(RegistryError::ProviderRegisteredNothing { provider: identity });
         }
         for key in batch.definitions.keys() {
             if self.definitions.contains_key(key) {
                 return Err(RegistryError::DuplicateTypeAuthority {
+                    key: Arc::new(key.clone()),
+                });
+            }
+        }
+        for key in batch.operations.keys() {
+            if self.operations.contains_key(key) {
+                return Err(RegistryError::DuplicateOperationAuthority {
                     key: Arc::new(key.clone()),
                 });
             }
@@ -449,6 +478,16 @@ impl SemanticRegistryBuilder {
                     },
                 )
             }));
+        self.operations
+            .extend(batch.operations.into_iter().map(|(key, definition)| {
+                (
+                    key,
+                    RegisteredOperation {
+                        definition,
+                        provider: identity.clone(),
+                    },
+                )
+            }));
         self.marker_bindings.extend(batch.marker_bindings);
         Ok(())
     }
@@ -460,12 +499,13 @@ impl SemanticRegistryBuilder {
     /// Returns [`RegistryError`] when empty or when a marker target is not
     /// admitted by the completed semantic authority set.
     pub fn freeze(self) -> Result<FrozenSemanticRegistry, RegistryError> {
-        if self.definitions.is_empty() {
+        if self.definitions.is_empty() && self.operations.is_empty() {
             return Err(RegistryError::EmptyRegistry);
         }
         let registry = FrozenSemanticRegistry(Arc::new(FrozenRegistryData {
             identity: OnceLock::new(),
             definitions: self.definitions,
+            operations: self.operations,
             marker_bindings: self.marker_bindings,
         }));
         for binding in registry.0.marker_bindings.values() {
@@ -491,7 +531,7 @@ impl SemanticRegistryRegistrar<'_> {
         &mut self,
         definition: ValueTypeDefinition,
     ) -> Result<(), RegistryError> {
-        let key = definition.key.clone();
+        let key = definition.key().clone();
         if self
             .batch
             .definitions
@@ -499,6 +539,27 @@ impl SemanticRegistryRegistrar<'_> {
             .is_some()
         {
             return Err(RegistryError::DuplicateTypeAuthority { key: Arc::new(key) });
+        }
+        Ok(())
+    }
+
+    /// Registers one atomic semantic operation family.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] for duplicate authority within this provider.
+    pub fn register_operation(
+        &mut self,
+        definition: OperationDefinition,
+    ) -> Result<(), RegistryError> {
+        let key = definition.key().clone();
+        if self
+            .batch
+            .operations
+            .insert(key.clone(), definition)
+            .is_some()
+        {
+            return Err(RegistryError::DuplicateOperationAuthority { key: Arc::new(key) });
         }
         Ok(())
     }
@@ -564,6 +625,7 @@ impl fmt::Debug for FrozenSemanticRegistry {
         formatter
             .debug_struct("FrozenSemanticRegistry")
             .field("definition_count", &self.0.definitions.len())
+            .field("operation_count", &self.0.operations.len())
             .field("marker_count", &self.0.marker_bindings.len())
             .finish()
     }
@@ -571,6 +633,7 @@ impl fmt::Debug for FrozenSemanticRegistry {
 
 struct FrozenRegistryData {
     definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
+    operations: BTreeMap<OpKey, RegisteredOperation>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
     identity: OnceLock<CanonicalSemanticRegistryIdentity>,
 }
@@ -679,12 +742,106 @@ impl FrozenSemanticRegistry {
             .map(|registered| &registered.provider)
     }
 
+    /// Returns the registered semantic definition for one operation family.
+    #[must_use]
+    pub fn operation_definition(&self, key: &OpKey) -> Option<&OperationDefinition> {
+        self.0.operations.get(key).map(|entry| &entry.definition)
+    }
+
+    /// Returns the provider governing one operation family.
+    #[must_use]
+    pub fn operation_provider(&self, key: &OpKey) -> Option<&ProviderIdentity> {
+        self.0.operations.get(key).map(|entry| &entry.provider)
+    }
+
+    /// Validates one application and derives all ordered result facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] for missing authority, invalid operand/result
+    /// types, or semantic inference rejection.
+    pub fn infer_operation(
+        &self,
+        key: &OpKey,
+        operands: &[ValueFact],
+        attributes: &OperationAttributes,
+    ) -> Result<Vec<ValueFact>, RegistryError> {
+        let registered = self.0.operations.get(key).ok_or_else(|| {
+            RegistryError::UnregisteredOperationAuthority {
+                key: Arc::new(key.clone()),
+            }
+        })?;
+        for operand in operands {
+            self.validate_type(operand.resolved_type())?;
+        }
+        let results = registered
+            .definition
+            .infer(operands, attributes)
+            .map_err(|source| {
+                RegistryError::RejectedOperationApplication(Arc::new(
+                    OperationApplicationRejection {
+                        key: key.clone(),
+                        provider: registered.provider.clone(),
+                        source,
+                    },
+                ))
+            })?;
+        if results.is_empty() {
+            return Err(RegistryError::OperationProducedNoResults {
+                key: Arc::new(key.clone()),
+            });
+        }
+        for result in &results {
+            self.validate_type(result.resolved_type())?;
+        }
+        Ok(results)
+    }
+
     /// Returns complete frozen semantic-registry provenance.
     #[must_use]
     pub fn canonical_identity(&self) -> &CanonicalSemanticRegistryIdentity {
         self.0
             .identity
-            .get_or_init(|| compute_identity(&self.0.definitions))
+            .get_or_init(|| compute_identity(&self.0.definitions, &self.0.operations))
+    }
+
+    /// Projects deterministic provenance for only the semantic authorities
+    /// reached by one program.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] if a supplied type family or operation key is
+    /// absent from this exact frozen snapshot.
+    pub fn project_reached<'a>(
+        &self,
+        value_types: impl IntoIterator<Item = &'a ResolvedValueType>,
+        operations: impl IntoIterator<Item = &'a OpKey>,
+    ) -> Result<CanonicalSemanticAuthorityProjection, RegistryError> {
+        let type_keys: BTreeSet<_> = value_types
+            .into_iter()
+            .map(ValueTypeDefinitionKey::for_value)
+            .collect();
+        let operation_keys: BTreeSet<_> = operations.into_iter().cloned().collect();
+        let mut bytes = b"tiler.semantic-authority-projection.v1\0".to_vec();
+        encode_len(&mut bytes, type_keys.len());
+        for key in type_keys {
+            let registered = self.0.definitions.get(&key).ok_or_else(|| {
+                RegistryError::UnregisteredTypeAuthority {
+                    key: Arc::new(key.clone()),
+                }
+            })?;
+            encode_registered_type(&mut bytes, &key, registered);
+        }
+        encode_len(&mut bytes, operation_keys.len());
+        for key in operation_keys {
+            let registered = self.0.operations.get(&key).ok_or_else(|| {
+                RegistryError::UnregisteredOperationAuthority {
+                    key: Arc::new(key.clone()),
+                }
+            })?;
+            encode_registered_operation(&mut bytes, &key, registered);
+        }
+        Ok(CanonicalSemanticAuthorityProjection(bytes))
     }
 }
 
@@ -700,12 +857,52 @@ impl CanonicalSemanticRegistryIdentity {
     }
 }
 
+/// Deterministic provenance for only the semantic authorities reached by a program.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CanonicalSemanticAuthorityProjection(Vec<u8>);
+
+impl CanonicalSemanticAuthorityProjection {
+    /// Returns the collision-free canonical projection bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 /// Complete provider-attributed rejection of one concrete type instance.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypeInstanceRejection {
     key: ValueTypeDefinitionKey,
     provider: ProviderIdentity,
     source: TypeInstanceError,
+}
+
+/// Complete provider-attributed rejection of one operation application.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperationApplicationRejection {
+    key: OpKey,
+    provider: ProviderIdentity,
+    source: OperationInferenceError,
+}
+
+impl OperationApplicationRejection {
+    /// Returns the rejected operation family.
+    #[must_use]
+    pub const fn key(&self) -> &OpKey {
+        &self.key
+    }
+
+    /// Returns the governing provider.
+    #[must_use]
+    pub const fn provider(&self) -> &ProviderIdentity {
+        &self.provider
+    }
+
+    /// Returns the provider-attributed inference error.
+    #[must_use]
+    pub const fn source_error(&self) -> &OperationInferenceError {
+        &self.source
+    }
 }
 
 impl TypeInstanceRejection {
@@ -746,6 +943,11 @@ pub enum RegistryError {
         /// Duplicated family key.
         key: Arc<ValueTypeDefinitionKey>,
     },
+    /// Two providers or registrations claimed one operation key.
+    DuplicateOperationAuthority {
+        /// Duplicated operation key.
+        key: Arc<OpKey>,
+    },
     /// One Rust marker was bound more than once.
     DuplicateMarker {
         /// Diagnostic-only Rust marker name.
@@ -763,6 +965,18 @@ pub enum RegistryError {
     },
     /// A registered family rejected one concrete instance.
     RejectedTypeInstance(Arc<TypeInstanceRejection>),
+    /// An operation family had no registered semantic authority.
+    UnregisteredOperationAuthority {
+        /// Missing operation key.
+        key: Arc<OpKey>,
+    },
+    /// A registered operation rejected one application.
+    RejectedOperationApplication(Arc<OperationApplicationRejection>),
+    /// An operation authority inferred no results.
+    OperationProducedNoResults {
+        /// Invalid operation authority.
+        key: Arc<OpKey>,
+    },
     /// A normative definition reference was empty.
     EmptyNormativeDefinition,
     /// A normative definition reference exceeded its byte bound.
@@ -785,6 +999,9 @@ impl fmt::Display for RegistryError {
             Self::DuplicateTypeAuthority { key } => {
                 write!(formatter, "duplicate type authority for {key:?}")
             }
+            Self::DuplicateOperationAuthority { key } => {
+                write!(formatter, "duplicate operation authority for {key}")
+            }
             Self::DuplicateMarker { marker_name } => {
                 write!(formatter, "Rust marker {marker_name} is already bound")
             }
@@ -803,6 +1020,17 @@ impl fmt::Display for RegistryError {
                     rejection.provider, rejection.key, rejection.source
                 )
             }
+            Self::UnregisteredOperationAuthority { key } => {
+                write!(formatter, "no semantic authority for operation {key}")
+            }
+            Self::RejectedOperationApplication(rejection) => write!(
+                formatter,
+                "provider {} rejected operation {}: {}",
+                rejection.provider, rejection.key, rejection.source
+            ),
+            Self::OperationProducedNoResults { key } => {
+                write!(formatter, "operation authority {key} produced no results")
+            }
             Self::EmptyNormativeDefinition => {
                 formatter.write_str("normative definition reference is empty")
             }
@@ -819,6 +1047,7 @@ impl Error for RegistryError {
         match self {
             Self::InvalidProviderIdentity(source) => Some(source),
             Self::RejectedTypeInstance(rejection) => Some(&rejection.source),
+            Self::RejectedOperationApplication(rejection) => Some(&rejection.source),
             _ => None,
         }
     }
@@ -847,11 +1076,11 @@ impl fmt::Display for RegistryLookupError {
 
 impl Error for RegistryLookupError {}
 
-struct StandardValueTypes;
+struct StandardSemantics;
 
-impl SemanticRegistryProvider for StandardValueTypes {
+impl SemanticRegistryProvider for StandardSemantics {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-value-types", 2)
+        ProviderIdentity::new("tiler", "standard-semantics", 3)
             .expect("the governed standard provider identity is valid")
     }
 
@@ -875,29 +1104,335 @@ impl SemanticRegistryProvider for StandardValueTypes {
                 facts,
             ),
             F32::resolved_type(),
-        )
+        )?;
+        registrar.register_operation(OperationDefinition::new(
+            constant_f32_op(),
+            exact_schema(
+                0,
+                1,
+                [OperationAttributeSchema::required(
+                    F32_CONSTANT_BITS_ATTRIBUTE,
+                    CanonicalValueKind::Unsigned,
+                )],
+            ),
+            NormativeDefinitionRef::new("tiler::constant-f32@1; exact IEEE-754 payload")?,
+            OperationDefinitionFacts::new(
+                CanonicalValue::record([CanonicalField::new(
+                    1,
+                    CanonicalValue::utf8("exact-binary32-bits")
+                        .expect("the governed constant fact is bounded"),
+                )])
+                .expect("the governed constant facts are canonical"),
+            ),
+            standard_conformance("constant-f32"),
+            OperationEffect::Pure,
+            Arc::new(ConstantF32),
+        ))?;
+        registrar.register_operation(OperationDefinition::new(
+            multiply_f32_op(),
+            exact_schema(2, 1, []),
+            NormativeDefinitionRef::new("tiler::multiply-f32@1; separate binary32 multiply")?,
+            OperationDefinitionFacts::new(arithmetic_f32_facts()),
+            standard_conformance("multiply-f32"),
+            OperationEffect::Pure,
+            Arc::new(BinaryF32),
+        ))?;
+        registrar.register_operation(OperationDefinition::new(
+            add_f32_op(),
+            exact_schema(2, 1, []),
+            NormativeDefinitionRef::new("tiler::add-f32@1; separate binary32 addition")?,
+            OperationDefinitionFacts::new(arithmetic_f32_facts()),
+            standard_conformance("add-f32"),
+            OperationEffect::Pure,
+            Arc::new(BinaryF32),
+        ))?;
+        registrar.register_operation(OperationDefinition::new(
+            strict_serial_sum_f32_op(),
+            exact_schema(
+                1,
+                1,
+                [OperationAttributeSchema::required(
+                    REDUCTION_AXES_ATTRIBUTE,
+                    CanonicalValueKind::Sequence,
+                )],
+            ),
+            NormativeDefinitionRef::new(
+                "tiler::strict-serial-sum-f32@1; lexicographic serial contributors",
+            )?,
+            OperationDefinitionFacts::new(
+                CanonicalValue::record([
+                    CanonicalField::new(
+                        1,
+                        CanonicalValue::utf8("strict-left-fold")
+                            .expect("the governed reduction fact is bounded"),
+                    ),
+                    CanonicalField::new(
+                        2,
+                        CanonicalValue::utf8("binary32-each-step")
+                            .expect("the governed accumulation fact is bounded"),
+                    ),
+                    CanonicalField::new(
+                        3,
+                        CanonicalValue::unsigned(u64::from(
+                            super::operation::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+                        )),
+                    ),
+                ])
+                .expect("the governed reduction facts are canonical"),
+            ),
+            standard_conformance("strict-serial-sum-f32"),
+            OperationEffect::Pure,
+            Arc::new(StrictSerialSumF32),
+        ))
     }
+}
+
+fn exact_schema<const N: usize>(
+    operands: u32,
+    results: u32,
+    attributes: [OperationAttributeSchema; N],
+) -> OperationSchema {
+    OperationSchema::new(
+        OperationArity::exact(operands),
+        OperationArity::exact(results),
+        attributes,
+    )
+    .expect("governed operation schema is valid")
+}
+
+fn standard_conformance(name: &str) -> OperationConformance {
+    OperationConformance::new(
+        CanonicalValue::record([
+            CanonicalField::new(
+                1,
+                CanonicalValue::utf8(format!("tiler.conformance.{name}"))
+                    .expect("governed conformance identity is bounded"),
+            ),
+            CanonicalField::new(2, CanonicalValue::unsigned(1)),
+        ])
+        .expect("governed conformance identity is canonical"),
+    )
+}
+
+fn arithmetic_f32_facts() -> CanonicalValue {
+    CanonicalValue::record([
+        CanonicalField::new(
+            1,
+            CanonicalValue::utf8("binary32-round-to-nearest-ties-even")
+                .expect("the governed rounding fact is bounded"),
+        ),
+        CanonicalField::new(
+            2,
+            CanonicalValue::unsigned(u64::from(
+                super::operation::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            )),
+        ),
+        CanonicalField::new(3, CanonicalValue::boolean(false)),
+    ])
+    .expect("the governed f32 arithmetic facts are canonical")
+}
+
+struct ConstantF32;
+
+impl OperationInferencer for ConstantF32 {
+    fn infer(
+        &self,
+        operands: &[ValueFact],
+        attributes: &OperationAttributes,
+    ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+        if !operands.is_empty() {
+            return Err(op_error("constant.arity", "constant requires no operands"));
+        }
+        if attributes.fields().len() != 1 {
+            return Err(op_error(
+                "constant.attributes",
+                "constant requires exactly the bits attribute",
+            ));
+        }
+        let Some(CanonicalValueView::Unsigned(bits)) = attributes
+            .get(F32_CONSTANT_BITS_ATTRIBUTE)
+            .map(CanonicalValue::view)
+        else {
+            return Err(op_error(
+                "constant.bits",
+                "constant bits must be an unsigned canonical value",
+            ));
+        };
+        if u32::try_from(bits).is_err() {
+            return Err(op_error("constant.bits", "constant bits exceed u32"));
+        }
+        Ok(vec![ValueFact::new(
+            F32::resolved_type(),
+            crate::shape::Shape::new([]),
+        )])
+    }
+}
+
+struct BinaryF32;
+
+impl OperationInferencer for BinaryF32 {
+    fn infer(
+        &self,
+        operands: &[ValueFact],
+        attributes: &OperationAttributes,
+    ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+        if operands.len() != 2 {
+            return Err(op_error(
+                "binary.arity",
+                "binary operation requires two operands",
+            ));
+        }
+        if !attributes.fields().is_empty() {
+            return Err(op_error(
+                "binary.attributes",
+                "binary operation has no attributes",
+            ));
+        }
+        if operands
+            .iter()
+            .any(|operand| operand.resolved_type() != &F32::resolved_type())
+        {
+            return Err(op_error("binary.type", "both operands must be f32"));
+        }
+        let left = operands[0].shape();
+        let right = operands[1].shape();
+        let shape = if left.rank() == 0 {
+            right.clone()
+        } else if right.rank() == 0 || left == right {
+            left.clone()
+        } else {
+            return Err(op_error(
+                "binary.shape",
+                "operand shapes must match or one operand must be scalar",
+            ));
+        };
+        Ok(vec![ValueFact::new(F32::resolved_type(), shape)])
+    }
+}
+
+struct StrictSerialSumF32;
+
+impl OperationInferencer for StrictSerialSumF32 {
+    fn infer(
+        &self,
+        operands: &[ValueFact],
+        attributes: &OperationAttributes,
+    ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+        if operands.len() != 1 {
+            return Err(op_error("sum.arity", "Sum requires one operand"));
+        }
+        if operands[0].resolved_type() != &F32::resolved_type() {
+            return Err(op_error("sum.type", "strict serial Sum requires f32"));
+        }
+        if attributes.fields().len() != 1 {
+            return Err(op_error(
+                "sum.attributes",
+                "Sum requires exactly the axes attribute",
+            ));
+        }
+        let Some(CanonicalValueView::Sequence(values)) = attributes
+            .get(REDUCTION_AXES_ATTRIBUTE)
+            .map(CanonicalValue::view)
+        else {
+            return Err(op_error("sum.axes", "Sum axes must be a sequence"));
+        };
+        if values.is_empty() {
+            return Err(op_error("sum.axes.empty", "Sum axes cannot be empty"));
+        }
+        let mut reduced_axes = Vec::with_capacity(values.len());
+        for value in values {
+            let CanonicalValueView::Unsigned(axis_value) = value.view() else {
+                return Err(op_error("sum.axes.type", "Sum axes must be unsigned"));
+            };
+            let logical_axis = u32::try_from(axis_value)
+                .map(Axis::new)
+                .map_err(|_| op_error("sum.axes.width", "Sum axis exceeds u32"))?;
+            if usize::try_from(logical_axis.get())
+                .map_or(true, |position| position >= operands[0].shape().rank())
+            {
+                return Err(op_error("sum.axes.range", "Sum axis is out of range"));
+            }
+            if reduced_axes
+                .last()
+                .is_some_and(|prior: &Axis| prior >= &logical_axis)
+            {
+                return Err(op_error(
+                    "sum.axes.canonical",
+                    "Sum axes must be unique and strictly ascending",
+                ));
+            }
+            reduced_axes.push(logical_axis);
+        }
+        Ok(vec![ValueFact::new(
+            F32::resolved_type(),
+            operands[0].shape().without_axes(&reduced_axes),
+        )])
+    }
+}
+
+fn op_error(code: &str, message: &str) -> OperationInferenceError {
+    OperationInferenceError::new(code, message)
 }
 
 fn compute_identity(
     definitions: &BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
+    operations: &BTreeMap<OpKey, RegisteredOperation>,
 ) -> CanonicalSemanticRegistryIdentity {
-    let mut bytes = b"tiler.semantic-registry.v2\0".to_vec();
+    let mut bytes = b"tiler.semantic-registry.v3\0".to_vec();
     encode_len(&mut bytes, definitions.len());
     for (key, registered) in definitions {
-        key.encode(&mut bytes);
-        registered.provider.encode(&mut bytes);
-        encode_bytes(
-            &mut bytes,
-            registered
-                .definition
-                .normative_definition
-                .as_str()
-                .as_bytes(),
-        );
-        registered.definition.canonical_facts.0.encode(&mut bytes);
+        encode_registered_type(&mut bytes, key, registered);
+    }
+    encode_len(&mut bytes, operations.len());
+    for (key, registered) in operations {
+        encode_registered_operation(&mut bytes, key, registered);
     }
     CanonicalSemanticRegistryIdentity(bytes)
+}
+
+fn encode_registered_type(
+    output: &mut Vec<u8>,
+    key: &ValueTypeDefinitionKey,
+    registered: &RegisteredValueType,
+) {
+    key.encode(output);
+    registered.provider.encode(output);
+    encode_bytes(
+        output,
+        registered
+            .definition
+            .normative_definition
+            .as_str()
+            .as_bytes(),
+    );
+    registered.definition.canonical_facts.0.encode(output);
+}
+
+fn encode_registered_operation(
+    output: &mut Vec<u8>,
+    key: &OpKey,
+    registered: &RegisteredOperation,
+) {
+    key.encode(output);
+    registered.provider.encode(output);
+    encode_bytes(
+        output,
+        registered
+            .definition
+            .normative_definition()
+            .as_str()
+            .as_bytes(),
+    );
+    registered.definition.schema().encode(output);
+    registered
+        .definition
+        .canonical_facts()
+        .value()
+        .encode(output);
+    registered.definition.conformance().value().encode(output);
+    output.push(match registered.definition.effect() {
+        OperationEffect::Pure => 1,
+    });
 }
 
 fn encode_type_key(output: &mut Vec<u8>, key: &TypeKey) {
@@ -975,6 +1510,49 @@ mod tests {
         }
     }
 
+    fn external_identity_op() -> OpKey {
+        OpKey::new("acme", "identity", 1).unwrap()
+    }
+
+    struct IdentityInferencer;
+    impl OperationInferencer for IdentityInferencer {
+        fn infer(
+            &self,
+            operands: &[ValueFact],
+            attributes: &OperationAttributes,
+        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            if operands.len() != 1 || !attributes.fields().is_empty() {
+                return Err(OperationInferenceError::new(
+                    "acme.identity.signature",
+                    "identity requires one operand and no attributes",
+                ));
+            }
+            Ok(vec![operands[0].clone()])
+        }
+    }
+
+    struct ExternalOperationProvider;
+    impl SemanticRegistryProvider for ExternalOperationProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("acme", "operations", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_operation(OperationDefinition::new(
+                external_identity_op(),
+                exact_schema(1, 1, []),
+                NormativeDefinitionRef::new("acme identity v1")?,
+                OperationDefinitionFacts::new(CanonicalValue::record([]).unwrap()),
+                OperationConformance::new(CanonicalValue::utf8("acme.identity.tests.v1").unwrap()),
+                OperationEffect::Pure,
+                Arc::new(IdentityInferencer),
+            ))
+        }
+    }
+
     #[test]
     fn semantic_definition_does_not_require_marker() {
         let mut builder = SemanticRegistryBuilder::standard().unwrap();
@@ -1020,17 +1598,60 @@ mod tests {
     #[test]
     fn registry_identity_ignores_provider_registration_order() {
         let mut first = SemanticRegistryBuilder::new();
-        first.register_provider(&StandardValueTypes).unwrap();
+        first.register_provider(&StandardSemantics).unwrap();
         first.register_provider(&ExternalProvider).unwrap();
 
         let mut second = SemanticRegistryBuilder::new();
         second.register_provider(&ExternalProvider).unwrap();
-        second.register_provider(&StandardValueTypes).unwrap();
+        second.register_provider(&StandardSemantics).unwrap();
 
         assert_eq!(
             first.freeze().unwrap().canonical_identity(),
             second.freeze().unwrap().canonical_identity()
         );
+    }
+
+    #[test]
+    fn external_operation_uses_the_same_checked_inference_path() {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder
+            .register_provider(&ExternalOperationProvider)
+            .unwrap();
+        let registry = builder.freeze().unwrap();
+        let operand = ValueFact::new(F32::resolved_type(), crate::shape::Shape::from_dims([2, 3]));
+
+        let results = registry
+            .infer_operation(
+                &external_identity_op(),
+                std::slice::from_ref(&operand),
+                &OperationAttributes::empty(),
+            )
+            .unwrap();
+
+        assert_eq!(results, vec![operand]);
+    }
+
+    #[test]
+    fn reached_projection_excludes_unrelated_registered_operations() {
+        let standard = SemanticRegistryBuilder::standard()
+            .unwrap()
+            .freeze()
+            .unwrap();
+        let mut extended = SemanticRegistryBuilder::standard().unwrap();
+        extended
+            .register_provider(&ExternalOperationProvider)
+            .unwrap();
+        let extended = extended.freeze().unwrap();
+
+        let standard_projection = standard
+            .project_reached([&F32::resolved_type()], [&multiply_f32_op()])
+            .unwrap();
+        let extended_projection = extended
+            .project_reached([&F32::resolved_type()], [&multiply_f32_op()])
+            .unwrap();
+
+        assert_eq!(standard_projection, extended_projection);
+        assert_ne!(standard.canonical_identity(), extended.canonical_identity());
     }
 
     #[test]

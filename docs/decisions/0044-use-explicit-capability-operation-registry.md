@@ -6,7 +6,7 @@ title: "Use an explicit capability-based operation registry"
 topics: ["extensions", "registry", "operations"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 applies_to: ["tiler.contract.operation-extensions"]
 evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api"]
 ticket: "operation-extension-surface"
@@ -65,6 +65,13 @@ their revisions, and resulting output-affecting content.
 - Proc-macro visibility remains a separate feasibility problem.
 - Native providers remain a trust boundary; panic containment is not a
   sandbox.
+
+The semantic-authority portion is implemented in `tiler-ir`: bounded
+host-owned arity/attribute schemas, canonical facts and conformance identity,
+checked inference, transactional graph admission, reached-authority
+projection, and multi-result identity all use the same path for built-ins and
+external providers. The separately versioned optional capability registries
+remain future work.
 
 ## Alternatives considered
 

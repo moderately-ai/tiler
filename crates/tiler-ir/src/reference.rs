@@ -5,8 +5,9 @@ use std::error::Error;
 use std::fmt;
 
 use crate::semantic::{
-    CANONICAL_F32_ARITHMETIC_NAN_BITS, Definition, InputKey, OperationId, OperationKind,
-    SemanticProgram, ValueId,
+    CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalValueView, Definition, F32_CONSTANT_BITS_ATTRIBUTE,
+    InputKey, OperationId, REDUCTION_AXES_ATTRIBUTE, SemanticProgram, ValueId, add_f32_op,
+    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use crate::shape::{Axis, Shape};
 
@@ -146,24 +147,30 @@ impl ReferenceEvaluator {
             if results.len() != 1 {
                 return Err(EvaluationError::MalformedProgram);
             }
-            let result = match operation.kind() {
-                OperationKind::ConstantF32 { bits } if operands.is_empty() => {
-                    Tensor::scalar(f32::from_bits(*bits))
-                }
-                OperationKind::MultiplyF32 if operands.len() == 2 => {
-                    binary(&values, operands[0], operands[1], |left, right| {
-                        left * right
-                    })?
-                }
-                OperationKind::AddF32 if operands.len() == 2 => {
-                    binary(&values, operands[0], operands[1], |left, right| {
-                        left + right
-                    })?
-                }
-                OperationKind::StrictSerialSumF32 { axes } if operands.len() == 1 => {
-                    strict_sum(get_value(&values, operands[0])?, axes)?
-                }
-                _ => return Err(EvaluationError::MalformedProgram),
+            let result = if operation.key() == &constant_f32_op() && operands.is_empty() {
+                let Some(CanonicalValueView::Unsigned(bits)) = operation
+                    .attributes()
+                    .get(F32_CONSTANT_BITS_ATTRIBUTE)
+                    .map(crate::semantic::CanonicalValue::view)
+                else {
+                    return Err(EvaluationError::MalformedProgram);
+                };
+                Tensor::scalar(f32::from_bits(
+                    u32::try_from(bits).map_err(|_| EvaluationError::MalformedProgram)?,
+                ))
+            } else if operation.key() == &multiply_f32_op() && operands.len() == 2 {
+                binary(&values, operands[0], operands[1], |left, right| {
+                    left * right
+                })?
+            } else if operation.key() == &add_f32_op() && operands.len() == 2 {
+                binary(&values, operands[0], operands[1], |left, right| {
+                    left + right
+                })?
+            } else if operation.key() == &strict_serial_sum_f32_op() && operands.len() == 1 {
+                let axes = reduction_axes(operation.attributes())?;
+                strict_sum(get_value(&values, operands[0])?, &axes)?
+            } else {
+                return Err(EvaluationError::MalformedProgram);
             };
             if program
                 .shape(results[0])
@@ -180,6 +187,28 @@ impl ReferenceEvaluator {
             .map(|output| get_value(&values, output.value()).cloned())
             .collect()
     }
+}
+
+fn reduction_axes(
+    attributes: &crate::semantic::OperationAttributes,
+) -> Result<Vec<Axis>, EvaluationError> {
+    let Some(CanonicalValueView::Sequence(values)) = attributes
+        .get(REDUCTION_AXES_ATTRIBUTE)
+        .map(crate::semantic::CanonicalValue::view)
+    else {
+        return Err(EvaluationError::MalformedProgram);
+    };
+    values
+        .iter()
+        .map(|value| {
+            let CanonicalValueView::Unsigned(axis) = value.view() else {
+                return Err(EvaluationError::MalformedProgram);
+            };
+            u32::try_from(axis)
+                .map(Axis::new)
+                .map_err(|_| EvaluationError::MalformedProgram)
+        })
+        .collect()
 }
 
 fn binary(

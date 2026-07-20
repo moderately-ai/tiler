@@ -1,11 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::shape::{Axis, Shape};
-
 use super::interface::{InputKey, InterfaceKind, OutputKey};
 use super::registry::RegistryError;
-use super::types::ResolvedValueType;
+use super::types::{ResolvedValueType, TypeIdentityError};
 
 /// A fixed-width semantic arena or interface entity category.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -144,28 +142,14 @@ pub enum BuildError {
         /// Role occupied by the rejected value.
         role: ValueRole,
     },
+    /// Frozen semantic authority rejected an operation application.
+    SemanticRegistry(RegistryError),
+    /// Canonical operation attributes exceeded host-owned structural rules.
+    InvalidOperationAttributes(TypeIdentityError),
     /// The semantic registry does not define a type required by this operation.
     UnregisteredValueType {
         /// Complete missing type identity.
         resolved_type: ResolvedValueType,
-    },
-    /// Pointwise operands were neither equal-shaped nor rank-zero.
-    IncompatiblePointwiseShapes {
-        /// Left operand shape.
-        left: Shape,
-        /// Right operand shape.
-        right: Shape,
-    },
-    /// A reduction supplied no axes.
-    EmptyReductionAxes,
-    /// Reduction axes were duplicated or not strictly ascending.
-    NonCanonicalReductionAxes,
-    /// A reduction axis exceeded the input rank.
-    AxisOutOfRange {
-        /// Invalid axis.
-        axis: Axis,
-        /// Input tensor rank.
-        rank: usize,
     },
     /// A tensor rank exceeds the fixed-width logical axis space.
     RankTooLarge {
@@ -195,27 +179,14 @@ impl fmt::Display for BuildError {
             Self::InvalidLocalValue { role } => {
                 write!(formatter, "{role} is invalid in this semantic graph")
             }
+            Self::SemanticRegistry(error) => error.fmt(formatter),
+            Self::InvalidOperationAttributes(error) => {
+                write!(formatter, "invalid operation attributes: {error}")
+            }
             Self::UnregisteredValueType { resolved_type } => write!(
                 formatter,
                 "semantic registry does not define resolved value type {:?}",
                 resolved_type.canonical_encoding().as_bytes()
-            ),
-            Self::IncompatiblePointwiseShapes { left, right } => {
-                write!(
-                    formatter,
-                    "incompatible pointwise shapes {left:?} and {right:?}"
-                )
-            }
-            Self::EmptyReductionAxes => {
-                formatter.write_str("a reduction requires at least one axis")
-            }
-            Self::NonCanonicalReductionAxes => {
-                formatter.write_str("reduction axes must be unique and strictly ascending")
-            }
-            Self::AxisOutOfRange { axis, rank } => write!(
-                formatter,
-                "reduction axis {} is out of range for rank {rank}",
-                axis.get()
             ),
             Self::RankTooLarge { rank } => {
                 write!(
@@ -228,7 +199,15 @@ impl fmt::Display for BuildError {
     }
 }
 
-impl Error for BuildError {}
+impl Error for BuildError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::SemanticRegistry(error) => Some(error),
+            Self::InvalidOperationAttributes(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// One whole-program invariant violation found by [`super::SemanticProgramBuilder::validate`].
 #[derive(Clone, Debug, Eq, PartialEq)]

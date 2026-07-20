@@ -14,7 +14,9 @@ use super::interface::{
     ProgramOutputRef,
 };
 use super::operation::{
-    OperationData, OperationKind, OperationRef, ResultIndex, ValueData, ValueDefinition, ValueRef,
+    F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes, OperationData, OperationRef,
+    REDUCTION_AXES_ATTRIBUTE, ResultIndex, ValueData, ValueDefinition, ValueFact, ValueRef,
+    add_f32_op, axes_attribute, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use super::registry::{F32, FrozenSemanticRegistry};
 use super::types::ResolvedValueType;
@@ -291,13 +293,19 @@ impl SemanticProgramBuilder {
     ///
     /// Returns a typed error if an arena's fixed-width ID space is exhausted.
     pub fn scalar_f32_bits(&mut self, bits: u32) -> Result<ValueId, BuildError> {
-        let resolved_type = self.require_f32()?;
         self.push_operation(
-            OperationKind::ConstantF32 { bits },
+            constant_f32_op(),
+            OperationAttributes::new([super::types::CanonicalField::new(
+                F32_CONSTANT_BITS_ATTRIBUTE,
+                super::types::CanonicalValue::unsigned(u64::from(bits)),
+            )])
+            .map_err(BuildError::InvalidOperationAttributes)?,
             &[],
-            Shape::new([]),
-            resolved_type,
         )
+        .map(|mut results| {
+            debug_assert_eq!(results.len(), 1);
+            results.remove(0)
+        })
     }
 
     /// Adds a rank-zero immutable f32 constant.
@@ -315,7 +323,7 @@ impl SemanticProgramBuilder {
     ///
     /// Returns a typed error for foreign operands, incompatible shapes, or exhausted IDs.
     pub fn multiply_f32(&mut self, left: ValueId, right: ValueId) -> Result<ValueId, BuildError> {
-        self.binary(OperationKind::MultiplyF32, left, right)
+        self.binary(multiply_f32_op(), left, right)
     }
 
     /// Adds elementwise f32 addition with exact-shape or scalar broadcast.
@@ -324,7 +332,7 @@ impl SemanticProgramBuilder {
     ///
     /// Returns a typed error for foreign operands, incompatible shapes, or exhausted IDs.
     pub fn add_f32(&mut self, left: ValueId, right: ValueId) -> Result<ValueId, BuildError> {
-        self.binary(OperationKind::AddF32, left, right)
+        self.binary(add_f32_op(), left, right)
     }
 
     /// Adds strict serial f32 Sum over a nonempty, sorted, unique axis set.
@@ -337,39 +345,40 @@ impl SemanticProgramBuilder {
         input: ValueId,
         axes: impl IntoIterator<Item = Axis>,
     ) -> Result<ValueId, BuildError> {
-        let input_shape = self
-            .value_data(input, ValueRole::OperationOperand { index: 0 })?
-            .shape
-            .clone();
         let axes: Vec<_> = axes.into_iter().collect();
-        if axes.is_empty() {
-            return Err(BuildError::EmptyReductionAxes);
-        }
-        let mut previous = None;
-        for axis in &axes {
-            if usize::try_from(axis.get()).map_or(true, |axis| axis >= input_shape.rank()) {
-                return Err(BuildError::AxisOutOfRange {
-                    axis: *axis,
-                    rank: input_shape.rank(),
-                });
-            }
-            if previous.is_some_and(|prior| axis.get() <= prior) {
-                return Err(BuildError::NonCanonicalReductionAxes);
-            }
-            previous = Some(axis.get());
-        }
-        let shape = input_shape.without_axes(&axes);
-        let resolved_type = Arc::clone(
-            &self
-                .value_data(input, ValueRole::OperationOperand { index: 0 })?
-                .resolved_type,
-        );
         self.push_operation(
-            OperationKind::StrictSerialSumF32 { axes },
+            strict_serial_sum_f32_op(),
+            OperationAttributes::new([super::types::CanonicalField::new(
+                REDUCTION_AXES_ATTRIBUTE,
+                axes_attribute(&axes).map_err(BuildError::InvalidOperationAttributes)?,
+            )])
+            .map_err(BuildError::InvalidOperationAttributes)?,
             &[input],
-            shape,
-            resolved_type,
         )
+        .map(|mut results| {
+            debug_assert_eq!(results.len(), 1);
+            results.remove(0)
+        })
+    }
+
+    /// Applies one registered semantic operation through the sole checked,
+    /// transactional admission path.
+    ///
+    /// Result facts are derived exclusively by the frozen semantic authority;
+    /// callers cannot declare result types or shapes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for invalid handles, missing authority, rejected
+    /// semantics, unsupported inferred shapes, or exhausted graph IDs. The
+    /// builder is unchanged on every error.
+    pub fn apply(
+        &mut self,
+        key: super::operation::OpKey,
+        attributes: OperationAttributes,
+        operands: &[ValueId],
+    ) -> Result<Vec<ValueId>, BuildError> {
+        self.push_operation(key, attributes, operands)
     }
 
     /// Adds an ordered named output. Multiple outputs may share a value.
@@ -456,41 +465,23 @@ impl SemanticProgramBuilder {
 
     fn binary(
         &mut self,
-        kind: OperationKind,
+        key: super::operation::OpKey,
         left: ValueId,
         right: ValueId,
     ) -> Result<ValueId, BuildError> {
-        let left_shape = &self
-            .value_data(left, ValueRole::OperationOperand { index: 0 })?
-            .shape;
-        let right_shape = &self
-            .value_data(right, ValueRole::OperationOperand { index: 1 })?
-            .shape;
-        let shape = if left_shape.rank() == 0 {
-            right_shape.clone()
-        } else if right_shape.rank() == 0 || left_shape == right_shape {
-            left_shape.clone()
-        } else {
-            return Err(BuildError::IncompatiblePointwiseShapes {
-                left: left_shape.clone(),
-                right: right_shape.clone(),
-            });
-        };
-        let resolved_type = Arc::clone(
-            &self
-                .value_data(left, ValueRole::OperationOperand { index: 0 })?
-                .resolved_type,
-        );
-        self.push_operation(kind, &[left, right], shape, resolved_type)
+        self.push_operation(key, OperationAttributes::empty(), &[left, right])
+            .map(|mut results| {
+                debug_assert_eq!(results.len(), 1);
+                results.remove(0)
+            })
     }
 
     fn push_operation(
         &mut self,
-        kind: OperationKind,
+        key: super::operation::OpKey,
+        attributes: OperationAttributes,
         operands: &[ValueId],
-        shape: Shape,
-        resolved_type: Arc<ResolvedValueType>,
-    ) -> Result<ValueId, BuildError> {
+    ) -> Result<Vec<ValueId>, BuildError> {
         let operand_indices: Vec<_> = operands
             .iter()
             .enumerate()
@@ -503,28 +494,63 @@ impl SemanticProgramBuilder {
                 )
             })
             .collect::<Result<_, _>>()?;
+        let operand_facts: Vec<_> = operand_indices
+            .iter()
+            .map(|index| {
+                let value = &self.values[index.as_usize()];
+                ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
+            })
+            .collect();
+        let inferred = self
+            .semantic_registry
+            .infer_operation(&key, &operand_facts, &attributes)
+            .map_err(BuildError::SemanticRegistry)?;
+        for fact in &inferred {
+            validate_shape(fact.shape())?;
+        }
         let operation_index =
             OperationIndex::from_len(self.operations.len()).ok_or(BuildError::TooManyEntities {
                 entity: EntityKind::Operation,
             })?;
-        let value_index = checked_index(self.values.len(), EntityKind::Value)?;
-        self.values.push(ValueData {
-            definition: ValueDefinition::OperationResult {
-                operation: operation_index,
-                result_index: ResultIndex::ZERO,
-            },
-            shape,
-            resolved_type,
-        });
+        for offset in 0..inferred.len() {
+            let index =
+                self.values
+                    .len()
+                    .checked_add(offset)
+                    .ok_or(BuildError::TooManyEntities {
+                        entity: EntityKind::Value,
+                    })?;
+            checked_index(index, EntityKind::Value)?;
+            ResultIndex::from_len(offset).ok_or(BuildError::TooManyEntities {
+                entity: EntityKind::Value,
+            })?;
+        }
+        let mut result_indices = Vec::with_capacity(inferred.len());
+        let mut result_ids = Vec::with_capacity(inferred.len());
+        for (offset, fact) in inferred.into_iter().enumerate() {
+            let value_index = ValueIndex::from_verified_len(self.values.len());
+            let result_index = ResultIndex::from_len(offset).expect("result capacity was checked");
+            self.values.push(ValueData {
+                definition: ValueDefinition::OperationResult {
+                    operation: operation_index,
+                    result_index,
+                },
+                shape: fact.shape,
+                resolved_type: Arc::new(fact.resolved_type),
+            });
+            result_indices.push(value_index);
+            result_ids.push(ValueId {
+                owner: self.owner,
+                index: value_index,
+            });
+        }
         self.operations.push(OperationData {
-            kind,
+            key,
+            attributes,
             operands: operand_indices,
-            results: vec![value_index],
+            results: result_indices,
         });
-        Ok(ValueId {
-            owner: self.owner,
-            index: value_index,
-        })
+        Ok(result_ids)
     }
 
     fn value_index(&self, id: ValueId, role: ValueRole) -> Result<ValueIndex, BuildError> {
@@ -535,11 +561,6 @@ impl SemanticProgramBuilder {
             return Err(BuildError::InvalidLocalValue { role });
         }
         Ok(id.index)
-    }
-
-    fn value_data(&self, id: ValueId, role: ValueRole) -> Result<&ValueData, BuildError> {
-        let index = self.value_index(id, role)?;
-        Ok(&self.values[index.as_usize()])
     }
 
     fn require_f32(&self) -> Result<Arc<ResolvedValueType>, BuildError> {
@@ -700,27 +721,40 @@ impl SemanticProgramBuilder {
             let Some(operation_index) = OperationIndex::from_len(position) else {
                 return Some("the operation arena exceeds its fixed-width index space");
             };
-            if operation.results.len() != 1 {
-                return Some("a bounded-profile operation does not have exactly one result");
+            if operation.results.is_empty() {
+                return Some("an operation has no results");
             }
-            let result_index = operation.results[0];
-            let Some(result) = self.values.get(result_index.as_usize()) else {
-                return Some("an operation references an invalid result value");
-            };
-            if !matches!(result.definition, ValueDefinition::OperationResult { operation, result_index } if operation == operation_index && result_index == ResultIndex::ZERO)
-            {
-                return Some("an operation result has the wrong definition");
+            for (position, result_value) in operation.results.iter().copied().enumerate() {
+                let Some(result) = self.values.get(result_value.as_usize()) else {
+                    return Some("an operation references an invalid result value");
+                };
+                let Some(expected_result_index) = ResultIndex::from_len(position) else {
+                    return Some("an operation exceeds its fixed-width result space");
+                };
+                if !matches!(result.definition, ValueDefinition::OperationResult { operation, result_index } if operation == operation_index && result_index == expected_result_index)
+                {
+                    return Some("an operation result has the wrong definition");
+                }
             }
+            let first_result = operation.results[0];
             if operation.operands.iter().any(|operand| {
-                operand.as_usize() >= self.values.len() || operand.get() >= result_index.get()
+                operand.as_usize() >= self.values.len() || operand.get() >= first_result.get()
             }) {
                 return Some("an operation operand is invalid or not topologically prior");
             }
-            if !self.operation_contract_holds(operation, result) {
+            if !self.operation_contract_holds(operation) {
                 return Some("an operation violates its arity, attributes, or shape contract");
             }
         }
-        if self.inputs.len().checked_add(self.operations.len()) != Some(self.values.len()) {
+        let result_count = self
+            .operations
+            .iter()
+            .try_fold(0_usize, |count, operation| {
+                count.checked_add(operation.results.len())
+            });
+        if result_count.and_then(|count| self.inputs.len().checked_add(count))
+            != Some(self.values.len())
+        {
             return Some("the value arena contains an unowned value");
         }
         if self
@@ -733,53 +767,32 @@ impl SemanticProgramBuilder {
         None
     }
 
-    fn operation_contract_holds(&self, operation: &OperationData, result: &ValueData) -> bool {
-        let f32_type = F32::resolved_type();
-        match &operation.kind {
-            OperationKind::ConstantF32 { .. } => {
-                operation.operands.is_empty()
-                    && result.shape.rank() == 0
-                    && result.resolved_type.as_ref() == &f32_type
-            }
-            OperationKind::MultiplyF32 | OperationKind::AddF32 => {
-                if operation.operands.len() != 2 {
-                    return false;
-                }
-                let left = &self.values[operation.operands[0].as_usize()];
-                let right = &self.values[operation.operands[1].as_usize()];
-                if left.resolved_type.as_ref() != &f32_type
-                    || right.resolved_type.as_ref() != &f32_type
-                    || result.resolved_type.as_ref() != &f32_type
-                {
-                    return false;
-                }
-                let expected = if left.shape.rank() == 0 {
-                    &right.shape
-                } else if right.shape.rank() == 0 || left.shape == right.shape {
-                    &left.shape
-                } else {
-                    return false;
-                };
-                &result.shape == expected
-            }
-            OperationKind::StrictSerialSumF32 { axes } => {
-                if operation.operands.len() != 1 || axes.is_empty() {
-                    return false;
-                }
-                let input_value = &self.values[operation.operands[0].as_usize()];
-                if input_value.resolved_type.as_ref() != &f32_type
-                    || result.resolved_type.as_ref() != &f32_type
-                {
-                    return false;
-                }
-                let input = &input_value.shape;
-                let canonical = axes.windows(2).all(|pair| pair[0] < pair[1])
-                    && axes.iter().all(|axis| {
-                        usize::try_from(axis.get()).is_ok_and(|axis| axis < input.rank())
-                    });
-                canonical && result.shape == input.without_axes(axes)
-            }
-        }
+    fn operation_contract_holds(&self, operation: &OperationData) -> bool {
+        let operand_facts: Vec<_> = operation
+            .operands
+            .iter()
+            .map(|operand| {
+                let value = &self.values[operand.as_usize()];
+                ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
+            })
+            .collect();
+        let Ok(expected) = self.semantic_registry.infer_operation(
+            &operation.key,
+            &operand_facts,
+            &operation.attributes,
+        ) else {
+            return false;
+        };
+        expected.len() == operation.results.len()
+            && operation
+                .results
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| {
+                    let actual = &self.values[actual.as_usize()];
+                    actual.shape == expected.shape
+                        && actual.resolved_type.as_ref() == &expected.resolved_type
+                })
     }
 }
 
@@ -796,6 +809,12 @@ fn checked_index(index: usize, entity: EntityKind) -> Result<ValueIndex, BuildEr
 
 #[cfg(test)]
 mod tests {
+    use super::super::{
+        CanonicalValue, NormativeDefinitionRef, OpKey, OperationArity, OperationConformance,
+        OperationDefinition, OperationDefinitionFacts, OperationEffect, OperationInferenceError,
+        OperationInferencer, OperationSchema, ProviderIdentity, SemanticRegistryBuilder,
+        SemanticRegistryProvider, SemanticRegistryRegistrar,
+    };
     use super::*;
     use crate::shape::Shape;
 
@@ -804,6 +823,67 @@ mod tests {
     }
     fn output_key(value: &str) -> OutputKey {
         OutputKey::new(value).unwrap()
+    }
+
+    struct Identity;
+    impl OperationInferencer for Identity {
+        fn infer(
+            &self,
+            operands: &[ValueFact],
+            attributes: &OperationAttributes,
+        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            if operands.len() == 1 && attributes.fields().is_empty() {
+                Ok(vec![operands[0].clone()])
+            } else {
+                Err(OperationInferenceError::new(
+                    "test.identity.signature",
+                    "identity requires one operand and no attributes",
+                ))
+            }
+        }
+    }
+
+    struct Pair;
+    impl OperationInferencer for Pair {
+        fn infer(
+            &self,
+            operands: &[ValueFact],
+            _: &OperationAttributes,
+        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            Ok(vec![operands[0].clone(), operands[0].clone()])
+        }
+    }
+
+    struct OperationProvider;
+    impl SemanticRegistryProvider for OperationProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "operations", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), super::super::RegistryError> {
+            registrar.register_operation(test_operation("identity", 1, Arc::new(Identity)))?;
+            registrar.register_operation(test_operation("pair", 2, Arc::new(Pair)))
+        }
+    }
+
+    fn test_operation(
+        name: &str,
+        results: u32,
+        inferencer: Arc<dyn OperationInferencer>,
+    ) -> OperationDefinition {
+        OperationDefinition::new(
+            OpKey::new("test", name, 1).unwrap(),
+            OperationSchema::new(OperationArity::exact(1), OperationArity::exact(results), [])
+                .unwrap(),
+            NormativeDefinitionRef::new(format!("test {name} v1")).unwrap(),
+            OperationDefinitionFacts::new(CanonicalValue::record([]).unwrap()),
+            OperationConformance::new(CanonicalValue::utf8(format!("test.{name}.v1")).unwrap()),
+            OperationEffect::Pure,
+            inferencer,
+        )
     }
 
     fn program(dead_first: bool, share: bool) -> SemanticProgram {
@@ -1215,6 +1295,17 @@ mod tests {
 
     #[test]
     fn all_rejected_operation_edits_preserve_arena_lengths() {
+        fn has_code(result: Result<ValueId, BuildError>, code: &str) -> bool {
+            matches!(
+                result,
+                Err(BuildError::SemanticRegistry(
+                    super::super::registry::RegistryError::RejectedOperationApplication(
+                        rejection
+                    )
+                )) if rejection.source_error().code() == code
+            )
+        }
+
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let x = builder
             .input_f32(input_key("x"), Shape::from_dims([2, 3]))
@@ -1227,10 +1318,7 @@ mod tests {
             builder.values.len(),
             builder.outputs.len(),
         );
-        assert!(matches!(
-            builder.add_f32(x, y),
-            Err(BuildError::IncompatiblePointwiseShapes { .. })
-        ));
+        assert!(has_code(builder.add_f32(x, y), "binary.shape"));
         assert_eq!(
             before,
             (
@@ -1239,14 +1327,14 @@ mod tests {
                 builder.outputs.len()
             )
         );
-        assert_eq!(
+        assert!(has_code(
             builder.strict_serial_sum_f32(x, []),
-            Err(BuildError::EmptyReductionAxes)
-        );
-        assert_eq!(
+            "sum.axes.empty"
+        ));
+        assert!(has_code(
             builder.strict_serial_sum_f32(x, [Axis::new(1), Axis::new(1)]),
-            Err(BuildError::NonCanonicalReductionAxes)
-        );
+            "sum.axes.canonical"
+        ));
         assert_eq!(
             before,
             (
@@ -1294,5 +1382,78 @@ mod tests {
             &F32::resolved_type()
         );
         assert_eq!(program.outputs().count(), 2);
+    }
+
+    #[test]
+    fn external_operation_is_admitted_without_a_closed_operation_enum() {
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&OperationProvider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input_f32(input_key("x"), Shape::from_dims([2, 3]))
+            .unwrap();
+        let results = builder
+            .apply(
+                OpKey::new("test", "identity", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input],
+            )
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        builder.output(output_key("result"), results[0]).unwrap();
+        let program = builder.build().unwrap();
+
+        assert_eq!(
+            program.operations().next().unwrap().key().namespace(),
+            "test"
+        );
+        assert_eq!(
+            program
+                .value(program.outputs().next().unwrap().value())
+                .unwrap()
+                .resolved_type(),
+            &F32::resolved_type()
+        );
+
+        let registry = program.semantic_registry().clone();
+        let mut shared = SemanticProgramBuilder::try_new(registry.clone()).unwrap();
+        let input = shared
+            .input_f32(input_key("x"), Shape::from_dims([2]))
+            .unwrap();
+        let pair = shared
+            .apply(
+                OpKey::new("test", "pair", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input],
+            )
+            .unwrap();
+        assert_eq!(pair.len(), 2);
+        shared.output(output_key("left"), pair[0]).unwrap();
+        shared.output(output_key("right"), pair[1]).unwrap();
+        let shared = shared.build().unwrap();
+
+        let mut separate = SemanticProgramBuilder::try_new(registry).unwrap();
+        let input = separate
+            .input_f32(input_key("x"), Shape::from_dims([2]))
+            .unwrap();
+        let first = separate
+            .apply(
+                OpKey::new("test", "pair", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input],
+            )
+            .unwrap();
+        let second = separate
+            .apply(
+                OpKey::new("test", "pair", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input],
+            )
+            .unwrap();
+        separate.output(output_key("left"), first[0]).unwrap();
+        separate.output(output_key("right"), second[1]).unwrap();
+        let separate = separate.build().unwrap();
+
+        assert_ne!(shared.canonical_identity(), separate.canonical_identity());
     }
 }
