@@ -1,7 +1,7 @@
 ---
 id: apple-artifact-compatibility
 title: Measure Apple artifact target and deployment compatibility
-status: todo
+status: done
 priority: p1
 dependencies: [artifact-envelope-model, target-profile-feasibility-model]
 related: []
