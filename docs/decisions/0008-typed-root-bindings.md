@@ -44,6 +44,16 @@ specialized value additionally participates in scheduled/artifact identity.
 Physical-only target properties remain inputs to physical planning or
 `AbiExpr`. They do not become semantic roots merely because they affect
 layout, allocation padding, schedule selection, or launch geometry.
+ADR 0043 models those properties as phased typed capability facts. A physical
+capability affects semantic shapes or values only through an explicitly
+authored `TargetProperty` root binding; scheduling use alone never changes
+graph meaning.
+
+Every semantic target property is admitted and bound exactly once from the
+declared compile profile or live-device preflight before semantic shape
+evaluation and plan routing. Artifact, prepared-kernel, and launch facts cannot
+overwrite or refine that semantic environment. Supporting a later source would
+require revising this ADR's initial acyclic execution contract.
 
 ## Consequences
 

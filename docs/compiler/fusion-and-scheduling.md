@@ -75,11 +75,14 @@ A proposed fusion region is legal only when all of the following hold.
 
 ### Target capabilities
 
-- Dtypes and operations are supported.
+- Required dtypes, operations, execution scopes, memory spaces, barriers, and
+  collectives are supported by typed capability facts.
 - Index arithmetic cannot overflow under guards.
-- Threadgroup dimensions, local memory, bindings, and generated resources fit
-  target limits.
+- Selected execution-scope/group dimensions, local memory, bindings, and
+  generated resources fit target limits.
 - Vector access satisfies alignment and tail requirements.
+- Any unresolved hard fact is deferred to a named safe preflight phase with an
+  equivalent packaged alternative; estimates never establish legality.
 
 ### Numerical semantics
 
@@ -133,9 +136,14 @@ Candidate schedules include:
 - grid-stride loops;
 - collapsed contiguous iteration;
 - rank-aware dynamic-stride indexing;
-- vector widths 1, 2, 4, or 8 under guards;
+- fixed vector widths such as 1, 2, 4, or 8 as backend/profile-specific search
+  candidates, plus scalable vector shapes where the target model admits them;
 - alternate axis orders for coalescing;
 - masked vector or scalar tails.
+
+Vector legality is queried for the complete operation, dtype, fixed/scalable
+shape, mask/tail, address space, access width, and alignment contract. A
+preferred width is a cost fact, not proof that the operation is legal.
 
 A logical transpose need not be materialized. It becomes a different access
 map in the fused consumer. Materialization remains a candidate when it improves

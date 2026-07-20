@@ -109,6 +109,12 @@ and 4-bit program agree with the strict reference evaluator.
 - Explicit contiguous/layout enforcers.
 - Bounded alternative search and first analytical cost model.
 - Add richer device-family profiles and symbolic/guarded routing.
+- Implement governed capability keys and all `CompileProfile`,
+  `ArtifactEvidence`, `LiveDevicePreflight`, `PreparedKernelPreflight`, and
+  `LaunchPreflight` fact phases, with aggregate
+  `Proven`/`Deferred`/`Rejected`/`Unknown` feasibility and `RoutingCommit`.
+- Keep hard resource proofs distinct from register, occupancy, cache, and
+  throughput estimates; validate fixed and scalable vector legality.
 - Structured rejection reasons and plan comparison.
 
 **Exit criterion:** the optimizer chooses among several valid region

@@ -49,6 +49,7 @@ feasibility vehicle.
 - [Open design questions](open-questions.md)
 - [Lessons from `ug`](prior-art/ug.md)
 - [Logical-graph and schedule-IR precedents](prior-art/logical-graphs-and-schedules.md)
+- [Target profiles and phased physical feasibility](research/target-profiles/physical-feasibility-model.md)
 - [Architecture decisions](decisions/README.md)
 
 ## Document ownership

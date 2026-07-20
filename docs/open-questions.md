@@ -79,7 +79,16 @@ ADR when evidence is sufficient.
 - When are multi-output kernels introduced?
 - Which facts must an optimized opaque call expose as boundary contracts,
   target requirements, resource envelopes, and costs?
-- Which cost terms are hard constraints versus calibrated estimates?
+- Which governed capability keys and multivariate feasibility rules form the
+  first Metal profile, and which remain backend extensions?
+- What exact compatibility/versioning contract lets a declared profile cover
+  several device families without overstating their common guarantee?
+- Which runtime query phases and provider authorities are enabled in the first
+  executable profile?
+- Which compiler or prepared-kernel reports are authoritative enough to
+  promote an estimate into a hard resource fact?
+- What execution/threading and fixed/scalable vector contract defines the first
+  future CPU profile?
 - What normalized coordinate-map and loop/tile representation should
   `KernelSchedule` use?
 - Which schedule transforms are stable enough for replayable explain traces?

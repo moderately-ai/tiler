@@ -1,11 +1,11 @@
 ---
 id: target-profile-feasibility-model
 title: Define target profiles and physical feasibility constraints
-status: todo
+status: done
 priority: p0
 dependencies: []
 related: []
-scopes: [research/target-profiles]
+scopes: [research/target-profiles, contracts/core, contracts/compiler, contracts/artifacts, contracts/integrations, research/numerics, research/runtime]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research, gpu]

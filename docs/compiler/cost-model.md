@@ -60,7 +60,9 @@ modeled as a discrete tier; it is not double-counted in both places.
 - barrier and collective steps;
 - local-memory footprint;
 - live-value/register-pressure proxy;
-- occupancy tier or feasibility bound;
+- compiler/preflight-proven resource feasibility where a backend exposes an
+  authoritative rule, including nonzero residency when required for launch;
+- estimated occupancy tier, register pressure, and spill risk;
 - number of dispatches and multi-pass dependencies.
 
 ## Compilation and deployment features
@@ -86,6 +88,16 @@ converted blindly into runtime nanoseconds.
 GPU resource costs are discontinuous. Crossing a register, local-memory, or
 threadgroup-size threshold can reduce occupancy or invalidate a plan. The cost
 model therefore combines estimates with hard feasibility constraints.
+
+An analytical register or occupancy estimate cannot invalidate a candidate.
+Only an authoritative compiled/prepared-kernel fact and target rule may prove
+zero feasible residency or another hard launch failure. Occupancy above zero is
+a performance variable and higher occupancy is not inherently faster.
+
+CPU profiles add analogous costs for vector legalization/splitting, register
+spill pressure, cache working set, memory-level bandwidth, thread-pool width,
+oversubscription, and task/barrier overhead. Cache capacity remains a cost fact
+unless the schedule explicitly manages that memory space.
 
 Fusion is evaluated as a complete alternative:
 

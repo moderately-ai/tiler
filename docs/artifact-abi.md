@@ -41,6 +41,10 @@ struct MetallibBundle {
     codegen_version: String,
     target: MetalTarget,
     target_profile_id: String,
+    target_profile_descriptor_hash: Hash256,
+    capability_schema_versions: Vec<SchemaVersion>,
+    feasibility_rule_set: RuleSetIdentity,
+    artifact_execution_contract: ArtifactExecutionContract,
     cost_model_version: String,
     compiler: CompilerFingerprint,
     manifest_hash: Hash256,
@@ -65,6 +69,8 @@ struct ProgramPlan {
 struct PlanVariant {
     plan_hash: Hash256,
     applicability_guards: Vec<RuntimeGuard>,
+    target_requirements: Vec<TargetRequirement>,
+    deferred_target_checks: Vec<DeferredTargetCheck>,
     buffer_plan: BufferPlan,
     temporaries: Vec<TemporaryTensor>,
     steps: Vec<KernelStep>,
@@ -90,12 +96,22 @@ struct KernelEntry {
     dispatch: DispatchFormula,
     function_constants: Vec<FunctionConstantSpec>,
     static_threadgroup_bytes: u32,
+    resource_requirements: ResourceRequirements,
 }
 ```
 
 This is illustrative, not a committed Rust API or serialization format. The
 Milestone 2 one-kernel path is a program with one variant, no temporaries, and
 one step.
+
+The manifest carries governed capability-key and feasibility-rule schema
+versions, exact/proven resource requirements, and each deferred predicate's
+query contract, availability phase, and provenance authority. A
+`target_profile_id` alone is not evidence that an individual variant is legal.
+The descriptor hash covers canonical compatibility, compile guarantees, data
+layout, execution/memory/vector models, phase schemas, artifact execution
+policy, and rule-set/provider revisions. The display key and tuning-model key
+do not substitute for that identity.
 
 ## ABI expression language
 
@@ -239,6 +255,18 @@ may reject that plan and try the next semantically identical preflight-valid
 variant. After allocation/encoding begins, the runtime does not retry another
 plan or execute fallback.
 
+Preparation refines compile guarantees with live-device and prepared-kernel
+facts, then evaluates launch-instance requirements. Live facts are keyed by
+device/context; prepared facts additionally key artifact, entry point, and
+function constants, canonical pipeline descriptor/configuration, and relevant
+archive/runtime mode. Neither becomes portable semantic identity.
+
+`RoutingCommit` occurs only after route-sensitive launch preflight and final
+variant selection. Compatibility/capability rejection may route before it;
+artifact integrity, schema/ABI inconsistency, dishonest providers, systemic
+runtime errors, allocation failure, and all post-commit failures close with an
+error.
+
 ## Embedding contract
 
 The proc macro embeds the canonical manifest and metallib as byte-string literal
@@ -275,6 +303,13 @@ program plans, semantic root-binding declarations, ABIs, guards, routing,
 dispatch, numerical contract, translation-unit membership,
 schema/helper/codegen versions, target/profile, compiler, flags, and every
 selected conformance-evidence record digest and scope.
+
+Target requirement predicates, the feasibility-profile descriptor/rule
+identity, artifact execution policy, deferred query contracts/phases, and exact
+resource requirements are likewise identity. Live fact values and prepared-
+pipeline observations scope runtime caches and routing records rather than
+portable bundle identity. Tuning-model identity is selection provenance unless
+it changes the emitted portfolio or embedded manifest.
 
 Transcendental implementation evidence is explicit artifact provenance rather
 than an implied consequence of a compiler flag. Each claim identifies its

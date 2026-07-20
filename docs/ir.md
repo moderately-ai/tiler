@@ -496,12 +496,15 @@ Unroll      StageLocal     ChooseReduction
 
 The authoritative normalized schedule owns:
 
-- loop, tile, and vector hierarchy;
-- mappings from grid, threadgroup/block, SIMD-group/warp, lane, and vector
-  coordinates into logical iteration coordinates, including bounded domains;
-- intra-kernel memory placement, staging, reuse scopes, and local lifetimes;
+- loop, tile, and fixed/scalable vector hierarchy;
+- mappings from governed typed execution-scope coordinates into logical
+  iteration coordinates, including bounded domains; GPU grid/workgroup/
+  subgroup/lane and CPU task/thread/vector scopes are target-model examples;
+- intra-kernel placement in governed addressable memory spaces, staging, reuse
+  scopes, and local lifetimes; transparent caches remain cost facts;
 - reduction topology, combination order, and result visibility;
-- synchronization points, scopes, and convergence requirements;
+- synchronization points, participant/execution scopes, fenced memory spaces,
+  and convergence requirements;
 - tail, predication, and padding policy;
 - unrolling and software-pipeline choices;
 - symbolic launch expressions and specialization constants.
@@ -520,10 +523,15 @@ verified independently after transformation.
 
 Several adjacent concepts remain deliberately separate:
 
-- `TargetProfile` is planner input containing capabilities, hard ceilings, and
+- `TargetProfile` is governed planner input containing typed conservative
+  compile guarantees, compatibility, data layout, execution/memory/vector
+  models, phase-specific query/evidence schemas, artifact representation and
+  runtime-translation policy, feasibility-rule identity, and a separate
   calibrated cost-model identity.
-- `TargetRequirement` is the selected implementation's machine-checkable
-  capability predicate.
+- `TargetRequirement` is the selected implementation's canonical bounded
+  predicate over typed capability facts, candidate resources, evaluated launch
+  values, ABI/layout, and binding/access facts, including any named deferred
+  phase.
 - `ResourceRequirements` records exact quantities or proven upper bounds used
   for feasibility, such as bindings, threads, and local-memory bytes.
 - `ResourceEstimate` records quantities that cannot yet prove feasibility, such
@@ -554,10 +562,23 @@ Several adjacent concepts remain deliberately separate:
 ### Target feasibility assessment
 
 `assess_feasibility(ScheduledRegion, TargetProfile)` computes exact/proven
-resource requirements and target requirements or rejects the candidate. It
+resource requirements and target predicates. Aggregate feasibility is
+`Rejected` if any hard predicate is disproved; otherwise `Unknown` if any lacks
+an admissible proof/query path; otherwise `Deferred` with a nonempty canonical
+set of checks grouped by phase; otherwise `Proven`. It
 checks launch limits, bindings, supported operations/dtypes/collectives, local
-memory, and every other target-dependent hard constraint. Estimates may guide
-search and dominance but cannot prove feasibility.
+memory, and every other target-dependent hard constraint. A deferred candidate
+survives intrinsic assessment only when the fact has an admissible query path
+before `RoutingCommit`. The later portfolio or
+integration verifier proves equivalent coverage for every deferred-rejection
+region. That boundary
+follows route-sensitive `LaunchPreflight` and final selection but precedes
+output/scratch acquisition or encoding. Later allocation and launch invariants
+fail closed. Estimates may guide search and dominance but cannot prove
+feasibility.
+
+`Unknown` candidates remain explain/search state only and cannot enter an
+executable `ImplementationFrontier` or manifest.
 
 Cross-kernel materialized buffers, dependencies, and lifetime intervals belong
 to `KernelSubprogram` or `KernelProgram`, not an individual kernel schedule.

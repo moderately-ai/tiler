@@ -98,7 +98,8 @@ implementations and the complete kernel program.
 For a proposed fusion region, the local scheduler decides:
 
 - iteration order and dimension coalescing;
-- lane and threadgroup mappings;
+- mappings to governed target execution scopes/coordinates, such as GPU lanes,
+  subgroups, and threadgroups or CPU tasks, threads, and vector lanes;
 - tile and vector widths;
 - tail predication;
 - reduction strategy;
@@ -109,7 +110,9 @@ Its natural unit is one `RegionCandidate` with iteration domains and access
 maps. It returns a bounded `ImplementationFrontier`, not one unconditional
 winner. Every retained `RegionImplementation` contains boundary
 requirements/guarantees, applicability predicates, target requirements,
-resource requirements and estimates, and a cost estimate. Its implementation
+consumed compile guarantees, deferred target predicates with evaluation phases,
+exact/proven resource requirements, estimates, calibration identity, and a cost
+estimate. Its implementation
 body is one of:
 
 ```text

@@ -173,6 +173,11 @@ worse throughout the compared constraint cell and strictly better somewhere.
 Otherwise both remain or the constraint space is partitioned. Cost alone may
 not prune the only implementation valid for a runtime region.
 
+Target-requirement implication and evaluation phase participate in dominance.
+A candidate needing a stronger or later runtime predicate does not dominate a
+generic candidate merely because its estimated cost is lower. Scalar/generic
+coverage is retained whenever specialized feasibility is deferred or narrower.
+
 Numerical conformance is checked before this dominance relation. Accuracy is a
 hard semantic dimension, not a Pareto cost; incomparable or unknown evidence
 cannot be made legal by a lower estimated runtime.

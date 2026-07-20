@@ -24,14 +24,27 @@ then evaluates semantic requirements and available preflight guards. It chooses
 either an ordered set of applicable compiled plan variants or the ordinary
 Candle expression. This is where semantic fallback is safe and expressible.
 
+Before calling `apply_op`, the wrapper asks the adapter to refine those variants
+with live-device, library/function, prepared-pipeline, and route-sensitive
+launch-preflight facts. It returns a `PreparedSelection` token keyed by the
+bound semantic environment digest, live device identity, bundle and plan hash,
+the complete ordered step/pipeline identities (each including entry point,
+specialization, descriptor, archive/runtime mode), exact input-view/binding
+fingerprint (storage identity/generation where available, dtype, shape, strides,
+start/base offset, allocation length, accessible range, and required access),
+and evaluated route-sensitive launch-fact digest, or a typed
+capability miss. If every variant has a capability miss, the wrapper still owns
+the Tensor expression and can choose ordinary Candle fallback. No output/
+scratch allocation or encoding occurs before this selection.
+
 The same bound semantic environment is passed to compiled and fallback paths.
 Failure to bind a target property that affects output semantics is not a plan
 miss: fallback is permitted only if it can realize that identical binding and
 semantic result.
 
-Guards requiring backend-only allocation facts are classified as launch-time
-assertions. The integration should minimize these; failure after custom-op
-selection normally returns an error rather than rebuilding a Tensor graph.
+Conditions requiring actual plan-specific allocation facts are guaranteed by
+the allocator contract or classified as post-`RoutingCommit` invariants. Their
+failure returns an error rather than rebuilding a Tensor graph.
 
 ### Selected custom-op launch
 
@@ -40,9 +53,10 @@ For an already selected output-producing custom operation, the adapter:
 1. converts Candle storage and `Layout` into runtime tensor-view descriptors;
 2. constructs and validates the bound semantic extent environment;
 3. computes and validates the output shape and semantic requirements;
-4. validates launch-time guards and routes to a plan variant;
-5. prepares all required per-device library/function/pipeline objects, trying a
-   later preflight-valid plan only if preparation fails before device work;
+4. validates every token field against the current inputs, device, plan,
+   pipelines, and launch values, rejecting any stale/mismatched token before
+   `RoutingCommit`, then consumes it without rerouting;
+5. crosses `RoutingCommit` for that selected variant;
 6. allocates output and declared temporary storage through the input
    `MetalDevice`/Candle allocator;
 7. for each dependency-ordered step, binds allocation buffers and checked
@@ -96,9 +110,11 @@ If no artifact variant matches, the Tensor-level wrapper selects the existing
 Candle operation pipeline outside the manifest/runtime launcher.
 
 Failed preflight guards are normal and explainable. Pipeline preparation may
-try another preflight-valid compiled plan before allocation or encoding. Corrupt
-artifacts, ABI mismatches, or failures after device work begins are errors; the
-adapter does not risk executing fallback after partial work.
+try another preflight-valid compiled plan before `RoutingCommit`. Only a typed
+compatibility/capability rejection may route. Corrupt artifacts, schema or ABI
+mismatches, dishonest capability providers, systemic runtime failures,
+allocation failures, and all post-commit failures are errors; the adapter does
+not mask them by trying another variant or risk fallback after partial work.
 
 The Tensor-level wrapper retains enough information to execute the unfused
 Candle expression when no generated variant applies. That fallback is valid

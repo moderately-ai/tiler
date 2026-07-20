@@ -94,6 +94,12 @@ Generate combinations of:
   result checked against the composed subnormal, zero, overflow, and NaN
   policies;
 - shape products near index-width boundaries.
+- target hard limits at minus/equal/plus one; absent, unknown, stale, and
+  dishonest capability providers; fixed/scalable vector legality across
+  operation/dtype/mask/address-space/alignment combinations; barrier scope,
+  fence, and convergence; deferred checks at their exact preparation phase;
+  specialization-specific kernel facts; generic fallback retention; and proof
+  that estimates never establish legality.
 
 The cross-operation coverage, adversarial numerical atoms, and backend compiler
 verification protocol are maintained in the

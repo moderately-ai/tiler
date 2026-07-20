@@ -55,6 +55,13 @@ supported dtypes/features, SIMD-group assumptions, maximum threads and
 threadgroup memory, binding limits, supported address/index widths, and
 bootstrap cost parameters.
 
+This is the Metal instance of ADR 0043's generic schema. Family/platform facts
+are compile guarantees; `MTLDevice` facts are live-device facts; and
+`threadExecutionWidth`, `maxTotalThreadsPerThreadgroup`, and
+`staticThreadgroupMemoryLength` are prepared-pipeline facts keyed by device,
+bundle, entry point, function constants, canonical pipeline descriptor, and
+archive/runtime mode. A metallib load is not a pipeline feasibility proof.
+
 Numerical capabilities are keyed by operation, dtype, effective accuracy,
 special-value and subnormal contracts, implementation/helper revision, and
 toolchain profile. A generic claim that a target supports `fast` or `precise`
@@ -62,9 +69,18 @@ math is not a feasibility fact.
 
 Some limits are known only after pipeline creation, such as execution width or
 maximum threads for a compiled function. The manifest records corresponding
-runtime assertions. A bundle may contain a conservative generic portfolio plus
-device-family variants with explicit compatibility guards. Profile and
-cost-model version are compilation provenance and scheduled identity.
+deferred preflight assertions. A bundle may contain a conservative generic
+portfolio plus device-family variants with explicit compatibility guards.
+Profile and cost-model version are compilation provenance and scheduled
+identity.
+
+Metal does not expose stable planning facts for exact register use, spills,
+active threadgroups, or occupancy. These remain estimates or measurements;
+Metal feasibility uses pipeline creation plus documented launch/resource caps,
+not a generic nonzero-occupancy rule. Pipeline maximum threads is a hard launch
+limit, not an occupancy estimate.
+Recommended working-set size is likewise performance guidance, not an
+allocation ceiling.
 
 Metal may also implement a versioned provider for a semantic target-property
 binding declared by the backend-neutral program interface. Compile-profile and
@@ -73,6 +89,17 @@ contracts are deterministic and available before allocation. Pipeline-derived
 properties remain physical assertions in the initial model; they cannot feed
 semantic output shapes merely because the backend can query them after
 pipeline creation.
+
+For a concrete launch, preflight checks each threadgroup axis against the live
+device, the product against the pipeline's
+`maxTotalThreadsPerThreadgroup`, and pipeline static plus every aligned dynamic
+threadgroup-memory allocation against the live device limit. It also validates
+the selected uniform/nonuniform dispatch mode, checked launch-index
+representation, actual input binding presence/access/base-plus-offset alignment
+and range, and output/temporary allocation specifications plus allocator
+alignment/capacity guarantees before `RoutingCommit`. After allocation, the
+returned output/temporary bindings are validated against those guarantees as
+post-commit invariants; a mismatch fails closed.
 
 ## MSL emission
 
@@ -147,7 +174,8 @@ Per Metal device, cache:
 
 1. `MTLLibrary` by bundle hash;
 2. `MTLFunction` by bundle, symbol, and function constants;
-3. `MTLComputePipelineState` by the same identity plus descriptor fields.
+3. `MTLComputePipelineState` by the same identity plus canonical descriptor,
+   archive, and relevant runtime-mode fields.
 
 Device-bound objects are never stored in a device-agnostic global singleton.
 Initialization is concurrency-safe and fallible. Pipelines are not recreated

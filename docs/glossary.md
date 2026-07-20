@@ -12,6 +12,8 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Artifact | A versioned bundle or kernel-entry record consumed across the compiler/runtime boundary. |
 | Axis symbol | Stable frontend identity for a logical axis such as `b`, `h`, or `w`. |
 | Bundle | Self-contained target artifact and manifest containing a complete program portfolio; an integration may scope one bundle to one macro invocation. |
+| Capability fact | Typed value for a governed target key with explicit availability phase, validity scope, authority, and provenance. |
+| Capability phase | One of `CompileProfile`, `ArtifactEvidence`, `LiveDevicePreflight`, `PreparedKernelPreflight`, or `LaunchPreflight`, stating when a physical fact becomes available. |
 | Byte offset | Offset used by a buffer-binding API, measured in bytes. |
 | Candidate region set | Overlapping region candidates considered by program planning; a hypergraph may be used as its internal index. |
 | Boundary enforcer | Explicit materialization, layout conversion, cast, or copy that satisfies a boundary requirement. |
@@ -20,6 +22,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Buffer plan | Kernel-program mapping from logical values/views to allocation identities and verified lifetime intervals. |
 | Collective | Operation involving several hardware lanes or threads, such as a reduction. |
 | Compilation request | One semantic graph plus numerical/shape context, frozen operation registry, targets, budgets, and deterministic compiler options. |
+| Compile guarantee | Conservative typed capability fact promised by a declared target profile before artifact generation. |
 | Element offset | Typed index into elements of a buffer view, distinct from a byte offset. |
 | Evidence class | Scope and strength of support for an implementation guarantee: proof, exhaustive, normative guarantee, empirical qualification, or unknown. |
 | Expansion compiler cache | Disposable global content-addressed cache used by proc macros to avoid repeated external AOT compilation. |
@@ -39,6 +42,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Macro-local bundle | Bundle whose collection scope is one inline invocation, though it may contain many kernel entries and steps. |
 | Kernel program | Executable dependency DAG of kernel stages, materializations, opaque calls, buffers, and launches. |
 | Kernel schedule | Normalized mapping from one region's iteration/access representation onto target execution and memory hierarchy. |
+| Live-device capability | Typed fact queried for one runtime device/context and used for preflight or routing, not portable semantic identity. |
 | Map/scalar expression | Typed pointwise computation formed while lowering or fusing semantic operations into a region implementation. |
 | Materialization | Allocating and storing an intermediate tensor rather than retaining it in a fused expression. |
 | Materialization boundary | Kernel-program edge at which an intermediate tensor is stored. |
@@ -52,6 +56,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Operation registry snapshot | Immutable deterministic per-compilation mapping from semantic operation keys and capability-provider IDs to trusted implementations and revisions. |
 | Program portfolio | Guarded alternatives containing complete kernel programs for one semantic graph. |
 | Program result | Ordered named reference to a semantic value returned by the graph; it is not an `Output` operation. |
+| Prepared-kernel capability | Fact available only after selecting and preparing one entry point/specialization for a live device. |
 | Region candidate | Proposed semantic subgraph plus explicit boundary values, retained outputs, materialized edges, duplication policy, and contract. |
 | Region partition | Compatible covering set of selected region candidates. |
 | Resource estimate | Non-authoritative estimate such as register pressure, occupancy, or code size used for pruning and costing. |
@@ -60,15 +65,17 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Reduction domain | Coordinates combined to produce one logical output value. |
 | Schedule trace | Non-authoritative history of scheduling transforms, parameters, preconditions, and rejections retained for explain/replay. |
 | Root binding | Typed declaration mapping a semantic extent symbol to a static value, input dimension, interface parameter, or admitted target property. |
+| Routing commit | Boundary after all route-sensitive launch preflight and final variant selection, before output/scratch acquisition or encoding; no later failure selects another plan or semantic fallback. |
 | Semantic tensor graph | Public backend-neutral operation/value DAG describing tensor values and named program results as a function over explicit inputs and extent symbols. |
 | Shape constraint | Equality, divisibility, interval, or factorization fact required by tensor semantics. |
 | Shape environment | Scoped symbolic extent declarations, static/runtime source bindings, semantic constraints, and derived facts. |
 | SIMD group | Hardware subgroup of lanes that execute and cooperate; Metal uses this term where CUDA commonly uses warp. |
+| Scalable vector shape | Vector lane count expressed as a fixed minimum multiplied by a runtime-stable scale rather than one compile-time width. |
 | Source origin | Diagnostic mapping from canonical IR back to frontend source. |
 | Storage layout | Base offset and physical strides associated with a logical shape. |
-| Target profile | Conservative capabilities and cost parameters used for scheduling. |
-| Target property binding | Explicit semantic root binding to a stable, versioned target property available at a declared phase; distinct from an implicit device query or a physical-only target fact. |
-| Target requirement | Machine-checkable capability predicate required by a selected implementation. |
+| Target profile | Governed versioned compile guarantees, compatibility, execution/data-layout models, phased query schemas, feasibility rules, and separately identified tuning model used for physical planning. |
+| Target property binding | Explicit semantic root binding to a stable, versioned property admitted initially from `CompileProfile` or `LiveDevicePreflight`; later physical phases cannot overwrite it. |
+| Target requirement | Canonical bounded predicate over typed capability, candidate-resource, launch, ABI/layout, and binding/access facts required by a selected implementation, possibly deferred to a named safe preflight phase. |
 | Tensor expression | Pure semantic operation that produces a logical tensor value. |
 | Tensor view | Logical shape, strides, and start position over an allocation. |
 | Threadgroup | Threads dispatched together with shared synchronization and memory; Metal uses this term where CUDA commonly uses block. |
