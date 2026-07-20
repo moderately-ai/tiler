@@ -71,6 +71,15 @@ verification or optimization it freezes into an immutable snapshot:
   and hash-map randomization never participate in durable identity.
 
 The frozen registry is immutable and safe for concurrent read-only use.
+
+The implementation separates the semantic portion required by `tiler-ir` from
+later executable capabilities. `FrozenSemanticRegistry` is a cheap-clone owned
+snapshot of canonical type definitions, provider provenance, and local marker
+bindings; semantic programs retain it so checked Rust reification does not
+require a borrowed context. Registration-time provider callbacks are discarded
+at freeze. Optimizer and backend registries compose with that snapshot in a
+later compilation session rather than introducing an inward dependency from
+semantic IR to executable provider traits.
 Provider objects are expected to be `Send + Sync + 'static` unless an explicit
 compiler mode serializes a capability.
 
@@ -87,14 +96,17 @@ attestation. Changing output-affecting behavior without changing the declared
 revision is a provider bug. Compiler and capability-API versions also
 participate in identity.
 
-Element types follow the same durable identity principle. A conceptual
-`TypeKey { namespace, name, semantic_version }` identifies a canonical dtype
-for both built-ins and extensions. Built-ins may expose convenient constants or
-enum-like spellings, but durable IR never substitutes Rust discriminants,
-`TypeId`, implementation addresses, or unversioned display names for the type
-key. The descriptor attached to a key defines structural and value semantics;
+Value types follow the same durable identity principle. A conceptual
+`TypeKey { namespace, name, semantic_version }` identifies a canonical nominal
+dtype or parameterized constructor for both built-ins and extensions. ADR 0062
+places nominal, parameterized, and encoded-numeric scheme contracts in one
+tagged `ResolvedValueType` domain without collapsing `TypeKey` and
+`QuantSchemeKey`. Built-ins may expose convenient constants or enum-like
+spellings, but durable IR never substitutes Rust discriminants, `TypeId`,
+implementation addresses, or unversioned display names for canonical resolved
+identity. Registered descriptors define structural and value semantics;
 provider identity separately records the implementation that supplies
-capabilities for it.
+capabilities.
 
 A canonical type key is not rewritten when its support level changes. If Tiler
 later bundles support for `acme::fp8_special@1`, it supports that existing
@@ -103,7 +115,13 @@ improve spelling, but aliases resolve to a canonical key before semantic
 admission and never create identity equivalence implicitly. Namespace
 ownership, collision handling, provider compatibility, and durable descriptor
 encoding require the same deterministic registry discipline as operations;
-their exact Rust API remains open.
+ADRs 0060 and 0062 fix the Rust authority boundary: external marker types carry
+no key or capability authority merely by implementing a trait. The explicit
+registry binds one process-local marker `TypeId` to one complete canonical
+registered `ResolvedValueType`, rejects duplicate marker/identity bindings, and
+freezes the association before typed construction. The local `TypeId` is lookup
+metadata only and never durable identity. Remaining API details concern
+ergonomics, not semantic ownership.
 
 Tiler-governed built-in type descriptors contain mandatory normative source
 references but Tiler owns their IR-key compatibility. Published descriptors are

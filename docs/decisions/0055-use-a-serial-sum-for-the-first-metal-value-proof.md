@@ -6,7 +6,7 @@ title: "Use a serial Sum for the first Metal value proof"
 topics: ["prototype", "metal", "fusion", "reductions"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.numerical-semantics", "tiler.contract.fusion-and-scheduling", "tiler.contract.metal-backend", "tiler.contract.correctness-and-testing"]
 evidence: ["tiler.research.numerics.reduction-semantics-and-legality", "tiler.research.scheduling.scheduled-region-model", "tiler.research.kernel-ir.structured-kernel-ir-verifier"]
 ticket: "research-readiness-gate"
@@ -40,6 +40,14 @@ The proof compares one fused kernel against a deliberately materialized
 pointwise-plus-reduction reference. It must demonstrate equal reference results
 under the strict contract and fewer dispatches or intermediates. It does not
 claim a performant general reduction implementation.
+
+The versioned first-profile arithmetic-NaN contract uses the canonical quiet
+binary32 pattern `0x7fc00000`. Constants and bit-preserving values retain their
+declared payload bits. `f32` Multiply and Add canonicalize every produced NaN;
+strict Sum applies that Add rule after every combine and canonicalizes again at
+the reduction result boundary, including singleton results. This policy is
+part of semantic, plan, artifact, and cache identity rather than an ambient
+host or Metal behavior.
 
 This decision authorizes a bounded, explicitly unstable implementation
 prototype. It does not authorize stable public APIs, broad operation coverage,

@@ -23,3 +23,19 @@ Record devices, OS/SDK versions, storage modes, byte counts, synchronization,
 observed compatibility failures, latency/bandwidth, allocation/resource
 lifetime, and whether preflight catches the failure before device work. Do not
 generalize beyond measured configurations.
+
+## Activation gate
+
+Run only when the multi-device scope gate needs Metal evidence and a host with
+more than one independently addressable Metal device is available. Apple
+Silicon unified memory on one device does not satisfy that prerequisite; record
+partial platform coverage explicitly.
+
+## Exit criteria
+
+Produce a reproducible experiment and versioned report that distinguishes
+same-device aliasing, blits, host staging, cross-device synchronization, and
+unsupported routes. Marking the ticket done requires results from at least two real,
+independently addressable Metal devices with complete OS/SDK/device/storage-mode
+provenance; all unavailable platform families remain `Unknown` rather than
+being inferred from one configuration.

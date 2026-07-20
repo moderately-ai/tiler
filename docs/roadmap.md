@@ -24,8 +24,11 @@ implementation authority.
 
 **Research-contract status:** complete. ADRs 0005, 0006, 0008, 0044, and 0045
 fix the graph, shape, registry, and proc-macro visibility boundaries. The
-compile-checking operation API and normative reference slice validate the
-architecture; production implementation remains future work.
+active semantic ticket chain is implementing and testing the compile-checking
+operation API and normative reference integration; its current untyped draft
+does not yet satisfy this milestone's registry, external-provider, typed-handle,
+or shape-evidence exit requirements. Production implementation remains future
+work.
 
 The bullets below are the implementation scope authorized only after the
 research-readiness decision; they are not claims that the implementations
@@ -78,6 +81,11 @@ equivalent expansions invoke no external compiler, and the proposed Rust DX
 works without build scripts or prebuild commands. Failure does not invalidate
 Milestone 0A's consumer-independent compiler boundary.
 
+The currently authorized Metal AOT and runtime tickets prove backend artifact
+and device-execution boundaries but intentionally exclude the proc macro,
+generalized cache, and consumer integration. They are prerequisites and
+evidence for this milestone, not its complete exit.
+
 ## Milestone 1: canonical semantic graph and index IR
 
 - Build the typed operation/value semantic graph.
@@ -120,6 +128,11 @@ construction order.
 
 **Exit criterion:** a useful einops-derived chain executes correctly with fewer
 dispatches or intermediates than the reference path.
+
+The strict serial-Sum architectural proof exercises the core compiler and Metal
+path before this broader milestone. It intentionally does not claim the Candle
+adapter, inline macro, general fallback, or einops-derived workload required by
+the milestone exit.
 
 ## Milestone 2Q: quantized-value vertical proof
 

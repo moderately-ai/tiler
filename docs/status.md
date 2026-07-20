@@ -9,10 +9,17 @@ related: ["tiler.questions.open", "tiler.roadmap"]
 
 # Project status
 
-Tiler has entered a bounded prototype phase. The semantic,
-optimizer, scheduling, numerical, artifact, cache, and runtime boundaries have
-substantial accepted decisions and bounded executable evidence. Production
-compiler crates and kernels have not been implemented or stabilized.
+Tiler has entered a bounded prototype phase. The semantic, optimizer,
+scheduling, numerical, artifact, cache, and runtime boundaries have substantial
+accepted decisions and bounded executable evidence. An initial untyped
+semantic/reference draft and evaluator are implemented in the current working
+tree. Graph ownership, recoverable commitment, output-reachable compaction, and
+origin-bound output-selector mechanics are implemented for that bounded
+profile. The bounded resolved-value-type domain and frozen semantic registry
+are also implemented, including the standard `F32` and external-provider path.
+Typed values and shape-evidence interfaces remain on the active dependency
+path. Target-neutral compilation, Metal AOT, and device execution remain
+unimplemented and no public API is stabilized.
 
 ## Authorized prototype
 
@@ -21,9 +28,20 @@ proof in [ADR 0055](decisions/0055-use-a-serial-sum-for-the-first-metal-value-pr
 The prototype must pass through the documented semantic, reference, optimizer,
 schedule, structured-kernel, artifact, and guarded-runtime boundaries; a
 handwritten standalone Metal kernel is insufficient. ADRs 0056 and 0057 fix the
-prototype crate graph and Rust 1.89 MSRV; dependency-ordered implementation
-tickets are now the active frontier, beginning with
-[`prototype-workspace-scaffold`](../tickets/prototype-workspace-scaffold.md).
+implemented prototype crate graph and Rust 1.89 MSRV. The active frontier is
+the dependency-ordered typed value,
+[shape-evidence spike](../tickets/prototype-shape-evidence-spike.md), and
+checked shaped-value work, integrated by the
+[`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md).
+That is followed by the dependency-ordered
+[`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md),
+[`target-neutral fusion selection`](../tickets/prototype-target-neutral-fusion-slice.md),
+[`Metal AOT bundle`](../tickets/prototype-metal-aot-slice.md), and
+[`Metal execution proof`](../tickets/prototype-metal-runtime-proof.md) slices.
+
+This chain is an architectural value proof. It does not by itself complete the
+inline proc-macro/cache exit for Milestone 0B, Candle integration, or the full
+Milestone 2 product profile.
 
 ## Evidence boundary
 

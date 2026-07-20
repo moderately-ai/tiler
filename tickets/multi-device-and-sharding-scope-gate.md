@@ -4,7 +4,7 @@ title: Multi-device and sharding scope gate
 status: deferred
 priority: p2
 dependencies: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract, numerical-policy-contract]
-related: []
+related: [spike-cuda-multi-device-transfers, spike-metal-multi-device-transfers]
 scopes: [research/distributed]
 shared_scopes: []
 paths: []
@@ -32,6 +32,23 @@ Use StableHLO collectives, OpenXLA Shardy, XLA Send/Recv, IREE
 Flow/Stream/HAL, CUDA peer topology, and Metal multi-device restrictions as
 primary precedent. Produce a scope ADR and follow-up tickets only for the
 admitted milestone.
+
+## Activation gate
+
+Keep this ticket deferred until Tiler proposes either semantic collectives,
+compiler-selected sharding, or execution across more than one live device.
+Activate it before any of those concepts enter a public IR or runtime contract.
+Hardware-specific transfer spikes are evidence for this decision, not
+prerequisites for the current single-device value proof.
+
+## Exit criteria
+
+Mark the gate done only with an accepted ADR that fixes whether collectives and
+sharding are semantic inputs, compiler-selected physical properties, or both;
+defines the program/resource/execution ownership boundary; and identifies the
+minimum topology, numerical, lifetime, failure, and cost evidence required
+before implementation. If the triggering workload does not justify the
+surface, record explicit deferral without adding placeholder IR nodes.
 
 ## Initial research synthesis
 

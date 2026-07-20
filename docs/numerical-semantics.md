@@ -50,6 +50,16 @@ offer PyTorch-like, JAX-like, strict, or custom promotion, weak-scalar, and
 autocast policies, but they lower the result to explicitly typed constants,
 conversions, operands, and results before optimization.
 
+For Rust construction, ADRs 0059 and 0062 expose exact `Value<T>` handles, where
+`T` binds through the frozen registry to a complete shape-independent resolved
+value type rather than necessarily to one primitive `TypeKey`. This uniformly
+covers nominal, parameterized, and encoded-numeric tensor values. The contract
+requires result-affecting promotion, accumulator, conversion, rounding, and
+output choices as explicit operation signature/contract inputs. A typed builder
+returns the statically resolved result handle. Runtime-parsed frontends resolve
+the same semantic signature through the operation registry; they do not gain a
+second ambient promotion system or authority to invent result types.
+
 Operations with intrinsic mixed-precision behavior use specialized typed
 signatures. Depending on the operation, these may distinguish:
 
@@ -415,12 +425,21 @@ part of that conformance level. This makes arithmetic that produces NaN
 portable and bitwise testable rather than allowing a backend to select any NaN
 payload.
 
+The bounded first `f32` prototype profile names
+`tiler::canonical-arithmetic-nan-f32@1` with exact quiet-NaN bits
+`0x7fc00000`. Ordinary `f32` Multiply and Add replace any NaN they produce with
+that pattern. Strict `f32` Sum uses the same Add rule after every combine and
+applies the canonicalization at its result boundary even when the contributor
+sequence is a singleton. The redundant result-boundary rule prevents an
+uncombined input payload from leaking through an arithmetic reduction.
+
 Canonicalization applies according to each operation's semantic family; it is
 not a blanket rewrite of stored tensor bits. Operations defined to preserve or
 select existing bits, including views and bit-preserving copies, preserve an
 input NaN payload. Numeric conversions use their resolved conversion contract.
 Constants retain their declared bit pattern until an operation's semantics
-produce a new value.
+produce a new value. The named profile and exact canonical bits participate in
+semantic, plan, artifact, and cache identity.
 
 Other conformance modes may explicitly request operand-payload propagation or
 permit any quiet NaN. Those choices are typed operation contracts and affect

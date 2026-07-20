@@ -10,7 +10,7 @@ disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.ir"]
-adopted_by: ["ADR-0008"]
+adopted_by: ["ADR-0008", "ADR-0058"]
 ticket: "shape-environment-contract"
 ---
 
@@ -730,9 +730,10 @@ frontend may instead provide an explicit valid expression; the compiler must
 not invent a value or turn absence of a binding source into an ordinary runtime
 semantic check.
 
-This is a completeness invariant for compilable semantic input, not a decision
-about a mandatory `.build()`, `.seal()`, type-state, or other public commitment
-API. Those lifecycle mechanics remain deferred.
+This is a completeness invariant for compilable semantic input. ADR 0058 now
+defines the public commitment API that enforces the invariant: borrowed
+validation may diagnose an unresolved draft, while only a successful consuming
+`build(self)` produces an immutable `SemanticProgram` eligible for compilation.
 
 ## Accepted decision: shape is upstream of access, not physical planning
 
@@ -783,7 +784,7 @@ This separation leaves room for later histograms, observed distributions,
 feedback-directed profiles, and confidence or freshness metadata without
 changing logical program validity or contaminating canonical semantic facts.
 
-## Deferred decision: construction and commitment lifecycle
+## Accepted decision: construction and commitment lifecycle
 
 The discussion established that local, environment-relative, and graph-wide
 invariants can all be maintained incrementally; "whole graph" describes the
@@ -792,9 +793,24 @@ It also established requirements for multiple frontend/DX surfaces, reusable
 intermediate representations, consumer-side caching, and a stable point at
 which a graph may be treated as a complete program.
 
-No mandatory `GraphBuilder`, `.build()`, `.seal()`, immutable snapshot type, or
-canonicalization transition is accepted yet. Those are possible
-implementations of the requirements, but choosing among them is deferred until
-the remaining semantic shape contracts are settled. "Sealing" may be used as
-informal terminology for a completeness/commitment boundary without implying
-a particular public API or Rust type-state design.
+**Accepted by Tom on 2026-07-20 and recorded by ADR 0058:** an append-only,
+non-`Clone` `SemanticProgramBuilder` maintains fallible edits transactionally.
+Its borrowed `validate(&self)` supports incremental diagnostics, but only the
+consuming, recoverable transition
+
+```text
+build(self) -> Result<SemanticProgram, ProgramBuildError>
+```
+
+produces compiler input. Terminal validation defensively checks the complete
+shape environment, including unique elimination of existential extents. On
+failure the error retains the builder and structured diagnostics; on success
+the arenas move without cloning into an immutable, privately `Arc`-backed
+program.
+
+This decision does not introduce a separate shape-only sealing phase. Shape
+construction is part of the semantic draft, and shape completeness is one of
+the whole-program invariants checked at build. There is no implicit snapshot,
+builder clone, thaw, or copy-on-write contract. A future explicit draft
+branching facility requires measured need and a separately reviewed lifecycle.
+See the [Rust construction lifecycle research](../semantic-graph/rust-construction-lifecycle.md).

@@ -6,7 +6,7 @@ title: "System architecture"
 topics: ["architecture", "compiler"]
 contract_status: "mixed"
 implementation_status: "not-started"
-evidence: ["tiler.research.program-planning.kernel-program-buffer-plan"]
+evidence: ["tiler.research.program-planning.kernel-program-buffer-plan", "tiler.research.semantic-graph.rust-construction-lifecycle"]
 ---
 
 # System architecture
@@ -67,6 +67,7 @@ or backend assumptions:
 | Contract | Evidence | Durable decision |
 |---|---|---|
 | Pure operation/value DAG, sharing, multi-result operations, and ordered named results | [Semantic graph contract memo](research/semantic-graph/contract-memo.md) | ADRs 0005 and 0006 |
+| Transactional drafts, recoverable consuming build, immutable shared programs, and graph-owned handles | [Rust semantic-program construction lifecycle](research/semantic-graph/rust-construction-lifecycle.md) | ADR 0058 |
 | Scoped extent symbols, typed root bindings, admitted constraint language, and sourceability | [Shape environment contract](research/shapes/shape-environment-contract.md) | ADR 0008 |
 | One semantic authority plus separately versioned optional capabilities in an explicit frozen registry | [Operation-extension research](research/extensions/operation-extension-surface.md) and [API spike](research/extensions/operation-extension-api.md) | ADR 0044 |
 | Proc-macro provider visibility bounded by the host dependency graph | [Proc-macro visibility experiment](research/extensions/proc-macro-extension-visibility.md) | ADR 0045 |
@@ -77,12 +78,12 @@ macro for non-Rust consumers.
 
 ## Consumer-independent compilation request
 
-One initial compiler invocation consumes one verified semantic graph through a
-conceptual `CompilationRequest`:
+One initial compiler invocation borrows one immutable, verified
+`SemanticProgram` through a conceptual `CompilationRequest`:
 
 ```text
 CompilationRequest {
-    semantic_graph,
+    semantic_program: &SemanticProgram,
     numerical_contract,
     shape_environment,
     target_profiles,
@@ -92,7 +93,20 @@ CompilationRequest {
 }
 ```
 
-The semantic graph remains backend-neutral. `shape_environment` contains the
+Frontends obtain that program through the ADR 0058 commitment boundary:
+
+```text
+SemanticProgramBuilder -- build(self) --> SemanticProgram
+```
+
+The mutable builder is not compiler input. Its edits are transactional, its
+borrowed validation is diagnostic, and a failed consuming build returns the
+original builder with structured diagnostics. A successful build moves the
+graph storage into private immutable `Arc`-backed data. Compiler, optimizer,
+and evaluator APIs borrow the result, so sharing a completed program is cheap
+without making unfinished-graph snapshots implicit.
+
+The semantic program remains backend-neutral. `shape_environment` contains the
 typed root-binding environment for its extent symbols, including explicitly
 admitted target-property bindings. It contains stable declarations and values
 available at their declared binding phase, never live backend objects or

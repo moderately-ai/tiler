@@ -16,6 +16,15 @@ one owner and an explicit way to close or reconsider it.
 
 ## Genuine product decisions
 
+### Q-PKG-005 — Initial checked shape-evidence spelling
+
+- Owner/tracking: [IR](ir.md),
+  [`shape-evidence spike`](../tickets/prototype-shape-evidence-spike.md), and
+  [`shaped-value API`](../tickets/prototype-shaped-value-api.md).
+- Close when: the stable-Rust spike establishes the feasible vocabulary and
+  cost boundary, then Tom approves the consequential public rank/static-shape,
+  refinement, weakening, and witness call-site spelling.
+
 ### Q-ART-011 — Apple deployment floors
 
 - Owner/tracking: [Metal backend](backends/metal.md), after its compatibility
@@ -43,7 +52,10 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 ### Q-SEM-003 — First-profile operation and dtype support
 
 - Owner/track: [Numerical semantics](numerical-semantics.md), Milestones 1 and
-  2Q. Dtype recognition itself is settled by ADRs 0026–0038.
+  2Q. Dtype recognition itself is settled by ADRs 0026–0038. The bounded
+  strict-`f32` subset is exercised by the
+  [`semantic/reference`](../tickets/prototype-semantic-reference-slice.md),
+  target-neutral, and Metal proof tickets without closing the broader matrix.
 - Close: every admitted tuple has explicit reference, optimization, and backend
   support state.
 
@@ -110,13 +122,18 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 
 ### Q-PLAN-007 — First Metal capability keys and feasibility rules
 
-- Owner/track: [Metal backend](backends/metal.md), Milestone 2.
+- Owner/track: [Metal backend](backends/metal.md), Milestone 2. The
+  [`target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md)
+  and [`Metal AOT proof`](../tickets/prototype-metal-aot-slice.md) implement one
+  private named prototype fixture without closing the mature profile.
 - Close: governed profile/schema with boundary tests and stable explain reasons.
 
 ### Q-PLAN-009 — First-profile capability providers and phases
 
 - Owner/track: [Architecture](architecture.md), Milestones 2–3. The general
-  phases are settled by ADR 0043.
+  phases are settled by ADR 0043. The target-neutral baseline, Metal AOT, and
+  [`runtime proof`](../tickets/prototype-metal-runtime-proof.md) must provide the
+  bounded enabled-key/provider/phase subset required by their proof.
 - Close: complete enabled-key/provider allowlist and preflight tests.
 
 ### Q-PLAN-013 — Replayable schedule transforms
@@ -127,7 +144,10 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 
 ### Q-ART-002 — Private lockstep serialization
 
-- Owner/track: [Artifact ABI](artifact-abi.md), Milestones 0A–0B.
+- Owner/track: [Artifact ABI](artifact-abi.md), Milestones 0A–0B. The
+  [`Metal AOT proof`](../tickets/prototype-metal-aot-slice.md) owns the bounded
+  canonical bundle instance; broader private compiler/artifact formats remain
+  milestone work.
 - Close: deterministic encoder/decoder plus corruption, canonicality, and
   version-rejection tests. This does not promise a public stable format.
 
@@ -157,7 +177,11 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 ### Q-PKG-002 — Rust data APIs and operation capability traits
 
 - Owner/track: [Operation extensions](operation-extensions.md), Milestone 0A.
-  ADRs 0005 and 0044 settle the conceptual split.
+  ADRs 0005 and 0044 settle the conceptual split. The
+  [`resolved-type registry`](../tickets/prototype-resolved-value-type-registry.md),
+  [`typed handles`](../tickets/prototype-typed-value-handles.md), and
+  [`shaped-value API`](../tickets/prototype-shaped-value-api.md) own the active
+  bounded compile/UI proof.
 - Close: concrete visibility and trait ergonomics with compile/UI tests.
 
 ### Q-PKG-003 — Proc-macro to Metal-AOT visibility

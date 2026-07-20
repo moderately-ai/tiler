@@ -6,7 +6,7 @@ title: "IR stack and invariants"
 topics: ["ir", "semantics", "scheduling"]
 contract_status: "mixed"
 implementation_status: "not-started"
-evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.indexing.index-access-model", "tiler.research.scheduling.scheduled-region-model", "tiler.research.kernel-ir.structured-kernel-ir-verifier"]
+evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.indexing.index-access-model", "tiler.research.scheduling.scheduled-region-model", "tiler.research.kernel-ir.structured-kernel-ir-verifier"]
 ---
 
 # IR stack and invariants
@@ -136,6 +136,131 @@ do not participate in identity and may change without invalidating a program.
 Two interface entries cannot share a key even when two outputs intentionally
 reference the same value.
 
+### Accepted Rust construction and ownership boundary
+
+ADRs 0058 and 0059 fix the public lifecycle and typed authoring boundary without
+making storage layout public. The
+conceptual namespaces are `tiler_ir::shape`, `tiler_ir::semantic`, and
+`tiler_ir::reference`; internal files are organized beneath those concepts
+rather than exposed as a generic collection of newtypes. `Axis`, `Extent`, and
+`Shape` belong to the shape vocabulary. `ValueId`, `OperationId`, input keys,
+and output keys belong to the semantic graph. Physical schedules and kernel IR
+must define different handles even if they use the same integer representation.
+
+`SemanticProgramBuilder` is append-only and non-`Clone`. Fallible insertions
+are transactional: validation and capacity checks occur before mutation, and
+an error leaves the draft unchanged. Borrowed `validate(&self)` supports
+diagnostics and tooling but does not turn a draft into compiler input. The
+commitment boundary is:
+
+```text
+build(self) -> Result<SemanticProgram, ProgramBuildError>
+```
+
+`build` defensively rechecks whole-program invariants and consumes the arenas
+without cloning the draft. Under ADR 0064 it compacts the output-reachable
+closure into dense completed-program storage and assigns a new graph-owner
+identity; draft handles do not survive successful commitment. A failed build
+returns structured diagnostics together with ownership of the original builder. The caller may
+inspect it through borrowed accessors, use `into_builder` or `into_parts` to
+recover ownership, correct it, and retry without reconstructing the graph.
+
+Commitment computes the deterministic old-to-new mapping needed to rewrite
+live edges, interfaces, constraints, witnesses, and provenance, but ordinary
+`build` need not retain or expose it. Declared results cross the boundary
+through typed stable interface selectors such as conceptual `Output<T>`, which
+resolve to new completed-program-owned handles after validating the output key
+or position and resolved value type. A future additive `build_with_report` may
+expose governed retained/rewritten/coalesced/removed correlation without
+changing ordinary `build`; draft arena indices never become durable identity.
+
+`SemanticProgram` is immutable and cheaply cloneable through private
+`Arc<ProgramData>` storage. Compiler, optimizer, and evaluator entry points
+borrow `&SemanticProgram`. A shared lazy cache may memoize canonical identity,
+using `OnceLock` across every clone. The `Arc`, owner token, arena numbering,
+and insertion history do not enter that identity.
+
+The primary Rust authoring capability is an exact nominal `Value<T>`, where `T`
+denotes the complete semantic tensor type rather than a coarse numerical family.
+The canonical heterogeneous graph stores an authoritative complete
+`ResolvedValueType`, shape, and definition under an opaque graph-owned
+`ValueId`; it does not store Rust `T`, `TypeId`, or type names. The resolved
+type may be nominal, parameterized, or an encoded-numeric scheme contract under
+ADR 0062. `ValueId` means the type is unknown at the
+current Rust call site, not that the value may be used as any type. It grants
+identity and lookup only. `ValueRef` exposes the authoritative runtime metadata.
+
+Only the owning builder or program constructs `Value<T>` after checking an exact
+resolved-value-type match. There is no `AnyValue`, unchecked public constructor, implicit
+retyping, or unvalidated general insertion API. Erasure to `ValueId` is explicit
+and checked reification is fallible. All handles have no cross-graph validity,
+serialization contract, or durable semantic identity. Public operations reject
+foreign handles. Internal edges store private compact typed `u32` indices so
+the ownership guard does not inflate every edge.
+
+Under ADR 0063, graph ownership is an opaque runtime-checked safety property,
+not a mandatory Rust lifetime or generative brand. Every handle-consuming
+public API verifies exact ownership before indexing storage or mutating a draft.
+Foreign values, refined values, and witnesses produce a typed argument-specific
+error and leave an append-only builder unchanged. Owner tokens never enter
+durable identity or internal verified edges, and exhaustion cannot alias a live
+graph.
+
+Under ADR 0060, a Rust marker does not declare or own its semantic key. The
+explicit frozen registry binds one local `'static` marker to one complete
+registered `ResolvedValueType`; duplicate marker or resolved-identity bindings
+fail before construction.
+Only a builder/program using that frozen binding may create or checked-reify the
+corresponding `Value<T>`. A process-local `TypeId<T>` may implement lookup but
+never enters semantic or artifact identity.
+
+The implemented ownership boundary distinguishes semantic authority from later
+compiler capabilities. `tiler-ir` owns an immutable, cheap-clone
+`FrozenSemanticRegistry` containing portable type definitions, provider
+provenance, and process-local marker bindings. Semantic builders and completed
+programs own that snapshot rather than borrowing a context. Registration begins
+from an empty or mutable standard `SemanticRegistryBuilder`, applies built-in
+and statically linked external providers transactionally, validates referenced
+type closure, and consumes the builder at freeze. Provider callbacks are not
+retained. Optimizer, evaluator, scheduler, and backend capabilities belong to
+later layer-specific registries; a higher-level compilation session may compose
+them without making `SemanticProgram` own executable provider machinery.
+
+Frozen-registry canonical provenance includes the sorted semantic definitions
+and stable provider revisions but excludes marker `TypeId`s and Rust names.
+Program semantic identity includes the complete resolved type of every retained
+value, not unrelated registry entries. The compilation-request layer remains
+responsible for incorporating the complete frozen registry and selected
+capability provenance into its own identity.
+
+ADR 0061 adds optional, checked Rust-side shape evidence without making it
+canonical graph authority. Conceptually, `ShapedValue<T, E>` refines a
+`Value<T>` with evidence such as fixed rank or an exact static shape. Only the
+owning builder or completed program may construct it after checking `E` against
+the value's authoritative ranked shape-expression vector and `ShapeEnv`.
+Absence of such evidence means only that the Rust caller does not possess it;
+the semantic value never becomes unranked.
+
+Weakening a refined handle to `Value<T>` is explicit and zero-cost. Refinement
+is checked and fallible unless the producing operation established the evidence
+directly. User-implemented marker traits cannot forge evidence, and Rust shape
+markers, const parameters, names, and `TypeId` values never enter durable
+identity. Multi-value solver proofs use graph-owned typed witnesses such as a
+same-shape or broadcast-compatibility witness rather than an untyped boolean.
+
+Refined and unrefined authoring APIs share one semantic admission path. Shape
+evidence may improve arguments, results, and diagnostics, but it neither owns a
+second shape inference system nor directs physical specialization. An operation
+propagates evidence only for a relationship that it can establish
+unambiguously and revalidate against the canonical result shape. The initial
+surface remains builder-centered; an independent fluent shaped-value API is
+reserved until completeness and nonduplication are demonstrated.
+
+There is no implicit snapshot, builder `Clone`, mutable thaw, or hidden
+copy-on-write arena. Adding unfinished-graph branching requires a separately
+reviewed `snapshot` or `fork` contract backed by measurements. Completed
+immutable programs already branch cheaply.
+
 All initial semantic values are tensors; rank-zero tensors represent scalar
 data. This initial restriction is not a claim that every future graph value
 must be a tensor. A later effect model may add explicitly kinded resource or
@@ -158,7 +283,7 @@ CanonicalAttrValue =
   | FloatBits { format: TypeKey, bits }
   | Bytes
   | Utf8String
-  | Type(TypeKey)
+  | Type(ResolvedValueType)
   | Sequence([CanonicalAttrValue])
   | Record([(AttributeFieldId, CanonicalAttrValue)])
 ```
@@ -192,8 +317,9 @@ type identities. Backend compilation separately proves the selected storage
 encoding, ABI, and realization for every operation/type combination in the
 physical plan.
 
-Built-in and extension element types share one durable nominal identity model.
-Conceptually, a type key contains a namespace, name, and semantic version:
+Built-in and extension nominal element types share one durable identity model,
+and ADR 0062 composes them into the larger tagged `ResolvedValueType` domain.
+Conceptually, a nominal type key contains a namespace, name, and semantic version:
 `tiler::f32@1` and `acme::fp8_special@1` differ by identity even if some
 structural facts coincide. Built-ins may have ergonomic Rust spellings such as
 `DType::F32`, but canonical hashing, serialization, registry lookup, and
@@ -356,6 +482,8 @@ specified in [Operation extensions](operation-extensions.md).
 - Operation results and program results are ordered and individually typed.
 - Result names are unique; result values exist and match their contracts.
 - Output shapes and dtypes are derived rather than trusted assertions.
+- Optional Rust shape evidence is checked against derived graph shapes; it is
+  never trusted as an alternative source of shape truth.
 - Every tensor value has a resolved value dtype, and every operation has a
   resolved numerical signature. Canonical semantic IR contains no ambient
   frontend promotion, weak-scalar, default-dtype, or autocast decision.
@@ -416,8 +544,9 @@ specified in [Operation extensions](operation-extensions.md).
 - Every initial floating-point operation uses the explicit value-only
   exception-observation contract. Unknown future effect signatures or
   exception-observation modes are rejected rather than treated as pure.
-- The canonical graph contains only the transitive closure reachable from all
-  program results; dead pure operations are removed before identity is formed.
+- The completed canonical graph contains only the transitive closure reachable
+  from all program results; dead pure draft operations are removed and live
+  storage is compacted during commitment, before identity is formed.
 - Stable serialization and hashing do not depend on arena IDs, insertion order,
   source spans, cached use lists, or registry addresses.
 - Shared values remain graph sharing; use count is not a materialization rule.

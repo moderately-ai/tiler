@@ -294,6 +294,15 @@ Reduction inherits each combine step from its exact scalar reducer:
   result boundary. Thus even a singleton or empty arithmetic reduction cannot
   leak target-selected NaN payload behavior.
 
+For the versioned bounded `f32` prototype profile, that canonical value is the
+quiet-NaN bit pattern `0x7fc00000` under
+`tiler::canonical-arithmetic-nan-f32@1`. Constants and bit-preserving values
+retain their exact payload bits, while Multiply and Add canonicalize any NaN
+they produce. Strict Sum canonicalizes after every Add combine and again at the
+result boundary; a singleton NaN contributor therefore produces `0x7fc00000`,
+not its input payload. The profile identity and bits participate in semantic,
+plan, artifact, and cache identity.
+
 Reassociation or permutation never silently implies permission to ignore NaNs,
 zeros, subnormals, intermediate overflow, or rounding. For example, signed
 saturating addition lacks a general associativity capability, and checked

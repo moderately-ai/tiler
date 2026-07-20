@@ -44,7 +44,7 @@ satisfies_dependents = false
 # Map abstract scope names to path globs. Tickets reference these stable names.
 [scopes]
 "research/semantic-graph" = ["docs/research/semantic-graph/**"]
-"research/shapes" = ["docs/research/shapes/**"]
+"research/shapes" = ["docs/research/shapes/**", "spikes/shapes/**"]
 "research/extensions" = ["docs/research/extensions/**", "spikes/extensions/**"]
 "research/numerics" = ["docs/research/numerics/**", "spikes/numerics/**"]
 "research/region-search" = ["docs/research/region-search/**", "spikes/region-search/**"]
@@ -104,7 +104,7 @@ satisfies_dependents = false
 "contracts/artifacts" = ["docs/artifact-abi.md", "docs/backends/**"]
 "contracts/integrations" = ["docs/integration/**"]
 "project/tickets" = ["tickets/**", "ticketsplease.toml"]
-"implementation/workspace" = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml", ".github/workflows/rust.yml", "scripts/check_workspace.py"]
+"implementation/workspace" = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml", "pyproject.toml", "uv.lock", ".python-version", "deps.sh", ".github/workflows/rust.yml", "scripts/check_workspace.py", "scripts/check_rust.py"]
 "implementation/ir" = ["crates/tiler-ir/**"]
 "implementation/artifact" = ["crates/tiler-artifact/**"]
 "implementation/compiler" = ["crates/tiler-compiler/**"]

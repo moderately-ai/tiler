@@ -31,6 +31,22 @@ ownership, TVM Relax, and JAX host offloading as primary precedents. Produce a
 scope ADR; default to deferral unless measurements demonstrate an initial
 whole-program requirement.
 
+## Activation gate
+
+Keep this ticket deferred until a proposed milestone requires file-backed,
+out-of-core, or persistent resources that cannot be represented as ordinary
+runtime-provided tensor inputs. Activate it before exposing such resources in a
+public semantic or execution contract, not merely because the extension point
+exists.
+
+## Exit criteria
+
+Mark the gate done only with an accepted ADR that names the owning layer, stable
+identities and lifecycle boundaries, admitted operations, failure semantics,
+and explicitly deferred orchestration responsibilities. If no current workload
+justifies ownership, the ADR must affirm the reserved extension boundary and
+leave implementation work uncreated.
+
 ## Initial research synthesis
 
 The first pass on 2026-07-19 supports deferring general out-of-core planning.

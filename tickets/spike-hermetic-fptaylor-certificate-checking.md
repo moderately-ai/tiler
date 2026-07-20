@@ -26,3 +26,19 @@ The gate is whether independently checked evidence materially reduces the
 trusted base at acceptable compile-time cost. Missing formal coverage returns
 `Unknown`; empirical agreement with Daisy or high-precision samples is not a
 substitute for certificate validation.
+
+## Activation gate
+
+Keep this ticket deferred until the bounded analyzer integration is complete
+and a milestone requires independently checkable accuracy evidence rather than
+the accepted trusted-analyzer result. Activate it only with a pinned hermetic
+toolchain plan and explicit approval for any host-level installation.
+
+## Exit criteria
+
+Produce the pinned environment, exact corpus, generated certificates,
+independent-check commands, unsupported-case inventory, trusted-base analysis,
+and timing/size measurements. Mark the experiment done with a positive adoption
+recommendation only if the independent checker covers every admitted numerical
+construct; otherwise mark it done with a documented `Unknown`/negative result
+and leave empirical agreement explicitly non-authoritative.
