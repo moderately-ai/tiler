@@ -232,20 +232,21 @@ definition path. Durable IR stores an `OpKey`, canonical attributes, operands,
 and results; it never serializes Rust trait objects or registry addresses. A
 registry resolves `OpKey` to versioned operation capabilities.
 
-Mandatory capabilities define:
+The mandatory semantic definition supplies:
 
 - operand/result schema and arity;
 - shape, dtype, axis, and semantic-constraint inference and verification;
 - canonical attribute encoding and deterministic identity;
 - purity/effect declaration;
-- normative/reference semantics and conformance behavior;
+- normative semantic specification identity and conformance behavior;
 - for transcendental operations, immutable reference semantics, admitted
   accuracy envelopes/domains, independent special-value policies, and
   reference-evaluator support;
-- explain and diagnostic formatting.
+- stable host-readable names and documentation for explain output.
 
 Optional capabilities may provide:
 
+- executable reference evaluation;
 - decomposition into other semantic operations;
 - canonicalization and contract-preserving rewrite rules;
 - iteration-domain and access-map lowering;
@@ -264,6 +265,12 @@ the operation remains valid semantic IR but Tiler cannot construct an
 executable program for it and must diagnose or delegate it. Compiler/artifact
 identity must include the registered dialect's semantic and lowering
 fingerprint.
+
+Semantic graph identity excludes provider revisions. Compilation-request
+provenance records the complete frozen registry, while a selected plan and
+artifact include only semantic authorities reached by the graph and capability
+providers actually selected. Registering an unused provider therefore does not
+change the meaning of a graph or invalidate an otherwise identical artifact.
 
 The initial extension execution model is trusted, statically linked compiler
 code supplied explicitly to one compiler session. It does not promise native

@@ -4,7 +4,10 @@
 
 ADR 0005 accepts a public experimental vertical extension boundary. This
 document proposes the initial safety, determinism, and compilation-phase
-contract; it does not yet commit exact Rust trait signatures.
+contract. The supporting [research](research/extensions/operation-extension-surface.md),
+[API sketch](research/extensions/operation-extension-api.md), and
+[compile-checking spike](../spikes/extensions/operation-api) validate its
+shape; exact Rust names and allocation choices remain experimental.
 
 ## Initial trust and linkage model
 
@@ -38,8 +41,9 @@ verification or optimization it freezes into an immutable snapshot:
 - additional decomposition, lowering, scheduling, or cost providers have
   independently named provider identities and declared compatibility;
 - collisions or contradictory provider selections fail deterministically;
-- registry contents and selected provider revisions participate in compilation
-  provenance and output identity;
+- the complete frozen registry participates in compilation-request provenance;
+  only reached semantic authorities and selected capability providers
+  participate directly in selected-plan/artifact identity;
 - Rust `TypeId`, vtable addresses, function addresses, registration addresses,
   and hash-map randomization never participate in durable identity.
 
@@ -123,6 +127,29 @@ Tiler, not arbitrary extension `Serialize` output. The contract defines:
 Providers declare attribute schemas/defaults and validate semantic constraints;
 the host canonicalizes, bounds, serializes, and hashes the data.
 
+## Mandatory definition and optional capabilities
+
+Exactly one semantic authority owns an `OpKey`. Its mandatory definition
+contains the bounded operand/result/value-kind schema, attribute schema,
+initial pure effect signature, deterministic inference and semantic
+validation, normative semantic specification identity, conformance vectors,
+and stable host-readable names.
+
+Normative meaning is mandatory, but a particular executable evaluator is not
+universally mandatory. Reference evaluation is an optional capability. A phase
+that needs executable reference behavior admits the operation only when a
+compatible evaluator or exact verified decomposition supplies it. Likewise,
+registration alone grants no rewrite, fusion, lowering, costing, or execution
+authority.
+
+Decomposition, rewrites, access lowering, fusion participation, typed opaque
+physical implementations, structured-kernel lowering, accuracy evidence,
+target feasibility/cost evidence, and provider-specific diagnostic detail are
+separately versioned optional capabilities. An opaque physical implementation
+must expose typed ABI, effect, alias, placement, target, numerical, resource,
+and failure-stage boundary contracts; it is not an unrestricted callback in
+semantic IR.
+
 ## Capability coherence
 
 Capability callbacks are immutable and deterministic functions of explicit
@@ -197,12 +224,19 @@ calling extension code. Deserialization never loads code named by input bytes.
 
 ## Rust API evolution
 
-Do not begin with one large downstream-implemented trait. The likely shape is a
-small dyn-compatible root descriptor plus separately versioned optional
-capability objects and sealed/opaque host contexts. This reduces object-safety,
-coherence, and semver hazards while allowing capability growth. Exact trait
-splitting, allocation types, registration containers, and builder ergonomics
-remain implementation decisions to prototype before stabilization.
+Do not begin with one large downstream-implemented trait. The initial shape is
+an explicit per-session `RegistryBuilder` frozen into an immutable canonical
+snapshot, one small dyn-compatible semantic definition, and separately
+versioned optional capability objects using sealed/opaque host contexts. All
+initial provider objects are `Send + Sync + 'static`. This reduces dyn
+compatibility, coherence, and semver hazards while allowing capability growth.
+Exact names, allocation types, borrowed contexts, and builder ergonomics remain
+experimental.
+
+Optional `inventory`- or linker-style adapters may populate the explicit
+builder for environments where their ordering and linkage are understood.
+They do not replace the builder, define precedence, or solve proc-macro
+visibility.
 
 ## Required conformance tests
 

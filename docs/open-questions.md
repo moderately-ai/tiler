@@ -21,20 +21,11 @@ ADR when evidence is sufficient.
 
 ## Semantic graph and operation extensions
 
-- Which mandatory Rust traits and canonical data structures form the first
-  public experimental operation-definition API?
 - How are external providers supplied to ordinary compiler sessions, and which
   discovery/declarative mechanism, if any, can make them visible to a separately
   compiled proc macro?
-- Does one semantic authority exclusively own each `OpKey`, and how are
-  additional lowering/schedule/cost providers selected without precedence
-  ambiguity?
-- What exact provider revision/fingerprint contract covers output-affecting
-  callback changes?
 - What bounded canonical attribute value model and schema/version policy is
   used?
-- Which callback thread-safety, panic-containment, trust, and determinism
-  obligations are public API?
 - Which transactional rewrite API, recursion declarations, cycle detection,
   and application budgets are required?
 - Are several named graph results and first-class multi-result operations both
@@ -42,8 +33,6 @@ ADR when evidence is sufficient.
 - Are program-result names semantic identity, diagnostic identity, or both?
 - Which higher-level operations must decompose into a canonical core, and which
   may supply direct iteration/access lowering?
-- How are extension semantic, verifier, rewrite, and lowering implementation
-  changes fingerprinted for compiler and artifact identity?
 - May unknown operation keys round-trip through tooling even though they cannot
   be compiled or optimized?
 - Which explicit effect/resource token model would be required before stateful,
