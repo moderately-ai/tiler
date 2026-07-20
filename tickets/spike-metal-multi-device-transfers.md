@@ -1,7 +1,7 @@
 ---
 id: spike-metal-multi-device-transfers
 title: Spike Metal multi-device transfers
-status: todo
+status: deferred
 priority: p2
 dependencies: [transfer-synchronization-and-resource-lifetime-contract]
 related: []

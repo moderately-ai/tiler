@@ -1,7 +1,7 @@
 ---
 id: spike-hermetic-fptaylor-certificate-checking
 title: Spike hermetic FPTaylor certificate checking
-status: todo
+status: deferred
 priority: p2
 dependencies: [spike-sound-region-accuracy-analyzer-integration]
 related: [research-region-accuracy-contracts-and-analyzable-error-budgets]

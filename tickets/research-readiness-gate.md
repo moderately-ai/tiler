@@ -1,7 +1,7 @@
 ---
 id: research-readiness-gate
 title: Run the research-to-implementation readiness gate
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [synthesize-core-contracts, synthesize-optimizer-contracts, synthesize-artifact-contracts]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/core, research/macro-environment]
 shared_scopes: [contracts/compiler, contracts/artifacts, contracts/integrations]
 paths: []
 tags: [tiler-research, gate, decision]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1784559469
 ---
 Audit the synthesized design for contradictions, missing invariants, unmeasured feasibility claims, and decisions that would force crate or IR boundaries to change. Rank remaining unknowns by architecture impact and experimental cost, then propose the smallest defensible implementation slice.
 

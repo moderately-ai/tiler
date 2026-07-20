@@ -1,3 +1,11 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.portal.decisions"
+kind: "portal"
+title: "Architecture decision records"
+topics: ["decisions", "architecture"]
+---
+
 # Architecture decision records
 
 ADRs record choices that constrain several components or would be expensive to
@@ -5,7 +13,13 @@ reverse. Proposed ADRs and design text remain non-decisions until explicitly
 accepted. Unresolved questions are collected in
 [open questions](../open-questions.md).
 
-## Index
+## Browse by topic
+
+<!-- BEGIN GENERATED ADR TOPICS -->
+Topic generation is pending metadata migration.
+<!-- END GENERATED ADR TOPICS -->
+
+## Chronological index
 
 - [0001: Separate semantic planning from physical scheduling](0001-separate-semantic-and-physical-plans.md) — accepted
 - [0002: Generate Metal artifacts ahead of time](0002-aot-metal-artifacts.md) — accepted

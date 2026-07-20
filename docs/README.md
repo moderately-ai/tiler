@@ -1,34 +1,50 @@
-# Tiler design documentation
+---
+schema: "tiler-doc/v1"
+id: "tiler.portal.docs"
+kind: "portal"
+title: "Tiler documentation"
+topics: ["orientation", "architecture"]
+---
 
-Tiler is an ahead-of-time compiler toolkit for tensor iteration spaces. It is
-intended to accept declarative tensor programs, optimize them using a
-semantic tensor graph plus hierarchical region/program planning, and emit
-optimized kernels with a stable runtime contract. It selectively borrows
-property-aware database optimizer techniques without copying a relational plan
-shape. `candle-einops` is the first planned frontend and Candle Metal is the
-first planned runtime integration.
+# Tiler documentation
 
-This directory describes the design before implementation. Documents marked
-**proposed** capture the current direction, not a compatibility promise. Open
-choices are collected rather than silently resolved.
+Tiler is an experimental ahead-of-time compiler toolkit for tensor iteration
+spaces. The documentation separates normative contracts, durable decisions,
+research evidence, executable experiments, and proposed work.
 
-## Current design status
+## Ten-minute orientation
 
-These documents are research and design contracts for an experimental toolkit,
-not a stable public compatibility promise. ADR status is authoritative:
-accepted ADRs are current decisions, while proposed documents remain subject to
-revision. Integration-specific choices for einops, Candle, Rust macros, and
-Metal must not silently become constraints on the compiler toolkit core.
+1. [Project status](status.md): what is decided, measured, unimplemented, and
+   currently awaiting a decision.
+2. [Vision and scope](vision.md): product goals and non-goals.
+3. [Design map](design-map.md): the compiler layers and the owner of each
+   question.
+4. [System architecture](architecture.md): components and dependency direction.
 
-The settled product direction is a tensor-specific, consumer-independent
-compiler toolkit with a public semantic graph boundary. Frontends translate
-their languages into that graph; optimizers and backends operate without
-depending on the originating syntax or consuming runtime. The inline Rust
-macro, self-contained AOT artifact, Metal backend, and Candle adapter boundaries
-are accepted first-integration contracts. Their production implementation and
-broad compatibility remain future work.
+Use the [glossary](glossary.md) whenever a typed compiler term is unfamiliar.
 
-## Start here
+## Navigate by task
+
+- **Understand semantic meaning:** [IR](ir.md),
+  [operation extensions](operation-extensions.md), and
+  [numerical semantics](numerical-semantics.md).
+- **Understand optimization:** [optimizer](compiler/optimizer.md),
+  [fusion and scheduling](compiler/fusion-and-scheduling.md), and
+  [cost model](compiler/cost-model.md).
+- **Understand artifacts and execution:** [artifact ABI](artifact-abi.md),
+  [Metal](backends/metal.md), [frontends](integration/frontends.md), and
+  [Candle](integration/candle.md).
+- **Inspect accepted choices:** use the [thematic ADR index](decisions/README.md).
+- **Audit evidence or reproduce a claim:** use the
+  [research catalog](research/README.md) and
+  [experiment catalog](../spikes/README.md).
+- **Continue work:** read [work tracking](work-tracking.md) and
+  [AGENTS.md](../AGENTS.md).
+
+## Deep design sequence
+
+This complete sequence is for a detailed architecture review, not a prerequisite
+for locating one fact:
 
 1. [Vision and scope](vision.md)
 2. [System architecture](architecture.md)
@@ -45,33 +61,16 @@ broad compatibility remain future work.
 13. [Correctness and testing](correctness-and-testing.md)
 14. [Roadmap](roadmap.md)
 
-## Supporting material
+## Authority model
 
-- [Terminology](glossary.md)
-- [Open design questions](open-questions.md)
-- [Lessons from `ug`](prior-art/ug.md)
-- [Logical-graph and schedule-IR precedents](prior-art/logical-graphs-and-schedules.md)
-- [Symbolic index and access model](research/indexing/index-access-model.md)
-- [Target profiles and phased physical feasibility](research/target-profiles/physical-feasibility-model.md)
-- [Device placement and memory-domain contract](research/placement/device-placement-and-memory-domains.md)
-- [Structured kernel IR and verifier boundary](research/kernel-ir/structured-kernel-ir-verifier.md)
-- [Architecture decisions](decisions/README.md)
+- Accepted ADRs govern durable choices and rationale.
+- Normative contracts own detailed current behavior within their stated status.
+- Research reports establish evidence and limitations, not authority by
+  themselves.
+- Spikes establish only the bounded claim they measured or modeled.
+- Ticketsplease owns live work status; the roadmap is proposed progression.
 
-## Document ownership
-
-The documents are organized around contracts:
-
-| Area | Establishes |
-| --- | --- |
-| Vision | Goals, non-goals, and success criteria |
-| Architecture | Components and dependency direction |
-| IR | Meaning and invariants at each lowering boundary |
-| Operation extensions | Registry, identity, canonical data, trust, capability, and rewrite contracts |
-| Optimizer | Equivalence rules, alternatives, and properties |
-| Scheduling | Hardware mapping and fusion decisions |
-| Backend | Translation into target source and compiled artifacts |
-| ABI/runtime | How compiled code is validated, bound, and dispatched |
-| Correctness | Semantic authority and verification strategy |
-
-Changes that cross one of these contracts should update its document and, when
-the choice is durable, add an architecture decision record.
+The exact metadata and relationship rules are defined in
+[documentation metadata](document-metadata.md). A disagreement among an
+accepted ADR, its normative owner, and indexed evidence is a documentation bug,
+not a choice left to the reader.

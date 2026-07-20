@@ -1,7 +1,7 @@
 ---
 id: multi-device-and-sharding-scope-gate
 title: Multi-device and sharding scope gate
-status: todo
+status: deferred
 priority: p2
 dependencies: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract, numerical-policy-contract]
 related: []

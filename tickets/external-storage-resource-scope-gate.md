@@ -1,7 +1,7 @@
 ---
 id: external-storage-resource-scope-gate
 title: External storage resource scope gate
-status: todo
+status: deferred
 priority: p2
 dependencies: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract]
 related: []

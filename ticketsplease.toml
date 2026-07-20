@@ -12,6 +12,35 @@ default_base = "main"
 # "none" = path-glob scopes only; "rust" = also expand via the cargo crate graph.
 backend = "none"
 
+[workflow.states.todo]
+category = "dispatchable"
+
+[workflow.states.ready]
+category = "dispatchable"
+
+[workflow.states.in-progress]
+category = "open"
+
+[workflow.states.review]
+category = "open"
+
+[workflow.states.blocked]
+category = "parked"
+
+[workflow.states.awaiting-decision]
+category = "parked"
+
+[workflow.states.deferred]
+category = "parked"
+
+[workflow.states.done]
+category = "terminal"
+satisfies_dependents = true
+
+[workflow.states.closed]
+category = "terminal"
+satisfies_dependents = false
+
 # Map abstract scope names to path globs. Tickets reference these stable names.
 [scopes]
 "research/semantic-graph" = ["docs/research/semantic-graph/**"]
@@ -38,24 +67,40 @@ backend = "none"
 "research/external-storage" = ["docs/research/external-storage/**", "spikes/external-storage/**"]
 "research/metal-transfers" = ["docs/research/metal-transfers/**", "spikes/metal-transfers/**"]
 "research/cuda-transfers" = ["docs/research/cuda-transfers/**", "spikes/cuda-transfers/**"]
-"contracts/core" = [
-  "docs/README.md",
+"contracts/core" = []
+"contracts/compiler" = []
+"contracts/foundation" = [
   "docs/vision.md",
   "docs/architecture.md",
   "docs/ir.md",
   "docs/operation-extensions.md",
   "docs/glossary.md",
+]
+"contracts/navigation" = [
+  "README.md",
+  "docs/README.md",
+  "docs/status.md",
+  "docs/design-map.md",
+  "docs/document-metadata.md",
+  "docs/work-tracking.md",
+  "docs/research/README.md",
+  "spikes/README.md",
   "docs/open-questions.md",
   "docs/roadmap.md",
-  "docs/decisions/**",
+  "docs/decisions/README.md",
+  "scripts/docs.py",
+  "scripts/tests/**",
+  ".github/workflows/docs.yml",
 ]
-"contracts/compiler" = [
-  "docs/compiler/**",
+"contracts/decisions" = ["docs/decisions/[0-9]*.md"]
+"contracts/optimizer" = ["docs/compiler/**"]
+"contracts/numerics" = [
   "docs/numerical-semantics.md",
   "docs/correctness-and-testing.md",
 ]
 "contracts/artifacts" = ["docs/artifact-abi.md", "docs/backends/**"]
 "contracts/integrations" = ["docs/integration/**"]
+"project/tickets" = ["tickets/**", "ticketsplease.toml"]
 
 # Optionally map a scope to its owning crate so the Rust backend can expand
 # reverse-dependents (requires `cargo` at runtime).
