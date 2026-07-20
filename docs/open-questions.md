@@ -88,24 +88,23 @@ ADR when evidence is sufficient.
 
 ## Artifacts and macro expansion
 
-- What is the minimal target-neutral artifact envelope, and which ABI,
-  payload, reflection, and delivery fields belong only to backend profiles such
-  as Metal?
 - Does one `CompilationRequest` always compile one semantic graph for one or
   several target profiles, and how are multi-target outputs grouped?
 - What serialization format is used for manifests and canonical IR?
-- What direct-embedding size budget keeps rustc memory and expansion acceptable?
-- Does the linker merge identical byte-string literals reliably enough to use,
-  or is an explicit content-named section strategy eventually needed?
+- Which additional Rust/LLVM/linker platforms must repeat the measured
+  embedding matrix before changing the initial 1 MiB invocation and
+  32-invocation/3.2 MiB package gates?
 - What is the default compiler-cache location and cleanup/size policy?
-- What minimum Rust version and lock implementation are supported, and how is
-  automatic OS-lock release after process death tested?
-- Which exact Metal toolchain facts enter the cache key?
+- Does the workspace set MSRV 1.89 for standard-library file locking or audit an
+  older-compatible lock adapter?
 - What measured rust-analyzer cold/warm cost, if any, justifies a future stable
   optimization that preserves identical expansion semantics?
-- Which Apple toolchain details define reproducibility boundaries?
+- What cross-machine and cross-toolchain evidence qualifies an Apple toolchain
+  row beyond the measured same-host boundary?
 - Which ergonomic explicit artifact-family profiles should frontends expose?
 - How is unsupported Apple cross-compilation diagnosed?
+- Which measured startup or size threshold would justify `MTLBinaryArchive`,
+  offline pipeline binaries, or dynamic Metal libraries?
 - When, if ever, does the serialized IR become a public compatibility promise?
 
 ## Structured kernel lowering
@@ -128,7 +127,6 @@ ADR when evidence is sufficient.
 - Which tracked/autograd cases can eventually avoid the initial fusion bypass?
 - Are pipeline objects cached in a Candle-specific or generic Metal runtime
   crate?
-- What policy applies if pipeline construction fails after guards succeed?
 
 ## Project packaging
 

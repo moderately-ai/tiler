@@ -1,6 +1,6 @@
 # Frontend and proc-macro integration
 
-**Status:** proposed integration direction; feasibility measurements remain
+**Status:** accepted inline AOT contract; rust-analyzer performance remains unmeasured
 
 Frontends translate user-facing tensor languages into Tiler's public semantic
 tensor graph. `candle-einops` is the first proposed frontend. For that Rust
@@ -122,10 +122,18 @@ The stable proc-macro API provides `Literal::byte_string` for constructing one
 byte-string token from artifact bytes; see
 [`proc_macro::Literal`](https://doc.rust-lang.org/proc_macro/struct.Literal.html).
 
-Embedding cost must be measured at representative 10 KiB, 100 KiB, and 1 MiB
-bundle sizes. Linker merging of identical byte literals is not assumed. Binary
-deduplication may later use platform/linker mechanisms without changing macro
-syntax or artifact semantics.
+Measured 10 KiB, 100 KiB, and 1 MiB fixtures confirm byte-string literals as
+the required representation. At 1 MiB, one numeric token per byte used about
+3.5 times the wall time and peak RSS while linking identical output. Linker
+merging is not assumed: default release retained all eight identical 100 KiB
+copies in the measured fixture, and folding varied with crate boundaries,
+codegen units, and LTO.
+
+The initial gate is 1 MiB per invocation and 32 invocations or 3.2 MiB of
+logical embedded bytes per consumer package. Crossing it requires an explicit
+override and remeasurement. Macro diagnostics report logical bytes and payload
+counts; CI owns the crate-wide aggregate because independent invocations cannot
+reliably coordinate it.
 
 ## Compiler cache
 
@@ -140,9 +148,18 @@ Its key includes:
 - `xcrun`/Metal compiler fingerprint and flags.
 
 A default macOS user cache is used rather than consumer `OUT_DIR`. A documented
-override supports CI and sandboxed builds. Cache entries use cross-process
-locking, temporary files, validation, and atomic rename. Identical invocations
-share external compiler work even when expanded in different rustc processes.
+override supports CI and sandboxed builds. One immutable self-validating bundle
+is stored per complete key. A miss uses a stable per-key OS advisory lock,
+locked recheck, create-new same-filesystem temporary file, full temporary
+validation, and atomic rename. Readers validate every hit without taking the
+lock. Identical invocations share external compiler work even when expanded in
+different rustc processes.
+
+Locking suppresses duplicate work; complete identity, immutable bytes,
+validation, and atomic publication provide correctness. Corruption is a miss.
+Cache I/O failure compiles and validates without publication; compiler or
+artifact failure remains a hard error. The default durability contract covers
+process crashes, not power loss.
 
 Deleting the cache may cause the next macro expansion to rebuild it; generated
 runtime code never opens cache files. Cache cleanup and compiler incremental
@@ -248,18 +265,25 @@ errors rather than silent fallback; otherwise broken generated code could ship
 unnoticed. Runtime applicability misses may use fallback before custom-op
 application as described in [Candle integration](candle.md).
 
-## Initial feasibility gates
+## Feasibility evidence and remaining vertical checks
 
-Before broad IR implementation, prove:
+Completed bounded measurements establish:
 
-1. cold macro expansion compiles and embeds a loadable metallib;
-2. warm equivalent expansions do not invoke `xcrun`;
-3. concurrent identical expansions compile once and never observe partial data;
-4. direct byte literals have acceptable rustc time/memory at representative
-   sizes;
-5. repeated identical bundles have measured, understood binary-size behavior;
-6. rust-analyzer and `cargo check` cold/warm behavior is usable;
-7. cache deletion, `cargo clean`, and compiler/toolchain changes behave safely;
-8. Metal diagnostics point to the macro invocation and preserve retained MSL;
-9. native macOS and non-Apple fallback paths work without consumer setup;
-10. one bundle can contain several entry points and a multi-step program plan.
+1. the immutable cache protocol survives concurrent writers, nine killed-writer
+   phases, corruption, deletion, unavailable roots, and reader/eviction races;
+2. direct byte literals have measured initial size/count gates and repeated
+   identical bundles cannot rely on linker deduplication;
+3. Cargo no-op builds skip expansion, consumer or macro edits rerun it, and
+   cache/toolchain changes alone do not invalidate an otherwise fresh expansion;
+4. the qualified Metal toolchain compiles distinct macOS, iOS-device, and
+   iOS-simulator payload families; and
+5. Metal library load, function lookup, and pipeline creation are distinct
+   runtime failure stages.
+
+The first vertical implementation slice must still demonstrate an actual Tiler
+macro compiling, embedding, loading, and dispatching a one- and multi-entry
+bundle; a production warm cache hit invoking no `xcrun`; source-spanned retained
+MSL diagnostics; and the non-Apple semantic fallback path without consumer
+setup. rust-analyzer cold/warm performance also remains unmeasured because the
+component was unavailable. None of these gaps changes the accepted contract,
+but they must not be reported as completed feasibility.

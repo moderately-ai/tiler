@@ -1,6 +1,6 @@
 # Candle integration
 
-**Status:** proposed
+**Status:** accepted adapter contract; initial Candle API limits remain
 
 The Candle adapter consumes versioned Tiler artifacts. It owns Candle storage,
 layout, allocation, command-stream, and fallback concerns; it does not own
@@ -10,6 +10,12 @@ The frontend macro passes an `EmbeddedBundle` backed by static manifest and
 metallib byte literals. The adapter never reads the expansion compiler cache or
 compiles MSL at runtime; it loads/caches Metal libraries and pipelines by bundle
 identity.
+
+The adapter implements the consumer-neutral
+[runtime execution contract](../research/runtime/runtime-execution-contract.md).
+It consumes a device-free validated envelope, binds it to one live
+device/context, prepares every entry of one complete variant, and receives a
+one-way `RoutingCommitted` authority before program allocation or encoding.
 
 ## Two-stage forward path
 
@@ -117,6 +123,12 @@ mismatches, dishonest capability providers, systemic runtime failures,
 allocation failures, and all post-commit failures are errors; the adapter does
 not mask them by trying another variant or risk fallback after partial work.
 
+Library load, function lookup, and pipeline creation remain distinct stages.
+A missing declared symbol is an artifact invariant, not an applicability miss.
+A pipeline error permits another route only when a governed classifier proves a
+typed capability miss before `RoutingCommit`; unknown/systemic errors fail
+closed.
+
 The Tensor-level wrapper retains enough information to execute the unfused
 Candle expression when no generated variant applies. That fallback is valid
 only when its numerical and autograd contract matches the requested semantics.
@@ -129,6 +141,10 @@ ordering and overlap with surrounding Candle work.
 
 Resource access modes come from the ABI so the encoder can declare read-only,
 write-only, and read/write resources accurately.
+
+Inputs, outputs, temporaries, metadata/argument storage, libraries, pipelines,
+and any validation resources are retained through their exact final device use.
+Encoding scope or a host reference count alone is not completion evidence.
 
 An explicitly synchronous validation/readback path is an exception to the
 ordinary asynchronous launch path. It must commit and wait for the exact

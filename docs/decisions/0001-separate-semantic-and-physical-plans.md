@@ -1,6 +1,6 @@
 # 0001: Separate semantic planning from physical scheduling
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 

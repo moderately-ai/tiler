@@ -1,6 +1,6 @@
 # 0003: Keep the compiler independent of Candle
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 

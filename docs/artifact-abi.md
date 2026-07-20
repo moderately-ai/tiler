@@ -1,8 +1,8 @@
-# Proposed Metal artifact and kernel ABI profile
+# Artifact envelope and Metal kernel ABI profile
 
-**Status:** proposed
+**Status:** accepted research contract; concrete serialization remains internal
 
-This document describes the proposed first-backend Metal profile of Tiler's
+This document describes the accepted first-backend Metal profile of Tiler's
 target-neutral artifact concepts. `MetallibBundle`, Metal binding indices, and
 direct Rust embedding are profile-specific; the compiler core must also admit
 other target payloads and delivery mechanisms.
@@ -11,7 +11,37 @@ A metallib alone is not executable safely. The Metal profile pairs compiled code
 versioned, machine-checkable contract describing executable plans, bindings,
 formulas, guards, routing, numerical behavior, and target requirements.
 
-## Artifact hierarchy
+## Target-neutral envelope
+
+The artifact is one bounded, self-verifying envelope with a canonical neutral
+manifest and length-delimited typed sections. The neutral layer owns semantic
+interfaces, complete program portfolios, routing, guards, checked expressions,
+logical ABI roles, feasibility requirements, and execution/failure boundaries.
+Backend payload schemas own executable bytes and backend-only transport
+metadata.
+
+The neutral layer references a backend payload through a governed backend key,
+representation key, payload digest, compatibility-contract reference, and an
+opaque backend entry key. It does not contain Metal symbol names, buffer or
+function-constant indices, Apple triples, or MSL versions. Those belong to the
+Metal payload. A future CUDA payload can use cubin/PTX and CUDA parameter
+metadata without changing the neutral program schema.
+
+Every section descriptor contains its required/optional meaning, schema, exact
+byte length, and digest. The header bounds total length, manifest length, and
+section count before allocation. All executable and required metadata bytes are
+hashed. Unknown required meanings fail closed; unknown optional sections may be
+skipped only when their schema explicitly permits it. An external
+`EnvelopeDigest` covers the exact complete encoding and is not recursively
+stored inside itself.
+
+Integrity, structural validity, neutral-program validity, backend-payload
+validity, declared target compatibility, live applicability, prepared-entry
+feasibility, and launch feasibility are distinct monotonic validation stages.
+Parse success never implies executable compatibility. See the
+[target-neutral envelope research](research/artifacts/target-neutral-artifact-envelope.md).
+
+## Metal payload hierarchy
 
 ```text
 Bundle
@@ -32,10 +62,10 @@ and multi-pass reductions with the same execution model. Every kernel entry has
 one symbol and ABI; separately emitted scalar/vector kernels are separate
 entries referenced by different plan variants or steps.
 
-## Conceptual schema
+## Conceptual Metal payload view
 
 ```rust
-struct MetallibBundle {
+struct MetalPayload {
     format_version: u32,
     ir_version: u32,
     codegen_version: String,
@@ -100,7 +130,8 @@ struct KernelEntry {
 }
 ```
 
-This is illustrative, not a committed Rust API or serialization format. The
+This is the Metal payload/profile view, not the neutral envelope schema. It is
+illustrative, not a committed Rust API or serialization format. The
 Milestone 2 one-kernel path is a program with one variant, no temporaries, and
 one step.
 
@@ -339,10 +370,18 @@ those static byte slices; it does not open source files, compiler-cache paths,
 or consumer `OUT_DIR`.
 
 The embedding representation is deterministic and versioned. Artifact identity
-is independent of the absolute compiler-cache location. Direct embedding size,
-rustc memory, incremental behavior, and repeated-literal binary duplication are
-measured and bounded. A later linker-level deduplication mechanism may change
-storage without changing bundle semantics or call-site DX.
+is independent of the absolute compiler-cache location. Each manifest or
+payload is emitted as one byte-string literal, never one numeric token per
+byte. Linker/rustc deduplication is opportunistic and is not part of the storage
+or correctness contract.
+
+The initial measured gate is at most 1 MiB of direct bytes per invocation and
+at most 32 invocations or 3.2 MiB of logical emitted bytes per consumer package,
+whichever comes first. Crossing a gate requires an explicit diagnostic/override
+and a measurement case; it is not a claim that Rust or Metal has a hard limit.
+Because one proc macro cannot reliably observe a crate-wide total, integration
+CI owns the package gate and reports logical bytes separately from actual
+linked bytes. See the [embedding measurements](research/embedding/embedded-artifact-costs.md).
 
 One embedded bundle contains all `KernelEntry` values required by that macro
 invocation's plan portfolio. It is not required to contain kernels from other
@@ -362,11 +401,21 @@ pipeline-cache identity.
 
 ## Artifact identity
 
-Expansion compilation identity includes canonical scheduled IR and complete
+Expansion compilation identity includes a domain/schema separator, canonical
+semantic, index, scheduled, and structured kernel IR, complete
 program plans, semantic root-binding declarations, ABIs, guards, routing,
 dispatch, numerical contract, translation-unit membership,
 schema/helper/codegen versions, target/profile, compiler, flags, and every
 selected conformance-evidence record digest and scope.
+
+For Metal it additionally includes exact generated MSL and helper bytes,
+normalized Apple platform family, requested deployment minimum, MSL language
+standard, optimization/math/debug/line/include/macro/compiler/linker flags,
+canonical SDK version/build and relevant content identities, and the resolved
+`metal` and `metallib` component versions or executable digests. Absolute SDK
+or temporary paths are provenance rather than portable key material when
+equivalent content is otherwise established. Requested deployment minima stay
+in identity even when a trivial measured kernel happens to produce equal bytes.
 
 Target requirement predicates, the feasibility-profile descriptor/rule
 identity, artifact execution policy, deferred query contracts/phases, and exact
@@ -396,8 +445,45 @@ metallib_hash  = H(raw metallib bytes)
 bundle_hash    = H(format tag || manifest_hash || metallib_hash)
 ```
 
-Stable canonical IR, MSL, manifest, and cache keys are required. Byte-identical
-metallibs are promised only within a verified pinned toolchain/environment.
+Stable canonical IR, MSL, manifest, and cache keys are required. Tiler promises
+deterministic source, manifest, and identity construction; it does not promise
+byte-identical Apple output across machines or toolchain builds. A cache hit
+validates stored payload bytes and never depends on recompiling to reproduce
+them.
+
+## Expansion cache contract
+
+The expansion cache stores one immutable, self-validating bundle per complete
+compilation key. The required protocol is:
+
+```text
+validate lock-free candidate
+  -> on miss, open stable per-key lock file and acquire an OS advisory lock
+  -> recheck after acquisition
+  -> compile into process-owned state
+  -> write a create-new unique temporary bundle on the final filesystem
+  -> reopen and fully validate the temporary bundle
+  -> atomically rename it over the content-addressed final path
+  -> release the lock by closing its descriptor
+```
+
+The lock suppresses duplicate compiler work; it is not the correctness
+boundary. Correctness comes from complete identity, bounded validation on every
+hit, immutable final entries, and atomic publication. A killed process releases
+its OS lock. There are no PID leases or stale-lock deletion rules. Internal GC
+retains lock files and acquires the same key lock before eviction; lock-free
+readers validate their already-open descriptor.
+
+The default durability claim is process-crash safety, not power-loss
+durability. A separate `fsync` policy may synchronize the temporary file before
+rename and the containing directory afterward, but Darwin does not make that a
+universal physical-media guarantee. Cache read/write/lock/publication failures
+fall open to validated uncached compilation. Compiler failures, unsupported
+targets, and invalid artifacts remain hard expansion errors.
+
+Rust's standard `File::lock` requires an MSRV of at least 1.89. Choosing an
+older MSRV requires a separately audited lock adapter. See the
+[crash/race protocol and harness](research/cache/crash-and-race-protocol.md).
 
 ## Loading and validation
 

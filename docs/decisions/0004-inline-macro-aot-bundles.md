@@ -1,6 +1,6 @@
 # 0004: Treat each inline macro invocation as an AOT bundle
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 

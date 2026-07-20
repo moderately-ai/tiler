@@ -35,15 +35,21 @@ semantic graph verifies and evaluates without any frontend, backend, or runtime
 dependency. Registry, canonical-data, semantic/provider identity, and dynamic
 shape-source invariants are tested.
 
-## Milestone 0B: proposed Rust/Metal integration feasibility
+## Milestone 0B: Rust/Metal integration vertical feasibility
+
+**Research-contract status:** complete. ADRs 0002–0004, 0049–0051 and the
+artifact/cache/runtime spikes fix the AOT, inline-DX, family-selection,
+publication, and fallback boundaries. The actual Tiler macro-to-dispatch
+vertical remains implementation work.
 
 - Build a proc-macro spike that compiles fixed deterministic MSL with `xcrun`
   and emits manifest/metallib byte-string literals without consumer setup.
-- Implement a minimal content-addressed user cache with cross-process locking,
-  validation, and atomic publication.
-- Measure cold/warm expansion, rustc memory for representative bundle sizes,
-  repeated-literal binary size, rust-analyzer, `cargo check`, cache deletion,
-  native macOS, and non-Apple fallback behavior.
+- Implement the accepted immutable self-validating content-addressed cache and
+  reproduce the completed process-level crash/race harness against it.
+- Retain the completed embedding, Cargo freshness, cache deletion, and Apple
+  family/toolchain probes. Measure rust-analyzer cold/warm behavior when the
+  component is available, plus the actual native macOS and non-Apple fallback
+  paths.
 
 **Exit criterion:** cold inline macro AOT produces a loadable bundle, warm
 equivalent expansions invoke no external compiler, and the proposed Rust DX

@@ -1,6 +1,6 @@
 # 0002: Generate Metal artifacts ahead of time
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 

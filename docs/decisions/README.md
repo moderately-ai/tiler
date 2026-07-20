@@ -7,10 +7,10 @@ accepted. Unresolved questions are collected in
 
 ## Index
 
-- [0001: Separate semantic planning from physical scheduling](0001-separate-semantic-and-physical-plans.md) — proposed
-- [0002: Generate Metal artifacts ahead of time](0002-aot-metal-artifacts.md) — proposed
-- [0003: Keep the compiler independent of Candle](0003-candle-is-an-integration.md) — proposed
-- [0004: Treat each inline macro invocation as an AOT bundle](0004-inline-macro-aot-bundles.md) — proposed
+- [0001: Separate semantic planning from physical scheduling](0001-separate-semantic-and-physical-plans.md) — accepted
+- [0002: Generate Metal artifacts ahead of time](0002-aot-metal-artifacts.md) — accepted
+- [0003: Keep the compiler independent of Candle](0003-candle-is-an-integration.md) — accepted
+- [0004: Treat each inline macro invocation as an AOT bundle](0004-inline-macro-aot-bundles.md) — accepted
 - [0005: Expose a public semantic graph and extension boundary](0005-public-semantic-tensor-graph.md) — accepted
 - [0006: Model semantic programs as operation/value graphs](0006-operation-value-graph.md) — accepted
 - [0007: Make normalized hardware schedules first-class IR](0007-first-class-kernel-schedules.md) — accepted
@@ -56,6 +56,8 @@ accepted. Unresolved questions are collected in
 - [0047: Model placement as physical properties over capability graphs](0047-model-placement-as-physical-properties.md) — accepted
 - [0048: Verify structured kernels as schedule refinements](0048-verify-structured-kernels-as-schedule-refinements.md) — accepted
 - [0049: Select artifact families explicitly at inline invocations](0049-explicit-artifact-family-selection.md) — accepted
+- [0050: Use immutable self-validating expansion-cache entries](0050-use-immutable-self-validating-expansion-cache-entries.md) — accepted
+- [0051: Make runtime routing commit one-way before program work](0051-make-runtime-routing-commit-one-way.md) — accepted
 
 ## Template
 
