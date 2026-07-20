@@ -5,7 +5,7 @@ status: done
 priority: p0
 dependencies: [prototype-typed-value-handles]
 related: [prototype-semantic-reference-slice]
-scopes: [implementation/reference, implementation/ir, implementation/workspace, research/reference]
+scopes: [implementation/reference, implementation/ir, implementation/workspace, research/reference, research/extensions]
 shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions, contracts/navigation]
 paths: []
 tags: [implementation, reference, rust-api]
