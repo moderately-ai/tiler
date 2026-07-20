@@ -67,7 +67,12 @@ impl Shape {
         &self.0
     }
 
-    pub(crate) fn element_count(&self) -> Option<usize> {
+    /// Returns the dense logical element count when it fits this host.
+    ///
+    /// A zero extent always produces zero, even when another extent is not
+    /// representable as `usize`.
+    #[must_use]
+    pub fn element_count(&self) -> Option<usize> {
         if self.0.iter().any(|extent| extent.get() == 0) {
             return Some(0);
         }
@@ -77,17 +82,22 @@ impl Shape {
         })
     }
 
-    pub(crate) fn without_axes(&self, axes: &[Axis]) -> Self {
-        let reduced: BTreeSet<u32> = axes.iter().map(|axis| axis.get()).collect();
+    /// Returns a shape with the named logical axes removed.
+    ///
+    /// Callers are responsible for validating axis range and uniqueness when
+    /// those distinctions affect their semantic contract.
+    #[must_use]
+    pub fn without_axes(&self, axes: &[Axis]) -> Self {
+        let reduced: BTreeSet<usize> = axes
+            .iter()
+            .filter_map(|axis| usize::try_from(axis.get()).ok())
+            .collect();
         Self(
             self.0
                 .iter()
                 .copied()
                 .enumerate()
-                .filter_map(|(index, extent)| {
-                    let index = u32::try_from(index).expect("verified rank fits u32");
-                    (!reduced.contains(&index)).then_some(extent)
-                })
+                .filter_map(|(index, extent)| (!reduced.contains(&index)).then_some(extent))
                 .collect(),
         )
     }

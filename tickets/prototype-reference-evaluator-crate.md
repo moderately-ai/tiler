@@ -1,7 +1,7 @@
 ---
 id: prototype-reference-evaluator-crate
 title: Extract the reference evaluator capability crate
-status: todo
+status: done
 priority: p0
 dependencies: [prototype-typed-value-handles]
 related: [prototype-semantic-reference-slice]
@@ -28,3 +28,16 @@ Create `tiler-reference` as a target-independent downstream consumer of
 
 Add the workspace dependency and ticketsplease scope, update ADR 0056 through
 its accepted supersessor, and move conformance tests without weakening them.
+
+## Outcome
+
+Implemented `tiler-reference` as a target-independent consumer of `tiler-ir`.
+The crate owns dense host tensors, ordered input bindings, evaluator traversal,
+typed failures, and exact-signature reference capabilities with deterministic
+provider/revision provenance. Governed F32 and external capabilities use the
+same transactional registration path; a missing oracle reports
+`MissingCapability`. Eleven tests preserve numerical edge cases and cover
+external dispatch, deterministic identities, revision sensitivity, and
+transactional collision rejection. Workspace dependency inspection confirms
+that compiler, artifact, and Metal production crates do not depend on the
+reference crate.

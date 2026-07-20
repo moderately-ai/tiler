@@ -6,7 +6,7 @@ title: "Extract reference evaluation from the IR crate"
 topics: ["rust", "reference", "dependencies", "semantics"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir"]
 evidence: ["tiler.research.extensions.semantic-foundation-api-v2", "tiler.research.reference.normative-reference-slice"]
 supersedes: ["ADR-0056"]
@@ -15,8 +15,8 @@ ticket: "prototype-reference-evaluator-crate"
 
 # 0065: Extract reference evaluation from the IR crate
 
-**Status:** accepted; supersedes ADR 0056 only for the reusable-crate count and
-reference-evaluator placement
+**Status:** accepted and implemented; supersedes ADR 0056 only for the
+reusable-crate count and reference-evaluator placement
 
 ## Context
 
@@ -44,6 +44,13 @@ Compiler, artifact, backend, and runtime production crates do not depend on
 Normative operation specifications remain authoritative; moving their
 executable oracle does not transfer semantic ownership away from the IR
 contract.
+
+The frozen reference registry resolves the exact pair of semantic operation
+key and ordered resolved operand/result signature. Its canonical provenance
+also commits to the provider identity and capability revision. Standard and
+external capabilities use the same transactional registration path; absence
+is a typed capability error rather than evidence that the verified semantic
+program is malformed.
 
 ## Consequences
 

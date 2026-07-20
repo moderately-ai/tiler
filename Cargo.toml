@@ -4,6 +4,7 @@ members = [
     "crates/tiler-compiler",
     "crates/tiler-ir",
     "crates/tiler-metal",
+    "crates/tiler-reference",
     "prototypes/serial-sum-compile",
     "prototypes/serial-sum-run",
 ]
@@ -28,6 +29,7 @@ tiler-artifact = { path = "crates/tiler-artifact" }
 tiler-compiler = { path = "crates/tiler-compiler" }
 tiler-ir = { path = "crates/tiler-ir" }
 tiler-metal = { path = "crates/tiler-metal" }
+tiler-reference = { path = "crates/tiler-reference" }
 trybuild = "1.0.114"
 
 [workspace.lints.rust]

@@ -7,7 +7,7 @@ topics: ["extensions", "semantics", "rust", "reference"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "partial"
+implementation_status: "implemented"
 evidence_classes: ["executable-model", "primary-source-synthesis"]
 informs: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.operation-extensions"]
 adopted_by: ["ADR-0065", "ADR-0066"]
@@ -96,3 +96,15 @@ semantic graph.
 Correct type authority first, then operation authority and generic typed
 construction, then extract reference evaluation. Compiler and backend work
 remain blocked until the assembled semantic/reference slice passes again.
+
+## Implementation result
+
+The corrected boundaries are now compile-checked in the workspace. `tiler-ir`
+owns independently registered semantic type authority, optional Rust marker
+bindings, open operation authority, generic typed handles, erased frontend
+construction, and deterministic reached-authority projection.
+`tiler-reference` depends only on `tiler-ir` and owns host tensors, traversal,
+numerical oracle implementations, and a separately frozen exact-signature
+capability registry. Governed and external operations pass through the same
+semantic and reference registration mechanisms. No F32-specific input or
+builder convenience remains in the public semantic builder.

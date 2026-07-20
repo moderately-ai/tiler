@@ -12,14 +12,13 @@ related: ["tiler.questions.open", "tiler.roadmap"]
 Tiler has entered a bounded prototype phase. The semantic, optimizer,
 scheduling, numerical, artifact, cache, and runtime boundaries have substantial
 accepted decisions and bounded executable evidence. An initial untyped
-semantic/reference draft and evaluator exposed incorrect provisional public
-boundaries and are undergoing the dependency-ordered v2 correction. Graph
-ownership, recoverable commitment, output-reachable compaction, and
-origin-bound output-selector mechanics are implemented for that bounded
-profile. The bounded resolved-value-type domain and frozen semantic registry
-are also implemented, including the standard `F32` and external-provider path.
-Type authority, operation registration, generic typed values, reference-crate
-extraction, and shape evidence remain on the active dependency path.
+semantic/reference draft exposed incorrect provisional public boundaries; the
+dependency-ordered v2 correction is now implemented through the semantic and
+reference crate boundary. Graph ownership, recoverable commitment,
+output-reachable compaction, origin-bound output selectors, independent type
+authority, open operation registration, generic typed values, and exact
+reference-capability dispatch are compile-checked for the bounded profile.
+Shape evidence remains on the active dependency path.
 Target-neutral compilation, Metal AOT, and device execution remain
 unimplemented and no public API is stabilized.
 

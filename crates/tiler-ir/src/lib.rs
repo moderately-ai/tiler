@@ -23,8 +23,6 @@
 //! # }
 //! ```
 
-/// Host reference values and evaluation.
-pub mod reference;
 /// Public semantic tensor-program vocabulary.
 pub mod semantic;
 /// Target-independent fixed shape vocabulary.
