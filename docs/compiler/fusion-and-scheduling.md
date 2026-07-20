@@ -91,8 +91,12 @@ A proposed fusion region is legal only when all of the following hold.
   independently; a permission or algebraic capability for one is not evidence
   for the other.
 - NaN, signed-zero, empty-domain, cast, and overflow semantics are preserved.
+- Every fused scalar realization and opaque intrinsic refines each
+  transcendental operation's effective reference, domain, accuracy, special-
+  value, and subnormal contract.
 
-Legality failure produces a structured split or fallback reason.
+Legality failure produces a structured split or fallback reason. An accuracy
+failure is hard infeasibility, never a cost penalty.
 
 ## Profitability
 

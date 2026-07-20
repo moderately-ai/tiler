@@ -55,6 +55,11 @@ supported dtypes/features, SIMD-group assumptions, maximum threads and
 threadgroup memory, binding limits, supported address/index widths, and
 bootstrap cost parameters.
 
+Numerical capabilities are keyed by operation, dtype, effective accuracy,
+special-value and subnormal contracts, implementation/helper revision, and
+toolchain profile. A generic claim that a target supports `fast` or `precise`
+math is not a feasibility fact.
+
 Some limits are known only after pipeline creation, such as execution width or
 maximum threads for a compiled function. The manifest records corresponding
 runtime assertions. A bundle may contain a conservative generic portfolio plus
@@ -79,7 +84,9 @@ A macro-local translation unit should:
 - emit each helper once;
 - assign explicit `[[buffer(N)]]` attributes;
 - emit explicit built-in parameters;
-- preserve precise versus fast numerical policy;
+- realize each operation's effective accuracy and independent NaN, infinity,
+  signed-zero, contraction, and subnormal contracts; a translation-unit-wide
+  flag is legal only when it stays within every affected operation contract;
 - include comments mapping symbols to semantic hashes and optional origins;
 - state the required Metal language and platform version.
 
@@ -120,6 +127,8 @@ The cache is content-addressed and concurrency-safe:
 - publication uses atomic rename;
 - readers validate hashes and completeness;
 - toolchain or flag changes invalidate entries;
+- resolved accuracy contracts, selected helpers/intrinsics, and conformance-
+  provider revisions invalidate entries;
 - cache hit/miss reasons can be inspected.
 
 The cache is an internal accelerator. Generated Rust embeds completed bytes and

@@ -24,10 +24,12 @@ results, bounded-error models over stated domains, or explicitly versioned
 backend-elementary behavior. The final metric types and initial supported
 subset remain open.
 
-An optimizer or backend may choose an implementation only when it proves that
-the implementation satisfies the resolved contract or consumes a separately
-authorized relaxation. Otherwise it emulates or rejects the plan according to
-the standard backend feasibility classification.
+Any authorized approximation relaxation resolves to a new canonical, testable
+effective envelope before semantic optimization. An optimizer or backend may
+choose an implementation only when its guarantee refines that resolved
+contract. A physical phase never weakens admitted semantics by merely consuming
+a permission. Otherwise it emulates or rejects the plan according to the
+standard backend feasibility classification.
 
 This decision governs local operation accuracy. It does not authorize moving
 or redistributing an error budget between operations.

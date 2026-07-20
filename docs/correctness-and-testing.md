@@ -32,6 +32,13 @@ The evaluator is independently tested with hand-authored conformance vectors,
 small exhaustive cases, and higher-precision arithmetic where appropriate so a
 shared evaluator/lowering bug is not mistaken for agreement.
 
+Bounded transcendental evaluation computes the named immutable reference with
+enough precision or certified intervals to decide the exact rational predicate;
+it does not round an oracle and then measure against that rounded value. A
+named-elementary profile uses its frozen versioned definition and independent
+conformance corpus. Running the same live backend as both implementation and
+oracle is circular and cannot establish conformance.
+
 ## Verification gates
 
 Each lowering verifies its input and output:
@@ -80,6 +87,12 @@ Generate combinations of:
 - proof-elided, host-check, device-pre-scan, and transactional validation paths
   producing the same success/error contract; private failed results discarded;
   no dependent publication or fallback after device enforcement begins;
+- transcendental clause boundaries, zeros, binade and normal/subnormal
+  transitions, overflow thresholds, hard-to-round values, and large
+  argument-reduction inputs; every pre-output-policy candidate checked against
+  the exact reference and all applicable typed clauses, then the observable
+  result checked against the composed subnormal, zero, overflow, and NaN
+  policies;
 - shape products near index-width boundaries.
 
 The cross-operation coverage, adversarial numerical atoms, and backend compiler

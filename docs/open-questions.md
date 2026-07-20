@@ -12,7 +12,8 @@ ADR when evidence is sufficient.
 - After taxonomy review, which dtypes are recognized, representable,
   reference-evaluable, optimizable per operation, backend-realizable, and
   enabled in the first product profile?
-- Which transcendental error metrics and operation subset are supported first?
+- Which transcendental operation/dtype/contract tuples are enabled in the
+  first vertically supported product profile?
 - Which float-to-integer family, rounding, source-dtype, and destination-dtype
   tuples are enabled in the first product profile?
 - Which built-in quantization scheme families and exact conversion contracts

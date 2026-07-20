@@ -119,6 +119,10 @@ OpaqueCall(call contract)
 View(alias/metadata result)
 ```
 
+Every executable body also carries the selected numerical realization,
+machine-checkable guarantee, and scoped evidence identity. These must refine
+the region's effective operation contracts before costing.
+
 A locally slower implementation may provide a layout that removes a downstream
 conversion. Multi-pass reductions are `KernelSubprogram` bodies rather than one
 oversized `KernelSchedule`; opaque library calls need not invent a schedule.
@@ -283,7 +287,8 @@ storage and layout explicitly.
 Not every semantic operation should be implemented as primitive scalar work.
 The physical planner and `KernelProgram` admit `OpaqueCall` implementations
 with explicit boundary contracts, target requirements, resource/hazard
-metadata, and costs, for example an optimized matrix multiplication or a
+metadata, exact function/accuracy/special-value behavior, and costs, for
+example an optimized matrix multiplication or a
 handwritten reduction. These form deliberate fusion boundaries unless a
 backend-specific implementation rule can legally absorb adjacent operations.
 Opaque execution effects order physical stages; they do not introduce hidden

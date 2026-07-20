@@ -133,6 +133,11 @@ mutable global state, registry order, or call order.
 - Decomposition and rewrite output re-enters full semantic verification.
 - Lowering declares its numerical, shape, effect, operation-set, and target
   preconditions in machine-checkable form where possible.
+- A transcendental definition declares immutable reference semantics,
+  supported accuracy envelopes and domains, independent exceptional-value
+  behavior, reference-evaluator capability, and scoped conformance evidence.
+  Its decompositions and rewrites state exactly which input contract they
+  preserve and which subordinate contracts they create.
 - Missing optional knowledge is conservative.
 - Contradictory capability answers are hard diagnostics, not fallback misses.
 

@@ -30,7 +30,7 @@ the first executable slice.
 | Value assumptions | Compiler-proven or runtime-validated before use for legality | fixed |
 | Backend result | Exact native, exact emulation, declared-relaxation-only, or unsupported | fixed |
 | Determinism | Explicit scope; initial practical guarantee is plan determinism | fixed |
-| Explain and identity | Resolved contract, consumed permissions, target realization, and topology are recorded | fixed |
+| Explain and identity | Resolved effective contract, target realization, conformance evidence, and topology are recorded | fixed |
 
 ## Operation families
 
@@ -50,7 +50,7 @@ the first executable slice.
 | Integer `Rescale` | Named multiplier/shift widths, integer rounding algorithm, zero-point interpretation, clip range, and intermediate widths | Approximate result only under a separately declared bounded-error family | Initial exact algorithms and imported-dialect profiles |
 | `Minimum` / `Maximum` | NaN-propagating; deterministic `-0.0 < +0.0` | NaN-absence and signed-zero relaxations remain independent | Exact Metal fixup and cost measurement |
 | `MinimumNumber` / `MaximumNumber` | Prefer the number when exactly one operand is NaN; deterministic zero ordering | Signed-zero and NaN assumptions remain independent | Exact Metal fixup and reduction conformance |
-| Transcendentals | Per-operation accuracy, domain, special-value, and subnormal contract | Approximate implementation only when its bound satisfies the contract or consumes permission | Initial metric vocabulary and supported operation subset are open |
+| Transcendentals | Per-operation reference plus correctly rounded, faithful, typed piecewise bounded, or immutable named behavior; special values and subnormals remain separate | Approximate implementation only when it refines the resolved contract and its envelope | Initial vertically supported operation/dtype/profile subset is open |
 | `Select` and bit-selecting operations | Preserve the selected operand's bits; predicate semantics are explicit | Speculation of arms requires proof that doing so is semantically harmless | Initial predicate/dtype subset |
 | Sum/product/logical reductions | Resolved accumulator/result types, empty result, seed, padding capability, and order contract | Reassociation and permutation are independent; topology is physical | Built-in capability table and target topology conformance |
 | Extrema reductions | Named extrema scalar family plus explicit empty result-or-error, seed, padding capability, and order contract | Same independent order and exceptional-value permissions | All-NaN, signed-zero, empty, and tree-shape validation |
@@ -72,6 +72,7 @@ Each supported floating dtype uses exact bit-pattern inputs where representable.
 | Empty and seeded reduction | Empty result; identity-less empty rejection; dynamic non-empty guard; non-identity seed included exactly once; singleton `[-0]` without injected `+0` |
 | Extrema reduction | All-NaN; one numeric plus NaNs; opposite-signed zeros in every order and tree; infinities |
 | Assumption guards | Passing and failing data scan; no dependent work before validation; alternate-plan/fallback selection |
+| Transcendental bounds | Every clause boundary; exact zeros; binade boundaries; normal/subnormal transitions; overflow thresholds; large argument reduction; known hard-to-round inputs; result accepted by all matching clauses |
 
 Positive and negative tests accompany every rewrite: one witness where the rule
 is legal, and one adversarial input demonstrating why each unmet permission or
@@ -109,7 +110,7 @@ native support for it.
 The unresolved work is now concrete rather than architectural:
 
 1. choose the first vertically supported operation/dtype combinations;
-2. define initial transcendental error metric types and operations;
+2. choose the first vertically supported transcendental operation/dtype/contract profiles;
 3. enumerate algebraic capabilities for each built-in operation;
 4. run and publish Metal flag/intrinsic/device conformance measurements; and
 5. choose ergonomic frontend policy presets, which expand into the already

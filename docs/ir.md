@@ -191,7 +191,10 @@ Reduce
 ```
 
 Program inputs are declarations rather than operation invocations. The
-operation list is illustrative rather than a closed Rust enum. An operation
+operation list is illustrative rather than a closed Rust enum. In particular,
+an admitted `Gelu` key pins its exact formula or decomposition and every
+subordinate transcendental contract; erf-GELU and a tanh approximation are not
+interchangeable implementations of an unspecified node. An operation
 invocation is a graph node; its axes, reduction kind, accumulator dtype, and
 other meaning-defining parameters are canonical semantic attributes. Shape,
 result dtype, and constraints are inferred semantic facts. Layout,
@@ -236,6 +239,9 @@ Mandatory capabilities define:
 - canonical attribute encoding and deterministic identity;
 - purity/effect declaration;
 - normative/reference semantics and conformance behavior;
+- for transcendental operations, immutable reference semantics, admitted
+  accuracy envelopes/domains, independent special-value policies, and
+  reference-evaluator support;
 - explain and diagnostic formatting.
 
 Optional capabilities may provide:
@@ -245,6 +251,7 @@ Optional capabilities may provide:
 - iteration-domain and access-map lowering;
 - region-fusion participation;
 - physical implementations, boundary requirements/guarantees, and costing;
+- accuracy realizations and scoped conformance evidence;
 - structured-kernel lowering.
 
 Registration alone does not make an operation optimizable. A pass may transform
@@ -304,7 +311,9 @@ specified in [Operation extensions](operation-extensions.md).
   boundaries unless their resolved contraction permission authorizes fusion.
 - Every transcendental operation carries a resolved accuracy contract. No
   canonical operation inherits transcendental accuracy from backend defaults
-  or ambient compiler flags.
+  or ambient compiler flags. Correctly rounded, faithful, typed piecewise
+  bounded, and named-elementary contracts are discriminated; references,
+  domains, exact tolerances, and metric versions are canonical identity.
 - The initial optimizer enforces local numerical contracts and does not
   redistribute a graph-level error budget. Reference provenance, input/shape
   assumptions, casts, materialization boundaries, and reduction topology remain
@@ -601,8 +610,11 @@ Identity is layered:
 2. `ScheduledRegion` commits to its `IndexRegion` plus normalized schedule.
 3. `RegionImplementation` commits to its body, boundary contracts,
    applicability predicates, target requirements, and exact/proven resource
-   requirements. Cost estimates, target-profile calibration, and schedule
-   traces are provenance rather than executable identity.
+   requirements, including the selected numerical realization/provider.
+   Conformance evidence identity, cost estimates, target-profile calibration,
+   and schedule traces are provenance rather than semantic identity. The
+   selected realization/provider and every output-affecting helper and flag
+   remain physical-plan and artifact identity.
 4. `KernelProgram` and `ProgramPortfolio` commit to the stage DAG,
    materializations, temporaries, ABI, routing, guards, and referenced
    implementation identities.

@@ -122,7 +122,7 @@ The resulting canonical contract is granular, for example:
 struct NumericPolicy {
     reassociation: Reassociation,
     contraction: Contraction,
-    approximate_intrinsics: ApproximateIntrinsics,
+    approximate_intrinsics: ForbidOrAccuracyEnvelopeKey,
     reciprocal_math: ReciprocalMath,
     nan_assumptions: NaNAssumptions,
     infinity_assumptions: InfinityAssumptions,
@@ -238,17 +238,26 @@ contract. `Exp`, `Log`, `Sin`, and similar operations do not inherit an
 accuracy choice from ambient compiler flags or a backend's default math
 library.
 
-Illustrative contract forms include correctly rounded results, a bounded ULP
-or absolute/relative error model over a stated input domain, and a versioned
-backend-elementary contract. The actual metric vocabulary remains to be
-decided; an opaque `approximate` boolean is insufficient.
+ADR 0042 defines four discriminated forms: correctly rounded, faithful,
+piecewise bounded, and immutable versioned named-elementary behavior. Bounded
+clauses use exact rational tolerances and versioned absolute, relative,
+absolute-plus-relative, or ULP metrics over explicit domains. The initial ULP
+definition is `tiler::ulp-reference-gap@1`, matching the spacing definition
+used by OpenCL. Exceptional values, signed zero, and input/result subnormals
+remain orthogonal rather than being inferred from an error metric.
 
 A frontend may expose named accuracy presets, but it resolves them before
 canonical semantic admission. A rewrite, fusion choice, or backend intrinsic
-is legal only when it proves that its implementation satisfies the resolved
-operation contract or consumes a separately authorized relaxation. Backend
-feasibility may report exact native support, exact emulation, relaxed-only
-support, or rejection.
+is legal only when its implementation guarantee refines the resolved effective
+operation contract. Every authorized relaxation has already resolved into that
+canonical contract before optimization. Backend feasibility may report exact
+native support, exact emulation, relaxed-only support, or rejection.
+
+Approximate-intrinsic permission resolves to a maximum accuracy envelope before
+semantic optimization, not a boolean or a later license to weaken meaning.
+Proof, exhaustive finite-domain testing, or an applicable normative
+guarantee can establish hard feasibility. Empirical qualification remains
+labeled empirical and cannot establish an unmeasured worst-case bound.
 
 Local operation contracts are mandatory and authoritative. The initial
 optimizer does not redistribute an end-to-end error budget across operations.
@@ -597,5 +606,6 @@ authority.
 Tests include NaN, infinities, subnormals, signed zero, extreme integers, empty
 domains, and schedule changes.
 
-The selected numerical contract and backend compiler flags appear in `EXPLAIN`,
-cache keys, and artifact manifests.
+The selected numerical contract, implementation realization, evidence
+provenance, and backend compiler flags appear in `EXPLAIN`, cache keys, and
+artifact manifests.

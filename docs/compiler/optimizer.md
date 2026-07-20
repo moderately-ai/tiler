@@ -108,6 +108,12 @@ Implementation rules produce schedules such as:
 - serial, subgroup, threadgroup, or multi-pass reduction;
 - direct or GEMM-backed contraction.
 
+Each implementation candidate advertises a machine-checkable numerical
+guarantee, realization/provider identity, and scoped evidence. It is admitted
+only when that guarantee refines every effective operation contract. A stronger
+implementation may satisfy a weaker requested result set, but it does not
+rewrite semantic identity.
+
 ### Enforcers
 
 An enforcer supplies a missing required property at a cost:
@@ -166,6 +172,10 @@ its hard resources are no worse where relevant, and its symbolic cost is no
 worse throughout the compared constraint cell and strictly better somewhere.
 Otherwise both remain or the constraint space is partitioned. Cost alone may
 not prune the only implementation valid for a runtime region.
+
+Numerical conformance is checked before this dominance relation. Accuracy is a
+hard semantic dimension, not a Pareto cost; incomparable or unknown evidence
+cannot be made legal by a lower estimated runtime.
 
 ## Possible memo contract
 
@@ -235,10 +245,14 @@ fusion regions considered
 boundary requirements/guarantees
 enforcers inserted
 schedules considered and rejected
+per-operation reference and effective accuracy envelope
+candidate numerical guarantee, realization, and evidence class
 selected cost and assumptions
 runtime guards and fallback
 ```
 
 Structured rejection reasons are important: “threadgroup reduction rejected:
 shared memory exceeds target limit” is actionable; a later MSL compiler error
-is not.
+is not. Numerical reasons are equally concrete, such as “claimed 3 ULP exceeds
+required 1 ULP,” “domain uncovered,” or “toolchain evidence unknown,” and are
+reported separately from cost rejection.

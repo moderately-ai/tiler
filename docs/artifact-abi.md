@@ -80,6 +80,7 @@ struct KernelStep {
     kernel_entry: KernelEntryId,
     tensor_bindings: Vec<PlanValueId>,
     dependencies: Vec<StepId>,
+    numeric_realizations: Vec<NumericRealizationRef>,
 }
 
 struct KernelEntry {
@@ -228,6 +229,9 @@ When several plan variants are applicable, a canonical routing policy selects
 by piecewise cost, constraint region, or stable explicit priority. All variants
 in one program have the same semantic and numerical contract. Routing is
 versioned, explainable, and independent of manifest serialization order.
+The verifier checks this equality per operation; routing never chooses between
+different accuracy meanings. Variants may use different realizations only when
+each independently refines the same contract.
 
 Before any allocation or encoding, runtime preparation creates or retrieves all
 pipelines required by the chosen plan. A pipeline-specific capability failure
@@ -269,7 +273,18 @@ pipeline-cache identity.
 Expansion compilation identity includes canonical scheduled IR and complete
 program plans, semantic root-binding declarations, ABIs, guards, routing,
 dispatch, numerical contract, translation-unit membership,
-schema/helper/codegen versions, target/profile, compiler, and flags.
+schema/helper/codegen versions, target/profile, compiler, flags, and every
+selected conformance-evidence record digest and scope.
+
+Transcendental implementation evidence is explicit artifact provenance rather
+than an implied consequence of a compiler flag. Each claim identifies its
+class (proof, exhaustive, normative guarantee, empirical, or unknown), scope,
+reference oracle, implementation/helper digest, toolchain, target/device where
+applicable, and test-corpus digest. Empirical qualification cannot satisfy a
+hard worst-case semantic bound.
+Evidence is not semantic identity, but changing the evidence record, target or
+toolchain scope, or classification changes manifest, bundle, and expansion-
+cache identity even when generated code bytes happen to remain equal.
 
 ```text
 semantic_hash  = H(canonical semantic graph + semantic root-binding interface

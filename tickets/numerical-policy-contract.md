@@ -1,7 +1,7 @@
 ---
 id: numerical-policy-contract
 title: Define the multidimensional numerical policy contract
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/numerics, contracts/compiler, contracts/core, contracts/artifa
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research, numerics]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1784506819
 ---
 Turn exact, relaxed, and fast behavior into explicit policy dimensions covering reassociation, contraction, reciprocal transforms, approximations, NaN/Inf assumptions, signed zero, subnormals, and materialization-boundary rounding.
 

@@ -48,6 +48,7 @@ accepted. Unresolved questions are collected in
 - [0039: Make integer overflow explicit in operation identity](0039-explicit-integer-overflow-operations.md) — accepted
 - [0040: Specialize integer division and remainder families](0040-specialize-integer-division-families.md) — accepted
 - [0041: Separate float-to-integer conversion families](0041-separate-float-to-integer-conversion-families.md) — accepted
+- [0042: Use typed transcendental accuracy contracts](0042-use-typed-transcendental-accuracy-contracts.md) — accepted
 
 ## Template
 

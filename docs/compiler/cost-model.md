@@ -31,7 +31,9 @@ modeled as a discrete tier; it is not double-counted in both places.
 ## Work features
 
 - scalar arithmetic count by dtype and operation class;
-- transcendental and special-function count;
+- transcendental and special-function count by function, dtype, and legal
+  realization class such as native bounded, fixup, emulated correctly rounded,
+  or opaque library call;
 - integer index arithmetic, especially division and modulo;
 - reduction operations and serial loop length;
 - duplicated producer work caused by fan-out;

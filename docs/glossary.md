@@ -7,6 +7,8 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Access map | Function from iteration coordinates and runtime metadata to a buffer element offset. |
 | Access mode | Whether a binding may be read, written, or both. |
 | Accumulation dtype | Type specified independently for reduction accumulation; it may equal the input or output dtype. |
+| Accuracy contract | Canonical per-operation allowed result set relative to immutable reference semantics, including domains and versioned metrics where applicable. |
+| Accuracy guarantee | Machine-checkable result-set claim made by one candidate implementation; it must refine the requested accuracy contract. |
 | Artifact | A versioned bundle or kernel-entry record consumed across the compiler/runtime boundary. |
 | Axis symbol | Stable frontend identity for a logical axis such as `b`, `h`, or `w`. |
 | Bundle | Self-contained target artifact and manifest containing a complete program portfolio; an integration may scope one bundle to one macro invocation. |
@@ -19,6 +21,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Collective | Operation involving several hardware lanes or threads, such as a reduction. |
 | Compilation request | One semantic graph plus numerical/shape context, frozen operation registry, targets, budgets, and deterministic compiler options. |
 | Element offset | Typed index into elements of a buffer view, distinct from a byte offset. |
+| Evidence class | Scope and strength of support for an implementation guarantee: proof, exhaustive, normative guarantee, empirical qualification, or unknown. |
 | Expansion compiler cache | Disposable global content-addressed cache used by proc macros to avoid repeated external AOT compilation. |
 | Expansion-time AOT | Offline target compilation performed synchronously while a proc macro expands, with completed bytes embedded in returned Rust. |
 | Extent expression | Static extent or expression over runtime scalar parameters. |

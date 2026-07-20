@@ -51,6 +51,8 @@ Milestone 0A's consumer-independent compiler boundary.
 - Lower output coordinates through composed reindexes into access maps.
 - Add symbolic extents, strides, and offsets.
 - Implement semantic/index verifiers and the slow reference evaluator.
+- Canonically serialize and reference-evaluate every enabled transcendental
+  accuracy contract before admitting such an operation to the vertical slice.
 - Establish randomized differential testing against normative semantics and
   independent compatibility cases; Candle cases belong to the first
   integration suite.
@@ -68,6 +70,9 @@ construction order.
 - One input, one newly allocated output, F32, statically known rank.
 - Contiguous layout with arbitrary valid start offset.
 - Reindex plus pointwise fusion.
+- Initially limit pointwise operations to fully resolved algebraic semantics;
+  any transcendental or GELU enters only with its formula, reference evaluator,
+  accuracy contract, and conformance evidence implemented end to end.
 - Scalar one-thread-per-output and rank-aware schedules.
 - Minimal conservative Metal target profile for correctness and launch limits.
 - Deterministic MSL, one metallib bundle, and complete lockstep experimental

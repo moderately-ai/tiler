@@ -47,6 +47,10 @@ A frontend owns:
 - rank, shape, and axis constraints;
 - translation into explicit atomic semantic operations such as `Reindex`,
   `Broadcast`, named pointwise operations, and `Reduce`;
+- resolution of source-library transcendental behavior or ergonomic accuracy
+  presets into complete canonical per-operation contracts; an underspecified
+  source intrinsic selects an explicit import profile or is rejected rather
+  than inheriting the eventual backend;
 - construction of a semantically compatible fallback expression;
 - invocation of the compiler/AOT pipeline from its proc-macro crate.
 
