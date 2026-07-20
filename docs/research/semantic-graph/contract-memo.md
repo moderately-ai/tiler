@@ -1,6 +1,21 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.semantic-graph.contract-memo"
+kind: "research"
+title: "Semantic tensor graph contract research memo"
+topics: ["semantics", "graph", "ir"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.vision", "tiler.contract.ir"]
+adopted_by: ["ADR-0005", "ADR-0006"]
+ticket: "semantic-graph-contract"
+---
+
 # Semantic tensor graph contract research memo
 
-**Status:** research; candidate contract, not an accepted decision  
+**Status:** completed research adopted by ADRs 0005 and 0006
 **Ticket:** `semantic-graph-contract`  
 **Scope:** target-independent tensor semantics only
 

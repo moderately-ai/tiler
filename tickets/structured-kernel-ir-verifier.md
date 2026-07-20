@@ -14,3 +14,10 @@ Lower representative scheduled regions into a typed structured kernel form with 
 
 Deliver well-formed and intentionally invalid examples, verifier responsibilities, backend assumptions, and evidence that the representation can express the first Metal schedules without embedding Metal syntax or runtime objects.
 Completed research note, proposed ADR 0048, contract updates, and dependency-free Rust spike. The spike validates schedule-linked types/effects, address spaces, bounds and ownership evidence, convergence/synchronization, reduction order, conversions, launch builtins, and a separate backend-support gate with 14 passing tests. Non-obvious deferrals are recorded in the research note and open questions.
+
+## Outcome
+
+- Research: [structured kernel IR verifier](../docs/research/kernel-ir/structured-kernel-ir-verifier.md)
+- Experiment: [kernel-IR verifier experiment](../spikes/kernel-ir/README.md)
+- Adopted decision: [ADR 0048](../docs/decisions/0048-verify-structured-kernels-as-schedule-refinements.md)
+- Verification: 14 dependency-free Rust tests cover the modeled positive and negative refinement cases.

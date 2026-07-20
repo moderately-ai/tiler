@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0043"
+kind: "decision"
+title: "Use typed phased target feasibility"
+topics: ["targets", "feasibility", "scheduling"]
+decision_status: "accepted"
+implementation_status: "spike-only"
+applies_to: ["tiler.contract.architecture", "tiler.contract.fusion-and-scheduling", "tiler.contract.cost-model"]
+evidence: ["tiler.research.target-profiles.physical-feasibility-model"]
+ticket: "target-profile-feasibility-model"
+---
+
 # 0043: Use typed phased target feasibility
 
 **Status:** accepted

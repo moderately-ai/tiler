@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.extensions.operation-extension-api"
+kind: "research"
+title: "Experimental operation API sketch"
+topics: ["extensions", "operations", "rust"]
+research_status: "complete"
+disposition: "partially-adopted"
+implementation_status: "spike-only"
+evidence_classes: ["executable-model"]
+informs: ["tiler.contract.operation-extensions"]
+adopted_by: ["ADR-0044"]
+reproduced_by: ["tiler.spike.extensions"]
+ticket: "operation-extension-surface"
+---
+
 # Experimental operation API sketch
 
 This sketch records the shape validated by the compile-checking spike. Names
@@ -107,4 +123,3 @@ target feasibility, or transaction boundaries through a convenience API.
   address.
 - Keep built-ins on the same registration path so the public boundary is
   continuously exercised.
-

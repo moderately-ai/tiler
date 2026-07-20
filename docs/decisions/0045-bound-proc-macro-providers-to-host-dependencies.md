@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0045"
+kind: "decision"
+title: "Bound inline proc-macro providers to host dependencies"
+topics: ["extensions", "proc-macro", "rust"]
+decision_status: "accepted"
+implementation_status: "spike-only"
+applies_to: ["tiler.contract.operation-extensions"]
+evidence: ["tiler.research.extensions.proc-macro-extension-visibility"]
+ticket: "proc-macro-extension-visibility"
+---
+
 # 0045: Bound inline proc-macro providers to host dependencies
 
 **Status:** accepted
@@ -49,4 +62,3 @@ Consumer linker inventories do not populate the host macro process. Passing a
 type path gives the macro tokens, not executable consumer metadata. Reverse
 dependencies are cyclic. Source scanning and auxiliary preparation violate the
 accepted DX, and runtime invocation misses the AOT planning phase.
-

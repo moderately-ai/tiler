@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.target-profiles.physical-feasibility-model"
+kind: "research"
+title: "Target profiles and phased physical feasibility"
+topics: ["targets", "feasibility", "gpu"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.architecture", "tiler.contract.fusion-and-scheduling", "tiler.contract.cost-model"]
+adopted_by: ["ADR-0043"]
+ticket: "target-profile-feasibility-model"
+---
+
 # Target profiles and phased physical feasibility
 
 **Status:** research basis for ADR 0043

@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.shapes.constraint-prover-boundary"
+kind: "research"
+title: "Shape constraint prover boundary"
+topics: ["shapes", "constraints", "proof"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.ir"]
+adopted_by: ["ADR-0008"]
+ticket: "shape-environment-contract"
+---
+
 # Shape constraint prover boundary
 
 **Status:** research finding with an accepted prototype scope

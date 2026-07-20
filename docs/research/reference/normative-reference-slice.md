@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.reference.normative-reference-slice"
+kind: "research"
+title: "Normative reference evaluator slice"
+topics: ["reference", "semantics", "correctness"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["executable-model"]
+informs: ["tiler.contract.optimizer"]
+reproduced_by: ["tiler.spike.reference"]
+ticket: "reference-evaluator-slice"
+---
+
 # Normative reference evaluator slice
 
 ## Role
@@ -119,4 +134,3 @@ signature. New operations add independent conformance implementations or exact
 decompositions. New dtypes add explicit bit/value conversion components.
 Neither requires teaching the evaluator about Metal, CUDA, threadgroups,
 buffers, or fusion regions.
-

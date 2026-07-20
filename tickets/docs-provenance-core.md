@@ -1,7 +1,7 @@
 ---
 id: docs-provenance-core
 title: Backfill core and optimizer provenance
-status: todo
+status: done
 priority: p1
 dependencies: [docs-navigation-metadata]
 related: []

@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0007"
+kind: "decision"
+title: "Make normalized hardware schedules first-class IR"
+topics: ["scheduling", "ir", "gpu"]
+decision_status: "accepted"
+implementation_status: "spike-only"
+applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
+evidence: ["tiler.research.scheduling.scheduled-region-model"]
+ticket: "scheduled-region-model"
+---
+
 # 0007: Make normalized hardware schedules first-class IR
 
 **Status:** accepted

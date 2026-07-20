@@ -1,3 +1,15 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.ir"
+kind: "contract"
+title: "IR stack and invariants"
+topics: ["ir", "semantics", "scheduling"]
+contract_status: "proposed"
+implementation_status: "not-started"
+governed_by: ["ADR-0001", "ADR-0006", "ADR-0007", "ADR-0008", "ADR-0046", "ADR-0048", "ADR-0052"]
+evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.indexing.index-access-model", "tiler.research.scheduling.scheduled-region-model", "tiler.research.kernel-ir.structured-kernel-ir-verifier"]
+---
+
 # IR stack and invariants
 
 **Status:** proposed

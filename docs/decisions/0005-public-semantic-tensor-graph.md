@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0005"
+kind: "decision"
+title: "Expose a public semantic graph and extension boundary"
+topics: ["semantics", "extensions", "api"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.vision", "tiler.contract.operation-extensions"]
+evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.extensions.operation-extension-surface"]
+ticket: "synthesize-core-contracts"
+---
+
 # 0005: Expose a public semantic graph and extension boundary
 
 **Status:** accepted

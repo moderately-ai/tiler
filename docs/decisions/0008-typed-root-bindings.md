@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0008"
+kind: "decision"
+title: "Separate extent symbols from typed root bindings"
+topics: ["shapes", "bindings", "semantics"]
+decision_status: "accepted"
+implementation_status: "spike-only"
+applies_to: ["tiler.contract.ir"]
+evidence: ["tiler.research.shapes.shape-environment-contract", "tiler.research.shapes.constraint-prover-boundary"]
+ticket: "shape-environment-contract"
+---
+
 # 0008: Separate extent symbols from typed root bindings
 
 **Status:** accepted

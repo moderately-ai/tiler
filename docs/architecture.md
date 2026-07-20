@@ -1,3 +1,15 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.architecture"
+kind: "contract"
+title: "System architecture"
+topics: ["architecture", "compiler"]
+contract_status: "proposed"
+implementation_status: "not-started"
+governed_by: ["ADR-0001", "ADR-0005", "ADR-0007", "ADR-0043", "ADR-0047", "ADR-0048"]
+evidence: ["tiler.research.program-planning.kernel-program-buffer-plan"]
+---
+
 # System architecture
 
 **Status:** proposed

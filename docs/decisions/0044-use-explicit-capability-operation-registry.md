@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0044"
+kind: "decision"
+title: "Use an explicit capability-based operation registry"
+topics: ["extensions", "registry", "operations"]
+decision_status: "accepted"
+implementation_status: "spike-only"
+applies_to: ["tiler.contract.operation-extensions"]
+evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api"]
+ticket: "operation-extension-surface"
+---
+
 # 0044: Use an explicit capability-based operation registry
 
 **Status:** accepted

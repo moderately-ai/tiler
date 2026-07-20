@@ -13,3 +13,9 @@ tags: [tiler-research, spike, optimizer]
 Define RegionCandidate and ImplementationFrontier semantics, then construct a tiny exhaustive enumerator for small DAGs to expose legal fusion regions, overlapping alternatives, duplicated work, and materialization choices. Use it as an oracle for future bounded heuristics, not as the production optimizer.
 
 Deliver representative graphs, the enumerated alternatives, legality-rejection explanations, and proposed bounds for the first heuristic search. Include multiple graph outputs and shared producers.
+
+## Outcome
+
+- Research: [exhaustive fusion-region oracle](../docs/research/region-search/exhaustive-region-oracle.md)
+- Experiment: [region-search oracle](../spikes/region-search/README.md)
+- Result: defined candidate/frontier semantics and exhaustive finite program-cover enumeration for bounded DAGs, including fan-out, multiple outputs, duplication, and rejection explanations.

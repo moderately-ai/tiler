@@ -1,6 +1,21 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.program-planning.kernel-program-buffer-plan"
+kind: "research"
+title: "KernelProgram and conservative buffer planning"
+topics: ["program-planning", "buffers", "scheduling"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.architecture", "tiler.contract.fusion-and-scheduling"]
+reproduced_by: ["tiler.spike.program-planning"]
+ticket: "kernel-program-buffer-plan"
+---
+
 # KernelProgram and conservative buffer planning
 
-**Status:** proposed research basis
+**Status:** completed research adopted into the compiler contracts
 **Ticket:** `kernel-program-buffer-plan`
 
 ## Outcome

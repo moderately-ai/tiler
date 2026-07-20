@@ -1,3 +1,15 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.optimizer"
+kind: "contract"
+title: "Optimizer model"
+topics: ["optimizer", "search", "planning"]
+contract_status: "accepted"
+implementation_status: "not-started"
+governed_by: ["ADR-0001", "ADR-0006", "ADR-0007", "ADR-0043"]
+evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.research.reference.normative-reference-slice", "tiler.research.cost-model.bootstrap-cost-model"]
+---
+
 # Optimizer model
 
 **Status:** accepted research contract; implementation pending

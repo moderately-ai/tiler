@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.scheduling.scheduled-region-model"
+kind: "research"
+title: "First-class scheduled-region model"
+topics: ["scheduling", "ir", "gpu"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
+adopted_by: ["ADR-0007"]
+reproduced_by: ["tiler.spike.scheduling"]
+ticket: "scheduled-region-model"
+---
+
 # First-class scheduled-region model
 
 **Status:** research basis for ADR 0007

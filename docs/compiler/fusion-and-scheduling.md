@@ -1,3 +1,15 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.fusion-and-scheduling"
+kind: "contract"
+title: "Fusion and scheduling"
+topics: ["fusion", "scheduling", "optimizer"]
+contract_status: "accepted"
+implementation_status: "not-started"
+governed_by: ["ADR-0001", "ADR-0007", "ADR-0043", "ADR-0046", "ADR-0047", "ADR-0048"]
+evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.research.scheduling.scheduled-region-model", "tiler.research.target-profiles.physical-feasibility-model", "tiler.research.program-planning.kernel-program-buffer-plan"]
+---
+
 # Fusion and scheduling
 
 **Status:** accepted research contract; implementation pending

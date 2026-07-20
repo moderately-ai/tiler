@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.cost-model.bootstrap-cost-model"
+kind: "research"
+title: "Initial cost model and calibration plan"
+topics: ["cost-model", "optimizer", "measurement"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["executable-model"]
+informs: ["tiler.contract.optimizer", "tiler.contract.cost-model"]
+reproduced_by: ["tiler.spike.cost-model"]
+ticket: "cost-model-bootstrap"
+---
+
 # Initial cost model and calibration plan
 
 ## Contract
@@ -161,4 +176,3 @@ thermal throttling, unified-memory contention, library internals, or multi-
 device transfers. It also does not perform runtime autotuning. Persistent
 residuals justify new features or a learned model only after the transparent
 baseline and oracle comparisons exist.
-

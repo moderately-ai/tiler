@@ -1,3 +1,15 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.operation-extensions"
+kind: "contract"
+title: "Operation extension contract"
+topics: ["extensions", "operations", "semantics"]
+contract_status: "mixed"
+implementation_status: "spike-only"
+governed_by: ["ADR-0005", "ADR-0044", "ADR-0045", "ADR-0052"]
+evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.extensions.proc-macro-extension-visibility"]
+---
+
 # Operation extension contract
 
 **Status:** proposed details under the accepted public extension direction

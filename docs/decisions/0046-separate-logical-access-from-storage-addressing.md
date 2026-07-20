@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0046"
+kind: "decision"
+title: "Separate logical tensor access from storage addressing"
+topics: ["indexing", "storage", "ir"]
+decision_status: "accepted"
+implementation_status: "spike-only"
+applies_to: ["tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
+evidence: ["tiler.research.indexing.index-access-model"]
+ticket: "index-access-model"
+---
+
 # 0046: Separate logical tensor access from storage addressing
 
 **Status:** accepted

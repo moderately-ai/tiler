@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0048"
+kind: "decision"
+title: "Verify structured kernels as schedule refinements"
+topics: ["kernel-ir", "verification", "scheduling"]
+decision_status: "accepted"
+implementation_status: "spike-only"
+applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
+evidence: ["tiler.research.kernel-ir.structured-kernel-ir-verifier"]
+ticket: "structured-kernel-ir-verifier"
+---
+
 # 0048: Verify structured kernels as schedule refinements
 
 **Status:** accepted

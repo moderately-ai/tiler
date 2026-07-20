@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.indexing.index-access-model"
+kind: "research"
+title: "Symbolic index and access model"
+topics: ["indexing", "access", "storage"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
+adopted_by: ["ADR-0046"]
+reproduced_by: ["tiler.spike.indexing"]
+ticket: "index-access-model"
+---
+
 # Symbolic index and access model
 
 **Status:** research basis for ADR 0046

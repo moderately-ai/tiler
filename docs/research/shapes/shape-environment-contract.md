@@ -1,6 +1,21 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.shapes.shape-environment-contract"
+kind: "research"
+title: "Shape environment contract research memo"
+topics: ["shapes", "constraints", "bindings"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.ir"]
+adopted_by: ["ADR-0008"]
+ticket: "shape-environment-contract"
+---
+
 # Shape environment contract research memo
 
-**Status:** research in progress; candidate contract, not an ADR  
+**Status:** completed research adopted by ADR 0008
 **Ticket:** `shape-environment-contract`  
 **Scope:** ranked tensors with static or symbolic axis extents
 

@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.extensions.proc-macro-extension-visibility"
+kind: "research"
+title: "Proc-macro visibility of operation extensions"
+topics: ["extensions", "proc-macro", "rust"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
+informs: ["tiler.contract.operation-extensions"]
+adopted_by: ["ADR-0045"]
+reproduced_by: ["tiler.spike.extensions"]
+ticket: "proc-macro-extension-visibility"
+---
+
 # Proc-macro visibility of operation extensions
 
 **Question:** Can an inline stable Rust proc macro performing AOT compilation
@@ -120,4 +136,3 @@ provenance. Selected artifact identity uses only reached and selected providers
 under ADR 0044. An unavailable provider is diagnosed during semantic admission
 with its `OpKey` and the macro's provider-set identity; it is never treated as
 an unknown opaque operation or silently delayed until runtime.
-

@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0047"
+kind: "decision"
+title: "Model placement as physical properties over capability graphs"
+topics: ["placement", "memory", "devices"]
+decision_status: "accepted"
+implementation_status: "spike-only"
+applies_to: ["tiler.contract.architecture", "tiler.contract.fusion-and-scheduling"]
+evidence: ["tiler.research.placement.device-placement-and-memory-domains"]
+ticket: "device-placement-and-memory-domain-contract"
+---
+
 # 0047: Model placement as physical properties over capability graphs
 
 **Status:** accepted

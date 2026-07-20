@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0001"
+kind: "decision"
+title: "Separate semantic planning from physical scheduling"
+topics: ["architecture", "ir", "scheduling"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.optimizer", "tiler.contract.fusion-and-scheduling"]
+evidence: ["tiler.research.scheduling.scheduled-region-model"]
+ticket: "synthesize-core-contracts"
+---
+
 # 0001: Separate semantic planning from physical scheduling
 
 **Status:** accepted

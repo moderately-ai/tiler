@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0006"
+kind: "decision"
+title: "Model semantic programs as operation/value graphs"
+topics: ["semantics", "graph", "ir"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.ir"]
+evidence: ["tiler.research.semantic-graph.contract-memo"]
+ticket: "semantic-graph-contract"
+---
+
 # 0006: Model semantic programs as operation/value graphs
 
 **Status:** accepted

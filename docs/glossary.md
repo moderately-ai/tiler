@@ -1,3 +1,11 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.portal.glossary"
+kind: "portal"
+title: "Glossary"
+topics: ["terminology"]
+---
+
 # Glossary
 
 Use these terms consistently in documentation, diagnostics, and code.
