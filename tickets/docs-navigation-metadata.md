@@ -1,7 +1,7 @@
 ---
 id: docs-navigation-metadata
 title: Define documentation metadata and navigation
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, contracts/core]
 shared_scopes: [contracts/decisions, project/tickets]
 paths: []
 tags: [docs-ia]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1784559616
 ---
 Establish the document metadata schema, progressive-disclosure portals, generated catalog structure, parked workflow states, and validator interface.
 
