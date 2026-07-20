@@ -1,7 +1,7 @@
 ---
 id: kernel-program-buffer-plan
 title: Define whole-program planning and conservative buffer reuse
-status: todo
+status: done
 priority: p1
 dependencies: [semantic-graph-contract, shape-environment-contract, scheduled-region-model]
 related: []
