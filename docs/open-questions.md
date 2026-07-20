@@ -16,19 +16,6 @@ one owner and an explicit way to close or reconsider it.
 
 ## Genuine product decisions
 
-### Q-PKG-001 — Initial workspace crate boundaries
-
-- Owner/tracking: [Architecture](architecture.md), before Roadmap Milestone 0A
-  implementation.
-- Close when: Tom accepts a concrete crate graph that preserves the documented
-  dependency direction without making a consumer or backend part of core.
-
-### Q-PKG-004 — Minimum supported Rust version
-
-- Owner/tracking: [Architecture](architecture.md), before scaffolding.
-- Close when: Tom selects an MSRV, thereby choosing standard `File` locking or
-  requiring a separately audited compatible lock adapter.
-
 ### Q-ART-011 — Apple deployment floors
 
 - Owner/tracking: [Metal backend](backends/metal.md), after its compatibility

@@ -20,8 +20,10 @@ Tom selected and authorized the bounded strict serial `f32` `Sum` Metal value
 proof in [ADR 0055](decisions/0055-use-a-serial-sum-for-the-first-metal-value-proof.md).
 The prototype must pass through the documented semantic, reference, optimizer,
 schedule, structured-kernel, artifact, and guarded-runtime boundaries; a
-handwritten standalone Metal kernel is insufficient. Crate layout and MSRV are
-the next decisions before scaffolding.
+handwritten standalone Metal kernel is insufficient. ADRs 0056 and 0057 fix the
+prototype crate graph and Rust 1.89 MSRV; dependency-ordered implementation
+tickets are now the active frontier, beginning with
+[`prototype-workspace-scaffold`](../tickets/prototype-workspace-scaffold.md).
 
 ## Evidence boundary
 

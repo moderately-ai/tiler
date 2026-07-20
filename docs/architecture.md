@@ -233,6 +233,29 @@ Initially, semantic, index, schedule, and kernel IRs may be modules in one
 crate. Splitting every representation into a crate before its API stabilizes
 would add ceremony without improving the dependency graph.
 
+## Accepted prototype packaging profile
+
+ADR 0056 fixes the first implementation workspace to four reusable libraries
+and two non-published proof executables:
+
+```text
+tiler-ir       -> []
+tiler-artifact -> [tiler-ir]
+tiler-compiler -> [tiler-ir, tiler-artifact]
+tiler-metal    -> [tiler-ir, tiler-artifact]
+
+prototype-compile -> [tiler-ir, tiler-artifact, tiler-compiler, tiler-metal]
+prototype-run     -> [tiler-artifact, platform Metal bindings]
+```
+
+This is an unstable prototype packaging profile, not the final published crate
+set. It deliberately omits frontend, proc-macro, Candle, generalized cache, and
+reusable Metal-runtime crates until the proof reaches those boundaries.
+
+ADR 0057 sets Rust 2024 and MSRV 1.89 uniformly across this workspace so the
+cache can use stable standard-library advisory locking. Locking remains behind
+an internal adapter to preserve a later older-toolchain compatibility path.
+
 ## Dependency direction
 
 ```text

@@ -64,6 +64,7 @@ satisfies_dependents = false
 "research/placement" = ["docs/research/placement/**", "spikes/placement/**"]
 "research/transfers" = ["docs/research/transfers/**", "spikes/transfers/**"]
 "research/documentation" = ["docs/research/documentation/**", "spikes/documentation/**"]
+"research/workspace" = ["docs/research/workspace/**"]
 "research/distributed" = ["docs/research/distributed/**", "spikes/distributed/**"]
 "research/external-storage" = ["docs/research/external-storage/**", "spikes/external-storage/**"]
 "research/metal-transfers" = ["docs/research/metal-transfers/**", "spikes/metal-transfers/**"]
@@ -103,6 +104,12 @@ satisfies_dependents = false
 "contracts/artifacts" = ["docs/artifact-abi.md", "docs/backends/**"]
 "contracts/integrations" = ["docs/integration/**"]
 "project/tickets" = ["tickets/**", "ticketsplease.toml"]
+"implementation/workspace" = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml", ".github/workflows/rust.yml"]
+"implementation/ir" = ["crates/tiler-ir/**"]
+"implementation/artifact" = ["crates/tiler-artifact/**"]
+"implementation/compiler" = ["crates/tiler-compiler/**"]
+"implementation/metal" = ["crates/tiler-metal/**", "prototypes/serial-sum-compile/**"]
+"implementation/runtime" = ["prototypes/serial-sum-run/**"]
 
 # Optionally map a scope to its owning crate so the Rust backend can expand
 # reverse-dependents (requires `cargo` at runtime).

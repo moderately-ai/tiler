@@ -16,8 +16,9 @@ no verified runtime contract.
 
 ADR 0055 authorizes a bounded, unstable implementation prototype whose first
 Metal value proof fuses a resolved `f32` pointwise prologue into a strict serial
-`f32` `Sum`. Crate layout and MSRV remain prerequisite decisions. Broader work
-below remains proposed progression rather than blanket implementation authority.
+`f32` `Sum`. ADRs 0056 and 0057 fix the prototype crate layout and Rust 1.89
+MSRV. Broader work below remains proposed progression rather than blanket
+implementation authority.
 
 ## Milestone 0A: semantic graph and extension feasibility
 
