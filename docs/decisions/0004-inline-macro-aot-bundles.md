@@ -4,6 +4,7 @@ id: "ADR-0004"
 kind: "decision"
 title: "Treat each inline macro invocation as an AOT bundle"
 topics: ["proc-macros", "aot", "embedding", "artifacts"]
+catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.artifact-abi", "tiler.contract.frontend-integration"]

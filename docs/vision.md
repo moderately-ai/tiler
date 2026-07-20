@@ -6,13 +6,18 @@ title: "Vision and scope"
 topics: ["architecture", "product"]
 contract_status: "proposed"
 implementation_status: "not-started"
-governed_by: ["ADR-0001", "ADR-0005"]
 evidence: ["tiler.research.semantic-graph.contract-memo"]
 ---
 
 # Vision and scope
 
 **Status:** proposed
+
+## Ownership boundary
+
+This document owns product intent, scope, and non-goals. Normative compiler
+structures, numerical meaning, physical planning, artifact formats, and runtime
+integration live in their dedicated contracts and accepted ADRs.
 
 ## Problem
 

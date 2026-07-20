@@ -4,6 +4,7 @@ id: "tiler.portal.status"
 kind: "portal"
 title: "Project status"
 topics: ["status", "orientation"]
+related: ["tiler.questions.open", "tiler.roadmap"]
 ---
 
 # Project status

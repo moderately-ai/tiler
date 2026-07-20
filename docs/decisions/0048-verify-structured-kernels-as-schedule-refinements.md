@@ -4,6 +4,7 @@ id: "ADR-0048"
 kind: "decision"
 title: "Verify structured kernels as schedule refinements"
 topics: ["kernel-ir", "verification", "scheduling"]
+catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
 implementation_status: "spike-only"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]

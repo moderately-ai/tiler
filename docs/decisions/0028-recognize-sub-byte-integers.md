@@ -4,6 +4,7 @@ id: "ADR-0028"
 kind: "decision"
 title: "Recognize standardized sub-byte integer types"
 topics: ["numerics","dtypes","integers"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

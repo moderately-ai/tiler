@@ -4,6 +4,7 @@ id: "ADR-0041"
 kind: "decision"
 title: "Separate float-to-integer conversion families"
 topics: ["numerics","conversion","integers"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

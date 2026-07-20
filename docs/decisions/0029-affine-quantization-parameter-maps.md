@@ -4,6 +4,7 @@ id: "ADR-0029"
 kind: "decision"
 title: "Generalize affine quantization granularity with parameter index maps"
 topics: ["numerics","quantization","indexing"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

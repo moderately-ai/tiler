@@ -1,3 +1,12 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.prior-art.logical-graphs-and-schedules"
+kind: "prior-art"
+title: "Logical-graph and schedule-IR precedents"
+topics: ["semantic-graph", "scheduling", "prior-art"]
+informs: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.optimizer", "tiler.contract.fusion-and-scheduling"]
+---
+
 # Logical-graph and schedule-IR precedents
 
 **Status:** supporting research

@@ -6,8 +6,9 @@ title: "Apple Metal target compatibility spikes"
 topics: ["apple-targets", "metal", "compatibility"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility"]
-entrypoints: ["compatibility_probe.sh", "runtime_failure_probe.swift"]
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift"]
 last_verified: "2026-07-20"
 ticket: "apple-artifact-compatibility"
 ---

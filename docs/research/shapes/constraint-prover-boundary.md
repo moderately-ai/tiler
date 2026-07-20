@@ -4,6 +4,7 @@ id: "tiler.research.shapes.constraint-prover-boundary"
 kind: "research"
 title: "Shape constraint prover boundary"
 topics: ["shapes", "constraints", "proof"]
+catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"

@@ -4,6 +4,7 @@ id: "ADR-0020"
 kind: "decision"
 title: "Use value-only floating-point exceptions initially"
 topics: ["numerics","floating-point","exceptions"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

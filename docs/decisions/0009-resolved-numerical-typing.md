@@ -4,6 +4,7 @@ id: "ADR-0009"
 kind: "decision"
 title: "Resolve numerical typing before semantic optimization"
 topics: ["numerics","dtypes","semantics"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

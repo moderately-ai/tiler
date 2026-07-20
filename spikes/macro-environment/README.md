@@ -6,8 +6,9 @@ title: "Proc-macro environment and artifact-family spikes"
 topics: ["proc-macros", "cargo", "cross-compilation"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.macro-environment.build-environment"]
-entrypoints: ["run.sh", "run-target.sh", "run-family-cfg.sh"]
+entrypoints: ["spikes/macro-environment/run.sh", "spikes/macro-environment/run-target.sh", "spikes/macro-environment/run-family-cfg.sh"]
 last_verified: "2026-07-20"
 ticket: "macro-build-environment"
 ---

@@ -4,13 +4,13 @@ id: "tiler.research.placement.device-memory-domains"
 kind: "research"
 title: "Device placement and memory-domain contract"
 topics: ["placement", "memory-domains", "devices", "physical-properties"]
+catalog_group: "runtime-integration-placement"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.cpu-backend", "tiler.contract.metal-backend"]
 adopted_by: ["ADR-0047"]
-reproduced_by: ["tiler.spike.placement"]
 ticket: "device-placement-and-memory-domain-contract"
 ---
 

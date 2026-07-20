@@ -4,6 +4,7 @@ id: "ADR-0019"
 kind: "decision"
 title: "Separate subnormal input and result handling"
 topics: ["numerics","floating-point","subnormals"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

@@ -4,13 +4,13 @@ id: "tiler.research.numerics.mature-dtype-taxonomy"
 kind: "research"
 title: "Mature tensor dtype taxonomy"
 topics: ["numerics","dtypes","taxonomy"]
+catalog_group: "dtypes-quantization"
 research_status: "complete"
 disposition: "partially-adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0026","ADR-0028","ADR-0035","ADR-0036","ADR-0037","ADR-0038"]
-reproduced_by: []
 ticket: "enumerate-the-mature-tensor-dtype-taxonomy"
 ---
 

@@ -4,12 +4,12 @@ id: "tiler.research.program-planning.kernel-program-buffer-plan"
 kind: "research"
 title: "KernelProgram and conservative buffer planning"
 topics: ["program-planning", "buffers", "scheduling"]
+catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.architecture", "tiler.contract.fusion-and-scheduling"]
-reproduced_by: ["tiler.spike.program-planning"]
 ticket: "kernel-program-buffer-plan"
 ---
 

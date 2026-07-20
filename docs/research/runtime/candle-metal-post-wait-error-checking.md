@@ -4,13 +4,13 @@ id: "tiler.research.runtime.candle-post-wait"
 kind: "research"
 title: "Candle Metal post-wait error checking"
 topics: ["runtime", "candle", "metal", "errors"]
+catalog_group: "runtime-integration-placement"
 research_status: "complete"
 disposition: "partially-adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.candle-integration"]
 adopted_by: ["ADR-0051"]
-reproduced_by: ["tiler.spike.runtime"]
 ticket: "verify-candle-metal-post-wait-error-checking"
 ---
 

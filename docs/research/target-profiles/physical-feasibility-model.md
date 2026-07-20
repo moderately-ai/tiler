@@ -4,6 +4,7 @@ id: "tiler.research.target-profiles.physical-feasibility-model"
 kind: "research"
 title: "Target profiles and phased physical feasibility"
 topics: ["targets", "feasibility", "gpu"]
+catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"

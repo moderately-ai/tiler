@@ -31,9 +31,10 @@ planning; target capabilities never redefine tensor semantics.
 | What does a tensor program mean? | [IR](ir.md), [numerical semantics](numerical-semantics.md) | [semantic, shape, and numerical research](research/README.md) |
 | How may operations extend? | [Operation extensions](operation-extensions.md) | extension/API research in the [catalog](research/README.md) |
 | Which alternatives are legal and chosen? | [Optimizer](compiler/optimizer.md), [fusion and scheduling](compiler/fusion-and-scheduling.md) | optimizer and schedule research in the [catalog](research/README.md) |
-| What is target feasibility? | [Architecture](architecture.md), backend contracts | target-profile and placement research |
+| What is target feasibility? | [IR](ir.md) owns normalized requirements; backend contracts own device realization | target-profile and placement research |
+| What owns kernel programs and buffers? | [IR](ir.md) owns the compiler model; [Artifact ABI](artifact-abi.md) owns serialization | program-planning research |
 | What is embedded and identified? | [Artifact ABI](artifact-abi.md) | artifact, cache, embedding, and Apple research |
-| When may fallback occur? | runtime and [Candle integration](integration/candle.md) | runtime execution and validation research |
+| When may fallback occur? | [Artifact ABI](artifact-abi.md) owns neutral routing; [Candle integration](integration/candle.md) owns the adapter | runtime execution and validation research |
 | What is accepted? | [Thematic ADR index](decisions/README.md) | each ADR's evidence links |
 | What remains? | [Status](status.md), [open questions](open-questions.md), [roadmap](roadmap.md) | live ticketsplease board |
 

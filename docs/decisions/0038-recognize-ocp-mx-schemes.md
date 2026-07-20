@@ -4,6 +4,7 @@ id: "ADR-0038"
 kind: "decision"
 title: "Recognize OCP microscaling schemes as compound values"
 topics: ["numerics","quantization","microscaling"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

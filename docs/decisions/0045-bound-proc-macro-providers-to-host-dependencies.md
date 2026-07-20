@@ -4,6 +4,7 @@ id: "ADR-0045"
 kind: "decision"
 title: "Bound inline proc-macro providers to host dependencies"
 topics: ["extensions", "proc-macro", "rust"]
+catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
 implementation_status: "spike-only"
 applies_to: ["tiler.contract.operation-extensions"]

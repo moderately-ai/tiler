@@ -6,8 +6,9 @@ title: "Expansion cache crash and race spike"
 topics: ["cache", "concurrency", "durability"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
+evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.cache.crash-race-protocol"]
-entrypoints: ["cache_harness.rs"]
+entrypoints: ["spikes/cache/cache_harness.rs"]
 last_verified: "2026-07-20"
 ticket: "cache-crash-race-harness"
 ---

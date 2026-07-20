@@ -6,7 +6,6 @@ title: "Candle integration"
 topics: ["integrations", "candle", "runtime", "metal"]
 contract_status: "accepted"
 implementation_status: "not-started"
-governed_by: ["ADR-0003", "ADR-0051"]
 evidence: ["tiler.research.runtime.execution-contract", "tiler.research.runtime.candle-post-wait", "tiler.research.runtime.semantic-validation"]
 ticket: "synthesize-artifact-contracts"
 ---
@@ -14,6 +13,8 @@ ticket: "synthesize-artifact-contracts"
 # Candle integration
 
 **Status:** accepted adapter contract; initial Candle API limits remain
+
+## Ownership boundary
 
 The Candle adapter consumes versioned Tiler artifacts. It owns Candle storage,
 layout, allocation, command-stream, and fallback concerns; it does not own

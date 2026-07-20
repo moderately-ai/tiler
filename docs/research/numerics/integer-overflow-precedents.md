@@ -4,13 +4,13 @@ id: "tiler.research.numerics.integer-overflow-precedents"
 kind: "research"
 title: "Integer arithmetic overflow precedents"
 topics: ["numerics","integers","overflow"]
+catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0039"]
-reproduced_by: []
 ticket: "numerical-policy-contract"
 ---
 

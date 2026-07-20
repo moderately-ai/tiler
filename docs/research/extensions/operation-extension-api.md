@@ -4,13 +4,13 @@ id: "tiler.research.extensions.operation-extension-api"
 kind: "research"
 title: "Experimental operation API sketch"
 topics: ["extensions", "operations", "rust"]
+catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "partially-adopted"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model"]
 informs: ["tiler.contract.operation-extensions"]
 adopted_by: ["ADR-0044"]
-reproduced_by: ["tiler.spike.extensions"]
 ticket: "operation-extension-surface"
 ---
 

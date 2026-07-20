@@ -4,13 +4,13 @@ id: "tiler.research.extensions.proc-macro-extension-visibility"
 kind: "research"
 title: "Proc-macro visibility of operation extensions"
 topics: ["extensions", "proc-macro", "rust"]
+catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.operation-extensions"]
 adopted_by: ["ADR-0045"]
-reproduced_by: ["tiler.spike.extensions"]
 ticket: "proc-macro-extension-visibility"
 ---
 

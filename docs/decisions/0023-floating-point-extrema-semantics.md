@@ -4,6 +4,7 @@ id: "ADR-0023"
 kind: "decision"
 title: "Separate propagating and number-preferring extrema"
 topics: ["numerics","floating-point","extrema"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

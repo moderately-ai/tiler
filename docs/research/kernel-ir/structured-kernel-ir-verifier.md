@@ -4,13 +4,13 @@ id: "tiler.research.kernel-ir.structured-kernel-ir-verifier"
 kind: "research"
 title: "Structured kernel IR and verifier boundary"
 topics: ["kernel-ir", "verification", "scheduling"]
+catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
 adopted_by: ["ADR-0048"]
-reproduced_by: ["tiler.spike.kernel-ir"]
 ticket: "structured-kernel-ir-verifier"
 ---
 

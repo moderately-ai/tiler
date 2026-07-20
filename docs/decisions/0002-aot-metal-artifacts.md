@@ -4,6 +4,7 @@ id: "ADR-0002"
 kind: "decision"
 title: "Generate Metal artifacts ahead of time"
 topics: ["metal", "aot", "artifacts"]
+catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.artifact-abi", "tiler.contract.metal-backend", "tiler.contract.frontend-integration"]

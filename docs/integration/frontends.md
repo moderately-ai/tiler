@@ -6,7 +6,6 @@ title: "Frontend and proc-macro integration"
 topics: ["integrations", "frontends", "proc-macros", "aot"]
 contract_status: "accepted"
 implementation_status: "not-started"
-governed_by: ["ADR-0004", "ADR-0049", "ADR-0050", "ADR-0053"]
 evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.embedding.artifact-costs", "tiler.research.cache.crash-race-protocol"]
 ticket: "synthesize-artifact-contracts"
 ---

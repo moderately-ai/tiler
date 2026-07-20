@@ -4,6 +4,7 @@ id: "ADR-0032"
 kind: "decision"
 title: "Fix strict affine quantization evaluation"
 topics: ["numerics","quantization","semantics"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

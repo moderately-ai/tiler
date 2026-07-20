@@ -4,9 +4,10 @@ id: "ADR-0007"
 kind: "decision"
 title: "Make normalized hardware schedules first-class IR"
 topics: ["scheduling", "ir", "gpu"]
+catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
 implementation_status: "spike-only"
-applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
+applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.optimizer", "tiler.contract.fusion-and-scheduling"]
 evidence: ["tiler.research.scheduling.scheduled-region-model"]
 ticket: "scheduled-region-model"
 ---

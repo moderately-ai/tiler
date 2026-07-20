@@ -6,13 +6,19 @@ title: "Optimizer model"
 topics: ["optimizer", "search", "planning"]
 contract_status: "accepted"
 implementation_status: "not-started"
-governed_by: ["ADR-0001", "ADR-0006", "ADR-0007", "ADR-0043"]
 evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.research.reference.normative-reference-slice", "tiler.research.cost-model.bootstrap-cost-model"]
 ---
 
 # Optimizer model
 
 **Status:** accepted research contract; implementation pending
+
+## Ownership boundary
+
+This document owns planning phases, rule contracts, alternative retention,
+search bounds, costing inputs, and explainability. It consumes verified IR
+schemas from the IR contract and does not redefine their fields or backend
+resource limits.
 
 Tiler borrows selected techniques from property-aware database optimizers while
 using a tensor operation/value DAG, access-aware fusion regions, and explicit

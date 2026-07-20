@@ -4,6 +4,7 @@ id: "ADR-0036"
 kind: "decision"
 title: "Recognize standard binary and microscaling scalar formats"
 topics: ["numerics","dtypes","floating-point"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

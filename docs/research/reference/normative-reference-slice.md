@@ -4,12 +4,12 @@ id: "tiler.research.reference.normative-reference-slice"
 kind: "research"
 title: "Normative reference evaluator slice"
 topics: ["reference", "semantics", "correctness"]
+catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model"]
 informs: ["tiler.contract.optimizer"]
-reproduced_by: ["tiler.spike.reference"]
 ticket: "reference-evaluator-slice"
 ---
 

@@ -4,13 +4,12 @@ id: "tiler.research.numerics.sound-region-analyzer-spike"
 kind: "research"
 title: "Sound region-accuracy analyzer integration spike"
 topics: ["numerics","accuracy","proof"]
+catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "informational"
-implementation_status: "not-started"
+implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis","sound-proof","bounded-measurement"]
 informs: ["tiler.contract.correctness-and-testing"]
-adopted_by: []
-reproduced_by: ["tiler.spike.numerics.sound-accuracy"]
 ticket: "spike-sound-region-accuracy-analyzer-integration"
 ---
 

@@ -4,12 +4,12 @@ id: "tiler.research.transfers.synchronization-lifetime"
 kind: "research"
 title: "Transfer synchronization and resource-lifetime contract"
 topics: ["transfers", "synchronization", "resource-lifetime", "placement"]
+catalog_group: "runtime-integration-placement"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration", "tiler.contract.cpu-backend", "tiler.contract.metal-backend"]
-reproduced_by: ["tiler.spike.transfers"]
 ticket: "transfer-synchronization-and-resource-lifetime-contract"
 ---
 

@@ -4,12 +4,12 @@ id: "tiler.research.region-search.exhaustive-region-oracle"
 kind: "research"
 title: "Exhaustive fusion-region oracle"
 topics: ["fusion", "search", "optimizer"]
+catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["exhaustive-finite", "executable-model"]
 informs: ["tiler.contract.optimizer", "tiler.contract.fusion-and-scheduling"]
-reproduced_by: ["tiler.spike.region-search"]
 ticket: "region-search-oracle"
 ---
 

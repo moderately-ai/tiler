@@ -4,6 +4,7 @@ id: "ADR-0016"
 kind: "decision"
 title: "Resolve transcendental accuracy per operation"
 topics: ["numerics","transcendentals","accuracy"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

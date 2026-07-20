@@ -4,13 +4,13 @@ id: "tiler.research.numerics.region-accuracy-contract"
 kind: "research"
 title: "Region accuracy contracts and analyzable error budgets"
 topics: ["numerics","accuracy","proof"]
+catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "partially-adopted"
-implementation_status: "not-started"
+implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis","bounded-measurement"]
 informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
 adopted_by: ["ADR-0017","ADR-0021"]
-reproduced_by: ["tiler.spike.numerics.region-accuracy","tiler.spike.numerics.sound-accuracy"]
 ticket: "research-region-accuracy-contracts-and-analyzable-error-budgets"
 ---
 

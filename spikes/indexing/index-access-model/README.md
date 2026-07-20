@@ -1,3 +1,11 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.portal.spike.indexing-guide"
+kind: "portal"
+title: "Index/access contract spike"
+topics: ["indexing", "access-maps", "rust"]
+---
+
 # Index/access contract spike
 
 This dependency-free Rust crate mechanically checks the key ADR 0046

@@ -4,12 +4,12 @@ id: "tiler.research.artifacts.target-neutral-envelope"
 kind: "research"
 title: "Target-neutral artifact and backend payload envelope"
 topics: ["artifacts", "abi", "backends", "validation"]
+catalog_group: "artifacts-build-toolchains"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.metal-backend"]
-reproduced_by: ["tiler.spike.artifacts"]
 ticket: "artifact-envelope-model"
 ---
 

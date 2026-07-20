@@ -4,12 +4,12 @@ id: "tiler.research.cost-model.bootstrap-cost-model"
 kind: "research"
 title: "Initial cost model and calibration plan"
 topics: ["cost-model", "optimizer", "measurement"]
+catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model"]
 informs: ["tiler.contract.optimizer", "tiler.contract.cost-model"]
-reproduced_by: ["tiler.spike.cost-model"]
 ticket: "cost-model-bootstrap"
 ---
 

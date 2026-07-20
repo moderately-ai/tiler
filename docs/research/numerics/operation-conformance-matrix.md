@@ -4,13 +4,13 @@ id: "tiler.research.numerics.operation-conformance-matrix"
 kind: "research"
 title: "Initial operation conformance matrix"
 topics: ["numerics","conformance","testing"]
+catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
 adopted_by: ["ADR-0011","ADR-0015","ADR-0018","ADR-0019","ADR-0020","ADR-0021","ADR-0024"]
-reproduced_by: []
 ticket: "numerical-policy-contract"
 ---
 

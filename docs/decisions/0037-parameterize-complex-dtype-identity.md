@@ -4,6 +4,7 @@ id: "ADR-0037"
 kind: "decision"
 title: "Parameterize complex dtype identity by component type"
 topics: ["numerics","dtypes","complex"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

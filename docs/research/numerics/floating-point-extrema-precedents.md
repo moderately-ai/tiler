@@ -4,13 +4,13 @@ id: "tiler.research.numerics.floating-point-extrema-precedents"
 kind: "research"
 title: "Floating-point extrema precedents"
 topics: ["numerics","floating-point","extrema"]
+catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0023"]
-reproduced_by: []
 ticket: "numerical-policy-contract"
 ---
 

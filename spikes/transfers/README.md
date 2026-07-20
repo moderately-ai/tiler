@@ -6,8 +6,9 @@ title: "Transfer synchronization and lifetime model"
 topics: ["transfers", "synchronization", "resource-lifetime"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
+evidence_classes: ["executable-model"]
 supports: ["tiler.research.transfers.synchronization-lifetime"]
-entrypoints: ["transfer_contract.rs"]
+entrypoints: ["spikes/transfers/transfer_contract.rs"]
 last_verified: "2026-07-20"
 ticket: "transfer-synchronization-and-resource-lifetime-contract"
 ---

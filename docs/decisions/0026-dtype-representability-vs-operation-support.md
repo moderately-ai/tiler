@@ -4,6 +4,7 @@ id: "ADR-0026"
 kind: "decision"
 title: "Separate dtype representability from operation support"
 topics: ["numerics","dtypes","capabilities"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

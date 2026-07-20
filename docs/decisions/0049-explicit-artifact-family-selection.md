@@ -4,6 +4,7 @@ id: "ADR-0049"
 kind: "decision"
 title: "Select artifact families explicitly at inline invocations"
 topics: ["proc-macros", "apple-targets", "cross-compilation"]
+catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.frontend-integration", "tiler.contract.metal-backend"]

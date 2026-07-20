@@ -4,6 +4,7 @@ id: "ADR-0025"
 kind: "decision"
 title: "Separate reduction empty results from physical padding"
 topics: ["numerics","reductions","semantics"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

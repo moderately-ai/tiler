@@ -6,7 +6,6 @@ title: "Correctness and testing"
 topics: ["correctness", "testing", "verification"]
 contract_status: "accepted"
 implementation_status: "not-started"
-governed_by: ["ADR-0017", "ADR-0021", "ADR-0033"]
 evidence: ["tiler.research.numerics.operation-conformance-matrix", "tiler.research.numerics.region-accuracy-contract", "tiler.research.numerics.sound-region-analyzer-spike"]
 ticket: "reference-evaluator-slice"
 ---

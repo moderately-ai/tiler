@@ -4,6 +4,7 @@ id: "ADR-0003"
 kind: "decision"
 title: "Keep the compiler independent of Candle"
 topics: ["candle", "integrations", "architecture"]
+catalog_group: "runtime-integration-placement"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.candle-integration"]

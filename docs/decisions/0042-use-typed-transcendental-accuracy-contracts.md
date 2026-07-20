@@ -4,6 +4,7 @@ id: "ADR-0042"
 kind: "decision"
 title: "Use typed transcendental accuracy contracts"
 topics: ["numerics","transcendentals","accuracy"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

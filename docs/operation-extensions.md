@@ -6,13 +6,19 @@ title: "Operation extension contract"
 topics: ["extensions", "operations", "semantics"]
 contract_status: "mixed"
 implementation_status: "spike-only"
-governed_by: ["ADR-0005", "ADR-0044", "ADR-0045", "ADR-0052"]
 evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.extensions.proc-macro-extension-visibility"]
 ---
 
 # Operation extension contract
 
 **Status:** proposed details under the accepted public extension direction
+
+## Ownership boundary
+
+This document owns the public capability surface and trust, identity,
+registration, and diagnostic obligations for operation providers. Individual
+operation semantics remain in their typed definitions; proc-macro visibility
+and backend realization remain separate integration concerns.
 
 ADR 0005 accepts a public experimental vertical extension boundary. This
 document proposes the initial safety, determinism, and compilation-phase

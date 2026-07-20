@@ -4,6 +4,7 @@ id: "ADR-0013"
 kind: "decision"
 title: "Scope deterministic numerical guarantees"
 topics: ["numerics","determinism","reductions"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

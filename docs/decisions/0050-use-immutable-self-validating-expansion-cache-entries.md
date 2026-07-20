@@ -4,6 +4,7 @@ id: "ADR-0050"
 kind: "decision"
 title: "Use immutable self-validating expansion-cache entries"
 topics: ["cache", "artifacts", "concurrency", "durability"]
+catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.artifact-abi", "tiler.contract.frontend-integration", "tiler.contract.metal-backend"]

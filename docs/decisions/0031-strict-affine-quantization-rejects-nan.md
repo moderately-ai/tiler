@@ -4,6 +4,7 @@ id: "ADR-0031"
 kind: "decision"
 title: "Reject NaN in strict affine quantization"
 topics: ["numerics","quantization","nan"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

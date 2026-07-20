@@ -6,8 +6,9 @@ title: "Artifact envelope spike"
 topics: ["artifacts", "abi", "validation"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
+evidence_classes: ["executable-model"]
 supports: ["tiler.research.artifacts.target-neutral-envelope"]
-entrypoints: ["artifact_envelope.rs"]
+entrypoints: ["spikes/artifacts/artifact_envelope.rs"]
 last_verified: "2026-07-20"
 ticket: "artifact-envelope-model"
 ---

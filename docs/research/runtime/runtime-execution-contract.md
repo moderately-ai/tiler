@@ -4,13 +4,13 @@ id: "tiler.research.runtime.execution-contract"
 kind: "research"
 title: "Consumer-neutral runtime execution contract"
 topics: ["runtime", "routing", "fallback", "resource-lifetime"]
+catalog_group: "runtime-integration-placement"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration"]
 adopted_by: ["ADR-0051"]
-reproduced_by: ["tiler.spike.runtime"]
 ticket: "runtime-execution-contract"
 ---
 

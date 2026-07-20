@@ -4,13 +4,13 @@ id: "tiler.research.cache.crash-race-protocol"
 kind: "research"
 title: "Expansion cache crash and race protocol"
 topics: ["cache", "artifacts", "concurrency", "durability"]
+catalog_group: "artifacts-build-toolchains"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model", "bounded-measurement"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.frontend-integration"]
 adopted_by: ["ADR-0050"]
-reproduced_by: ["tiler.spike.cache"]
 ticket: "cache-crash-race-harness"
 ---
 

@@ -4,6 +4,7 @@ id: "tiler.research.semantic-graph.contract-memo"
 kind: "research"
 title: "Semantic tensor graph contract research memo"
 topics: ["semantics", "graph", "ir"]
+catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"

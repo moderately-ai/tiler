@@ -4,13 +4,13 @@ id: "tiler.research.numerics.quantization-ir-precedents"
 kind: "research"
 title: "Quantization representation in tensor IRs"
 topics: ["numerics","quantization","ir"]
+catalog_group: "dtypes-quantization"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0029","ADR-0030"]
-reproduced_by: []
 ticket: "define-quantized-value-binding-contract"
 ---
 

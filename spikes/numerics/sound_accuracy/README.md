@@ -8,6 +8,8 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["sound-proof", "bounded-measurement"]
 supports: ["tiler.research.numerics.sound-region-analyzer-spike", "tiler.research.numerics.region-accuracy-contract"]
+entrypoints: ["spikes/numerics/sound_accuracy/run_daisy.sh", "spikes/numerics/sound_accuracy/observe.py"]
+last_verified: "2026-07-20"
 ticket: "spike-sound-region-accuracy-analyzer-integration"
 ---
 

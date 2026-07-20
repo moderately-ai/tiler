@@ -4,6 +4,7 @@ id: "ADR-0034"
 kind: "decision"
 title: "Govern admitted built-in dtype keys in Tiler"
 topics: ["numerics","dtypes","governance"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

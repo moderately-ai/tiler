@@ -4,13 +4,13 @@ id: "tiler.research.apple-targets.compatibility"
 kind: "research"
 title: "Apple Metal artifact compatibility"
 topics: ["apple-targets", "metal", "artifacts", "compatibility"]
+catalog_group: "artifacts-build-toolchains"
 research_status: "complete"
 disposition: "partially-adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.metal-backend", "tiler.contract.artifact-abi"]
 adopted_by: ["ADR-0049", "ADR-0053"]
-reproduced_by: ["tiler.spike.apple-targets"]
 ticket: "apple-artifact-compatibility"
 ---
 

@@ -4,13 +4,13 @@ id: "tiler.research.numerics.integer-division-precedents"
 kind: "research"
 title: "Integer division and remainder precedents"
 topics: ["numerics","integers","division"]
+catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0040"]
-reproduced_by: []
 ticket: "numerical-policy-contract"
 ---
 

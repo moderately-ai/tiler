@@ -4,6 +4,7 @@ id: "ADR-0053"
 kind: "decision"
 title: "Gate artifact delivery and failures by consumer family"
 topics: ["proc-macros", "apple-targets", "fallback", "cross-compilation"]
+catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.frontend-integration", "tiler.contract.metal-backend"]

@@ -6,7 +6,6 @@ title: "Artifact envelope and Metal kernel ABI profile"
 topics: ["artifacts", "abi", "metal", "runtime"]
 contract_status: "accepted"
 implementation_status: "not-started"
-governed_by: ["ADR-0002", "ADR-0004", "ADR-0050", "ADR-0051"]
 evidence: ["tiler.research.artifacts.target-neutral-envelope", "tiler.research.cache.crash-race-protocol", "tiler.research.runtime.execution-contract"]
 ticket: "synthesize-artifact-contracts"
 ---
@@ -14,6 +13,13 @@ ticket: "synthesize-artifact-contracts"
 # Artifact envelope and Metal kernel ABI profile
 
 **Status:** accepted research contract; concrete serialization remains internal
+
+## Ownership boundary
+
+This document owns the target-neutral envelope, serialized program portfolio,
+ABI roles, routing commit, guards, digests, and backend payload boundaries. The
+IR contract owns compiler-model meaning and schedule legality; adapters own
+device-specific loading, binding, and execution.
 
 This document describes the accepted first-backend Metal profile of Tiler's
 target-neutral artifact concepts. `MetallibBundle`, Metal binding indices, and

@@ -1,3 +1,12 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.prior-art.ug"
+kind: "prior-art"
+title: "Lessons from `ug`"
+topics: ["compiler", "fusion", "prior-art"]
+informs: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.optimizer"]
+---
+
 # Lessons from `ug`
 
 **Status:** supporting analysis

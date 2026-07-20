@@ -4,6 +4,7 @@ id: "ADR-0024"
 kind: "decision"
 title: "Use round-to-nearest ties-to-even for initial arithmetic"
 topics: ["numerics","floating-point","rounding"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

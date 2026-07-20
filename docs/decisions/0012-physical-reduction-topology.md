@@ -4,6 +4,7 @@ id: "ADR-0012"
 kind: "decision"
 title: "Keep reduction topology in physical plans"
 topics: ["numerics","reductions","scheduling"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

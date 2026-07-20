@@ -4,6 +4,7 @@ id: "ADR-0052"
 kind: "decision"
 title: "Use stable interface keys and host-canonical attributes"
 topics: ["identity", "attributes", "semantics"]
+catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.ir", "tiler.contract.operation-extensions"]

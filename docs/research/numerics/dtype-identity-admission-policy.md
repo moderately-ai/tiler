@@ -4,13 +4,13 @@ id: "tiler.research.numerics.dtype-identity-admission-policy"
 kind: "research"
 title: "Dtype identity admission policy"
 topics: ["numerics","dtypes","governance"]
+catalog_group: "dtypes-quantization"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0027","ADR-0034","ADR-0035","ADR-0036","ADR-0037","ADR-0038"]
-reproduced_by: []
 ticket: "define-dtype-namespace-admission-policy"
 ---
 

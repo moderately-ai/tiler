@@ -4,13 +4,13 @@ id: "tiler.research.embedding.artifact-costs"
 kind: "research"
 title: "Direct embedded-artifact costs across Rust crates"
 topics: ["embedding", "artifacts", "rustc", "binary-size"]
+catalog_group: "artifacts-build-toolchains"
 research_status: "complete"
 disposition: "partially-adopted"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 informs: ["tiler.contract.frontend-integration", "tiler.contract.artifact-abi"]
 adopted_by: ["ADR-0004"]
-reproduced_by: ["tiler.spike.embedding"]
 ticket: "embedded-artifact-costs"
 ---
 

@@ -4,6 +4,7 @@ id: "ADR-0035"
 kind: "decision"
 title: "Recognize IEEE decimal floating-point formats"
 topics: ["numerics","dtypes","floating-point"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

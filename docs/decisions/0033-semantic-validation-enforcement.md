@@ -4,6 +4,7 @@ id: "ADR-0033"
 kind: "decision"
 title: "Separate semantic validation from physical enforcement"
 topics: ["numerics","validation","runtime"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]

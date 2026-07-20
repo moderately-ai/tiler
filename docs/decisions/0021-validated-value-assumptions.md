@@ -4,9 +4,10 @@ id: "ADR-0021"
 kind: "decision"
 title: "Require proof or runtime validation for value assumptions"
 topics: ["numerics","validation","optimization"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
-applies_to: ["tiler.contract.numerical-semantics"]
+applies_to: ["tiler.contract.numerical-semantics", "tiler.contract.correctness-and-testing"]
 evidence: ["tiler.research.numerics.region-accuracy-contract"]
 ticket: "numerical-policy-contract"
 ---

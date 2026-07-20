@@ -4,15 +4,21 @@ id: "tiler.contract.architecture"
 kind: "contract"
 title: "System architecture"
 topics: ["architecture", "compiler"]
-contract_status: "proposed"
+contract_status: "mixed"
 implementation_status: "not-started"
-governed_by: ["ADR-0001", "ADR-0005", "ADR-0007", "ADR-0043", "ADR-0047", "ADR-0048"]
 evidence: ["tiler.research.program-planning.kernel-program-buffer-plan"]
 ---
 
 # System architecture
 
-**Status:** proposed
+**Status:** mixed — accepted boundaries and proposed field-level detail
+
+## Ownership boundary
+
+This document owns component boundaries, dependency direction, and the
+compiler-to-runtime lifecycle. The IR contract owns representation fields and
+verifiers; optimizer contracts own search; artifact and integration contracts
+own serialization and execution adapters.
 
 ## Overview
 

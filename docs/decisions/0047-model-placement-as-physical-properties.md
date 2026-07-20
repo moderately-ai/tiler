@@ -4,10 +4,11 @@ id: "ADR-0047"
 kind: "decision"
 title: "Model placement as physical properties over capability graphs"
 topics: ["placement", "memory", "devices"]
+catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
 implementation_status: "spike-only"
-applies_to: ["tiler.contract.architecture", "tiler.contract.fusion-and-scheduling"]
-evidence: ["tiler.research.placement.device-placement-and-memory-domains"]
+applies_to: ["tiler.contract.architecture", "tiler.contract.cpu-backend", "tiler.contract.fusion-and-scheduling"]
+evidence: ["tiler.research.placement.device-memory-domains"]
 ticket: "device-placement-and-memory-domain-contract"
 ---
 

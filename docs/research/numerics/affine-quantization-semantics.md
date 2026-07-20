@@ -4,13 +4,13 @@ id: "tiler.research.numerics.affine-quantization-semantics"
 kind: "research"
 title: "Affine quantization numerical semantics"
 topics: ["numerics","quantization","semantics"]
+catalog_group: "dtypes-quantization"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
 adopted_by: ["ADR-0031","ADR-0032","ADR-0033"]
-reproduced_by: []
 ticket: "define-initial-affine-quantization-semantics"
 ---
 

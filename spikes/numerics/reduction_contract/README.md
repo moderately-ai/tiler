@@ -8,6 +8,8 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "exhaustive-finite"]
 supports: ["tiler.research.numerics.reduction-semantics-and-legality"]
+entrypoints: ["spikes/numerics/reduction_contract_probe.py"]
+last_verified: "2026-07-20"
 ticket: "reduction-semantics-contract"
 ---
 

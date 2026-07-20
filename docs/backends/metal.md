@@ -6,7 +6,6 @@ title: "Metal AOT backend"
 topics: ["backends", "metal", "aot", "apple-targets"]
 contract_status: "accepted"
 implementation_status: "not-started"
-governed_by: ["ADR-0002", "ADR-0049", "ADR-0050", "ADR-0053"]
 evidence: ["tiler.research.apple-targets.compatibility", "tiler.research.artifacts.target-neutral-envelope", "tiler.research.macro-environment.build-environment"]
 ticket: "synthesize-artifact-contracts"
 ---

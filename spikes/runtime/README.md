@@ -6,8 +6,9 @@ title: "Runtime execution and validation spikes"
 topics: ["runtime", "fallback", "validation", "candle"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
+evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.runtime.execution-contract", "tiler.research.runtime.semantic-validation", "tiler.research.runtime.candle-post-wait"]
-entrypoints: ["runtime_execution_contract.rs", "semantic_validation_enforcement.rs", "candle_metal_post_wait.rs", "check_candle_post_wait_source.py"]
+entrypoints: ["spikes/runtime/runtime_execution_contract.rs", "spikes/runtime/semantic_validation_enforcement.rs", "spikes/runtime/candle_metal_post_wait.rs", "spikes/runtime/check_candle_post_wait_source.py"]
 last_verified: "2026-07-20"
 ticket: "runtime-execution-contract"
 ---

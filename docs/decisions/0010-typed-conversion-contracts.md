@@ -4,6 +4,7 @@ id: "ADR-0010"
 kind: "decision"
 title: "Make conversion behavior a typed semantic contract"
 topics: ["numerics","conversion","semantics"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

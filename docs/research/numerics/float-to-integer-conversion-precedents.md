@@ -4,13 +4,13 @@ id: "tiler.research.numerics.float-to-integer-conversion-precedents"
 kind: "research"
 title: "Floating-point to integer conversion precedents"
 topics: ["numerics","conversion","integers"]
+catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0010","ADR-0041"]
-reproduced_by: []
 ticket: "numerical-policy-contract"
 ---
 

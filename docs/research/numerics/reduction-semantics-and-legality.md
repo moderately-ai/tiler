@@ -4,13 +4,13 @@ id: "tiler.research.numerics.reduction-semantics-and-legality"
 kind: "research"
 title: "Reduction semantics and legality"
 topics: ["numerics","reductions","legality"]
+catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "partially-adopted"
-implementation_status: "not-started"
+implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis","executable-model"]
 informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
 adopted_by: ["ADR-0012","ADR-0013","ADR-0014","ADR-0022","ADR-0025"]
-reproduced_by: ["tiler.spike.numerics.reduction-contract"]
 ticket: "reduction-semantics-contract"
 ---
 

@@ -1,9 +1,24 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.roadmap"
+kind: "roadmap"
+title: "Roadmap"
+topics: ["roadmap", "implementation"]
+roadmap_status: "proposed"
+---
+
 # Roadmap
 
 **Status:** proposed
 
 The roadmap favors narrow end-to-end slices over implementing a broad IR with
 no verified runtime contract.
+
+The next phase is intentionally gated by
+[Q-PLAN-017](open-questions.md#q-plan-017--first-value-proof-workload-and-implementation-phase):
+whether the first Metal value proof includes the specified strict serial `f32`
+sum baseline or stays reduction-free. Everything below is proposed progression,
+not authorization to begin implementation.
 
 ## Milestone 0A: semantic graph and extension feasibility
 

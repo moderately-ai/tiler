@@ -4,13 +4,13 @@ id: "tiler.research.numerics.dtype-resolution-precedents"
 kind: "research"
 title: "Dtype resolution and mixed-precision precedent"
 topics: ["numerics","dtypes","conversion"]
+catalog_group: "dtypes-quantization"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0009","ADR-0010"]
-reproduced_by: []
 ticket: "numerical-policy-contract"
 ---
 

@@ -6,8 +6,9 @@ title: "Embedded-artifact cost probe"
 topics: ["embedding", "rustc", "binary-size"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.embedding.artifact-costs"]
-entrypoints: ["measure.py"]
+entrypoints: ["spikes/embedding/measure.py"]
 last_verified: "2026-07-20"
 ticket: "embedded-artifact-costs"
 ---

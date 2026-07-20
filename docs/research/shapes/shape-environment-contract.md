@@ -4,6 +4,7 @@ id: "tiler.research.shapes.shape-environment-contract"
 kind: "research"
 title: "Shape environment contract research memo"
 topics: ["shapes", "constraints", "bindings"]
+catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"

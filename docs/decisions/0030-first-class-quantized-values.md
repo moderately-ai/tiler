@@ -4,6 +4,7 @@ id: "ADR-0030"
 kind: "decision"
 title: "Represent quantized tensors as first-class assembled values"
 topics: ["numerics","quantization","semantics"]
+catalog_group: "dtypes-quantization"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

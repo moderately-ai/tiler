@@ -4,13 +4,13 @@ id: "tiler.research.extensions.operation-extension-surface"
 kind: "research"
 title: "Operation-extension surface research"
 topics: ["extensions", "operations", "api"]
+catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.operation-extensions"]
 adopted_by: ["ADR-0005", "ADR-0044", "ADR-0052"]
-reproduced_by: ["tiler.spike.extensions"]
 ticket: "operation-extension-surface"
 ---
 

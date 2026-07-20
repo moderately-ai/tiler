@@ -74,6 +74,7 @@ Topic generation is pending metadata migration.
 - [0051: Make runtime routing commit one-way before program work](0051-make-runtime-routing-commit-one-way.md) — accepted
 - [0052: Use stable interface keys and host-canonical attributes](0052-use-stable-interface-keys-and-host-canonical-attributes.md) — accepted
 - [0053: Gate artifact delivery and failures by consumer family](0053-gate-artifact-delivery-by-consumer-family.md) — accepted
+- [0054: Use typed documentation metadata and derived backlinks](0054-use-typed-documentation-metadata.md) — accepted
 
 ## Template
 

@@ -4,13 +4,13 @@ id: "tiler.research.runtime.semantic-validation"
 kind: "research"
 title: "Semantic validation enforcement"
 topics: ["runtime", "validation", "semantics", "fallback"]
+catalog_group: "runtime-integration-placement"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration"]
 adopted_by: ["ADR-0033", "ADR-0051"]
-reproduced_by: ["tiler.spike.runtime"]
 ticket: "spike-runtime-semantic-validation-enforcement"
 ---
 

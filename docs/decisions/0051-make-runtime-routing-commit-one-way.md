@@ -4,6 +4,7 @@ id: "ADR-0051"
 kind: "decision"
 title: "Make runtime routing commit one-way before program work"
 topics: ["runtime", "fallback", "routing", "errors"]
+catalog_group: "runtime-integration-placement"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration"]

@@ -4,6 +4,7 @@ id: "ADR-0008"
 kind: "decision"
 title: "Separate extent symbols from typed root bindings"
 topics: ["shapes", "bindings", "semantics"]
+catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
 implementation_status: "spike-only"
 applies_to: ["tiler.contract.ir"]

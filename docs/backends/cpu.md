@@ -6,7 +6,6 @@ title: "Proposed CPU/SIMD target profile"
 topics: ["backends", "cpu", "simd", "target-profiles"]
 contract_status: "proposed"
 implementation_status: "not-started"
-governed_by: ["ADR-0043", "ADR-0047"]
 evidence: ["tiler.research.placement.device-memory-domains", "tiler.research.transfers.synchronization-lifetime"]
 ---
 

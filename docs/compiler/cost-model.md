@@ -6,13 +6,18 @@ title: "Cost model"
 topics: ["cost-model", "optimizer", "measurement"]
 contract_status: "accepted"
 implementation_status: "spike-only"
-governed_by: ["ADR-0043"]
 evidence: ["tiler.research.cost-model.bootstrap-cost-model"]
 ---
 
 # Cost model
 
 **Status:** accepted bootstrap contract; target calibration pending
+
+## Ownership boundary
+
+This document owns ranking objectives, feature definitions, calibration
+provenance, and uncertainty treatment after hard feasibility checks pass. It
+does not define semantic legality, IR shape, or device capability truth.
 
 The cost model ranks complete legal plans. Its first implementation should be
 simple and inspectable rather than claiming hardware accuracy it does not have.

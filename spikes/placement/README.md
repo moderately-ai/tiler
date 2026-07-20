@@ -6,8 +6,9 @@ title: "Placement and memory-domain model"
 topics: ["placement", "memory-domains", "physical-properties"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
+evidence_classes: ["executable-model"]
 supports: ["tiler.research.placement.device-memory-domains"]
-entrypoints: ["placement_domain_model.rs"]
+entrypoints: ["spikes/placement/placement_domain_model.rs"]
 last_verified: "2026-07-20"
 ticket: "device-placement-and-memory-domain-contract"
 ---

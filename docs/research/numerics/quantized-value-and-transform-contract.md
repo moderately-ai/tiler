@@ -4,13 +4,13 @@ id: "tiler.research.numerics.quantized-value-and-transform-contract"
 kind: "research"
 title: "Quantized value and transformation contract"
 topics: ["numerics","quantization","semantics"]
+catalog_group: "dtypes-quantization"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics"]
 adopted_by: ["ADR-0029","ADR-0030","ADR-0038"]
-reproduced_by: []
 ticket: "define-quantized-value-binding-contract"
 ---
 

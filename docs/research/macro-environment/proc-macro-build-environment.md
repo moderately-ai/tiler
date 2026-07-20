@@ -4,13 +4,13 @@ id: "tiler.research.macro-environment.build-environment"
 kind: "research"
 title: "Proc-macro build environment and freshness"
 topics: ["proc-macros", "cargo", "cross-compilation", "freshness"]
+catalog_group: "artifacts-build-toolchains"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.frontend-integration", "tiler.contract.metal-backend"]
 adopted_by: ["ADR-0049", "ADR-0053"]
-reproduced_by: ["tiler.spike.macro-environment"]
 ticket: "macro-build-environment"
 ---
 

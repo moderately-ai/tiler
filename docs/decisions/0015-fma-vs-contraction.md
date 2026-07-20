@@ -4,6 +4,7 @@ id: "ADR-0015"
 kind: "decision"
 title: "Distinguish required FMA from optional contraction"
 topics: ["numerics","floating-point","optimization"]
+catalog_group: "numerical-operations"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]

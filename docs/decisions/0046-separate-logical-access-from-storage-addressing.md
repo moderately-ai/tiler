@@ -4,6 +4,7 @@ id: "ADR-0046"
 kind: "decision"
 title: "Separate logical tensor access from storage addressing"
 topics: ["indexing", "storage", "ir"]
+catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
 implementation_status: "spike-only"
 applies_to: ["tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]

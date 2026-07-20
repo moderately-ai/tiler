@@ -8,6 +8,8 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.numerics.region-accuracy-contract"]
+entrypoints: ["spikes/numerics/region_accuracy_probe.py"]
+last_verified: "2026-07-20"
 ticket: "research-region-accuracy-contracts-and-analyzable-error-budgets"
 ---
 
