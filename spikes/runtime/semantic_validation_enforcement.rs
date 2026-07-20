@@ -82,7 +82,7 @@ impl SemanticError {
         let code = match ((key >> 8) & 0xff) as u8 {
             1 => StableErrorCode::Nan,
             2 => StableErrorCode::Infinite,
-            other => panic!("unknown stable error code {other}"),
+            other => panic!("unknown stable error code {}", other),
         };
         Some(Self {
             logical_linear_index: key >> 16,
