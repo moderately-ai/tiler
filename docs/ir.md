@@ -384,6 +384,14 @@ semantic validation failure is never a plan miss. An explicitly trusted
 assumption is a separate future policy, not another enforcement of strict
 semantics.
 
+A residual witness dependency names the stable predicate and obligation,
+logical subject and component roles, exact logical view, value version or
+immutability proof, and producer/coherence prerequisites. Consumers depend on
+that witness, not on an untyped boolean or storage pointer. The physical
+mechanism may erase or realize the dependency, but it cannot change the
+predicate or subject. Witness reuse requires exact dependency equality or an
+explicit proof of refinement.
+
 Every extent symbol has one declaration and one typed static or runtime root
 binding; equal spelling in different scopes never implies equality, and free
 symbols are invalid. Contradictory semantic constraints reject the graph.

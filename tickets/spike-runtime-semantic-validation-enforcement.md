@@ -1,7 +1,7 @@
 ---
 id: spike-runtime-semantic-validation-enforcement
 title: Spike runtime semantic validation enforcement
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [numerical-policy-contract, define-initial-affine-quantization-semantics]

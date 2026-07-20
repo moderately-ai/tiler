@@ -55,6 +55,101 @@ An explicitly trusted assumption is not an enforcement plan for strict
 semantics. It is a separate versioned policy with its own invalid-input
 contract and is deferred.
 
+### Witness dependencies
+
+A witness is evidence about a particular logical subject, not a reusable
+boolean. Its dependency identity contains at least:
+
+- the stable precondition/predicate and obligation identity;
+- the logical tensor or component-set identity and exact logical view;
+- value version or compiler-established immutability provenance;
+- producer-completion and coherence dependencies needed to observe that value;
+- the validation mechanism and its completion/publication dependency edges.
+
+Reuse requires equality or a proof of refinement for all of those fields.
+Storage pointer identity is not value identity, and validating a base allocation
+does not automatically validate a differently mapped view. A dependent result
+consumes the witness edge even when the selected enforcement later erases it.
+
+### Three commit boundaries
+
+The execution contract distinguishes boundaries that an undifferentiated
+"dispatch started" flag cannot express:
+
+1. `RoutingCommit`: a complete semantically equivalent variant and any fallback
+   have been selected after preparation.
+2. `EnforcementCommit`: execution of the selected residual validation mechanism
+   begins. From here, semantic or runtime failure is returned; another variant
+   or fallback is not executed.
+3. `PublicationCommit`: completed validation has produced a successful witness
+   and private logical results become externally observable.
+
+A proof-elided obligation has no runtime `EnforcementCommit`. Host validation
+commits before reading authoritative values; device pre-scan commits before its
+validation dispatch; transactional validation commits before combined
+validation/compute. `PublicationCommit` must follow completion observation for
+every device-produced witness.
+
+## Enforcement mechanisms
+
+**Proof-elided.** Only compiler-owned proof evidence discharges the obligation.
+A caller assertion is not a proof under strict semantics. Runtime validation,
+error storage, and synchronization cost are zero.
+
+**Host scan.** The host may validate only when it can observe the authoritative
+logical value after all producer/coherence dependencies. It walks canonical
+logical-view order and may stop at the first violation. Result computation does
+not start until success. Device-private storage may make this infeasible or add
+a transfer/map cost.
+
+**Device pre-scan.** A validation-only dispatch scans the logical view and
+reduces failures into a deterministic error record. The runtime completes and
+observes that dispatch before normal result dispatch. This adds a full read
+pass, a dispatch, and a host-visible completion boundary, but needs no full
+private result.
+
+**Transactional device validation.** Validation and computation share a
+dispatch, but every result and dependent effect stays in a declared private
+transaction closure. After successful completion and error observation,
+publication is either ownership promotion or an explicit copy/dispatch; the
+mode is part of the plan. Failure discards private results. Initial support is
+out-of-place: mutation requires shadow state or an undo protocol and is a
+separate capability. Invalid lanes do not cancel other parallel work, so the
+cost model includes potentially complete wasted computation.
+
+An error-as-data design can later enlarge the transaction closure by threading
+the witness through device work. It does not remove the rule that neither data
+nor effects may escape independently of the witness.
+
+### Completion observation
+
+"Waited" is not sufficient. A device enforcement provider must, in order:
+
+1. wait for or otherwise establish terminal completion;
+2. inspect terminal execution status and errors *after* completion;
+3. establish host visibility/coherence of the error record;
+4. validate its framing and schema;
+5. reduce it to the deterministic semantic success or error result.
+
+An execution failure takes precedence over interpreting an error record whose
+producer did not complete successfully. The separate Candle integration spike
+tests whether its adapter provides these steps; core requires the contract and
+does not encode Candle behavior.
+
+### Deterministic errors
+
+The semantic diagnostic priority is a canonical total order over
+`(logical_linear_index, stable_error_code, obligation_ordinal)`. The logical
+index is row-major over the declared logical view, never a physical storage
+offset or worker order. Parallel enforcement uses an associative, commutative,
+and idempotent minimum reduction; first-writer-wins is invalid.
+
+The artifact declares an `ErrorRecordSpec` with schema/version, state,
+obligation identity, logical index, stable code, and bounded optional detail.
+A backend may pack the priority key for an atomic implementation only when the
+declared index/code widths prove it lossless. The portable record contract does
+not depend on one `u64` layout.
+
 ## Publication and failure rules
 
 - Static contradiction rejects compilation; a static proof removes enforcement.
@@ -88,6 +183,59 @@ a narrow runtime profile, but it cannot weaken its semantics.
 
 Validation results may be reused only with sound immutability/version
 provenance. Storage pointer identity alone is insufficient for mutable data.
+
+Capability is runtime-physical metadata, separate from semantic identity:
+
+- host enforcement declares observable memory domains, supported
+  dtype/predicate evaluation, producer completion, and coherence;
+- pre-scan declares validation-kernel coverage, deterministic reduction,
+  host-visible error records, and post-completion error observation;
+- transactional enforcement declares private allocation, maximum transaction
+  scope, permitted effects, publication modes, and completion observation.
+
+The selected mechanism and capability provider schema/revision participate in
+physical plan and artifact identity. Missing capability may choose another
+semantically identical prepared plan before `RoutingCommit`; it cannot weaken
+the precondition.
+
+Hard feasibility is checked before costing. Cost inputs include:
+
+| Mechanism | Principal cost inputs |
+| --- | --- |
+| Proof-elided | compile-time proof/search only; zero runtime work |
+| Host scan | logical elements/bytes, view-index cost, producer wait/coherence, mapping or transfer, CPU bandwidth, expected first-error position |
+| Device pre-scan | full logical read, validation dispatch, error-record clear/readback, queue completion, lost overlap, then result work |
+| Transactional | predicate plus result work, full private bytes and lifetime, atomic contention, completion, invalid-input wasted work, publication promotion or copy |
+
+Invalid-input probability and error position can affect expected cost, but
+never legality or the returned semantics.
+
+## Executable spike and measurements
+
+[`spikes/runtime/semantic_validation_enforcement.rs`](../../../spikes/runtime/semantic_validation_enforcement.rs)
+models the three commit boundaries, exact witness reuse, deterministic parallel
+error reduction, completion failure, private publication, and no-fallback
+behavior. Eight tests cover equivalent valid results, worker-order-independent
+errors, failed private-result discard, post-completion status precedence,
+witness version/view mismatch, and structural accounting.
+
+The optimized CPU model was run on an Apple M4 Max with 14 logical CPUs,
+macOS 27.0, and rustc 1.97.0. Values are median microseconds over nine runs for
+64 Ki elements and five runs for larger inputs:
+
+| Elements | Proof | Host scan | Parallel pre-scan | Transactional |
+| ---: | ---: | ---: | ---: | ---: |
+| 65,536 | 5 | 30 | 72 | 65 |
+| 1,048,576 | 62 | 413 | 170 | 132 |
+| 8,388,608 | 518 | 3,297 | 917 | 586 |
+
+These timings validate the model and harness, not Metal/CUDA performance. The
+portable findings are the accounting ratios: proof performs one compute read;
+host and pre-scan perform two reads; pre-scan has two modeled dispatches and
+one completion observation; transactional performs one read/dispatch but writes
+one full private result before zero-copy ownership publication. Real device
+measurements must calibrate bandwidth, launch, synchronization, atomic,
+allocation, overlap-loss, and publication-copy coefficients independently.
 
 ## Metal/Candle evidence
 

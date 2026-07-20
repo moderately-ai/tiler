@@ -20,6 +20,9 @@ meaning.
 A semantic operation declares typed `SemanticPrecondition`s. Verification
 either proves each precondition or emits a residual validation obligation.
 Dependent semantic results conceptually require its validation witness.
+The witness identifies the predicate/obligation, logical subject and exact
+view, value version or immutability provenance, and required producer/coherence
+dependencies. Pointer identity alone cannot justify reuse.
 
 The physical plan selects an `EnforcementPlan` for every residual obligation
 from mechanisms supported by its runtime profile, including:
@@ -43,9 +46,26 @@ device enforcement begins. Once device validation or transactional work begins,
 ordinary fallback does not run. Private incomplete output may be discarded; no
 logical result or dependent public work may escape before its witness succeeds.
 
+Execution has three explicit boundaries. `RoutingCommit` fixes the prepared
+variant and fallback. `EnforcementCommit` begins unresolved validation and
+closes all alternate execution. `PublicationCommit` follows successful
+completion observation and exposes the logical result. Proof-elided validation
+has no runtime enforcement boundary. Host scans precede result work; device
+pre-scans precede the result dispatch; transactional validation keeps the full
+dependent effect closure private until publication.
+
+Device completion observation means terminal completion, a post-completion
+status/error check, error-record visibility/coherence, record validation, and
+only then semantic interpretation. A failed producer cannot yield a trusted
+semantic record. Initial transactions are out-of-place; mutation requires a
+separate shadow/undo capability.
+
 Validation covers the logical view, excluding padding, unused packed bits, and
 unreachable allocation bytes. Diagnostics use deterministic logical-index and
-error-code priority rather than schedule-dependent first-writer order.
+error-code priority rather than schedule-dependent first-writer order. The
+portable order is `(logical_linear_index, stable_error_code,
+obligation_ordinal)` and parallel implementations must implement its minimum
+without lossy packing.
 
 An explicitly trusted assumption is a separate future semantic policy with its
 own invalid-input behavior. It is not an enforcement plan for strict semantics.
@@ -62,6 +82,9 @@ own invalid-input behavior. It is not an enforcement plan for strict semantics.
   provenance.
 - Runtime integrations need conformance tests for error timing, discarded
   output, dependent-work suppression, and no fallback after enforcement starts.
+- Device pre-scan necessarily adds a read pass and completion boundary;
+  transactional enforcement trades those for private result storage and
+  potentially complete wasted compute on invalid input.
 
 ## Alternatives considered
 

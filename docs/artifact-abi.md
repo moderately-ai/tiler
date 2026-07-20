@@ -163,6 +163,61 @@ The validation result is not encoded as an applicability predicate. A runtime
 profile that cannot provide the required observability reports the semantic
 operation as unsupported before device work begins.
 
+The conceptual target-neutral portion of that manifest is:
+
+```rust
+struct ValidationObligationSpec {
+    obligation_id: ObligationId,
+    predicate_id: SemanticPredicateId,
+    witness: WitnessDependency,
+    stable_error_codes: Vec<SemanticErrorCode>,
+}
+
+struct WitnessDependency {
+    witness_id: WitnessId,
+    logical_subject: LogicalValueId,
+    component_roles: Vec<ComponentRole>,
+    logical_view: LogicalViewId,
+    value_provenance: ValueProvenance,
+    producer_dependencies: Vec<StepId>,
+    coherence_requirement: CoherenceRequirement,
+}
+
+enum EnforcementPlan {
+    ProofElided { proof: ProofRecordId },
+    HostScan { evaluator: HostEvaluatorId },
+    DevicePreScan { step: StepId, error: ErrorRecordSpec },
+    TransactionalDevice {
+        steps: Vec<StepId>,
+        private_results: Vec<PlanValueId>,
+        error: ErrorRecordSpec,
+        publication: PublicationMode,
+    },
+}
+
+struct ErrorRecordSpec {
+    schema: SchemaVersion,
+    obligation_id: ObligationId,
+    logical_index_width: u8,
+    stable_code_width: u8,
+    reduction_order: ErrorPriorityOrder,
+    storage_and_coherence: ErrorStorageContract,
+}
+```
+
+This remains a schema contract, not a committed Rust representation. Error
+priority is the canonical minimum of `(logical_linear_index,
+stable_error_code, obligation_ordinal)`. Any backend-specific packed atomic
+key must prove those widths lossless. First-writer order is not conforming.
+
+The plan also declares its `CompletionObservation`: terminal completion,
+post-completion status/error inspection, error-record coherence, record
+validation, and semantic interpretation in that order. A transactional plan's
+private-result closure includes all dependent work before publication. Initial
+transactional support is out-of-place; mutation requires an explicit shadow or
+undo capability. Publication mode distinguishes ownership promotion from a
+copy/dispatch, because they have different ABI steps and costs.
+
 ## Binding contract
 
 Before evaluating output shapes, semantic constraints, routing, allocation, or
@@ -267,6 +322,14 @@ variant selection. Compatibility/capability rejection may route before it;
 artifact integrity, schema/ABI inconsistency, dishonest providers, systemic
 runtime errors, allocation failure, and all post-commit failures close with an
 error.
+
+`EnforcementCommit` occurs when execution of the chosen unresolved semantic
+validation begins, including a host scan. No variant or fallback may execute
+after it. `PublicationCommit` occurs only after a successful witness and makes
+the logical result externally observable. Proof-elided obligations have no
+runtime enforcement commit. Device pre-scan places result dispatch after
+successful completion observation; transactional enforcement keeps result and
+dependent effects private until publication.
 
 ## Embedding contract
 
