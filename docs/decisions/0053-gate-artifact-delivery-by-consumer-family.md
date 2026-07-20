@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0053"
+kind: "decision"
+title: "Gate artifact delivery and failures by consumer family"
+topics: ["proc-macros", "apple-targets", "fallback", "cross-compilation"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.frontend-integration", "tiler.contract.metal-backend"]
+evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.apple-targets.compatibility"]
+ticket: "macro-build-environment"
+---
+
 # 0053: Gate artifact delivery and failures by consumer family
 
 **Status:** accepted
@@ -41,3 +54,8 @@ Host-target inference is incorrect for cross compilation. Unconditional family
 failure breaks unrelated targets. Opportunistic fallback on a matching target
 hides broken generated code. A required build script or prepare command would
 violate the accepted inline workflow.
+
+## Traceability
+
+Applies to frontend delivery and the Metal backend. Macro-environment and Apple
+target evidence define the measured family boundary.

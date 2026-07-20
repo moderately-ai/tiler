@@ -59,3 +59,10 @@ Primary starting points:
 - https://mlir.llvm.org/docs/Dialects/Builtin/#memref-type
 - https://openxla.org/shardy/sharding_representation
 - https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus
+
+## Outcome
+
+Delivered the [placement and memory-domain report](../docs/research/placement/device-placement-and-memory-domains.md),
+[executable model](../spikes/placement/README.md), and accepted
+[ADR 0047](../docs/decisions/0047-model-placement-as-physical-properties.md).
+Distributed scheduling and external-storage semantics remain deferred.

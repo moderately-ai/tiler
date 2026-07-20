@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.embedding.artifact-costs"
+kind: "research"
+title: "Direct embedded-artifact costs across Rust crates"
+topics: ["embedding", "artifacts", "rustc", "binary-size"]
+research_status: "complete"
+disposition: "partially-adopted"
+implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement"]
+informs: ["tiler.contract.frontend-integration", "tiler.contract.artifact-abi"]
+adopted_by: ["ADR-0004"]
+reproduced_by: ["tiler.spike.embedding"]
+ticket: "embedded-artifact-costs"
+---
+
 # Direct embedded-artifact costs across Rust crates
 
 **Status:** bounded host measurement and initial budget; linker behavior is
@@ -215,3 +231,9 @@ section is an observed optimization, never a new budget baseline.
   visibility, address observation, or optimization context may link differently.
 - Timings are compilation-only. Runtime Metal library creation and pipeline
   costs belong to the runtime performance matrix.
+
+## Traceability
+
+The bounded measurements inform the [frontend integration](../../integration/frontends.md)
+and ADR 0004. The [embedding spike](../../../spikes/embedding/README.md) owns
+reproduction. Thresholds are initial diagnostics, not universal linker guarantees.

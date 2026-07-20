@@ -56,3 +56,9 @@ Primary starting points:
 - https://developer.apple.com/documentation/metal/synchronizing-events-across-multiple-devices-or-processes
 - https://iree.dev/reference/mlir-dialects/Stream/
 - https://mlir.llvm.org/docs/Dialects/GPU/
+
+## Outcome
+
+Delivered the [transfer and lifetime contract](../docs/research/transfers/transfer-synchronization-and-resource-lifetime.md)
+and [bounded verifier](../spikes/transfers/README.md). Backend-specific
+multi-device transfer measurements and calibrated costs remain deferred.

@@ -1,3 +1,15 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0003"
+kind: "decision"
+title: "Keep the compiler independent of Candle"
+topics: ["candle", "integrations", "architecture"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.candle-integration"]
+evidence: ["tiler.research.runtime.execution-contract"]
+---
+
 # 0003: Keep the compiler independent of Candle
 
 **Status:** accepted
@@ -26,3 +38,8 @@ allocates outputs, evaluates guards, encodes dispatches, and supplies fallback.
 
 Embedding Candle types in semantic IR would simplify the first demo but mix
 runtime allocation/layout behavior with compile-time tensor meaning.
+
+## Traceability
+
+Applies to the Candle adapter contract and is supported by the consumer-neutral
+runtime execution research.

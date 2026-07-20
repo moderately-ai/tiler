@@ -1,6 +1,22 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.runtime.execution-contract"
+kind: "research"
+title: "Consumer-neutral runtime execution contract"
+topics: ["runtime", "routing", "fallback", "resource-lifetime"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration"]
+adopted_by: ["ADR-0051"]
+reproduced_by: ["tiler.spike.runtime"]
+ticket: "runtime-execution-contract"
+---
+
 # Consumer-neutral runtime execution contract
 
-**Status:** proposed research basis
+**Status:** completed research adopted by ADR 0051 and the runtime-facing contracts
 **Ticket:** `runtime-execution-contract`
 
 ## Outcome
@@ -587,3 +603,9 @@ Multi-device placement, multiple streams, external storage, in-place mutation,
 partial writes, and cancellation remain separate contracts. They require
 explicit timepoints, transfer/coherence stages, partial-failure ownership, and
 publication rules rather than exceptions to this first profile.
+
+## Traceability
+
+This result is adopted by ADR 0051 and the artifact and Candle contracts. The
+[runtime spike](../../../spikes/runtime/README.md) checks the state-machine
+invariants; multi-device and multi-stream execution remain separate work.

@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.runtime.candle-post-wait"
+kind: "research"
+title: "Candle Metal post-wait error checking"
+topics: ["runtime", "candle", "metal", "errors"]
+research_status: "complete"
+disposition: "partially-adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.candle-integration"]
+adopted_by: ["ADR-0051"]
+reproduced_by: ["tiler.spike.runtime"]
+ticket: "verify-candle-metal-post-wait-error-checking"
+---
+
 # Candle Metal post-wait error checking
 
 **Status:** verified source defect; real-GPU fault injection not measured
@@ -186,3 +202,9 @@ Accordingly:
 A future upstream Candle regression test should use a test-only injectable
 command-buffer trait or a deterministic Metal test fixture supplied by Apple;
 it should not rely on GPU hangs, page faults, or out-of-bounds behavior.
+
+## Traceability
+
+This source-level finding informs the [Candle adapter](../../integration/candle.md)
+and ADR 0051. The [runtime spike](../../../spikes/runtime/README.md) reproduces
+the transition defect; deterministic real-GPU fault injection remains unmeasured.

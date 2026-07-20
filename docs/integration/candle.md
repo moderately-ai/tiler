@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.candle-integration"
+kind: "contract"
+title: "Candle integration"
+topics: ["integrations", "candle", "runtime", "metal"]
+contract_status: "accepted"
+implementation_status: "not-started"
+governed_by: ["ADR-0003", "ADR-0051"]
+evidence: ["tiler.research.runtime.execution-contract", "tiler.research.runtime.candle-post-wait", "tiler.research.runtime.semantic-validation"]
+ticket: "synthesize-artifact-contracts"
+---
+
 # Candle integration
 
 **Status:** accepted adapter contract; initial Candle API limits remain
@@ -192,3 +205,10 @@ Runtime errors and explain traces identify:
 - artifact and target versions;
 - evaluated binding offsets and launch geometry where safe;
 - whether fallback was selected.
+
+## Traceability
+
+This adapter contract owns Candle-specific storage, preparation, encoding, and
+fallback integration. It does not own compiler planning or Metal emission. The
+consumer-neutral execution evidence and accepted routing decision are linked in
+frontmatter.

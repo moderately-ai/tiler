@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0004"
+kind: "decision"
+title: "Treat each inline macro invocation as an AOT bundle"
+topics: ["proc-macros", "aot", "embedding", "artifacts"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.artifact-abi", "tiler.contract.frontend-integration"]
+evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.embedding.artifact-costs", "tiler.research.cache.crash-race-protocol"]
+ticket: "synthesize-artifact-contracts"
+---
+
 # 0004: Treat each inline macro invocation as an AOT bundle
 
 **Status:** accepted
@@ -49,3 +62,8 @@ files, enclosing collection solely for build discovery, Cargo subcommands,
 source scanning, and separate specification crates. They may remain internal
 tools or optional future optimizations but cannot be required developer
 workflow.
+
+## Traceability
+
+Applies to the artifact and frontend contracts; macro-environment, embedding,
+and expansion-cache evidence bound its feasibility.

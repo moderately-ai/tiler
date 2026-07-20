@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.runtime.semantic-validation"
+kind: "research"
+title: "Semantic validation enforcement"
+topics: ["runtime", "validation", "semantics", "fallback"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration"]
+adopted_by: ["ADR-0033", "ADR-0051"]
+reproduced_by: ["tiler.spike.runtime"]
+ticket: "spike-runtime-semantic-validation-enforcement"
+---
+
 # Semantic validation enforcement
 
 **Status:** researched architecture supporting ADR 0033
@@ -261,3 +277,9 @@ observes post-wait `Completed` versus `Error` and propagates the latter. See the
 Primary Apple sources: [command-buffer completion](https://developer.apple.com/documentation/metal/mtlcommandbuffer/waituntilcompleted%28%29),
 [command-buffer errors](https://developer.apple.com/documentation/metal/mtlcommandbuffer/error),
 and [resource synchronization](https://developer.apple.com/documentation/metal/resource-synchronization).
+
+## Traceability
+
+The result is adopted by ADRs 0033 and 0051 and the runtime-facing contracts.
+The [runtime spike](../../../spikes/runtime/README.md) exercises enforcement
+transitions; target-specific device implementations remain future work.

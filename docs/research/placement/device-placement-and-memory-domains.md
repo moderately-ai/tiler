@@ -1,6 +1,22 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.placement.device-memory-domains"
+kind: "research"
+title: "Device placement and memory-domain contract"
+topics: ["placement", "memory-domains", "devices", "physical-properties"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.cpu-backend", "tiler.contract.metal-backend"]
+adopted_by: ["ADR-0047"]
+reproduced_by: ["tiler.spike.placement"]
+ticket: "device-placement-and-memory-domain-contract"
+---
+
 # Device placement and memory-domain contract
 
-**Status:** proposed contract supporting ADR 0047
+**Status:** completed research adopted by ADR 0047; distributed planning remains deferred
 
 ## Question
 
@@ -347,3 +363,9 @@ device measurements and must never seed a production cost model.
 5. Runtime adapters need conformance tests proving that their concrete storage
    modes, allocators, and synchronization implement the advertised domain and
    edge contracts.
+
+## Traceability
+
+ADR 0047 adopts this physical-property boundary. The
+[placement spike](../../../spikes/placement/README.md) exercises the model;
+distributed scheduling and external-storage semantics remain deliberately deferred.

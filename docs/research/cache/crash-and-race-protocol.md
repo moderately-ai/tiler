@@ -1,6 +1,22 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.cache.crash-race-protocol"
+kind: "research"
+title: "Expansion cache crash and race protocol"
+topics: ["cache", "artifacts", "concurrency", "durability"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model", "bounded-measurement"]
+informs: ["tiler.contract.artifact-abi", "tiler.contract.frontend-integration"]
+adopted_by: ["ADR-0050"]
+reproduced_by: ["tiler.spike.cache"]
+ticket: "cache-crash-race-harness"
+---
+
 # Expansion cache crash and race protocol
 
-Status: proposed contract, exercised by a process-level spike on 2026-07-20.
+Status: completed research adopted by ADR 0050 and exercised by a process-level spike on 2026-07-20.
 
 This note separates sourced filesystem facts, protocol deductions, product
 proposals, and host observations. The cache is an expansion-time accelerator;
@@ -270,6 +286,12 @@ of scope for this ticket.
    writers/readers at 1, 8, and 32 processes.
 7. Run the harness under Cargo and rust-analyzer process patterns once the
    proc-macro spike exists; this ticket only establishes the storage protocol.
+
+## Traceability
+
+ADR 0050 and the artifact/frontend contracts adopt this protocol. The
+[cache spike](../../../spikes/cache/README.md) owns the bounded process tests;
+power-loss durability, filesystem portability, and production GC remain open.
 
 [rust-file]: https://doc.rust-lang.org/stable/std/fs/struct.File.html
 [rust-rename]: https://doc.rust-lang.org/stable/std/fs/fn.rename.html

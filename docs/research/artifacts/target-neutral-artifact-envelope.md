@@ -1,6 +1,21 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.artifacts.target-neutral-envelope"
+kind: "research"
+title: "Target-neutral artifact and backend payload envelope"
+topics: ["artifacts", "abi", "backends", "validation"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.artifact-abi", "tiler.contract.metal-backend"]
+reproduced_by: ["tiler.spike.artifacts"]
+ticket: "artifact-envelope-model"
+---
+
 # Target-neutral artifact and backend payload envelope
 
-**Status:** proposed research basis
+**Status:** completed research adopted by the artifact contract; serialization implementation remains future work
 **Ticket:** `artifact-envelope-model`
 
 ## Outcome
@@ -731,3 +746,9 @@ rustc --edition 2021 --test \
    this separation in a later contract/ADR ticket: rename the outer bundle to
    the neutral envelope and move all Metal-only fields into
    `MetalPayloadMetadata` without changing accepted inline-AOT behavior.
+
+## Traceability
+
+The result is adopted by the [artifact ABI](../../artifact-abi.md) and exercised
+by the [artifact envelope spike](../../../spikes/artifacts/README.md). Production
+serialization, authenticity, and version-skew policy remain unimplemented.

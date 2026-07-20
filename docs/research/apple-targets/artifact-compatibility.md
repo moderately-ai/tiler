@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.apple-targets.compatibility"
+kind: "research"
+title: "Apple Metal artifact compatibility"
+topics: ["apple-targets", "metal", "artifacts", "compatibility"]
+research_status: "complete"
+disposition: "partially-adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
+informs: ["tiler.contract.metal-backend", "tiler.contract.artifact-abi"]
+adopted_by: ["ADR-0049", "ADR-0053"]
+reproduced_by: ["tiler.spike.apple-targets"]
+ticket: "apple-artifact-compatibility"
+---
+
 # Apple Metal artifact compatibility
 
 **Status:** bounded research; compile and same-host reproducibility matrix
@@ -364,3 +380,9 @@ Old-device behavior remains explicitly unmeasured. Apple's forward-compatibility
 statements about offline GPU binary archives do not establish universal
 metallib compatibility across platform families, deployment minima, old OS
 versions, or GPU features.
+
+## Traceability
+
+The measured family distinctions inform the [Metal backend](../../backends/metal.md)
+and ADRs 0049 and 0053. The [Apple target spike](../../../spikes/apple-targets/README.md)
+is reproducible; old-device and cross-machine runtime compatibility remain open.

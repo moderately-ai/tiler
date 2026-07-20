@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0050"
+kind: "decision"
+title: "Use immutable self-validating expansion-cache entries"
+topics: ["cache", "artifacts", "concurrency", "durability"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.artifact-abi", "tiler.contract.frontend-integration", "tiler.contract.metal-backend"]
+evidence: ["tiler.research.cache.crash-race-protocol"]
+ticket: "cache-crash-race-harness"
+---
+
 # 0050: Use immutable self-validating expansion-cache entries
 
 **Status:** accepted
@@ -43,3 +56,8 @@ PID lock files require unsafe stale-owner recovery. Multi-file entry
 directories expose partial publication. Locking readers adds contention without
 removing the need for validation. Treating cache failure as compilation failure
 would make an optional accelerator a correctness dependency.
+
+## Traceability
+
+Applies to artifact publication and inline expansion. The crash/race report and
+process harness exercise the accepted protocol; production durability remains bounded.

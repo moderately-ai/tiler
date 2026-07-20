@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0049"
+kind: "decision"
+title: "Select artifact families explicitly at inline invocations"
+topics: ["proc-macros", "apple-targets", "cross-compilation"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.frontend-integration", "tiler.contract.metal-backend"]
+evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.apple-targets.compatibility"]
+ticket: "macro-build-environment"
+---
+
 # 0049: Select artifact families explicitly at inline invocations
 
 **Status:** accepted
@@ -57,3 +70,8 @@ its host process.
 - always compile all installed Apple SDK families;
 - require a build script, registry, scan, or prepare step;
 - use an undocumented IDE-analysis mode.
+
+## Traceability
+
+Applies to frontend delivery and Metal targeting. The macro-environment and
+Apple-family probes provide the bounded evidence.

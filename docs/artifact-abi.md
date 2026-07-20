@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.artifact-abi"
+kind: "contract"
+title: "Artifact envelope and Metal kernel ABI profile"
+topics: ["artifacts", "abi", "metal", "runtime"]
+contract_status: "accepted"
+implementation_status: "not-started"
+governed_by: ["ADR-0002", "ADR-0004", "ADR-0050", "ADR-0051"]
+evidence: ["tiler.research.artifacts.target-neutral-envelope", "tiler.research.cache.crash-race-protocol", "tiler.research.runtime.execution-contract"]
+ticket: "synthesize-artifact-contracts"
+---
+
 # Artifact envelope and Metal kernel ABI profile
 
 **Status:** accepted research contract; concrete serialization remains internal
@@ -485,3 +498,10 @@ available.
 Unknown required features fail closed. Compatibility rules for optional fields
 and compiler/runtime version skew must be decided before the format is exposed
 outside a lockstep release.
+
+## Traceability
+
+This document owns the neutral artifact envelope and Metal ABI profile. It does
+not own backend scheduling or consumer storage. Its governing decisions and
+supporting research are declared in frontmatter; unresolved serialization and
+compatibility work remains explicit above.

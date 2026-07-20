@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.macro-environment.build-environment"
+kind: "research"
+title: "Proc-macro build environment and freshness"
+topics: ["proc-macros", "cargo", "cross-compilation", "freshness"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
+informs: ["tiler.contract.frontend-integration", "tiler.contract.metal-backend"]
+adopted_by: ["ADR-0049", "ADR-0053"]
+reproduced_by: ["tiler.spike.macro-environment"]
+ticket: "macro-build-environment"
+---
+
 # Proc-macro build environment and freshness
 
 **Status:** measured contract; rust-analyzer and a genuinely different installed
@@ -151,3 +167,10 @@ generated-code data and require compile tests for every supported Rust target.
 - [Rust procedural macros](https://doc.rust-lang.org/reference/procedural-macros.html)
 - [Cargo environment variables](https://doc.rust-lang.org/cargo/reference/environment-variables.html)
 - [Experimental tracked proc-macro inputs](https://doc.rust-lang.org/proc_macro/tracked/index.html)
+
+## Traceability
+
+The findings are adopted by ADRs 0049 and 0053 and the
+[frontend contract](../../integration/frontends.md). The
+[macro-environment spike](../../../spikes/macro-environment/README.md) preserves
+the fixtures; rust-analyzer performance remains unmeasured.

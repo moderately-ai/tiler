@@ -1,3 +1,15 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0002"
+kind: "decision"
+title: "Generate Metal artifacts ahead of time"
+topics: ["metal", "aot", "artifacts"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.artifact-abi", "tiler.contract.metal-backend", "tiler.contract.frontend-integration"]
+evidence: ["tiler.research.apple-targets.compatibility"]
+---
+
 # 0002: Generate Metal artifacts ahead of time
 
 **Status:** accepted
@@ -31,3 +43,8 @@ artifacts but does not compile MSL source.
 Runtime JIT offers shape-specific specialization but is not justified for the
 initial use case. Shipping only handwritten kernels cannot express arbitrary
 known frontend compositions.
+
+## Traceability
+
+Applies to the artifact, Metal backend, and frontend contracts; bounded Apple
+compatibility research is the current implementation evidence.

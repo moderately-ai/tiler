@@ -22,3 +22,11 @@ fingerprint changes, and test compilation contexts. rust-analyzer and a truly
 different installed Rust target were unavailable without mutating the host, so
 those performance measurements are explicitly retained as unmeasured while the
 contract fails closed and does not depend on either environment.
+
+## Outcome
+
+Delivered the [environment/freshness report](../docs/research/macro-environment/proc-macro-build-environment.md),
+[isolated fixtures](../spikes/macro-environment/README.md), and accepted
+[ADRs 0049](../docs/decisions/0049-explicit-artifact-family-selection.md) and
+[0053](../docs/decisions/0053-gate-artifact-delivery-by-consumer-family.md).
+rust-analyzer timing and a genuinely different installed Rust target remain unmeasured.

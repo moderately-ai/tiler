@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0051"
+kind: "decision"
+title: "Make runtime routing commit one-way before program work"
+topics: ["runtime", "fallback", "routing", "errors"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration"]
+evidence: ["tiler.research.runtime.execution-contract", "tiler.research.runtime.candle-post-wait", "tiler.research.runtime.semantic-validation"]
+ticket: "runtime-execution-contract"
+---
+
 # 0051: Make runtime routing commit one-way before program work
 
 **Status:** accepted
@@ -44,3 +57,8 @@ distinguish no-work failures from partial effects. A Boolean `can_fallback`
 flag is weaker than a consumed ownership token. Preloading only the library is
 insufficient because function lookup and pipeline creation are separately
 fallible.
+
+## Traceability
+
+Applies to the artifact and Candle runtime contracts. Runtime transition,
+semantic-validation, and Candle post-wait evidence support the boundary.

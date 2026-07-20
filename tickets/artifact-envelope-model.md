@@ -13,3 +13,10 @@ tags: [tiler-research, research, artifact]
 Separate the target-neutral artifact program from backend-specific payloads. Define entry points, plan portfolios, guards, ABI fields, launch expressions, requirements, provenance, digests, and validation boundaries, then map the first Metal payload into that envelope.
 
 Deliver a versioning and compatibility proposal with examples of valid and invalid bundles. Identify which identity fields are semantic, scheduled, backend, compiler, or runtime concerns.
+
+## Outcome
+
+Delivered the [target-neutral envelope research](../docs/research/artifacts/target-neutral-artifact-envelope.md)
+and [dependency-free executable model](../spikes/artifacts/README.md). The
+result is incorporated into the [artifact ABI](../docs/artifact-abi.md);
+production codec and digest selection remain unimplemented.

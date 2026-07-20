@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.frontend-integration"
+kind: "contract"
+title: "Frontend and proc-macro integration"
+topics: ["integrations", "frontends", "proc-macros", "aot"]
+contract_status: "accepted"
+implementation_status: "not-started"
+governed_by: ["ADR-0004", "ADR-0049", "ADR-0050", "ADR-0053"]
+evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.embedding.artifact-costs", "tiler.research.cache.crash-race-protocol"]
+ticket: "synthesize-artifact-contracts"
+---
+
 # Frontend and proc-macro integration
 
 **Status:** accepted inline AOT contract; rust-analyzer performance remains unmeasured
@@ -318,3 +331,9 @@ MSL diagnostics; and the non-Apple semantic fallback path without consumer
 setup. rust-analyzer cold/warm performance also remains unmeasured because the
 component was unavailable. None of these gaps changes the accepted contract,
 but they must not be reported as completed feasibility.
+
+## Traceability
+
+This document owns frontend translation and the inline proc-macro delivery
+profile, not consumer runtime execution. Its accepted decisions and measured
+macro, cache, and embedding boundaries are linked in frontmatter.

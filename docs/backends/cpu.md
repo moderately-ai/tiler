@@ -1,3 +1,15 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.cpu-backend"
+kind: "contract"
+title: "Proposed CPU/SIMD target profile"
+topics: ["backends", "cpu", "simd", "target-profiles"]
+contract_status: "proposed"
+implementation_status: "not-started"
+governed_by: ["ADR-0043", "ADR-0047"]
+evidence: ["tiler.research.placement.device-memory-domains", "tiler.research.transfers.synchronization-lifetime"]
+---
+
 # Proposed CPU/SIMD target profile
 
 **Status:** future contract sketch; not an implementation commitment
@@ -21,3 +33,9 @@ remains packaged. CPU caches are transparent cost-model levels; stack,
 thread-local storage, heap buffers, and explicit scratch are addressable
 resource contracts. Thread/task barriers state participants, memory ordering,
 and runtime ownership rather than borrowing GPU barrier semantics.
+
+## Traceability
+
+This proposed contract owns the CPU/SIMD target-profile sketch, not tensor
+semantics or runtime implementations. Placement and transfer research supplies
+its physical-resource boundary; implementation evidence does not yet exist.

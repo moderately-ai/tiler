@@ -26,3 +26,11 @@ Catalyst, binary archives/dynamic Metal libraries, a production serialization
 codec, cache location/GC limits, cross-machine/old-runtime compatibility,
 rust-analyzer performance, and the actual macro-to-dispatch vertical remain
 explicit measured or implementation gates rather than assumed support.
+
+## Outcome
+
+Reconciled the [artifact ABI](../docs/artifact-abi.md),
+[Metal backend](../docs/backends/metal.md), [frontend integration](../docs/integration/frontends.md),
+and [Candle integration](../docs/integration/candle.md) with the completed
+artifact, cache, macro, compatibility, embedding, and runtime evidence. The
+accepted decisions are ADRs 0002–0004, 0049–0051, and 0053.

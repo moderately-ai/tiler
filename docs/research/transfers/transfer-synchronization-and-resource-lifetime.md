@@ -1,6 +1,21 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.transfers.synchronization-lifetime"
+kind: "research"
+title: "Transfer synchronization and resource-lifetime contract"
+topics: ["transfers", "synchronization", "resource-lifetime", "placement"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "spike-only"
+evidence_classes: ["primary-source-synthesis", "executable-model"]
+informs: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration", "tiler.contract.cpu-backend", "tiler.contract.metal-backend"]
+reproduced_by: ["tiler.spike.transfers"]
+ticket: "transfer-synchronization-and-resource-lifetime-contract"
+---
+
 # Transfer synchronization and resource-lifetime contract
 
-**Status:** proposed research contract
+**Status:** completed research incorporated into the physical and runtime contracts
 **Ticket:** `transfer-synchronization-and-resource-lifetime-contract`
 
 ## Outcome
@@ -571,3 +586,9 @@ at every leg. Measure latency, bandwidth, overlap, staging thresholds, and
 retention overhead per exact device/runtime profile. Those measurements inform
 feasibility predicates and cost models; they do not weaken the correctness or
 failure boundaries above.
+
+## Traceability
+
+This contract refines the placement and runtime boundaries and is exercised by
+the [transfer spike](../../../spikes/transfers/README.md). Backend-specific
+multi-device measurements and calibrated transfer costs remain future evidence.

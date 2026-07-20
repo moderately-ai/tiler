@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.metal-backend"
+kind: "contract"
+title: "Metal AOT backend"
+topics: ["backends", "metal", "aot", "apple-targets"]
+contract_status: "accepted"
+implementation_status: "not-started"
+governed_by: ["ADR-0002", "ADR-0049", "ADR-0050", "ADR-0053"]
+evidence: ["tiler.research.apple-targets.compatibility", "tiler.research.artifacts.target-neutral-envelope", "tiler.research.macro-environment.build-environment"]
+ticket: "synthesize-artifact-contracts"
+---
+
 # Metal AOT backend
 
 **Status:** accepted backend contract; runtime compatibility matrix remains bounded
@@ -259,3 +272,10 @@ cache/distribution problem with device-family and OS compatibility. Dynamic
 Metal libraries likewise introduce runtime assets and dependencies. Both remain
 deferred until measured startup or size costs justify changing the initial
 self-contained payload contract.
+
+## Traceability
+
+This document owns structured-kernel-to-Metal lowering and Apple AOT target
+requirements. Artifact framing and consumer execution are owned by the
+[artifact](../artifact-abi.md) and [Candle integration](../integration/candle.md)
+contracts. Frontmatter links the accepted decisions and bounded evidence.

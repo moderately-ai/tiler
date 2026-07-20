@@ -13,3 +13,10 @@ tags: [tiler-research, spike, metal, measurement]
 Create a bounded compatibility matrix for macOS, iOS device, iOS simulator, deployment minima, SDK identities, and supported toolchain versions. Determine whether incompatibility appears at metallib load, function lookup, or pipeline creation and evaluate Catalyst as support, rejection, or deferral.
 
 Record exact commands, hosts and devices, compiler metadata, artifacts, and results. Separate local measurement from portable contract; do not generalize across untested OS or GPU families.
+
+## Outcome
+
+Delivered the [bounded compatibility report](../docs/research/apple-targets/artifact-compatibility.md)
+and [reproducible probes](../spikes/apple-targets/README.md). All six compile
+tuples were exercised on the recorded host; old-device, old-OS, and
+cross-machine runtime compatibility remain follow-up evidence.
