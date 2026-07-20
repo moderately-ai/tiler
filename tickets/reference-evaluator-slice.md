@@ -1,7 +1,7 @@
 ---
 id: reference-evaluator-slice
 title: Define and exercise the normative reference evaluator slice
-status: todo
+status: done
 priority: p1
 dependencies: [semantic-graph-contract, shape-environment-contract, numerical-policy-contract]
 related: []
