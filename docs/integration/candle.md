@@ -85,7 +85,8 @@ it. The adapter must account for:
 - start offset;
 - dtype size and byte-offset conversion;
 - contiguity class;
-- maximum reachable element under a strided access map;
+- maximum reachable element after composing logical access with the strided
+  physical view;
 - zero-sized views.
 
 The initial fused variant requires contiguous inputs, but it must still

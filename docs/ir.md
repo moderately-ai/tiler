@@ -411,17 +411,26 @@ here into a fused scalar-expression DAG after a region candidate has been
 formed. An access map answers:
 
 ```text
-(output coordinates, reduction coordinates, runtime metadata)
-    -> buffer element offset
+(output coordinates, reduction coordinates, shape/interface parameters)
+    -> logical tensor coordinates
 ```
+
+It deliberately does not answer where those coordinates live in an allocation.
+A selected physical implementation composes the logical `TensorAccessMap` with
+a verified `BufferView` to derive allocation-relative element offsets. Storage
+encoding and target lowering perform later checked element-to-byte or packed
+address conversion. See ADR 0046.
 
 Core concepts:
 
 ```text
 ExtentExpr        IndexExpr          ScalarExpr
 IterationVar      IterationDomain    ReductionDomain
-AccessMap         StorageLayout      ProvenFact         BufferView
+TensorAccessMap   ProvenFact
 ```
+
+`StorageLayout` and `BufferView` are adjacent physical-plan concepts used only
+when realizing these logical accesses.
 
 The typed `ScalarExpr` vocabulary contains argument references, constants,
 booleans, comparisons, select, arithmetic, min/max, casts, and an explicit set
@@ -435,36 +444,47 @@ reduction domains, scalar expressions, access maps, and constraints. It is the
 input to scheduling rather than data independently restated by the schedule.
 
 Index expressions should be stored in an interned arena/DAG so repeated
-division, modulo, and stride arithmetic can be shared and simplified.
+division, modulo, and coordinate arithmetic can be shared and simplified.
+They use exact signed mathematical-integer semantics for canonicalization.
+The bounded initial vocabulary admits addition/negation, multiplication by a
+parameter-only expression, and Euclidean floor division/modulo by a proven-
+positive parameter-only expression. Iteration-by-iteration multiplication and
+tensor-data-derived indices are rejected. Passes classify maps as affine,
+constant-divisor quasi-affine, semi-affine, or data-dependent and may
+conservatively decline classes they cannot analyze.
 
-For a contiguous NHWC tensor:
+For a contiguous NHWC physical view, address derivation after logical access is:
 
 ```text
 x[b,h,w,c]
   -> x_offset + b*(H*W*C) + h*(W*C) + w*C + c
 ```
 
-For a runtime-strided view:
+For a runtime-strided physical view:
 
 ```text
 x_offset + b*stride_b + h*stride_h + w*stride_w + c*stride_c
 ```
 
-Logical transformations lower by reverse coordinate composition. A flattened
-coordinate may be split with division/modulo; a transpose permutes coordinates;
-a broadcast maps its input coordinate to zero.
+Logical transformations lower by reverse coordinate composition before that
+address derivation. A flattened coordinate may be split with division/modulo;
+a transpose permutes coordinates; a broadcast omits an iteration coordinate or
+maps it to zero. These maps do not themselves promise a no-copy view.
+
+Semantic constraints, index-domain predicates, physical variant guards, and
+per-point schedule predicates are distinct. A `TensorAccessMap` is total over
+its declared domain. Tail masks belong to scheduled IR rather than weakening
+logical totality.
 
 ### Index verifier
 
-- Access-map rank matches the logical buffer rank.
+- Access-map result rank matches the logical tensor rank.
 - Every expression is integer typed.
-- Divisors are nonzero statically or under a guard.
-- Symbolic shape products and maximum relative offsets cannot overflow the
-  selected type under declared constraints and guards.
-- The compiler derives a required accessible element/byte range; runtime
-  binding separately validates that the actual allocation provides it.
-- Broadcast reads may alias. Physical output-store ownership is separately
-  verified and cannot be inferred from logical reduction contributors.
+- Divisors are proven positive and use Euclidean floor/mod semantics.
+- Every logical coordinate is in bounds over the complete iteration domain.
+- Canonical arithmetic does not overflow because it is width-independent.
+- Broadcast reads may alias. Ordinary writes prove exact output coverage and
+  unique ownership; reductions and atomics use explicit contracts.
 - Every declared output produced by the compiled region is fully initialized
   according to its result contract. Narrow integration profiles may separately
   restrict execution to one out-of-place output.
@@ -474,7 +494,19 @@ a broadcast maps its input coordinate to zero.
   launch expression is host-evaluable from declared input metadata or scalar
   ABI sources. Data-dependent output shapes and device-produced/indirect launch
   dimensions are initially unsupported.
-- Bounds are proven or represented by explicit predicates and guards.
+- Semantic/index-domain bounds are proved or retained as semantic obligations.
+
+### Physical view and address verifier
+
+- Logical accesses compose with exactly one selected view/address convention.
+- The derived accessible element/byte range fits the actual view and allocation.
+- Layout and alignment requirements are proved or explicit variant guards.
+- Coordinate, element-offset, byte/packed-offset, and dispatch widths are
+  separately proved under the emitter's fixed evaluation order.
+- A guarded `u32` path covers every relevant intermediate and retains a target-
+  supported wide correctness path.
+- Alias/view results refine the semantic coordinate relation and program alias
+  contract; layout compatibility alone does not establish semantic equivalence.
 
 ## Layer 3: scheduled iteration IR
 

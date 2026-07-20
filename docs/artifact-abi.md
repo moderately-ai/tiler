@@ -212,8 +212,9 @@ The initial buffer convention is:
 
 - bind the Metal allocation buffer at byte offset zero;
 - pass logical `start_element` as typed metadata;
-- access maps add it exactly once and produce allocation-relative element
-  offsets;
+- physical address derivation composes each logical tensor access with the
+  selected `BufferView`, adds `start_element` exactly once, and produces an
+  allocation-relative element offset;
 - metadata strides are measured in elements;
 - validate the derived allocation-relative range against allocation bytes.
 

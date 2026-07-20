@@ -4,7 +4,6 @@ Use these terms consistently in documentation, diagnostics, and code.
 
 | Term | Definition |
 | --- | --- |
-| Access map | Function from iteration coordinates and runtime metadata to a buffer element offset. |
 | Access mode | Whether a binding may be read, written, or both. |
 | Accumulation dtype | Type specified independently for reduction accumulation; it may equal the input or output dtype. |
 | Accuracy contract | Canonical per-operation allowed result set relative to immutable reference semantics, including domains and versioned metrics where applicable. |
@@ -33,6 +32,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Applicability predicate | Runtime-checkable condition under which a program or region implementation may execute. |
 | Guard | Checked predicate with provenance: semantic input, storage, schedule, target, or dispatch safety. |
 | Implementation frontier | Bounded non-dominated region implementations returned for one candidate and target profile. |
+| Index-domain predicate | Constraint restricting the mathematical points of an index region; it is part of map truth rather than a physical fallback guard. |
 | Iteration domain | Cartesian coordinate space over which outputs are computed. |
 | Kernel ABI | Ordered buffer and scalar parameters with types, roles, access modes, and binding locations. |
 | Launch geometry | Grid and threadgroup dimensions derived from a schedule. |
@@ -76,6 +76,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Target profile | Governed versioned compile guarantees, compatibility, execution/data-layout models, phased query schemas, feasibility rules, and separately identified tuning model used for physical planning. |
 | Target property binding | Explicit semantic root binding to a stable, versioned property admitted initially from `CompileProfile` or `LiveDevicePreflight`; later physical phases cannot overwrite it. |
 | Target requirement | Canonical bounded predicate over typed capability, candidate-resource, launch, ABI/layout, and binding/access facts required by a selected implementation, possibly deferred to a named safe preflight phase. |
+| Tensor access map | Width-independent map from iteration coordinates and admitted parameters to logical tensor coordinates; storage addressing is derived separately. |
 | Tensor expression | Pure semantic operation that produces a logical tensor value. |
 | Tensor view | Logical shape, strides, and start position over an allocation. |
 | Threadgroup | Threads dispatched together with shared synchronization and memory; Metal uses this term where CUDA commonly uses block. |

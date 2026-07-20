@@ -181,7 +181,7 @@ underspecified portable “block reduce” operation in final scheduled IR.
 
 Alternatives include:
 
-- pure direct gather/scatter from a composed access map;
+- direct loads/stores from a composed logical tensor-access map;
 - collapsed contiguous copy;
 - tiled threadgroup-memory transpose;
 - materialize once for multiple consumers.

@@ -168,6 +168,17 @@ Benchmarks are not substitutes for these correctness cases.
 - Symbol scopes distinguish equal spellings, reject free/contradictory symbols,
   and prove that every dynamic output, temporary, guard, and launch expression
   has an admitted host-evaluable source.
+- Index tests compose identity, permutation, broadcast, split/merge, and static
+  or dynamic reshape maps; distinguish read aliasing from exact unique write
+  ownership; reject out-of-bounds/data-dependent accesses; and verify
+  noncontiguous positive-stride views with nonzero starts.
+- Width tests prove every narrowed coordinate, linearization, element-offset,
+  byte/packed-offset, and dispatch intermediate. They include cases where every
+  extent fits `u32` but stride multiplication does not, and require the guarded
+  variant to select a verified wide path rather than wrap.
+- Tail tests at vector width minus/equal/plus one prove inactive scheduled
+  points cannot access memory; tail predicates never weaken logical access-map
+  totality.
 - Program verification rejects data-dependent output shapes in the initial
   profile, cross-device values/stages, noncanonical step order, unauthorized
   concurrency, temporary use outside its lifetime, and allocation aliasing or

@@ -42,8 +42,6 @@ ADR when evidence is sufficient.
 
 ## Shapes and indexing
 
-- Is the canonical index type `u64`, `i64`, or target-dependent?
-- When may a proven `u32` fast variant be emitted?
 - Which extents are specialized versus passed at runtime?
 - Are composed-axis factors required to be static initially?
 - How are ellipses represented across possible runtime ranks?
@@ -52,8 +50,12 @@ ADR when evidence is sufficient.
 - When are data-dependent output shapes or device-produced indirect dispatch
   dimensions introduced, and what host/device `ShapeProgram` contract would
   they require?
-- Are negative strides permanently out of scope or merely deferred?
-- Which bounds are statically proven versus guarded at runtime?
+- Which finite piecewise tensor-access maps justify extending the initial
+  total affine/quasi-affine/semi-affine language?
+- Which indirect gather/scatter relation and validation contract should admit
+  tensor-data-derived indices?
+- When does signed reachable-range analysis and runtime support justify
+  enabling the currently deferred negative-stride ABI profile?
 
 ## Fusion, planning, and scheduling
 
