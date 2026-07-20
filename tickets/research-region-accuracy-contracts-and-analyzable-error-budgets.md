@@ -1,7 +1,7 @@
 ---
 id: research-region-accuracy-contracts-and-analyzable-error-budgets
 title: Research region accuracy contracts and analyzable error budgets
-status: todo
+status: done
 priority: p2
 dependencies: [numerical-policy-contract, reference-evaluator-slice]
 related: []
@@ -70,3 +70,16 @@ runtime, and unsupported cases. Random/adversarial measurements remain
 empirical evidence and cannot satisfy a sound contract. The gate is whether a
 sound analyzer can certify modest fused tensor regions quickly enough and with
 non-vacuous bounds.
+
+## Completed outcome
+
+The typed goal/evidence model and compiler boundary are recorded in
+`docs/research/numerics/region-accuracy-contract.md`. A dependency-light
+`mpmath` adversarial probe exercises materialization removal, cancellation,
+reference choice, relative error at zero, and reduction topology. It is
+explicitly empirical and therefore does not claim a worst-case certificate.
+
+Actual sound-analyzer integration, certificate tightness, and proof-time
+measurement are separated into
+`spike-sound-region-accuracy-analyzer-integration`; delegated region budgets
+remain disabled until that feasibility gate passes.
