@@ -110,6 +110,22 @@ their replacement:
   target profile. It does not mean the largest fused kernel; a multi-kernel
   program or deliberate materialization may be correct and faster.
 
+Future compatibility should come from explicit seams and invariants, not from
+prematurely implementing an unbounded abstraction. When a mature system will
+need more than the first supported subset:
+
+- enumerate the broader semantic space far enough to expose identity,
+  validation, ABI, and lowering consequences;
+- reserve strongly typed extension points where the dependency direction is
+  understood;
+- make unsupported cases reject explicitly rather than silently approximating
+  them; and
+- implement the smallest specialized component that proves the architecture,
+  while recording what would be required to broaden it.
+
+Do not confuse a type-system reservation, an architectural seam, implemented
+support, and a tested guarantee. They are four different maturity claims.
+
 ## Correctness priorities
 
 Bias toward failing closed with typed, explainable errors. Never return an
@@ -152,6 +168,12 @@ empirical evidence, normative guarantees, and `Unknown` as different classes.
 - Challenge prior design text when evidence conflicts with it, but preserve the
   original rationale and supersede durable decisions explicitly.
 
+Research recommendations should end in one of four concrete outcomes: a
+correctness-derived contract update, an accepted architectural decision, a
+bounded experiment, or an explicitly deferred question with a trigger for
+reconsideration. Avoid accumulating open-ended notes that do not say what
+evidence or decision would close them.
+
 Use subagents for independent, bounded research tracks when parallel evidence
 collection reduces uncertainty. Give each agent a non-overlapping ticket scope
 and exact base commit. Ask agents to report conclusions, measurement boundaries,
@@ -175,6 +197,28 @@ when the checked-in harness reconstructs them. Cleanup must target regenerable
 run products, never the preserved experiment. Prefer keeping compact raw data
 when it materially supports a measurement; otherwise record enough exact
 environment, commands, and summarized results to reproduce it.
+
+## Documentation as a coherent contract
+
+Treat the documentation corpus as one system. A decision may affect the IR,
+optimizer, artifact identity, runtime, testing, roadmap, and open-question
+index simultaneously. Before declaring it recorded:
+
+- search for conflicting terminology, stale status language, and duplicated
+  authorities;
+- update every normative contract whose behavior changes;
+- keep accepted decisions, proposals, measurements, and future work visibly
+  distinct;
+- ensure identifiers, schemas, examples, and dependency directions agree
+  across documents; and
+- remove an open question only after its answer is represented in the durable
+  contract or an accepted ADR.
+
+Examples are part of the design work. Prefer a small end-to-end tensor program
+that shows inputs, typed operations, multiple values or outputs when relevant,
+logical properties, candidate physical plans, rejected alternatives, and the
+observable result. Do not let an example quietly introduce semantics that the
+normative text has not defined.
 
 ## Ticketsplease and parallel work
 
