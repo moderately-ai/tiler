@@ -1,7 +1,7 @@
 ---
 id: enumerate-the-mature-tensor-dtype-taxonomy
 title: Enumerate the mature tensor dtype taxonomy
-status: review
+status: done
 priority: p0
 dependencies: []
 related: [numerical-policy-contract]
