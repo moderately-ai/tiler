@@ -6,7 +6,7 @@ title: "Separate semantic type authority from Rust marker bindings"
 topics: ["rust", "semantics", "dtypes", "extensions", "registry"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.ir", "tiler.contract.operation-extensions", "tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.extensions.semantic-foundation-api-v2", "tiler.research.extensions.operation-extension-api"]
 refines: ["ADR-0044", "ADR-0059", "ADR-0060", "ADR-0062"]

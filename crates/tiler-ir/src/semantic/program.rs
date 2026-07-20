@@ -884,12 +884,11 @@ mod tests {
     #[test]
     fn f32_admission_requires_registered_semantic_authority() {
         use crate::semantic::{
-            ProviderIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
-            SemanticRegistryRegistrar, ValueTypeDefinition, ValueTypeMarker,
+            NormativeDefinitionRef, ProviderIdentity, SemanticRegistryBuilder,
+            SemanticRegistryProvider, SemanticRegistryRegistrar, TypeDefinitionFacts,
+            ValueTypeDefinition, ValueTypeDefinitionKey,
         };
 
-        enum ExternalOnly {}
-        impl ValueTypeMarker for ExternalOnly {}
         struct ExternalOnlyProvider;
         impl SemanticRegistryProvider for ExternalOnlyProvider {
             fn identity(&self) -> ProviderIdentity {
@@ -900,13 +899,13 @@ mod tests {
                 &self,
                 registrar: &mut SemanticRegistryRegistrar<'_>,
             ) -> Result<(), crate::semantic::RegistryError> {
-                registrar.register_value_type::<ExternalOnly>(ValueTypeDefinition::new(
-                    ResolvedValueType::nominal(
+                registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                    ValueTypeDefinitionKey::Nominal(
                         crate::semantic::TypeKey::new("acme", "external", 1).unwrap(),
                     ),
-                    "https://example.invalid/external/v1",
-                    crate::semantic::ResolvedValueTypeArgument::boolean(true),
-                )?)
+                    NormativeDefinitionRef::new("https://example.invalid/external/v1")?,
+                    TypeDefinitionFacts::new(crate::semantic::CanonicalValue::boolean(true)),
+                ))
             }
         }
 

@@ -30,12 +30,14 @@ pub use operation::{
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
 pub use registry::{
-    CanonicalSemanticRegistryIdentity, F32, FrozenSemanticRegistry, ProviderIdentity,
-    RegistryError, RegistryLookupError, SemanticRegistryBuilder, SemanticRegistryProvider,
-    SemanticRegistryRegistrar, ValueTypeDefinition, ValueTypeMarker,
+    CanonicalSemanticRegistryIdentity, F32, FrozenSemanticRegistry, NormativeDefinitionRef,
+    ProviderIdentity, RegistryError, RegistryLookupError, SemanticRegistryBuilder,
+    SemanticRegistryProvider, SemanticRegistryRegistrar, TypeDefinitionFacts, TypeInstanceError,
+    TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey, ValueTypeInstanceValidator,
+    ValueTypeMarker,
 };
 pub use types::{
-    CanonicalEncodedNumericContract, CanonicalResolvedValueType, IdentityComponent, QuantSchemeKey,
-    ResolvedValueType, ResolvedValueTypeArgument, ResolvedValueTypeField, TypeIdentityError,
-    TypeKey,
+    CanonicalField, CanonicalResolvedValueType, CanonicalValue, CanonicalValueView,
+    EncodedNumericContract, IdentityComponent, QuantSchemeKey, ResolvedValueType, TypeArguments,
+    TypeIdentityError, TypeKey,
 };

@@ -1,7 +1,7 @@
 ---
 id: prototype-semantic-type-authority-v2
 title: Correct semantic type authority and marker binding
-status: todo
+status: done
 priority: p0
 dependencies: [prototype-semantic-foundation-api-v2]
 related: [prototype-semantic-reference-slice]
@@ -32,3 +32,17 @@ encoded-scheme proof through the same path. Preserve the existing resolved-type
 bounds and canonical encodings unless the reviewed ADR explicitly versions
 them. Do not add operation definitions, typed handles, reference execution, or
 backend capabilities.
+
+## Outcome
+
+Implemented semantic authority independently from optional Rust marker
+bindings. Nominal definitions, parameterized constructors, and encoded-numeric
+schemes now validate complete instances through bounded host-owned canonical
+structures and immutable family validators. Provider registration is staged
+and atomic without cloning callback state, while frozen registry identity is
+deterministic and independent of provider registration order.
+
+The implementation includes adversarial coverage for orphan marker bindings,
+duplicate authority rollback, invalid referenced types, validator rejection,
+and registration-order-independent identity. Strict tests, doctests, and
+Clippy pass for `tiler-ir`.

@@ -36,3 +36,12 @@ review before production implementation. Do not edit `crates/` in this ticket.
 Acceptance includes compile-pass/fail cases for absent markers, invalid
 constructor/scheme instances, unsupported operations, forged result typing,
 and an external provider. The spike is evidence, not a compatibility promise.
+
+## Outcome
+
+Compile-checked the corrected API across separate IR, reference, external
+provider, and consumer crates. The spike established independent semantic type
+authority, optional marker bindings, host-owned canonical values, registered
+operation semantics, generic typed inputs, checked erased application, and a
+downstream reference-capability boundary. ADRs 0065 and 0066 record the crate
+and authority corrections used by the production tickets.

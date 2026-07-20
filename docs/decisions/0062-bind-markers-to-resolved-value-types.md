@@ -44,11 +44,11 @@ ResolvedValueType =
     Nominal(TypeKey)
   | Parameterized {
         constructor: TypeKey,
-        arguments: [ResolvedValueTypeArgument],
+        arguments: TypeArguments,
     }
   | EncodedNumeric {
         scheme: QuantSchemeKey,
-        static_contract: CanonicalEncodedNumericContract,
+        static_contract: EncodedNumericContract,
     }
 ```
 

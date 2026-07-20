@@ -19,6 +19,7 @@ mean dependency-free, hermetic, portable to every host, or rerun by CI.
 - [Index and access-model experiment](indexing/README.md) — reproducible; executable-model; supports: [Symbolic index and access model](../docs/research/indexing/index-access-model.md)
 - [Normative reference-evaluator experiment](reference/README.md) — reproducible; executable-model; supports: [Normative reference evaluator slice](../docs/research/reference/normative-reference-slice.md)
 - [Operation-extension experiments](extensions/README.md) — reproducible; executable-model, bounded-measurement; supports: [Operation-extension surface research](../docs/research/extensions/operation-extension-surface.md), [Experimental operation API sketch](../docs/research/extensions/operation-extension-api.md), [Proc-macro visibility of operation extensions](../docs/research/extensions/proc-macro-extension-visibility.md)
+- [Semantic foundation API v2 compile-checking spike](extensions/semantic-foundation-api-v2/README.md) — reproducible; executable-model; supports: [Corrected semantic foundation API](../docs/research/extensions/semantic-foundation-api-v2.md)
 
 ### Numerical operations
 

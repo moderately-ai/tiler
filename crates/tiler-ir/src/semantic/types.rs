@@ -271,11 +271,11 @@ enum ResolvedValueTypeData {
     Nominal(TypeKey),
     Parameterized {
         constructor: TypeKey,
-        arguments: Vec<ResolvedValueTypeArgument>,
+        arguments: TypeArguments,
     },
     EncodedNumeric {
         scheme: QuantSchemeKey,
-        contract: CanonicalEncodedNumericContract,
+        contract: EncodedNumericContract,
     },
 }
 
@@ -293,12 +293,8 @@ impl ResolvedValueType {
     /// Returns [`TypeIdentityError`] for empty or over-limit arguments.
     pub fn parameterized(
         constructor: TypeKey,
-        arguments: impl IntoIterator<Item = ResolvedValueTypeArgument>,
+        arguments: TypeArguments,
     ) -> Result<Self, TypeIdentityError> {
-        let arguments: Vec<_> = arguments.into_iter().collect();
-        if arguments.is_empty() {
-            return Err(TypeIdentityError::EmptyTypeArguments);
-        }
         let value = Self(ResolvedValueTypeData::Parameterized {
             constructor,
             arguments,
@@ -315,7 +311,7 @@ impl ResolvedValueType {
     /// canonical bound.
     pub fn encoded_numeric(
         scheme: QuantSchemeKey,
-        contract: CanonicalEncodedNumericContract,
+        contract: EncodedNumericContract,
     ) -> Result<Self, TypeIdentityError> {
         let value = Self(ResolvedValueTypeData::EncodedNumeric { scheme, contract });
         validate_resolved_type(&value)?;
@@ -329,6 +325,31 @@ impl ResolvedValueType {
             ResolvedValueTypeData::Nominal(key) => Some(key),
             ResolvedValueTypeData::Parameterized { .. }
             | ResolvedValueTypeData::EncodedNumeric { .. } => None,
+        }
+    }
+
+    /// Returns a parameterized constructor and its canonical arguments.
+    #[must_use]
+    pub const fn parameterized_parts(&self) -> Option<(&TypeKey, &TypeArguments)> {
+        match &self.0 {
+            ResolvedValueTypeData::Parameterized {
+                constructor,
+                arguments,
+            } => Some((constructor, arguments)),
+            ResolvedValueTypeData::Nominal(_) | ResolvedValueTypeData::EncodedNumeric { .. } => {
+                None
+            }
+        }
+    }
+
+    /// Returns an encoded-numeric scheme and its static contract.
+    #[must_use]
+    pub const fn encoded_numeric_parts(
+        &self,
+    ) -> Option<(&QuantSchemeKey, &EncodedNumericContract)> {
+        match &self.0 {
+            ResolvedValueTypeData::EncodedNumeric { scheme, contract } => Some((scheme, contract)),
+            ResolvedValueTypeData::Nominal(_) | ResolvedValueTypeData::Parameterized { .. } => None,
         }
     }
 
@@ -352,8 +373,8 @@ impl ResolvedValueType {
             } => {
                 output.push(2);
                 constructor.0.encode(output);
-                encode_len(output, arguments.len());
-                for argument in arguments {
+                encode_len(output, arguments.values.len());
+                for argument in &arguments.values {
                     argument.encode(output);
                 }
             }
@@ -369,7 +390,7 @@ impl ResolvedValueType {
         match &self.0 {
             ResolvedValueTypeData::Nominal(_) => {}
             ResolvedValueTypeData::Parameterized { arguments, .. } => {
-                for argument in arguments {
+                for argument in &arguments.values {
                     argument.visit_referenced_types(visitor);
                 }
             }
@@ -394,45 +415,116 @@ impl CanonicalResolvedValueType {
     }
 }
 
+/// Ordered canonical arguments applied to one parameterized type constructor.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TypeArguments {
+    values: Vec<CanonicalValue>,
+}
+
+impl TypeArguments {
+    /// Creates one nonempty bounded argument list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] when the argument list is empty or exceeds
+    /// a canonical structural bound.
+    pub fn new(
+        values: impl IntoIterator<Item = CanonicalValue>,
+    ) -> Result<Self, TypeIdentityError> {
+        let values: Vec<_> = values.into_iter().collect();
+        if values.is_empty() {
+            return Err(TypeIdentityError::EmptyTypeArguments);
+        }
+        validate_items(values.len())?;
+        let result = Self { values };
+        for value in &result.values {
+            validate_argument_root(value)?;
+        }
+        Ok(result)
+    }
+
+    /// Returns arguments in semantic order.
+    #[must_use]
+    pub fn values(&self) -> &[CanonicalValue] {
+        &self.values
+    }
+}
+
 /// One bounded canonical parameter of a resolved value type.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ResolvedValueTypeArgument(ResolvedValueTypeArgumentData);
+pub struct CanonicalValue(CanonicalValueData);
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-enum ResolvedValueTypeArgumentData {
+enum CanonicalValueData {
     Type(ResolvedValueType),
     Bool(bool),
     Signed(i64),
     Unsigned(u64),
     Bytes(Vec<u8>),
     Utf8(String),
-    Sequence(Vec<ResolvedValueTypeArgument>),
-    Record(Vec<ResolvedValueTypeField>),
+    Sequence(Vec<CanonicalValue>),
+    Record(Vec<CanonicalField>),
 }
 
-impl ResolvedValueTypeArgument {
+/// Borrowed inspection of one host-canonical value.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum CanonicalValueView<'a> {
+    /// A complete resolved semantic value type.
+    Type(&'a ResolvedValueType),
+    /// A Boolean value.
+    Bool(bool),
+    /// A signed fixed-width host value.
+    Signed(i64),
+    /// An unsigned fixed-width host value.
+    Unsigned(u64),
+    /// Exact bytes.
+    Bytes(&'a [u8]),
+    /// Exact UTF-8.
+    Utf8(&'a str),
+    /// An ordered sequence.
+    Sequence(&'a [CanonicalValue]),
+    /// A stable-field-ID record.
+    Record(&'a [CanonicalField]),
+}
+
+impl CanonicalValue {
+    /// Returns a borrowed, exhaustively tagged view of this canonical value.
+    #[must_use]
+    pub fn view(&self) -> CanonicalValueView<'_> {
+        match &self.0 {
+            CanonicalValueData::Type(value) => CanonicalValueView::Type(value),
+            CanonicalValueData::Bool(value) => CanonicalValueView::Bool(*value),
+            CanonicalValueData::Signed(value) => CanonicalValueView::Signed(*value),
+            CanonicalValueData::Unsigned(value) => CanonicalValueView::Unsigned(*value),
+            CanonicalValueData::Bytes(value) => CanonicalValueView::Bytes(value),
+            CanonicalValueData::Utf8(value) => CanonicalValueView::Utf8(value),
+            CanonicalValueData::Sequence(value) => CanonicalValueView::Sequence(value),
+            CanonicalValueData::Record(value) => CanonicalValueView::Record(value),
+        }
+    }
     /// Creates a nested resolved-type argument.
     #[must_use]
     pub const fn value_type(value: ResolvedValueType) -> Self {
-        Self(ResolvedValueTypeArgumentData::Type(value))
+        Self(CanonicalValueData::Type(value))
     }
 
     /// Creates a Boolean argument.
     #[must_use]
     pub const fn boolean(value: bool) -> Self {
-        Self(ResolvedValueTypeArgumentData::Bool(value))
+        Self(CanonicalValueData::Bool(value))
     }
 
     /// Creates a fixed-width signed integer argument.
     #[must_use]
     pub const fn signed(value: i64) -> Self {
-        Self(ResolvedValueTypeArgumentData::Signed(value))
+        Self(CanonicalValueData::Signed(value))
     }
 
     /// Creates a fixed-width unsigned integer argument.
     #[must_use]
     pub const fn unsigned(value: u64) -> Self {
-        Self(ResolvedValueTypeArgumentData::Unsigned(value))
+        Self(CanonicalValueData::Unsigned(value))
     }
 
     /// Creates a bounded exact byte argument.
@@ -443,7 +535,7 @@ impl ResolvedValueTypeArgument {
     pub fn bytes(value: impl Into<Vec<u8>>) -> Result<Self, TypeIdentityError> {
         let value = value.into();
         validate_payload_len(value.len())?;
-        Ok(Self(ResolvedValueTypeArgumentData::Bytes(value)))
+        Ok(Self(CanonicalValueData::Bytes(value)))
     }
 
     /// Creates a bounded exact UTF-8 argument.
@@ -454,7 +546,7 @@ impl ResolvedValueTypeArgument {
     pub fn utf8(value: impl Into<String>) -> Result<Self, TypeIdentityError> {
         let value = value.into();
         validate_payload_len(value.len())?;
-        Ok(Self(ResolvedValueTypeArgumentData::Utf8(value)))
+        Ok(Self(CanonicalValueData::Utf8(value)))
     }
 
     /// Creates an ordered bounded sequence argument.
@@ -465,7 +557,7 @@ impl ResolvedValueTypeArgument {
     pub fn sequence(values: impl IntoIterator<Item = Self>) -> Result<Self, TypeIdentityError> {
         let values: Vec<_> = values.into_iter().collect();
         validate_items(values.len())?;
-        let value = Self(ResolvedValueTypeArgumentData::Sequence(values));
+        let value = Self(CanonicalValueData::Sequence(values));
         validate_argument_root(&value)?;
         Ok(value)
     }
@@ -476,48 +568,48 @@ impl ResolvedValueTypeArgument {
     ///
     /// Returns [`TypeIdentityError`] for duplicate fields or exceeded bounds.
     pub fn record(
-        fields: impl IntoIterator<Item = ResolvedValueTypeField>,
+        fields: impl IntoIterator<Item = CanonicalField>,
     ) -> Result<Self, TypeIdentityError> {
         let fields = canonical_fields(fields)?;
-        let value = Self(ResolvedValueTypeArgumentData::Record(fields));
+        let value = Self(CanonicalValueData::Record(fields));
         validate_argument_root(&value)?;
         Ok(value)
     }
 
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
         match &self.0 {
-            ResolvedValueTypeArgumentData::Type(value) => {
+            CanonicalValueData::Type(value) => {
                 output.push(1);
                 value.encode(output);
             }
-            ResolvedValueTypeArgumentData::Bool(value) => {
+            CanonicalValueData::Bool(value) => {
                 output.push(2);
                 output.push(u8::from(*value));
             }
-            ResolvedValueTypeArgumentData::Signed(value) => {
+            CanonicalValueData::Signed(value) => {
                 output.push(3);
                 output.extend_from_slice(&value.to_be_bytes());
             }
-            ResolvedValueTypeArgumentData::Unsigned(value) => {
+            CanonicalValueData::Unsigned(value) => {
                 output.push(4);
                 output.extend_from_slice(&value.to_be_bytes());
             }
-            ResolvedValueTypeArgumentData::Bytes(value) => {
+            CanonicalValueData::Bytes(value) => {
                 output.push(5);
                 encode_bytes(output, value);
             }
-            ResolvedValueTypeArgumentData::Utf8(value) => {
+            CanonicalValueData::Utf8(value) => {
                 output.push(6);
                 encode_bytes(output, value.as_bytes());
             }
-            ResolvedValueTypeArgumentData::Sequence(values) => {
+            CanonicalValueData::Sequence(values) => {
                 output.push(7);
                 encode_len(output, values.len());
                 for value in values {
                     value.encode(output);
                 }
             }
-            ResolvedValueTypeArgumentData::Record(fields) => {
+            CanonicalValueData::Record(fields) => {
                 output.push(8);
                 encode_len(output, fields.len());
                 for field in fields {
@@ -530,40 +622,40 @@ impl ResolvedValueTypeArgument {
 
     pub(super) fn visit_referenced_types(&self, visitor: &mut impl FnMut(&ResolvedValueType)) {
         match &self.0 {
-            ResolvedValueTypeArgumentData::Type(value) => {
+            CanonicalValueData::Type(value) => {
                 visitor(value);
                 value.visit_referenced_types(visitor);
             }
-            ResolvedValueTypeArgumentData::Sequence(values) => {
+            CanonicalValueData::Sequence(values) => {
                 for value in values {
                     value.visit_referenced_types(visitor);
                 }
             }
-            ResolvedValueTypeArgumentData::Record(fields) => {
+            CanonicalValueData::Record(fields) => {
                 for field in fields {
                     field.value.visit_referenced_types(visitor);
                 }
             }
-            ResolvedValueTypeArgumentData::Bool(_)
-            | ResolvedValueTypeArgumentData::Signed(_)
-            | ResolvedValueTypeArgumentData::Unsigned(_)
-            | ResolvedValueTypeArgumentData::Bytes(_)
-            | ResolvedValueTypeArgumentData::Utf8(_) => {}
+            CanonicalValueData::Bool(_)
+            | CanonicalValueData::Signed(_)
+            | CanonicalValueData::Unsigned(_)
+            | CanonicalValueData::Bytes(_)
+            | CanonicalValueData::Utf8(_) => {}
         }
     }
 }
 
 /// One stable field in a canonical type record.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ResolvedValueTypeField {
+pub struct CanonicalField {
     id: u32,
-    value: ResolvedValueTypeArgument,
+    value: CanonicalValue,
 }
 
-impl ResolvedValueTypeField {
+impl CanonicalField {
     /// Creates a field with a stable schema-local ID.
     #[must_use]
-    pub const fn new(id: u32, value: ResolvedValueTypeArgument) -> Self {
+    pub const fn new(id: u32, value: CanonicalValue) -> Self {
         Self { id, value }
     }
 
@@ -575,40 +667,39 @@ impl ResolvedValueTypeField {
 
     /// Returns the canonical field value.
     #[must_use]
-    pub const fn value(&self) -> &ResolvedValueTypeArgument {
+    pub const fn value(&self) -> &CanonicalValue {
         &self.value
     }
 }
 
 /// A host-canonical static encoded-numeric contract.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CanonicalEncodedNumericContract {
-    fields: Vec<ResolvedValueTypeField>,
+pub struct EncodedNumericContract {
+    fields: Vec<CanonicalField>,
 }
 
-impl CanonicalEncodedNumericContract {
+impl EncodedNumericContract {
     /// Creates a nonempty field-ID-sorted static contract.
     ///
     /// # Errors
     ///
     /// Returns [`TypeIdentityError`] for empty, duplicate, or over-limit fields.
     pub fn new(
-        fields: impl IntoIterator<Item = ResolvedValueTypeField>,
+        fields: impl IntoIterator<Item = CanonicalField>,
     ) -> Result<Self, TypeIdentityError> {
         let fields = canonical_fields(fields)?;
         if fields.is_empty() {
             return Err(TypeIdentityError::EmptyEncodedNumericContract);
         }
         let value = Self { fields };
-        let argument =
-            ResolvedValueTypeArgument(ResolvedValueTypeArgumentData::Record(value.fields.clone()));
+        let argument = CanonicalValue(CanonicalValueData::Record(value.fields.clone()));
         validate_argument_root(&argument)?;
         Ok(value)
     }
 
     /// Returns fields in canonical ascending ID order.
     #[must_use]
-    pub fn fields(&self) -> &[ResolvedValueTypeField] {
+    pub fn fields(&self) -> &[CanonicalField] {
         &self.fields
     }
 
@@ -645,8 +736,8 @@ fn validate_component(component: IdentityComponent, value: &str) -> Result<(), T
 }
 
 fn canonical_fields(
-    fields: impl IntoIterator<Item = ResolvedValueTypeField>,
-) -> Result<Vec<ResolvedValueTypeField>, TypeIdentityError> {
+    fields: impl IntoIterator<Item = CanonicalField>,
+) -> Result<Vec<CanonicalField>, TypeIdentityError> {
     let mut fields: Vec<_> = fields.into_iter().collect();
     validate_items(fields.len())?;
     fields.sort_unstable_by_key(|field| field.id);
@@ -712,7 +803,7 @@ fn validate_resolved_type(value: &ResolvedValueType) -> Result<(), TypeIdentityE
     validate_type_at(value, 1, &mut budget)
 }
 
-fn validate_argument_root(value: &ResolvedValueTypeArgument) -> Result<(), TypeIdentityError> {
+fn validate_argument_root(value: &CanonicalValue) -> Result<(), TypeIdentityError> {
     let mut budget = ValidationBudget::default();
     validate_argument_at(value, 1, &mut budget)
 }
@@ -726,8 +817,8 @@ fn validate_type_at(
     match &value.0 {
         ResolvedValueTypeData::Nominal(_) => Ok(()),
         ResolvedValueTypeData::Parameterized { arguments, .. } => {
-            validate_items(arguments.len())?;
-            for argument in arguments {
+            validate_items(arguments.values.len())?;
+            for argument in &arguments.values {
                 validate_argument_at(argument, depth + 1, budget)?;
             }
             Ok(())
@@ -743,32 +834,32 @@ fn validate_type_at(
 }
 
 fn validate_argument_at(
-    value: &ResolvedValueTypeArgument,
+    value: &CanonicalValue,
     depth: usize,
     budget: &mut ValidationBudget,
 ) -> Result<(), TypeIdentityError> {
     budget.node(depth)?;
     match &value.0 {
-        ResolvedValueTypeArgumentData::Type(value) => validate_type_at(value, depth + 1, budget),
-        ResolvedValueTypeArgumentData::Bytes(value) => budget.payload(value.len()),
-        ResolvedValueTypeArgumentData::Utf8(value) => budget.payload(value.len()),
-        ResolvedValueTypeArgumentData::Sequence(values) => {
+        CanonicalValueData::Type(value) => validate_type_at(value, depth + 1, budget),
+        CanonicalValueData::Bytes(value) => budget.payload(value.len()),
+        CanonicalValueData::Utf8(value) => budget.payload(value.len()),
+        CanonicalValueData::Sequence(values) => {
             validate_items(values.len())?;
             for value in values {
                 validate_argument_at(value, depth + 1, budget)?;
             }
             Ok(())
         }
-        ResolvedValueTypeArgumentData::Record(fields) => {
+        CanonicalValueData::Record(fields) => {
             validate_items(fields.len())?;
             for field in fields {
                 validate_argument_at(&field.value, depth + 1, budget)?;
             }
             Ok(())
         }
-        ResolvedValueTypeArgumentData::Bool(_)
-        | ResolvedValueTypeArgumentData::Signed(_)
-        | ResolvedValueTypeArgumentData::Unsigned(_) => Ok(()),
+        CanonicalValueData::Bool(_)
+        | CanonicalValueData::Signed(_)
+        | CanonicalValueData::Unsigned(_) => Ok(()),
     }
 }
 
@@ -808,17 +899,17 @@ mod tests {
 
     #[test]
     fn records_sort_fields_and_reject_duplicates() {
-        let record = ResolvedValueTypeArgument::record([
-            ResolvedValueTypeField::new(9, ResolvedValueTypeArgument::unsigned(1)),
-            ResolvedValueTypeField::new(2, ResolvedValueTypeArgument::boolean(true)),
+        let record = CanonicalValue::record([
+            CanonicalField::new(9, CanonicalValue::unsigned(1)),
+            CanonicalField::new(2, CanonicalValue::boolean(true)),
         ])
         .unwrap();
-        let duplicate = ResolvedValueTypeArgument::record([
-            ResolvedValueTypeField::new(2, ResolvedValueTypeArgument::unsigned(1)),
-            ResolvedValueTypeField::new(2, ResolvedValueTypeArgument::unsigned(2)),
+        let duplicate = CanonicalValue::record([
+            CanonicalField::new(2, CanonicalValue::unsigned(1)),
+            CanonicalField::new(2, CanonicalValue::unsigned(2)),
         ]);
 
-        let ResolvedValueTypeArgumentData::Record(fields) = record.0 else {
+        let CanonicalValueData::Record(fields) = record.0 else {
             panic!("record constructor produced another argument family")
         };
         assert_eq!(fields[0].id(), 2);
@@ -834,12 +925,12 @@ mod tests {
         let nominal = ResolvedValueType::nominal(key("f32"));
         let parameterized = ResolvedValueType::parameterized(
             key("complex"),
-            [ResolvedValueTypeArgument::value_type(nominal.clone())],
+            TypeArguments::new([CanonicalValue::value_type(nominal.clone())]).unwrap(),
         )
         .unwrap();
-        let contract = CanonicalEncodedNumericContract::new([
-            ResolvedValueTypeField::new(1, ResolvedValueTypeArgument::value_type(nominal.clone())),
-            ResolvedValueTypeField::new(2, ResolvedValueTypeArgument::unsigned(32)),
+        let contract = EncodedNumericContract::new([
+            CanonicalField::new(1, CanonicalValue::value_type(nominal.clone())),
+            CanonicalField::new(2, CanonicalValue::unsigned(32)),
         ])
         .unwrap();
         let encoded = ResolvedValueType::encoded_numeric(
@@ -861,12 +952,12 @@ mod tests {
 
     #[test]
     fn complete_structure_is_depth_bounded() {
-        let mut argument = ResolvedValueTypeArgument::unsigned(1);
+        let mut argument = CanonicalValue::unsigned(1);
         for _ in 0..(MAX_RESOLVED_TYPE_DEPTH - 1) {
-            argument = ResolvedValueTypeArgument::sequence([argument]).unwrap();
+            argument = CanonicalValue::sequence([argument]).unwrap();
         }
         assert!(matches!(
-            ResolvedValueTypeArgument::sequence([argument]),
+            CanonicalValue::sequence([argument]),
             Err(TypeIdentityError::NestingTooDeep)
         ));
     }

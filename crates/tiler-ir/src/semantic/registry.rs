@@ -5,41 +5,38 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use super::types::{
-    IdentityComponent, MAX_IDENTITY_COMPONENT_BYTES, MAX_RESOLVED_TYPE_BYTES, ResolvedValueType,
-    ResolvedValueTypeArgument, ResolvedValueTypeField, TypeIdentityError, TypeKey,
+    CanonicalField, CanonicalValue, QuantSchemeKey, ResolvedValueType, TypeIdentityError, TypeKey,
 };
 
-/// Maximum UTF-8 byte length of one normative-definition reference.
-pub const MAX_DEFINITION_REFERENCE_BYTES: usize = 4_096;
+const MAX_DEFINITION_REFERENCE_BYTES: usize = 4 * 1024;
 
-/// An intentionally empty local Rust type marker.
+/// Open local marker implemented by Rust types used for exact typed handles.
 ///
-/// Implementing this trait grants no semantic identity or authority. Only an
-/// explicit binding in a [`FrozenSemanticRegistry`] makes a marker usable.
+/// Implementing this trait grants no semantic authority. A frozen registry
+/// must separately bind the marker to an admitted complete resolved type.
 pub trait ValueTypeMarker: 'static {}
 
-/// The standard marker for Tiler's `tiler::f32@1` nominal type.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// Governed Rust marker for IEEE binary32 values.
 pub enum F32 {}
 
+impl ValueTypeMarker for F32 {}
+
 impl F32 {
-    /// Returns the canonical built-in resolved value type.
+    /// Returns the governed complete F32 semantic identity.
     ///
     /// # Panics
     ///
-    /// Panics only if Tiler's compile-time governed key violates its own key
-    /// grammar, which is an internal library defect.
+    /// Panics only if Tiler's compile-time governed key violates its own
+    /// canonical identity grammar.
     #[must_use]
     pub fn resolved_type() -> ResolvedValueType {
         ResolvedValueType::nominal(
-            TypeKey::new("tiler", "f32", 1).expect("the governed f32 key is valid"),
+            TypeKey::new("tiler", "f32", 1).expect("the governed F32 key is valid"),
         )
     }
 }
 
-impl ValueTypeMarker for F32 {}
-
-/// Stable identity and revision of a semantic-definition provider.
+/// Stable identity and output-affecting revision of one semantic provider.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProviderIdentity {
     namespace: String,
@@ -52,7 +49,8 @@ impl ProviderIdentity {
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] for invalid components or revision zero.
+    /// Returns [`RegistryError`] when a component is invalid or revision zero
+    /// is supplied.
     pub fn new(
         namespace: impl Into<String>,
         name: impl Into<String>,
@@ -60,11 +58,8 @@ impl ProviderIdentity {
     ) -> Result<Self, RegistryError> {
         let namespace = namespace.into();
         let name = name.into();
-        validate_provider_component(IdentityComponent::Namespace, &namespace)?;
-        validate_provider_component(IdentityComponent::Name, &name)?;
-        if revision == 0 {
-            return Err(RegistryError::ZeroProviderRevision);
-        }
+        TypeKey::new(namespace.clone(), name.clone(), revision)
+            .map_err(RegistryError::InvalidProviderIdentity)?;
         Ok(Self {
             namespace,
             name,
@@ -78,13 +73,13 @@ impl ProviderIdentity {
         &self.namespace
     }
 
-    /// Returns the provider name.
+    /// Returns the name within the provider namespace.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Returns the output-affecting provider revision.
+    /// Returns the nonzero output-affecting provider revision.
     #[must_use]
     pub const fn revision(&self) -> u32 {
         self.revision
@@ -107,105 +102,280 @@ impl fmt::Display for ProviderIdentity {
     }
 }
 
-/// Portable semantic definition of one complete resolved value type.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ValueTypeDefinition {
-    resolved_type: ResolvedValueType,
-    normative_definition: String,
-    canonical_facts: ResolvedValueTypeArgument,
-}
+/// Validated identity-bearing reference to a normative semantic definition.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct NormativeDefinitionRef(String);
 
-impl ValueTypeDefinition {
-    /// Creates a validated host-canonical semantic definition.
+impl NormativeDefinitionRef {
+    /// Creates a nonempty bounded normative reference.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] when the normative reference is empty or too
-    /// large. The resolved identity and facts are already bounded by their
-    /// constructors.
-    pub fn new(
-        resolved_type: ResolvedValueType,
-        normative_definition: impl Into<String>,
-        canonical_facts: ResolvedValueTypeArgument,
-    ) -> Result<Self, RegistryError> {
-        let normative_definition = normative_definition.into();
-        if normative_definition.is_empty() {
+    /// Returns [`RegistryError`] when the reference is empty or over the
+    /// canonical byte bound.
+    pub fn new(value: impl Into<String>) -> Result<Self, RegistryError> {
+        let value = value.into();
+        if value.is_empty() {
             return Err(RegistryError::EmptyNormativeDefinition);
         }
-        if normative_definition.len() > MAX_DEFINITION_REFERENCE_BYTES {
-            return Err(RegistryError::NormativeDefinitionTooLong {
-                bytes: normative_definition.len(),
-            });
+        if value.len() > MAX_DEFINITION_REFERENCE_BYTES {
+            return Err(RegistryError::NormativeDefinitionTooLong { bytes: value.len() });
         }
-        Ok(Self {
-            resolved_type,
+        Ok(Self(value))
+    }
+
+    /// Returns the exact reference text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Bounded canonical descriptive facts owned by one type definition.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TypeDefinitionFacts(CanonicalValue);
+
+impl TypeDefinitionFacts {
+    /// Wraps an already bounded canonical value in its definition-fact role.
+    #[must_use]
+    pub const fn new(value: CanonicalValue) -> Self {
+        Self(value)
+    }
+
+    /// Returns the canonical value.
+    #[must_use]
+    pub const fn value(&self) -> &CanonicalValue {
+        &self.0
+    }
+}
+
+/// Which family of resolved types one semantic definition governs.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ValueTypeDefinitionKey {
+    /// One exact nominal type.
+    Nominal(TypeKey),
+    /// Every admitted instance of one parameterized constructor.
+    Parameterized(TypeKey),
+    /// Every admitted static contract for one encoded-numeric scheme.
+    EncodedNumeric(QuantSchemeKey),
+}
+
+impl ValueTypeDefinitionKey {
+    fn for_value(value: &ResolvedValueType) -> Self {
+        if let Some(key) = value.nominal_key() {
+            return Self::Nominal(key.clone());
+        }
+        if let Some((constructor, _)) = value.parameterized_parts() {
+            return Self::Parameterized(constructor.clone());
+        }
+        let (scheme, _) = value
+            .encoded_numeric_parts()
+            .expect("resolved value type has one governed variant");
+        Self::EncodedNumeric(scheme.clone())
+    }
+
+    fn encode(&self, output: &mut Vec<u8>) {
+        match self {
+            Self::Nominal(key) => {
+                output.push(1);
+                encode_type_key(output, key);
+            }
+            Self::Parameterized(key) => {
+                output.push(2);
+                encode_type_key(output, key);
+            }
+            Self::EncodedNumeric(key) => {
+                output.push(3);
+                encode_bytes(output, key.namespace().as_bytes());
+                encode_bytes(output, key.name().as_bytes());
+                output.extend_from_slice(&key.semantic_version().to_be_bytes());
+            }
+        }
+    }
+}
+
+/// Typed rejection produced by a semantic type-family validator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TypeInstanceError {
+    code: String,
+    message: String,
+}
+
+impl TypeInstanceError {
+    /// Creates a provider-attributed, stable-code instance rejection.
+    #[must_use]
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Returns the stable diagnostic code.
+    #[must_use]
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// Returns provider diagnostic detail.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for TypeInstanceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.code, self.message)
+    }
+}
+
+impl Error for TypeInstanceError {}
+
+/// Additional immutable validation for instances of one registered type family.
+///
+/// Structural bounds, family-key matching, and referenced-type admission are
+/// always checked by the host before this validator runs.
+pub trait ValueTypeInstanceValidator: Send + Sync + 'static {
+    /// Validates additional semantic predicates for one bounded instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable provider diagnostic when the instance is not admitted.
+    fn validate(&self, value: &ResolvedValueType) -> Result<(), TypeInstanceError>;
+}
+
+#[derive(Debug)]
+struct AcceptStructurallyValid;
+
+impl ValueTypeInstanceValidator for AcceptStructurallyValid {
+    fn validate(&self, _: &ResolvedValueType) -> Result<(), TypeInstanceError> {
+        Ok(())
+    }
+}
+
+/// Portable semantic definition of one nominal type, constructor, or scheme.
+#[derive(Clone)]
+pub struct ValueTypeDefinition {
+    key: ValueTypeDefinitionKey,
+    normative_definition: NormativeDefinitionRef,
+    canonical_facts: TypeDefinitionFacts,
+    validator: Arc<dyn ValueTypeInstanceValidator>,
+}
+
+impl fmt::Debug for ValueTypeDefinition {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValueTypeDefinition")
+            .field("key", &self.key)
+            .field("normative_definition", &self.normative_definition)
+            .field("canonical_facts", &self.canonical_facts)
+            .field("validator", &"ValueTypeInstanceValidator(..)")
+            .finish()
+    }
+}
+
+impl ValueTypeDefinition {
+    /// Creates a definition with additional immutable instance validation.
+    #[must_use]
+    pub fn new(
+        key: ValueTypeDefinitionKey,
+        normative_definition: NormativeDefinitionRef,
+        canonical_facts: TypeDefinitionFacts,
+        validator: Arc<dyn ValueTypeInstanceValidator>,
+    ) -> Self {
+        Self {
+            key,
             normative_definition,
             canonical_facts,
-        })
+            validator,
+        }
     }
 
-    /// Returns the complete resolved value type being defined.
+    /// Creates a definition whose family-key, structure, and references are
+    /// sufficient for admission.
     #[must_use]
-    pub const fn resolved_type(&self) -> &ResolvedValueType {
-        &self.resolved_type
+    pub fn structurally_valid(
+        key: ValueTypeDefinitionKey,
+        normative_definition: NormativeDefinitionRef,
+        canonical_facts: TypeDefinitionFacts,
+    ) -> Self {
+        Self::new(
+            key,
+            normative_definition,
+            canonical_facts,
+            Arc::new(AcceptStructurallyValid),
+        )
     }
 
-    /// Returns the exact normative-definition reference.
+    /// Returns the governed family key.
     #[must_use]
-    pub fn normative_definition(&self) -> &str {
+    pub const fn key(&self) -> &ValueTypeDefinitionKey {
+        &self.key
+    }
+
+    /// Returns the normative definition reference.
+    #[must_use]
+    pub const fn normative_definition(&self) -> &NormativeDefinitionRef {
         &self.normative_definition
     }
 
-    /// Returns the bounded canonical semantic facts.
+    /// Returns bounded canonical semantic facts.
     #[must_use]
-    pub const fn canonical_facts(&self) -> &ResolvedValueTypeArgument {
+    pub const fn canonical_facts(&self) -> &TypeDefinitionFacts {
         &self.canonical_facts
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 struct RegisteredValueType {
     definition: ValueTypeDefinition,
     provider: ProviderIdentity,
 }
 
-/// A statically linked source of semantic type definitions and marker bindings.
+/// A statically linked source of semantic definitions and optional marker bindings.
 ///
-/// Providers run only while a registry is built. They are not retained by the
-/// frozen registry or by semantic programs.
-pub trait SemanticRegistryProvider {
+/// The provider callback runs only while a registration batch is staged. It is
+/// not retained by the frozen registry.
+pub trait SemanticRegistryProvider: Send + Sync + 'static {
     /// Returns stable provider identity and output-affecting revision.
     fn identity(&self) -> ProviderIdentity;
 
-    /// Registers definitions through the host-owned transactional registrar.
+    /// Stages semantic definitions and local marker bindings.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] for invalid definitions or collisions.
+    /// Returns [`RegistryError`] without mutating the destination builder.
     fn register(&self, registrar: &mut SemanticRegistryRegistrar<'_>) -> Result<(), RegistryError>;
 }
 
 /// Mutable, single-use constructor for a frozen semantic registry.
-///
-/// Freezing consumes the builder, making post-freeze mutation impossible:
-///
-/// ```compile_fail
-/// use tiler_ir::semantic::SemanticRegistryBuilder;
-///
-/// let builder = SemanticRegistryBuilder::new();
-/// let _registry = builder.freeze().unwrap();
-/// let _second = builder.freeze();
-/// ```
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct SemanticRegistryBuilder {
-    definitions: BTreeMap<ResolvedValueType, RegisteredValueType>,
+    definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
+}
+
+impl fmt::Debug for SemanticRegistryBuilder {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SemanticRegistryBuilder")
+            .field("definition_count", &self.definitions.len())
+            .field("marker_count", &self.marker_bindings.len())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
 struct MarkerBinding {
     marker_name: &'static str,
     resolved_type: ResolvedValueType,
+}
+
+#[derive(Default)]
+struct RegistrationBatch {
+    definitions: BTreeMap<ValueTypeDefinitionKey, ValueTypeDefinition>,
+    marker_bindings: HashMap<TypeId, MarkerBinding>,
 }
 
 impl SemanticRegistryBuilder {
@@ -217,41 +387,69 @@ impl SemanticRegistryBuilder {
 
     /// Creates the mutable governed standard profile.
     ///
-    /// External providers may be registered on this builder before its single
-    /// freeze transition.
-    ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] if a governed built-in violates the same
-    /// registration contract applied to extensions.
+    /// Returns [`RegistryError`] if a governed built-in violates the public
+    /// provider contract.
     pub fn standard() -> Result<Self, RegistryError> {
         let mut builder = Self::new();
         builder.register_provider(&StandardValueTypes)?;
         Ok(builder)
     }
 
-    /// Applies one provider transactionally.
+    /// Applies one provider transactionally through an isolated staging batch.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] without changing this builder if the provider
-    /// fails, registers nothing, or collides with existing authority.
+    /// Returns [`RegistryError`] without changing this builder when the
+    /// provider fails, registers nothing, or collides with existing authority.
     pub fn register_provider(
         &mut self,
-        provider: &impl SemanticRegistryProvider,
+        provider: &(dyn SemanticRegistryProvider + 'static),
     ) -> Result<(), RegistryError> {
-        let mut candidate = self.clone();
-        let before = candidate.definitions.len();
         let identity = provider.identity();
-        let mut registrar = SemanticRegistryRegistrar {
-            builder: &mut candidate,
-            provider: identity.clone(),
-        };
-        provider.register(&mut registrar)?;
-        if candidate.definitions.len() == before {
+        let mut batch = RegistrationBatch::default();
+        provider.register(&mut SemanticRegistryRegistrar { batch: &mut batch })?;
+        if batch.definitions.is_empty() && batch.marker_bindings.is_empty() {
             return Err(RegistryError::ProviderRegisteredNothing { provider: identity });
         }
-        *self = candidate;
+        for key in batch.definitions.keys() {
+            if self.definitions.contains_key(key) {
+                return Err(RegistryError::DuplicateTypeAuthority {
+                    key: Arc::new(key.clone()),
+                });
+            }
+        }
+        for (marker, binding) in &batch.marker_bindings {
+            if let Some(existing) = self.marker_bindings.get(marker) {
+                return Err(RegistryError::DuplicateMarker {
+                    marker_name: existing.marker_name,
+                });
+            }
+            if self
+                .marker_bindings
+                .values()
+                .any(|existing| existing.resolved_type == binding.resolved_type)
+                || batch.marker_bindings.iter().any(|(other, existing)| {
+                    other != marker && existing.resolved_type == binding.resolved_type
+                })
+            {
+                return Err(RegistryError::DuplicateResolvedTypeMarker {
+                    resolved_type: Arc::new(binding.resolved_type.clone()),
+                });
+            }
+        }
+        self.definitions
+            .extend(batch.definitions.into_iter().map(|(key, definition)| {
+                (
+                    key,
+                    RegisteredValueType {
+                        definition,
+                        provider: identity.clone(),
+                    },
+                )
+            }));
+        self.marker_bindings.extend(batch.marker_bindings);
         Ok(())
     }
 
@@ -259,83 +457,79 @@ impl SemanticRegistryBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError::EmptyRegistry`] when no semantic authority was
-    /// registered.
+    /// Returns [`RegistryError`] when empty or when a marker target is not
+    /// admitted by the completed semantic authority set.
     pub fn freeze(self) -> Result<FrozenSemanticRegistry, RegistryError> {
         if self.definitions.is_empty() {
             return Err(RegistryError::EmptyRegistry);
         }
-        for (owner, registered) in &self.definitions {
-            let mut missing = None;
-            owner.visit_referenced_types(&mut |component| {
-                if missing.is_none() && !self.definitions.contains_key(component) {
-                    missing = Some(component.clone());
-                }
-            });
-            registered
-                .definition
-                .canonical_facts
-                .visit_referenced_types(&mut |component| {
-                    if missing.is_none() && !self.definitions.contains_key(component) {
-                        missing = Some(component.clone());
-                    }
-                });
-            if let Some(component) = missing {
-                return Err(RegistryError::UnregisteredComponentType {
-                    owner: Arc::new(owner.clone()),
-                    component: Arc::new(component),
-                });
-            }
-        }
-        let identity = compute_identity(&self.definitions);
-        Ok(FrozenSemanticRegistry(Arc::new(FrozenRegistryData {
+        let registry = FrozenSemanticRegistry(Arc::new(FrozenRegistryData {
+            identity: OnceLock::new(),
             definitions: self.definitions,
             marker_bindings: self.marker_bindings,
-            identity,
-        })))
+        }));
+        for binding in registry.0.marker_bindings.values() {
+            registry.validate_type(&binding.resolved_type)?;
+        }
+        let _ = registry.canonical_identity();
+        Ok(registry)
     }
 }
 
 /// Host-owned registration surface supplied to one semantic provider.
 pub struct SemanticRegistryRegistrar<'a> {
-    builder: &'a mut SemanticRegistryBuilder,
-    provider: ProviderIdentity,
+    batch: &'a mut RegistrationBatch,
 }
 
 impl SemanticRegistryRegistrar<'_> {
-    /// Registers one complete resolved identity and its canonical Rust marker.
+    /// Registers one semantic nominal, constructor, or scheme definition.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] for duplicate marker or semantic authority.
-    pub fn register_value_type<T: ValueTypeMarker>(
+    /// Returns [`RegistryError`] for duplicate authority within this provider.
+    pub fn register_value_type(
         &mut self,
         definition: ValueTypeDefinition,
     ) -> Result<(), RegistryError> {
+        let key = definition.key.clone();
+        if self
+            .batch
+            .definitions
+            .insert(key.clone(), definition)
+            .is_some()
+        {
+            return Err(RegistryError::DuplicateTypeAuthority { key: Arc::new(key) });
+        }
+        Ok(())
+    }
+
+    /// Binds one local Rust marker to a complete resolved semantic type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] for duplicate marker or resolved-type binding
+    /// within this provider batch.
+    pub fn bind_marker<T: ValueTypeMarker>(
+        &mut self,
+        resolved_type: ResolvedValueType,
+    ) -> Result<(), RegistryError> {
         let marker = TypeId::of::<T>();
-        if let Some(existing) = self.builder.marker_bindings.get(&marker) {
+        if self.batch.marker_bindings.contains_key(&marker) {
             return Err(RegistryError::DuplicateMarker {
-                marker_name: existing.marker_name,
+                marker_name: type_name::<T>(),
             });
         }
         if self
-            .builder
-            .definitions
-            .contains_key(definition.resolved_type())
+            .batch
+            .marker_bindings
+            .values()
+            .any(|binding| binding.resolved_type == resolved_type)
         {
-            return Err(RegistryError::DuplicateResolvedType {
-                resolved_type: Arc::new(definition.resolved_type().clone()),
+            return Err(RegistryError::DuplicateResolvedTypeMarker {
+                resolved_type: Arc::new(resolved_type),
             });
         }
-        let resolved_type = definition.resolved_type().clone();
-        self.builder.definitions.insert(
-            resolved_type.clone(),
-            RegisteredValueType {
-                definition,
-                provider: self.provider.clone(),
-            },
-        );
-        self.builder.marker_bindings.insert(
+        self.batch.marker_bindings.insert(
             marker,
             MarkerBinding {
                 marker_name: type_name::<T>(),
@@ -344,26 +538,50 @@ impl SemanticRegistryRegistrar<'_> {
         );
         Ok(())
     }
-}
 
-/// Immutable, cheap-clone semantic authority used by builders and programs.
-#[derive(Clone, Debug)]
-pub struct FrozenSemanticRegistry(Arc<FrozenRegistryData>);
-
-#[derive(Debug)]
-struct FrozenRegistryData {
-    definitions: BTreeMap<ResolvedValueType, RegisteredValueType>,
-    marker_bindings: HashMap<TypeId, MarkerBinding>,
-    identity: CanonicalSemanticRegistryIdentity,
-}
-
-impl FrozenSemanticRegistry {
-    /// Builds the standard registry profile containing `tiler::f32@1`.
+    /// Registers a definition and marker binding through the two independent
+    /// primitives as one provider convenience.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] if the governed built-in definition violates
-    /// the same public registration contract used by extensions.
+    /// Returns [`RegistryError`] for either registration failure.
+    pub fn register_marked_value_type<T: ValueTypeMarker>(
+        &mut self,
+        definition: ValueTypeDefinition,
+        resolved_type: ResolvedValueType,
+    ) -> Result<(), RegistryError> {
+        self.register_value_type(definition)?;
+        self.bind_marker::<T>(resolved_type)
+    }
+}
+
+/// Immutable, cheap-clone semantic authority used by builders and programs.
+#[derive(Clone)]
+pub struct FrozenSemanticRegistry(Arc<FrozenRegistryData>);
+
+impl fmt::Debug for FrozenSemanticRegistry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FrozenSemanticRegistry")
+            .field("definition_count", &self.0.definitions.len())
+            .field("marker_count", &self.0.marker_bindings.len())
+            .finish()
+    }
+}
+
+struct FrozenRegistryData {
+    definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
+    marker_bindings: HashMap<TypeId, MarkerBinding>,
+    identity: OnceLock<CanonicalSemanticRegistryIdentity>,
+}
+
+impl FrozenSemanticRegistry {
+    /// Builds the governed standard registry profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] if the governed definition violates the same
+    /// public contract used by extensions.
     pub fn standard() -> Result<Self, RegistryError> {
         static STANDARD: OnceLock<Result<FrozenSemanticRegistry, RegistryError>> = OnceLock::new();
         STANDARD
@@ -371,12 +589,12 @@ impl FrozenSemanticRegistry {
             .clone()
     }
 
-    /// Resolves one local Rust marker through this exact frozen snapshot.
+    /// Resolves one local marker through this exact frozen snapshot.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryLookupError::UnregisteredMarker`] when implementing
-    /// [`ValueTypeMarker`] was not accompanied by explicit registration.
+    /// Returns [`RegistryLookupError::UnregisteredMarker`] when the marker was
+    /// not explicitly bound.
     pub fn resolve_marker<T: ValueTypeMarker>(
         &self,
     ) -> Result<&ResolvedValueType, RegistryLookupError> {
@@ -389,35 +607,84 @@ impl FrozenSemanticRegistry {
             })
     }
 
-    /// Returns whether this snapshot contains semantic authority for a complete
-    /// resolved value type.
-    #[must_use]
-    pub fn contains(&self, resolved_type: &ResolvedValueType) -> bool {
-        self.0.definitions.contains_key(resolved_type)
+    /// Validates one complete resolved type against registered family authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] for missing authority, an unregistered nested
+    /// component, or provider semantic rejection.
+    pub fn validate_type(&self, value: &ResolvedValueType) -> Result<(), RegistryError> {
+        let key = ValueTypeDefinitionKey::for_value(value);
+        let registered = self.0.definitions.get(&key).ok_or_else(|| {
+            RegistryError::UnregisteredTypeAuthority {
+                key: Arc::new(key.clone()),
+            }
+        })?;
+        let mut failure = None;
+        value.visit_referenced_types(&mut |component| {
+            if failure.is_none()
+                && let Err(error) = self.validate_type(component)
+            {
+                failure = Some(error);
+            }
+        });
+        registered
+            .definition
+            .canonical_facts
+            .0
+            .visit_referenced_types(&mut |component| {
+                if failure.is_none()
+                    && let Err(error) = self.validate_type(component)
+                {
+                    failure = Some(error);
+                }
+            });
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        registered
+            .definition
+            .validator
+            .validate(value)
+            .map_err(|source| {
+                RegistryError::RejectedTypeInstance(Arc::new(TypeInstanceRejection {
+                    key,
+                    provider: registered.provider.clone(),
+                    source,
+                }))
+            })
     }
 
-    /// Returns the canonical provider-independent definition when registered.
+    /// Returns whether this snapshot admits a complete resolved value type.
+    #[must_use]
+    pub fn contains(&self, resolved_type: &ResolvedValueType) -> bool {
+        self.validate_type(resolved_type).is_ok()
+    }
+
+    /// Returns the governing family definition when registered.
     #[must_use]
     pub fn definition(&self, resolved_type: &ResolvedValueType) -> Option<&ValueTypeDefinition> {
         self.0
             .definitions
-            .get(resolved_type)
+            .get(&ValueTypeDefinitionKey::for_value(resolved_type))
             .map(|registered| &registered.definition)
     }
 
-    /// Returns the provider identity governing one registered definition.
+    /// Returns the provider governing one resolved type family.
     #[must_use]
     pub fn provider(&self, resolved_type: &ResolvedValueType) -> Option<&ProviderIdentity> {
         self.0
             .definitions
-            .get(resolved_type)
+            .get(&ValueTypeDefinitionKey::for_value(resolved_type))
             .map(|registered| &registered.provider)
     }
 
     /// Returns complete frozen semantic-registry provenance.
     #[must_use]
     pub fn canonical_identity(&self) -> &CanonicalSemanticRegistryIdentity {
-        &self.0.identity
+        self.0
+            .identity
+            .get_or_init(|| compute_identity(&self.0.definitions))
     }
 }
 
@@ -433,80 +700,116 @@ impl CanonicalSemanticRegistryIdentity {
     }
 }
 
-/// Failure to build or freeze semantic registry authority.
+/// Complete provider-attributed rejection of one concrete type instance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TypeInstanceRejection {
+    key: ValueTypeDefinitionKey,
+    provider: ProviderIdentity,
+    source: TypeInstanceError,
+}
+
+impl TypeInstanceRejection {
+    /// Returns the governing family key.
+    #[must_use]
+    pub const fn key(&self) -> &ValueTypeDefinitionKey {
+        &self.key
+    }
+
+    /// Returns the governing provider.
+    #[must_use]
+    pub const fn provider(&self) -> &ProviderIdentity {
+        &self.provider
+    }
+
+    /// Returns the provider-attributed instance error.
+    #[must_use]
+    pub const fn source_error(&self) -> &TypeInstanceError {
+        &self.source
+    }
+}
+
+/// Failure to build, freeze, or validate semantic registry authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RegistryError {
-    /// A provider identity component was invalid.
+    /// Provider identity did not satisfy canonical identity rules.
     InvalidProviderIdentity(TypeIdentityError),
-    /// Provider revision zero is reserved.
-    ZeroProviderRevision,
-    /// A normative-definition reference was empty.
-    EmptyNormativeDefinition,
-    /// A normative-definition reference exceeded its byte bound.
-    NormativeDefinitionTooLong {
-        /// Actual UTF-8 byte length.
-        bytes: usize,
-    },
-    /// A provider transaction registered no semantic definition.
+    /// No semantic definition was registered.
+    EmptyRegistry,
+    /// A provider transaction contained no semantic contribution.
     ProviderRegisteredNothing {
-        /// Provider that supplied no definition.
+        /// Provider which registered nothing.
         provider: ProviderIdentity,
     },
-    /// A Rust marker already had a binding.
+    /// Two providers or registrations claimed one semantic family key.
+    DuplicateTypeAuthority {
+        /// Duplicated family key.
+        key: Arc<ValueTypeDefinitionKey>,
+    },
+    /// One Rust marker was bound more than once.
     DuplicateMarker {
-        /// Diagnostic-only local Rust type name.
+        /// Diagnostic-only Rust marker name.
         marker_name: &'static str,
     },
-    /// A complete resolved identity already had semantic authority.
-    DuplicateResolvedType {
-        /// Colliding complete identity.
+    /// Two markers attempted to represent one complete resolved type.
+    DuplicateResolvedTypeMarker {
+        /// Duplicated complete type.
         resolved_type: Arc<ResolvedValueType>,
     },
-    /// A definition referenced a complete type absent from the same snapshot.
-    UnregisteredComponentType {
-        /// Definition containing the reference.
-        owner: Arc<ResolvedValueType>,
-        /// Missing referenced type.
-        component: Arc<ResolvedValueType>,
+    /// A resolved type had no registered nominal, constructor, or scheme authority.
+    UnregisteredTypeAuthority {
+        /// Missing family key.
+        key: Arc<ValueTypeDefinitionKey>,
     },
-    /// A frozen registry cannot be empty.
-    EmptyRegistry,
+    /// A registered family rejected one concrete instance.
+    RejectedTypeInstance(Arc<TypeInstanceRejection>),
+    /// A normative definition reference was empty.
+    EmptyNormativeDefinition,
+    /// A normative definition reference exceeded its byte bound.
+    NormativeDefinitionTooLong {
+        /// Actual UTF-8 bytes.
+        bytes: usize,
+    },
 }
 
 impl fmt::Display for RegistryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidProviderIdentity(error) => error.fmt(formatter),
-            Self::ZeroProviderRevision => formatter.write_str("provider revision zero is reserved"),
+            Self::InvalidProviderIdentity(source) => {
+                write!(formatter, "invalid provider identity: {source}")
+            }
+            Self::EmptyRegistry => formatter.write_str("semantic registry is empty"),
+            Self::ProviderRegisteredNothing { provider } => {
+                write!(formatter, "semantic provider {provider} registered nothing")
+            }
+            Self::DuplicateTypeAuthority { key } => {
+                write!(formatter, "duplicate type authority for {key:?}")
+            }
+            Self::DuplicateMarker { marker_name } => {
+                write!(formatter, "Rust marker {marker_name} is already bound")
+            }
+            Self::DuplicateResolvedTypeMarker { resolved_type } => write!(
+                formatter,
+                "resolved type {:?} already has a Rust marker",
+                resolved_type.canonical_encoding().as_bytes()
+            ),
+            Self::UnregisteredTypeAuthority { key } => {
+                write!(formatter, "no semantic authority for {key:?}")
+            }
+            Self::RejectedTypeInstance(rejection) => {
+                write!(
+                    formatter,
+                    "provider {} rejected {:?}: {}",
+                    rejection.provider, rejection.key, rejection.source
+                )
+            }
             Self::EmptyNormativeDefinition => {
-                formatter.write_str("normative-definition reference is empty")
+                formatter.write_str("normative definition reference is empty")
             }
             Self::NormativeDefinitionTooLong { bytes } => write!(
                 formatter,
-                "normative-definition reference has {bytes} bytes, exceeding {MAX_DEFINITION_REFERENCE_BYTES}"
+                "normative definition reference has {bytes} bytes, exceeding {MAX_DEFINITION_REFERENCE_BYTES}"
             ),
-            Self::ProviderRegisteredNothing { provider } => {
-                write!(
-                    formatter,
-                    "provider {provider} registered no semantic definitions"
-                )
-            }
-            Self::DuplicateMarker { marker_name } => {
-                write!(formatter, "Rust marker {marker_name} is already registered")
-            }
-            Self::DuplicateResolvedType { resolved_type } => write!(
-                formatter,
-                "resolved value type {:?} already has semantic authority",
-                resolved_type.canonical_encoding().as_bytes()
-            ),
-            Self::UnregisteredComponentType { owner, component } => write!(
-                formatter,
-                "resolved value type {:?} references unregistered component {:?}",
-                owner.canonical_encoding().as_bytes(),
-                component.canonical_encoding().as_bytes()
-            ),
-            Self::EmptyRegistry => formatter.write_str("semantic registry is empty"),
         }
     }
 }
@@ -514,19 +817,20 @@ impl fmt::Display for RegistryError {
 impl Error for RegistryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::InvalidProviderIdentity(error) => Some(error),
+            Self::InvalidProviderIdentity(source) => Some(source),
+            Self::RejectedTypeInstance(rejection) => Some(&rejection.source),
             _ => None,
         }
     }
 }
 
-/// Failure to resolve process-local evidence in a frozen registry.
+/// Failure to resolve a local Rust marker.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RegistryLookupError {
-    /// The marker trait was implemented but no provider bound this marker.
+    /// Marker was implemented but never explicitly bound.
     UnregisteredMarker {
-        /// Diagnostic-only local Rust type name.
+        /// Diagnostic-only Rust type name.
         marker_name: &'static str,
     },
 }
@@ -547,87 +851,70 @@ struct StandardValueTypes;
 
 impl SemanticRegistryProvider for StandardValueTypes {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-value-types", 1)
+        ProviderIdentity::new("tiler", "standard-value-types", 2)
             .expect("the governed standard provider identity is valid")
     }
 
     fn register(&self, registrar: &mut SemanticRegistryRegistrar<'_>) -> Result<(), RegistryError> {
-        let facts = ResolvedValueTypeArgument::record([
-            ResolvedValueTypeField::new(
-                1,
-                ResolvedValueTypeArgument::utf8("ieee-binary")
-                    .expect("the governed f32 class is bounded"),
+        let facts = TypeDefinitionFacts::new(
+            CanonicalValue::record([
+                CanonicalField::new(
+                    1,
+                    CanonicalValue::utf8("ieee-binary").expect("the governed F32 class is bounded"),
+                ),
+                CanonicalField::new(2, CanonicalValue::unsigned(32)),
+            ])
+            .expect("the governed F32 facts are canonical"),
+        );
+        registrar.register_marked_value_type::<F32>(
+            ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(
+                    TypeKey::new("tiler", "f32", 1).expect("the governed F32 key is valid"),
+                ),
+                NormativeDefinitionRef::new("IEEE 754-2019 binary32; tiler::f32@1")?,
+                facts,
             ),
-            ResolvedValueTypeField::new(2, ResolvedValueTypeArgument::unsigned(32)),
-        ])
-        .expect("the governed f32 facts are canonical");
-        registrar.register_value_type::<F32>(ValueTypeDefinition::new(
             F32::resolved_type(),
-            "IEEE 754-2019 binary32; tiler::f32@1",
-            facts,
-        )?)
+        )
     }
 }
 
 fn compute_identity(
-    definitions: &BTreeMap<ResolvedValueType, RegisteredValueType>,
+    definitions: &BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
 ) -> CanonicalSemanticRegistryIdentity {
-    let mut bytes = b"tiler.semantic-registry.v1\0".to_vec();
+    let mut bytes = b"tiler.semantic-registry.v2\0".to_vec();
     encode_len(&mut bytes, definitions.len());
-    for (resolved_type, registered) in definitions {
-        resolved_type.encode(&mut bytes);
+    for (key, registered) in definitions {
+        key.encode(&mut bytes);
         registered.provider.encode(&mut bytes);
         encode_bytes(
             &mut bytes,
-            registered.definition.normative_definition.as_bytes(),
+            registered
+                .definition
+                .normative_definition
+                .as_str()
+                .as_bytes(),
         );
-        registered.definition.canonical_facts.encode(&mut bytes);
+        registered.definition.canonical_facts.0.encode(&mut bytes);
     }
     CanonicalSemanticRegistryIdentity(bytes)
 }
 
-fn validate_provider_component(
-    component: IdentityComponent,
-    value: &str,
-) -> Result<(), RegistryError> {
-    if value.is_empty() {
-        return Err(RegistryError::InvalidProviderIdentity(
-            TypeIdentityError::EmptyComponent { component },
-        ));
-    }
-    if value.len() > MAX_IDENTITY_COMPONENT_BYTES {
-        return Err(RegistryError::InvalidProviderIdentity(
-            TypeIdentityError::ComponentTooLong {
-                component,
-                bytes: value.len(),
-            },
-        ));
-    }
-    for (index, byte) in value.bytes().enumerate() {
-        let valid =
-            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'.' | b'_' | b'-'));
-        if !valid {
-            return Err(RegistryError::InvalidProviderIdentity(
-                TypeIdentityError::InvalidComponentCharacter {
-                    component,
-                    byte_index: index,
-                },
-            ));
-        }
-    }
-    Ok(())
+fn encode_type_key(output: &mut Vec<u8>, key: &TypeKey) {
+    encode_bytes(output, key.namespace().as_bytes());
+    encode_bytes(output, key.name().as_bytes());
+    output.extend_from_slice(&key.semantic_version().to_be_bytes());
 }
 
 fn encode_len(output: &mut Vec<u8>, value: usize) {
     output.extend_from_slice(
         &u64::try_from(value)
-            .expect("bounded registry collection length fits u64")
+            .expect("supported usize fits u64")
             .to_be_bytes(),
     );
 }
 
 fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    debug_assert!(value.len() <= MAX_RESOLVED_TYPE_BYTES);
     encode_len(output, value.len());
     output.extend_from_slice(value);
 }
@@ -635,215 +922,225 @@ fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::semantic::{EncodedNumericContract, TypeArguments};
 
     enum ExternalF8 {}
     impl ValueTypeMarker for ExternalF8 {}
 
-    struct ExternalProvider;
+    fn external_f8() -> ResolvedValueType {
+        ResolvedValueType::nominal(TypeKey::new("acme", "f8-special", 1).unwrap())
+    }
 
+    struct ExternalProvider;
     impl SemanticRegistryProvider for ExternalProvider {
         fn identity(&self) -> ProviderIdentity {
-            ProviderIdentity::new("acme", "f8-semantics", 7).unwrap()
+            ProviderIdentity::new("acme", "value-types", 1).unwrap()
         }
 
         fn register(
             &self,
             registrar: &mut SemanticRegistryRegistrar<'_>,
         ) -> Result<(), RegistryError> {
-            registrar.register_value_type::<ExternalF8>(ValueTypeDefinition::new(
-                ResolvedValueType::nominal(TypeKey::new("acme", "f8-special", 1).unwrap()),
-                "https://example.invalid/acme/f8-special/v1",
-                ResolvedValueTypeArgument::record([
-                    ResolvedValueTypeField::new(1, ResolvedValueTypeArgument::unsigned(8)),
-                    ResolvedValueTypeField::new(
-                        2,
-                        ResolvedValueTypeArgument::utf8("external-test-format").unwrap(),
-                    ),
-                ])
-                .unwrap(),
-            )?)
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(TypeKey::new("acme", "f8-special", 1).unwrap()),
+                NormativeDefinitionRef::new("acme f8 special v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::unsigned(8)),
+            ))?;
+            registrar.bind_marker::<ExternalF8>(external_f8())
+        }
+    }
+
+    struct Families;
+    impl SemanticRegistryProvider for Families {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("tiler", "families", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Parameterized(TypeKey::new("tiler", "complex", 1).unwrap()),
+                NormativeDefinitionRef::new("tiler complex v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))?;
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::EncodedNumeric(
+                    QuantSchemeKey::new("tiler", "affine", 1).unwrap(),
+                ),
+                NormativeDefinitionRef::new("tiler affine v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))
         }
     }
 
     #[test]
-    fn standard_and_external_types_use_the_same_provider_path() {
+    fn semantic_definition_does_not_require_marker() {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&Families).unwrap();
+        let registry = builder.freeze().unwrap();
+        let complex = ResolvedValueType::parameterized(
+            TypeKey::new("tiler", "complex", 1).unwrap(),
+            TypeArguments::new([CanonicalValue::value_type(F32::resolved_type())]).unwrap(),
+        )
+        .unwrap();
+        assert!(registry.contains(&complex));
+    }
+
+    #[test]
+    fn encoded_instance_validates_referenced_storage() {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&ExternalProvider).unwrap();
+        builder.register_provider(&Families).unwrap();
+        let registry = builder.freeze().unwrap();
+        let encoded = ResolvedValueType::encoded_numeric(
+            QuantSchemeKey::new("tiler", "affine", 1).unwrap(),
+            EncodedNumericContract::new([CanonicalField::new(
+                1,
+                CanonicalValue::value_type(external_f8()),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(registry.contains(&encoded));
+    }
+
+    #[test]
+    fn marker_binding_is_optional_and_checked() {
         let mut builder = SemanticRegistryBuilder::standard().unwrap();
         builder.register_provider(&ExternalProvider).unwrap();
         let registry = builder.freeze().unwrap();
         assert_eq!(
-            registry.resolve_marker::<F32>().unwrap(),
-            &F32::resolved_type()
+            registry.resolve_marker::<ExternalF8>().unwrap(),
+            &external_f8()
         );
-        let resolved = registry.resolve_marker::<ExternalF8>().unwrap();
-        assert_eq!(resolved.nominal_key().unwrap().namespace(), "acme");
-        assert_eq!(registry.provider(resolved).unwrap().revision(), 7);
     }
 
     #[test]
-    fn marker_implementation_alone_grants_no_authority() {
-        assert!(matches!(
-            FrozenSemanticRegistry::standard()
-                .unwrap()
-                .resolve_marker::<ExternalF8>(),
-            Err(RegistryLookupError::UnregisteredMarker { .. })
-        ));
-    }
-
-    #[test]
-    fn provider_registration_is_transactional_on_collision() {
-        let mut builder = SemanticRegistryBuilder::new();
-        builder.register_provider(&ExternalProvider).unwrap();
-        let identity_before = compute_identity(&builder.definitions);
-
-        assert!(matches!(
-            builder.register_provider(&ExternalProvider),
-            Err(RegistryError::DuplicateMarker { .. })
-        ));
-        assert_eq!(compute_identity(&builder.definitions), identity_before);
-    }
-
-    #[test]
-    fn invalid_definition_and_duplicate_identity_are_rejected() {
-        enum Alias {}
-        impl ValueTypeMarker for Alias {}
-        struct AliasProvider;
-        impl SemanticRegistryProvider for AliasProvider {
-            fn identity(&self) -> ProviderIdentity {
-                ProviderIdentity::new("another", "f8-provider", 1).unwrap()
-            }
-
-            fn register(
-                &self,
-                registrar: &mut SemanticRegistryRegistrar<'_>,
-            ) -> Result<(), RegistryError> {
-                registrar.register_value_type::<Alias>(ValueTypeDefinition::new(
-                    ResolvedValueType::nominal(TypeKey::new("acme", "f8-special", 1).unwrap()),
-                    "https://example.invalid/another/f8/v1",
-                    ResolvedValueTypeArgument::boolean(true),
-                )?)
-            }
-        }
-
-        assert_eq!(
-            ValueTypeDefinition::new(
-                F32::resolved_type(),
-                "",
-                ResolvedValueTypeArgument::boolean(true)
-            ),
-            Err(RegistryError::EmptyNormativeDefinition)
-        );
-
-        let mut builder = SemanticRegistryBuilder::new();
-        builder.register_provider(&ExternalProvider).unwrap();
-        assert!(matches!(
-            builder.register_provider(&AliasProvider),
-            Err(RegistryError::DuplicateResolvedType { .. })
-        ));
-    }
-
-    #[test]
-    fn registry_identity_ignores_marker_type_ids_and_registration_order() {
-        enum Alias {}
-        impl ValueTypeMarker for Alias {}
-
-        struct AliasProvider;
-        impl SemanticRegistryProvider for AliasProvider {
-            fn identity(&self) -> ProviderIdentity {
-                ExternalProvider.identity()
-            }
-
-            fn register(
-                &self,
-                registrar: &mut SemanticRegistryRegistrar<'_>,
-            ) -> Result<(), RegistryError> {
-                let definition = ValueTypeDefinition::new(
-                    ResolvedValueType::nominal(TypeKey::new("acme", "f8-special", 1).unwrap()),
-                    "https://example.invalid/acme/f8-special/v1",
-                    ResolvedValueTypeArgument::record([
-                        ResolvedValueTypeField::new(1, ResolvedValueTypeArgument::unsigned(8)),
-                        ResolvedValueTypeField::new(
-                            2,
-                            ResolvedValueTypeArgument::utf8("external-test-format").unwrap(),
-                        ),
-                    ])
-                    .unwrap(),
-                )?;
-                registrar.register_value_type::<Alias>(definition)
-            }
-        }
-
+    fn registry_identity_ignores_provider_registration_order() {
         let mut first = SemanticRegistryBuilder::new();
+        first.register_provider(&StandardValueTypes).unwrap();
         first.register_provider(&ExternalProvider).unwrap();
+
         let mut second = SemanticRegistryBuilder::new();
-        second.register_provider(&AliasProvider).unwrap();
+        second.register_provider(&ExternalProvider).unwrap();
+        second.register_provider(&StandardValueTypes).unwrap();
+
         assert_eq!(
             first.freeze().unwrap().canonical_identity(),
             second.freeze().unwrap().canonical_identity()
         );
-
-        let mut standard_then_external = SemanticRegistryBuilder::new();
-        standard_then_external
-            .register_provider(&StandardValueTypes)
-            .unwrap();
-        standard_then_external
-            .register_provider(&ExternalProvider)
-            .unwrap();
-        let mut external_then_standard = SemanticRegistryBuilder::new();
-        external_then_standard
-            .register_provider(&ExternalProvider)
-            .unwrap();
-        external_then_standard
-            .register_provider(&StandardValueTypes)
-            .unwrap();
-        assert_eq!(
-            standard_then_external
-                .freeze()
-                .unwrap()
-                .canonical_identity(),
-            external_then_standard
-                .freeze()
-                .unwrap()
-                .canonical_identity()
-        );
     }
 
     #[test]
-    fn freeze_rejects_dangling_parameterized_component_types() {
-        enum ComplexF32 {}
-        impl ValueTypeMarker for ComplexF32 {}
-
-        struct ComplexProvider;
-        impl SemanticRegistryProvider for ComplexProvider {
+    fn freeze_rejects_marker_without_semantic_authority() {
+        struct MarkerOnly;
+        impl SemanticRegistryProvider for MarkerOnly {
             fn identity(&self) -> ProviderIdentity {
-                ProviderIdentity::new("acme", "complex", 1).unwrap()
+                ProviderIdentity::new("acme", "marker-only", 1).unwrap()
             }
 
             fn register(
                 &self,
                 registrar: &mut SemanticRegistryRegistrar<'_>,
             ) -> Result<(), RegistryError> {
-                let resolved = ResolvedValueType::parameterized(
-                    TypeKey::new("tiler", "complex", 1).unwrap(),
-                    [ResolvedValueTypeArgument::value_type(F32::resolved_type())],
-                )
-                .unwrap();
-                registrar.register_value_type::<ComplexF32>(ValueTypeDefinition::new(
-                    resolved,
-                    "https://example.invalid/complex/v1",
-                    ResolvedValueTypeArgument::boolean(true),
-                )?)
+                registrar.bind_marker::<ExternalF8>(external_f8())
             }
         }
 
-        let mut incomplete = SemanticRegistryBuilder::new();
-        incomplete.register_provider(&ComplexProvider).unwrap();
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&MarkerOnly).unwrap();
         assert!(matches!(
-            incomplete.freeze(),
-            Err(RegistryError::UnregisteredComponentType { .. })
+            builder.freeze(),
+            Err(RegistryError::UnregisteredTypeAuthority { .. })
         ));
+    }
 
-        let mut complete = SemanticRegistryBuilder::standard().unwrap();
-        complete.register_provider(&ComplexProvider).unwrap();
-        assert!(complete.freeze().is_ok());
+    #[test]
+    fn duplicate_authority_rejection_preserves_existing_builder() {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&ExternalProvider).unwrap();
+        assert!(matches!(
+            builder.register_provider(&ExternalProvider),
+            Err(RegistryError::DuplicateTypeAuthority { .. })
+        ));
+        assert!(builder.freeze().unwrap().contains(&external_f8()));
+    }
+
+    #[test]
+    fn family_validator_can_reject_a_structurally_valid_instance() {
+        struct Reject;
+        impl ValueTypeInstanceValidator for Reject {
+            fn validate(&self, _: &ResolvedValueType) -> Result<(), TypeInstanceError> {
+                Err(TypeInstanceError::new(
+                    "unsupported-component",
+                    "the component is not a real scalar",
+                ))
+            }
+        }
+
+        struct RejectingFamily;
+        impl SemanticRegistryProvider for RejectingFamily {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("acme", "rejecting-family", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                registrar.register_value_type(ValueTypeDefinition::new(
+                    ValueTypeDefinitionKey::Parameterized(
+                        TypeKey::new("acme", "rejected", 1).unwrap(),
+                    ),
+                    NormativeDefinitionRef::new("acme rejected family")?,
+                    TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+                    Arc::new(Reject),
+                ))
+            }
+        }
+
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&RejectingFamily).unwrap();
+        let registry = builder.freeze().unwrap();
+        let value = ResolvedValueType::parameterized(
+            TypeKey::new("acme", "rejected", 1).unwrap(),
+            TypeArguments::new([CanonicalValue::value_type(F32::resolved_type())]).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            registry.validate_type(&value),
+            Err(RegistryError::RejectedTypeInstance(_))
+        ));
+    }
+
+    #[test]
+    fn provider_failure_is_transactional_without_cloning_callback_state() {
+        struct Failing;
+        impl SemanticRegistryProvider for Failing {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("acme", "failing", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                    ValueTypeDefinitionKey::Nominal(TypeKey::new("acme", "temporary", 1).unwrap()),
+                    NormativeDefinitionRef::new("temporary")?,
+                    TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+                ))?;
+                Err(RegistryError::EmptyNormativeDefinition)
+            }
+        }
+
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        assert!(builder.register_provider(&Failing).is_err());
+        let registry = builder.freeze().unwrap();
+        assert!(!registry.contains(&ResolvedValueType::nominal(
+            TypeKey::new("acme", "temporary", 1).unwrap()
+        )));
     }
 }
