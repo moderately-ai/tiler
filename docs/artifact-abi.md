@@ -66,74 +66,39 @@ entries referenced by different plan variants or steps.
 
 ```rust
 struct MetalPayload {
-    format_version: u32,
-    ir_version: u32,
-    codegen_version: String,
-    target: MetalTarget,
-    target_profile_id: String,
-    target_profile_descriptor_hash: Hash256,
-    capability_schema_versions: Vec<SchemaVersion>,
-    feasibility_rule_set: RuleSetIdentity,
-    artifact_execution_contract: ArtifactExecutionContract,
-    cost_model_version: String,
-    compiler: CompilerFingerprint,
-    manifest_hash: Hash256,
-    metallib_hash: Hash256,
-    bundle_hash: Hash256,
-    metallib: Bytes,
-    kernels: Vec<KernelEntry>,
-    programs: Vec<ProgramPlan>,
+    payload_schema: SchemaVersion,
+    representation: MetalMetallib,
+    compatibility: AppleMetalCompatibility,
+    compiler: MetalCompilerProvenance,
+    entries: Vec<MetalEntryMapping>,
+    code_section: SectionId,
+    optional_reflection_section: Option<SectionId>,
 }
 
-struct ProgramPlan {
-    semantic_hash: Hash256,
-    inputs: Vec<TensorSpec>,
-    outputs: Vec<TensorSpec>,
-    semantic_root_bindings: Vec<SemanticRootBinding>,
-    semantic_constraints: Vec<SemanticConstraint>,
-    numeric_contract: NumericContract,
-    variants: Vec<PlanVariant>,
-    routing: RoutingPolicy,
-}
-
-struct PlanVariant {
-    plan_hash: Hash256,
-    applicability_guards: Vec<RuntimeGuard>,
-    target_requirements: Vec<TargetRequirement>,
-    deferred_target_checks: Vec<DeferredTargetCheck>,
-    buffer_plan: BufferPlan,
-    temporaries: Vec<TemporaryTensor>,
-    steps: Vec<KernelStep>,
-}
-
-struct BufferPlan {
-    allocations: Vec<Allocation>,
-    value_bindings: Vec<ValueAllocationBinding>,
-    lifetime_intervals: Vec<LifetimeInterval>,
-}
-
-struct KernelStep {
-    kernel_entry: KernelEntryId,
-    tensor_bindings: Vec<PlanValueId>,
-    dependencies: Vec<StepId>,
-    numeric_realizations: Vec<NumericRealizationRef>,
-}
-
-struct KernelEntry {
-    scheduled_hash: Hash256,
+struct MetalEntryMapping {
+    backend_entry_key: BackendEntryKey,
+    neutral_entry: ExecutableEntryId,
     symbol: String,
-    bindings: Vec<Binding>,
-    dispatch: DispatchFormula,
-    function_constants: Vec<FunctionConstantSpec>,
-    static_threadgroup_bytes: u32,
-    resource_requirements: ResourceRequirements,
+    bindings: Vec<MetalBindingMapping>,
+    function_constants: Vec<MetalFunctionConstantMapping>,
+    dispatch_api: MetalDispatchConvention,
+}
+
+struct MetalBindingMapping {
+    neutral_binding: EntryBindingId,
+    transport: BufferIndex | InlineBytes | ConstantBufferField,
 }
 ```
 
 This is the Metal payload/profile view, not the neutral envelope schema. It is
 illustrative, not a committed Rust API or serialization format. The
-Milestone 2 one-kernel path is a program with one variant, no temporaries, and
-one step.
+full canonical `KernelProgram`, program portfolio, neutral ABI, guards,
+routing, checked launch expressions, numerical realizations, resources, and
+named outputs occur exactly once in neutral sections. Metal metadata only maps
+those stable neutral IDs to Metal transport and executable spellings. Any
+duplicated neutral executable authority makes the envelope invalid. The
+Milestone 2 one-kernel path remains a neutral program with one variant, no
+temporaries, and one step.
 
 The manifest carries governed capability-key and feasibility-rule schema
 versions, exact/proven resource requirements, and each deferred predicate's
@@ -435,15 +400,25 @@ toolchain scope, or classification changes manifest, bundle, and expansion-
 cache identity even when generated code bytes happen to remain equal.
 
 ```text
-semantic_hash  = H(canonical semantic graph + semantic root-binding interface
-                   + operation contract)
-scheduled_hash = H(semantic_hash + scheduled IR + target/profile/policy)
-plan_hash       = H(semantic_hash + canonical steps/temps/guards)
-manifest_hash  = H(canonical embedded manifest payload with hash fields and metallib
-                   byte payload excluded)
-metallib_hash  = H(raw metallib bytes)
-bundle_hash    = H(format tag || manifest_hash || metallib_hash)
+semantic_digest = H("tiler-semantic-v1" || canonical semantic bytes)
+scheduled_digest = H("tiler-schedule-v1" || semantic_digest
+                     || canonical scheduled bytes)
+plan_digest = H("tiler-program-v1" || semantic_digest
+                || canonical program bytes)
+section_digest[i] = H("tiler-section-v1" || section_type/schema
+                      || exact section bytes)
+manifest_digest = H("tiler-manifest-v1" || exact canonical manifest bytes)
+envelope_digest = H("tiler-envelope-v1" || exact complete envelope bytes)
 ```
+
+Section digests are stored only in manifest section descriptors. The manifest
+digest is stored only in the framing header and covers the exact manifest bytes,
+which contain no `manifest_digest` or `envelope_digest` field. `EnvelopeDigest`
+is externally derived and never stored inside the envelope it covers. Semantic,
+scheduled, and plan digests may appear as cross-reference values, but their
+canonical subject bytes and domain separators are fixed and independently
+validated. No field is hashed through a zeroing convention or recursive
+definition.
 
 Stable canonical IR, MSL, manifest, and cache keys are required. Tiler promises
 deterministic source, manifest, and identity construction; it does not promise

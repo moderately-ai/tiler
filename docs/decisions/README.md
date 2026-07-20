@@ -58,6 +58,8 @@ accepted. Unresolved questions are collected in
 - [0049: Select artifact families explicitly at inline invocations](0049-explicit-artifact-family-selection.md) — accepted
 - [0050: Use immutable self-validating expansion-cache entries](0050-use-immutable-self-validating-expansion-cache-entries.md) — accepted
 - [0051: Make runtime routing commit one-way before program work](0051-make-runtime-routing-commit-one-way.md) — accepted
+- [0052: Use stable interface keys and host-canonical attributes](0052-use-stable-interface-keys-and-host-canonical-attributes.md) — accepted
+- [0053: Gate artifact delivery and failures by consumer family](0053-gate-artifact-delivery-by-consumer-family.md) — accepted
 
 ## Template
 

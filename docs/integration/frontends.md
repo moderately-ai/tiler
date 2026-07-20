@@ -87,9 +87,14 @@ The proc macro synchronously performs:
 8. Emit them as byte-string literals together with runtime selection and
    fallback code.
 
-External compiler failures become `compile_error!` diagnostics associated with
-the invocation span. Debug configuration may retain canonical MSL and tool
-diagnostics under the cache entry.
+Target-neutral parse, semantic, optimizer, verifier, and envelope failures
+become unconditional `compile_error!` diagnostics associated with the invocation
+span. A selected artifact family's unavailable toolchain or external compiler
+failure is retained as a family-scoped diagnostic and emitted under that
+family's governed consumer `#[cfg]`; it is fatal when the consumer target
+matches that requested family but does not break an unrelated fallback-only
+target. Debug configuration may retain canonical MSL and tool diagnostics under
+the cache entry.
 
 Rust procedural macros execute during compilation with the compiler's file and
 process resources, so host tool invocation is within their execution model; it
@@ -185,6 +190,30 @@ choose among compatible embedded families. An unselected or unavailable family
 uses the integration's semantic fallback where allowed, or produces an explicit
 unsupported-AOT diagnostic; it never receives a host-family artifact.
 
+The selection also carries a delivery policy:
+
+```text
+ArtifactDeliveryPolicy =
+    SelectedFamilies([AppleArtifactFamily], RequiredWhenTargetMatches)
+  | FallbackOnly
+```
+
+For each selected family, successful expansion embeds its payload under the
+family's governed consumer-target `#[cfg]`. If that family cannot be built on
+the macro host, expansion emits the retained toolchain/compiler diagnostic as a
+`#[cfg]`-gated `compile_error!` item and emits the semantic fallback for
+nonmatching targets. Thus a Linux host building Linux can use the same portable
+source without Metal, while a Linux host cross-building a selected macOS family
+gets a deterministic unsupported-cross-AOT error. The proc macro does not need
+to observe the consumer target to make either decision.
+
+An unselected family intentionally uses fallback. `FallbackOnly` is a valid
+explicit profile and performs no backend compiler work. A frontend may expose a
+separate explicit “acceleration required” policy, but it cannot silently turn a
+selected-family build failure into fallback on the matching target. The mapping
+from family to consumer `cfg` predicate is versioned Tiler data and covered by
+generated-code tests.
+
 Platform policy, SDK, deployment target, and Metal language version participate
 in artifact identity. No target is silently inferred from the proc-macro host
 when that would produce an incompatible artifact.
@@ -260,10 +289,12 @@ property is unavailable or let fallback observe a different value. If neither
 path can bind the declared semantic interface, execution returns a typed
 interface/binding error rather than silently changing the computation.
 
-Artifact compilation errors on a supported native Metal build are compile-time
-errors rather than silent fallback; otherwise broken generated code could ship
-unnoticed. Runtime applicability misses may use fallback before custom-op
-application as described in [Candle integration](candle.md).
+Artifact compilation errors for a selected family are compile-time errors when
+the consumer target matches that family rather than silent fallback; otherwise
+broken generated code could ship unnoticed. Family-scoped `cfg` delivery keeps
+the same invocation portable to unrelated fallback targets. Runtime
+applicability misses may use fallback before custom-op application as described
+in [Candle integration](candle.md).
 
 ## Feasibility evidence and remaining vertical checks
 

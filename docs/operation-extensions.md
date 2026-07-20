@@ -132,6 +132,13 @@ Tiler, not arbitrary extension `Serialize` output. The contract defines:
 Providers declare attribute schemas/defaults and validate semantic constraints;
 the host canonicalizes, bounds, serializes, and hashes the data.
 
+The accepted v1 model is the discriminated `CanonicalAttrValue` defined in
+[the IR contract](ir.md): fixed-width signed/unsigned bits, governed float bits,
+bytes, exact UTF-8, type keys, ordered sequences, and records keyed by stable
+`AttributeFieldId`. It has one tagged big-endian identity encoding, rejects
+unknown/duplicate fields, and resolves schema defaults before hashing. Provider
+Rust structs and serializer output are never durable identity.
+
 ## Mandatory definition and optional capabilities
 
 Exactly one semantic authority owns an `OpKey`. Its mandatory definition

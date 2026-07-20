@@ -72,7 +72,8 @@ operation/value model below.
 
 ```text
 ProgramInput {
-    name,
+    key: ProgramInputKey,
+    display_name?,
     tensor_type_or_constraints,
 }
 
@@ -89,7 +90,8 @@ Value {
 }
 
 ProgramResult {
-    name,
+    key: ProgramOutputKey,
+    display_name?,
     value: ValueId,
     result_contract,
 }
@@ -102,8 +104,14 @@ are a separate ordered, named list of value references rather than synthetic
 `Output` operations. A program may return several independently shaped and
 typed tensors, and two result declarations may intentionally reference the
 same value.
-Whether result names participate in semantic identity remains open; ordered
-result arity, value references, and result contracts do participate.
+`ProgramInputKey` and `ProgramOutputKey` are stable newtyped interface keys and
+participate in semantic identity together with ordered position, referenced
+value, type/constraints, and result contract. They are not diagnostic names. A
+frontend that does not expose authored keys deterministically assigns
+`input/<ordinal>` and `output/<ordinal>`. Optional display names and source spans
+do not participate in identity and may change without invalidating a program.
+Two interface entries cannot share a key even when two outputs intentionally
+reference the same value.
 
 All initial semantic values are tensors; rank-zero tensors represent scalar
 data. This initial restriction is not a claim that every future graph value
@@ -115,8 +123,38 @@ covers runtime tensor parameters and immutable weights.
 identity. Shape/index metadata scalars are not tensor values and instead enter
 through declared symbolic sources. Externalizing a large constant is an
 artifact-packaging policy and must not silently change semantic identity.
-Whether input names participate in identity follows the same unresolved policy
-as result names.
+Input interface keys participate in identity; optional display names do not.
+
+Canonical operation attributes use this bounded host-owned data model:
+
+```text
+CanonicalAttrValue =
+    Bool
+  | SignedInt { width: 8 | 16 | 32 | 64, bits }
+  | UnsignedInt { width: 8 | 16 | 32 | 64, bits }
+  | FloatBits { format: TypeKey, bits }
+  | Bytes
+  | Utf8String
+  | Type(TypeKey)
+  | Sequence([CanonicalAttrValue])
+  | Record([(AttributeFieldId, CanonicalAttrValue)])
+```
+
+`AttributeFieldId(u32)` is stable within one versioned operation attribute
+schema. Record fields are sorted by ID and unique; sequence order is semantic.
+Strings are exact valid UTF-8 bytes with no implicit Unicode normalization.
+Integers never use host `usize`/`isize`, and floats are raw governed-format bits
+so signed zero and NaN payloads are not host-normalized. Recursion, bytes,
+items, string length, and collection sizes are checked against host limits.
+
+The schema resolves defaults before canonicalization: a field equal to its
+declared default has one canonical representation, which is omission unless the
+schema marks presence itself semantic. Unknown fields are rejected in the
+initial lockstep schema. The v1 identity encoder uses explicit one-byte kind and
+integer-width tags, big-endian integer payloads, big-endian `u64` byte/item
+lengths, big-endian `u32` field IDs, and exact payload bytes; records use sorted
+field IDs. This identity encoding is Tiler-owned and is not ordinary provider
+serialization or the still-unselected public artifact codec.
 
 Element-type representability is intentionally broader than executable
 operation support. A tensor may carry a recognized exact element type through

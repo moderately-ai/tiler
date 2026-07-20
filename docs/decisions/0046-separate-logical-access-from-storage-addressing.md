@@ -15,7 +15,7 @@ descriptors. Dynamic reshape also demonstrates that “affine” alone is too
 narrow: its logical map may require multiplication, floor division, or modulo
 by symbolic extents even though it remains independent of tensor data.
 
-## Proposed decision
+## Decision
 
 An `IndexRegion` owns a bounded exact-integer iteration domain and
 `TensorAccessMap`s from iteration coordinates plus admitted host-evaluable

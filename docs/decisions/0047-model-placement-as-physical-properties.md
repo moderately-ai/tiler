@@ -16,7 +16,7 @@ portable meaning depend on one process and backend. Conversely, treating
 placement as an informal kernel annotation would hide required transfers and
 synchronization from whole-program correctness and cost.
 
-## Proposed decision
+## Decision
 
 Semantic tensor graphs remain device-neutral except for an explicitly authored
 and independently bound semantic `TargetProperty` root under ADR 0008.

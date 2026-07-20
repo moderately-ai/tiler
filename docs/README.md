@@ -14,17 +14,19 @@ choices are collected rather than silently resolved.
 
 ## Current design status
 
-These documents are research and design proposals, not an established public
-contract. ADR status is authoritative only for decisions explicitly reviewed
-and accepted. Integration-specific choices for einops, Candle, Rust macros, and
+These documents are research and design contracts for an experimental toolkit,
+not a stable public compatibility promise. ADR status is authoritative:
+accepted ADRs are current decisions, while proposed documents remain subject to
+revision. Integration-specific choices for einops, Candle, Rust macros, and
 Metal must not silently become constraints on the compiler toolkit core.
 
 The settled product direction is a tensor-specific, consumer-independent
 compiler toolkit with a public semantic graph boundary. Frontends translate
 their languages into that graph; optimizers and backends operate without
-depending on the originating syntax or consuming runtime. The inline Rust macro
-and Metal AOT flow remain an important proposed first integration and
-feasibility vehicle.
+depending on the originating syntax or consuming runtime. The inline Rust
+macro, self-contained AOT artifact, Metal backend, and Candle adapter boundaries
+are accepted first-integration contracts. Their production implementation and
+broad compatibility remain future work.
 
 ## Start here
 

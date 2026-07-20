@@ -119,6 +119,19 @@ already exists.
 8. No correctness or diagnostic behavior depends on undocumented
    rust-analyzer environment variables or on detecting `cargo check` versus
    code generation.
+9. Selected-family toolchain/compiler failures are retained and emitted through
+   governed consumer-target `#[cfg]` diagnostics. Nonmatching targets emit the
+   semantic fallback without requiring the proc macro to discover `TARGET`.
+   `FallbackOnly` is an explicit valid selection and performs no AOT work.
+
+The checked-in [`run-family-cfg.sh`](../../../spikes/macro-environment/run-family-cfg.sh)
+probe confirms on the measured host that a nonmatching family removes its
+`compile_error!` and executes fallback, while a matching macOS family produces
+the retained diagnostic. `rustc --print cfg` also confirms the governed Apple
+distinctions used by generated predicates: macOS has `target_os="macos"`, iOS
+device has empty `target_abi`, iOS simulator uses `target_abi="sim"`, and
+Catalyst uses `target_abi="macabi"`. The exact predicates remain versioned
+generated-code data and require compile tests for every supported Rust target.
 
 ## Options rejected
 

@@ -21,8 +21,6 @@ ADR when evidence is sufficient.
 
 ## Semantic graph and operation extensions
 
-- What bounded canonical attribute value model and schema/version policy is
-  used?
 - Which transactional rewrite API, recursion declarations, cycle detection,
   and application budgets are required?
 - Are several named graph results and first-class multi-result operations both
@@ -102,7 +100,6 @@ ADR when evidence is sufficient.
 - What cross-machine and cross-toolchain evidence qualifies an Apple toolchain
   row beyond the measured same-host boundary?
 - Which ergonomic explicit artifact-family profiles should frontends expose?
-- How is unsupported Apple cross-compilation diagnosed?
 - Which measured startup or size threshold would justify `MTLBinaryArchive`,
   offline pipeline binaries, or dynamic Metal libraries?
 - When, if ever, does the serialized IR become a public compatibility promise?

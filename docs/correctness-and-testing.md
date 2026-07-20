@@ -148,6 +148,10 @@ Benchmarks are not substitutes for these correctness cases.
 
 - Stable serialization round trips.
 - Hashes do not depend on construction order or transient IDs.
+- Program input/output interface keys participate in identity, while display
+  names and source spans do not. Tests cover duplicate-key rejection,
+  deterministic ordinal defaults, display-only renames, and two output keys
+  intentionally referencing the same value.
 - Operation/value graphs preserve use-def relationships, ordered named results,
   sharing, and individually typed multi-result operations.
 - Dead pure operations are removed before canonical identity; live operations
@@ -161,6 +165,10 @@ Benchmarks are not substitutes for these correctness cases.
   durable content.
 - Canonical attributes reject duplicate keys, noncanonical encodings, invalid
   defaults, excessive depth/count/bytes, and checked-size overflow.
+- Canonical-attribute vectors cover every integer width, signed zero and NaN
+  float-bit payloads, exact UTF-8, empty and boundary-length byte strings,
+  ordered sequences, sorted records, unknown fields, and equivalent
+  explicit/default representations.
 - Provider callbacks are deterministic under repeated/concurrent invocation;
   contradictory capabilities are hard diagnostics and recoverable panics are
   attributed to the provider without committing partial mutations.
@@ -249,10 +257,14 @@ optimizer tests remain platform-independent.
   time/memory and binary-size measurements.
 - Many identical invocations establish whether linker constant merging occurs;
   correctness never depends on it.
-- Native macOS embeds Metal; non-Apple builds select fallback without Apple
-  tools; unsupported cross-Apple builds fail with an actionable diagnostic.
-- A macOS-host non-Apple target's unnecessary Metal work is measured until
-  better target discovery or multi-platform generation is implemented.
+- Generated consumer-`cfg` tests cover macOS, iOS device, iOS simulator,
+  Catalyst, and an unrelated non-Apple target. A selected matching family
+  embeds its payload or emits its retained actionable compile error; a
+  nonmatching target compiles the semantic fallback; `FallbackOnly` performs
+  no backend compiler work.
+- A capable macOS host's selected-family work while compiling an unrelated
+  target is measured; the content cache bounds it, and correctness never
+  depends on proc-macro consumer-target discovery.
 - External Metal errors preserve invocation spans and retained canonical MSL.
 
 ## Candle integration tests

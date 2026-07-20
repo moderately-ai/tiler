@@ -12,6 +12,10 @@ fix the graph, shape, registry, and proc-macro visibility boundaries. The
 compile-checking operation API and normative reference slice validate the
 architecture; production implementation remains future work.
 
+The bullets below are the implementation scope authorized only after the
+research-readiness decision; they are not claims that the implementations
+already exist.
+
 - Define axes, reindexing, broadcasting, dtype, reduction, empty-domain,
   overflow, alias, and numerical policies.
 - Define operation conformance vectors and oracle precedence.
@@ -37,10 +41,13 @@ shape-source invariants are tested.
 
 ## Milestone 0B: Rust/Metal integration vertical feasibility
 
-**Research-contract status:** complete. ADRs 0002–0004, 0049–0051 and the
+**Research-contract status:** complete. ADRs 0002–0004, 0049–0053 and the
 artifact/cache/runtime spikes fix the AOT, inline-DX, family-selection,
 publication, and fallback boundaries. The actual Tiler macro-to-dispatch
 vertical remains implementation work.
+
+The bullets below are remaining vertical implementation and integration checks,
+not completed production capabilities.
 
 - Build a proc-macro spike that compiles fixed deterministic MSL with `xcrun`
   and emits manifest/metallib byte-string literals without consumer setup.

@@ -30,12 +30,21 @@ expansion runs, the complete compiler fingerprint changes the cache key. Cargo
 may not rerun expansion merely because Xcode or the external cache changed, so
 users and CI must force a rebuild after changing toolchains.
 
+Family selection is paired with explicit delivery policy. A selected family is
+required when the consumer target matches its governed `cfg`; if the macro host
+cannot build it, generated tokens contain a family-gated compile error. An
+unrelated target uses the semantic fallback. `FallbackOnly` is an explicit
+valid selection. The proc macro never needs to infer the consumer target from
+its host process.
+
 ## Consequences
 
 - Native and cross builds cannot silently receive a host-family metallib.
 - One invocation can deliberately embed several independently identified
   families without a registry or source scan.
 - Unselected SDK families incur no mandatory compiler work.
+- Portable source can build an unrelated fallback target without an installed
+  Apple toolchain while selected Apple cross-AOT still fails explicitly.
 - Cache deletion cannot break already generated code.
 - Tiler cannot promise automatic incremental invalidation for external
   toolchain changes on stable Rust.
