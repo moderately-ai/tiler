@@ -1,7 +1,7 @@
 ---
 id: spike-sound-region-accuracy-analyzer-integration
 title: Spike sound region-accuracy analyzer integration
-status: todo
+status: done
 priority: p2
 dependencies: [research-region-accuracy-contracts-and-analyzable-error-budgets]
 related: []

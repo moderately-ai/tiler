@@ -1,0 +1,27 @@
+[
+  {
+    "case": "data_dependent_branch",
+    "reason": "unsupported_control_flow",
+    "detail": "The initial profile admits branch-free scalar expressions only."
+  },
+  {
+    "case": "unbounded_reduction",
+    "reason": "unbounded_scalarization",
+    "detail": "A reduction needs a fixed contributor count before scalarization."
+  },
+  {
+    "case": "target_transcendental",
+    "reason": "missing_implementation_error_profile",
+    "detail": "A real-function roundoff proof does not prove a target intrinsic implementation."
+  },
+  {
+    "case": "flush_to_zero_target",
+    "reason": "unsupported_subnormal_semantics",
+    "detail": "The analyzer profile must match the target's effective subnormal behavior."
+  },
+  {
+    "case": "possible_overflow",
+    "reason": "unproved_finite_range",
+    "detail": "The initial adapter rejects rather than treating overflow as real-number error."
+  }
+]

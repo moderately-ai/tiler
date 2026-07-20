@@ -1,7 +1,7 @@
 # Region accuracy contracts and analyzable error budgets
 
-**Status:** contract model established; sound tensor-region certification
-remains a separate feasibility gate
+**Status:** contract model established; a narrow trusted-analyzer feasibility
+gate passed, with independent certificate checking still open
 
 ## Outcome
 
@@ -223,6 +223,12 @@ approximations. It must record:
 A useful result is not necessarily a tight proof for every graph. Fast,
 non-vacuous certificates for common modest regions justify enabling the layer;
 conservative `Unknown` for unsupported regions preserves correctness.
+
+The follow-up [sound analyzer integration spike](sound-region-analyzer-spike.md)
+found this profile feasible with a pinned Daisy trusted-analyzer boundary. It
+does not yet authorize delegated numerical freedoms: the production adapter,
+evidence envelope, timeout isolation, and negative corpus remain implementation
+gates, and independently checked certificates remain a separate research item.
 
 ## Primary sources
 

@@ -1,0 +1,4 @@
+materialized_f16 = {
+  x: Float32
+  q: Float16
+}
