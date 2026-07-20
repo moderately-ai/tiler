@@ -1,0 +1,67 @@
+{
+  "schema": "tiler.shape-evidence-measurement/v1",
+  "measured_at": "2026-07-20",
+  "host": {
+    "model": "MacBook Pro MX2K3LL/A",
+    "chip": "Apple M4 Max",
+    "cores": "14 (10 performance, 4 efficiency)",
+    "memory_gib": 36,
+    "os": "macOS 27.0.0",
+    "target": "aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "1.89.0 (29483883e 2025-08-04)",
+    "cargo": "1.89.0 (c24e10642 2025-06-23)",
+    "llvm": "20.1.7"
+  },
+  "method": {
+    "cold_check": "cargo clean -p shape-evidence-spike, then cargo check --bin",
+    "incremental_check": "touch the selected generated bin after cold check, then cargo check --bin",
+    "optimized_build": "cargo build --release --bin after the incremental check",
+    "samples_per_case": 1,
+    "timer": "/usr/bin/time -lp"
+  },
+  "results": [
+    {
+      "distinct_shapes": 1,
+      "cold_check_seconds": 0.07,
+      "incremental_check_seconds": 0.03,
+      "optimized_build_seconds": 0.07,
+      "cold_check_peak_rss_mib": 97.9,
+      "incremental_check_peak_rss_mib": 61.4,
+      "optimized_build_peak_rss_mib": 88.7,
+      "optimized_binary_bytes": 404016
+    },
+    {
+      "distinct_shapes": 10,
+      "cold_check_seconds": 0.07,
+      "incremental_check_seconds": 0.03,
+      "optimized_build_seconds": 0.08,
+      "cold_check_peak_rss_mib": 98.0,
+      "incremental_check_peak_rss_mib": 61.7,
+      "optimized_build_peak_rss_mib": 89.2,
+      "optimized_binary_bytes": 404016
+    },
+    {
+      "distinct_shapes": 100,
+      "cold_check_seconds": 0.08,
+      "incremental_check_seconds": 0.04,
+      "optimized_build_seconds": 0.09,
+      "cold_check_peak_rss_mib": 98.0,
+      "incremental_check_peak_rss_mib": 64.7,
+      "optimized_build_peak_rss_mib": 94.4,
+      "optimized_binary_bytes": 404016
+    },
+    {
+      "distinct_shapes": 1000,
+      "cold_check_seconds": 0.17,
+      "incremental_check_seconds": 0.06,
+      "optimized_build_seconds": 0.19,
+      "cold_check_peak_rss_mib": 122.9,
+      "incremental_check_peak_rss_mib": 92.6,
+      "optimized_build_peak_rss_mib": 136.8,
+      "optimized_binary_bytes": 404016
+    }
+  ]
+}
+

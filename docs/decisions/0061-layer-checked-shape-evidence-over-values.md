@@ -8,13 +8,14 @@ catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.ir"]
-evidence: ["tiler.research.shapes.shape-environment-contract", "tiler.research.shapes.constraint-prover-boundary", "tiler.research.semantic-graph.rust-construction-lifecycle"]
+evidence: ["tiler.research.shapes.shape-environment-contract", "tiler.research.shapes.constraint-prover-boundary", "tiler.research.shapes.stable-rust-shape-evidence", "tiler.research.semantic-graph.rust-construction-lifecycle"]
 ticket: "prototype-semantic-reference-slice"
 ---
 
 # 0061: Layer checked shape evidence over canonical typed values
 
-**Status:** accepted
+**Status:** accepted; stable-Rust feasibility measured, production API not yet
+implemented
 
 ## Context
 

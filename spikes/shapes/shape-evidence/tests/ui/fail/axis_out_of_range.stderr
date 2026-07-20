@@ -1,0 +1,17 @@
+error[E0080]: evaluation panicked: reduction axis is out of range
+ --> src/lib.rs
+  |
+  |         const { assert!(A < R, "reduction axis is out of range") };
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `shape_evidence_spike::Builder::reduce_axis::<shape_evidence_spike::F32, 2, 2>::{constant#0}` failed here
+
+note: erroneous constant encountered
+ --> src/lib.rs
+  |
+  |         const { assert!(A < R, "reduction axis is out of range") };
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn shape_evidence_spike::Builder::reduce_axis::<shape_evidence_spike::F32, 2, 2>`
+ --> tests/ui/fail/axis_out_of_range.rs:7:13
+  |
+7 |     let _ = builder.reduce_axis(ranked, Axis::<2>);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
