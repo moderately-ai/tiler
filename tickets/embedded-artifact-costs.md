@@ -1,7 +1,7 @@
 ---
 id: embedded-artifact-costs
 title: Measure direct embedded-artifact costs across crates
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: []

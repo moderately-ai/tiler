@@ -1,0 +1,13 @@
+boundary,peak_rss_bytes,phase,target_tree_bytes,wall_seconds
+same,140296192,fresh,11652316,0.27
+same,22331392,noop,11652316,0.01
+same,85032960,unrelated-edit,13676705,0.11
+same,22380544,noop-after-unrelated,13676705,0.01
+same,103317504,one-artifact-edit,14894986,0.11
+same,22298624,noop-after-artifact,14894986,0.01
+cross,140640256,fresh,15200527,0.31
+cross,23101440,noop,15200527,0.02
+cross,87064576,unrelated-edit,15861879,0.09
+cross,23035904,noop-after-unrelated,15861879,0.02
+cross,95633408,one-artifact-edit,16298595,0.12
+cross,23052288,noop-after-artifact,16298595,0.02
