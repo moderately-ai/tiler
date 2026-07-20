@@ -19,8 +19,11 @@ verified scheduled iteration IR
     -> manifest/metallib byte-string literals in generated Rust
 ```
 
-The pure emitter owns syntax translation and helper emission. It does not
-create a Metal device, invoke `xcrun`, inspect Candle layouts, or decide fusion.
+The pure emitter owns syntax translation and helper emission. It receives a
+structured kernel already verified as a refinement of its schedule, together
+with target requirements, providers, resources, and ABI. It does not create a
+Metal device, invoke `xcrun`, inspect Candle layouts, decide fusion, repair
+missing synchronization, or change reduction/numerical behavior.
 
 ## Scheduled lowering
 
@@ -34,6 +37,11 @@ Before MSL emission, target lowering resolves:
 - barrier scopes;
 - static and dynamic threadgroup storage;
 - numerical-mode-specific intrinsics.
+
+It first checks support for every governed kernel type, operation, memory
+space, builtin coordinate, collective, fence, conversion, and required MSL
+feature. A gap is a typed backend rejection. MSL compiler acceptance is an
+additional validation layer, not a substitute for the kernel verifier.
 
 There is no final generic `BlockReduce`. A scheduled reduction is an explicit
 algorithm with convergence, lane-visibility, extent, dtype, and capability

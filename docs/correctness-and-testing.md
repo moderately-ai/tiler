@@ -50,7 +50,7 @@ Each lowering verifies its input and output:
 | Semantic | Shape, dtype, broadcasting, reduction policy, pure DAG, valid outputs |
 | Index | Rank, integer types, bounds, overflow, divisors, writer coverage, runtime parameters |
 | Schedule | Observational coverage, safe redundancy/tails, resources, convergence, numerical contract, capabilities |
-| Kernel | Scope/dominance, types, access modes, address spaces, barriers, store bounds |
+| Kernel | Scope/dominance, types/effects, access modes/address spaces, schedule-refined bounds and ownership, barrier/collective convergence and fences, reduction/order and launch references |
 | Program/buffer | Semantic coverage, dependencies, boundary contracts, placement, initialization, allocation/lifetime/alias rules |
 | Artifact | Symbols, ABI, hashes, target, launch metadata, guard completeness |
 
@@ -157,6 +157,10 @@ Benchmarks are not substitutes for these correctness cases.
 - Semantically different guards, schedules, ABIs, or numerical contracts hash
   differently.
 - Malformed control flow, types, pointers, and effects are rejected.
+- Kernel refinement tests reject missing or mismatched bounds/ownership
+  witnesses, undeclared invocation coordinates, divergent barriers, nonuniform
+  barrier loop counts, insufficient fences, changed reduction order, and
+  uncontracted conversions before backend source emission.
 - Simplification preserves overflow and division semantics.
 - `EXPLAIN` output is deterministic.
 - Every normative verifier invariant has at least one negative/rejection test.

@@ -635,36 +635,63 @@ launch fields are checked derivations rather than a second editable authority.
 ## Layer 4: structured kernel IR
 
 After scheduling, Tiler lowers into typed imperative code with lexical control
-flow. It is not described as SSA if it contains mutation.
+flow. The initial form uses immutable SSA-style values and typed loop-carried
+values rather than general mutation. It is a verified refinement of exactly one
+`ScheduledRegion`, not a second scheduler or target IR.
 
 Representative constructs:
 
 ```text
-BufferParameter    ScalarParameter
-ImmutableValue     MutableVariable
-For                If
-Load               Store
-Unary              Binary             Cast
-Barrier            SubgroupCollective ThreadgroupCollective
+BufferParameter    ScalarParameter    SpecializationParameter
+ImmutableValue     For                If                 Yield
+Load               Store              AtomicUpdate
+Unary              Binary             Convert            Bitcast
+CheckedNarrow      Barrier             Collective         Builtin
 ```
 
-Pointers state element type, address space, access mode, alignment, and
-accessible range. The initial alias contract permits input/input aliasing but
-requires a newly allocated output that aliases no input. Richer alias classes
-are deferred until an optimization consumes them. Immutable values and mutable
-accumulators are distinct constructs.
+The initial form uses typed buffer references plus checked allocation-relative
+element/storage offsets instead of unrestricted pointers. Buffers state element
+or storage type, governed address space, access mode, alignment, accessible
+range, and alias class. The initial alias contract permits input/input aliasing
+but requires a newly allocated output that aliases no input. Richer alias
+classes are deferred until an optimization consumes them.
+
+Loads and stores carry dominating schedule-derived bounds evidence. Ordinary
+stores also carry output-ownership evidence; atomics and reductions name their
+selected protocols. Barriers separately state execution scope, memory scope,
+fenced spaces, ordering, convergence, and the schedule synchronization point
+they realize. Serial reductions use explicit loops; collectives retain the
+selected participant set, combine order, identity/tail, owner/visibility, and
+numerical realization. Conversions distinguish semantic value conversion,
+representation conversion, checked index/address narrowing, and bitcast.
+
+Invocation coordinates are governed builtins admitted by the kernel signature
+and mapped to schedule execution axes, never backend source names. The schedule
+owns launch formulas; the kernel and artifact contain checked references or
+derivations rather than editable copies. General CFGs, recursion, unbounded
+loops, unrestricted pointers, and calls with unknown effects are outside the
+initial form.
 
 ### Kernel verifier
 
 - Definitions dominate uses and lexical scopes are valid.
-- Only mutable variables may be assigned.
+- Region arguments, loop-carried values, and yields have exact arity and types.
 - Operation signatures agree with operand and result types.
 - Buffer element types match loads and stores.
 - Read-only buffers cannot be written and write-only buffers cannot be read.
 - Address spaces are explicit and valid.
-- Barriers and collectives satisfy convergence requirements.
-- Every store is in bounds or predicated.
-- Local-memory allocation and launch assumptions satisfy target constraints.
+- Every memory effect has dominating bounds evidence; every ordinary store
+  matches its scheduled ownership witness.
+- Barriers and collectives match scheduled participant, scope, fence, phase,
+  convergence, visibility, and order requirements.
+- Builtins, loops, tails, accesses, conversions, and reductions refine the
+  referenced schedule and numerical contracts.
+- Derived local-memory and launch requirements match the schedule. Target
+  support is established separately by target feasibility, then checked as a
+  backend precondition rather than inferred from source acceptance.
+
+See the [structured kernel IR research](research/kernel-ir/structured-kernel-ir-verifier.md)
+for the proposed schema, worked lowerings, and verifier split.
 
 ## Layer 5: artifact representation
 

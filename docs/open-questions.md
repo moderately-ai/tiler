@@ -109,6 +109,18 @@ ADR when evidence is sufficient.
 - How is unsupported Apple cross-compilation diagnosed?
 - When, if ever, does the serialized IR become a public compatibility promise?
 
+## Structured kernel lowering
+
+- What minimal conservative uniformity analysis is sufficient for the first
+  workgroup reductions, and which schedule-derived uniformity proofs may it
+  consume?
+- When do asynchronous copies or split-phase barriers justify dependence tokens
+  and a partial-order extension to the initial structured/phase model?
+- Which target-specific operations require a later target-lowering IR rather
+  than governed common-kernel operations?
+- Which demonstrated workloads justify general CFGs, unrestricted pointers,
+  calls, or richer aliasing beyond bounded structured tensor kernels?
+
 ## Candle runtime
 
 - Which fusion cases require more than the initial three CustomOp inputs?
