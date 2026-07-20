@@ -1,6 +1,6 @@
 # 0047: Model placement as physical properties over capability graphs
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 

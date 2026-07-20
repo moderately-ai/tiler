@@ -53,7 +53,7 @@ accepted. Unresolved questions are collected in
 - [0044: Use an explicit capability-based operation registry](0044-use-explicit-capability-operation-registry.md) — accepted
 - [0045: Bound inline proc-macro providers to host dependencies](0045-bound-proc-macro-providers-to-host-dependencies.md) — accepted
 - [0046: Separate logical tensor access from storage addressing](0046-separate-logical-access-from-storage-addressing.md) — accepted
-- [0047: Model placement as physical properties over capability graphs](0047-model-placement-as-physical-properties.md) — proposed
+- [0047: Model placement as physical properties over capability graphs](0047-model-placement-as-physical-properties.md) — accepted
 
 ## Template
 
