@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0041"
+kind: "decision"
+title: "Separate float-to-integer conversion families"
+topics: ["numerics","conversion","integers"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.float-to-integer-conversion-precedents"]
+ticket: "numerical-policy-contract"
+---
+
 # 0041: Separate float-to-integer conversion families
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [float to integer conversion precedents](../research/numerics/float-to-integer-conversion-precedents.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

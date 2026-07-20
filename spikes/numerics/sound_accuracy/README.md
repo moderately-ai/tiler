@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.spike.numerics.sound-accuracy"
+kind: "experiment"
+title: "Sound accuracy probe"
+topics: ["numerics", "accuracy", "proof"]
+experiment_status: "reproducible"
+implementation_status: "spike-only"
+evidence_classes: ["sound-proof", "bounded-measurement"]
+supports: ["tiler.research.numerics.sound-region-analyzer-spike", "tiler.research.numerics.region-accuracy-contract"]
+ticket: "spike-sound-region-accuracy-analyzer-integration"
+---
+
 # Sound accuracy probe
 
 This corpus invokes a pinned Daisy trusted-analyzer profile and separately
@@ -48,3 +61,10 @@ installation. The default runner uses interval ranges and affine errors.
 The runner refuses a different Daisy revision. Treat any diagnostic, missing
 function result, parse failure, or timeout as `Unknown`, even when Daisy exits
 with status zero.
+
+## Traceability
+
+- **Supported claim:** [Sound analyzer integration spike](../../../docs/research/numerics/sound-region-analyzer-spike.md).
+- **Parent contract research:** [Region accuracy contracts](../../../docs/research/numerics/region-accuracy-contract.md).
+- **Retained measurements:** [measurements.json](measurements.json) and [unsupported_cases.json](unsupported_cases.json).
+- **Work record:** [spike-sound-region-accuracy-analyzer-integration](../../../tickets/spike-sound-region-accuracy-analyzer-integration.md).

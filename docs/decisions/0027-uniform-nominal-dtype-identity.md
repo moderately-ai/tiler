@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0027"
+kind: "decision"
+title: "Use uniform nominal identities for built-in and extension dtypes"
+topics: ["numerics","dtypes","identity"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.dtype-identity-admission-policy"]
+ticket: "define-dtype-namespace-admission-policy"
+---
+
 # 0027: Use uniform nominal identities for built-in and extension dtypes
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [dtype identity admission policy](../research/numerics/dtype-identity-admission-policy.md).
+- **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+
 
 ## Context
 

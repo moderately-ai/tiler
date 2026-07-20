@@ -1,7 +1,32 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.reduction-semantics-and-legality"
+kind: "research"
+title: "Reduction semantics and legality"
+topics: ["numerics","reductions","legality"]
+research_status: "complete"
+disposition: "partially-adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis","executable-model"]
+informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
+adopted_by: ["ADR-0012","ADR-0013","ADR-0014","ADR-0022","ADR-0025"]
+reproduced_by: ["tiler.spike.numerics.reduction-contract"]
+ticket: "reduction-semantics-contract"
+---
+
 # Reduction semantics and legality
 
-**Status:** proposed normative contract and research synthesis  
+**Status:** partially adopted research synthesis; the complete reduction
+contract and executable support remain proposed
 **Ticket:** `reduction-semantics-contract`
+
+## Traceability
+
+- **Current disposition:** partially adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md) and [Correctness and testing](../../correctness-and-testing.md).
+- **Adoption:** [ADR 0012](../../decisions/0012-physical-reduction-topology.md), [ADR 0013](../../decisions/0013-scoped-determinism.md), [ADR 0014](../../decisions/0014-reassociation-vs-permutation.md), [ADR 0022](../../decisions/0022-reduction-identities-and-initial-values.md), [ADR 0025](../../decisions/0025-reduction-empty-results-and-padding.md).
+- **Work record:** [reduction-semantics-contract](../../../tickets/reduction-semantics-contract.md).
+
 
 ## Outcome
 

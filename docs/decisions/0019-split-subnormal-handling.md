@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0019"
+kind: "decision"
+title: "Separate subnormal input and result handling"
+topics: ["numerics","floating-point","subnormals"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.operation-conformance-matrix"]
+ticket: "numerical-policy-contract"
+---
+
 # 0019: Separate subnormal input and result handling
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [operation conformance matrix](../research/numerics/operation-conformance-matrix.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

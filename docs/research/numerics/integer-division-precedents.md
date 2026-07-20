@@ -1,6 +1,30 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.integer-division-precedents"
+kind: "research"
+title: "Integer division and remainder precedents"
+topics: ["numerics","integers","division"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0040"]
+reproduced_by: []
+ticket: "numerical-policy-contract"
+---
+
 # Integer division and remainder precedents
 
-**Status:** decision research
+**Status:** adopted decision research supporting ADR 0040
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0040](../../decisions/0040-specialize-integer-division-families.md).
+- **Work record:** [numerical-policy-contract](../../../tickets/numerical-policy-contract.md).
+
 
 ## Distinct quotient families
 

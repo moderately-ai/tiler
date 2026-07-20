@@ -1,8 +1,33 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.mature-dtype-taxonomy"
+kind: "research"
+title: "Mature tensor dtype taxonomy"
+topics: ["numerics","dtypes","taxonomy"]
+research_status: "complete"
+disposition: "partially-adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0026","ADR-0028","ADR-0035","ADR-0036","ADR-0037","ADR-0038"]
+reproduced_by: []
+ticket: "enumerate-the-mature-tensor-dtype-taxonomy"
+---
+
 # Mature tensor dtype taxonomy
 
-**Status:** research inventory; no Tiler support set has been selected  
+**Status:** partially adopted inventory; recognized identities have been
+selected for several families, while executable support sets remain unselected
 **Ticket:** `enumerate-the-mature-tensor-dtype-taxonomy`  
 **Research date:** 2026-07-19
+
+## Traceability
+
+- **Current disposition:** partially adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0026](../../decisions/0026-dtype-representability-vs-operation-support.md), [ADR 0028](../../decisions/0028-recognize-sub-byte-integers.md), [ADR 0035](../../decisions/0035-recognize-ieee-decimal-floating-formats.md), [ADR 0036](../../decisions/0036-recognize-standard-binary-and-microscaling-formats.md), [ADR 0037](../../decisions/0037-parameterize-complex-dtype-identity.md), [ADR 0038](../../decisions/0038-recognize-ocp-mx-schemes.md).
+- **Work record:** [enumerate-the-mature-tensor-dtype-taxonomy](../../../tickets/enumerate-the-mature-tensor-dtype-taxonomy.md).
+
 
 ## Purpose and boundary
 

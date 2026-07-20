@@ -25,3 +25,12 @@ effect of casts, contraction, topology, overflow, and subnormal policies. Bind
 every certificate to the canonical goal, candidate physical/numerical identity,
 target profile, and assumptions. The outcome should decide whether a small
 sound profile is practical; `Unknown` must remain a correct rejection.
+
+## Outcome
+
+The [research report](../docs/research/numerics/sound-region-analyzer-spike.md)
+and [preserved Daisy harness](../spikes/numerics/sound_accuracy/README.md)
+demonstrate a bounded trusted-analyzer profile for fixed branch-free scalarized
+regions. The measured profile is practical with caching, but produces no
+independently checkable certificate; FPTaylor/HOL Light remains a
+[deferred follow-up](spike-hermetic-fptaylor-certificate-checking.md).

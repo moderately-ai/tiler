@@ -1,7 +1,31 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.region-accuracy-contract"
+kind: "research"
+title: "Region accuracy contracts and analyzable error budgets"
+topics: ["numerics","accuracy","proof"]
+research_status: "complete"
+disposition: "partially-adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis","bounded-measurement"]
+informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
+adopted_by: ["ADR-0017","ADR-0021"]
+reproduced_by: ["tiler.spike.numerics.region-accuracy","tiler.spike.numerics.sound-accuracy"]
+ticket: "research-region-accuracy-contracts-and-analyzable-error-budgets"
+---
+
 # Region accuracy contracts and analyzable error budgets
 
 **Status:** contract model established; a narrow trusted-analyzer feasibility
 gate passed, with independent certificate checking still open
+
+## Traceability
+
+- **Current disposition:** partially adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md) and [Correctness and testing](../../correctness-and-testing.md).
+- **Adoption:** [ADR 0017](../../decisions/0017-local-vs-region-accuracy.md), [ADR 0021](../../decisions/0021-validated-value-assumptions.md).
+- **Work record:** [research-region-accuracy-contracts-and-analyzable-error-budgets](../../../tickets/research-region-accuracy-contracts-and-analyzable-error-budgets.md).
+
 
 ## Outcome
 

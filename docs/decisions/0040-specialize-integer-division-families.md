@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0040"
+kind: "decision"
+title: "Specialize integer division and remainder families"
+topics: ["numerics","integers","division"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.integer-division-precedents"]
+ticket: "numerical-policy-contract"
+---
+
 # 0040: Specialize integer division and remainder families
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [integer division precedents](../research/numerics/integer-division-precedents.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

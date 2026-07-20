@@ -1,7 +1,32 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.quantization-ir-precedents"
+kind: "research"
+title: "Quantization representation in tensor IRs"
+topics: ["numerics","quantization","ir"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0029","ADR-0030"]
+reproduced_by: []
+ticket: "define-quantized-value-binding-contract"
+---
+
 # Quantization representation in tensor IRs
 
-**Status:** researched recommendation; representation decision remains open  
+**Historical status:** researched recommendation before ADRs 0029 and 0030
+accepted the parameter-map and first-class assembled-value model.
 **Reviewed:** 2026-07-19
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0029](../../decisions/0029-affine-quantization-parameter-maps.md), [ADR 0030](../../decisions/0030-first-class-quantized-values.md).
+- **Work record:** [define-quantized-value-binding-contract](../../../tickets/define-quantized-value-binding-contract.md).
+
 
 ## Question
 
@@ -87,8 +112,9 @@ sections 1.12 and 2.13.2.
 
 ## Compatibility with accepted Tiler decisions
 
-No accepted ADR currently chooses the quantization carrier. The following
-decisions constrain it:
+At the time of this review no accepted ADR chose the quantization carrier. The
+following decisions constrained it; ADRs 0029 and 0030 subsequently adopted
+the recommended direction:
 
 | Existing decision | Consequence for quantization |
 |---|---|

@@ -1,9 +1,29 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0022"
+kind: "decision"
+title: "Define reduction identities and initial values"
+topics: ["numerics","reductions","semantics"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.reduction-semantics-and-legality"]
+ticket: "reduction-semantics-contract"
+---
+
 # 0022: Define reduction identities and initial values
 
 **Status:** accepted
 
 The identity terminology in this decision is refined by ADR 0025: an empty
 result is not automatically a bitwise-neutral, replicable padding value.
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [reduction semantics and legality](../research/numerics/reduction-semantics-and-legality.md).
+- **Work record:** [reduction-semantics-contract](../../tickets/reduction-semantics-contract.md).
+
 
 ## Context
 

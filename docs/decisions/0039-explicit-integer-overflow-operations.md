@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0039"
+kind: "decision"
+title: "Make integer overflow explicit in operation identity"
+topics: ["numerics","integers","overflow"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.integer-overflow-precedents"]
+ticket: "numerical-policy-contract"
+---
+
 # 0039: Make integer overflow explicit in operation identity
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [integer overflow precedents](../research/numerics/integer-overflow-precedents.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

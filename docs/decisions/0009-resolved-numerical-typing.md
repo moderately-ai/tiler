@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0009"
+kind: "decision"
+title: "Resolve numerical typing before semantic optimization"
+topics: ["numerics","dtypes","semantics"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.dtype-resolution-precedents"]
+ticket: "numerical-policy-contract"
+---
+
 # 0009: Resolve numerical typing before semantic optimization
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [dtype resolution precedents](../research/numerics/dtype-resolution-precedents.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

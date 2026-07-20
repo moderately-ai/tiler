@@ -1,3 +1,19 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.operation-conformance-matrix"
+kind: "research"
+title: "Initial operation conformance matrix"
+topics: ["numerics","conformance","testing"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
+adopted_by: ["ADR-0011","ADR-0015","ADR-0018","ADR-0019","ADR-0020","ADR-0021","ADR-0024"]
+reproduced_by: []
+ticket: "numerical-policy-contract"
+---
+
 # Initial operation conformance matrix
 
 **Status:** contract audit; implementation support remains unmeasured  
@@ -6,6 +22,14 @@
 This matrix records which numerical questions the semantic operation contract
 must answer. It is not a claim that every listed operation is implemented in
 the first executable slice.
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md) and [Correctness and testing](../../correctness-and-testing.md).
+- **Adoption:** [ADR 0011](../../decisions/0011-per-operation-numerical-permissions.md), [ADR 0015](../../decisions/0015-fma-vs-contraction.md), [ADR 0018](../../decisions/0018-portable-bitwise-nans.md), [ADR 0019](../../decisions/0019-split-subnormal-handling.md), [ADR 0020](../../decisions/0020-value-only-floating-point-exceptions.md), [ADR 0021](../../decisions/0021-validated-value-assumptions.md), [ADR 0024](../../decisions/0024-initial-arithmetic-rounding.md).
+- **Work record:** [numerical-policy-contract](../../../tickets/numerical-policy-contract.md).
+
 
 ## Legend
 

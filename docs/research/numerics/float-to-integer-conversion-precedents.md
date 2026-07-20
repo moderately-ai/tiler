@@ -1,6 +1,30 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.float-to-integer-conversion-precedents"
+kind: "research"
+title: "Floating-point to integer conversion precedents"
+topics: ["numerics","conversion","integers"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0010","ADR-0041"]
+reproduced_by: []
+ticket: "numerical-policy-contract"
+---
+
 # Floating-point to integer conversion precedents
 
-**Status:** decision research
+**Status:** adopted decision research supporting ADRs 0010 and 0041
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0010](../../decisions/0010-typed-conversion-contracts.md), [ADR 0041](../../decisions/0041-separate-float-to-integer-conversion-families.md).
+- **Work record:** [numerical-policy-contract](../../../tickets/numerical-policy-contract.md).
+
 
 ## Finding
 

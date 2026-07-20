@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0032"
+kind: "decision"
+title: "Fix strict affine quantization evaluation"
+topics: ["numerics","quantization","semantics"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.affine-quantization-semantics"]
+ticket: "define-initial-affine-quantization-semantics"
+---
+
 # 0032: Fix strict affine quantization evaluation
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [affine quantization semantics](../research/numerics/affine-quantization-semantics.md).
+- **Work record:** [define-initial-affine-quantization-semantics](../../tickets/define-initial-affine-quantization-semantics.md).
+
 
 ## Context
 

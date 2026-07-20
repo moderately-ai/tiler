@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.numerical-semantics"
+kind: "contract"
+title: "Numerical semantics"
+topics: ["numerics", "semantics", "dtypes", "accuracy"]
+contract_status: "mixed"
+implementation_status: "not-started"
+governed_by: ["ADR-0009","ADR-0010","ADR-0011","ADR-0012","ADR-0013","ADR-0014","ADR-0015","ADR-0016","ADR-0017","ADR-0018","ADR-0019","ADR-0020","ADR-0021","ADR-0022","ADR-0023","ADR-0024","ADR-0025","ADR-0026","ADR-0027","ADR-0028","ADR-0029","ADR-0030","ADR-0031","ADR-0032","ADR-0033","ADR-0034","ADR-0035","ADR-0036","ADR-0037","ADR-0038","ADR-0039","ADR-0040","ADR-0041","ADR-0042"]
+evidence: ["tiler.research.numerics.affine-quantization-semantics","tiler.research.numerics.dtype-identity-admission-policy","tiler.research.numerics.dtype-resolution-precedents","tiler.research.numerics.float-to-integer-conversion-precedents","tiler.research.numerics.floating-point-extrema-precedents","tiler.research.numerics.integer-division-precedents","tiler.research.numerics.integer-overflow-precedents","tiler.research.numerics.mature-dtype-taxonomy","tiler.research.numerics.operation-conformance-matrix","tiler.research.numerics.quantization-ir-precedents","tiler.research.numerics.quantized-value-and-transform-contract","tiler.research.numerics.reduction-semantics-and-legality","tiler.research.numerics.region-accuracy-contract","tiler.research.numerics.sound-region-analyzer-spike","tiler.research.numerics.transcendental-accuracy-precedents"]
+ticket: "numerical-policy-contract"
+---
+
 # Numerical semantics
 
 **Status:** accepted framework; initial product-profile operation tuples remain open
@@ -5,6 +18,16 @@
 Tiler optimizes floating-point and integer programs whose algebraic identities
 do not automatically imply machine-level equivalence. Numerical policy is part
 of semantic meaning, legality, plan identity, artifact identity, and testing.
+
+## Traceability
+
+This document owns Tiler's target-independent numerical meaning and legality.
+It does not claim that every recognized dtype or semantic tuple is implemented.
+The accepted decisions are [ADRs 0009–0042](decisions/README.md), with primary
+support in the [numerical research corpus](research/numerics/). Implementation
+support remains capability-gated and unmeasured unless a linked experiment says
+otherwise.
+
 
 ## Three parts of the contract
 

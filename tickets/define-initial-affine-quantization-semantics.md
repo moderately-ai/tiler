@@ -12,14 +12,17 @@ tags: [tiler-research, numerics, foundation]
 ---
 Resolve the first built-in affine Quantize/Dequantize/Requantize numerical contract, including NaN behavior, endpoint ordering, compute/intermediate dtypes, subnormal policy, and portable conformance. Use docs/research/numerics/affine-quantization-semantics.md as the evidence baseline. Keep logical Requantize distinct from specialized integer Rescale.
 
-## Progress
+## Outcome
 
-ADR 0031 resolves strict NaN handling as semantic rejection while preserving explicitly named alternative mappings. Evaluation dtype/order, subnormal behavior, and the initial portable dtype profile remain in progress.
+[ADR 0031](../docs/decisions/0031-strict-affine-quantization-rejects-nan.md)
+resolves strict NaN handling as semantic rejection while preserving explicitly
+named alternative mappings.
 
-ADR 0032 resolves strict evaluation order, widened subtraction, explicit
+[ADR 0032](../docs/decisions/0032-strict-affine-quantization-evaluation.md)
+resolves strict evaluation order, widened subtraction, explicit
 computation dtype, subnormal preservation, endpoint handling, and the separation
-of logical `Requantize` from integer `Rescale`. The initial portable dtype and
-backend profile is the remaining scope item.
+of logical `Requantize` from integer `Rescale`. The complete evidence is in
+[Affine quantization numerical semantics](../docs/research/numerics/affine-quantization-semantics.md).
 
 The initial semantic/reference profile is now `i4/u4/i8/u8` codes with `f32`
 expressed, scale, computation, and requantization-intermediate values across

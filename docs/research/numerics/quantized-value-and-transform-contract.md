@@ -1,7 +1,31 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.quantized-value-and-transform-contract"
+kind: "research"
+title: "Quantized value and transformation contract"
+topics: ["numerics","quantization","semantics"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0029","ADR-0030","ADR-0038"]
+reproduced_by: []
+ticket: "define-quantized-value-binding-contract"
+---
+
 # Quantized value and transformation contract
 
 **Status:** researched contract supporting ADR 0030  
 **Reviewed:** 2026-07-19
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0029](../../decisions/0029-affine-quantization-parameter-maps.md), [ADR 0030](../../decisions/0030-first-class-quantized-values.md), [ADR 0038](../../decisions/0038-recognize-ocp-mx-schemes.md).
+- **Work record:** [define-quantized-value-binding-contract](../../../tickets/define-quantized-value-binding-contract.md).
+
 
 ## Resolved carrier
 

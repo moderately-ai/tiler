@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0015"
+kind: "decision"
+title: "Distinguish required FMA from optional contraction"
+topics: ["numerics","floating-point","optimization"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.operation-conformance-matrix"]
+ticket: "numerical-policy-contract"
+---
+
 # 0015: Distinguish required FMA from optional contraction
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [operation conformance matrix](../research/numerics/operation-conformance-matrix.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

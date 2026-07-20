@@ -1,7 +1,31 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.sound-region-analyzer-spike"
+kind: "research"
+title: "Sound region-accuracy analyzer integration spike"
+topics: ["numerics","accuracy","proof"]
+research_status: "complete"
+disposition: "informational"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis","sound-proof","bounded-measurement"]
+informs: ["tiler.contract.correctness-and-testing"]
+adopted_by: []
+reproduced_by: ["tiler.spike.numerics.sound-accuracy"]
+ticket: "spike-sound-region-accuracy-analyzer-integration"
+---
+
 # Sound region-accuracy analyzer integration spike
 
 **Status:** bounded feasibility gate passed for a trusted-analyzer profile;
 independent certificate checking remains unavailable
+
+## Traceability
+
+- **Current disposition:** informational; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md) and [Correctness and testing](../../correctness-and-testing.md).
+- **Adoption:** No ADR directly adopts this bounded evidence.
+- **Work record:** [spike-sound-region-accuracy-analyzer-integration](../../../tickets/spike-sound-region-accuracy-analyzer-integration.md).
+
 
 ## Outcome
 

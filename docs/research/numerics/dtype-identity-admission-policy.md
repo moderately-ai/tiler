@@ -1,6 +1,30 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.dtype-identity-admission-policy"
+kind: "research"
+title: "Dtype identity admission policy"
+topics: ["numerics","dtypes","governance"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0027","ADR-0034","ADR-0035","ADR-0036","ADR-0037","ADR-0038"]
+reproduced_by: []
+ticket: "define-dtype-namespace-admission-policy"
+---
+
 # Dtype identity admission policy
 
 **Status:** namespace governance accepted
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0027](../../decisions/0027-uniform-nominal-dtype-identity.md), [ADR 0034](../../decisions/0034-tiler-governed-built-in-dtype-keys.md), [ADR 0035](../../decisions/0035-recognize-ieee-decimal-floating-formats.md), [ADR 0036](../../decisions/0036-recognize-standard-binary-and-microscaling-formats.md), [ADR 0037](../../decisions/0037-parameterize-complex-dtype-identity.md), [ADR 0038](../../decisions/0038-recognize-ocp-mx-schemes.md).
+- **Work record:** [define-dtype-namespace-admission-policy](../../../tickets/define-dtype-namespace-admission-policy.md).
+
 
 ## Problem
 

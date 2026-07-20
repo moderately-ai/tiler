@@ -1,3 +1,16 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.contract.correctness-and-testing"
+kind: "contract"
+title: "Correctness and testing"
+topics: ["correctness", "testing", "verification"]
+contract_status: "accepted"
+implementation_status: "not-started"
+governed_by: ["ADR-0017", "ADR-0021", "ADR-0033"]
+evidence: ["tiler.research.numerics.operation-conformance-matrix", "tiler.research.numerics.region-accuracy-contract", "tiler.research.numerics.sound-region-analyzer-spike"]
+ticket: "reference-evaluator-slice"
+---
+
 # Correctness and testing
 
 **Status:** accepted research contract; implementation pending
@@ -5,6 +18,15 @@
 Tiler must define semantics before asking a GPU compiler to accept generated
 source. Backend compilation is a validation layer, not the type system or the
 semantic authority.
+
+## Traceability
+
+This document owns cross-layer verification and evidence requirements. It does
+not redefine operation semantics; those are owned by [Numerical semantics](numerical-semantics.md).
+Its numerical evidence includes the [operation conformance matrix](research/numerics/operation-conformance-matrix.md),
+[region-accuracy contract](research/numerics/region-accuracy-contract.md), and
+[bounded sound-analyzer spike](research/numerics/sound-region-analyzer-spike.md).
+
 
 ## Semantic authority
 

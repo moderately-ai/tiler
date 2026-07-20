@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0013"
+kind: "decision"
+title: "Scope deterministic numerical guarantees"
+topics: ["numerics","determinism","reductions"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.reduction-semantics-and-legality"]
+ticket: "numerical-policy-contract"
+---
+
 # 0013: Scope deterministic numerical guarantees
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [reduction semantics and legality](../research/numerics/reduction-semantics-and-legality.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

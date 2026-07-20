@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0028"
+kind: "decision"
+title: "Recognize standardized sub-byte integer types"
+topics: ["numerics","dtypes","integers"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.mature-dtype-taxonomy"]
+ticket: "enumerate-the-mature-tensor-dtype-taxonomy"
+---
+
 # 0028: Recognize standardized sub-byte integer types
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
+- **Work record:** [enumerate-the-mature-tensor-dtype-taxonomy](../../tickets/enumerate-the-mature-tensor-dtype-taxonomy.md).
+
 
 ## Context
 

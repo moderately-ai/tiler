@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0037"
+kind: "decision"
+title: "Parameterize complex dtype identity by component type"
+topics: ["numerics","dtypes","complex"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.mature-dtype-taxonomy"]
+ticket: "define-dtype-namespace-admission-policy"
+---
+
 # 0037: Parameterize complex dtype identity by component type
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
+- **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+
 
 ## Context
 

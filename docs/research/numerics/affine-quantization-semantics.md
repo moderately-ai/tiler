@@ -1,8 +1,32 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.affine-quantization-semantics"
+kind: "research"
+title: "Affine quantization numerical semantics"
+topics: ["numerics","quantization","semantics"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
+adopted_by: ["ADR-0031","ADR-0032","ADR-0033"]
+reproduced_by: []
+ticket: "define-initial-affine-quantization-semantics"
+---
+
 # Affine quantization numerical semantics
 
 **Status:** strict baseline accepted
 
 **Reviewed:** 2026-07-19
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md) and [Correctness and testing](../../correctness-and-testing.md).
+- **Adoption:** [ADR 0031](../../decisions/0031-strict-affine-quantization-rejects-nan.md), [ADR 0032](../../decisions/0032-strict-affine-quantization-evaluation.md), [ADR 0033](../../decisions/0033-semantic-validation-enforcement.md).
+- **Work record:** [define-initial-affine-quantization-semantics](../../../tickets/define-initial-affine-quantization-semantics.md).
+
 
 ## Why the formula is insufficient
 

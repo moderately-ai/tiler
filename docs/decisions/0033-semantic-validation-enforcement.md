@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0033"
+kind: "decision"
+title: "Separate semantic validation from physical enforcement"
+topics: ["numerics","validation","runtime"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
+evidence: ["tiler.research.numerics.affine-quantization-semantics"]
+ticket: "define-initial-affine-quantization-semantics"
+---
+
 # 0033: Separate semantic validation from physical enforcement
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md) and [Correctness and testing](../correctness-and-testing.md).
+- **Evidence:** [affine quantization semantics](../research/numerics/affine-quantization-semantics.md).
+- **Work record:** [define-initial-affine-quantization-semantics](../../tickets/define-initial-affine-quantization-semantics.md).
+
 
 ## Context
 

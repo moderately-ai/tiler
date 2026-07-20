@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0020"
+kind: "decision"
+title: "Use value-only floating-point exceptions initially"
+topics: ["numerics","floating-point","exceptions"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.operation-conformance-matrix"]
+ticket: "numerical-policy-contract"
+---
+
 # 0020: Use value-only floating-point exceptions initially
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [operation conformance matrix](../research/numerics/operation-conformance-matrix.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

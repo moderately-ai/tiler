@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0023"
+kind: "decision"
+title: "Separate propagating and number-preferring extrema"
+topics: ["numerics","floating-point","extrema"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.floating-point-extrema-precedents"]
+ticket: "numerical-policy-contract"
+---
+
 # 0023: Separate propagating and number-preferring extrema
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [floating point extrema precedents](../research/numerics/floating-point-extrema-precedents.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

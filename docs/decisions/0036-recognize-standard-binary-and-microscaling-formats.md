@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0036"
+kind: "decision"
+title: "Recognize standard binary and microscaling scalar formats"
+topics: ["numerics","dtypes","floating-point"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.mature-dtype-taxonomy","tiler.research.numerics.dtype-identity-admission-policy"]
+ticket: "define-dtype-namespace-admission-policy"
+---
+
 # 0036: Recognize standard binary and microscaling scalar formats
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
+- **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+
 
 ## Context
 

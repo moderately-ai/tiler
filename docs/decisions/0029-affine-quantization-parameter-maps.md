@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0029"
+kind: "decision"
+title: "Generalize affine quantization granularity with parameter index maps"
+topics: ["numerics","quantization","indexing"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.quantization-ir-precedents","tiler.research.numerics.quantized-value-and-transform-contract"]
+ticket: "define-quantized-value-binding-contract"
+---
+
 # 0029: Generalize affine quantization granularity with parameter index maps
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [quantization ir precedents](../research/numerics/quantization-ir-precedents.md).
+- **Work record:** [define-quantized-value-binding-contract](../../tickets/define-quantized-value-binding-contract.md).
+
 
 ## Context
 

@@ -14,4 +14,10 @@ Resolve the carrier and ownership model for first-class quantized value interpre
 
 ## Outcome
 
-Resolved by ADR 0030 and `docs/research/numerics/quantized-value-and-transform-contract.md`: static scheme structure lives in the semantic type contract; concrete components remain graph operands to a dedicated assembly/conversion operation; index transformations preserve quantization only by proving composed parameter-selection maps; logical values expand to stable component roles during ABI lowering.
+Resolved by [ADR 0030](../docs/decisions/0030-first-class-quantized-values.md)
+and the [quantized value contract](../docs/research/numerics/quantized-value-and-transform-contract.md):
+static scheme structure lives in the semantic type contract; concrete
+components remain graph operands to a dedicated assembly/conversion operation;
+index transformations preserve quantization only by proving composed
+parameter-selection maps; logical values expand to stable component roles
+during ABI lowering.

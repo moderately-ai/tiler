@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0012"
+kind: "decision"
+title: "Keep reduction topology in physical plans"
+topics: ["numerics","reductions","scheduling"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.reduction-semantics-and-legality"]
+ticket: "reduction-semantics-contract"
+---
+
 # 0012: Keep reduction topology in physical plans
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [reduction semantics and legality](../research/numerics/reduction-semantics-and-legality.md).
+- **Work record:** [reduction-semantics-contract](../../tickets/reduction-semantics-contract.md).
+
 
 ## Context
 

@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0016"
+kind: "decision"
+title: "Resolve transcendental accuracy per operation"
+topics: ["numerics","transcendentals","accuracy"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.transcendental-accuracy-precedents"]
+ticket: "numerical-policy-contract"
+---
+
 # 0016: Resolve transcendental accuracy per operation
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [transcendental accuracy precedents](../research/numerics/transcendental-accuracy-precedents.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

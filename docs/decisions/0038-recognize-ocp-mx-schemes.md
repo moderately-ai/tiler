@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0038"
+kind: "decision"
+title: "Recognize OCP microscaling schemes as compound values"
+topics: ["numerics","quantization","microscaling"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.mature-dtype-taxonomy","tiler.research.numerics.quantized-value-and-transform-contract"]
+ticket: "define-dtype-namespace-admission-policy"
+---
+
 # 0038: Recognize OCP microscaling schemes as compound values
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
+- **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+
 
 ## Context
 

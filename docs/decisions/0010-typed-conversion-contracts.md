@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0010"
+kind: "decision"
+title: "Make conversion behavior a typed semantic contract"
+topics: ["numerics","conversion","semantics"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.dtype-resolution-precedents","tiler.research.numerics.float-to-integer-conversion-precedents"]
+ticket: "numerical-policy-contract"
+---
+
 # 0010: Make conversion behavior a typed semantic contract
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [dtype resolution precedents](../research/numerics/dtype-resolution-precedents.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

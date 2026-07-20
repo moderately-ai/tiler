@@ -1,6 +1,30 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.transcendental-accuracy-precedents"
+kind: "research"
+title: "Transcendental accuracy precedents"
+topics: ["numerics","transcendentals","accuracy"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0016","ADR-0042"]
+reproduced_by: []
+ticket: "numerical-policy-contract"
+---
+
 # Transcendental accuracy precedents
 
 **Status:** research basis for ADR 0042
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0016](../../decisions/0016-transcendental-accuracy-contracts.md), [ADR 0042](../../decisions/0042-use-typed-transcendental-accuracy-contracts.md).
+- **Work record:** [numerical-policy-contract](../../../tickets/numerical-policy-contract.md).
+
 
 ## Question
 

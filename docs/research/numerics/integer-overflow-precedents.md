@@ -1,6 +1,30 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.integer-overflow-precedents"
+kind: "research"
+title: "Integer arithmetic overflow precedents"
+topics: ["numerics","integers","overflow"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0039"]
+reproduced_by: []
+ticket: "numerical-policy-contract"
+---
+
 # Integer arithmetic overflow precedents
 
-**Status:** decision research
+**Status:** adopted decision research supporting ADR 0039
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0039](../../decisions/0039-explicit-integer-overflow-operations.md).
+- **Work record:** [numerical-policy-contract](../../../tickets/numerical-policy-contract.md).
+
 
 ## Finding
 

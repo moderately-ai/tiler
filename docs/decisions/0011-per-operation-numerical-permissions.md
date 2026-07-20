@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0011"
+kind: "decision"
+title: "Resolve numerical permissions per operation"
+topics: ["numerics","optimization","semantics"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.operation-conformance-matrix"]
+ticket: "numerical-policy-contract"
+---
+
 # 0011: Resolve numerical permissions per operation
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [operation conformance matrix](../research/numerics/operation-conformance-matrix.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

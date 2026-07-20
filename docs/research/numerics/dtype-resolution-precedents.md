@@ -1,9 +1,33 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.dtype-resolution-precedents"
+kind: "research"
+title: "Dtype resolution and mixed-precision precedent"
+topics: ["numerics","dtypes","conversion"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0009","ADR-0010"]
+reproduced_by: []
+ticket: "numerical-policy-contract"
+---
+
 # Dtype resolution and mixed-precision precedent
 
 **Status:** research synthesis with an accepted initial decision  
 **Ticket:** `numerical-policy-contract`  
 **Scope:** semantic value typing, computation precision, accumulation, and
 conversion boundaries
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0009](../../decisions/0009-resolved-numerical-typing.md), [ADR 0010](../../decisions/0010-typed-conversion-contracts.md).
+- **Work record:** [numerical-policy-contract](../../../tickets/numerical-policy-contract.md).
+
 
 ## Question
 

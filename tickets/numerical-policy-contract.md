@@ -13,3 +13,13 @@ tags: [tiler-research, foundation, research, numerics]
 Turn exact, relaxed, and fast behavior into explicit policy dimensions covering reassociation, contraction, reciprocal transforms, approximations, NaN/Inf assumptions, signed zero, subnormals, and materialization-boundary rounding.
 
 Deliver an operation-conformance matrix, adversarial examples, identity requirements, and a proposed method for verifying backend compiler flags against the semantic policy. Preserve unknown behavior as unknown rather than naming an unsupported mode.
+
+## Outcome
+
+The accepted numerical framework is owned by
+[Numerical semantics](../docs/numerical-semantics.md), supported by the
+[operation conformance matrix](../docs/research/numerics/operation-conformance-matrix.md),
+and recorded across [ADRs 0009–0024](../docs/decisions/README.md). It resolves
+operation-local permissions, conversions, reduction-order dimensions, NaN,
+subnormal, rounding, determinism, and validation requirements. Product-profile
+tuples and backend conformance remain capability-gated rather than implied.

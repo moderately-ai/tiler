@@ -36,3 +36,11 @@ The research must:
 Deliver a reviewed taxonomy and capability-level model in `docs/research/`.
 Only after that review should a separate decision select Tiler's representable,
 reference-evaluable, optimizable, backend-supported, and initial-profile sets.
+
+## Outcome
+
+The [mature tensor dtype taxonomy](../docs/research/numerics/mature-dtype-taxonomy.md)
+separates logical types, numeric interpretations, storage encodings, compute
+formats, accumulators, results, and non-tensor graph values. Later ADRs adopt
+selected recognized identities, but the inventory deliberately does not claim
+reference-evaluator, optimizer, or backend support.

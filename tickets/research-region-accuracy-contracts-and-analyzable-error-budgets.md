@@ -71,15 +71,17 @@ empirical evidence and cannot satisfy a sound contract. The gate is whether a
 sound analyzer can certify modest fused tensor regions quickly enough and with
 non-vacuous bounds.
 
-## Completed outcome
+## Outcome
 
-The typed goal/evidence model and compiler boundary are recorded in
-`docs/research/numerics/region-accuracy-contract.md`. A dependency-light
-`mpmath` adversarial probe exercises materialization removal, cancellation,
+The typed goal/evidence model and compiler boundary are recorded in the
+[region accuracy contract](../docs/research/numerics/region-accuracy-contract.md).
+The retained [`mpmath` adversarial probe](../spikes/numerics/region_accuracy/README.md)
+exercises materialization removal, cancellation,
 reference choice, relative error at zero, and reduction topology. It is
 explicitly empirical and therefore does not claim a worst-case certificate.
 
 Actual sound-analyzer integration, certificate tightness, and proof-time
-measurement are separated into
-`spike-sound-region-accuracy-analyzer-integration`; delegated region budgets
+measurement are separated into the
+[sound analyzer spike](spike-sound-region-accuracy-analyzer-integration.md);
+delegated region budgets
 remain disabled until that feasibility gate passes.

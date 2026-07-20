@@ -14,8 +14,10 @@ Choose canonical namespace authority for standards-backed built-in dtypes, then 
 
 ## Outcome
 
-ADR 0034 selects Tiler-governed keys with mandatory normative references for
+[ADR 0034](../docs/decisions/0034-tiler-governed-built-in-dtype-keys.md)
+selects Tiler-governed keys with mandatory normative references for
 formats admitted into the built-in vocabulary. Published external identities
 remain external; descriptors are immutable; incompatible meaning changes
 require new key versions; exact equivalence is explicit and conformance-tested.
-The remaining catalog classification can proceed under these rules.
+The supporting [admission policy](../docs/research/numerics/dtype-identity-admission-policy.md)
+applies those rules to the catalog.

@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0034"
+kind: "decision"
+title: "Govern admitted built-in dtype keys in Tiler"
+topics: ["numerics","dtypes","governance"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.dtype-identity-admission-policy"]
+ticket: "define-dtype-namespace-admission-policy"
+---
+
 # 0034: Govern admitted built-in dtype keys in Tiler
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [dtype identity admission policy](../research/numerics/dtype-identity-admission-policy.md).
+- **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+
 
 ## Context
 

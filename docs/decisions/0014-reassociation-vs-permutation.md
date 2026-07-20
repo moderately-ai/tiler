@@ -1,6 +1,26 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0014"
+kind: "decision"
+title: "Separate reassociation from operand permutation"
+topics: ["numerics","reductions","optimization"]
+decision_status: "accepted"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.numerical-semantics"]
+evidence: ["tiler.research.numerics.reduction-semantics-and-legality"]
+ticket: "numerical-policy-contract"
+---
+
 # 0014: Separate reassociation from operand permutation
 
 **Status:** accepted
+
+## Traceability
+
+- **Normative owner:** [Numerical semantics](../numerical-semantics.md).
+- **Evidence:** [reduction semantics and legality](../research/numerics/reduction-semantics-and-legality.md).
+- **Work record:** [numerical-policy-contract](../../tickets/numerical-policy-contract.md).
+
 
 ## Context
 

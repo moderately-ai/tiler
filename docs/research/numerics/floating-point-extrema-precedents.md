@@ -1,7 +1,31 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.numerics.floating-point-extrema-precedents"
+kind: "research"
+title: "Floating-point extrema precedents"
+topics: ["numerics","floating-point","extrema"]
+research_status: "complete"
+disposition: "adopted"
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
+informs: ["tiler.contract.numerical-semantics"]
+adopted_by: ["ADR-0023"]
+reproduced_by: []
+ticket: "numerical-policy-contract"
+---
+
 # Floating-point extrema precedents
 
 **Status:** research synthesis with accepted initial decision  
 **Ticket:** `numerical-policy-contract`
+
+## Traceability
+
+- **Current disposition:** adopted; historical status text below records the report's state when written.
+- **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
+- **Adoption:** [ADR 0023](../../decisions/0023-floating-point-extrema-semantics.md).
+- **Work record:** [numerical-policy-contract](../../../tickets/numerical-policy-contract.md).
+
 
 ## Primary-source facts
 
