@@ -6,7 +6,7 @@ priority: p1
 dependencies: [docs-status-reconciliation]
 related: []
 scopes: [contracts/navigation]
-shared_scopes: [project/tickets]
+shared_scopes: [project/tickets, research/indexing]
 paths: []
 tags: [docs-ia]
 ---
