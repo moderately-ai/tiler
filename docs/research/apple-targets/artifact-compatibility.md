@@ -1,25 +1,34 @@
 # Apple Metal artifact compatibility
 
-**Status:** bounded research; compilation matrix blocked by absent Metal
-Toolchain component
+**Status:** bounded research; compile and same-host reproducibility matrix
+measured, runtime compatibility matrix still open
 
 **Probe date:** 2026-07-20
 
 ## Result
 
-The portable contract can be tightened even though this host cannot produce a
-new metallib. macOS, iOS device, iOS simulator, and Mac Catalyst are distinct
-artifact families. Each needs an explicit platform/environment and deployment
-minimum in the Metal payload descriptor. SDK identity and compiler provenance
-do not substitute for that compatibility contract, and a successful metallib
-load does not prove function or pipeline readiness.
+The authorized Metal Toolchain 17F109 follow-up compiled all six tested
+tuples. The trivial kernel produced three different final metallibs: one each
+for macOS, iOS device, and iOS simulator. This directly supports treating those
+as distinct artifact families. Mac Catalyst remains a fourth, deferred family.
 
-The installed Xcode contains macOS, iPhoneOS, and iPhoneSimulator 26.5 SDKs but
-does not contain the separately downloadable Metal Toolchain. The `metal`
-launcher fails before compilation and `metallib` cannot be resolved. Per the
-research constraint no Metal Toolchain component was downloaded or installed.
-Therefore this run does **not** establish AIR/metallib target metadata, output-byte
-reproducibility, or old/new OS compatibility.
+Within each family, the two requested deployment minima produced identical AIR
+and final metallib bytes for this kernel. That narrow result does not show that
+deployment minima are interchangeable, absent from compatibility semantics, or
+safe to omit from identity. The requested triple is still an input and the
+declared lower runtime boundary; another source feature or compiler may encode
+it differently.
+
+Compiling identical source bytes from two absolute directories produced
+different AIR bytes containing the respective source paths, but byte-identical
+final metallibs. This supports using the final metallib as the embedded payload
+and keeping absolute paths out of portable identity when equivalent inputs are
+otherwise established. It does not establish reproducibility across machines
+or toolchain builds.
+
+No old macOS host, iOS device, or iOS simulator loaded these new artifacts.
+Compile success is not runtime compatibility evidence, and library load would
+still not prove function lookup or pipeline readiness.
 
 ## Evidence classification
 
@@ -39,6 +48,8 @@ This memo uses four labels:
 host: MacBook Pro Mac16,6, Apple M4 Max, arm64, 36 GB
 macOS: 27.0 build 26A5378n
 Xcode: 26.6 build 17F113
+Metal Toolchain component: build 17F109
+Metal Toolchain identifier: com.apple.dt.toolchain.Metal.32023.883
 DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
 xcrun: 72
 Apple clang: 21.0.0 (clang-2100.1.1.101)
@@ -61,18 +72,24 @@ Tool discovery produced:
 
 ```text
 metal launcher:
-  /Applications/Xcode.app/Contents/Developer/Toolchains/
-  XcodeDefault.xctoolchain/usr/bin/metal
-launcher SHA-256:
-  1705fe2424223a740e3ec0a419ffce6568610cc62156d60df475a1a67afbe0d1
-metallib: not found by xcrun
-metal --version exit: 1
-metal --version error:
-  cannot execute tool 'metal' due to missing Metal Toolchain;
-  use: xcodebuild -downloadComponent MetalToolchain
+  /private/var/run/com.apple.security.cryptexd/mnt/
+  com.apple.MobileAsset.MetalToolchain-v17.6.109.0.../
+  Metal.xctoolchain/usr/metal/current/bin/metal
+metal: Apple metal version 32023.883 (metalfe-32023.883)
+metallib: AIR-LLD 32023.883 (metalfe-32023.883)
+metal SHA-256:
+  3457ceed7d7e9cd5ac4e96affa8726df72331e19f3a836ece5c0758e0ba79f54
+metallib SHA-256:
+  0f391fad93f257988128848b76eec747ddf6863cff871ee9b9518152a8db68ac
 ```
 
-No download command was run. A read-only `xcrun simctl list devices available`
+The initial probe, before the user-authorized Metal Toolchain installation,
+resolved only Xcode's launcher; that launcher reported the missing component
+and `metallib` was unavailable. The follow-up resolved the separately installed
+MobileAsset toolchain shown above. This chronology matters: Xcode build alone
+does not identify the compiler binaries actually used.
+
+A read-only `xcrun simctl list devices available` during the initial probe
 unexpectedly printed `Install Started` / `Install Succeeded` while initializing
 Xcode simulator support, then listed only an iOS 26.0 simulator runtime. No
 simulator was booted. This side effect was not requested and the command is not
@@ -120,14 +137,17 @@ physical device.
 
 | Family | SDK/compiler target probed | Artifact produced | Runtime exercised | Current conclusion |
 | --- | --- | --- | --- | --- |
-| macOS | `macosx`; intended `air64-apple-macos<min>` | No: missing Metal Toolchain | macOS 27 API-stage controls only | Family required; deployment minimum explicit; real artifact compatibility unmeasured |
-| iOS device | `iphoneos`; intended `air64-apple-ios<min>` | No: missing Metal Toolchain | No physical device attached | Separate family required; all load/pipeline/old-device behavior unmeasured |
-| iOS simulator | `iphonesimulator`; intended `air64-apple-ios<min>-simulator` | No: missing Metal Toolchain | iOS 26.0 runtime listed but not booted | Separate family required; runtime behavior unmeasured |
+| macOS | `macosx`; `air64-apple-macos13.0`, `air64-apple-macos14.0` | Both compiled; identical final bytes | macOS 27 API-stage controls only; generated artifacts not loaded | Distinct final output; deployment-minimum runtime range unmeasured |
+| iOS device | `iphoneos`; `air64-apple-ios16.0`, `air64-apple-ios17.0` | Both compiled; identical final bytes | No physical device attached | Distinct final output; all runtime behavior unmeasured |
+| iOS simulator | `iphonesimulator`; `air64-apple-ios16.0-simulator`, `air64-apple-ios17.0-simulator` | Both compiled; identical final bytes | iOS 26.0 runtime listed but not booted | Distinct final output; runtime behavior unmeasured |
 | Mac Catalyst | macOS SDK exposes `ios` + `macabi` | No command validated | Not exercised | **Deferred**, neither silently supported nor permanently rejected |
 
-The word “intended” is deliberate: the exact target triples are inputs to the
-checked-in matrix, consistent with installed SDK target metadata and Apple's
-iOS example, but this host could not ask the Metal compiler to validate them.
+The identical-minima observation is specific to `copy.metal`, Metal 32023.883,
+MSL 3.1, and the exact flags below. Internal AIR strings observed by the probe
+named macOS 14.0 and iOS 17.0 even for the lower-minimum commands. That may be
+toolchain normalization, an MSL/toolchain floor, or metadata unrelated to the
+requested deployment contract; the probe does not distinguish those causes.
+It is not evidence that Tiler may discard the requested minimum.
 
 ### Catalyst disposition
 
@@ -141,10 +161,12 @@ the neutral envelope.
 
 ### Toolchain support policy
 
-No complete Metal AOT toolchain version was qualified by this run. “Xcode
-26.6” is insufficient because its separately resolved Metal compiler/linker
-component is absent. Initial support should use a tested evidence table keyed
-by Xcode build, SDK canonical version/build, `metal` and `metallib`
+Metal 32023.883 with AIR-LLD 32023.883 is now qualified only for this bounded
+compile and same-host reproducibility probe. It is not qualified for Tiler's
+runtime support matrix or numerical conformance. “Xcode 26.6” remains an
+insufficient identity because `xcrun` separately resolves the MobileAsset
+compiler/linker component. Initial support should use a tested evidence table
+keyed by Xcode build, SDK canonical version/build, `metal` and `metallib`
 version/executable fingerprint, selected MSL standard, and exact flags. It
 should not use an open-ended `Xcode >= N` claim.
 
@@ -172,7 +194,7 @@ vertex function as compute-> pipeline creation error (AGXMetalG16X Code=3)
 This proves that the local API exposes distinct library-load, function-lookup,
 and pipeline-creation stages. It does **not** prove at which stage a correctly
 formed but wrong-platform, too-new-deployment, or unsupported-GPU metallib
-fails. No such artifacts could be created on this host.
+fails. The new artifacts were compiled but not used for those runtime tests.
 
 ### Proposed classification
 
@@ -236,21 +258,46 @@ declared family and compatibility, never by trial-loading every metallib.
 
 ## Reproducibility
 
-### Unmeasured
+### Measured on one host and toolchain
 
-AIR and metallib byte reproducibility could not run because compilation failed
-at toolchain preflight. No conclusion is available for:
+The probe compiled identical source bytes from `src-a/copy.metal` and
+`src-b/copy.metal`. Each family showed this pattern:
 
-- repeated output in one directory;
-- identical sources in different absolute directories;
-- different machines with the same Xcode build;
-- Xcode patch/build changes;
-- embedded timestamps, UUIDs, source paths, or nondeterministic section order.
+| Family | Requested minima | AIR across directories | Final metallib across directories | Final metallib SHA-256 |
+| --- | --- | --- | --- | --- |
+| macOS | 13.0, 14.0 | Different | Identical | `12bc2bc6771922c6d41a00b077111d8bcb3632f7196f386c63ab9332bbf114b8` |
+| iOS device | 16.0, 17.0 | Different | Identical | `5410e94de593a21ea3190feb94c89b58cdb8cd3132dc1c64ed3495f856579262` |
+| iOS simulator | 16.0, 17.0 | Different | Identical | `ede80a137044deed1d41efbd352fcf9fc8a136e332b8aebb3428ae5d63d0f9aa` |
 
-Until measured, Tiler promises deterministic source/manifest/key construction,
-not byte-identical Apple compiler output across machines or toolchains. A cache
-hit requires the complete compiler/SDK/flag identity and stored payload digest;
-cache correctness never depends on independently reproducing the same bytes.
+Within a family, both tested minima also produced identical AIR and metallib
+bytes. Across families, the final metallibs differed.
+
+The AIR files contained their respective absolute `src-a` or `src-b` source
+paths. The path is therefore a measured AIR input leak correlated with the AIR
+digest change, although this probe does not prove it is the only differing
+field. The linker removed or canonicalized the difference in the final
+metallib for this case.
+
+### Inferred cache consequences
+
+- The final metallib, not AIR, is the initial product payload and payload
+  digest. Persisting AIR is unnecessary for the proposed macro-local bundle.
+- Absolute temporary paths should not enter the portable content key merely
+  because the compiler records them in an intermediate. The key still includes
+  every semantic and compiler input, including requested deployment minimum.
+- Cache correctness must validate the stored final payload digest and never
+  depend on a second compiler invocation reproducing the same bytes.
+
+### Still unmeasured
+
+- repeated compilation in the same absolute directory;
+- a second machine with the same Xcode and MobileAsset toolchain builds;
+- different Xcode or Metal Toolchain patch/build versions;
+- whether richer kernels, debug/line-info flags, includes, or libraries retain
+  paths, timestamps, UUIDs, or nondeterministic order in the final metallib.
+
+Tiler therefore promises deterministic source/manifest/key construction, not
+byte-identical Apple compiler output across machines or toolchains.
 
 ## Exact probes
 
@@ -285,7 +332,8 @@ ZERO_AR_DATE=1 xcrun --sdk <same-sdk> metallib copy.air -o copy.metallib
 The script records SDK/tool versions and hashes, compiles identical source bytes
 from two different absolute directories, extracts target-like strings, hashes
 both artifacts, and performs byte comparisons. It exits 4 when the Metal
-Toolchain is unavailable and does not download anything.
+Toolchain is unavailable and does not download anything. The follow-up run
+completed successfully with all six tuples.
 
 Run the API-stage control on a macOS Metal host:
 
@@ -298,17 +346,18 @@ xcrun --sdk macosx swiftc \
 
 ## Required follow-up matrix
 
-After installing a Metal Toolchain through a user-approved maintenance action,
-repeat the checked-in probe and add:
+The authorized toolchain follow-up completed the checked-in compile and
+same-host path-variation probe. Remaining work is:
 
-1. metallib metadata inspection with the toolchain-provided inspection tool;
-2. same-build second machine and at least two Xcode patch/build versions;
+1. metallib metadata inspection with a format-aware tool rather than `strings`;
+2. same-build second machine and at least two Xcode/Metal patch-build pairs;
 3. minimum/equal/newer macOS runtime hosts for each chosen deployment minimum;
 4. minimum/equal/newer physical iOS devices across admitted Apple GPU families;
 5. minimum/equal/newer simulator runtimes;
 6. deliberately wrong-family and too-new-minimum artifacts at every runtime;
 7. library load, function lookup, and pipeline creation recorded independently;
-8. a Catalyst compile/load/pipeline experiment before changing its deferred
+8. richer kernels and compile modes that may retain paths or nondeterminism;
+9. a Catalyst compile/load/pipeline experiment before changing its deferred
    status.
 
 Old-device behavior remains explicitly unmeasured. Apple's forward-compatibility
