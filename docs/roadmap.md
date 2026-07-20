@@ -14,11 +14,10 @@ roadmap_status: "proposed"
 The roadmap favors narrow end-to-end slices over implementing a broad IR with
 no verified runtime contract.
 
-The next phase is intentionally gated by
-[Q-PLAN-017](open-questions.md#q-plan-017--first-metal-value-proof-workload):
-whether the first Metal value proof includes the proposed strict serial `f32`
-sum profile or stays reduction-free. Q-PHASE-001 then separately decides
-whether to begin. Everything below is proposed progression, not authorization.
+ADR 0055 authorizes a bounded, unstable implementation prototype whose first
+Metal value proof fuses a resolved `f32` pointwise prologue into a strict serial
+`f32` `Sum`. Crate layout and MSRV remain prerequisite decisions. Broader work
+below remains proposed progression rather than blanket implementation authority.
 
 ## Milestone 0A: semantic graph and extension feasibility
 
@@ -103,9 +102,9 @@ construction order.
 - One input, one newly allocated output, F32, statically known rank.
 - Contiguous layout with arbitrary valid start offset.
 - Reindex plus pointwise fusion.
-- If Q-PLAN-017 selects it, pull the proposed strict serial `f32` `Sum` profile
-  into this milestone, first accept its normative operation tuple, and compare
-  one fused map/reduce dispatch with a deliberately materialized reference.
+- Implement the accepted prototype strict serial `f32` `Sum` profile and
+  compare one fused map/reduce dispatch with a deliberately materialized
+  reference.
 - Initially limit pointwise operations to fully resolved algebraic semantics;
   any transcendental or GELU enters only with its formula, reference evaluator,
   accuracy contract, and conformance evidence implemented end to end.

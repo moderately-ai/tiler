@@ -9,24 +9,19 @@ related: ["tiler.questions.open", "tiler.roadmap"]
 
 # Project status
 
-Tiler is in the research-to-implementation readiness phase. The semantic,
+Tiler has entered a bounded prototype phase. The semantic,
 optimizer, scheduling, numerical, artifact, cache, and runtime boundaries have
 substantial accepted decisions and bounded executable evidence. Production
-compiler crates and kernels have not been authorized or implemented.
+compiler crates and kernels have not been implemented or stabilized.
 
-## Current gate
+## Authorized prototype
 
-The [`research-readiness-gate`](../tickets/research-readiness-gate.md) ticket is
-`awaiting-decision`. Its two remaining product choices are deliberately atomic
-and sequential: [Q-PLAN-017](open-questions.md#q-plan-017--first-metal-value-proof-workload)
-selects the proposed strict serial `f32` sum profile or reduction-free plumbing;
-then [Q-PHASE-001](open-questions.md#q-phase-001--implementation-phase-authorization)
-authorizes, narrows, or declines that implementation phase.
-
-If Tom authorizes implementation, crate layout and MSRV remain deliberately
-sequenced follow-up decisions before scaffolding; the gate's closure must create
-their tickets and the chosen vertical-slice tickets. No implementation ticket
-is pre-authorized while the gate is parked.
+Tom selected and authorized the bounded strict serial `f32` `Sum` Metal value
+proof in [ADR 0055](decisions/0055-use-a-serial-sum-for-the-first-metal-value-proof.md).
+The prototype must pass through the documented semantic, reference, optimizer,
+schedule, structured-kernel, artifact, and guarded-runtime boundaries; a
+handwritten standalone Metal kernel is insufficient. Crate layout and MSRV are
+the next decisions before scaffolding.
 
 ## Evidence boundary
 

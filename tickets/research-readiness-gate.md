@@ -1,7 +1,7 @@
 ---
 id: research-readiness-gate
 title: Run the research-to-implementation readiness gate
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [synthesize-core-contracts, synthesize-optimizer-contracts, synthesize-artifact-contracts]
 related: []
@@ -30,11 +30,19 @@ gaps were resolved before presenting the gate:
   consumer-target `cfg` diagnostics, while unrelated targets and explicit
   `FallbackOnly` use the semantic fallback without proc-macro target inference.
 
-Two atomic decisions remain. First, choose the first Metal value-proof workload.
-The current reduction-free reindex/pointwise slice validates plumbing but weakly
-demonstrates fusion value. Pulling forward the researched, still-proposed strict
-serial f32 `Sum` profile would prove a one-dispatch/no-intermediate result
-against a split baseline while leaving parallel/reassociated/SIMD/multi-pass
-reductions deferred. Second, after that workload is concrete, Tom explicitly
-authorizes, narrows, or declines its implementation. Crate layout and MSRV are
-follow-up decisions only if implementation is authorized.
+Tom selected the strict serial f32 `Sum` value proof and authorized the bounded,
+explicitly unstable implementation prototype. ADR 0055 records the scope:
+semantic-to-runtime vertical evidence, not a broad or production Metal backend.
+Parallel/reassociated/SIMD/multi-pass reductions remain deferred. Crate layout
+and MSRV are the next prerequisite decisions before scaffolding.
+
+## Outcome
+
+- The architecture passed independent contradiction, provenance, and
+  blank-agent acceptance audits.
+- Identity, artifact-family delivery, numerical, cache, and runtime boundaries
+  have accepted contracts and bounded executable evidence.
+- ADR 0055 selects a strict serial f32 `Sum` with a resolved pointwise prologue
+  as the first Metal-backed value proof.
+- Tom authorized this bounded prototype phase; it does not stabilize APIs or
+  authorize broader backend and operation coverage.
