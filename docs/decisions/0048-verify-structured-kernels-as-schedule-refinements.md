@@ -67,6 +67,9 @@ synchronization, reduction order, numerical behavior, or launch intent.
 - Target-specific operations may be introduced in a later lowering IR without
   contaminating common kernel identity.
 
+This decision accepts the verifier boundary and required proof obligations, not
+the current proposed field names or Rust API shape in the mixed IR contract.
+
 ## Alternatives considered
 
 Trusting the schedule verifier alone cannot detect bugs introduced while
@@ -75,3 +78,10 @@ ownership, bounds, convergence, numerical, and launch correspondence. Re-running
 general schedule legality from emitted code duplicates authority and loses
 high-level proof structure. Embedding Metal/CUDA syntax or runtime objects in
 the common IR prevents backend independence.
+
+## Traceability
+
+Applies to the [IR contract](../ir.md) and
+[fusion and scheduling](../compiler/fusion-and-scheduling.md). The
+[structured-kernel verifier research](../research/kernel-ir/structured-kernel-ir-verifier.md)
+and its linked experiment provide the bounded executable model.

@@ -61,5 +61,9 @@ fallible.
 
 ## Traceability
 
-Applies to the artifact and Candle runtime contracts. Runtime transition,
-semantic-validation, and Candle post-wait evidence support the boundary.
+Applies to the [artifact execution boundary](../artifact-abi.md) and
+[Candle adapter](../integration/candle.md). The
+[runtime execution](../research/runtime/runtime-execution-contract.md),
+[semantic validation](../research/runtime/semantic-validation-enforcement.md),
+and [Candle post-wait](../research/runtime/candle-metal-post-wait-error-checking.md)
+reports define the accepted state machine and failure boundary.

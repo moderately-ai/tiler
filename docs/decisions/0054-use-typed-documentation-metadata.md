@@ -52,5 +52,6 @@ GitHub reading worse.
 
 ## Traceability
 
-The information-architecture audit records the observed corpus failures and the
-bounded migration used to validate this contract.
+The [information-architecture audit](../research/documentation/information-architecture-audit.md)
+records the observed corpus failures and migration used to validate the
+[metadata contract](../document-metadata.md).

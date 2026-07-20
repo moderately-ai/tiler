@@ -6,6 +6,7 @@ title: "Documentation metadata and traceability"
 topics: ["documentation", "governance"]
 contract_status: "accepted"
 implementation_status: "implemented"
+evidence: ["tiler.research.documentation.information-architecture-audit", "tiler.research.documentation.blank-agent-acceptance-audit"]
 ticket: "docs-navigation-metadata"
 ---
 
@@ -46,6 +47,25 @@ Status is kind-specific:
 `not-started`, `spike-only`, `partial`, or `implemented`. Evidence classes are
 `primary-source-synthesis`, `executable-model`, `bounded-measurement`,
 `exhaustive-finite`, `sound-proof`, `normative-guarantee`, and `unknown`.
+
+| Evidence class | Meaning |
+| --- | --- |
+| `primary-source-synthesis` | A conclusion traced to named specifications, papers, or inspected source revisions. |
+| `executable-model` | Checked code exercises a proposed contract; it is not the production implementation. |
+| `bounded-measurement` | An observation holds only for the recorded inputs, environment, and procedure. |
+| `exhaustive-finite` | Every member of an explicitly named finite universe was checked. |
+| `sound-proof` | A stated property follows within the documented formal model and assumptions. |
+| `normative-guarantee` | A governing specification promises the property within its stated scope. |
+| `unknown` | Available evidence does not establish the claim. This class cannot be combined with another. |
+
+These classes are categories, not a total strength ordering. Reports and
+experiment guides must name the bounded universe, assumptions, environment, or
+normative scope that makes the selected class honest.
+
+In a `mixed` contract, only accepted-ADR-derived invariants and sections
+explicitly labeled accepted are normative. Unmarked field-level schemas and API
+detail default to proposed. Authors should split a contract when that default
+would make ordinary reading ambiguous.
 
 ## Typed relationships
 

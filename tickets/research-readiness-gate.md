@@ -30,9 +30,11 @@ gaps were resolved before presenting the gate:
   consumer-target `cfg` diagnostics, while unrelated targets and explicit
   `FallbackOnly` use the semantic fallback without proc-macro target inference.
 
-The remaining phase choice is the first Metal value-proof workload. The current
-reduction-free reindex/pointwise slice validates plumbing but weakly demonstrates
-fusion value. Pulling forward only the already-specified strict serial f32 `Sum`
-would prove a one-dispatch/no-intermediate result against a split baseline while
-leaving parallel/reassociated/SIMD/multi-pass reductions deferred. Tom's review
-and phase decision remain required before this ticket can complete.
+Two atomic decisions remain. First, choose the first Metal value-proof workload.
+The current reduction-free reindex/pointwise slice validates plumbing but weakly
+demonstrates fusion value. Pulling forward the researched, still-proposed strict
+serial f32 `Sum` profile would prove a one-dispatch/no-intermediate result
+against a split baseline while leaving parallel/reassociated/SIMD/multi-pass
+reductions deferred. Second, after that workload is concrete, Tom explicitly
+authorizes, narrows, or declines its implementation. Crate layout and MSRV are
+follow-up decisions only if implementation is authorized.

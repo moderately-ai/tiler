@@ -220,6 +220,17 @@ logical properties, candidate physical plans, rejected alternatives, and the
 observable result. Do not let an example quietly introduce semantics that the
 normative text has not defined.
 
+Before completing documentation work, run:
+
+```sh
+python3 scripts/docs.py render
+python3 scripts/docs.py validate
+python3 -B -m unittest discover -s scripts/tests -v
+```
+
+Generated catalog blocks are checked-in views over frontmatter. Edit source
+metadata, not generated list items, and rerun the renderer.
+
 ## Ticketsplease and parallel work
 
 This repository uses ticketsplease (`tkt`) as the work graph. Follow its skill
@@ -230,8 +241,9 @@ or rolling up research work.
   another agent's claim.
 - Use `tkt ready`, `tkt tracks`, or `tkt next` to select dependency-satisfied,
   conflict-aware work.
-- Create or enter the dedicated worktree and branch before claiming a ticket so
-  the claim does not dirty another agent's worktree.
+- Atomically claim the ticket first so another worker cannot win the same work,
+  then immediately create or enter its dedicated worktree and `tkt/<id>` branch
+  from current `origin/main`. Do not edit scoped content between those steps.
 - Keep one ticket per branch when practical and stay within declared scopes.
 - Add a scope before touching a mapped contract area; `paths` do not substitute
   for scopes in scheduling.

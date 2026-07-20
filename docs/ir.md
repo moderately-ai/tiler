@@ -13,6 +13,10 @@ evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.indexi
 
 **Status:** mixed — accepted representation boundaries and proposed schemas
 
+Accepted ADRs govern the representation separation and semantic invariants they
+name. Unless a section says otherwise, concrete field sets, enum variants, and
+API shapes below remain proposed.
+
 ## Ownership boundary
 
 This document owns field-level semantic, index/access, schedule,

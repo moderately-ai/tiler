@@ -16,10 +16,17 @@ compiler crates and kernels have not been authorized or implemented.
 
 ## Current gate
 
-The `research-readiness-gate` ticket is `awaiting-decision`. Its remaining
-product choice is whether the first Metal value proof should pull forward the
-already-specified strict serial `f32` sum baseline or remain reduction-free.
-This status does not authorize implementation.
+The [`research-readiness-gate`](../tickets/research-readiness-gate.md) ticket is
+`awaiting-decision`. Its two remaining product choices are deliberately atomic
+and sequential: [Q-PLAN-017](open-questions.md#q-plan-017--first-metal-value-proof-workload)
+selects the proposed strict serial `f32` sum profile or reduction-free plumbing;
+then [Q-PHASE-001](open-questions.md#q-phase-001--implementation-phase-authorization)
+authorizes, narrows, or declines that implementation phase.
+
+If Tom authorizes implementation, crate layout and MSRV remain deliberately
+sequenced follow-up decisions before scaffolding; the gate's closure must create
+their tickets and the chosen vertical-slice tickets. No implementation ticket
+is pre-authorized while the gate is parked.
 
 ## Evidence boundary
 

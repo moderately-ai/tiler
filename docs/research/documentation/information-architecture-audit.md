@@ -8,7 +8,7 @@ catalog_group: "documentation-governance"
 research_status: "complete"
 disposition: "adopted"
 implementation_status: "implemented"
-evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
+evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.document-metadata"]
 adopted_by: ["ADR-0054"]
 ticket: "docs-status-reconciliation"

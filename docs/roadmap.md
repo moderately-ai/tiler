@@ -15,10 +15,10 @@ The roadmap favors narrow end-to-end slices over implementing a broad IR with
 no verified runtime contract.
 
 The next phase is intentionally gated by
-[Q-PLAN-017](open-questions.md#q-plan-017--first-value-proof-workload-and-implementation-phase):
-whether the first Metal value proof includes the specified strict serial `f32`
-sum baseline or stays reduction-free. Everything below is proposed progression,
-not authorization to begin implementation.
+[Q-PLAN-017](open-questions.md#q-plan-017--first-metal-value-proof-workload):
+whether the first Metal value proof includes the proposed strict serial `f32`
+sum profile or stays reduction-free. Q-PHASE-001 then separately decides
+whether to begin. Everything below is proposed progression, not authorization.
 
 ## Milestone 0A: semantic graph and extension feasibility
 
@@ -103,6 +103,9 @@ construction order.
 - One input, one newly allocated output, F32, statically known rank.
 - Contiguous layout with arbitrary valid start offset.
 - Reindex plus pointwise fusion.
+- If Q-PLAN-017 selects it, pull the proposed strict serial `f32` `Sum` profile
+  into this milestone, first accept its normative operation tuple, and compare
+  one fused map/reduce dispatch with a deliberately materialized reference.
 - Initially limit pointwise operations to fully resolved algebraic semantics;
   any transcendental or GELU enters only with its formula, reference evaluator,
   accuracy contract, and conformance evidence implemented end to end.
@@ -155,7 +158,7 @@ implementations and complete `KernelProgram`s and explains the choice.
 
 ## Milestone 4: reductions
 
-- Exact serial reduction baseline.
+- Broaden the exact serial baseline beyond any narrow Milestone 2 proof.
 - SIMD-group and threadgroup strategies.
 - Fused pointwise prologues and epilogues.
 - Explicit accumulator and empty-domain policy.

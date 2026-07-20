@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
 import sys
 from collections import defaultdict
@@ -316,6 +317,18 @@ def catalog(records: list[Record], kind: str) -> str:
             group = sorted(support_groups)[0] if support_groups else "documentation-governance"
         grouped[str(group)].append(record)
     lines = []
+    portal_dir = MARKERS[kind][0].parent.as_posix()
+
+    def link(target_id: str) -> str:
+        target = by_id[target_id]
+        href = posixpath.relpath(target.path.as_posix(), portal_dir)
+        return f"[{target.meta['title']}]({href})"
+
+    experiments_by_research: dict[str, list[str]] = defaultdict(list)
+    for candidate in records:
+        if candidate.meta.get("kind") == "experiment":
+            for supported in candidate.meta.get("supports", []):
+                experiments_by_research[str(supported)].append(candidate.id)
     for group in GROUPS:
         items = sorted(grouped.get(group, []), key=lambda r: (str(r.meta.get("title")), r.id))
         if not items: continue
@@ -324,15 +337,24 @@ def catalog(records: list[Record], kind: str) -> str:
             if kind == "decision":
                 label = f"{record.id[4:]}: {record.meta['title']}"
                 href = record.path.relative_to(Path("docs/decisions"))
-                detail = record.meta["decision_status"]
+                contracts = ", ".join(link(str(item)) for item in record.meta["applies_to"])
+                evidence = ", ".join(link(str(item)) for item in record.meta["evidence"])
+                detail = f"{record.meta['decision_status']}; contracts: {contracts}; evidence: {evidence}"
             elif kind == "research":
                 label = str(record.meta["title"])
-                href = Path("..").joinpath(record.path.relative_to(Path("docs")))
+                href = Path(posixpath.relpath(record.path.as_posix(), portal_dir))
                 detail = f"{record.meta['disposition']}; {', '.join(record.meta['evidence_classes'])}"
+                destinations = [str(item) for item in record.meta.get("informs", []) + record.meta.get("adopted_by", [])]
+                if destinations:
+                    detail += "; informs: " + ", ".join(link(item) for item in destinations)
+                reproduced = sorted(experiments_by_research.get(record.id, []))
+                if reproduced:
+                    detail += "; experiments: " + ", ".join(link(item) for item in reproduced)
             else:
                 label = str(record.meta["title"])
                 href = record.path.relative_to(Path("spikes"))
                 detail = f"{record.meta['experiment_status']}; {', '.join(record.meta['evidence_classes'])}"
+                detail += "; supports: " + ", ".join(link(str(item)) for item in record.meta["supports"])
             lines.append(f"- [{label}]({href.as_posix()}) — {detail}")
         lines.append("")
     return "\n".join(lines).rstrip()

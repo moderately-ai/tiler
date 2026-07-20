@@ -20,6 +20,11 @@ empty domains, seed placement, typed accumulator boundaries, and adversarial
 floating-point cases. It does not measure a GPU lowering or prove parallel
 reduction topology.
 
+The `exhaustive-finite` claim is limited to all 24 permutations of the single
+four-value cancellation witness `[1e20, -1e20, 3.0, 4.0]`. Other seed, empty,
+conversion, and exceptional-value cases are selected witnesses, not exhaustive
+domains.
+
 ## Reproduce
 
 From the repository root:
@@ -28,8 +33,8 @@ From the repository root:
 python3 spikes/numerics/reduction_contract_probe.py
 ```
 
-The script exits nonzero on a failed assertion and otherwise prints its passed
-case count.
+The script exits nonzero on a failed assertion and otherwise prints
+`reduction contract probe: all witnesses passed`.
 
 ## Traceability
 

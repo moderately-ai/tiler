@@ -30,6 +30,7 @@ production compiler implementation.
 - **Continue the work:** read [AGENTS.md](AGENTS.md) and the
   [work-tracking guide](docs/work-tracking.md) before editing.
 
-Accepted ADRs govern durable architectural choices. Detailed design documents
-remain explicit about proposed sections and implementation maturity; a measured
-spike is evidence, not production support.
+Accepted ADRs govern durable architectural choices. A `mixed` contract treats
+unmarked field-level detail as proposed unless an accepted ADR is cited; every
+document states implementation maturity. A measured spike is evidence, not
+production support.

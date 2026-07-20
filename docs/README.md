@@ -74,3 +74,8 @@ The exact metadata and relationship rules are defined in
 [documentation metadata](document-metadata.md). A disagreement among an
 accepted ADR, its normative owner, and indexed evidence is a documentation bug,
 not a choice left to the reader.
+
+For a `mixed` contract, accepted ADRs and explicitly labeled accepted sections
+are authoritative; otherwise unmarked field-level schemas and API detail remain
+proposed. This fail-closed convention avoids making a whole evolving design
+normative merely because it incorporates accepted boundaries.

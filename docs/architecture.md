@@ -13,6 +13,10 @@ evidence: ["tiler.research.program-planning.kernel-program-buffer-plan"]
 
 **Status:** mixed — accepted boundaries and proposed field-level detail
 
+Accepted ADRs govern the layer separation and dependency boundaries cited by
+this document. Unless a section says otherwise, concrete component names,
+schemas, and API shapes below are proposed.
+
 ## Ownership boundary
 
 This document owns component boundaries, dependency direction, and the

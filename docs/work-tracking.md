@@ -23,8 +23,10 @@ tkt reconcile              # branch/worktree/board consistency
 product alternatives. `deferred` means the work is intentionally parked until
 its stated trigger. Neither belongs in `tkt ready`.
 
-Before work: read [AGENTS.md](../AGENTS.md), inspect `git status`, create the
-dedicated worktree/branch from current `origin/main`, then claim the ticket.
+Before work: read [AGENTS.md](../AGENTS.md), inspect `git status`, atomically
+claim the ticket, then immediately create or enter its dedicated branch/worktree
+from current `origin/main`. Do not edit scoped content between claim and branch
+creation.
 Before integration: run the ticket's tests, `tkt lint`, `git diff --check`, and
 `tkt guard` against the true base. A completed ticket must point to its durable
 outputs and remaining gates.

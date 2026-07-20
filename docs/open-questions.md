@@ -16,13 +16,20 @@ one owner and an explicit way to close or reconsider it.
 
 ## Genuine product decisions
 
-### Q-PLAN-017 — First value-proof workload and implementation phase
+### Q-PLAN-017 — First Metal value-proof workload
 
 - Owner/tracking: [Fusion and scheduling](compiler/fusion-and-scheduling.md),
   [`research-readiness-gate`](../tickets/research-readiness-gate.md).
-- Close when: Tom chooses strict serial `f32` Sum versus reduction-free plumbing
-  for the first Metal proof and explicitly authorizes, narrows, or declines the
-  implementation phase.
+- Close when: Tom chooses the proposed strict serial `f32` Sum profile versus
+  reduction-free plumbing for the first Metal proof.
+
+### Q-PHASE-001 — Implementation-phase authorization
+
+- Owner/tracking: [`research-readiness-gate`](../tickets/research-readiness-gate.md),
+  after Q-PLAN-017.
+- Close when: Tom explicitly authorizes, narrows, or declines implementation of
+  the selected proof. Authorization creates the crate-layout, MSRV, and
+  vertical-slice tickets; it does not silently settle those follow-up choices.
 
 ### Q-PKG-001 — Initial workspace crate boundaries
 
