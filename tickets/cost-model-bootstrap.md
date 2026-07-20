@@ -1,7 +1,7 @@
 ---
 id: cost-model-bootstrap
 title: Design the initial cost model and calibration experiments
-status: todo
+status: done
 priority: p1
 dependencies: [region-search-oracle, scheduled-region-model, target-profile-feasibility-model]
 related: []
