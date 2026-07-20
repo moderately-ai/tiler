@@ -1,6 +1,6 @@
 # 0046: Separate logical tensor access from storage addressing
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 
