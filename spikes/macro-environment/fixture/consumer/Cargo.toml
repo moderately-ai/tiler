@@ -1,0 +1,9 @@
+[package]
+name = "tiler-environment-probe-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+tiler-environment-probe-macro = { path = "../probe-macro" }
+

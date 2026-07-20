@@ -101,11 +101,10 @@ ADR when evidence is sufficient.
 - What minimum Rust version and lock implementation are supported, and how is
   automatic OS-lock release after process death tested?
 - Which exact Metal toolchain facts enter the cache key?
-- How should cache deletion interact with rustc incremental macro expansion?
-- Does rust-analyzer need an analysis stub after cold/warm measurements?
+- What measured rust-analyzer cold/warm cost, if any, justifies a future stable
+  optimization that preserves identical expansion semantics?
 - Which Apple toolchain details define reproducibility boundaries?
-- When are macOS, iOS-device, and iOS-simulator bundles generated together?
-- Can target discovery improve without relying on unstable proc-macro APIs?
+- Which ergonomic explicit artifact-family profiles should frontends expose?
 - How is unsupported Apple cross-compilation diagnosed?
 - When, if ever, does the serialized IR become a public compatibility promise?
 

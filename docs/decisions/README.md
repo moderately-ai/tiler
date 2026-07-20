@@ -55,6 +55,7 @@ accepted. Unresolved questions are collected in
 - [0046: Separate logical tensor access from storage addressing](0046-separate-logical-access-from-storage-addressing.md) — accepted
 - [0047: Model placement as physical properties over capability graphs](0047-model-placement-as-physical-properties.md) — accepted
 - [0048: Verify structured kernels as schedule refinements](0048-verify-structured-kernels-as-schedule-refinements.md) — accepted
+- [0049: Select artifact families explicitly at inline invocations](0049-explicit-artifact-family-selection.md) — accepted
 
 ## Template
 

@@ -1,0 +1,76 @@
+use proc_macro::{Literal, TokenStream, TokenTree};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
+
+const OBSERVED: &[&str] = &[
+    "HOST",
+    "TARGET",
+    "CARGO_BUILD_TARGET",
+    "CARGO_CFG_TARGET_ARCH",
+    "CARGO_CFG_TARGET_OS",
+    "CARGO_CFG_TARGET_ENV",
+    "CARGO_CFG_TARGET_FAMILY",
+    "CARGO_MANIFEST_DIR",
+    "CARGO_PKG_NAME",
+    "OUT_DIR",
+    "PROFILE",
+    "OPT_LEVEL",
+    "DEBUG",
+    "RUSTC",
+    "SDKROOT",
+    "MACOSX_DEPLOYMENT_TARGET",
+    "IPHONEOS_DEPLOYMENT_TARGET",
+];
+
+#[proc_macro]
+pub fn probe(input: TokenStream) -> TokenStream {
+    let selection = input.to_string();
+    let fingerprint =
+        std::env::var("TILER_TOOLCHAIN_FINGERPRINT").unwrap_or_else(|_| "unset".into());
+    let cache_root = std::env::var_os("TILER_PROBE_CACHE").map(PathBuf::from);
+    let cache_state = cache_root
+        .as_ref()
+        .map(|root| {
+            fs::create_dir_all(root).unwrap();
+            let key = root.join(format!(
+                "{}-{}",
+                sanitize(&selection),
+                sanitize(&fingerprint)
+            ));
+            if key.exists() {
+                "hit"
+            } else {
+                fs::write(key, b"complete").unwrap();
+                "miss"
+            }
+        })
+        .unwrap_or("disabled");
+
+    if let Some(path) = std::env::var_os("TILER_TRACE_PATH") {
+        let mut trace = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        write!(
+            trace,
+            "selection={selection:?}\tfingerprint={fingerprint:?}\tcache={cache_state}"
+        )
+        .unwrap();
+        for name in OBSERVED {
+            let value = std::env::var(name).unwrap_or_else(|_| "<absent>".into());
+            write!(trace, "\t{name}={value:?}").unwrap();
+        }
+        writeln!(trace).unwrap();
+    }
+
+    TokenStream::from(TokenTree::Literal(Literal::string(&selection)))
+}
+
+fn sanitize(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect()
+}

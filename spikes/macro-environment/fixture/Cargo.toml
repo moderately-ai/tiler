@@ -1,0 +1,4 @@
+[workspace]
+members = ["probe-macro", "consumer"]
+resolver = "2"
+

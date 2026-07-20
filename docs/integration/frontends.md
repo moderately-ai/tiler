@@ -156,32 +156,35 @@ cache side effects. See
 ## Target policy
 
 Proc macros execute for the host and do not receive the same guaranteed target
-metadata as Cargo build scripts. The initial supported AOT path is:
+metadata as Cargo build scripts. Each invocation therefore resolves a typed,
+canonical `ArtifactFamilySelection`; it does not infer the consumer family from
+the proc-macro host. A selection may name one or several governed families such
+as macOS, iOS device, and iOS simulator. Each family remains a distinct artifact
+with its own target manifest and content identity.
 
-```text
-macOS host + native macOS target
-  -> compile and embed macOS metallib
-
-non-macOS host + non-Apple target
-  -> emit semantically compatible fallback path
-
-non-macOS host + Apple target
-  -> explicit unsupported cross-AOT diagnostic
-```
-
-A macOS-host build targeting a non-Apple platform may perform unnecessary
-cached Metal compilation initially because target discovery is not assumed.
-Later, the macro can compile an enabled family of macOS, iOS-device, and
-iOS-simulator bundles and emit Rust `#[cfg]` selection without requiring target
-knowledge inside the proc macro.
+A frontend may offer an ergonomic literal default profile, but the resolved
+selection is still explicit compiler input. Generated Rust may use `#[cfg]` to
+choose among compatible embedded families. An unselected or unavailable family
+uses the integration's semantic fallback where allowed, or produces an explicit
+unsupported-AOT diagnostic; it never receives a host-family artifact.
 
 Platform policy, SDK, deployment target, and Metal language version participate
 in artifact identity. No target is silently inferred from the proc-macro host
 when that would produce an incompatible artifact.
 
 Cargo documents `TARGET` and `CARGO_CFG_*` as build-script inputs rather than
-ordinary crate-compilation variables; see
+ordinary crate-compilation variables. Local measurement also found them absent
+from native and explicitly targeted proc-macro expansion; see the
+[proc-macro environment research](../research/macro-environment/proc-macro-build-environment.md)
+and
 [Cargo environment variables](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
+
+Changing Xcode, the selected developer directory, SDK contents, or explicit
+Tiler toolchain configuration is a rebuild boundary. On an actual expansion,
+the resolved compiler fingerprint changes the cache key. Stable Cargo does not
+track those external changes, so users and CI must force the affected consumer
+crate to rebuild after a toolchain change. Cache deletion alone does not affect
+already generated Rust or compiled binaries.
 
 ## Rust-analyzer and `cargo check`
 
@@ -196,7 +199,9 @@ Instead:
 - an optional analysis stub is considered only if measurements demonstrate a
   material problem and it can preserve type/diagnostic behavior.
 
-This behavior is a required feasibility test, not an assumption.
+Cold/warm IDE behavior remains a useful performance measurement. Correctness
+does not depend on it: expansion has identical types, diagnostics, artifact
+selection, and fallback semantics in every compiler process.
 
 ## Fusion visibility boundary
 
