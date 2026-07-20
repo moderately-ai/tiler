@@ -1,6 +1,6 @@
 # 0048: Verify structured kernels as schedule refinements
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 
