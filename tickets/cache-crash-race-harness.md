@@ -1,7 +1,7 @@
 ---
 id: cache-crash-race-harness
 title: Spike the content-addressed cache crash and race protocol
-status: todo
+status: done
 priority: p1
 dependencies: [artifact-envelope-model]
 related: []
