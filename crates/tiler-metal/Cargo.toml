@@ -1,0 +1,16 @@
+[package]
+name = "tiler-metal"
+description = "Metal source emission and offline compilation for Tiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+tiler-artifact.workspace = true
+tiler-ir.workspace = true
+
+[lints]
+workspace = true

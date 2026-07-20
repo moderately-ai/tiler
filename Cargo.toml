@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "crates/tiler-artifact",
+    "crates/tiler-compiler",
+    "crates/tiler-ir",
+    "crates/tiler-metal",
+    "prototypes/serial-sum-compile",
+    "prototypes/serial-sum-run",
+]
+exclude = [
+    "spikes/extensions/operation-api",
+    "spikes/extensions/proc-macro-visibility",
+    "spikes/indexing/index-access-model",
+    "spikes/macro-environment/fixture",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/moderately-ai/tiler"
+publish = false
+
+[workspace.dependencies]
+tiler-artifact = { path = "crates/tiler-artifact" }
+tiler-compiler = { path = "crates/tiler-compiler" }
+tiler-ir = { path = "crates/tiler-ir" }
+tiler-metal = { path = "crates/tiler-metal" }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

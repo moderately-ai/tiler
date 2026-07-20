@@ -1,0 +1,15 @@
+[package]
+name = "tiler-artifact"
+description = "Target-neutral artifact and execution contracts for Tiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+tiler-ir.workspace = true
+
+[lints]
+workspace = true
