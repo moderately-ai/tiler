@@ -130,6 +130,16 @@ ordering and overlap with surrounding Candle work.
 Resource access modes come from the ABI so the encoder can declare read-only,
 write-only, and read/write resources accurately.
 
+An explicitly synchronous validation/readback path is an exception to the
+ordinary asynchronous launch path. It must commit and wait for the exact
+command buffer containing the validator and required copy/synchronization, then
+observe a final `Completed` status before reading the CPU-visible validation
+record. A final `Error` returns the command buffer's error and cannot select
+fallback. The inspected Candle 0.11.0 `Commands::ensure_completed` does not
+perform this post-wait terminal check, so that method is not sufficient until
+the [verified gap](../research/runtime/candle-metal-post-wait-error-checking.md)
+is fixed or the adapter supplies an equivalent checked boundary.
+
 ## Dtypes and numerical contract
 
 Storage dtype, accumulator dtype, and output dtype are distinct fields.

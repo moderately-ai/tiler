@@ -250,10 +250,13 @@ operation-level fallible completion boundary. A validator-plus-readback or
 transactional result therefore needs explicit integration work. This is a
 runtime-profile feasibility issue, not a core semantic restriction.
 
-Local inspection also found that Candle's current `Commands::ensure_completed`
-checks command-buffer status before waiting and does not appear to recheck
-status/error after a committed or scheduled buffer completes. This requires a
-focused upstream/source validation before Tiler relies on the path.
+Focused source inspection and an executable transition test now confirm that
+the local Candle 0.11.0 `Commands::ensure_completed` checks command-buffer
+status before waiting and can return success without rechecking a buffer that
+transitions from committed/scheduled to error during the wait. Tiler cannot use
+that result as a synchronous validation-readback completion proof until Candle
+observes post-wait `Completed` versus `Error` and propagates the latter. See the
+[post-wait verification](candle-metal-post-wait-error-checking.md).
 
 Primary Apple sources: [command-buffer completion](https://developer.apple.com/documentation/metal/mtlcommandbuffer/waituntilcompleted%28%29),
 [command-buffer errors](https://developer.apple.com/documentation/metal/mtlcommandbuffer/error),
