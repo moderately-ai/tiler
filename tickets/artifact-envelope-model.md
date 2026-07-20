@@ -1,13 +1,13 @@
 ---
 id: artifact-envelope-model
 title: Define the target-neutral artifact program and backend payload envelope
-status: todo
+status: done
 priority: p1
 dependencies: [kernel-program-buffer-plan, numerical-policy-contract, target-profile-feasibility-model]
 related: []
 scopes: [research/artifacts]
 shared_scopes: []
-paths: []
+paths: [spikes/artifacts/**]
 tags: [tiler-research, research, artifact]
 ---
 Separate the target-neutral artifact program from backend-specific payloads. Define entry points, plan portfolios, guards, ABI fields, launch expressions, requirements, provenance, digests, and validation boundaries, then map the first Metal payload into that envelope.
