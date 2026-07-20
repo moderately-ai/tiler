@@ -1,6 +1,6 @@
 # Numerical semantics
 
-**Status:** proposed framework; concrete operation policies remain open
+**Status:** accepted framework; initial product-profile operation tuples remain open
 
 Tiler optimizes floating-point and integer programs whose algebraic identities
 do not automatically imply machine-level equivalence. Numerical policy is part
@@ -293,6 +293,13 @@ A reduction definition includes:
 - NaN and signed-zero behavior;
 - deterministic or implementation-dependent result policy.
 
+Canonical reduced axes are a nonempty, unique, sorted set. For an ordered fold,
+contributors appear in ascending lexicographic order of reduced coordinates
+using original logical axis order; `keepdims` affects result-shape lowering,
+not contributor order. Input-to-accumulator conversion, optional seed
+conversion, accumulator dtype, result conversion, empty behavior, and order
+permissions all participate in semantic identity.
+
 Accumulator dtype does not determine reduction semantics by itself. The order
 contract independently states which serial or tree evaluations are permitted.
 It represents reassociation and operand permutation as independent dimensions:
@@ -348,6 +355,14 @@ copied into every SIMD lane, threadgroup, or partial reduction. A proven
 replicable padding value may be copied only under the conformance contract for
 which neutrality was established; an arbitrary initial value remains exactly
 one logical contributor even when the permitted topology reassociates work.
+
+Parallel partials carry `has_value` unless nonemptiness or observably neutral
+padding is proved. Reassociation without permutation may combine only
+contiguous contributor intervals in order; lane-strided partials generally
+permute contributors and require the independent permission. Cross-kernel
+scratch preserves accumulator bits, including contracted subnormal and NaN
+behavior. Narrowing, flushing, or NaN rewriting in scratch is an explicit
+semantic conversion, never a cost-only storage choice.
 
 An identity-less reduction such as the initial `minimum`/`maximum` contract is
 valid only with an explicit initial value or a proven/runtime-validated

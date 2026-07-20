@@ -1,6 +1,6 @@
 # Cost model
 
-**Status:** proposed
+**Status:** accepted bootstrap contract; target calibration pending
 
 The cost model ranks complete legal plans. Its first implementation should be
 simple and inspectable rather than claiming hardware accuracy it does not have.
@@ -27,6 +27,13 @@ estimated time =
 Recomputed operations and bytes are included in work and memory counts rather
 than added again as a generic penalty. Occupancy modifies effective rates or is
 modeled as a discrete tier; it is not double-counted in both places.
+
+Every estimate carries a point value, lower/upper interval, calibration-profile
+identity, feature-domain coverage, and unsupported interaction list. Plans
+whose intervals overlap are cost-indistinguishable; deterministic identity may
+break the packaging tie, but explain output must not claim a measured winner.
+An infeasible or intrinsically invalid candidate has no cost estimate rather
+than a large penalty.
 
 ## Work features
 
@@ -147,6 +154,20 @@ device-family microbenchmark data:
 Calibration is offline. Runtime JIT or online autotuning is not required.
 Observed versus predicted performance should be retained in benchmark reports
 so coefficients can evolve without obscuring plan changes.
+
+The bootstrap suite isolates dispatch, contiguous/strided traffic, arithmetic
+classes, index div/rem and wide arithmetic, barriers, threadgroup/live-value
+pressure, allocation, compilation/artifact size, and fused-versus-materialized
+pairs. Each measurement records target profile, live device, OS/driver,
+toolchain, thermal/power state, harness version, sample count, median/tail, and
+residual error. The detailed controlled matrix is in the
+[bootstrap cost-model research](../research/cost-model/bootstrap-cost-model.md).
+
+For every tiny graph, all oracle-legal plans are costed and measured. Reports
+include top-1 accuracy, rank correlation, absolute/relative error, and regret
+of the selected plan versus the measured best under the same legal
+implementation set. This distinguishes search loss, model error, and illegal
+enumeration.
 
 ## Explain output
 

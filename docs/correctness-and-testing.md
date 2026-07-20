@@ -1,6 +1,6 @@
 # Correctness and testing
 
-**Status:** proposed
+**Status:** accepted research contract; implementation pending
 
 Tiler must define semantics before asking a GPU compiler to accept generated
 source. Backend compilation is a validation layer, not the type system or the
@@ -9,8 +9,9 @@ semantic authority.
 ## Semantic authority
 
 A normative operation specification is the authority. A slow reference
-evaluator implements it and should support every operation before optimized
-scheduling is enabled. Differential tests compare:
+evaluator implements it directly or through an exact verified decomposition;
+one of those paths should cover every operation before optimized scheduling is
+enabled. Differential tests compare:
 
 ```text
 frontend or independent compatibility reference
@@ -109,6 +110,21 @@ Random programs should be small enough to shrink into useful counterexamples.
 Every optimizer rule needs positive tests, negative precondition tests, and a
 semantic equivalence property.
 
+For curated graphs of at most eight operations, the exhaustive region oracle
+enumerates all legal candidates, exact partitions, multi-output alternatives,
+and explicitly permitted duplication covers. The bounded production search is
+checked for three independent outcomes: every emitted candidate is oracle-
+legal, singleton/unfused coverage remains complete, and missed legal
+alternatives are reported as bounded search loss. Cost-model comparisons then
+measure selection regret separately from enumeration correctness.
+
+The first normative end-to-end evaluator case preserves an explicit
+`f32 -> f16 -> f32` rounding boundary before a broadcasted add and returns both
+the add result and a row-major reshaped view as ordered graph outputs. Tests
+must demonstrate that deleting the cast boundary changes bits, that broadcast
+and reshape errors have stable codes, and that both output shapes/bit sequences
+match the reference contract.
+
 ## Reduction matrix
 
 Reduction tests explicitly cover:
@@ -187,6 +203,10 @@ Benchmarks are not substitutes for these correctness cases.
   profile, cross-device values/stages, noncanonical step order, unauthorized
   concurrency, temporary use outside its lifetime, and allocation aliasing or
   reuse forbidden by the initial buffer plan.
+- Every data use and storage reuse is justified by a typed dependency and
+  `StorageHandoff`; canonical list/stream order alone is rejected as a lifetime
+  or visibility proof. Multi-pass tests preserve accumulator bits through
+  scratch and reject narrowing or early reuse.
 
 ## Metal and artifact tests
 

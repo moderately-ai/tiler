@@ -1,7 +1,7 @@
 ---
 id: synthesize-optimizer-contracts
 title: Synthesize optimizer, schedule, program, and numerical contracts
-status: todo
+status: done
 priority: p1
 dependencies: [reduction-semantics-contract, region-search-oracle, scheduled-region-model, kernel-program-buffer-plan, cost-model-bootstrap, reference-evaluator-slice, index-access-model, structured-kernel-ir-verifier]
 related: [synthesize-core-contracts]

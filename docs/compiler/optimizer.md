@@ -1,12 +1,18 @@
 # Optimizer model
 
-**Status:** proposed
+**Status:** accepted research contract; implementation pending
 
 Tiler borrows selected techniques from property-aware database optimizers while
 using a tensor operation/value DAG, access-aware fusion regions, and explicit
 GPU schedules. DataFusion is useful vocabulary for semantic/executable
 separation and boundary enforcement, but it is not the structural template for
 Tiler's graph or search algorithm.
+
+The contract synthesizes the [region oracle](../research/region-search/exhaustive-region-oracle.md),
+[index/access model](../research/indexing/index-access-model.md),
+[scheduled-region model](../research/scheduling/scheduled-region-model.md),
+[whole-program plan](../research/program-planning/kernel-program-buffer-plan.md),
+and [structured-kernel verifier](../research/kernel-ir/structured-kernel-ir-verifier.md).
 
 ## Planning model
 
@@ -27,6 +33,32 @@ The optimizer must distinguish:
 - **fusion legality:** a region can be implemented correctly as one kernel;
 - **physical feasibility:** a schedule fits target capabilities and resources;
 - **profitability:** the complete plan is preferable to legal alternatives.
+
+## Named stages and verifier boundaries
+
+The initial optimizer pipeline has explicit stage names and cannot skip their
+verification boundaries:
+
+1. `VerifySemanticRequest` checks the graph, resolved numerical contracts,
+   shapes, and frozen operation registry.
+2. `NormalizeSemantics` produces one deterministic canonical graph.
+3. `ExploreLogicalAlternatives` adds only proved contract-preserving forms.
+4. `EnumerateRegionCandidates` forms connected convex semantic regions and
+   retains complete singleton coverage.
+5. `LowerIndexRegions` derives width-independent domains/access maps and proves
+   read bounds plus exact unique ordinary writes.
+6. `ExploreScheduledRegions` returns bounded normalized schedules after
+   intrinsic schedule verification and typed target-feasibility assessment.
+7. `SelectKernelPrograms` chooses compatible region implementations, explicit
+   materializations, dependencies, buffers, and guarded complete portfolios;
+   the whole-program verifier checks coverage, lifetimes, aliasing, and typed
+   storage handoffs.
+8. `RefineStructuredKernels` lowers each scheduled kernel and proves typed,
+   effect-safe refinement of exactly that schedule before backend emission.
+
+Semantic, index, schedule, program/buffer, and structured-kernel verifiers have
+separate authority. Target feasibility cannot repair intrinsic invalidity;
+costing observes only candidates that have passed the applicable gates.
 
 ## Bounded hierarchical search
 
@@ -52,6 +84,14 @@ and value keys, deterministic rule order, small alternative sets, dominance
 pruning, and explicit search budgets. Tiny graphs should have an exhaustive
 oracle in tests so heuristic completeness and plan quality can be measured
 before a memo architecture is chosen.
+
+The first deterministic safety budgets are 32 semantic occurrences per region,
+8 boundary outputs, 64 live boundary/internal values, 32 candidates per seed,
+8 nondominated implementations per region, and 10,000 candidate expansions per
+compilation request. Producer duplication is disabled outside oracle tests in
+the initial implementation. Hitting a budget stops only that growth path,
+emits an explain reason, and never removes singleton/unfused coverage. These
+defaults are calibration inputs, not correctness constants.
 
 ## Rule classes
 
@@ -92,6 +132,13 @@ duplication policy:
 - supported prologue/epilogue around a semantic operation with an opaque
   library implementation;
 - an explicit split/materialize alternative at eligible edges.
+
+Each initial candidate is nonempty, connected, and convex in the operation DAG:
+a path between included operations may not leave and re-enter the region.
+Explicit duplication creates separately accounted occurrences; it never
+silently waives convexity. Values consumed outside the region and graph results
+are retained boundary outputs, so one fused region may correctly produce
+several ordered values.
 
 Producer duplication, region boundaries, and materialization belong to this
 physical exploration phase rather than logical rewrite identity. A hypergraph
@@ -261,3 +308,8 @@ shared memory exceeds target limit” is actionable; a later MSL compiler error
 is not. Numerical reasons are equally concrete, such as “claimed 3 ULP exceeds
 required 1 ULP,” “domain uncovered,” or “toolchain evidence unknown,” and are
 reported separately from cost rejection.
+
+Every rejection records its stage, stable reason code, rule/provider identity,
+affected operation/value or candidate, failed predicate/evidence, and whether
+the result is a hard rejection, safe deferral, budget stop, dominance pruning,
+or cost disadvantage. Explain output never collapses these into “not fused.”

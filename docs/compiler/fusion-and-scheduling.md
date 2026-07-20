@@ -1,6 +1,6 @@
 # Fusion and scheduling
 
-**Status:** proposed
+**Status:** accepted research contract; implementation pending
 
 ## Fusion is a plan choice
 
@@ -35,6 +35,12 @@ RegionCandidate {
 }
 ```
 
+The initial region is also connected and convex. If `a -> b -> d` and
+`a -> c -> d`, the set `{a, b, d}` is illegal because another path between its
+members leaves through `c` and re-enters at `d`. Contracting such a set would
+hide required interleaving. Duplication creates distinct, explicitly costed
+occurrences; it is not an exception to convexity.
+
 Overlapping candidates may be indexed as hyperedges during search. That
 hypergraph is an optimizer data structure, not the semantic graph or selected
 physical program. Two candidates with the same member operations can differ in
@@ -49,6 +55,12 @@ or `View`), boundary requirements/guarantees, applicability predicates, target
 requirements, exact/proven resource requirements, resource estimates, and a
 cost estimate. Program selection chooses a compatible covering set only after
 these frontiers are available.
+
+For a shared producer `p` with consumers `left` and `right`, legal alternatives
+include one materialized `p`, a multi-output region `{p,left,right}`, or—only
+with explicit duplication capability—two occurrences in `{p,left}` and
+`{p,right}`. The first implementation keeps duplication disabled while the
+exhaustive tiny-DAG oracle retains it as a completeness witness.
 
 ## Legality
 
@@ -151,6 +163,14 @@ several downstream consumers enough to repay its write/read cost.
 
 ## Schedule representation
 
+A `ScheduledRegion` is one canonical `IndexRegion` plus one normalized
+`KernelSchedule`. The schedule owns execution axes, work assignment, output
+ownership, loop/vector/tail organization, staging lifetimes, reduction
+topology/result visibility, synchronization phases, launch formulas, and
+specialization bindings. The index region continues to own scalar meaning and
+logical access maps. Derived hard resource requirements are checked from the
+schedule; target facts and cost estimates remain separate inputs.
+
 A selected schedule explicitly represents loop/tile hierarchy, coordinate
 mapping to grid/threadgroup/SIMD/lane/vector axes, vectorization, memory
 placement, staging, synchronization, reduction topology, tails, and launch
@@ -176,6 +196,13 @@ explicit strategy:
 Each implementation declares valid extents, lane-result visibility, tail masking,
 barrier requirements, accumulator type, and target capabilities. There is no
 underspecified portable “block reduce” operation in final scheduled IR.
+
+A multi-pass reduction is a `KernelSubprogram`: an initial scheduled kernel
+writes typed partials to declared scratch, a typed dependency and
+`StorageHandoff` makes those bits visible, and a later scheduled kernel produces
+the result. Scratch preserves accumulator bits unless the semantic contract
+explicitly admits a conversion. Canonical stream/list order alone is not a
+durable storage-handoff proof.
 
 ## Rearrangement schedules
 
