@@ -1,7 +1,7 @@
 ---
 id: transfer-synchronization-and-resource-lifetime-contract
 title: Transfer synchronization and resource-lifetime contract
-status: todo
+status: done
 priority: p1
 dependencies: [device-placement-and-memory-domain-contract, runtime-execution-contract, index-access-model]
 related: []

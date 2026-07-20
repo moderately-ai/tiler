@@ -1,0 +1,3 @@
+# Optional in-place output from an equivalent rustc test invocation.
+/transfer_contract_tests
+/transfer_contract_tests.dSYM/
