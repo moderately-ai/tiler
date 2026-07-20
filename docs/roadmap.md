@@ -7,16 +7,21 @@ no verified runtime contract.
 
 ## Milestone 0A: semantic graph and extension feasibility
 
+**Research-contract status:** complete. ADRs 0005, 0006, 0008, 0044, and 0045
+fix the graph, shape, registry, and proc-macro visibility boundaries. The
+compile-checking operation API and normative reference slice validate the
+architecture; production implementation remains future work.
+
 - Define axes, reindexing, broadcasting, dtype, reduction, empty-domain,
   overflow, alias, and numerical policies.
 - Define operation conformance vectors and oracle precedence.
-- Prototype the public semantic operation/value graph and deterministic
+- Implement the public semantic operation/value graph and deterministic
   identity needed for executable examples.
-- Exercise the public experimental extension path through the ordinary compiler
+- Implement and exercise the public experimental extension path through the ordinary compiler
   API with one built-in and one statically linked external operation definition
   using the same capability interfaces. Separately record which providers the
   proposed proc macro can see across its compilation boundary.
-- Freeze an explicit per-session registry and prove collision rejection,
+- Implement an explicit per-session registry and continuously test collision rejection,
   canonical attribute encoding, and separation of semantic keys from provider
   revisions.
 - Define the consumer-independent `CompilationRequest`, scoped shape symbols,

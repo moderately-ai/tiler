@@ -27,7 +27,6 @@ ADR when evidence is sufficient.
   and application budgets are required?
 - Are several named graph results and first-class multi-result operations both
   required in the first executable slice?
-- Are program-result names semantic identity, diagnostic identity, or both?
 - Which higher-level operations must decompose into a canonical core, and which
   may supply direct iteration/access lowering?
 - May unknown operation keys round-trip through tooling even though they cannot

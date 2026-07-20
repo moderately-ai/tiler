@@ -67,8 +67,8 @@ and interprocedural identity.
 
 The durable graph is an operation/value model rather than a node-only tree:
 
-ADR 0005 accepts the public graph and extension boundary. The concrete
-operation/value model below remains proposed in ADR 0006.
+ADRs 0005 and 0006 accept the public graph/extension boundary and the concrete
+operation/value model below.
 
 ```text
 ProgramInput {

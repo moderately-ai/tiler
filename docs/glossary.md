@@ -13,6 +13,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Bundle | Self-contained target artifact and manifest containing a complete program portfolio; an integration may scope one bundle to one macro invocation. |
 | Capability fact | Typed value for a governed target key with explicit availability phase, validity scope, authority, and provenance. |
 | Capability phase | One of `CompileProfile`, `ArtifactEvidence`, `LiveDevicePreflight`, `PreparedKernelPreflight`, or `LaunchPreflight`, stating when a physical fact becomes available. |
+| Canonical attribute | Host-owned bounded typed value attached to a semantic operation; its normalized encoding, not provider serialization, participates in identity. |
 | Byte offset | Offset used by a buffer-binding API, measured in bytes. |
 | Candidate region set | Overlapping region candidates considered by program planning; a hypergraph may be used as its internal index. |
 | Boundary enforcer | Explicit materialization, layout conversion, cast, or copy that satisfies a boundary requirement. |
@@ -54,6 +55,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Operation definition | Registered versioned capabilities that define an operation's schema, semantics, verification, decomposition, optimization, and lowering support. |
 | Operation key | Durable dialect, name, and semantic-version identity stored in semantic IR. |
 | Operation registry snapshot | Immutable deterministic per-compilation mapping from semantic operation keys and capability-provider IDs to trusted implementations and revisions. |
+| Provider revision | Stable provider-declared fingerprint for output-affecting implementation behavior, distinct from an operation's semantic version. |
 | Program portfolio | Guarded alternatives containing complete kernel programs for one semantic graph. |
 | Program result | Ordered named reference to a semantic value returned by the graph; it is not an `Output` operation. |
 | Prepared-kernel capability | Fact available only after selecting and preparing one entry point/specialization for a live device. |
@@ -67,6 +69,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Root binding | Typed declaration mapping a semantic extent symbol to a static value, input dimension, interface parameter, or admitted target property. |
 | Routing commit | Boundary after all route-sensitive launch preflight and final variant selection, before output/scratch acquisition or encoding; no later failure selects another plan or semantic fallback. |
 | Semantic tensor graph | Public backend-neutral operation/value DAG describing tensor values and named program results as a function over explicit inputs and extent symbols. |
+| Semantic authority | The single registered definition owning an operation key's meaning, schema, normative specification, and deterministic inference/validation contract. |
 | Shape constraint | Equality, divisibility, interval, or factorization fact required by tensor semantics. |
 | Shape environment | Scoped symbolic extent declarations, static/runtime source bindings, semantic constraints, and derived facts. |
 | SIMD group | Hardware subgroup of lanes that execute and cooperate; Metal uses this term where CUDA commonly uses warp. |

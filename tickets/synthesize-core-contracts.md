@@ -1,7 +1,7 @@
 ---
 id: synthesize-core-contracts
 title: Synthesize semantic graph, shape, and extension contracts
-status: todo
+status: done
 priority: p1
 dependencies: [semantic-graph-contract, shape-environment-contract, operation-extension-surface, proc-macro-extension-visibility]
 related: []

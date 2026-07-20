@@ -1,6 +1,6 @@
 # 0006: Model semantic programs as operation/value graphs
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 
@@ -15,7 +15,7 @@ A value with several consumers can be viewed mathematically as a multi-edge or
 hyperedge, while an explicit value entity provides simpler use-def chains and
 multi-result handling.
 
-## Proposed decision
+## Decision
 
 Represent a semantic program as a pure acyclic operation/value graph:
 
@@ -52,6 +52,10 @@ or a boolean side-effect annotation.
   conservative boundaries rather than being transformed on trust.
 - Graph construction, verification, canonical serialization, and hashing need
   deterministic operation/value handling.
+
+The supporting precedents, invariants, identity rules, and worked multi-output
+examples are recorded in the
+[semantic graph contract memo](../research/semantic-graph/contract-memo.md).
 
 ## Alternatives considered
 

@@ -37,6 +37,22 @@ runtime adapter or embedded artifact
 The proposed inline Metal/Candle path is one integration of this general
 pipeline, not part of the compiler's defining abstraction.
 
+## Core-contract evidence
+
+The core boundary is backed by completed research tracks rather than frontend
+or backend assumptions:
+
+| Contract | Evidence | Durable decision |
+|---|---|---|
+| Pure operation/value DAG, sharing, multi-result operations, and ordered named results | [Semantic graph contract memo](research/semantic-graph/contract-memo.md) | ADRs 0005 and 0006 |
+| Scoped extent symbols, typed root bindings, admitted constraint language, and sourceability | [Shape environment contract](research/shapes/shape-environment-contract.md) | ADR 0008 |
+| One semantic authority plus separately versioned optional capabilities in an explicit frozen registry | [Operation-extension research](research/extensions/operation-extension-surface.md) and [API spike](research/extensions/operation-extension-api.md) | ADR 0044 |
+| Proc-macro provider visibility bounded by the host dependency graph | [Proc-macro visibility experiment](research/extensions/proc-macro-extension-visibility.md) | ADR 0045 |
+
+These decisions constrain the compiler core. They do not make serialized IR a
+public compatibility promise, add effectful operations, or require a proc
+macro for non-Rust consumers.
+
 ## Consumer-independent compilation request
 
 One initial compiler invocation consumes one verified semantic graph through a
