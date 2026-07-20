@@ -1,7 +1,7 @@
 ---
 id: operation-extension-surface
 title: Design the public experimental operation extension surface
-status: review
+status: done
 priority: p0
 dependencies: [semantic-graph-contract]
 related: []
@@ -9,9 +9,6 @@ scopes: [research/extensions, contracts/core]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research, spike]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1784511099
 ---
 Compare a closed built-in operation set, trusted explicit registration, and other Rust extension mechanisms for semantic operations. Define the minimum traits and invariants needed for shape inference, validation, canonical identity, reference evaluation, numerical policy, access lowering, and explain output.
 

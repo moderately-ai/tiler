@@ -1,6 +1,6 @@
 # 0044: Use an explicit capability-based operation registry
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 
@@ -59,4 +59,3 @@ goal. One universal operation trait makes unsupported phases ambiguous and
 creates semver pressure. Global/linker registration hides inputs and ordering.
 Serializing trait objects or Rust type identities would make durable IR and
 cache identity build-dependent.
-
