@@ -6,7 +6,7 @@ title: "Compact semantic programs at commitment"
 topics: ["rust", "semantics", "graph", "api", "provenance"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "partial"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir"]
 evidence: ["tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.semantic-graph.contract-memo"]
 ticket: "prototype-semantic-owner-and-commit"

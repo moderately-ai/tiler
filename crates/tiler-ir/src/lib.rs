@@ -7,18 +7,18 @@
 //! Construction and read APIs are grouped by the invariants they protect:
 //!
 //! ```
-//! use tiler_ir::semantic::{InputKey, OutputKey, SemanticProgramBuilder};
+//! use tiler_ir::semantic::{F32, InputKey, OutputKey, SemanticProgramBuilder};
 //! use tiler_ir::shape::Shape;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut draft = SemanticProgramBuilder::try_standard()?;
-//! let input = draft.input_f32(InputKey::new("input")?, Shape::from_dims([4]))?;
+//! let input = draft.input::<F32>(InputKey::new("input")?, Shape::from_dims([4]))?;
 //! let result = draft.output(OutputKey::new("result")?, input)?;
 //! let program = draft.build()?;
 //!
 //! assert_eq!(program.input_count(), 1);
 //! assert_eq!(program.output_count(), 1);
-//! assert_eq!(program.resolve_output(&result)?.key().as_str(), "result");
+//! assert_eq!(program.resolve_typed_output(&result)?.key().as_str(), "result");
 //! # Ok(())
 //! # }
 //! ```

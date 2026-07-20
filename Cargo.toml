@@ -28,6 +28,7 @@ tiler-artifact = { path = "crates/tiler-artifact" }
 tiler-compiler = { path = "crates/tiler-compiler" }
 tiler-ir = { path = "crates/tiler-ir" }
 tiler-metal = { path = "crates/tiler-metal" }
+trybuild = "1.0.114"
 
 [workspace.lints.rust]
 missing_docs = "warn"

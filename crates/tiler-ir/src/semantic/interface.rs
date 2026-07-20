@@ -1,5 +1,7 @@
 use super::error::BuildError;
-use super::handles::{GraphId, ValueId, ValueIndex};
+use std::marker::PhantomData;
+
+use super::handles::{GraphId, Value, ValueId, ValueIndex};
 
 /// One of the semantic program's ordered interfaces.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -101,6 +103,55 @@ pub struct OutputSelector {
     pub(super) key: OutputKey,
 }
 
+/// A typed selector for one output declared on a specific semantic draft.
+pub struct Output<T> {
+    selector: OutputSelector,
+    marker: PhantomData<fn() -> T>,
+}
+
+impl<T> Output<T> {
+    pub(super) const fn from_verified(selector: OutputSelector) -> Self {
+        Self {
+            selector,
+            marker: PhantomData,
+        }
+    }
+
+    /// Returns the stable semantic output key.
+    #[must_use]
+    pub const fn key(&self) -> &OutputKey {
+        self.selector.key()
+    }
+
+    /// Explicitly erases static type evidence from this selector.
+    #[must_use]
+    pub fn erase(self) -> OutputSelector {
+        self.selector
+    }
+
+    pub(super) const fn selector(&self) -> &OutputSelector {
+        &self.selector
+    }
+}
+
+impl<T> Clone for Output<T> {
+    fn clone(&self) -> Self {
+        Self {
+            selector: self.selector.clone(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for Output<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("Output")
+            .field(&self.selector)
+            .finish()
+    }
+}
+
 impl OutputSelector {
     /// Returns the stable semantic output key carried by this selector.
     #[must_use]
@@ -150,6 +201,56 @@ pub(super) struct ProgramOutput {
 pub struct ProgramOutputRef<'a> {
     pub(super) owner: GraphId,
     pub(super) output: &'a ProgramOutput,
+}
+
+/// A borrowed program output with exact registry-checked type evidence.
+pub struct TypedProgramOutputRef<'a, T> {
+    output: ProgramOutputRef<'a>,
+    marker: PhantomData<fn() -> T>,
+}
+
+impl<T> Clone for TypedProgramOutputRef<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for TypedProgramOutputRef<'_, T> {}
+
+impl<T> std::fmt::Debug for TypedProgramOutputRef<'_, T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("TypedProgramOutputRef")
+            .field(&self.output)
+            .finish()
+    }
+}
+
+impl<'a, T> TypedProgramOutputRef<'a, T> {
+    pub(super) const fn from_verified(output: ProgramOutputRef<'a>) -> Self {
+        Self {
+            output,
+            marker: PhantomData,
+        }
+    }
+
+    /// Returns the stable output key.
+    #[must_use]
+    pub fn key(&self) -> &OutputKey {
+        self.output.key()
+    }
+
+    /// Returns the exactly typed output value.
+    #[must_use]
+    pub const fn value(&self) -> Value<T> {
+        Value::from_verified(self.output.value())
+    }
+
+    /// Returns the unknown-typed borrowed output view.
+    #[must_use]
+    pub const fn erase(self) -> ProgramOutputRef<'a> {
+        self.output
+    }
 }
 
 impl ProgramOutputRef<'_> {

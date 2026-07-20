@@ -6,7 +6,7 @@ title: "Bind Rust type markers through the explicit registry"
 topics: ["rust", "dtypes", "extensions", "registry"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "partial"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.ir", "tiler.contract.operation-extensions", "tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.numerics.dtype-identity-admission-policy"]
 ticket: "prototype-resolved-value-type-registry"

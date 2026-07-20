@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::shape::{Axis, Shape};
+use crate::shape::Shape;
 
 use super::handles::{GraphId, OperationId, OperationIndex, ValueId, ValueIndex};
 use super::interface::InputIndex;
@@ -833,11 +833,4 @@ impl OperationRef<'_> {
             index,
         })
     }
-}
-
-pub(super) fn axes_attribute(axes: &[Axis]) -> Result<CanonicalValue, TypeIdentityError> {
-    CanonicalValue::sequence(
-        axes.iter()
-            .map(|axis| CanonicalValue::unsigned(u64::from(axis.get()))),
-    )
 }

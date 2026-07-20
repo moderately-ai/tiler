@@ -1,0 +1,10 @@
+error[E0624]: associated function `from_verified` is private
+ --> tests/typed-handles/fail/forge.rs:4:12
+  |
+4 |     Value::from_verified(id)
+  |            ^^^^^^^^^^^^^ private associated function
+  |
+ ::: src/semantic/handles.rs
+  |
+  |     pub(super) const fn from_verified(id: ValueId) -> Self {
+  |     ------------------------------------------------------ private associated function defined here

@@ -1,24 +1,25 @@
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
-use crate::shape::{Axis, Shape};
+use crate::shape::Shape;
 
 use super::error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,
-    ProgramBuildFailure, ValidationDiagnostic, ValidationDiagnostics, ValueRole,
+    ProgramBuildFailure, ReifyError, ValidationDiagnostic, ValidationDiagnostics, ValueRole,
 };
-use super::handles::{GraphId, OperationId, OperationIndex, ValueId, ValueIndex, next_graph_id};
+use super::handles::{
+    GraphId, OperationId, OperationIndex, Value, ValueId, ValueIndex, next_graph_id,
+};
 use super::identity::CanonicalIdentity;
 use super::interface::{
-    InputIndex, InputKey, OutputKey, OutputSelector, ProgramInput, ProgramInputRef, ProgramOutput,
-    ProgramOutputRef,
+    InputIndex, InputKey, Output, OutputKey, OutputSelector, ProgramInput, ProgramInputRef,
+    ProgramOutput, ProgramOutputRef, TypedProgramOutputRef,
 };
 use super::operation::{
-    F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes, OperationData, OperationRef,
-    REDUCTION_AXES_ATTRIBUTE, ResultIndex, ValueData, ValueDefinition, ValueFact, ValueRef,
-    add_f32_op, axes_attribute, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    OperationAttributes, OperationData, OperationRef, ResultIndex, ValueData, ValueDefinition,
+    ValueFact, ValueRef,
 };
-use super::registry::{F32, FrozenSemanticRegistry};
+use super::registry::FrozenSemanticRegistry;
 use super::types::ResolvedValueType;
 
 /// A verified, immutable semantic program for the bounded f32 prototype.
@@ -207,6 +208,52 @@ impl SemanticProgram {
     pub fn semantic_registry(&self) -> &FrozenSemanticRegistry {
         &self.data.semantic_registry
     }
+
+    /// Recovers exact marker-backed type evidence for one graph-owned value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReifyError`] for a foreign/invalid handle, an unbound marker,
+    /// or an exact resolved-type mismatch.
+    pub fn reify<T: super::registry::ValueTypeMarker>(
+        &self,
+        value: ValueId,
+    ) -> Result<Value<T>, ReifyError> {
+        let actual = self
+            .value(value)
+            .map_err(ReifyError::Handle)?
+            .resolved_type()
+            .clone();
+        let expected = self
+            .data
+            .semantic_registry
+            .resolve_marker::<T>()
+            .map_err(ReifyError::RegistryLookup)?;
+        if &actual != expected {
+            return Err(ReifyError::TypeMismatch {
+                expected: Arc::new(expected.clone()),
+                actual: Arc::new(actual),
+            });
+        }
+        Ok(Value::from_verified(value))
+    }
+
+    /// Resolves a typed selector produced by the committed draft.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for a selector from another draft or for an
+    /// invalid local selector.
+    pub fn resolve_typed_output<T: super::registry::ValueTypeMarker>(
+        &self,
+        selector: &Output<T>,
+    ) -> Result<TypedProgramOutputRef<'_, T>, ReifyError> {
+        let output = self
+            .resolve_output(selector.selector())
+            .map_err(ReifyError::Handle)?;
+        let _ = self.reify::<T>(output.value())?;
+        Ok(TypedProgramOutputRef::from_verified(output))
+    }
 }
 
 /// Incremental constructor for a verified bounded semantic program.
@@ -254,14 +301,44 @@ impl SemanticProgramBuilder {
         Self::try_new(registry)
     }
 
-    /// Adds an ordered fixed-shape f32 tensor input.
+    /// Adds an ordered fixed-shape input through an exact registered marker.
     ///
     /// # Errors
     ///
     /// Returns a typed error for duplicate keys, unsupported shapes, or exhausted IDs.
-    pub fn input_f32(&mut self, key: InputKey, shape: Shape) -> Result<ValueId, BuildError> {
+    pub fn input<T: super::registry::ValueTypeMarker>(
+        &mut self,
+        key: InputKey,
+        shape: Shape,
+    ) -> Result<Value<T>, BuildError> {
+        let resolved_type = self
+            .semantic_registry
+            .resolve_marker::<T>()
+            .map_err(BuildError::RegistryLookup)?
+            .clone();
+        self.input_resolved(key, shape, resolved_type)
+            .map(Value::from_verified)
+    }
+
+    /// Adds a checked runtime-resolved input for parsed or generated frontends.
+    ///
+    /// This is an unknown-typed path, not an `any` escape hatch: the frozen
+    /// semantic registry must admit the complete supplied type.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for an unregistered type, duplicate key,
+    /// unsupported shape, or exhausted IDs.
+    pub fn input_resolved(
+        &mut self,
+        key: InputKey,
+        shape: Shape,
+        resolved_type: ResolvedValueType,
+    ) -> Result<ValueId, BuildError> {
         validate_shape(&shape)?;
-        let resolved_type = self.require_f32()?;
+        self.semantic_registry
+            .validate_type(&resolved_type)
+            .map_err(BuildError::SemanticRegistry)?;
         if self.input_keys.contains(&key) {
             return Err(BuildError::DuplicateInputKey(key));
         }
@@ -273,7 +350,7 @@ impl SemanticProgramBuilder {
         self.values.push(ValueData {
             definition: ValueDefinition::Input { input_index },
             shape,
-            resolved_type,
+            resolved_type: Arc::new(resolved_type),
         });
         self.inputs.push(ProgramInput {
             key: key.clone(),
@@ -284,80 +361,6 @@ impl SemanticProgramBuilder {
         Ok(ValueId {
             owner: self.owner,
             index: value_index,
-        })
-    }
-
-    /// Adds a rank-zero immutable f32 constant using exact bits.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error if an arena's fixed-width ID space is exhausted.
-    pub fn scalar_f32_bits(&mut self, bits: u32) -> Result<ValueId, BuildError> {
-        self.push_operation(
-            constant_f32_op(),
-            OperationAttributes::new([super::types::CanonicalField::new(
-                F32_CONSTANT_BITS_ATTRIBUTE,
-                super::types::CanonicalValue::unsigned(u64::from(bits)),
-            )])
-            .map_err(BuildError::InvalidOperationAttributes)?,
-            &[],
-        )
-        .map(|mut results| {
-            debug_assert_eq!(results.len(), 1);
-            results.remove(0)
-        })
-    }
-
-    /// Adds a rank-zero immutable f32 constant.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error if an arena's fixed-width ID space is exhausted.
-    pub fn scalar_f32(&mut self, value: f32) -> Result<ValueId, BuildError> {
-        self.scalar_f32_bits(value.to_bits())
-    }
-
-    /// Adds elementwise f32 multiplication with exact-shape or scalar broadcast.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error for foreign operands, incompatible shapes, or exhausted IDs.
-    pub fn multiply_f32(&mut self, left: ValueId, right: ValueId) -> Result<ValueId, BuildError> {
-        self.binary(multiply_f32_op(), left, right)
-    }
-
-    /// Adds elementwise f32 addition with exact-shape or scalar broadcast.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error for foreign operands, incompatible shapes, or exhausted IDs.
-    pub fn add_f32(&mut self, left: ValueId, right: ValueId) -> Result<ValueId, BuildError> {
-        self.binary(add_f32_op(), left, right)
-    }
-
-    /// Adds strict serial f32 Sum over a nonempty, sorted, unique axis set.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error for a foreign input, invalid axes, or exhausted IDs.
-    pub fn strict_serial_sum_f32(
-        &mut self,
-        input: ValueId,
-        axes: impl IntoIterator<Item = Axis>,
-    ) -> Result<ValueId, BuildError> {
-        let axes: Vec<_> = axes.into_iter().collect();
-        self.push_operation(
-            strict_serial_sum_f32_op(),
-            OperationAttributes::new([super::types::CanonicalField::new(
-                REDUCTION_AXES_ATTRIBUTE,
-                axes_attribute(&axes).map_err(BuildError::InvalidOperationAttributes)?,
-            )])
-            .map_err(BuildError::InvalidOperationAttributes)?,
-            &[input],
-        )
-        .map(|mut results| {
-            debug_assert_eq!(results.len(), 1);
-            results.remove(0)
         })
     }
 
@@ -381,12 +384,33 @@ impl SemanticProgramBuilder {
         self.push_operation(key, attributes, operands)
     }
 
-    /// Adds an ordered named output. Multiple outputs may share a value.
+    /// Adds an ordered named output with exact static type evidence.
     ///
     /// # Errors
     ///
     /// Returns a typed error for a foreign value or duplicate output key.
-    pub fn output(&mut self, key: OutputKey, value: ValueId) -> Result<OutputSelector, BuildError> {
+    pub fn output<T: super::registry::ValueTypeMarker>(
+        &mut self,
+        key: OutputKey,
+        value: Value<T>,
+    ) -> Result<Output<T>, BuildError> {
+        self.output_resolved(key, value.erase())
+            .map(Output::from_verified)
+    }
+
+    /// Adds an ordered named output from an unknown-typed identity.
+    ///
+    /// The value remains authoritatively typed in the graph; this method only
+    /// omits static Rust evidence for parsed frontends.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for a foreign value or duplicate output key.
+    pub fn output_resolved(
+        &mut self,
+        key: OutputKey,
+        value: ValueId,
+    ) -> Result<OutputSelector, BuildError> {
         let value_index = self.value_index(value, ValueRole::ProgramOutput)?;
         if self.output_keys.contains(&key) {
             return Err(BuildError::DuplicateOutputKey(key));
@@ -461,19 +485,6 @@ impl SemanticProgramBuilder {
                 semantic_registry: self.semantic_registry,
             }),
         })
-    }
-
-    fn binary(
-        &mut self,
-        key: super::operation::OpKey,
-        left: ValueId,
-        right: ValueId,
-    ) -> Result<ValueId, BuildError> {
-        self.push_operation(key, OperationAttributes::empty(), &[left, right])
-            .map(|mut results| {
-                debug_assert_eq!(results.len(), 1);
-                results.remove(0)
-            })
     }
 
     fn push_operation(
@@ -563,12 +574,41 @@ impl SemanticProgramBuilder {
         Ok(id.index)
     }
 
-    fn require_f32(&self) -> Result<Arc<ResolvedValueType>, BuildError> {
-        let resolved_type = F32::resolved_type();
-        if !self.semantic_registry.contains(&resolved_type) {
-            return Err(BuildError::UnregisteredValueType { resolved_type });
+    /// Recovers exact marker-backed type evidence for one draft-owned value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReifyError`] for a foreign/invalid handle, an unbound marker,
+    /// or an exact resolved-type mismatch.
+    pub fn reify<T: super::registry::ValueTypeMarker>(
+        &self,
+        value: ValueId,
+    ) -> Result<Value<T>, ReifyError> {
+        let index = self
+            .value_index(value, ValueRole::OperationOperand { index: 0 })
+            .map_err(|error| match error {
+                BuildError::ForeignValue { .. } => ReifyError::Handle(HandleError::ForeignGraph {
+                    entity: EntityKind::Value,
+                }),
+                BuildError::InvalidLocalValue { .. } => {
+                    ReifyError::Handle(HandleError::InvalidLocal {
+                        entity: EntityKind::Value,
+                    })
+                }
+                _ => unreachable!("value lookup returns only handle failures"),
+            })?;
+        let actual = &self.values[index.as_usize()].resolved_type;
+        let expected = self
+            .semantic_registry
+            .resolve_marker::<T>()
+            .map_err(ReifyError::RegistryLookup)?;
+        if actual.as_ref() != expected {
+            return Err(ReifyError::TypeMismatch {
+                expected: Arc::new(expected.clone()),
+                actual: Arc::clone(actual),
+            });
         }
-        Ok(Arc::new(resolved_type))
+        Ok(Value::from_verified(value))
     }
 
     fn compact_to_outputs(&mut self) {
@@ -810,19 +850,58 @@ fn checked_index(index: usize, entity: EntityKind) -> Result<ValueIndex, BuildEr
 #[cfg(test)]
 mod tests {
     use super::super::{
-        CanonicalValue, NormativeDefinitionRef, OpKey, OperationArity, OperationConformance,
-        OperationDefinition, OperationDefinitionFacts, OperationEffect, OperationInferenceError,
-        OperationInferencer, OperationSchema, ProviderIdentity, SemanticRegistryBuilder,
-        SemanticRegistryProvider, SemanticRegistryRegistrar,
+        CanonicalValue, F32, F32Add, F32Constant, F32Multiply, NormativeDefinitionRef, OpKey,
+        OperationArity, OperationConformance, OperationDefinition, OperationDefinitionFacts,
+        OperationEffect, OperationInferenceError, OperationInferencer, OperationSchema,
+        ProviderIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
+        SemanticRegistryRegistrar, StrictSerialF32Sum, add_f32_op,
     };
     use super::*;
-    use crate::shape::Shape;
+    use crate::shape::{Axis, Shape};
 
     fn input_key(value: &str) -> InputKey {
         InputKey::new(value).unwrap()
     }
     fn output_key(value: &str) -> OutputKey {
         OutputKey::new(value).unwrap()
+    }
+
+    fn constant_bits(
+        builder: &mut SemanticProgramBuilder,
+        bits: u32,
+    ) -> Result<Value<F32>, BuildError> {
+        F32Constant::apply(builder, bits)
+    }
+
+    fn constant(
+        builder: &mut SemanticProgramBuilder,
+        value: f32,
+    ) -> Result<Value<F32>, BuildError> {
+        constant_bits(builder, value.to_bits())
+    }
+
+    fn multiply(
+        builder: &mut SemanticProgramBuilder,
+        left: Value<F32>,
+        right: Value<F32>,
+    ) -> Result<Value<F32>, BuildError> {
+        F32Multiply::apply(builder, left, right)
+    }
+
+    fn add(
+        builder: &mut SemanticProgramBuilder,
+        left: Value<F32>,
+        right: Value<F32>,
+    ) -> Result<Value<F32>, BuildError> {
+        F32Add::apply(builder, left, right)
+    }
+
+    fn sum(
+        builder: &mut SemanticProgramBuilder,
+        input: Value<F32>,
+        axes: impl IntoIterator<Item = Axis>,
+    ) -> Result<Value<F32>, BuildError> {
+        StrictSerialF32Sum::apply(builder, input, axes)
     }
 
     struct Identity;
@@ -889,20 +968,20 @@ mod tests {
     fn program(dead_first: bool, share: bool) -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let x = builder
-            .input_f32(input_key("x"), Shape::from_dims([2, 3]))
+            .input::<F32>(input_key("x"), Shape::from_dims([2, 3]))
             .unwrap();
         if dead_first {
-            let _ = builder.scalar_f32(f32::NAN).unwrap();
+            let _ = constant(&mut builder, f32::NAN).unwrap();
         }
-        let scale = builder.scalar_f32_bits((-0.0_f32).to_bits()).unwrap();
-        let first = builder.multiply_f32(x, scale).unwrap();
+        let scale = constant_bits(&mut builder, (-0.0_f32).to_bits()).unwrap();
+        let first = multiply(&mut builder, x, scale).unwrap();
         let second = if share {
             first
         } else {
-            builder.multiply_f32(x, scale).unwrap()
+            multiply(&mut builder, x, scale).unwrap()
         };
         if !dead_first {
-            let _ = builder.scalar_f32(f32::NAN).unwrap();
+            let _ = constant(&mut builder, f32::NAN).unwrap();
         }
         builder.output(output_key("first"), first).unwrap();
         builder.output(output_key("second"), second).unwrap();
@@ -913,7 +992,7 @@ mod tests {
     fn failed_edits_are_transactional() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let x = builder
-            .input_f32(input_key("x"), Shape::from_dims([2]))
+            .input::<F32>(input_key("x"), Shape::from_dims([2]))
             .unwrap();
         let before = (
             builder.inputs.len(),
@@ -924,7 +1003,7 @@ mod tests {
             builder.output_keys.len(),
         );
         assert!(matches!(
-            builder.input_f32(input_key("x"), Shape::from_dims([2])),
+            builder.input::<F32>(input_key("x"), Shape::from_dims([2])),
             Err(BuildError::DuplicateInputKey(_))
         ));
         assert_eq!(
@@ -940,10 +1019,10 @@ mod tests {
         );
         let mut foreign = SemanticProgramBuilder::try_standard().unwrap();
         let y = foreign
-            .input_f32(input_key("y"), Shape::from_dims([2]))
+            .input::<F32>(input_key("y"), Shape::from_dims([2]))
             .unwrap();
         assert!(matches!(
-            builder.add_f32(x, y),
+            add(&mut builder, x, y),
             Err(BuildError::ForeignValue {
                 role: ValueRole::OperationOperand { index: 1 }
             })
@@ -962,7 +1041,7 @@ mod tests {
     }
 
     #[test]
-    fn f32_admission_requires_registered_semantic_authority() {
+    fn typed_and_resolved_inputs_require_their_distinct_registry_authority() {
         use crate::semantic::{
             NormativeDefinitionRef, ProviderIdentity, SemanticRegistryBuilder,
             SemanticRegistryProvider, SemanticRegistryRegistrar, TypeDefinitionFacts,
@@ -994,8 +1073,20 @@ mod tests {
         let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
 
         assert!(matches!(
-            builder.input_f32(input_key("x"), Shape::from_dims([1])),
-            Err(BuildError::UnregisteredValueType { .. })
+            builder.input::<F32>(input_key("x"), Shape::from_dims([1])),
+            Err(BuildError::RegistryLookup(
+                super::super::RegistryLookupError::UnregisteredMarker { .. }
+            ))
+        ));
+        assert!(matches!(
+            builder.input_resolved(
+                input_key("resolved"),
+                Shape::from_dims([1]),
+                F32::resolved_type()
+            ),
+            Err(BuildError::SemanticRegistry(
+                super::super::RegistryError::UnregisteredTypeAuthority { .. }
+            ))
         ));
         assert!(builder.inputs.is_empty());
         assert!(builder.values.is_empty());
@@ -1005,7 +1096,7 @@ mod tests {
     fn failed_build_returns_builder_for_retry() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let x = builder
-            .input_f32(input_key("x"), Shape::from_dims([1]))
+            .input::<F32>(input_key("x"), Shape::from_dims([1]))
             .unwrap();
         let error = builder.build().unwrap_err();
         assert_eq!(
@@ -1018,9 +1109,53 @@ mod tests {
     }
 
     #[test]
+    fn reification_requires_an_exact_marker_binding() {
+        struct External;
+        impl super::super::ValueTypeMarker for External {}
+
+        struct Provider;
+        impl SemanticRegistryProvider for Provider {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "external-type", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), super::super::RegistryError> {
+                let resolved = ResolvedValueType::nominal(
+                    super::super::TypeKey::new("test", "external", 1).unwrap(),
+                );
+                registrar.register_marked_value_type::<External>(
+                    super::super::ValueTypeDefinition::structurally_valid(
+                        super::super::ValueTypeDefinitionKey::Nominal(
+                            super::super::TypeKey::new("test", "external", 1).unwrap(),
+                        ),
+                        NormativeDefinitionRef::new("test external v1")?,
+                        super::super::TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+                    ),
+                    resolved,
+                )
+            }
+        }
+
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&Provider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let value: Value<F32> = builder
+            .input(input_key("f32"), Shape::from_dims([1]))
+            .unwrap();
+
+        assert!(matches!(
+            builder.reify::<External>(value.erase()),
+            Err(ReifyError::TypeMismatch { .. })
+        ));
+    }
+
+    #[test]
     fn completed_owner_exhaustion_returns_the_intact_builder() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let value = builder.scalar_f32(1.0).unwrap();
+        let value = constant(&mut builder, 1.0).unwrap();
         builder.output(output_key("result"), value).unwrap();
 
         let error = builder.build_with_completed_owner(None).unwrap_err();
@@ -1031,8 +1166,8 @@ mod tests {
         assert!(error.diagnostics().is_none());
 
         let mut builder = error.into_builder();
-        let increment = builder.scalar_f32(2.0).unwrap();
-        let sum = builder.add_f32(value, increment).unwrap();
+        let increment = constant(&mut builder, 2.0).unwrap();
+        let sum = add(&mut builder, value, increment).unwrap();
         builder.output(output_key("sum"), sum).unwrap();
         assert_eq!(builder.build().unwrap().output_count(), 2);
     }
@@ -1040,34 +1175,38 @@ mod tests {
     #[test]
     fn handle_admission_distinguishes_owner_locality_and_argument_role() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let local = builder.scalar_f32(1.0).unwrap();
+        let local = constant(&mut builder, 1.0).unwrap();
         let invalid = ValueId {
             owner: builder.owner,
             index: ValueIndex::from_verified_len(builder.values.len() + 10),
         };
         let mut foreign_builder = SemanticProgramBuilder::try_standard().unwrap();
-        let foreign = foreign_builder.scalar_f32(2.0).unwrap();
+        let foreign = constant(&mut foreign_builder, 2.0).unwrap();
 
         assert_eq!(
-            builder.add_f32(foreign, local),
+            add(&mut builder, foreign, local),
             Err(BuildError::ForeignValue {
                 role: ValueRole::OperationOperand { index: 0 }
             })
         );
-        assert_eq!(
-            builder.add_f32(local, invalid),
+        assert!(matches!(
+            builder.apply(
+                add_f32_op(),
+                OperationAttributes::empty(),
+                &[local.erase(), invalid]
+            ),
             Err(BuildError::InvalidLocalValue {
                 role: ValueRole::OperationOperand { index: 1 }
             })
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             builder.output(output_key("foreign"), foreign),
             Err(BuildError::ForeignValue {
                 role: ValueRole::ProgramOutput
             })
-        );
+        ));
         assert_eq!(
-            builder.output(output_key("invalid"), invalid),
+            builder.output_resolved(output_key("invalid"), invalid),
             Err(BuildError::InvalidLocalValue {
                 role: ValueRole::ProgramOutput
             })
@@ -1131,16 +1270,14 @@ mod tests {
     fn commitment_compacts_the_live_closure_and_invalidates_draft_handles() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let dead_input = builder
-            .input_f32(input_key("dead"), Shape::from_dims([4]))
+            .input::<F32>(input_key("dead"), Shape::from_dims([4]))
             .unwrap();
-        let _dead_result = builder
-            .strict_serial_sum_f32(dead_input, [Axis::new(0)])
-            .unwrap();
+        let _dead_result = sum(&mut builder, dead_input, [Axis::new(0)]).unwrap();
         let live_input = builder
-            .input_f32(input_key("live"), Shape::from_dims([2]))
+            .input::<F32>(input_key("live"), Shape::from_dims([2]))
             .unwrap();
-        let scale = builder.scalar_f32(3.0).unwrap();
-        let result = builder.multiply_f32(live_input, scale).unwrap();
+        let scale = constant(&mut builder, 3.0).unwrap();
+        let result = multiply(&mut builder, live_input, scale).unwrap();
         let selector = builder.output(output_key("result"), result).unwrap();
 
         let program = builder.build().unwrap();
@@ -1149,10 +1286,13 @@ mod tests {
         assert_eq!(program.value_count(), 3);
         assert_eq!(program.inputs().next().unwrap().key().as_str(), "live");
 
-        let completed = program.resolve_output(&selector).unwrap().value();
-        assert_eq!(program.shape(completed).unwrap(), &Shape::from_dims([2]));
+        let completed = program.resolve_typed_output(&selector).unwrap().value();
+        assert_eq!(
+            program.shape(completed.erase()).unwrap(),
+            &Shape::from_dims([2])
+        );
         assert!(matches!(
-            program.value(result),
+            program.value(result.erase()),
             Err(HandleError::ForeignGraph {
                 entity: EntityKind::Value
             })
@@ -1173,9 +1313,9 @@ mod tests {
 
     #[test]
     fn output_selectors_are_bound_to_the_originating_draft() {
-        fn build() -> (SemanticProgram, OutputSelector) {
+        fn build() -> (SemanticProgram, Output<F32>) {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-            let value = builder.scalar_f32(1.0).unwrap();
+            let value = constant(&mut builder, 1.0).unwrap();
             let selector = builder.output(output_key("same-key"), value).unwrap();
             (builder.build().unwrap(), selector)
         }
@@ -1183,20 +1323,20 @@ mod tests {
         let (first, first_selector) = build();
         let (second, second_selector) = build();
         assert_eq!(
-            first.resolve_output(&first_selector).unwrap().key(),
+            first.resolve_typed_output(&first_selector).unwrap().key(),
             first_selector.key()
         );
         assert!(matches!(
-            first.resolve_output(&second_selector),
-            Err(HandleError::ForeignGraph {
+            first.resolve_typed_output(&second_selector),
+            Err(ReifyError::Handle(HandleError::ForeignGraph {
                 entity: EntityKind::Output
-            })
+            }))
         ));
         assert!(matches!(
-            second.resolve_output(&first_selector),
-            Err(HandleError::ForeignGraph {
+            second.resolve_typed_output(&first_selector),
+            Err(ReifyError::Handle(HandleError::ForeignGraph {
                 entity: EntityKind::Output
-            })
+            }))
         ));
     }
 
@@ -1234,10 +1374,10 @@ mod tests {
         fn identity(bits: u32, reverse: bool) -> CanonicalIdentity {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
             let x = builder
-                .input_f32(input_key("x"), Shape::from_dims([1]))
+                .input::<F32>(input_key("x"), Shape::from_dims([1]))
                 .unwrap();
-            let scalar = builder.scalar_f32_bits(bits).unwrap();
-            let value = builder.add_f32(x, scalar).unwrap();
+            let scalar = constant_bits(&mut builder, bits).unwrap();
+            let value = add(&mut builder, x, scalar).unwrap();
             if reverse {
                 builder.output(output_key("copy"), value).unwrap();
                 builder.output(output_key("result"), value).unwrap();
@@ -1263,10 +1403,10 @@ mod tests {
         const DEPTH: usize = 50_000;
 
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let mut value = builder.scalar_f32(1.0).unwrap();
-        let increment = builder.scalar_f32(0.0).unwrap();
+        let mut value = constant(&mut builder, 1.0).unwrap();
+        let increment = constant(&mut builder, 0.0).unwrap();
         for _ in 0..DEPTH {
-            value = builder.add_f32(value, increment).unwrap();
+            value = add(&mut builder, value, increment).unwrap();
         }
         builder.output(output_key("result"), value).unwrap();
         let program = builder.build().unwrap();
@@ -1279,14 +1419,16 @@ mod tests {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let shape = Shape::from_dims([u64::MAX, 2]);
         assert_eq!(shape.element_count(), None);
-        let value = builder.input_f32(input_key("huge"), shape.clone()).unwrap();
+        let value = builder
+            .input::<F32>(input_key("huge"), shape.clone())
+            .unwrap();
         let output = builder.output(output_key("huge"), value).unwrap();
         let program = builder.build().unwrap();
-        let completed = program.resolve_output(&output).unwrap().value();
+        let completed = program.resolve_typed_output(&output).unwrap().value();
 
-        assert_eq!(program.shape(completed).unwrap(), &shape);
+        assert_eq!(program.shape(completed.erase()).unwrap(), &shape);
         assert!(matches!(
-            program.shape(value),
+            program.shape(value.erase()),
             Err(HandleError::ForeignGraph {
                 entity: EntityKind::Value
             })
@@ -1295,7 +1437,7 @@ mod tests {
 
     #[test]
     fn all_rejected_operation_edits_preserve_arena_lengths() {
-        fn has_code(result: Result<ValueId, BuildError>, code: &str) -> bool {
+        fn has_code<T>(result: Result<T, BuildError>, code: &str) -> bool {
             matches!(
                 result,
                 Err(BuildError::SemanticRegistry(
@@ -1308,17 +1450,17 @@ mod tests {
 
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let x = builder
-            .input_f32(input_key("x"), Shape::from_dims([2, 3]))
+            .input::<F32>(input_key("x"), Shape::from_dims([2, 3]))
             .unwrap();
         let y = builder
-            .input_f32(input_key("y"), Shape::from_dims([2, 4]))
+            .input::<F32>(input_key("y"), Shape::from_dims([2, 4]))
             .unwrap();
         let before = (
             builder.operations.len(),
             builder.values.len(),
             builder.outputs.len(),
         );
-        assert!(has_code(builder.add_f32(x, y), "binary.shape"));
+        assert!(has_code(add(&mut builder, x, y), "binary.shape"));
         assert_eq!(
             before,
             (
@@ -1327,12 +1469,9 @@ mod tests {
                 builder.outputs.len()
             )
         );
+        assert!(has_code(sum(&mut builder, x, []), "sum.axes.empty"));
         assert!(has_code(
-            builder.strict_serial_sum_f32(x, []),
-            "sum.axes.empty"
-        ));
-        assert!(has_code(
-            builder.strict_serial_sum_f32(x, [Axis::new(1), Axis::new(1)]),
+            sum(&mut builder, x, [Axis::new(1), Axis::new(1)]),
             "sum.axes.canonical"
         ));
         assert_eq!(
@@ -1390,17 +1529,18 @@ mod tests {
         registry.register_provider(&OperationProvider).unwrap();
         let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
         let input = builder
-            .input_f32(input_key("x"), Shape::from_dims([2, 3]))
+            .input::<F32>(input_key("x"), Shape::from_dims([2, 3]))
             .unwrap();
         let results = builder
             .apply(
                 OpKey::new("test", "identity", 1).unwrap(),
                 OperationAttributes::empty(),
-                &[input],
+                &[input.erase()],
             )
             .unwrap();
         assert_eq!(results.len(), 1);
-        builder.output(output_key("result"), results[0]).unwrap();
+        let result = builder.reify::<F32>(results[0]).unwrap();
+        builder.output(output_key("result"), result).unwrap();
         let program = builder.build().unwrap();
 
         assert_eq!(
@@ -1418,40 +1558,46 @@ mod tests {
         let registry = program.semantic_registry().clone();
         let mut shared = SemanticProgramBuilder::try_new(registry.clone()).unwrap();
         let input = shared
-            .input_f32(input_key("x"), Shape::from_dims([2]))
+            .input::<F32>(input_key("x"), Shape::from_dims([2]))
             .unwrap();
         let pair = shared
             .apply(
                 OpKey::new("test", "pair", 1).unwrap(),
                 OperationAttributes::empty(),
-                &[input],
+                &[input.erase()],
             )
             .unwrap();
         assert_eq!(pair.len(), 2);
-        shared.output(output_key("left"), pair[0]).unwrap();
-        shared.output(output_key("right"), pair[1]).unwrap();
+        shared.output_resolved(output_key("left"), pair[0]).unwrap();
+        shared
+            .output_resolved(output_key("right"), pair[1])
+            .unwrap();
         let shared = shared.build().unwrap();
 
         let mut separate = SemanticProgramBuilder::try_new(registry).unwrap();
         let input = separate
-            .input_f32(input_key("x"), Shape::from_dims([2]))
+            .input::<F32>(input_key("x"), Shape::from_dims([2]))
             .unwrap();
         let first = separate
             .apply(
                 OpKey::new("test", "pair", 1).unwrap(),
                 OperationAttributes::empty(),
-                &[input],
+                &[input.erase()],
             )
             .unwrap();
         let second = separate
             .apply(
                 OpKey::new("test", "pair", 1).unwrap(),
                 OperationAttributes::empty(),
-                &[input],
+                &[input.erase()],
             )
             .unwrap();
-        separate.output(output_key("left"), first[0]).unwrap();
-        separate.output(output_key("right"), second[1]).unwrap();
+        separate
+            .output_resolved(output_key("left"), first[0])
+            .unwrap();
+        separate
+            .output_resolved(output_key("right"), second[1])
+            .unwrap();
         let separate = separate.build().unwrap();
 
         assert_ne!(shared.canonical_identity(), separate.canonical_identity());

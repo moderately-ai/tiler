@@ -6,7 +6,7 @@ title: "Bind Rust markers to complete resolved value types"
 topics: ["rust", "semantics", "dtypes", "quantization", "registry"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "partial"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.ir", "tiler.contract.numerical-semantics", "tiler.contract.operation-extensions"]
 evidence: ["tiler.research.numerics.dtype-identity-admission-policy", "tiler.research.numerics.quantized-value-and-transform-contract", "tiler.research.numerics.mature-dtype-taxonomy"]
 ticket: "prototype-resolved-value-type-registry"

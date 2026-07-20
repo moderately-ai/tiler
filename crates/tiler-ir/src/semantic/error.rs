@@ -1,8 +1,9 @@
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 use super::interface::{InputKey, InterfaceKind, OutputKey};
-use super::registry::RegistryError;
+use super::registry::{RegistryError, RegistryLookupError};
 use super::types::{ResolvedValueType, TypeIdentityError};
 
 /// A fixed-width semantic arena or interface entity category.
@@ -146,11 +147,11 @@ pub enum BuildError {
     SemanticRegistry(RegistryError),
     /// Canonical operation attributes exceeded host-owned structural rules.
     InvalidOperationAttributes(TypeIdentityError),
-    /// The semantic registry does not define a type required by this operation.
-    UnregisteredValueType {
-        /// Complete missing type identity.
-        resolved_type: ResolvedValueType,
-    },
+    /// A local Rust marker was not bound in the frozen registry.
+    RegistryLookup(RegistryLookupError),
+    /// A typed facade could not recover the result evidence promised by its
+    /// registered semantic signature.
+    Reify(ReifyError),
     /// A tensor rank exceeds the fixed-width logical axis space.
     RankTooLarge {
         /// Rejected logical rank.
@@ -183,11 +184,8 @@ impl fmt::Display for BuildError {
             Self::InvalidOperationAttributes(error) => {
                 write!(formatter, "invalid operation attributes: {error}")
             }
-            Self::UnregisteredValueType { resolved_type } => write!(
-                formatter,
-                "semantic registry does not define resolved value type {:?}",
-                resolved_type.canonical_encoding().as_bytes()
-            ),
+            Self::RegistryLookup(error) => error.fmt(formatter),
+            Self::Reify(error) => error.fmt(formatter),
             Self::RankTooLarge { rank } => {
                 write!(
                     formatter,
@@ -204,7 +202,51 @@ impl Error for BuildError {
         match self {
             Self::SemanticRegistry(error) => Some(error),
             Self::InvalidOperationAttributes(error) => Some(error),
+            Self::RegistryLookup(error) => Some(error),
+            Self::Reify(error) => Some(error),
             _ => None,
+        }
+    }
+}
+
+/// Failure to recover exact static type evidence for an existing value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ReifyError {
+    /// The value identity is foreign or invalid locally.
+    Handle(HandleError),
+    /// The requested Rust marker is not bound in this registry snapshot.
+    RegistryLookup(RegistryLookupError),
+    /// The marker's exact type does not match the value's authoritative type.
+    TypeMismatch {
+        /// Type bound to the requested marker.
+        expected: Arc<ResolvedValueType>,
+        /// Type stored by the semantic value.
+        actual: Arc<ResolvedValueType>,
+    },
+}
+
+impl fmt::Display for ReifyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Handle(error) => error.fmt(formatter),
+            Self::RegistryLookup(error) => error.fmt(formatter),
+            Self::TypeMismatch { expected, actual } => write!(
+                formatter,
+                "cannot reify value of type {:?} as marker bound to {:?}",
+                actual.canonical_encoding().as_bytes(),
+                expected.canonical_encoding().as_bytes()
+            ),
+        }
+    }
+}
+
+impl Error for ReifyError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Handle(error) => Some(error),
+            Self::RegistryLookup(error) => Some(error),
+            Self::TypeMismatch { .. } => None,
         }
     }
 }

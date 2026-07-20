@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+  --> tests/typed-handles/fail/mixed_types.rs:11:42
+   |
+11 |     let _ = F32Add::apply(builder, left, right);
+   |             -------------                ^^^^^ expected `Value<F32>`, found `Value<External>`
+   |             |
+   |             arguments to this function are incorrect
+   |
+   = note: expected struct `tiler_ir::semantic::Value<F32>`
+              found struct `tiler_ir::semantic::Value<External>`
+note: associated function defined here
+  --> src/semantic/standard_operations.rs
+   |
+   |     pub fn apply(
+   |            ^^^^^

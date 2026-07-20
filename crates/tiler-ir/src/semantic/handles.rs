@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -31,6 +32,60 @@ pub struct OperationId {
 pub struct ValueId {
     pub(super) owner: GraphId,
     pub(super) index: ValueIndex,
+}
+
+/// An exact statically typed authoring capability for one graph-owned value.
+///
+/// `T` is process-local evidence resolved through the graph's frozen semantic
+/// registry. The canonical graph stores only [`ValueId`] and its authoritative
+/// runtime [`ResolvedValueType`](super::ResolvedValueType).
+#[repr(transparent)]
+pub struct Value<T> {
+    id: ValueId,
+    marker: PhantomData<fn() -> T>,
+}
+
+impl<T> Value<T> {
+    pub(super) const fn from_verified(id: ValueId) -> Self {
+        Self {
+            id,
+            marker: PhantomData,
+        }
+    }
+
+    /// Explicitly erases static type evidence to an unknown-typed identity.
+    #[must_use]
+    pub const fn erase(self) -> ValueId {
+        self.id
+    }
+}
+
+impl<T> Clone for Value<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Value<T> {}
+
+impl<T> std::fmt::Debug for Value<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_tuple("Value").field(&self.id).finish()
+    }
+}
+
+impl<T> PartialEq for Value<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<T> Eq for Value<T> {}
+
+impl<T> std::hash::Hash for Value<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -87,8 +142,10 @@ fn verified_index_overflow() -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{OperationIndex, ValueIndex, allocate_graph_id};
+    use super::{OperationIndex, Value, ValueId, ValueIndex, allocate_graph_id};
+    use crate::semantic::ValueTypeMarker;
     use std::mem::size_of;
+    use std::rc::Rc;
     use std::sync::atomic::AtomicU64;
 
     #[test]
@@ -105,5 +162,16 @@ mod tests {
         assert!(allocate_graph_id(&next).is_none());
         assert!(allocate_graph_id(&next).is_none());
         assert_eq!(last, super::GraphId(u64::MAX - 1));
+    }
+
+    #[allow(dead_code)]
+    struct NonSendMarker(Rc<()>);
+    impl ValueTypeMarker for NonSendMarker {}
+
+    #[test]
+    fn typed_handle_layout_and_thread_safety_do_not_depend_on_marker_layout() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_eq!(size_of::<Value<NonSendMarker>>(), size_of::<ValueId>());
+        assert_send_sync::<Value<NonSendMarker>>();
     }
 }

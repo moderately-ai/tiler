@@ -12,17 +12,18 @@ mod interface;
 mod operation;
 mod program;
 mod registry;
+mod standard_operations;
 mod types;
 
 pub use error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,
-    ProgramBuildFailure, ValidationDiagnostic, ValidationDiagnostics, ValueRole,
+    ProgramBuildFailure, ReifyError, ValidationDiagnostic, ValidationDiagnostics, ValueRole,
 };
-pub use handles::{OperationId, ValueId};
+pub use handles::{OperationId, Value, ValueId};
 pub use identity::CanonicalIdentity;
 pub use interface::{
-    InputIndex, InputKey, InterfaceKind, OutputKey, OutputSelector, ProgramInputRef,
-    ProgramOutputRef,
+    InputIndex, InputKey, InterfaceKind, Output, OutputKey, OutputSelector, ProgramInputRef,
+    ProgramOutputRef, TypedProgramOutputRef,
 };
 pub use operation::{
     CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalValueKind, Definition, F32_CONSTANT_BITS_ATTRIBUTE,
@@ -41,6 +42,7 @@ pub use registry::{
     TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey, ValueTypeInstanceValidator,
     ValueTypeMarker,
 };
+pub use standard_operations::{F32Add, F32Constant, F32Multiply, StrictSerialF32Sum};
 pub use types::{
     CanonicalField, CanonicalResolvedValueType, CanonicalValue, CanonicalValueView,
     EncodedNumericContract, IdentityComponent, QuantSchemeKey, ResolvedValueType, TypeArguments,

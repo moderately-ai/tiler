@@ -6,7 +6,7 @@ title: "Use exact typed authoring handles over runtime-typed semantic values"
 topics: ["rust", "semantics", "dtypes", "api"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.ir", "tiler.contract.numerical-semantics", "tiler.contract.operation-extensions"]
 evidence: ["tiler.research.numerics.dtype-resolution-precedents", "tiler.research.numerics.dtype-identity-admission-policy", "tiler.research.extensions.operation-extension-surface"]
 ticket: "prototype-semantic-reference-slice"

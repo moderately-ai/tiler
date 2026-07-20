@@ -6,7 +6,7 @@ title: "Check value graph ownership at semantic admission"
 topics: ["rust", "semantics", "ownership", "api"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "partial"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.ir"]
 evidence: ["tiler.research.semantic-graph.rust-construction-lifecycle"]
 ticket: "prototype-semantic-owner-and-commit"

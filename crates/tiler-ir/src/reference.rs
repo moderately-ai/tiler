@@ -444,18 +444,49 @@ impl Error for EvaluationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::{InputKey, OutputKey, SemanticProgramBuilder};
+    use crate::semantic::{
+        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
+        StrictSerialF32Sum, Value,
+    };
+
+    fn constant_bits(graph: &mut SemanticProgramBuilder, bits: u32) -> Value<F32> {
+        F32Constant::apply(graph, bits).unwrap()
+    }
+
+    fn constant(graph: &mut SemanticProgramBuilder, value: f32) -> Value<F32> {
+        constant_bits(graph, value.to_bits())
+    }
+
+    fn multiply(
+        graph: &mut SemanticProgramBuilder,
+        left: Value<F32>,
+        right: Value<F32>,
+    ) -> Value<F32> {
+        F32Multiply::apply(graph, left, right).unwrap()
+    }
+
+    fn add(graph: &mut SemanticProgramBuilder, left: Value<F32>, right: Value<F32>) -> Value<F32> {
+        F32Add::apply(graph, left, right).unwrap()
+    }
+
+    fn sum(
+        graph: &mut SemanticProgramBuilder,
+        input: Value<F32>,
+        axes: impl IntoIterator<Item = Axis>,
+    ) -> Value<F32> {
+        StrictSerialF32Sum::apply(graph, input, axes).unwrap()
+    }
 
     fn graph(shape: Shape, axes: &[u32]) -> SemanticProgram {
         let mut graph = SemanticProgramBuilder::try_standard().unwrap();
-        let x = graph.input_f32(InputKey::new("x").unwrap(), shape).unwrap();
-        let scale = graph.scalar_f32(2.0).unwrap();
-        let bias = graph.scalar_f32(1.0).unwrap();
-        let product = graph.multiply_f32(x, scale).unwrap();
-        let mapped = graph.add_f32(product, bias).unwrap();
-        let sum = graph
-            .strict_serial_sum_f32(mapped, axes.iter().copied().map(Axis::new))
+        let x = graph
+            .input::<F32>(InputKey::new("x").unwrap(), shape)
             .unwrap();
+        let scale = constant(&mut graph, 2.0);
+        let bias = constant(&mut graph, 1.0);
+        let product = multiply(&mut graph, x, scale);
+        let mapped = add(&mut graph, product, bias);
+        let sum = sum(&mut graph, mapped, axes.iter().copied().map(Axis::new));
         graph
             .output(OutputKey::new("mapped").unwrap(), mapped)
             .unwrap();
@@ -483,11 +514,9 @@ mod tests {
     fn contributor_order_is_original_axis_lexicographic() {
         let mut graph = SemanticProgramBuilder::try_standard().unwrap();
         let x = graph
-            .input_f32(InputKey::new("x").unwrap(), Shape::from_dims([2, 2, 2]))
+            .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2, 2, 2]))
             .unwrap();
-        let sum = graph
-            .strict_serial_sum_f32(x, [Axis::new(0), Axis::new(2)])
-            .unwrap();
+        let sum = sum(&mut graph, x, [Axis::new(0), Axis::new(2)]);
         graph.output(OutputKey::new("sum").unwrap(), sum).unwrap();
         let program = graph.build().unwrap();
         let input = Tensor::new(
@@ -504,9 +533,9 @@ mod tests {
     fn strict_sum_preserves_non_nan_singletons_and_canonicalizes_nan_results() {
         let mut graph = SemanticProgramBuilder::try_standard().unwrap();
         let x = graph
-            .input_f32(InputKey::new("x").unwrap(), Shape::from_dims([3, 1]))
+            .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([3, 1]))
             .unwrap();
-        let sum = graph.strict_serial_sum_f32(x, [Axis::new(1)]).unwrap();
+        let sum = sum(&mut graph, x, [Axis::new(1)]);
         graph.output(OutputKey::new("sum").unwrap(), sum).unwrap();
         let program = graph.build().unwrap();
         let nan = f32::from_bits(0x7fc0_1234);
@@ -524,13 +553,13 @@ mod tests {
     fn multiply_and_add_remain_two_rounding_operations() {
         let mut graph = SemanticProgramBuilder::try_standard().unwrap();
         let x = graph
-            .input_f32(InputKey::new("x").unwrap(), Shape::from_dims([1]))
+            .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([1]))
             .unwrap();
-        let scale = graph.scalar_f32_bits(0x3f7f_ffff).unwrap();
-        let bias = graph.scalar_f32(-1.0).unwrap();
-        let product = graph.multiply_f32(x, scale).unwrap();
-        let mapped = graph.add_f32(product, bias).unwrap();
-        let sum = graph.strict_serial_sum_f32(mapped, [Axis::new(0)]).unwrap();
+        let scale = constant_bits(&mut graph, 0x3f7f_ffff);
+        let bias = constant(&mut graph, -1.0);
+        let product = multiply(&mut graph, x, scale);
+        let mapped = add(&mut graph, product, bias);
+        let sum = sum(&mut graph, mapped, [Axis::new(0)]);
         graph.output(OutputKey::new("sum").unwrap(), sum).unwrap();
         let program = graph.build().unwrap();
         let input = Tensor::new(Shape::from_dims([1]), vec![f32::from_bits(0x3f80_0001)]).unwrap();
@@ -576,12 +605,12 @@ mod tests {
         let left_key = InputKey::new("left").unwrap();
         let right_key = InputKey::new("right").unwrap();
         let left = graph
-            .input_f32(left_key.clone(), Shape::from_dims([2]))
+            .input::<F32>(left_key.clone(), Shape::from_dims([2]))
             .unwrap();
         let right = graph
-            .input_f32(right_key.clone(), Shape::from_dims([2]))
+            .input::<F32>(right_key.clone(), Shape::from_dims([2]))
             .unwrap();
-        let sum = graph.add_f32(left, right).unwrap();
+        let sum = add(&mut graph, left, right);
         graph.output(OutputKey::new("sum").unwrap(), sum).unwrap();
         let program = graph.build().unwrap();
         let left_tensor = Tensor::new(Shape::from_dims([2]), vec![1.0, 2.0]).unwrap();
@@ -615,11 +644,11 @@ mod tests {
     fn constants_preserve_nan_payloads_but_arithmetic_results_are_canonical() {
         let payload = 0x7fc0_1234;
         let mut graph = SemanticProgramBuilder::try_standard().unwrap();
-        let constant = graph.scalar_f32_bits(payload).unwrap();
-        let zero = graph.scalar_f32(0.0).unwrap();
-        let arithmetic = graph.add_f32(constant, zero).unwrap();
+        let literal = constant_bits(&mut graph, payload);
+        let zero = constant(&mut graph, 0.0);
+        let arithmetic = add(&mut graph, literal, zero);
         graph
-            .output(OutputKey::new("constant").unwrap(), constant)
+            .output(OutputKey::new("constant").unwrap(), literal)
             .unwrap();
         graph
             .output(OutputKey::new("arithmetic").unwrap(), arithmetic)
@@ -637,18 +666,16 @@ mod tests {
     #[test]
     fn commitment_removes_dead_operations_and_inputs_before_evaluation() {
         let mut graph = SemanticProgramBuilder::try_standard().unwrap();
-        let live = graph.scalar_f32(7.0).unwrap();
+        let live = constant(&mut graph, 7.0);
         let dead_input = graph
-            .input_f32(InputKey::new("dead").unwrap(), Shape::from_dims([2]))
+            .input::<F32>(InputKey::new("dead").unwrap(), Shape::from_dims([2]))
             .unwrap();
-        let dead = graph
-            .strict_serial_sum_f32(dead_input, [Axis::new(0)])
-            .unwrap();
+        let dead = sum(&mut graph, dead_input, [Axis::new(0)]);
         graph.output(OutputKey::new("live").unwrap(), live).unwrap();
         let program = graph.build().unwrap();
 
         assert!(matches!(
-            program.value(dead),
+            program.value(dead.erase()),
             Err(crate::semantic::HandleError::ForeignGraph { .. })
         ));
         assert_eq!(program.input_count(), 0);
