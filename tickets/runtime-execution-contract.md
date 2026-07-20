@@ -1,7 +1,7 @@
 ---
 id: runtime-execution-contract
 title: Define the consumer-neutral runtime execution contract
-status: todo
+status: done
 priority: p1
 dependencies: [artifact-envelope-model, kernel-program-buffer-plan, spike-runtime-semantic-validation-enforcement, verify-candle-metal-post-wait-error-checking]
 related: []
