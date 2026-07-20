@@ -1,11 +1,11 @@
 ---
 id: device-placement-and-memory-domain-contract
 title: Device placement and memory-domain contract
-status: todo
+status: done
 priority: p1
 dependencies: [target-profile-feasibility-model, kernel-program-buffer-plan]
 related: []
-scopes: [research/placement]
+scopes: [research/placement, contracts/core]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, placement, memory]

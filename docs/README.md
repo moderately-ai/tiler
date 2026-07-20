@@ -51,6 +51,7 @@ feasibility vehicle.
 - [Logical-graph and schedule-IR precedents](prior-art/logical-graphs-and-schedules.md)
 - [Symbolic index and access model](research/indexing/index-access-model.md)
 - [Target profiles and phased physical feasibility](research/target-profiles/physical-feasibility-model.md)
+- [Device placement and memory-domain contract](research/placement/device-placement-and-memory-domains.md)
 - [Architecture decisions](decisions/README.md)
 
 ## Document ownership
