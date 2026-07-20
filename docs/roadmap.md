@@ -91,7 +91,8 @@ evidence for this milestone, not its complete exit.
 - Build the typed operation/value semantic graph.
 - Lower output coordinates through composed reindexes into access maps.
 - Add symbolic extents, strides, and offsets.
-- Implement semantic/index verifiers and the slow reference evaluator.
+- Implement semantic/index verifiers in `tiler-ir` and the slow executable
+  oracle in downstream `tiler-reference`.
 - Canonically serialize and reference-evaluate every enabled transcendental
   accuracy contract before admitting such an operation to the vertical slice.
 - Establish randomized differential testing against normative semantics and

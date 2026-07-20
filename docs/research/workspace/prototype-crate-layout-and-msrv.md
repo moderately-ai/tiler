@@ -6,11 +6,11 @@ title: "Prototype crate layout and Rust MSRV"
 topics: ["rust", "workspace", "msrv", "architecture"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
-disposition: "adopted"
-implementation_status: "not-started"
+disposition: "partially-adopted"
+implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.architecture", "tiler.contract.frontend-integration"]
-adopted_by: ["ADR-0056", "ADR-0057"]
+adopted_by: ["ADR-0056", "ADR-0057", "ADR-0065"]
 ticket: "prototype-foundation-contract"
 ---
 
@@ -59,6 +59,11 @@ modules in `tiler-compiler`. MSL emission and offline invocation remain separate
 modules in `tiler-metal`. Frontend, proc-macro, Candle, generalized cache, and
 reusable Metal-runtime crates wait until the vertical proof establishes their
 need.
+
+Subsequent evaluator implementation supplied new evidence: reference values,
+execution traversal, and executable operation capabilities form a genuine
+downstream consumer boundary. ADR 0065 therefore adds `tiler-reference ->
+tiler-ir` while preserving the remaining dependency conclusions below.
 
 The counterpoint is ceremony compared with one core crate and executable. That
 smaller layout cannot mechanically test the accepted runtime/optimizer

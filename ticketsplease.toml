@@ -106,6 +106,7 @@ satisfies_dependents = false
 "project/tickets" = ["tickets/**", "ticketsplease.toml"]
 "implementation/workspace" = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml", "pyproject.toml", "uv.lock", ".python-version", "deps.sh", ".github/workflows/rust.yml", "scripts/check_workspace.py", "scripts/check_rust.py"]
 "implementation/ir" = ["crates/tiler-ir/**"]
+"implementation/reference" = ["crates/tiler-reference/**"]
 "implementation/artifact" = ["crates/tiler-artifact/**"]
 "implementation/compiler" = ["crates/tiler-compiler/**"]
 "implementation/metal" = ["crates/tiler-metal/**", "prototypes/serial-sum-compile/**"]

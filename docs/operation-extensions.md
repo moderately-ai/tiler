@@ -73,13 +73,16 @@ verification or optimization it freezes into an immutable snapshot:
 The frozen registry is immutable and safe for concurrent read-only use.
 
 The implementation separates the semantic portion required by `tiler-ir` from
-later executable capabilities. `FrozenSemanticRegistry` is a cheap-clone owned
-snapshot of canonical type definitions, provider provenance, and local marker
-bindings; semantic programs retain it so checked Rust reification does not
-require a borrowed context. Registration-time provider callbacks are discarded
-at freeze. Optimizer and backend registries compose with that snapshot in a
-later compilation session rather than introducing an inward dependency from
-semantic IR to executable provider traits.
+later executable capabilities. Under ADR 0066, `FrozenSemanticRegistry` is a
+cheap-clone owned snapshot of nominal definitions, parameterized constructors,
+encoded schemes, operation definitions, provider provenance, and optional
+local marker bindings. Semantic programs retain it so checked Rust reification
+does not require a borrowed context. Registration callbacks are discarded at
+freeze; immutable definition objects required for concrete-type validation and
+operation inference remain in the snapshot under narrow host-owned contexts.
+Under ADR 0065, executable reference capabilities compose in
+`tiler-reference`; optimizer and backend registries likewise compose later
+rather than introducing an inward dependency from semantic IR.
 Provider objects are expected to be `Send + Sync + 'static` unless an explicit
 compiler mode serializes a capability.
 

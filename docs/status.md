@@ -12,13 +12,15 @@ related: ["tiler.questions.open", "tiler.roadmap"]
 Tiler has entered a bounded prototype phase. The semantic, optimizer,
 scheduling, numerical, artifact, cache, and runtime boundaries have substantial
 accepted decisions and bounded executable evidence. An initial untyped
-semantic/reference draft and evaluator are implemented in the current working
-tree. Graph ownership, recoverable commitment, output-reachable compaction, and
+semantic/reference draft and evaluator exposed incorrect provisional public
+boundaries and are undergoing the dependency-ordered v2 correction. Graph
+ownership, recoverable commitment, output-reachable compaction, and
 origin-bound output-selector mechanics are implemented for that bounded
 profile. The bounded resolved-value-type domain and frozen semantic registry
 are also implemented, including the standard `F32` and external-provider path.
-Typed values and shape-evidence interfaces remain on the active dependency
-path. Target-neutral compilation, Metal AOT, and device execution remain
+Type authority, operation registration, generic typed values, reference-crate
+extraction, and shape evidence remain on the active dependency path.
+Target-neutral compilation, Metal AOT, and device execution remain
 unimplemented and no public API is stabilized.
 
 ## Authorized prototype
@@ -27,9 +29,10 @@ Tom selected and authorized the bounded strict serial `f32` `Sum` Metal value
 proof in [ADR 0055](decisions/0055-use-a-serial-sum-for-the-first-metal-value-proof.md).
 The prototype must pass through the documented semantic, reference, optimizer,
 schedule, structured-kernel, artifact, and guarded-runtime boundaries; a
-handwritten standalone Metal kernel is insufficient. ADRs 0056 and 0057 fix the
-implemented prototype crate graph and Rust 1.89 MSRV. The active frontier is
-the dependency-ordered typed value,
+handwritten standalone Metal kernel is insufficient. ADR 0065 supersedes ADR
+0056's four-crate count by extracting `tiler-reference`; ADR 0057 retains the
+Rust 1.89 MSRV. The active frontier is the dependency-ordered corrected
+semantic foundation, typed value,
 [shape-evidence spike](../tickets/prototype-shape-evidence-spike.md), and
 checked shaped-value work, integrated by the
 [`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md).

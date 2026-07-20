@@ -1,0 +1,9 @@
+[package]
+name = "semantic-api-external"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+semantic-api-ir.workspace = true
+semantic-api-reference.workspace = true

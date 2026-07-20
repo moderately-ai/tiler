@@ -5,16 +5,19 @@ kind: "decision"
 title: "Use four libraries and two proof executables"
 topics: ["rust", "workspace", "dependencies", "prototype"]
 catalog_group: "foundation-semantics-extensions"
-decision_status: "accepted"
-implementation_status: "not-started"
+decision_status: "superseded"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv"]
 ticket: "prototype-foundation-contract"
+related: ["ADR-0065"]
 ---
 
 # 0056: Use four libraries and two proof executables
 
-**Status:** accepted
+**Status:** superseded by ADR 0065 for the reusable-crate count and reference
+evaluator placement; the remaining compiler/artifact/backend/runtime boundaries
+are retained
 
 ## Context
 

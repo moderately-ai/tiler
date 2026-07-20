@@ -234,7 +234,8 @@ layout.
 
 | Component | Responsibility | Forbidden dependencies |
 | --- | --- | --- |
-| `tiler-ir` | Public semantic graph and operation-extension contracts; internal/experimental index, schedule, and kernel representations; verifiers and reference evaluator | Frontend syntax, Candle, and Metal runtime APIs |
+| `tiler-ir` | Public semantic graph and operation-extension contracts; internal/experimental index, schedule, and kernel representations; verifiers | Frontend syntax, reference execution, Candle, and Metal runtime APIs |
+| `tiler-reference` | Host reference values, executable semantic-operation capabilities, interpreter traversal, and conformance utilities | Optimizer, scheduler, backend, and live device APIs |
 | `tiler-compiler` | Normalization, rule engine, fusion planning, index lowering, schedule search, costing | Candle |
 | `tiler-artifact` | Versioned target-neutral artifact/ABI schema and checked expression evaluator | Candle, optimizer, and Metal device APIs |
 | `tiler-metal` | Pure structured-kernel-to-MSL translation and Metal target metadata | Candle and Metal device APIs |
@@ -249,16 +250,18 @@ would add ceremony without improving the dependency graph.
 
 ## Accepted prototype packaging profile
 
-ADR 0056 fixes the first implementation workspace to four reusable libraries
-and two non-published proof executables:
+ADR 0065 refines ADR 0056 after the evaluator implementation exposed a real
+consumer boundary. The prototype uses five reusable libraries and two
+non-published proof executables:
 
 ```text
 tiler-ir       -> []
+tiler-reference -> [tiler-ir]
 tiler-artifact -> [tiler-ir]
 tiler-compiler -> [tiler-ir, tiler-artifact]
 tiler-metal    -> [tiler-ir, tiler-artifact]
 
-prototype-compile -> [tiler-ir, tiler-artifact, tiler-compiler, tiler-metal]
+prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal]
 prototype-run     -> [tiler-artifact, platform Metal bindings]
 ```
 

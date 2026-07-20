@@ -3,7 +3,7 @@ id: prototype-typed-value-handles
 title: Implement exact typed semantic value handles
 status: todo
 priority: p0
-dependencies: [prototype-resolved-value-type-registry]
+dependencies: [prototype-resolved-value-type-registry, prototype-semantic-operation-registry]
 related: [prototype-semantic-reference-slice]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions]
@@ -17,8 +17,13 @@ heterogeneous graph.
   registry-checked fallible reification;
 - keep `ValueId` as identity-and-inspection capability with `unknown`, never
   `any`, semantics;
-- convert the bounded `F32` input, constant, multiply, add, strict serial Sum,
-  and output paths to exact typed arguments and results;
+- remove the public `input_f32`, `scalar_f32`, `scalar_f32_bits`,
+  `multiply_f32`, `add_f32`, and `strict_serial_sum_f32` builder methods;
+- add generic registry-checked `input::<T>` plus a distinctly named checked
+  erased input path for parsed frontends;
+- expose constant, multiply, add, strict serial Sum, and output typed facades
+  over the canonical operation-registry `apply` path, generalizing only where
+  the registered operation family genuinely preserves its resolved signature;
 - keep handles compact, `Copy`, and `Send + Sync` independently of marker
   layout while preserving runtime owner checks; and
 - add downstream compile-pass/fail fixtures for mixed types, erased-ID misuse,

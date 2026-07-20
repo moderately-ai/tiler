@@ -140,9 +140,10 @@ reference the same value.
 
 ADRs 0058 and 0059 fix the public lifecycle and typed authoring boundary without
 making storage layout public. The
-conceptual namespaces are `tiler_ir::shape`, `tiler_ir::semantic`, and
-`tiler_ir::reference`; internal files are organized beneath those concepts
-rather than exposed as a generic collection of newtypes. `Axis`, `Extent`, and
+conceptual namespaces are `tiler_ir::shape` and `tiler_ir::semantic`; reference
+execution is a downstream `tiler-reference` consumer under ADR 0065. Internal
+files are organized beneath their semantic concepts rather than exposed as a
+generic collection of newtypes. `Axis`, `Extent`, and
 `Shape` belong to the shape vocabulary. `ValueId`, `OperationId`, input keys,
 and output keys belong to the semantic graph. Physical schedules and kernel IR
 must define different handles even if they use the same integer representation.

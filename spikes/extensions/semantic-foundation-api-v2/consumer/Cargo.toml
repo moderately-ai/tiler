@@ -1,0 +1,10 @@
+[package]
+name = "semantic-api-consumer"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+semantic-api-external.workspace = true
+semantic-api-ir.workspace = true
+semantic-api-reference.workspace = true

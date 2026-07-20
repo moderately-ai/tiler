@@ -3,15 +3,12 @@ id: prototype-semantic-reference-slice
 title: Implement the serial Sum semantic and reference slice
 status: in-progress
 priority: p0
-dependencies: [prototype-workspace-scaffold, prototype-shaped-value-api]
+dependencies: [prototype-workspace-scaffold, prototype-shaped-value-api, prototype-reference-evaluator-crate]
 related: []
 scopes: [implementation/ir, research/semantic-graph, research/shapes, implementation/workspace, research/documentation]
 shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions, contracts/navigation]
 paths: [AGENTS.md, CLAUDE.md, .gitignore]
 tags: [implementation, prototype, semantics, vertical-slice]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1784563216
 ---
 Build and evaluate the complete target-independent input to the first value
 proof:
@@ -86,3 +83,9 @@ all draft handles. Typed output selectors and retained provenance cross the
 boundary without stabilizing arena indices. The internal commit remap keeps an
 additive future `build_with_report` possible, but ordinary `build` does not pay
 for or expose a mandatory correlation report.
+
+The ticket remains open but implementation is paused while the dependency-
+ordered semantic-foundation v2 tickets correct the type-authority, operation-
+registry, typed-construction, and reference-crate boundaries exposed by review
+of the initial draft. No compiler work may treat the current public F32 builder
+surface or in-IR evaluator placement as accepted architecture.

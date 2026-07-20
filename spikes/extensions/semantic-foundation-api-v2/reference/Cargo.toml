@@ -1,0 +1,8 @@
+[package]
+name = "semantic-api-reference"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+semantic-api-ir.workspace = true
