@@ -9,6 +9,13 @@ users do not declare kernels separately, add a build script, run a Cargo
 subcommand, or accept runtime JIT compilation. This does not define the
 frontend-neutral compiler API or constrain other integrations to use macros.
 
+For an inline proc-macro frontend, the operation-provider snapshot is limited
+to providers in the macro's host dependency graph plus complete canonical
+semantic declarations present in invocation tokens. A consumer-local Rust
+trait implementation is target-crate code and is not executable by the
+already-compiled proc macro. ADR 0045 records this boundary; it does not narrow
+the provider set accepted by the ordinary compiler API.
+
 ## Invocation is the compilation unit
 
 Given:

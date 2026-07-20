@@ -22,13 +22,18 @@ discover arbitrary provider objects or trait implementations defined later in
 the consuming crate. Therefore:
 
 - ordinary compiler-API users may supply external operation providers;
-- a proc macro initially supports providers compiled into its own dependency
-  graph or described through a future explicit declarative mechanism;
-- consumer-side automatic registration is not assumed to cross the proc-macro
-  compilation boundary.
+- a proc macro supports providers compiled into its host dependency graph and
+  complete canonical semantic declarations visible in invocation tokens;
+- Cargo features can select only provider dependencies already declared by the
+  macro package;
+- consumer-side automatic registration does not cross the proc-macro
+  compilation boundary;
+- an unavailable provider fails semantic admission rather than becoming an
+  opaque operation or runtime compilation request.
 
-This limitation is an integration feasibility gate, not a reason to make the
-compiler-core extension boundary consumer-specific.
+This measured limitation is accepted by ADR 0045. It does not make the
+compiler-core extension boundary consumer-specific or close the ordinary
+compiler API.
 
 ## Registry lifecycle and coherence
 

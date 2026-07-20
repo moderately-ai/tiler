@@ -51,6 +51,7 @@ accepted. Unresolved questions are collected in
 - [0042: Use typed transcendental accuracy contracts](0042-use-typed-transcendental-accuracy-contracts.md) — accepted
 - [0043: Use typed phased target feasibility](0043-use-typed-phased-target-feasibility.md) — accepted
 - [0044: Use an explicit capability-based operation registry](0044-use-explicit-capability-operation-registry.md) — accepted
+- [0045: Bound inline proc-macro providers to host dependencies](0045-bound-proc-macro-providers-to-host-dependencies.md) — accepted
 
 ## Template
 

@@ -1,0 +1,17 @@
+[package]
+name = "visibility-macro"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+proc-macro = true
+
+[features]
+external-provider = ["dep:visibility-external-provider"]
+
+[dependencies]
+visibility-api = { path = "../api" }
+visibility-builtin-provider = { path = "../builtin-provider" }
+visibility-external-provider = { path = "../external-provider", optional = true }
+

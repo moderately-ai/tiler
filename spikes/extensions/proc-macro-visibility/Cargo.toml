@@ -1,0 +1,5 @@
+[workspace]
+members = ["api", "builtin-provider", "external-provider", "macro", "consumer"]
+exclude = ["cycle/consumer", "cycle/macro"]
+resolver = "2"
+

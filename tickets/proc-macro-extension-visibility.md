@@ -1,11 +1,11 @@
 ---
 id: proc-macro-extension-visibility
 title: Spike proc-macro visibility of operation extensions
-status: todo
+status: done
 priority: p1
 dependencies: [operation-extension-surface]
 related: []
-scopes: [research/extensions]
+scopes: [research/extensions, contracts/core, contracts/integrations]
 shared_scopes: []
 paths: []
 tags: [tiler-research, spike, macro, extensions]

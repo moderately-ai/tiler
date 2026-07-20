@@ -1,0 +1,9 @@
+[package]
+name = "visibility-builtin-provider"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+visibility-api = { path = "../api" }
+

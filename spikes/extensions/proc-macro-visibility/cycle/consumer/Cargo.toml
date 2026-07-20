@@ -1,0 +1,9 @@
+[package]
+name = "visibility-cycle-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+visibility-cycle-macro = { path = "../macro" }
+

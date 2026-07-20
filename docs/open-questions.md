@@ -21,9 +21,6 @@ ADR when evidence is sufficient.
 
 ## Semantic graph and operation extensions
 
-- How are external providers supplied to ordinary compiler sessions, and which
-  discovery/declarative mechanism, if any, can make them visible to a separately
-  compiled proc macro?
 - What bounded canonical attribute value model and schema/version policy is
   used?
 - Which transactional rewrite API, recursion declarations, cycle detection,
