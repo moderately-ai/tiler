@@ -1,7 +1,7 @@
 ---
 id: reduction-semantics-contract
 title: Define reduction semantics and legality
-status: todo
+status: done
 priority: p0
 dependencies: [semantic-graph-contract, numerical-policy-contract]
 related: []
