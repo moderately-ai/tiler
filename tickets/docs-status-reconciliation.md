@@ -6,7 +6,7 @@ priority: p1
 dependencies: [docs-provenance-core, docs-provenance-numerics, docs-provenance-runtime]
 related: []
 scopes: [contracts/navigation, research/documentation]
-shared_scopes: [contracts/foundation, contracts/numerics, contracts/artifacts, contracts/integrations, contracts/optimizer, contracts/decisions, project/tickets]
+shared_scopes: [contracts/foundation, contracts/numerics, contracts/artifacts, contracts/integrations, contracts/optimizer, contracts/decisions, project/tickets, research/apple-targets, research/artifacts, research/cache, research/cost-model, research/embedding, research/extensions, research/indexing, research/kernel-ir, research/macro-environment, research/numerics, research/placement, research/program-planning, research/reference, research/region-search, research/runtime, research/scheduling, research/semantic-graph, research/shapes, research/target-profiles, research/transfers]
 paths: []
 tags: [docs-ia]
 ---
