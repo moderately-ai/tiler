@@ -11,7 +11,6 @@ supports: ["tiler.research.indexing.index-access-model"]
 entrypoints: ["spikes/indexing/index-access-model/Cargo.toml"]
 last_verified: "2026-07-20"
 ticket: "index-access-model"
-related: ["tiler.portal.spike.indexing-guide"]
 ---
 
 # Index and access-model experiment

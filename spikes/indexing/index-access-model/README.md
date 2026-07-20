@@ -4,6 +4,7 @@ id: "tiler.portal.spike.indexing-guide"
 kind: "portal"
 title: "Index/access contract spike"
 topics: ["indexing", "access-maps", "rust"]
+related: ["tiler.spike.indexing"]
 ---
 
 # Index/access contract spike

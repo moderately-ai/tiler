@@ -114,6 +114,26 @@ Live ticket status and calculated backlinks never appear in document
 frontmatter. Ticketsplease owns workflow state. Generated catalog sections are
 derived from metadata and checked in for ordinary GitHub reading.
 
+## Validation and catalog updates
+
+The validator uses only the Python standard library:
+
+```sh
+python3 scripts/docs.py validate
+python3 -m unittest discover -s scripts/tests -v
+```
+
+After changing cataloged metadata, regenerate the checked-in views and validate
+the result:
+
+```sh
+python3 scripts/docs.py render
+python3 scripts/docs.py validate
+```
+
+CI runs the tests and validator. `render --check` is available when a caller
+needs only the deterministic generated-block freshness check.
+
 ## Ownership
 
 This document owns metadata shape and relationship semantics. It does not own
