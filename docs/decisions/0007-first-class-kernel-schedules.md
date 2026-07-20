@@ -1,6 +1,6 @@
 # 0007: Make normalized hardware schedules first-class IR
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 
@@ -14,7 +14,7 @@ Schedule APIs in Halide, TVM, MLIR, XLA, and Triton distinguish, to varying
 degrees, transformed executable structure from the history or parameters used
 to obtain it.
 
-## Proposed decision
+## Decision
 
 Each scheduled-kernel implementation contains a first-class `ScheduledRegion`
 pairing its canonical `IndexRegion` with a normalized `KernelSchedule`. The
@@ -29,6 +29,14 @@ identity-bearing, and independently verified. All automatic/default decisions
 are resolved before identity is formed. The same mapping structure paired with
 a different scalar/access program is a different scheduled region.
 
+The normalized schedule contains canonical execution axes, the mapping from
+execution coordinates to logical spatial and reduction coordinates, output
+ownership, loop/vector organization, tail policy, local staging and lifetimes,
+reduction topology and result visibility, synchronization and abstract phase
+order, launch formulas, and specialization bindings. The scalar program and
+buffer access maps remain owned by `IndexRegion`; a schedule references rather
+than restates them.
+
 A separate schedule trace records transformations, decisions, preconditions,
 and rejection reasons for explanation and replay. Equivalent normalized
 schedules may share identity even when produced by different transform
@@ -39,11 +47,23 @@ resource requirements and estimates, boundary contracts, and cost estimates
 remain separate typed concepts rather than undifferentiated schedule
 properties.
 
+Verification is layered. Intrinsic verification proves domain coverage,
+ownership, bounds under predicates, race freedom, staging lifetime,
+synchronization convergence, tail/vector behavior, reduction contributor and
+numerical-order legality, and zero-domain behavior. It then derives exact or
+proven resource requirements and typed predicates for the separate phased
+target-feasibility assessment. Cost evidence never proves legality.
+
+One scheduled region describes one kernel. Cross-kernel temporaries,
+dependencies, and multi-pass reductions belong to `KernelSubprogram` or
+`KernelProgram`.
+
 ## Consequences
 
-- Schedule verification can prove domain coverage, access safety, race freedom,
-  barrier convergence, numerical preservation, resource feasibility, and
-  target compatibility before target source emission.
+- Intrinsic schedule verification proves domain coverage, access safety, race
+  freedom, barrier convergence, and numerical preservation before target
+  source emission. Phased feasibility separately proves or safely defers
+  target/resource predicates.
 - Backends consume a verified schedule instead of owning undocumented mapping
   heuristics.
 - Explain/replay provenance remains available without making transform history
@@ -52,6 +72,9 @@ properties.
   defaults, and transient IDs.
 - Structured kernel IR remains a later imperative lowering; the schedule does
   not collapse into target source code.
+- Rejections are attributed to intrinsic schedule, numerical, applicability,
+  target-feasibility, cost, or search-budget rules rather than flattened into
+  one unsupported result.
 
 ## Alternatives considered
 

@@ -1,13 +1,13 @@
 ---
 id: scheduled-region-model
 title: Validate a first-class scheduled-region model
-status: todo
+status: done
 priority: p1
 dependencies: [semantic-graph-contract, shape-environment-contract, target-profile-feasibility-model]
 related: []
 scopes: [research/scheduling]
 shared_scopes: []
-paths: []
+paths: [docs/decisions/0007-first-class-kernel-schedules.md, docs/decisions/README.md]
 tags: [tiler-research, spike, scheduler, gpu]
 ---
 Take several legal tensor regions and represent alternative mappings to grids, threadgroups, SIMD groups or warps, vector lanes, staging, reductions, tails, and launch geometry. Determine the normalized ScheduledRegion fields and verifier responsibilities needed before structured kernel lowering.

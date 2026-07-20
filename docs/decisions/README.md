@@ -13,7 +13,7 @@ accepted. Unresolved questions are collected in
 - [0004: Treat each inline macro invocation as an AOT bundle](0004-inline-macro-aot-bundles.md) — proposed
 - [0005: Expose a public semantic graph and extension boundary](0005-public-semantic-tensor-graph.md) — accepted
 - [0006: Model semantic programs as operation/value graphs](0006-operation-value-graph.md) — proposed
-- [0007: Make normalized hardware schedules first-class IR](0007-first-class-kernel-schedules.md) — proposed
+- [0007: Make normalized hardware schedules first-class IR](0007-first-class-kernel-schedules.md) — accepted
 - [0008: Separate extent symbols from typed root bindings](0008-typed-root-bindings.md) — accepted
 - [0009: Resolve numerical typing before semantic optimization](0009-resolved-numerical-typing.md) — accepted
 - [0010: Make conversion behavior a typed semantic contract](0010-typed-conversion-contracts.md) — accepted
