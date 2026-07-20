@@ -1,0 +1,4 @@
+# Local Python execution caches. Keep reproducible experiment sources and any
+# referenced result fixtures tracked; ignore only regenerable interpreter data.
+__pycache__/
+*.py[cod]
