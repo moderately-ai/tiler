@@ -1,7 +1,7 @@
 ---
 id: region-search-oracle
 title: Build a tiny exhaustive oracle for fusion-region search
-status: todo
+status: done
 priority: p1
 dependencies: [semantic-graph-contract, numerical-policy-contract]
 related: []
