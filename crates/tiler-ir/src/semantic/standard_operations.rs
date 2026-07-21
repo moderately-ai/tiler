@@ -1,11 +1,11 @@
 //! Typed facades for Tiler's governed initial operation profile.
 
-use crate::shape::Axis;
+use crate::shape::{Axis, ShapeEvidence, StaticShape};
 
 use super::{
     BuildError, CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE,
-    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, SemanticProgramBuilder, Value, add_f32_op,
-    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, SemanticProgramBuilder, ShapedValue, Value,
+    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -29,6 +29,20 @@ impl F32Constant {
         )])
         .map_err(BuildError::InvalidOperationAttributes)?;
         apply_single(builder, constant_f32_op(), attributes, &[])
+    }
+
+    /// Applies the scalar constant semantics and preserves its exact shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on
+    /// failure.
+    pub fn apply_shaped(
+        builder: &mut SemanticProgramBuilder,
+        bits: u32,
+    ) -> Result<ShapedValue<F32, StaticShape<0, { [] }>>, BuildError> {
+        let value = Self::apply(builder, bits)?;
+        builder.refine(value).map_err(BuildError::ShapeRefinement)
     }
 }
 
@@ -55,6 +69,21 @@ impl F32Multiply {
             &[left.erase(), right.erase()],
         )
     }
+
+    /// Applies multiplication through the canonical path and rechecks the
+    /// shared operand evidence on its result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_shaped<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        left: ShapedValue<F32, E>,
+        right: ShapedValue<F32, E>,
+    ) -> Result<ShapedValue<F32, E>, BuildError> {
+        let value = Self::apply(builder, left.weaken(), right.weaken())?;
+        builder.refine(value).map_err(BuildError::ShapeRefinement)
+    }
 }
 
 /// Separate binary32 addition with scalar broadcast.
@@ -79,6 +108,21 @@ impl F32Add {
             OperationAttributes::empty(),
             &[left.erase(), right.erase()],
         )
+    }
+
+    /// Applies addition through the canonical path and rechecks the shared
+    /// operand evidence on its result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_shaped<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        left: ShapedValue<F32, E>,
+        right: ShapedValue<F32, E>,
+    ) -> Result<ShapedValue<F32, E>, BuildError> {
+        let value = Self::apply(builder, left.weaken(), right.weaken())?;
+        builder.refine(value).map_err(BuildError::ShapeRefinement)
     }
 }
 

@@ -6,15 +6,16 @@ title: "Layer checked shape evidence over canonical typed values"
 topics: ["rust", "semantics", "shapes", "api"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.ir"]
 evidence: ["tiler.research.shapes.shape-environment-contract", "tiler.research.shapes.constraint-prover-boundary", "tiler.research.shapes.stable-rust-shape-evidence", "tiler.research.shapes.public-static-shape-spelling", "tiler.research.shapes.nightly-const-shape-parameters", "tiler.research.semantic-graph.rust-construction-lifecycle"]
-ticket: "prototype-semantic-reference-slice"
+ticket: "prototype-shaped-value-api"
 ---
 
 # 0061: Layer checked shape evidence over canonical typed values
 
-**Status:** accepted and refined by ADR 0067; production API not yet implemented
+**Status:** accepted and refined by ADR 0067; bounded production API implemented
+as a public-interface review draft
 
 ## Context
 
@@ -79,6 +80,23 @@ The initial public operation surface remains builder-centered. Refined values
 may improve arguments, results, and diagnostics, but do not introduce an
 independent fluent operation API until measurements demonstrate that it can
 remain complete and nonduplicative.
+
+The bounded implementation now exposes sealed `Rank<RANK>` and dependent-array
+`StaticShape<RANK, EXTENTS>` evidence under `tiler_ir::shape`, privately
+constructed `ShapedValue<T, E>` capabilities under `tiler_ir::semantic`, and a
+graph-owned `ShapeWitness<SameShape>` for the first selected multi-value
+predicate. Both draft builders and completed programs check refinement and
+witness ownership against their canonical shapes. `F32Constant`, `F32Add`, and
+`F32Multiply` provide builder-centered evidence-preserving facades only where
+the result relationship is exact; each delegates to ordinary operation
+admission and rechecks the returned value. Reduction deliberately weakens to
+`Value<T>`.
+
+Runtime, identity, and compile-fail tests cover mismatch diagnostics, foreign
+graphs and witnesses, subject binding, forgery resistance, explicit weakening,
+rank/array-length rejection, and semantic identity equivalence. This is an
+implemented experimental draft, not approval or stabilization of the public
+names and call-site details.
 
 ## Consequences
 

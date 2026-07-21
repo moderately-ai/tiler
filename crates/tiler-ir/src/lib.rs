@@ -1,3 +1,6 @@
+#![feature(generic_const_parameter_types)]
+#![feature(min_adt_const_params)]
+#![allow(incomplete_features)]
 //! Target-independent representations and verifiers for Tiler.
 //!
 //! This crate currently implements only the bounded semantic/reference slice

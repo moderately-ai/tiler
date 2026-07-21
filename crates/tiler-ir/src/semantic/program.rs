@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
-use crate::shape::Shape;
+use crate::shape::{Shape, ShapeEvidence};
 
 use super::error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,
-    ProgramBuildFailure, ReifyError, ValidationDiagnostic, ValidationDiagnostics, ValueRole,
+    ProgramBuildFailure, ReifyError, ShapeRefineError, ShapeWitnessError, ShapeWitnessSubject,
+    ValidationDiagnostic, ValidationDiagnostics, ValueRole,
 };
 use super::handles::{
     GraphId, OperationId, OperationIndex, Value, ValueId, ValueIndex, next_graph_id,
@@ -20,6 +21,7 @@ use super::operation::{
     ValueFact, ValueRef,
 };
 use super::registry::FrozenSemanticRegistry;
+use super::shape_evidence::{SameShape, ShapeWitness, ShapedValue};
 use super::types::ResolvedValueType;
 
 /// A verified, immutable semantic program for the bounded f32 prototype.
@@ -203,6 +205,70 @@ impl SemanticProgram {
         Ok(&self.data.values[value.index.as_usize()].shape)
     }
 
+    /// Checks and attaches Rust-side shape evidence to a typed value.
+    ///
+    /// Refinement does not mutate the program or alter semantic identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for a foreign/invalid value or when `E` disagrees
+    /// with the authoritative graph shape.
+    pub fn refine<T, E: ShapeEvidence>(
+        &self,
+        value: Value<T>,
+    ) -> Result<ShapedValue<T, E>, ShapeRefineError> {
+        let actual = self
+            .shape(value.erase())
+            .map_err(ShapeRefineError::Handle)?;
+        refine_shape(value, actual)
+    }
+
+    /// Proves that two ordered values have equal authoritative shapes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for invalid subjects or unequal shapes.
+    pub fn prove_same_shape<L, R>(
+        &self,
+        left: Value<L>,
+        right: Value<R>,
+    ) -> Result<ShapeWitness<SameShape>, ShapeWitnessError> {
+        prove_same_shape(
+            self.data.owner,
+            left.erase(),
+            right.erase(),
+            |subject, value| {
+                self.shape(value)
+                    .map_err(|error| ShapeWitnessError::SubjectHandle { subject, error })
+            },
+        )
+    }
+
+    /// Validates a same-shape witness against this graph and exact subjects.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for invalid subjects, a foreign witness, or a
+    /// witness proving a different ordered pair.
+    pub fn validate_same_shape_witness<L, R>(
+        &self,
+        witness: &ShapeWitness<SameShape>,
+        left: Value<L>,
+        right: Value<R>,
+    ) -> Result<(), ShapeWitnessError> {
+        self.shape(left.erase())
+            .map_err(|error| ShapeWitnessError::SubjectHandle {
+                subject: ShapeWitnessSubject::Left,
+                error,
+            })?;
+        self.shape(right.erase())
+            .map_err(|error| ShapeWitnessError::SubjectHandle {
+                subject: ShapeWitnessSubject::Right,
+                error,
+            })?;
+        validate_same_shape_witness(self.data.owner, witness, left.erase(), right.erase())
+    }
+
     /// Returns the immutable semantic authority that validated this program.
     #[must_use]
     pub fn semantic_registry(&self) -> &FrozenSemanticRegistry {
@@ -254,6 +320,52 @@ impl SemanticProgram {
         let _ = self.reify::<T>(output.value())?;
         Ok(TypedProgramOutputRef::from_verified(output))
     }
+}
+
+fn refine_shape<T, E: ShapeEvidence>(
+    value: Value<T>,
+    actual: &Shape,
+) -> Result<ShapedValue<T, E>, ShapeRefineError> {
+    if E::matches(actual) {
+        Ok(ShapedValue::from_verified(value))
+    } else {
+        Err(ShapeRefineError::EvidenceMismatch {
+            expected: E::expectation(),
+            actual: actual.clone(),
+        })
+    }
+}
+
+fn prove_same_shape<'a>(
+    owner: GraphId,
+    left: ValueId,
+    right: ValueId,
+    mut shape: impl FnMut(ShapeWitnessSubject, ValueId) -> Result<&'a Shape, ShapeWitnessError>,
+) -> Result<ShapeWitness<SameShape>, ShapeWitnessError> {
+    let left_shape = shape(ShapeWitnessSubject::Left, left)?;
+    let right_shape = shape(ShapeWitnessSubject::Right, right)?;
+    if left_shape != right_shape {
+        return Err(ShapeWitnessError::NotSameShape {
+            left: left_shape.clone(),
+            right: right_shape.clone(),
+        });
+    }
+    Ok(ShapeWitness::from_verified(owner, left, right))
+}
+
+fn validate_same_shape_witness(
+    owner: GraphId,
+    witness: &ShapeWitness<SameShape>,
+    left: ValueId,
+    right: ValueId,
+) -> Result<(), ShapeWitnessError> {
+    if witness.owner != owner {
+        return Err(ShapeWitnessError::ForeignWitness);
+    }
+    if witness.left != left || witness.right != right {
+        return Err(ShapeWitnessError::SubjectMismatch);
+    }
+    Ok(())
 }
 
 /// Incremental constructor for a verified bounded semantic program.
@@ -609,6 +721,79 @@ impl SemanticProgramBuilder {
             });
         }
         Ok(Value::from_verified(value))
+    }
+
+    /// Checks and attaches Rust-side shape evidence to a typed draft value.
+    ///
+    /// Refinement does not mutate the builder or alter semantic identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for a foreign/invalid value or when `E` disagrees
+    /// with the authoritative graph shape.
+    pub fn refine<T, E: ShapeEvidence>(
+        &self,
+        value: Value<T>,
+    ) -> Result<ShapedValue<T, E>, ShapeRefineError> {
+        let actual = self
+            .shape_for_handle(value.erase())
+            .map_err(ShapeRefineError::Handle)?;
+        refine_shape(value, actual)
+    }
+
+    /// Proves that two ordered draft values have equal authoritative shapes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for invalid subjects or unequal shapes.
+    pub fn prove_same_shape<L, R>(
+        &self,
+        left: Value<L>,
+        right: Value<R>,
+    ) -> Result<ShapeWitness<SameShape>, ShapeWitnessError> {
+        prove_same_shape(self.owner, left.erase(), right.erase(), |subject, value| {
+            self.shape_for_handle(value)
+                .map_err(|error| ShapeWitnessError::SubjectHandle { subject, error })
+        })
+    }
+
+    /// Validates a same-shape witness against this draft and exact subjects.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for invalid subjects, a foreign witness, or a
+    /// witness proving a different ordered pair.
+    pub fn validate_same_shape_witness<L, R>(
+        &self,
+        witness: &ShapeWitness<SameShape>,
+        left: Value<L>,
+        right: Value<R>,
+    ) -> Result<(), ShapeWitnessError> {
+        self.shape_for_handle(left.erase())
+            .map_err(|error| ShapeWitnessError::SubjectHandle {
+                subject: ShapeWitnessSubject::Left,
+                error,
+            })?;
+        self.shape_for_handle(right.erase())
+            .map_err(|error| ShapeWitnessError::SubjectHandle {
+                subject: ShapeWitnessSubject::Right,
+                error,
+            })?;
+        validate_same_shape_witness(self.owner, witness, left.erase(), right.erase())
+    }
+
+    fn shape_for_handle(&self, value: ValueId) -> Result<&Shape, HandleError> {
+        if value.owner != self.owner {
+            return Err(HandleError::ForeignGraph {
+                entity: EntityKind::Value,
+            });
+        }
+        self.values
+            .get(value.index.as_usize())
+            .map(|data| &data.shape)
+            .ok_or(HandleError::InvalidLocal {
+                entity: EntityKind::Value,
+            })
     }
 
     fn compact_to_outputs(&mut self) {

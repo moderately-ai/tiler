@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+  --> tests/shape-evidence/fail/mismatched_operand_evidence.rs:15:49
+   |
+15 |     let _ = F32Add::apply_shaped(builder, left, right);
+   |             --------------------                ^^^^^ expected `[2, 3]`, found `[3, 2]`
+   |             |
+   |             arguments to this function are incorrect
+   |
+   = note: expected struct `ShapedValue<F32, StaticShape<2, [2, 3]>>`
+              found struct `ShapedValue<F32, StaticShape<2, [3, 2]>>`
+note: associated function defined here
+  --> src/semantic/standard_operations.rs
+   |
+   |     pub fn apply_shaped<E: ShapeEvidence>(
+   |            ^^^^^^^^^^^^

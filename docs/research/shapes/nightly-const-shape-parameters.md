@@ -260,4 +260,5 @@ summary](../../../spikes/shapes/nightly-dependent-static-shapes/measurements/sum
 **Inference:** the selected form is ready to serve as the prototype's checked
 exact-shape evidence spelling. These single-host measurements reject a
 catastrophic prototype cost; they are not a portable compiler-performance
-guarantee. The production `tiler-ir` API remains unimplemented.
+guarantee. The bounded production `tiler-ir` draft now implements this form;
+its public names and call-site details remain under review.

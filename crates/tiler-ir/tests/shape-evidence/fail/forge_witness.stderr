@@ -1,0 +1,5 @@
+error[E0451]: fields `owner`, `left`, `right` and `predicate` of struct `ShapeWitness` are private
+ --> tests/shape-evidence/fail/forge_witness.rs:4:22
+  |
+4 |     ShapeWitness { ..witness }
+  |                      ^^^^^^^ fields `owner`, `left`, `right` and `predicate` are private

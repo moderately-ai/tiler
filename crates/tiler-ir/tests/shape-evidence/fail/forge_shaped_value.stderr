@@ -1,0 +1,9 @@
+error[E0451]: fields `value` and `evidence` of struct `ShapedValue` are private
+  --> tests/shape-evidence/fail/forge_shaped_value.rs:10:9
+   |
+ 9 |     ShapedValue {
+   |     ----------- in this type
+10 |         value,
+   |         ^^^^^ private field
+11 |         evidence: PhantomData,
+   |         ^^^^^^^^ private field
