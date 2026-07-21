@@ -4,7 +4,7 @@ title: Compile serial Sum into a verified materialized baseline plan
 status: done
 priority: p0
 dependencies: [prototype-semantic-reference-slice]
-related: [prototype-artifact-slice]
+related: [prototype-artifact-slice, harden-compiler-verifier-subject-binding-and-totality]
 scopes: [implementation/compiler, implementation/artifact, implementation/ir, contracts/decisions, contracts/navigation, research/program-planning]
 shared_scopes: [project/tickets, contracts/optimizer, contracts/artifacts, contracts/foundation, contracts/numerics]
 paths: [Cargo.lock]

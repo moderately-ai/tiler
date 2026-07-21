@@ -4,7 +4,7 @@ title: Fuse serial Sum into one verified target-neutral program
 status: done
 priority: p0
 dependencies: [prototype-target-neutral-baseline-slice]
-related: [prototype-shared-compiler-ir-ownership]
+related: [prototype-shared-compiler-ir-ownership, harden-compiler-verifier-subject-binding-and-totality]
 scopes: [implementation/compiler, implementation/artifact, implementation/ir, implementation/workspace]
 shared_scopes: [project/tickets, contracts/optimizer, contracts/artifacts, contracts/foundation, contracts/numerics, contracts/navigation]
 paths: [Cargo.lock]

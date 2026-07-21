@@ -3,7 +3,7 @@ id: prototype-inline-proc-macro-frontend
 title: Implement the inline proc-macro frontend proof
 status: todo
 priority: p1
-dependencies: [prototype-optimizer-conformance-gate]
+dependencies: [prototype-optimizer-conformance-gate, enforce-repository-validation-gate-integrity]
 related: []
 scopes: [implementation/frontend, implementation/compiler, implementation/workspace]
 shared_scopes: []

@@ -3,7 +3,7 @@ id: prototype-apple-aot-driver
 title: Implement the Apple offline compiler driver
 status: todo
 priority: p0
-dependencies: [prototype-optimizer-conformance-gate]
+dependencies: [prototype-optimizer-conformance-gate, repair-apple-target-experiment-integrity]
 related: []
 scopes: [implementation/metal-aot]
 shared_scopes: []

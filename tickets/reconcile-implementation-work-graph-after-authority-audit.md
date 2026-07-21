@@ -16,6 +16,27 @@ audit performed at `01a223b7670b2251c5c6e1b3c0e18e2db7891716` after the
 semantic-authority and canonical-index corrections are accepted. This is a
 work-graph correction, not authority to implement the compiler components.
 
+An eleven-wave fixed-point audit of the actual codebase at
+`ad6e9f463de6eabad44af47eaddad9317e0935fd` found additional correctness and
+evidence gaps. This ticket must integrate the resulting vertical corrective
+work rather than treating the earlier ticket-only audit as exhaustive:
+
+- `harden-semantic-registry-and-program-construction`;
+- `correct-reference-value-and-authority-contracts`;
+- `harden-compiler-verifier-subject-binding-and-totality`;
+- `enforce-repository-validation-gate-integrity`;
+- `repair-numerical-witness-integrity`;
+- `repair-cache-experiment-harness-integrity`;
+- `repair-apple-target-experiment-integrity`;
+- `repair-macro-and-embedding-harness-integrity`;
+- `repair-shape-and-runtime-experiment-integrity`; and
+- `reconcile-research-evidence-provenance`.
+
+The two already-open owners, `correct-semantic-identity-layering` and
+`prototype-canonical-index-region-slice`, retain their transitive-authority and
+index-canonicality findings respectively. Do not duplicate those obligations
+into a competing ticket.
+
 ## Required outcome
 
 ### Correct the P0 dependency and ownership graph
@@ -55,6 +76,14 @@ work-graph correction, not authority to implement the compiler components.
 - Strengthen the optimizer conformance gate with an external operation through
   the ordinary path, non-isomorphic and fan-out or multi-output graphs, stable
   explain, and identity/provenance assertions for every implemented layer.
+- Gate operation capabilities and fusion legality on the semantic/reference
+  corrections, and gate every schedule/KIR/program/artifact milestone on the
+  compiler verifier subject-binding correction. A mutually consistent forged
+  plan is not a verified plan.
+- Treat the repository-gate correction as implementation infrastructure, not
+  optional cleanup: no later conformance claim may rely on a gate that can
+  disable tests, lints, documentation, toolchain selection, or locked Python
+  resolution while remaining green.
 
 ### Correct later work ownership
 

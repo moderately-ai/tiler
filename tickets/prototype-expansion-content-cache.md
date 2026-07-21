@@ -3,7 +3,7 @@ id: prototype-expansion-content-cache
 title: Implement the expansion content cache
 status: todo
 priority: p1
-dependencies: [prototype-neutral-artifact-codec, prototype-apple-aot-driver]
+dependencies: [prototype-neutral-artifact-codec, prototype-apple-aot-driver, repair-cache-experiment-harness-integrity]
 related: []
 scopes: [implementation/cache, implementation/metal-aot]
 shared_scopes: []

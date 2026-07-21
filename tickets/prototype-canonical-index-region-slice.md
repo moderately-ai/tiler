@@ -3,8 +3,8 @@ id: prototype-canonical-index-region-slice
 title: Implement the canonical index-region slice
 status: in-progress
 priority: p0
-dependencies: [prototype-shared-compiler-ir-ownership, correct-semantic-identity-layering]
-related: []
+dependencies: [prototype-shared-compiler-ir-ownership, correct-semantic-identity-layering, harden-semantic-registry-and-program-construction]
+related: [harden-compiler-verifier-subject-binding-and-totality]
 scopes: [implementation/ir, implementation/compiler, implementation/workspace, project/tickets, contracts/foundation, contracts/navigation, contracts/decisions, contracts/numerics, implementation/reference, research/indexing, contracts/optimizer, contracts/artifacts]
 shared_scopes: []
 paths: [.gitignore]
@@ -91,3 +91,34 @@ are split into `implement-shapeenv-index-bindings` and
 `implement-index-domain-predicates`. This profile leaves additive public seams
 for those authorities and rejects unsupported dynamic construction rather than
 introducing an index-local duplicate.
+
+## Fixed-point audit corrections
+
+The codebase audit at `ad6e9f463de6eabad44af47eaddad9317e0935fd`
+identified additional obligations owned by this still-open ticket:
+
+- Make domain cardinality zero-absorbing before overflow checks. A domain such
+  as `[u64::MAX, 2, 0]` is empty, and empty accesses must reach the vacuous
+  proof path rather than fail a proof budget.
+- Alpha-canonicalize iteration dimensions. Declaration order, arena numbering,
+  and bound-variable spelling must not change structural identity; every
+  access domain, free expression, and reduction reference must encode the
+  canonical renaming.
+- Enforce operand, result, state, contributor, yield, scalar-depth, expression-
+  depth, integer-magnitude, registry, retained-byte, and proof-plan budgets
+  before cloning, encoding, callback work, or aggregate allocation. Index
+  expression traversal must be iterative or explicitly depth-bounded.
+- Make failed nested/reduction builder operations transactional with respect to
+  builder identifiers and observable allocation state.
+- Distinguish scalar expression depth from scalar value-count diagnostics.
+- Add `#[non_exhaustive]` or an equivalent forward-compatible inspection
+  boundary to public index/scalar reserved-variant views, and replace exhaustive public
+  struct literals such as `ScalarInferenceRequest` and
+  `ScalarOperationContract` with additive construction APIs.
+- Implement `Error::source` for nested scalar/index causes and bound provider
+  diagnostics.
+
+Acceptance tests must include late-zero domains, alpha-equivalent regions built
+in different orders, oversized and infinite inputs, deep expression trees,
+failed nested-builder reuse, public downstream compile tests for additive API
+evolution, and complete nested error chains.

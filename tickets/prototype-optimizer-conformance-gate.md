@@ -3,7 +3,7 @@ id: prototype-optimizer-conformance-gate
 title: Gate the target-neutral optimizer conformance profile
 status: todo
 priority: p0
-dependencies: [prototype-neutral-program-and-artifact-types]
+dependencies: [prototype-neutral-program-and-artifact-types, correct-reference-value-and-authority-contracts, harden-compiler-verifier-subject-binding-and-totality, enforce-repository-validation-gate-integrity]
 related: []
 scopes: [implementation/compiler, implementation/ir, implementation/reference, implementation/artifact]
 shared_scopes: []

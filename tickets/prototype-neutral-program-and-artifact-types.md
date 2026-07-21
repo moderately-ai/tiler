@@ -3,7 +3,7 @@ id: prototype-neutral-program-and-artifact-types
 title: Implement neutral program and artifact types
 status: todo
 priority: p0
-dependencies: [prototype-structured-kir-slice]
+dependencies: [prototype-structured-kir-slice, harden-compiler-verifier-subject-binding-and-totality]
 related: [prototype-artifact-slice]
 scopes: [implementation/ir, implementation/artifact, implementation/compiler]
 shared_scopes: []

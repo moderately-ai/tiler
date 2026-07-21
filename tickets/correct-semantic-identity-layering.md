@@ -4,7 +4,7 @@ title: Correct semantic identity layering
 status: in-progress
 priority: p0
 dependencies: []
-related: []
+related: [harden-semantic-registry-and-program-construction]
 scopes: [implementation/ir, implementation/compiler, project/tickets, contracts/foundation, contracts/navigation, contracts/decisions, contracts/artifacts, contracts/numerics, research/indexing, implementation/reference, research/artifacts, research/extensions]
 shared_scopes: []
 paths: []

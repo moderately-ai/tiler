@@ -4,7 +4,7 @@ title: Extract the reference evaluator capability crate
 status: done
 priority: p0
 dependencies: [prototype-typed-value-handles]
-related: [prototype-semantic-reference-slice]
+related: [prototype-semantic-reference-slice, correct-reference-value-and-authority-contracts]
 scopes: [implementation/reference, implementation/ir, implementation/workspace, research/reference, research/extensions]
 shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions, contracts/navigation]
 paths: []

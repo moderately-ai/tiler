@@ -4,7 +4,7 @@ title: Implement the canonical semantic operation registry
 status: done
 priority: p0
 dependencies: [prototype-semantic-type-authority-v2]
-related: [prototype-semantic-reference-slice]
+related: [prototype-semantic-reference-slice, harden-semantic-registry-and-program-construction]
 scopes: [implementation/ir, research/extensions]
 shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions]
 paths: []

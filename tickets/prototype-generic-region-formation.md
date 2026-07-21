@@ -3,7 +3,7 @@ id: prototype-generic-region-formation
 title: Implement generic fusion-region formation
 status: todo
 priority: p0
-dependencies: [prototype-canonical-index-region-slice, correct-semantic-identity-layering, reconcile-implementation-work-graph-after-authority-audit]
+dependencies: [prototype-canonical-index-region-slice, correct-semantic-identity-layering, reconcile-implementation-work-graph-after-authority-audit, harden-semantic-registry-and-program-construction, harden-compiler-verifier-subject-binding-and-totality]
 related: []
 scopes: [implementation/compiler]
 shared_scopes: []
