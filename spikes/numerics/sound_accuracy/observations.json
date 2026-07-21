@@ -1,0 +1,179 @@
+{
+  "claim": "counterexample search only; never a worst-case certificate",
+  "evidence_class": "empirical-adversarial",
+  "max_witnesses": {
+    "relational_ratio": {
+      "candidate": "0x1.0000000000000p+0",
+      "reference": "1",
+      "x": "0x1.0000000000000p+0",
+      "y": "0x1.0000000000000p+0"
+    }
+  },
+  "observed_max_absolute_error": {
+    "affine_mix": "5.9604644775390625E-8",
+    "cancellation": "1",
+    "divide_sqrt": "7.1362289233286284545664815336024322818966983185607321051012036427611451881345734605140312899E-8",
+    "explicit_fma": "1.1920928955078125E-7",
+    "materialized_f16": "0.00048828125",
+    "reduce_left": "1",
+    "reduce_tree": "2",
+    "relational_ratio": "0"
+  },
+  "oracle": "Python Decimal precision 100 over exact binary inputs; explicit FMA uses exact Fraction arithmetic and an IEEE binary32 round-to-nearest-ties-to-even oracle",
+  "provenance": {
+    "algorithm": "tiler-sound-accuracy-observer/v1",
+    "decimal_precision_digits": 100,
+    "dependencies": {
+      "external": [],
+      "python_standard_library": true
+    },
+    "host": {
+      "kernel": "Darwin Kernel Version 27.0.0: Tue Jul 14 21:43:10 PDT 2026; root:xnu-13432.0.94.501.4~1/RELEASE_ARM64_T6041",
+      "libc": [
+        "",
+        ""
+      ],
+      "machine": "arm64",
+      "platform": "macOS-27.0-arm64-arm-64bit"
+    },
+    "interpreter": {
+      "cache_tag": "cpython-311",
+      "compiler": "Clang 20.1.0 ",
+      "executable": {
+        "bytes": 49968,
+        "path": "/Users/tsanterre/.local/share/uv/python/cpython-3.11.12-macos-aarch64-none/bin/python3.11",
+        "sha256": "2251bcd423f729ed113a148c4d1cf7069b90b8bdc430716d1d12a8e5d7d294b5"
+      },
+      "full_version": "3.11.12 (main, Apr  9 2025, 03:49:53) [Clang 20.1.0 ]",
+      "implementation": "CPython",
+      "numeric_extensions": {
+        "_decimal": {
+          "kind": "built-in",
+          "origin": "built-in"
+        },
+        "_struct": {
+          "kind": "built-in",
+          "origin": "built-in"
+        },
+        "math": {
+          "kind": "built-in",
+          "origin": "built-in"
+        }
+      },
+      "version": "3.11.12"
+    },
+    "rounding": {
+      "binary16": "IEEE 754 round-to-nearest-ties-to-even via struct '!e'",
+      "binary32": "IEEE 754 round-to-nearest-ties-to-even via struct '!f'",
+      "explicit_fma": "exact Fraction product-plus-add followed by one local binary32 RNE"
+    },
+    "source_sha256": "844502f7f5e0ea5d899c417cef5b4d1f78210b2b0af7b1b6e5f4eda5b68efcf3"
+  },
+  "sample_counts": {
+    "affine_mix": 245,
+    "cancellation": 1,
+    "divide_sqrt": 24,
+    "explicit_fma": 343,
+    "materialized_f16": 3,
+    "reduce_left": 1,
+    "reduce_tree": 1,
+    "relational_ratio": 5,
+    "rounding_oracle_checks": 5
+  },
+  "sample_domains": {
+    "affine_mix": {
+      "construction": "cartesian_product(x, y, z)",
+      "x_f32_hex": [
+        "-0x1.0000000000000p+1",
+        "-0x1.0000000000000p+0",
+        "-0x1.0000000000000p-23",
+        "0x0.0p+0",
+        "0x1.0000000000000p-23",
+        "0x1.0000000000000p+0",
+        "0x1.0000000000000p+1"
+      ],
+      "y_f32_hex": [
+        "-0x1.8000000000000p+1",
+        "-0x1.0000000000000p+0",
+        "-0x1.0000000000000p-23",
+        "0x0.0p+0",
+        "0x1.0000000000000p-23",
+        "0x1.0000000000000p+0",
+        "0x1.8000000000000p+1"
+      ],
+      "z_f32_hex": [
+        "-0x1.0000000000000p+0",
+        "-0x1.0000000000000p-24",
+        "0x0.0p+0",
+        "0x1.0000000000000p-24",
+        "0x1.0000000000000p+0"
+      ]
+    },
+    "cancellation": {
+      "ordered_f32_hex": [
+        "0x1.0000000000000p+24",
+        "0x1.0000000000000p+0",
+        "-0x1.0000000000000p+24"
+      ]
+    },
+    "divide_sqrt": {
+      "construction": "cartesian_product(x, y)",
+      "x_f32_hex": [
+        "0x1.0000000000000p+0",
+        "0x1.0000020000000p+0",
+        "0x1.8000000000000p+0",
+        "0x1.0000000000000p+1",
+        "0x1.8000000000000p+1",
+        "0x1.0000000000000p+2"
+      ],
+      "y_f32_hex": [
+        "0x1.0000000000000p+0",
+        "0x1.0000020000000p+0",
+        "0x1.8000000000000p+0",
+        "0x1.0000000000000p+1"
+      ]
+    },
+    "explicit_fma": {
+      "construction": "cartesian_product(values, repeat=3)",
+      "values_f32_hex": [
+        "-0x1.0000000000000p+1",
+        "-0x1.0000000000000p+0",
+        "-0x1.0000000000000p-23",
+        "0x0.0p+0",
+        "0x1.0000000000000p-23",
+        "0x1.0000000000000p+0",
+        "0x1.0000000000000p+1"
+      ]
+    },
+    "materialized_f16": {
+      "input_f32_hex": [
+        "0x1.0000000000000p+0",
+        "0x1.0020000000000p+0",
+        "0x1.0040000000000p+0"
+      ]
+    },
+    "reductions": {
+      "ordered_f32_hex": [
+        "0x1.7d78400000000p+26",
+        "0x1.0000000000000p+0",
+        "-0x1.7d78400000000p+26",
+        "0x1.0000000000000p+0"
+      ],
+      "topologies": [
+        "left",
+        "balanced_tree"
+      ]
+    },
+    "relational_ratio": {
+      "constraint": "x == y",
+      "values_f32_hex": [
+        "0x1.0000000000000p+0",
+        "0x1.0000020000000p+0",
+        "0x1.8000000000000p+0",
+        "0x1.fffffe0000000p+0",
+        "0x1.0000000000000p+1"
+      ]
+    }
+  },
+  "schema": "tiler-observation/v1"
+}

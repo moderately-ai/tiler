@@ -9,6 +9,15 @@ from dataclasses import dataclass
 from itertools import combinations
 
 
+class WitnessFailure(RuntimeError):
+    """A bounded region-search witness did not hold."""
+
+
+def require(condition, message):
+    if not condition:
+        raise WitnessFailure(message)
+
+
 @dataclass(frozen=True)
 class Node:
     name: str
@@ -192,10 +201,19 @@ def test_chain_convexity_and_partitions():
     graph = Graph((Node("a"), Node("b", ("a",)), Node("c", ("b",))), ("c",))
     accepted, rejected = enumerate_regions(graph)
     accepted_sets = {candidate.nodes for candidate in accepted}
-    assert frozenset(("a", "b", "c")) in accepted_sets
-    assert any(item.nodes == frozenset(("a", "c")) and item.reason == "disconnected" for item in rejected)
+    require(frozenset(("a", "b", "c")) in accepted_sets, "whole chain was not accepted")
+    require(
+        any(
+            item.nodes == frozenset(("a", "c")) and item.reason == "disconnected"
+            for item in rejected
+        ),
+        "disconnected chain subset lacked the expected rejection",
+    )
     partitions = enumerate_exact_partitions(graph, accepted)
-    assert len(partitions) == 4  # [abc], [ab][c], [a][bc], [a][b][c]
+    require(
+        len(partitions) == 4,
+        "chain did not produce [abc], [ab][c], [a][bc], and [a][b][c]",
+    )
 
 
 def test_non_convex_region_is_rejected():
@@ -205,7 +223,10 @@ def test_non_convex_region_is_rejected():
         ("d",),
     )
     result = classify_region(graph, frozenset(("a", "b", "d")))
-    assert isinstance(result, RegionRejection) and result.reason == "non-convex"
+    require(
+        isinstance(result, RegionRejection) and result.reason == "non-convex",
+        "path that leaves and reenters the region was not rejected as non-convex",
+    )
 
 
 def test_shared_producer_multi_output_and_duplication():
@@ -214,23 +235,40 @@ def test_shared_producer_multi_output_and_duplication():
         ("left", "right"),
     )
     accepted, _ = enumerate_regions(graph)
-    whole = next(candidate for candidate in accepted if candidate.nodes == frozenset(("p", "left", "right")))
-    assert whole.boundary_outputs == frozenset(("left", "right"))
+    whole = next(
+        candidate for candidate in accepted if candidate.nodes == frozenset(("p", "left", "right"))
+    )
+    require(
+        whole.boundary_outputs == frozenset(("left", "right")),
+        "multi-output region did not retain both graph outputs",
+    )
     duplicated = enumerate_duplication_plans(graph, accepted)
-    assert any(
-        overlap == frozenset(("p",))
-        and {candidate.nodes for candidate in plan}
-        == {frozenset(("p", "left")), frozenset(("p", "right"))}
-        for plan, overlap in duplicated
+    require(
+        any(
+            overlap == frozenset(("p",))
+            and {candidate.nodes for candidate in plan}
+            == {frozenset(("p", "left")), frozenset(("p", "right"))}
+            for plan, overlap in duplicated
+        ),
+        "explicitly duplicable shared producer had no valid duplicated cover",
     )
 
 
 def test_blocked_edge_preserves_unfused_coverage():
     graph = Graph((Node("a"), Node("b", ("a",))), ("b",), frozenset((("a", "b"),)))
     accepted, rejected = enumerate_regions(graph)
-    assert {item.nodes for item in accepted} == {frozenset(("a",)), frozenset(("b",))}
-    assert any(item.reason == "incompatible-internal-edge" for item in rejected)
-    assert len(enumerate_exact_partitions(graph, accepted)) == 1
+    require(
+        {item.nodes for item in accepted} == {frozenset(("a",)), frozenset(("b",))},
+        "blocked edge did not retain exactly the singleton regions",
+    )
+    require(
+        any(item.reason == "incompatible-internal-edge" for item in rejected),
+        "blocked edge lacked the expected internal-edge rejection",
+    )
+    require(
+        len(enumerate_exact_partitions(graph, accepted)) == 1,
+        "blocked edge did not preserve exactly one unfused complete cover",
+    )
 
 
 def test_frontier_keeps_guarded_alternative_and_removes_dominance():
@@ -239,7 +277,10 @@ def test_frontier_keeps_guarded_alternative_and_removes_dominance():
     worse = Implementation("worse", region, frozenset(), 30, 10)
     aligned = Implementation("aligned", region, frozenset(("alignment>=16",)), 8, 12)
     frontier = implementation_frontier([generic, worse, aligned])
-    assert {item.name for item in frontier} == {"generic", "aligned"}
+    require(
+        {item.name for item in frontier} == {"generic", "aligned"},
+        "frontier removed a guarded alternative or retained a dominated plan",
+    )
 
 
 if __name__ == "__main__":
@@ -247,4 +288,3 @@ if __name__ == "__main__":
     for test in tests:
         test()
     print(f"region-search oracle: {len(tests)} witnesses passed")
-

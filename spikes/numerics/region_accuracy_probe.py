@@ -10,8 +10,17 @@ from dataclasses import dataclass
 
 import mpmath
 
-
 mpmath.mp.dps = 100
+
+
+class ProbeFailure(RuntimeError):
+    """Raised when an adversarial witness no longer has its required shape."""
+
+
+def require(condition: bool, message: str) -> None:
+    """Fail in ordinary and optimized Python when a witness is invalid."""
+    if not condition:
+        raise ProbeFailure(message)
 
 
 def f32(value: float | mpmath.mpf) -> float:
@@ -73,12 +82,22 @@ def as_dict(value: Error) -> dict[str, float | int | None]:
 
 
 def main() -> None:
+    require(
+        mpmath.__version__ == "1.3.0",
+        f"unsupported mpmath version {mpmath.__version__}; expected 1.3.0",
+    )
+    require(mpmath.mp.dps == 100, "the high-precision oracle must use 100 digits")
+
     # Removing an f16 materialization changes a later result even without
     # reassociation. The input is exactly halfway between adjacent f16 values.
     x = f32(1.0 + 2.0**-11)
     strict_materialized = f32_add(f32(f16(x)), -1.0)
     fused_boundary_elided = f32_add(x, -1.0)
-    assert strict_materialized == 0.0 and fused_boundary_elided != 0.0
+    require(strict_materialized == 0.0, "f16 materialization must round x to 1.0")
+    require(
+        fused_boundary_elided != 0.0,
+        "eliding the f16 materialization must preserve the halfway residual",
+    )
 
     # The preferred expression depends on the named reference. Under strict
     # f32 operation semantics, (a+b)-a is zero; under a real-valued reference,
@@ -86,7 +105,8 @@ def main() -> None:
     a, b = f32(2.0**24), f32(1.0)
     strict_cancellation = f32_add(f32_add(a, b), -a)
     algebraic_candidate = b
-    assert strict_cancellation == 0.0 and algebraic_candidate == 1.0
+    require(strict_cancellation == 0.0, "strict f32 cancellation witness changed")
+    require(algebraic_candidate == 1.0, "real-algebra candidate witness changed")
 
     # Reduction order is an input to the candidate identity, not noise in the
     # measurement. Both results differ from the high-precision sum.
@@ -94,12 +114,17 @@ def main() -> None:
     reduction_real = float(sum(mpmath.mpf(value) for value in reduction_input))
     reduction_left = left_reduce(reduction_input)
     reduction_tree = tree_reduce(reduction_input)
-    assert reduction_real == 2.0 and reduction_left == 1.0 and reduction_tree == 0.0
+    require(reduction_real == 2.0, "high-precision reduction reference changed")
+    require(reduction_left == 1.0, "left reduction topology witness changed")
+    require(reduction_tree == 0.0, "tree reduction topology witness changed")
 
     # Near zero, relative error has no value unless the contract supplies a
     # zero policy or uses a mixed absolute/relative metric.
     zero_relative = error(fused_boundary_elided, strict_materialized)
-    assert zero_relative.relative is None
+    require(
+        zero_relative.relative is None,
+        "relative error at an exact-zero reference must remain undefined",
+    )
 
     result = {
         "evidence": {

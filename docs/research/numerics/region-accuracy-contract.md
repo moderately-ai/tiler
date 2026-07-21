@@ -209,7 +209,8 @@ rounding can all enter the proof subject itself.
 ## Bounded empirical witness
 
 [`region_accuracy_probe.py`](../../../spikes/numerics/region_accuracy_probe.py)
-uses a 100-decimal-digit `mpmath` oracle and adversarial f32/f16 cases. It
+uses the repository-locked `mpmath==1.3.0` package with a
+100-decimal-digit oracle and adversarial f32/f16 cases. It
 demonstrates:
 
 - deleting an f16 materialization changes a later result without any

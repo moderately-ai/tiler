@@ -272,11 +272,13 @@ ensure_python_environment() {
         [ -x .venv/bin/python ] || die 'the project environment is missing; run ./deps.sh'
         [ -x .venv/bin/pytest ] || die 'pytest is missing from the project environment; run ./deps.sh'
         [ -x .venv/bin/ruff ] || die 'Ruff is missing from the project environment; run ./deps.sh'
-        ok "$(.venv/bin/python --version) with locked pytest"
+        [ "$(.venv/bin/python -c 'import mpmath; print(mpmath.__version__)')" = '1.3.0' ] \
+            || die 'mpmath 1.3.0 is missing from the project environment; run ./deps.sh'
+        ok "$(.venv/bin/python --version) with locked mpmath, pytest, and Ruff"
     else
         uv python install "$REQUIRED_PYTHON"
         uv sync --locked
-        ok "$(uv run --locked python --version) with locked pytest"
+        ok "$(uv run --locked python --version) with locked mpmath, pytest, and Ruff"
     fi
 }
 
@@ -309,10 +311,12 @@ verify_tools() {
     uv --version
     if [ "$CHECK_ONLY" -eq 1 ]; then
         .venv/bin/python --version
+        .venv/bin/python -c 'import mpmath; print("mpmath", mpmath.__version__)'
         .venv/bin/pytest --version
         .venv/bin/ruff --version
     else
         uv run --locked python --version
+        uv run --locked python -c 'import mpmath; print("mpmath", mpmath.__version__)'
         uv run --locked pytest --version
         uv run --locked ruff --version
     fi

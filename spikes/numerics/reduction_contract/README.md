@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model", "exhaustive-finite"]
 supports: ["tiler.research.numerics.reduction-semantics-and-legality"]
 entrypoints: ["spikes/numerics/reduction_contract_probe.py"]
-last_verified: "2026-07-20"
+last_verified: "2026-07-21"
 ticket: "reduction-semantics-contract"
 ---
 
@@ -30,11 +30,19 @@ domains.
 From the repository root:
 
 ```sh
-python3 spikes/numerics/reduction_contract_probe.py
+uv run --locked python spikes/numerics/reduction_contract_probe.py
+uv run --locked python -O spikes/numerics/reduction_contract_probe.py
 ```
 
-The script exits nonzero on a failed assertion and otherwise prints
+The script uses explicit checks that remain active under `python -O`, exits
+nonzero on a failed check, and otherwise prints
 `reduction contract probe: all witnesses passed`.
+
+The empty-domain coverage invokes both unseeded serial and balanced reductions
+with zero contributors and verifies their `+0` identity. It separately verifies
+that an empty seeded reduction returns its one seed, including `-0`. The finite
+exhaustive corpus is generated and checked to contain exactly 24 permutations
+of the four distinct values documented above.
 
 ## Traceability
 

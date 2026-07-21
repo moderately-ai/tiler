@@ -23,5 +23,30 @@
     "case": "possible_overflow",
     "reason": "unproved_finite_range",
     "detail": "The initial adapter rejects rather than treating overflow as real-number error."
+  },
+  {
+    "case": "analyzer_execution_deadline",
+    "reason": "analyzer_timeout",
+    "detail": "A bounded external analysis that exceeds its configured deadline produces Unknown and no proof evidence."
+  },
+  {
+    "case": "analyzer_process_diagnostic",
+    "reason": "analyzer_diagnostic",
+    "detail": "Any analyzer output, nonzero status, malformed row, duplicate row, or non-finite bound produces Unknown; launcher success is insufficient."
+  },
+  {
+    "case": "analyzer_execution_identity",
+    "reason": "analyzer_provenance",
+    "detail": "Missing, unparsable, or over-budget launcher, classpath, Java, or analyzer-input state produces Unknown; a source revision alone is insufficient."
+  },
+  {
+    "case": "analyzer_output_budget",
+    "reason": "analyzer_resource_limit",
+    "detail": "Diagnostics, results, fields, rows, and provenance traversal are bounded; crossing a limit produces Unknown and no proof evidence."
+  },
+  {
+    "case": "incomplete_analyzer_output",
+    "reason": "missing_result",
+    "detail": "The adapter requires exactly one parsed result for every requested function before it publishes proved evidence."
   }
 ]

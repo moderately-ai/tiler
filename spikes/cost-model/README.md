@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model"]
 supports: ["tiler.research.cost-model.bootstrap-cost-model"]
 entrypoints: ["spikes/cost-model/bootstrap_model.py"]
-last_verified: "2026-07-20"
+last_verified: "2026-07-21"
 ticket: "cost-model-bootstrap"
 ---
 
@@ -22,7 +22,10 @@ component terms.
 Run from the repository root:
 
 ```sh
-python3 spikes/cost-model/bootstrap_model.py
+uv run --locked python spikes/cost-model/bootstrap_model.py
+uv run --locked python -O spikes/cost-model/bootstrap_model.py
 ```
 
-It is an executable contract model, not calibrated device-performance evidence.
+Both modes produce the same output; verdicts use explicit checks that optimized
+Python cannot remove. It is an executable contract model, not calibrated
+device-performance evidence.

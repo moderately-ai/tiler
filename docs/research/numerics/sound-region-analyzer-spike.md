@@ -41,9 +41,13 @@ time roughly 0.9--1.5 seconds. This is viable for a bounded compile-time proof
 portfolio with caching, not for indiscriminate use on every search candidate.
 
 The profile does **not** produce an independently checkable proof certificate.
-The soundness authority is the exact Daisy source revision, its analysis
-configuration, the adapter, and the admitted semantic profile. This satisfies
-the experiment's trusted-analyzer alternative, but it is a materially larger
+The soundness authority is the concrete Daisy executable state, its source
+revision and analysis configuration, the adapter, and the admitted semantic
+profile. The current adapter fingerprints the generated launcher, selected
+Java executable, literal Scala classpath contents, and analyzer inputs; it does
+not infer executable identity from the Git revision alone. It rechecks the Git
+state and complete fingerprint after every profile. This satisfies the
+experiment's trusted-analyzer alternative, but it is a materially larger
 trusted computing base than a small certificate checker.
 
 ## Facts from primary sources
@@ -112,7 +116,17 @@ python3 spikes/numerics/sound_accuracy/observe.py
 
 The generated Daisy runner requires its checkout as the working directory,
 because its frontend resolves the bundled language library relative to that
-directory. The spike runner enforces that requirement.
+directory. The spike runner enforces that requirement. It also bounds wall
+time for each analysis and provenance pass, per-file analyzer output, parsed
+bytes/rows/fields, and provenance traversal. Any missing input, limit
+violation, diagnostic, or incomplete result becomes `Unknown` and cannot
+produce proof evidence.
+
+**Limitation:** pre/post fingerprints detect ordinary mutation but are not an
+immutable snapshot and cannot exclude adversarial change-and-restore between
+checks. Production proof ingestion therefore still requires immutable staging
+or an equivalently strong content-addressed execution environment. The spike
+does not claim that stronger isolation property.
 
 ## Measurements
 
@@ -130,8 +144,8 @@ in [`measurements.json`](../../../spikes/numerics/sound_accuracy/measurements.js
 | explicit f16 materialization | 4.88817720906809e-4 | 4.8828125e-4 | 8 / 1033 ms |
 | four-term left reduction | 12.000001072883606 | 1 | included in batch |
 | four-term tree reduction | 16.000001072883606 | 2 | included in batch |
-| `x / y`, `x == y`, independent ranges | 4.768372292574121e-7 | 0 | 13 / 1171 ms |
-| same, Z3 relational ranges | 4.172325844820215e-7 | 0 | 192 / 1350 ms |
+| `x / y`, `x == y`, independent ranges | 4.768372292574121e-7 | 0 over 5 executed equal-f32 samples | 13 / 1171 ms |
+| same, Z3 relational ranges | 4.172325844820215e-7 | 0 over the same 5 samples | 192 / 1350 ms |
 | gradual-subnormal add | 2.1019476964872256e-45 | not sampled | 8 / 914 ms |
 
 Interval subdivision reduced the `sqrt`/division bound to
@@ -146,6 +160,11 @@ not estimates of worst-case error. In particular, the Daisy profile includes
 rounding arbitrary real inputs into f32, while the sampled inputs are already
 exact f32 values. Bound/observation ratios therefore describe this corpus only
 and must not be presented as proof tightness over the full domain.
+
+The equality-constrained ratio observation now executes five named binary32
+values with `x == y`, records the maximizing input, and obtains exact `1.0` in
+each case. The observed maximum is therefore a bounded zero witness rather than
+a literal placeholder; it does not establish zero error for the full range.
 
 Potential overflow produced an `OverflowException` diagnostic but Daisy still
 returned process status zero. A Tiler adapter must parse a complete structured
@@ -208,7 +227,8 @@ schema + adapter version
 + target numerical profile digest
 + exact assumptions and validation-provenance digest
 + scalarized analyzer-input digest
-+ Daisy source revision and executable digest
++ Daisy source revision, generated-launcher digest, classpath closure digest,
+  and selected Java executable digest
 + complete analysis flags, budgets, timeout, Java/Z3 identities
 + returned exact bound/result and normalized diagnostic set
 ```

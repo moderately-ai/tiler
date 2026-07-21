@@ -69,9 +69,9 @@ def main() -> int:
     if project.get("requires-python") != ">=3.11,<3.12":
         errors.append("Python development tooling must remain pinned to Python 3.11")
     development_dependencies = python_project.get("dependency-groups", {}).get("dev", [])
-    if development_dependencies != ["pytest==9.0.3", "ruff==0.15.15"]:
+    if development_dependencies != ["mpmath==1.3.0", "pytest==9.0.3", "ruff==0.15.15"]:
         errors.append(
-            "Python development dependencies must use the pinned pytest and Ruff versions"
+            "Python development dependencies must use the pinned mpmath, pytest, and Ruff versions"
         )
     uv_config = python_project.get("tool", {}).get("uv", {})
     if uv_config.get("package") is not False:

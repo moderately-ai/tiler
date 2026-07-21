@@ -4,6 +4,15 @@
 from dataclasses import dataclass
 
 
+class WitnessFailure(RuntimeError):
+    """A cost-model contract check did not hold."""
+
+
+def require(condition, message):
+    if not condition:
+        raise WitnessFailure(message)
+
+
 @dataclass(frozen=True)
 class Features:
     feasible: bool
@@ -55,7 +64,7 @@ def robustly_better(left, right):
 def test_infeasible_is_not_a_penalty():
     calibration = sample_calibration()
     impossible = Features(False, 1, 0, 0, 0, 0, "low", 0, 0)
-    assert estimate(impossible, calibration) is None
+    require(estimate(impossible, calibration) is None, "infeasible plan received a cost")
 
 
 def test_fusion_trades_dispatch_and_traffic_against_pressure():
@@ -64,14 +73,23 @@ def test_fusion_trades_dispatch_and_traffic_against_pressure():
     fused = Features(True, 1, 2048, 2300, 160, 1, "medium", 700, 1200)
     split_cost = estimate(split, calibration)
     fused_cost = estimate(fused, calibration)
-    assert split_cost and fused_cost and fused_cost["point_ns"] < split_cost["point_ns"]
+    require(split_cost is not None, "feasible split plan had no cost")
+    require(fused_cost is not None, "feasible fused plan had no cost")
+    require(
+        fused_cost["point_ns"] < split_cost["point_ns"],
+        "fusion did not trade dispatch and traffic for a lower point estimate",
+    )
 
 
 def test_overlapping_intervals_are_not_false_precision():
     calibration = sample_calibration()
     a = estimate(Features(True, 1, 1024, 1000, 20, 0, "low", 10, 10), calibration)
     b = estimate(Features(True, 1, 1000, 1024, 20, 0, "low", 10, 10), calibration)
-    assert a and b and not robustly_better(a, b) and not robustly_better(b, a)
+    require(a is not None and b is not None, "feasible interval comparison had no cost")
+    require(
+        not robustly_better(a, b) and not robustly_better(b, a),
+        "overlapping intervals were reported as a robust ordering",
+    )
 
 
 def sample_calibration():
@@ -83,4 +101,3 @@ if __name__ == "__main__":
     for test in tests:
         test()
     print(f"bootstrap cost model: {len(tests)} contract checks passed")
-

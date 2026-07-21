@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """Bit-oriented reference evaluator for one representative Tiler graph."""
 
-from dataclasses import dataclass
 import math
 import struct
+from dataclasses import dataclass
 
 
 class ReferenceError(Exception):
     pass
+
+
+class WitnessFailure(RuntimeError):
+    """A reference-evaluator witness did not hold."""
+
+
+def require(condition, message):
+    if not condition:
+        raise WitnessFailure(message)
 
 
 def f32_bits(value):
@@ -78,7 +87,7 @@ def add_f32(left, right):
     return Tensor(
         "f32",
         left.shape,
-        tuple(strict_f32_add(a, b) for a, b in zip(left.bits, right.bits)),
+        tuple(strict_f32_add(a, b) for a, b in zip(left.bits, right.bits, strict=True)),
     )
 
 
@@ -116,11 +125,17 @@ def test_materialization_rounding_is_observable():
     x = tensor_f32((2, 3), [midpoint, 2.0, -0.0, 3.0, -4.0, float("nan")])
     bias = tensor_f32((3,), [0.0, 0.5, -0.0])
     biased, view = evaluate_pipeline(x, bias)
-    assert biased.shape == (2, 3) and view.shape == (3, 2)
-    assert biased.bits == view.bits
-    assert biased.bits[0] == f32_bits(1.0)  # halfway f16 conversion ties to even
-    assert biased.bits[1] == f32_bits(2.5)
-    assert biased.bits[5] == 0x7FC00000
+    require(
+        biased.shape == (2, 3) and view.shape == (3, 2),
+        "ordered outputs had incorrect shapes",
+    )
+    require(biased.bits == view.bits, "reshape changed row-major element bits")
+    require(
+        biased.bits[0] == f32_bits(1.0),
+        "halfway f16 conversion did not round to even",
+    )
+    require(biased.bits[1] == f32_bits(2.5), "bias addition produced incorrect bits")
+    require(biased.bits[5] == 0x7FC00000, "NaN result was not canonicalized")
 
 
 def test_removing_the_cast_boundary_changes_the_answer():
@@ -129,7 +144,10 @@ def test_removing_the_cast_boundary_changes_the_answer():
     bias = tensor_f32((3,), [0.0, 0.0, 0.0])
     biased, _ = evaluate_pipeline(x, bias)
     without_boundary = add_f32(x, broadcast_last_axis(bias, x.shape))
-    assert biased.bits[0] != without_boundary.bits[0]
+    require(
+        biased.bits[0] != without_boundary.bits[0],
+        "removing the f16 materialization boundary did not change the answer",
+    )
 
 
 def test_bad_broadcast_and_reshape_fail_with_stable_codes():
@@ -137,15 +155,21 @@ def test_bad_broadcast_and_reshape_fail_with_stable_codes():
     try:
         broadcast_last_axis(value, (2, 3))
     except ReferenceError as error:
-        assert str(error) == "broadcast-extent-mismatch"
+        require(
+            str(error) == "broadcast-extent-mismatch",
+            f"bad broadcast returned unstable error code: {error}",
+        )
     else:
-        raise AssertionError("bad broadcast accepted")
+        raise WitnessFailure("bad broadcast accepted")
     try:
         reshape_row_major(value, (3,))
     except ReferenceError as error:
-        assert str(error) == "reshape-element-count-mismatch"
+        require(
+            str(error) == "reshape-element-count-mismatch",
+            f"bad reshape returned unstable error code: {error}",
+        )
     else:
-        raise AssertionError("bad reshape accepted")
+        raise WitnessFailure("bad reshape accepted")
 
 
 if __name__ == "__main__":
@@ -153,4 +177,3 @@ if __name__ == "__main__":
     for test in tests:
         test()
     print(f"reference evaluator: {len(tests)} cases passed")
-
