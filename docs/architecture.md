@@ -120,6 +120,15 @@ embedding, and runtime loading are later integration/backend steps. A proc-macro
 invocation may aggregate or package compiler results, but it is not the
 consumer-independent compilation unit.
 
+The compiler entry point remains general even when implemented support is
+narrow. Capability resolution distinguishes an invalid semantic request from a
+valid program lacking access, scheduling, target, or lowering support, and
+from a candidate that is intrinsically or target-infeasible. Initial vertical
+slices remain private strategy and conformance identities; they do not create
+graph-specific compiler entry points or public support-profile namespaces.
+Fixed region, stage, entry, and buffer cardinalities in a slice are not
+`CompilationRequest` or compiler-product invariants. See ADR 0069.
+
 ## Hierarchical planning with feedback
 
 The design deliberately separates global tensor planning from local kernel

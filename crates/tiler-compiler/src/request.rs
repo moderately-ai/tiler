@@ -9,7 +9,7 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
-const NUMERICAL_PROFILE_KEY: &str = "tiler.strict-f32-serial-sum.v1";
+const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
 const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,7 +26,7 @@ impl StaticShapeEnvironment {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct StrictF32NumericalProfile {
+pub(crate) struct StrictF32NumericalContract {
     pub(crate) key: &'static str,
     pub(crate) canonical_arithmetic_nan_bits: u32,
     pub(crate) input_subnormals: SubnormalMode,
@@ -45,10 +45,10 @@ pub(crate) enum NumericalPermission {
     Forbidden,
 }
 
-impl StrictF32NumericalProfile {
+impl StrictF32NumericalContract {
     pub(crate) const fn governed() -> Self {
         Self {
-            key: NUMERICAL_PROFILE_KEY,
+            key: NUMERICAL_CONTRACT_KEY,
             canonical_arithmetic_nan_bits: tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
             input_subnormals: SubnormalMode::Preserve,
             result_subnormals: SubnormalMode::Preserve,
@@ -104,23 +104,23 @@ impl PrototypeTargetProfile {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct CompilationRequest<'a> {
     pub(crate) program: &'a SemanticProgram,
     pub(crate) shape_environment: StaticShapeEnvironment,
-    pub(crate) numerical_profile: StrictF32NumericalProfile,
+    pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
-    pub(crate) target_profile: PrototypeTargetProfile,
+    pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
 }
 
 impl<'a> CompilationRequest<'a> {
-    pub(crate) const fn governed(program: &'a SemanticProgram) -> Self {
+    pub(crate) fn governed(program: &'a SemanticProgram) -> Self {
         Self {
             program,
             shape_environment: StaticShapeEnvironment::governed(),
-            numerical_profile: StrictF32NumericalProfile::governed(),
+            numerical_contract: StrictF32NumericalContract::governed(),
             budgets: DeterministicBudgets::governed(),
-            target_profile: PrototypeTargetProfile::governed(),
+            target_profiles: vec![PrototypeTargetProfile::governed()],
         }
     }
 }
@@ -142,25 +142,69 @@ pub(crate) struct NormalizedSerialSum {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct VerifiedRequest {
-    pub(crate) normalized: NormalizedSerialSum,
+pub(crate) enum NormalizedProgram {
+    SerialSum(NormalizedSerialSum),
+}
+
+impl NormalizedProgram {
+    pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
+        match self {
+            Self::SerialSum(normalized) => normalized,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedCompilationRequest {
+    pub(crate) normalized: NormalizedProgram,
     pub(crate) semantic_authority: CanonicalSemanticAuthorityProjection,
-    pub(crate) numerical_profile: StrictF32NumericalProfile,
+    pub(crate) numerical_contract: StrictF32NumericalContract,
+    pub(crate) budgets: DeterministicBudgets,
+    pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedTargetRequest {
+    pub(crate) normalized: NormalizedProgram,
+    pub(crate) semantic_authority: CanonicalSemanticAuthorityProjection,
+    pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profile: PrototypeTargetProfile,
+}
+
+impl VerifiedTargetRequest {
+    pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
+        self.normalized.serial_sum()
+    }
+}
+
+impl VerifiedCompilationRequest {
+    pub(crate) fn for_target(
+        &self,
+        target_profile: PrototypeTargetProfile,
+    ) -> VerifiedTargetRequest {
+        VerifiedTargetRequest {
+            normalized: self.normalized.clone(),
+            semantic_authority: self.semantic_authority.clone(),
+            numerical_contract: self.numerical_contract,
+            budgets: self.budgets,
+            target_profile,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RequestError {
     UnsupportedRequestVersion,
-    UnsupportedNumericalProfile,
-    UnsupportedTargetProfile,
+    EmptyTargetSet,
+    DuplicateTargetProfile,
     BudgetExceeded {
         resource: &'static str,
         limit: u32,
         actual: usize,
     },
-    ProfileMismatch {
+    UnsupportedCapability {
+        phase: &'static str,
         rule: &'static str,
     },
     ShapeProductOverflow {
@@ -175,12 +219,10 @@ impl fmt::Display for RequestError {
             Self::UnsupportedRequestVersion => {
                 formatter.write_str("compile.request.schema: unsupported static shape environment")
             }
-            Self::UnsupportedNumericalProfile => formatter.write_str(
-                "compile.request.numerics: unsupported numerical profile for the bounded slice",
-            ),
-            Self::UnsupportedTargetProfile => formatter.write_str(
-                "compile.request.target: unsupported target profile for the bounded slice",
-            ),
+            Self::EmptyTargetSet => formatter
+                .write_str("compile.request.targets.empty: at least one target is required"),
+            Self::DuplicateTargetProfile => formatter
+                .write_str("compile.request.targets.duplicate: target profile keys must be unique"),
             Self::BudgetExceeded {
                 resource,
                 limit,
@@ -189,10 +231,10 @@ impl fmt::Display for RequestError {
                 formatter,
                 "compile.budget.{resource}: {actual} exceeds deterministic limit {limit}"
             ),
-            Self::ProfileMismatch { rule } => {
+            Self::UnsupportedCapability { phase, rule } => {
                 write!(
                     formatter,
-                    "compile.profile.{rule}: semantic program is outside the bounded serial-Sum profile"
+                    "compile.unsupported.{phase}.{rule}: no installed capability can compile this valid semantic program"
                 )
             }
             Self::ShapeProductOverflow { role } => write!(
@@ -210,15 +252,31 @@ impl Error for RequestError {}
 
 pub(crate) fn verify_request(
     request: CompilationRequest<'_>,
-) -> Result<VerifiedRequest, RequestError> {
+) -> Result<VerifiedCompilationRequest, RequestError> {
     if request.shape_environment != StaticShapeEnvironment::governed() {
         return Err(RequestError::UnsupportedRequestVersion);
     }
-    if request.numerical_profile != StrictF32NumericalProfile::governed() {
-        return Err(RequestError::UnsupportedNumericalProfile);
+    if request.target_profiles.is_empty() {
+        return Err(RequestError::EmptyTargetSet);
     }
-    if request.target_profile != PrototypeTargetProfile::governed() {
-        return Err(RequestError::UnsupportedTargetProfile);
+    if request.numerical_contract != StrictF32NumericalContract::governed() {
+        return unsupported("numerics", "strict-f32");
+    }
+    if request
+        .target_profiles
+        .iter()
+        .any(|target| target.key != PrototypeTargetProfile::governed().key)
+    {
+        return unsupported("target", "prototype-target-neutral-baseline-v1");
+    }
+    let mut target_keys: Vec<_> = request
+        .target_profiles
+        .iter()
+        .map(|target| target.key)
+        .collect();
+    target_keys.sort_unstable();
+    if target_keys.windows(2).any(|keys| keys[0] == keys[1]) {
+        return Err(RequestError::DuplicateTargetProfile);
     }
     check_budget(
         "semantic-values",
@@ -238,15 +296,19 @@ pub(crate) fn verify_request(
     )?;
     check_budget("buffers", request.budgets.buffers, 3)?;
 
-    let normalized = normalize_serial_sum(request.program)?;
+    let normalized = select_supported_strategy(request.program)?;
     let semantic_authority = project_semantic_authority(request.program)?;
-    Ok(VerifiedRequest {
+    Ok(VerifiedCompilationRequest {
         normalized,
         semantic_authority,
-        numerical_profile: request.numerical_profile,
+        numerical_contract: request.numerical_contract,
         budgets: request.budgets,
-        target_profile: request.target_profile,
+        target_profiles: request.target_profiles,
     })
+}
+
+fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
+    normalize_serial_sum(program).map(NormalizedProgram::SerialSum)
 }
 
 fn project_semantic_authority(
@@ -313,7 +375,8 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
 
     let input_shape = program
         .shape(input.value())
-        .map_err(|_| RequestError::ProfileMismatch {
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
             rule: "input-handle",
         })?
         .clone();
@@ -354,7 +417,8 @@ fn producer<'a>(
     let operation = program
         .operations()
         .find(|operation| operation.results().any(|result| result == value))
-        .ok_or(RequestError::ProfileMismatch {
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
             rule: "missing-producer",
         })?;
     if operation.key() != expected {
@@ -393,7 +457,8 @@ fn constant_bits(program: &SemanticProgram, value: ValueId) -> Result<u32, Reque
     else {
         return mismatch("constant-bits");
     };
-    u32::try_from(bits).map_err(|_| RequestError::ProfileMismatch {
+    u32::try_from(bits).map_err(|_| RequestError::UnsupportedCapability {
+        phase: "strategy",
         rule: "constant-bits",
     })
 }
@@ -415,7 +480,10 @@ fn reduction_axes(
             };
             u32::try_from(axis)
                 .map(Axis::new)
-                .map_err(|_| RequestError::ProfileMismatch { rule: "sum-axes" })
+                .map_err(|_| RequestError::UnsupportedCapability {
+                    phase: "strategy",
+                    rule: "sum-axes",
+                })
         })
         .collect()
 }
@@ -432,7 +500,11 @@ fn element_count_u64(shape: &Shape, role: &'static str) -> Result<u64, RequestEr
 }
 
 fn mismatch<T>(rule: &'static str) -> Result<T, RequestError> {
-    Err(RequestError::ProfileMismatch { rule })
+    unsupported("strategy", rule)
+}
+
+fn unsupported<T>(phase: &'static str, rule: &'static str) -> Result<T, RequestError> {
+    Err(RequestError::UnsupportedCapability { phase, rule })
 }
 
 #[cfg(test)]
@@ -459,17 +531,21 @@ mod tests {
     }
 
     #[test]
-    fn governed_request_normalizes_the_fixed_profile() {
+    fn governed_request_selects_the_supported_serial_sum_strategy() {
         let program = program();
         let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
-        assert_eq!(verified.normalized.input_shape, Shape::from_dims([2, 3]));
-        assert_eq!(verified.normalized.output_shape, Shape::from_dims([2]));
-        assert_eq!(verified.normalized.reduction_axes, [Axis::new(1)]);
-        assert_eq!(verified.normalized.scale_bits, 2.0_f32.to_bits());
-        assert_eq!(verified.normalized.bias_bits, 1.0_f32.to_bits());
-        assert_eq!(verified.normalized.input_elements, 6);
-        assert_eq!(verified.normalized.output_elements, 2);
-        assert_eq!(verified.target_profile, PrototypeTargetProfile::governed());
+        let normalized = verified.normalized.serial_sum();
+        assert_eq!(normalized.input_shape, Shape::from_dims([2, 3]));
+        assert_eq!(normalized.output_shape, Shape::from_dims([2]));
+        assert_eq!(normalized.reduction_axes, [Axis::new(1)]);
+        assert_eq!(normalized.scale_bits, 2.0_f32.to_bits());
+        assert_eq!(normalized.bias_bits, 1.0_f32.to_bits());
+        assert_eq!(normalized.input_elements, 6);
+        assert_eq!(normalized.output_elements, 2);
+        assert_eq!(
+            verified.target_profiles,
+            [PrototypeTargetProfile::governed()]
+        );
     }
 
     #[test]
@@ -496,7 +572,27 @@ mod tests {
         let invalid = builder.build().unwrap();
         assert_eq!(
             verify_request(CompilationRequest::governed(&invalid)),
-            Err(RequestError::ProfileMismatch { rule: "signature" })
+            Err(RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "signature",
+            })
+        );
+    }
+
+    #[test]
+    fn request_requires_a_nonempty_unique_target_set() {
+        let program = program();
+        let mut empty = CompilationRequest::governed(&program);
+        empty.target_profiles.clear();
+        assert_eq!(verify_request(empty), Err(RequestError::EmptyTargetSet));
+
+        let mut duplicate = CompilationRequest::governed(&program);
+        duplicate
+            .target_profiles
+            .push(PrototypeTargetProfile::governed());
+        assert_eq!(
+            verify_request(duplicate),
+            Err(RequestError::DuplicateTargetProfile)
         );
     }
 }

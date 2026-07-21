@@ -8,7 +8,7 @@ use crate::physical::{
     NumericalRealization, RegionId, ResourceRequirements, TensorRole, VerifiedScheduledRegion,
     VerifiedStructuredKernel,
 };
-use crate::request::VerifiedRequest;
+use crate::request::VerifiedTargetRequest;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct HostExprId(u8);
@@ -101,7 +101,7 @@ pub(crate) struct StageValueAccess {
 pub(crate) struct ProgramStage {
     pub(crate) id: StageId,
     pub(crate) scheduled_region: RegionId,
-    pub(crate) values: [StageValueAccess; 2],
+    pub(crate) values: Vec<StageValueAccess>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,7 +142,7 @@ pub(crate) struct EntryBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct EntryContract {
     pub(crate) stage: StageId,
-    pub(crate) bindings: [EntryBinding; 2],
+    pub(crate) bindings: Vec<EntryBinding>,
     pub(crate) launch_threads: HostExprId,
     pub(crate) threads_per_workgroup: HostExprId,
     pub(crate) requirements: ResourceRequirements,
@@ -172,8 +172,8 @@ pub(crate) struct RoutingTransition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BufferPlan {
-    pub(crate) values: [MaterializedValue; 3],
-    pub(crate) allocations: [Allocation; 3],
+    pub(crate) values: Vec<MaterializedValue>,
+    pub(crate) allocations: Vec<Allocation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -181,22 +181,22 @@ pub(crate) struct KernelProgram {
     pub(crate) target_profile_key: &'static str,
     pub(crate) host_expressions: Vec<HostExpr>,
     pub(crate) applicability_guard: HostExprId,
-    pub(crate) stages: [ProgramStage; 2],
-    pub(crate) dependencies: [Dependency; 1],
+    pub(crate) stages: Vec<ProgramStage>,
+    pub(crate) dependencies: Vec<Dependency>,
     pub(crate) buffer_plan: BufferPlan,
-    pub(crate) entries: [EntryContract; 2],
-    pub(crate) outputs: [ProgramOutput; 1],
-    pub(crate) routing: [RoutingTransition; 3],
+    pub(crate) entries: Vec<EntryContract>,
+    pub(crate) outputs: Vec<ProgramOutput>,
+    pub(crate) routing: Vec<RoutingTransition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ArtifactConstructionPlan {
     pub(crate) semantic_identity: Vec<u8>,
     pub(crate) reached_semantic_authority: Vec<u8>,
-    pub(crate) numerical_profile_key: &'static str,
-    pub(crate) numerical_realizations: [NumericalRealization; 2],
+    pub(crate) numerical_contract_key: &'static str,
+    pub(crate) numerical_realizations: Vec<NumericalRealization>,
     pub(crate) target_profile_key: &'static str,
-    pub(crate) entry_regions: [RegionId; 2],
+    pub(crate) entry_regions: Vec<RegionId>,
     pub(crate) routing_guard: HostExprId,
 }
 
@@ -246,8 +246,8 @@ impl fmt::Display for ProgramError {
 impl Error for ProgramError {}
 
 pub(crate) fn build_kernel_program(
-    request: &VerifiedRequest,
-    scheduled: &[VerifiedScheduledRegion; 2],
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
 ) -> Result<KernelProgram, ProgramError> {
     let expressions = host_expressions(request)?;
     let input_bytes = HostExprId(2);
@@ -257,7 +257,7 @@ pub(crate) fn build_kernel_program(
         host_expressions: expressions,
         applicability_guard: HostExprId(7),
         stages: program_stages(scheduled),
-        dependencies: [Dependency {
+        dependencies: vec![Dependency {
             predecessor: StageId(0),
             successor: StageId(1),
             reason: DependencyReason::Data(MaterializedValueId(1)),
@@ -267,8 +267,8 @@ pub(crate) fn build_kernel_program(
             allocations: program_allocations(input_bytes, output_bytes),
         },
         entries: entry_contracts(scheduled, input_bytes, output_bytes),
-        outputs: [ProgramOutput {
-            key: request.normalized.output_key.as_str().to_owned(),
+        outputs: vec![ProgramOutput {
+            key: request.serial_sum().output_key.as_str().to_owned(),
             value: MaterializedValueId(2),
         }],
         routing: routing_policy(),
@@ -276,12 +276,12 @@ pub(crate) fn build_kernel_program(
     verify_kernel_program(program, scheduled)
 }
 
-fn program_stages(scheduled: &[VerifiedScheduledRegion; 2]) -> [ProgramStage; 2] {
-    [
+fn program_stages(scheduled: &[VerifiedScheduledRegion]) -> Vec<ProgramStage> {
+    vec![
         ProgramStage {
             id: StageId(0),
             scheduled_region: scheduled[0].region.index.id,
-            values: [
+            values: vec![
                 StageValueAccess {
                     value: MaterializedValueId(0),
                     access: StageAccess::Read,
@@ -295,7 +295,7 @@ fn program_stages(scheduled: &[VerifiedScheduledRegion; 2]) -> [ProgramStage; 2]
         ProgramStage {
             id: StageId(1),
             scheduled_region: scheduled[1].region.index.id,
-            values: [
+            values: vec![
                 StageValueAccess {
                     value: MaterializedValueId(1),
                     access: StageAccess::Read,
@@ -310,16 +310,16 @@ fn program_stages(scheduled: &[VerifiedScheduledRegion; 2]) -> [ProgramStage; 2]
 }
 
 fn materialized_values(
-    request: &VerifiedRequest,
+    request: &VerifiedTargetRequest,
     input_bytes: HostExprId,
     output_bytes: HostExprId,
-) -> [MaterializedValue; 3] {
-    [
+) -> Vec<MaterializedValue> {
+    vec![
         materialized(
             0,
             TensorRole::Input,
             ValueRole::Input,
-            request.normalized.input_shape.clone(),
+            request.serial_sum().input_shape.clone(),
             input_bytes,
             None,
             0,
@@ -328,7 +328,7 @@ fn materialized_values(
             1,
             TensorRole::Intermediate,
             ValueRole::Temporary,
-            request.normalized.input_shape.clone(),
+            request.serial_sum().input_shape.clone(),
             input_bytes,
             Some(StageId(0)),
             1,
@@ -337,7 +337,7 @@ fn materialized_values(
             2,
             TensorRole::Output,
             ValueRole::Output,
-            request.normalized.output_shape.clone(),
+            request.serial_sum().output_shape.clone(),
             output_bytes,
             Some(StageId(1)),
             2,
@@ -345,8 +345,8 @@ fn materialized_values(
     ]
 }
 
-fn program_allocations(input_bytes: HostExprId, output_bytes: HostExprId) -> [Allocation; 3] {
-    [
+fn program_allocations(input_bytes: HostExprId, output_bytes: HostExprId) -> Vec<Allocation> {
+    vec![
         allocation(0, input_bytes, AllocationOwnership::External),
         allocation(1, input_bytes, AllocationOwnership::Program),
         allocation(2, output_bytes, AllocationOwnership::Program),
@@ -354,14 +354,14 @@ fn program_allocations(input_bytes: HostExprId, output_bytes: HostExprId) -> [Al
 }
 
 fn entry_contracts(
-    scheduled: &[VerifiedScheduledRegion; 2],
+    scheduled: &[VerifiedScheduledRegion],
     input_bytes: HostExprId,
     output_bytes: HostExprId,
-) -> [EntryContract; 2] {
-    [
+) -> Vec<EntryContract> {
+    vec![
         entry(
             0,
-            [
+            vec![
                 binding(0, 0, ComponentRole::Input, AbiAccess::Read, input_bytes),
                 binding(
                     1,
@@ -377,7 +377,7 @@ fn entry_contracts(
         ),
         entry(
             1,
-            [
+            vec![
                 binding(
                     0,
                     1,
@@ -394,8 +394,8 @@ fn entry_contracts(
     ]
 }
 
-fn routing_policy() -> [RoutingTransition; 3] {
-    [
+fn routing_policy() -> Vec<RoutingTransition> {
+    vec![
         RoutingTransition {
             from: RoutingState::Preflight,
             to: RoutingState::Committed,
@@ -416,8 +416,20 @@ fn routing_policy() -> [RoutingTransition; 3] {
 
 pub(crate) fn verify_kernel_program(
     program: KernelProgram,
-    scheduled: &[VerifiedScheduledRegion; 2],
+    scheduled: &[VerifiedScheduledRegion],
 ) -> Result<KernelProgram, ProgramError> {
+    if scheduled.len() != 2
+        || program.stages.len() != 2
+        || program.dependencies.len() != 1
+        || program.entries.len() != 2
+        || program.outputs.len() != 1
+        || program.buffer_plan.values.len() != 3
+        || program.buffer_plan.allocations.len() != 3
+    {
+        return Err(ProgramError::Structure {
+            rule: "strategy-cardinality",
+        });
+    }
     let values = evaluate_expressions(&program.host_expressions)?;
     if values.get(usize::from(program.applicability_guard.0)) != Some(&HostValue::Bool(true)) {
         return Err(ProgramError::Structure {
@@ -507,13 +519,16 @@ pub(crate) fn verify_kernel_program(
 
 pub(crate) fn build_artifact_plan(
     semantic: &SemanticProgram,
-    request: &VerifiedRequest,
+    request: &VerifiedTargetRequest,
     program: &KernelProgram,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
     let semantic_output = semantic.outputs().next().ok_or(ProgramError::Structure {
         rule: "semantic-output-coverage",
     })?;
-    if semantic.output_count() != 1 || program.outputs[0].key != semantic_output.key().as_str() {
+    if semantic.output_count() != 1
+        || program.outputs.len() != 1
+        || program.outputs[0].key != semantic_output.key().as_str()
+    {
         return Err(ProgramError::Structure {
             rule: "semantic-output-coverage",
         });
@@ -521,7 +536,7 @@ pub(crate) fn build_artifact_plan(
     if program
         .entries
         .iter()
-        .any(|entry| entry.numerical.profile_key != request.numerical_profile.key)
+        .any(|entry| entry.numerical.profile_key != request.numerical_contract.key)
     {
         return Err(ProgramError::Structure {
             rule: "artifact-numerical-realization",
@@ -530,24 +545,29 @@ pub(crate) fn build_artifact_plan(
     Ok(ArtifactConstructionPlan {
         semantic_identity: semantic.canonical_identity().as_bytes().to_vec(),
         reached_semantic_authority: request.semantic_authority.as_bytes().to_vec(),
-        numerical_profile_key: request.numerical_profile.key,
-        numerical_realizations: [program.entries[0].numerical, program.entries[1].numerical],
+        numerical_contract_key: request.numerical_contract.key,
+        numerical_realizations: program
+            .entries
+            .iter()
+            .map(|entry| entry.numerical)
+            .collect(),
         target_profile_key: program.target_profile_key,
-        entry_regions: [
-            program.stages[0].scheduled_region,
-            program.stages[1].scheduled_region,
-        ],
+        entry_regions: program
+            .stages
+            .iter()
+            .map(|stage| stage.scheduled_region)
+            .collect(),
         routing_guard: program.applicability_guard,
     })
 }
 
-fn host_expressions(request: &VerifiedRequest) -> Result<Vec<HostExpr>, ProgramError> {
+fn host_expressions(request: &VerifiedTargetRequest) -> Result<Vec<HostExpr>, ProgramError> {
     let expressions = vec![
         expression(0, HostValueType::U64, HostExprNode::U64(4)),
         expression(
             1,
             HostValueType::U64,
-            HostExprNode::U64(request.normalized.input_elements),
+            HostExprNode::U64(request.serial_sum().input_elements),
         ),
         expression(
             2,
@@ -557,7 +577,7 @@ fn host_expressions(request: &VerifiedRequest) -> Result<Vec<HostExpr>, ProgramE
         expression(
             3,
             HostValueType::U64,
-            HostExprNode::U64(request.normalized.output_elements),
+            HostExprNode::U64(request.serial_sum().output_elements),
         ),
         expression(
             4,
@@ -567,12 +587,12 @@ fn host_expressions(request: &VerifiedRequest) -> Result<Vec<HostExpr>, ProgramE
         expression(
             5,
             HostValueType::U64,
-            HostExprNode::U64(request.normalized.input_elements),
+            HostExprNode::U64(request.serial_sum().input_elements),
         ),
         expression(
             6,
             HostValueType::U64,
-            HostExprNode::U64(request.normalized.output_elements),
+            HostExprNode::U64(request.serial_sum().output_elements),
         ),
         expression(7, HostValueType::Bool, HostExprNode::Bool(true)),
         expression(8, HostValueType::U64, HostExprNode::U64(1)),
@@ -638,8 +658,16 @@ fn evaluate_expressions(expressions: &[HostExpr]) -> Result<Vec<HostValue>, Prog
 fn verify_storage(
     program: &KernelProgram,
     values: &[HostValue],
-    scheduled: &[VerifiedScheduledRegion; 2],
+    scheduled: &[VerifiedScheduledRegion],
 ) -> Result<(), ProgramError> {
+    if scheduled.len() != 2
+        || program.buffer_plan.values.len() != 3
+        || program.buffer_plan.allocations.len() != 3
+    {
+        return Err(ProgramError::Storage {
+            rule: "strategy-cardinality",
+        });
+    }
     let expected_shapes = [
         &scheduled[0].region.index.iteration_shape,
         &scheduled[0].region.index.iteration_shape,
@@ -741,18 +769,30 @@ fn verify_entry(
             stage: entry.stage,
         });
     }
-    let stage_values = program.stages[stage].values;
+    let stage_values = &program.stages[stage].values;
+    if entry.bindings.len() != stage_values.len() {
+        return Err(ProgramError::Abi {
+            rule: "binding-cardinality",
+            stage: entry.stage,
+        });
+    }
     for (position, binding) in entry.bindings.iter().enumerate() {
         let expected_access = match stage_values[position].access {
             StageAccess::Read => AbiAccess::Read,
             StageAccess::Write => AbiAccess::Write,
         };
-        if binding.id != EntryBindingId(u8::try_from(position).expect("two bindings"))
+        let Some(materialized_value) = program.buffer_plan.values.get(usize::from(binding.value.0))
+        else {
+            return Err(ProgramError::Abi {
+                rule: "binding-value",
+                stage: entry.stage,
+            });
+        };
+        if binding.id != EntryBindingId(u8::try_from(position).expect("bounded binding count"))
             || binding.value != stage_values[position].value
             || binding.access != expected_access
             || binding.alignment != 4
-            || binding.accessible_bytes
-                != program.buffer_plan.values[usize::from(binding.value.0)].required_bytes
+            || binding.accessible_bytes != materialized_value.required_bytes
             || binding.role
                 != match binding.value.0 {
                     0 => ComponentRole::Input,
@@ -836,7 +876,7 @@ fn binding(
 
 fn entry(
     stage: u8,
-    bindings: [EntryBinding; 2],
+    bindings: Vec<EntryBinding>,
     launch_threads: HostExprId,
     requirements: ResourceRequirements,
     numerical: NumericalRealization,
@@ -865,9 +905,19 @@ fn host_error<T>(rule: &'static str, expression: HostExprId) -> Result<T, Progra
 
 pub(crate) fn assert_kernels_match_program(
     program: &KernelProgram,
-    kernels: &[VerifiedStructuredKernel; 2],
+    kernels: &[VerifiedStructuredKernel],
 ) -> Result<(), ProgramError> {
+    if kernels.len() != program.stages.len() || kernels.len() != program.entries.len() {
+        return Err(ProgramError::Structure {
+            rule: "kernel-entry-cardinality",
+        });
+    }
     for (index, kernel) in kernels.iter().enumerate() {
+        if kernel.kernel.buffers.len() != 2 {
+            return Err(ProgramError::Structure {
+                rule: "kernel-buffer-cardinality",
+            });
+        }
         if kernel.kernel.scheduled_region != program.stages[index].scheduled_region
             || kernel.kernel.requirements != program.entries[index].requirements
             || kernel.kernel.numerical != program.entries[index].numerical
@@ -910,8 +960,8 @@ mod tests {
 
     fn fixture() -> (
         SemanticProgram,
-        VerifiedRequest,
-        [VerifiedScheduledRegion; 2],
+        VerifiedTargetRequest,
+        Vec<VerifiedScheduledRegion>,
     ) {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
@@ -927,6 +977,7 @@ mod tests {
             .unwrap();
         let semantic = builder.build().unwrap();
         let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+        let request = request.for_target(request.target_profiles[0]);
         let scheduled = build_scheduled_regions(&request).unwrap();
         (semantic, request, scheduled)
     }
@@ -1069,6 +1120,40 @@ mod tests {
             verify_kernel_program(missing_output, &scheduled),
             Err(ProgramError::Structure {
                 rule: "semantic-output-coverage"
+            })
+        );
+    }
+
+    #[test]
+    fn variable_length_program_collections_fail_closed_on_wrong_cardinality() {
+        let (_, request, scheduled) = fixture();
+        let valid = build_kernel_program(&request, &scheduled).unwrap();
+
+        let mut missing_stage = valid.clone();
+        missing_stage.stages.pop();
+        assert_eq!(
+            verify_kernel_program(missing_stage, &scheduled),
+            Err(ProgramError::Structure {
+                rule: "strategy-cardinality"
+            })
+        );
+
+        let mut extra_binding = valid.clone();
+        let duplicate_binding = extra_binding.entries[0].bindings[0];
+        extra_binding.entries[0].bindings.push(duplicate_binding);
+        assert_eq!(
+            verify_kernel_program(extra_binding, &scheduled),
+            Err(ProgramError::Abi {
+                rule: "binding-cardinality",
+                stage: StageId(0),
+            })
+        );
+
+        let kernels = [lower_structured_kernel(&scheduled[0]).unwrap()];
+        assert_eq!(
+            assert_kernels_match_program(&valid, &kernels),
+            Err(ProgramError::Structure {
+                rule: "kernel-entry-cardinality"
             })
         );
     }

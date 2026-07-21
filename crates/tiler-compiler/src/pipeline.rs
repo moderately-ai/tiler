@@ -37,8 +37,14 @@ pub(crate) struct ExplainRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CompilationProduct {
-    pub(crate) scheduled_regions: [VerifiedScheduledRegion; 2],
-    pub(crate) kernels: [VerifiedStructuredKernel; 2],
+    pub(crate) targets: Vec<TargetCompilationProduct>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TargetCompilationProduct {
+    pub(crate) target_profile_key: &'static str,
+    pub(crate) scheduled_regions: Vec<VerifiedScheduledRegion>,
+    pub(crate) kernels: Vec<VerifiedStructuredKernel>,
     pub(crate) program: KernelProgram,
     pub(crate) artifact_plan: ArtifactConstructionPlan,
     pub(crate) explain: Vec<ExplainRecord>,
@@ -46,7 +52,21 @@ pub(crate) struct CompilationProduct {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CompileError {
+    InvalidRequest(RequestError),
+    UnsupportedCapability(RequestError),
+    BudgetExhausted(RequestError),
+    NoFeasiblePlan(NoFeasiblePlanError),
+    InvalidCompilerOutput(CompilerOutputError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum NoFeasiblePlanError {
     Request(RequestError),
+    Physical(PhysicalError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CompilerOutputError {
     Physical(PhysicalError),
     Program(ProgramError),
 }
@@ -54,9 +74,17 @@ pub(crate) enum CompileError {
 impl fmt::Display for CompileError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Request(error) => error.fmt(formatter),
-            Self::Physical(error) => error.fmt(formatter),
-            Self::Program(error) => error.fmt(formatter),
+            Self::InvalidRequest(error)
+            | Self::UnsupportedCapability(error)
+            | Self::BudgetExhausted(error)
+            | Self::NoFeasiblePlan(NoFeasiblePlanError::Request(error)) => error.fmt(formatter),
+            Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(error)) => error.fmt(formatter),
+            Self::InvalidCompilerOutput(CompilerOutputError::Physical(error)) => {
+                error.fmt(formatter)
+            }
+            Self::InvalidCompilerOutput(CompilerOutputError::Program(error)) => {
+                error.fmt(formatter)
+            }
         }
     }
 }
@@ -64,48 +92,83 @@ impl fmt::Display for CompileError {
 impl Error for CompileError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Request(error) => Some(error),
-            Self::Physical(error) => Some(error),
-            Self::Program(error) => Some(error),
+            Self::InvalidRequest(error)
+            | Self::UnsupportedCapability(error)
+            | Self::BudgetExhausted(error)
+            | Self::NoFeasiblePlan(NoFeasiblePlanError::Request(error)) => Some(error),
+            Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(error))
+            | Self::InvalidCompilerOutput(CompilerOutputError::Physical(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::Program(error)) => Some(error),
         }
     }
 }
 
 impl From<RequestError> for CompileError {
     fn from(value: RequestError) -> Self {
-        Self::Request(value)
+        match value {
+            RequestError::UnsupportedCapability { .. } => Self::UnsupportedCapability(value),
+            RequestError::ShapeProductOverflow { .. } => {
+                Self::NoFeasiblePlan(NoFeasiblePlanError::Request(value))
+            }
+            RequestError::BudgetExceeded { .. } => Self::BudgetExhausted(value),
+            RequestError::UnsupportedRequestVersion
+            | RequestError::EmptyTargetSet
+            | RequestError::DuplicateTargetProfile
+            | RequestError::SemanticAuthority => Self::InvalidRequest(value),
+        }
     }
 }
 
 impl From<PhysicalError> for CompileError {
     fn from(value: PhysicalError) -> Self {
-        Self::Physical(value)
+        match value {
+            PhysicalError::Refinement { .. } => {
+                Self::InvalidCompilerOutput(CompilerOutputError::Physical(value))
+            }
+            PhysicalError::Intrinsic { .. }
+            | PhysicalError::Target { .. }
+            | PhysicalError::ShapeProductOverflow { .. } => {
+                Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(value))
+            }
+        }
     }
 }
 
 impl From<ProgramError> for CompileError {
     fn from(value: ProgramError) -> Self {
-        Self::Program(value)
+        Self::InvalidCompilerOutput(CompilerOutputError::Program(value))
     }
 }
 
-pub(crate) fn compile_materialized_baseline(
-    request: CompilationRequest<'_>,
-) -> Result<CompilationProduct, CompileError> {
-    verify_semantic_output_type(request.program)?;
+pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProduct, CompileError> {
+    let semantic = request.program;
     let verified = verify_request(request)?;
-    let scheduled_regions = build_scheduled_regions(&verified)?;
-    let kernels = [
-        lower_structured_kernel(&scheduled_regions[0])?,
-        lower_structured_kernel(&scheduled_regions[1])?,
-    ];
-    let program = build_kernel_program(&verified, &scheduled_regions)?;
+    verify_semantic_output_type(semantic)?;
+    let targets = verified
+        .target_profiles
+        .iter()
+        .copied()
+        .map(|target| compile_target(semantic, &verified.for_target(target)))
+        .collect::<Result<_, _>>()?;
+    Ok(CompilationProduct { targets })
+}
+
+fn compile_target(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    verified: &crate::request::VerifiedTargetRequest,
+) -> Result<TargetCompilationProduct, CompileError> {
+    let scheduled_regions = build_scheduled_regions(verified)?;
+    let kernels = scheduled_regions
+        .iter()
+        .map(lower_structured_kernel)
+        .collect::<Result<Vec<_>, _>>()?;
+    let program = build_kernel_program(verified, &scheduled_regions)?;
     assert_kernels_match_program(&program, &kernels)?;
-    let artifact_plan = build_artifact_plan(request.program, &verified, &program)?;
+    let artifact_plan = build_artifact_plan(semantic, verified, &program)?;
     let explain = vec![
         accepted(
             ExplainPhase::RequestVerification,
-            "compile.request.fixed-profile",
+            "compile.request.general-boundary",
             "semantic-program",
         ),
         accepted(
@@ -149,7 +212,8 @@ pub(crate) fn compile_materialized_baseline(
             "artifact-plan",
         ),
     ];
-    Ok(CompilationProduct {
+    Ok(TargetCompilationProduct {
+        target_profile_key: verified.target_profile.key,
         scheduled_regions,
         kernels,
         program,
@@ -206,10 +270,11 @@ mod tests {
         let first = semantic(false);
         let second = semantic(true);
         assert_eq!(first.canonical_identity(), second.canonical_identity());
-        let first = compile_materialized_baseline(CompilationRequest::governed(&first)).unwrap();
-        let second = compile_materialized_baseline(CompilationRequest::governed(&second)).unwrap();
+        let first = compile(CompilationRequest::governed(&first)).unwrap();
+        let second = compile(CompilationRequest::governed(&second)).unwrap();
 
         assert_eq!(first, second);
+        let first = &first.targets[0];
         assert_eq!(first.program.stages.len(), 2);
         assert_eq!(
             first.program.buffer_plan.values[1].role,
@@ -243,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_fixed_profile_condition_keeps_its_stable_rule() {
+    fn valid_but_unsupported_program_has_a_capability_failure() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
@@ -252,15 +317,61 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), input)
             .unwrap();
         let semantic = builder.build().unwrap();
-        let error =
-            compile_materialized_baseline(CompilationRequest::governed(&semantic)).unwrap_err();
+        let error = compile(CompilationRequest::governed(&semantic)).unwrap_err();
         assert_eq!(
             error,
-            CompileError::Request(RequestError::ProfileMismatch { rule: "signature" })
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "signature",
+            })
         );
         assert_eq!(
             error.to_string(),
-            "compile.profile.signature: semantic program is outside the bounded serial-Sum profile"
+            "compile.unsupported.strategy.signature: no installed capability can compile this valid semantic program"
         );
+    }
+
+    #[test]
+    fn budget_exhaustion_is_not_reported_as_unsupported() {
+        let semantic = semantic(false);
+        let mut request = CompilationRequest::governed(&semantic);
+        request.budgets.semantic_operations = 4;
+        let error = compile(request).unwrap_err();
+        assert_eq!(
+            error,
+            CompileError::BudgetExhausted(RequestError::BudgetExceeded {
+                resource: "semantic-operations",
+                limit: 4,
+                actual: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_request_is_not_reported_as_missing_capability() {
+        let semantic = semantic(false);
+        let mut request = CompilationRequest::governed(&semantic);
+        request.target_profiles.clear();
+        assert_eq!(
+            compile(request),
+            Err(CompileError::InvalidRequest(RequestError::EmptyTargetSet))
+        );
+    }
+
+    #[test]
+    fn target_resource_failure_is_a_no_feasible_plan_outcome() {
+        let semantic = semantic(false);
+        let mut request = CompilationRequest::governed(&semantic);
+        request.target_profiles[0].max_threads_per_grid_axis = 1;
+        let error = compile(request).unwrap_err();
+        assert!(matches!(
+            error,
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
+                rule: "grid-axis",
+                region: crate::physical::RegionId(0),
+                required: 6,
+                available: 1,
+            }))
+        ));
     }
 }

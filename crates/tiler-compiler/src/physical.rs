@@ -4,8 +4,8 @@ use std::fmt;
 use tiler_ir::shape::{Axis, Shape};
 
 use crate::request::{
-    NumericalPermission, PrototypeTargetProfile, StrictF32NumericalProfile, SubnormalMode,
-    VerifiedRequest,
+    NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract, SubnormalMode,
+    VerifiedTargetRequest,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -108,7 +108,7 @@ pub(crate) struct IndexRegion {
     pub(crate) id: RegionId,
     pub(crate) iteration_shape: Shape,
     pub(crate) accesses: Vec<Access>,
-    pub(crate) bounds_proofs: [BoundsProof; 2],
+    pub(crate) bounds_proofs: Vec<BoundsProof>,
     pub(crate) ownership_proof: OwnershipProof,
     pub(crate) scalar_program: ScalarProgram,
     pub(crate) numerical: NumericalRealization,
@@ -124,8 +124,8 @@ pub(crate) struct NumericalRealization {
     pub(crate) reassociation: NumericalPermission,
 }
 
-impl From<StrictF32NumericalProfile> for NumericalRealization {
-    fn from(profile: StrictF32NumericalProfile) -> Self {
+impl From<StrictF32NumericalContract> for NumericalRealization {
+    fn from(profile: StrictF32NumericalContract) -> Self {
         Self {
             profile_key: profile.key,
             canonical_arithmetic_nan_bits: profile.canonical_arithmetic_nan_bits,
@@ -236,7 +236,7 @@ pub(crate) enum StructuredBody {
         output_ownership: OwnershipWitnessId,
         scale_bits: u32,
         bias_bits: u32,
-        operations: [BinaryF32; 2],
+        operations: Vec<BinaryF32>,
         canonical_nan_bits: u32,
         contraction: bool,
     },
@@ -266,7 +266,7 @@ pub(crate) enum StructuredBody {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StructuredKernel {
     pub(crate) scheduled_region: RegionId,
-    pub(crate) buffers: [KernelBuffer; 2],
+    pub(crate) buffers: Vec<KernelBuffer>,
     pub(crate) admitted_builtin: ExecutionBinding,
     pub(crate) body: StructuredBody,
     pub(crate) requirements: ResourceRequirements,
@@ -336,19 +336,19 @@ impl fmt::Display for PhysicalError {
 impl Error for PhysicalError {}
 
 pub(crate) fn build_scheduled_regions(
-    request: &VerifiedRequest,
-) -> Result<[VerifiedScheduledRegion; 2], PhysicalError> {
-    Ok([
+    request: &VerifiedTargetRequest,
+) -> Result<Vec<VerifiedScheduledRegion>, PhysicalError> {
+    Ok(vec![
         verify_schedule(pointwise_region(request), &request.target_profile)?,
         verify_schedule(reduction_region(request), &request.target_profile)?,
     ])
 }
 
-fn pointwise_region(request: &VerifiedRequest) -> ScheduledRegion {
+fn pointwise_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
     ScheduledRegion {
         index: IndexRegion {
             id: RegionId(0),
-            iteration_shape: request.normalized.input_shape.clone(),
+            iteration_shape: request.serial_sum().input_shape.clone(),
             accesses: vec![
                 Access {
                     tensor: TensorRole::Input,
@@ -365,19 +365,19 @@ fn pointwise_region(request: &VerifiedRequest) -> ScheduledRegion {
                     ownership: Some(OwnershipWitnessId(0)),
                 },
             ],
-            bounds_proofs: [
+            bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId(0),
                     tensor: TensorRole::Input,
                     kind: BoundsProofKind::LinearRange {
-                        element_count: request.normalized.input_elements,
+                        element_count: request.serial_sum().input_elements,
                     },
                 },
                 BoundsProof {
                     id: BoundsWitnessId(1),
                     tensor: TensorRole::Intermediate,
                     kind: BoundsProofKind::LinearRange {
-                        element_count: request.normalized.input_elements,
+                        element_count: request.serial_sum().input_elements,
                     },
                 },
             ],
@@ -385,35 +385,35 @@ fn pointwise_region(request: &VerifiedRequest) -> ScheduledRegion {
                 id: OwnershipWitnessId(0),
                 tensor: TensorRole::Intermediate,
                 kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
-                    output_count: request.normalized.input_elements,
+                    output_count: request.serial_sum().input_elements,
                 },
             },
             scalar_program: ScalarProgram::MultiplyThenAdd {
-                scale_bits: request.normalized.scale_bits,
-                bias_bits: request.normalized.bias_bits,
-                canonical_nan_bits: request.numerical_profile.canonical_arithmetic_nan_bits,
-                contraction: request.numerical_profile.contraction
+                scale_bits: request.serial_sum().scale_bits,
+                bias_bits: request.serial_sum().bias_bits,
+                canonical_nan_bits: request.numerical_contract.canonical_arithmetic_nan_bits,
+                contraction: request.numerical_contract.contraction
                     != NumericalPermission::Forbidden,
             },
-            numerical: request.numerical_profile.into(),
+            numerical: request.numerical_contract.into(),
         },
-        schedule: linear_schedule(request.normalized.input_elements, OwnershipWitnessId(0)),
+        schedule: linear_schedule(request.serial_sum().input_elements, OwnershipWitnessId(0)),
     }
 }
 
-fn reduction_region(request: &VerifiedRequest) -> ScheduledRegion {
+fn reduction_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
     ScheduledRegion {
         index: IndexRegion {
             id: RegionId(1),
-            iteration_shape: request.normalized.output_shape.clone(),
+            iteration_shape: request.serial_sum().output_shape.clone(),
             accesses: vec![
                 Access {
                     tensor: TensorRole::Intermediate,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
-                        input_shape: request.normalized.input_shape.clone(),
-                        output_shape: request.normalized.output_shape.clone(),
-                        axes: request.normalized.reduction_axes.clone(),
+                        input_shape: request.serial_sum().input_shape.clone(),
+                        output_shape: request.serial_sum().output_shape.clone(),
+                        axes: request.serial_sum().reduction_axes.clone(),
                         order: ContributorOrder::OriginalAxisLexicographic,
                     },
                     bounds: BoundsWitnessId(2),
@@ -427,14 +427,14 @@ fn reduction_region(request: &VerifiedRequest) -> ScheduledRegion {
                     ownership: Some(OwnershipWitnessId(1)),
                 },
             ],
-            bounds_proofs: [
+            bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId(2),
                     tensor: TensorRole::Intermediate,
                     kind: BoundsProofKind::ReductionDomain {
-                        input_shape: request.normalized.input_shape.clone(),
-                        output_shape: request.normalized.output_shape.clone(),
-                        axes: request.normalized.reduction_axes.clone(),
+                        input_shape: request.serial_sum().input_shape.clone(),
+                        output_shape: request.serial_sum().output_shape.clone(),
+                        axes: request.serial_sum().reduction_axes.clone(),
                         order: ContributorOrder::OriginalAxisLexicographic,
                     },
                 },
@@ -442,7 +442,7 @@ fn reduction_region(request: &VerifiedRequest) -> ScheduledRegion {
                     id: BoundsWitnessId(3),
                     tensor: TensorRole::Output,
                     kind: BoundsProofKind::LinearRange {
-                        element_count: request.normalized.output_elements,
+                        element_count: request.serial_sum().output_elements,
                     },
                 },
             ],
@@ -450,26 +450,26 @@ fn reduction_region(request: &VerifiedRequest) -> ScheduledRegion {
                 id: OwnershipWitnessId(1),
                 tensor: TensorRole::Output,
                 kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
-                    output_count: request.normalized.output_elements,
+                    output_count: request.serial_sum().output_elements,
                 },
             },
             scalar_program: ScalarProgram::StrictSerialSum {
-                axes: request.normalized.reduction_axes.clone(),
+                axes: request.serial_sum().reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_profile.canonical_arithmetic_nan_bits,
+                canonical_nan_bits: request.numerical_contract.canonical_arithmetic_nan_bits,
                 empty_identity_bits: 0.0_f32.to_bits(),
             },
-            numerical: request.numerical_profile.into(),
+            numerical: request.numerical_contract.into(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
-                axes: request.normalized.reduction_axes.clone(),
+                axes: request.serial_sum().reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
-                permits_reassociation: request.numerical_profile.reassociation
+                permits_reassociation: request.numerical_contract.reassociation
                     != NumericalPermission::Forbidden,
                 permits_permutation: false,
             },
-            ..linear_schedule(request.normalized.output_elements, OwnershipWitnessId(1))
+            ..linear_schedule(request.serial_sum().output_elements, OwnershipWitnessId(1))
         },
     }
 }
@@ -495,7 +495,7 @@ pub(crate) fn verify_schedule(
     target: &PrototypeTargetProfile,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
     let id = region.index.id;
-    if region.index.numerical != StrictF32NumericalProfile::governed().into() {
+    if region.index.numerical != StrictF32NumericalContract::governed().into() {
         return intrinsic("numerical-realization", id);
     }
     let iteration_count = element_count(&region.index.iteration_shape, id)?;
@@ -617,7 +617,9 @@ fn verify_proof_records(
     read: &Access,
     write: &Access,
 ) -> Result<(), PhysicalError> {
-    let [read_proof, write_proof] = &region.index.bounds_proofs;
+    let [read_proof, write_proof] = region.index.bounds_proofs.as_slice() else {
+        return intrinsic("bounds-proof-count", region.index.id);
+    };
     if read_proof.id != read.bounds
         || read_proof.tensor != read.tensor
         || write_proof.id != write.bounds
@@ -737,7 +739,7 @@ pub(crate) fn lower_structured_kernel(
             output_ownership: region.schedule.output_owner,
             scale_bits: *scale_bits,
             bias_bits: *bias_bits,
-            operations: [BinaryF32::Multiply, BinaryF32::Add],
+            operations: vec![BinaryF32::Multiply, BinaryF32::Add],
             canonical_nan_bits: *canonical_nan_bits,
             contraction: *contraction,
         },
@@ -790,7 +792,7 @@ pub(crate) fn lower_structured_kernel(
     verify_kernel(
         StructuredKernel {
             scheduled_region: region.index.id,
-            buffers: [
+            buffers: vec![
                 KernelBuffer {
                     tensor: read.tensor,
                     access: BufferAccess::Read,
@@ -1026,7 +1028,7 @@ mod tests {
         StrictSerialF32Sum,
     };
 
-    fn request(shape: Shape, axes: impl IntoIterator<Item = Axis>) -> VerifiedRequest {
+    fn request(shape: Shape, axes: impl IntoIterator<Item = Axis>) -> VerifiedTargetRequest {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), shape)
@@ -1040,7 +1042,8 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         let program = builder.build().unwrap();
-        verify_request(CompilationRequest::governed(&program)).unwrap()
+        let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        request.for_target(request.target_profiles[0])
     }
 
     #[test]
@@ -1052,13 +1055,10 @@ mod tests {
 
         assert_eq!(regions[0].region.schedule.work_items, 6);
         assert_eq!(regions[1].region.schedule.work_items, 2);
-        assert!(matches!(
-            pointwise.kernel.body,
-            StructuredBody::PredicatedPointwise {
-                operations: [BinaryF32::Multiply, BinaryF32::Add],
-                ..
-            }
-        ));
+        let StructuredBody::PredicatedPointwise { operations, .. } = pointwise.kernel.body else {
+            panic!("expected pointwise body");
+        };
+        assert_eq!(operations, [BinaryF32::Multiply, BinaryF32::Add]);
         assert!(matches!(
             reduction.kernel.body,
             StructuredBody::NonEmptySerialReduction {
