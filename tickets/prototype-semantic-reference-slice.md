@@ -1,7 +1,7 @@
 ---
 id: prototype-semantic-reference-slice
 title: Implement the serial Sum semantic and reference slice
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-workspace-scaffold, prototype-shaped-value-api, prototype-reference-evaluator-crate]
 related: []
@@ -9,8 +9,6 @@ scopes: [implementation/ir, research/semantic-graph, research/shapes, implementa
 shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions, contracts/navigation]
 paths: [AGENTS.md, CLAUDE.md, .gitignore]
 tags: [implementation, prototype, semantics, vertical-slice]
-assignee: codex
-lease_expires_at: 1784605806
 ---
 Build and evaluate the complete target-independent input to the first value
 proof:
