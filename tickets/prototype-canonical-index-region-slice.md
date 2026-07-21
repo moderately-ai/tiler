@@ -3,7 +3,7 @@ id: prototype-canonical-index-region-slice
 title: Implement the canonical index-region slice
 status: todo
 priority: p0
-dependencies: [prototype-operation-compilation-capabilities]
+dependencies: [prototype-shared-compiler-ir-ownership]
 related: []
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: []
