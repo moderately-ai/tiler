@@ -1,0 +1,9 @@
+error[E0451]: fields `value` and `evidence` of struct `ShapedValue` are private
+  --> tests/ui/fail/forge.rs:13:9
+   |
+12 |     let _ = ShapedValue::<F32, Matrix> {
+   |             -------------------------- in this type
+13 |         value: value(),
+   |         ^^^^^ private field
+14 |         evidence: PhantomData,
+   |         ^^^^^^^^ private field

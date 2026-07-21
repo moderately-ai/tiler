@@ -1,0 +1,9 @@
+[package]
+name = "nightly-shape-api"
+description = "Governed dependent-array shape evidence conformance fixture"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "nightly-shape-aliases-a"
+description = "First independent static-shape alias fixture"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+nightly-shape-api.workspace = true
+
+[lints]
+workspace = true

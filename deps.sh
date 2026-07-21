@@ -10,7 +10,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR
-readonly REQUIRED_RUST_TOOLCHAIN="1.89.0"
+readonly REQUIRED_RUST_TOOLCHAIN="nightly-2026-07-19"
 readonly REQUIRED_UV_VERSION="0.11.28"
 readonly REQUIRED_PYTHON="3.11"
 readonly REQUIRED_TICKETSPLEASE_VERSION="0.11.0"

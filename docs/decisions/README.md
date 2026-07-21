@@ -162,8 +162,8 @@ accepted. Unresolved questions are collected in
 - [0053: Gate artifact delivery and failures by consumer family](0053-gate-artifact-delivery-by-consumer-family.md) — accepted
 - [0054: Use typed documentation metadata and derived backlinks](0054-use-typed-documentation-metadata.md) — accepted
 - [0055: Use a serial Sum for the first Metal value proof](0055-use-a-serial-sum-for-the-first-metal-value-proof.md) — accepted
-- [0056: Use four libraries and two proof executables](0056-use-four-libraries-and-two-proof-executables.md) — accepted
-- [0057: Set the prototype MSRV to Rust 1.89](0057-set-the-prototype-msrv-to-rust-1-89.md) — accepted
+- [0056: Use four libraries and two proof executables](0056-use-four-libraries-and-two-proof-executables.md) — superseded
+- [0057: Set the prototype MSRV to Rust 1.89](0057-set-the-prototype-msrv-to-rust-1-89.md) — superseded
 - [0058: Use a recoverable consuming semantic-program build](0058-use-a-recoverable-consuming-semantic-program-build.md) — accepted
 - [0059: Use exact typed authoring handles over runtime-typed semantic values](0059-use-exact-typed-authoring-handles.md) — accepted
 

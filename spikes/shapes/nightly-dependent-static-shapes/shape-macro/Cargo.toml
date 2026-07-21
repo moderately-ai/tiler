@@ -1,0 +1,12 @@
+[package]
+name = "nightly-shape-macro"
+description = "Stable proc-macro token-generation fixture for static shapes"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true

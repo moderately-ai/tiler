@@ -1,0 +1,30 @@
+[workspace]
+members = [
+    "aliases-a",
+    "aliases-b",
+    "api",
+    "conformance",
+    "shape-macro",
+    "workload",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+nightly-shape-aliases-a = { path = "aliases-a" }
+nightly-shape-aliases-b = { path = "aliases-b" }
+nightly-shape-api = { path = "api" }
+nightly-shape-macro = { path = "shape-macro" }
+trybuild = "=1.0.118"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

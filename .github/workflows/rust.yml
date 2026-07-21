@@ -10,9 +10,6 @@ permissions:
 
 jobs:
   check:
-    strategy:
-      matrix:
-        toolchain: ["1.89.0", stable]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +18,5 @@ jobs:
           version: "0.11.29"
           python-version: "3.11"
           enable-cache: true
-      - run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --component clippy,rustfmt
-      - run: rustup override set ${{ matrix.toolchain }}
+      - run: rustup toolchain install nightly-2026-07-19 --profile minimal --component clippy,rustfmt
       - run: uv run --locked python scripts/check_rust.py

@@ -1,0 +1,488 @@
+{
+  "host": {
+    "machine": "arm64",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "processor": "arm"
+  },
+  "measurement_date": "2026-07-20",
+  "measurements": [
+    {
+      "clean_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1"
+        ],
+        "elapsed_seconds": 0.078992,
+        "peak_rss_bytes": 73203712
+      },
+      "global_symbol_count": 331,
+      "incremental_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1"
+        ],
+        "elapsed_seconds": 0.051539,
+        "peak_rss_bytes": 60899328
+      },
+      "release_binary_bytes": 432528,
+      "release_build": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "build",
+          "--release",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1"
+        ],
+        "elapsed_seconds": 0.166097,
+        "peak_rss_bytes": 116244480
+      },
+      "shape_count": 1,
+      "toolchain": "nightly-2026-07-19",
+      "warm_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1"
+        ],
+        "elapsed_seconds": 0.025253,
+        "peak_rss_bytes": 35373056
+      }
+    },
+    {
+      "clean_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_10"
+        ],
+        "elapsed_seconds": 0.078761,
+        "peak_rss_bytes": 73351168
+      },
+      "global_symbol_count": 331,
+      "incremental_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_10"
+        ],
+        "elapsed_seconds": 0.051007,
+        "peak_rss_bytes": 61227008
+      },
+      "release_binary_bytes": 432528,
+      "release_build": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "build",
+          "--release",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_10"
+        ],
+        "elapsed_seconds": 0.107716,
+        "peak_rss_bytes": 87670784
+      },
+      "shape_count": 10,
+      "toolchain": "nightly-2026-07-19",
+      "warm_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_10"
+        ],
+        "elapsed_seconds": 0.025798,
+        "peak_rss_bytes": 35258368
+      }
+    },
+    {
+      "clean_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_100"
+        ],
+        "elapsed_seconds": 0.08358,
+        "peak_rss_bytes": 74874880
+      },
+      "global_symbol_count": 331,
+      "incremental_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_100"
+        ],
+        "elapsed_seconds": 0.052007,
+        "peak_rss_bytes": 62914560
+      },
+      "release_binary_bytes": 432528,
+      "release_build": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "build",
+          "--release",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_100"
+        ],
+        "elapsed_seconds": 0.120103,
+        "peak_rss_bytes": 90177536
+      },
+      "shape_count": 100,
+      "toolchain": "nightly-2026-07-19",
+      "warm_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_100"
+        ],
+        "elapsed_seconds": 0.026209,
+        "peak_rss_bytes": 35373056
+      }
+    },
+    {
+      "clean_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1000"
+        ],
+        "elapsed_seconds": 0.132194,
+        "peak_rss_bytes": 90374144
+      },
+      "global_symbol_count": 331,
+      "incremental_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1000"
+        ],
+        "elapsed_seconds": 0.082459,
+        "peak_rss_bytes": 94584832
+      },
+      "release_binary_bytes": 432544,
+      "release_build": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "build",
+          "--release",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1000"
+        ],
+        "elapsed_seconds": 0.240253,
+        "peak_rss_bytes": 116867072
+      },
+      "shape_count": 1000,
+      "toolchain": "nightly-2026-07-19",
+      "warm_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-19",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1000"
+        ],
+        "elapsed_seconds": 0.026785,
+        "peak_rss_bytes": 35143680
+      }
+    },
+    {
+      "clean_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1"
+        ],
+        "elapsed_seconds": 0.109676,
+        "peak_rss_bytes": 78348288
+      },
+      "global_symbol_count": 331,
+      "incremental_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1"
+        ],
+        "elapsed_seconds": 0.049887,
+        "peak_rss_bytes": 60506112
+      },
+      "release_binary_bytes": 432528,
+      "release_build": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "build",
+          "--release",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1"
+        ],
+        "elapsed_seconds": 0.167453,
+        "peak_rss_bytes": 115392512
+      },
+      "shape_count": 1,
+      "toolchain": "nightly-2026-07-20",
+      "warm_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1"
+        ],
+        "elapsed_seconds": 0.025751,
+        "peak_rss_bytes": 35471360
+      }
+    },
+    {
+      "clean_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_10"
+        ],
+        "elapsed_seconds": 0.080572,
+        "peak_rss_bytes": 72810496
+      },
+      "global_symbol_count": 331,
+      "incremental_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_10"
+        ],
+        "elapsed_seconds": 0.050786,
+        "peak_rss_bytes": 60833792
+      },
+      "release_binary_bytes": 432528,
+      "release_build": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "build",
+          "--release",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_10"
+        ],
+        "elapsed_seconds": 0.107412,
+        "peak_rss_bytes": 87654400
+      },
+      "shape_count": 10,
+      "toolchain": "nightly-2026-07-20",
+      "warm_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_10"
+        ],
+        "elapsed_seconds": 0.025468,
+        "peak_rss_bytes": 35471360
+      }
+    },
+    {
+      "clean_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_100"
+        ],
+        "elapsed_seconds": 0.085337,
+        "peak_rss_bytes": 74416128
+      },
+      "global_symbol_count": 331,
+      "incremental_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_100"
+        ],
+        "elapsed_seconds": 0.051584,
+        "peak_rss_bytes": 62521344
+      },
+      "release_binary_bytes": 432528,
+      "release_build": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "build",
+          "--release",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_100"
+        ],
+        "elapsed_seconds": 0.121006,
+        "peak_rss_bytes": 90095616
+      },
+      "shape_count": 100,
+      "toolchain": "nightly-2026-07-20",
+      "warm_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_100"
+        ],
+        "elapsed_seconds": 0.02665,
+        "peak_rss_bytes": 35307520
+      }
+    },
+    {
+      "clean_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1000"
+        ],
+        "elapsed_seconds": 0.130643,
+        "peak_rss_bytes": 89964544
+      },
+      "global_symbol_count": 331,
+      "incremental_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1000"
+        ],
+        "elapsed_seconds": 0.078573,
+        "peak_rss_bytes": 94306304
+      },
+      "release_binary_bytes": 432544,
+      "release_build": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "build",
+          "--release",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1000"
+        ],
+        "elapsed_seconds": 0.240359,
+        "peak_rss_bytes": 116604928
+      },
+      "shape_count": 1000,
+      "toolchain": "nightly-2026-07-20",
+      "warm_check": {
+        "command": [
+          "cargo",
+          "+nightly-2026-07-20",
+          "check",
+          "-p",
+          "nightly-shape-workload",
+          "--bin",
+          "generated_1000"
+        ],
+        "elapsed_seconds": 0.024925,
+        "peak_rss_bytes": 35487744
+      }
+    }
+  ],
+  "schema_version": 1,
+  "timeout_seconds_per_command": 300,
+  "toolchains": {
+    "nightly-2026-07-19": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)\nbinary: rustc\ncommit-hash: eff8269f797067c30555e77f160ec84c0ed15cd9\ncommit-date: 2026-07-18\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8",
+    "nightly-2026-07-20": "rustc 1.99.0-nightly (9f36de775 2026-07-19)\nbinary: rustc\ncommit-hash: 9f36de775bc636c8e88c31a173c2bcb6995956a0\ncommit-date: 2026-07-19\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8"
+  }
+}

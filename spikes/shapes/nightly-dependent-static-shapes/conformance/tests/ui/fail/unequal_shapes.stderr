@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+  --> tests/ui/fail/unequal_shapes.rs:11:39
+   |
+11 |     require_same(PhantomData::<Left>, PhantomData::<Right>);
+   |     ------------                      ^^^^^^^^^^^^^^^^^^^^ expected `[2, 3]`, found `[3, 2]`
+   |     |
+   |     arguments to this function are incorrect
+   |
+   = note: expected struct `PhantomData<StaticShape<2, [2, 3]>>`
+              found struct `PhantomData<StaticShape<2, [3, 2]>>`
+note: function defined here
+  --> tests/ui/fail/unequal_shapes.rs:8:4
+   |
+ 8 | fn require_same<T>(_: PhantomData<T>, _: PhantomData<T>) {}
+   |    ^^^^^^^^^^^^                       -----------------

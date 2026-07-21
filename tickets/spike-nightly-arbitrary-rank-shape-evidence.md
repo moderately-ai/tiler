@@ -1,13 +1,13 @@
 ---
 id: spike-nightly-arbitrary-rank-shape-evidence
 title: Spike nightly arbitrary-rank static shape evidence
-status: todo
+status: done
 priority: p0
 dependencies: [research-nightly-const-shape-parameters, adopt-nightly-dependent-static-shapes]
 related: [prototype-shaped-value-api]
-scopes: [research/shapes, implementation/workspace, contracts/decisions]
+scopes: [research/shapes, implementation/workspace, implementation/ir, implementation/reference, implementation/artifact, implementation/compiler, implementation/metal, implementation/runtime, contracts/decisions]
 shared_scopes: [project/tickets, contracts/navigation]
-paths: []
+paths: [AGENTS.md]
 tags: [spike, rust-api, const-generics, shapes]
 ---
 # Spike nightly arbitrary-rank static shape evidence
@@ -22,7 +22,7 @@ accepted pinned-nightly, arbitrary-rank dependent-array shape evidence.
 Prioritize the dependent-array form identified by the research:
 
 ```rust,ignore
-pub struct StaticShape<const RANK: usize, const DIMS: [u64; RANK]>;
+pub struct StaticShape<const RANK: usize, const EXTENTS: [u64; RANK]>;
 
 type Matrix = ShapedValue<F32, StaticShape<2, { [2, 3] }>>;
 ```
@@ -78,3 +78,24 @@ accepted form requires an explicit superseding decision.
   compiler revision;
 - an ADR 0067 implementation-status update after the governed pin passes; and
 - corresponding toolchain-policy, CI, and implementation-ticket updates.
+
+## Outcome
+
+- Retained a six-crate isolated workspace covering the selected evidence type,
+  two independent alias providers, stable proc-macro generation, compile and
+  runtime conformance, and generated compile-cost workloads.
+- Proved exact structural identity across literals, constants, reexports,
+  crates, and generated tokens; representative ranks through 64; private
+  refinement authority; evidence-neutral identity; and expected failure for
+  unequal shapes, rank mismatch, forgery, and downstream evidence claims.
+- Proved that only `min_adt_const_params` and
+  `generic_const_parameter_types` are required. Borrowed slices remain an
+  isolated comparison behind nonselected features.
+- Passed the full suite unchanged on `nightly-2026-07-19` (`eff8269f7`) and
+  adjacent `nightly-2026-07-20` (`9f36de775`).
+- Measured 1/10/100/1,000 shapes with exact provenance. The governed 1,000-shape
+  clean check took 0.132 seconds at 86.2 MiB peak RSS; release took 0.240
+  seconds, added 16 bytes over one shape, and retained the same 331 global
+  symbols.
+- Migrated contributor bootstrap, CI, validation, and the workspace to the
+  exact governed pin and removed the misleading stable `rust-version` claim.

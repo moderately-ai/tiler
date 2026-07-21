@@ -18,7 +18,9 @@ reference crate boundary. Graph ownership, recoverable commitment,
 output-reachable compaction, origin-bound output selectors, independent type
 authority, open operation registration, generic typed values, and exact
 reference-capability dispatch are compile-checked for the bounded profile.
-Shape evidence remains on the active dependency path.
+The dependent-array shape conformance gate and exact nightly migration are now
+complete; the production checked shaped-value API remains on the active
+dependency path.
 Target-neutral compilation, Metal AOT, and device execution remain
 unimplemented and no public API is stabilized.
 
@@ -31,10 +33,11 @@ schedule, structured-kernel, artifact, and guarded-runtime boundaries; a
 handwritten standalone Metal kernel is insufficient. ADR 0065 supersedes ADR
 0056's four-crate count by extracting `tiler-reference`; ADR 0067 supersedes
 the stable Rust 1.89 floor and selects the exact `nightly-2026-07-19` pin plus
-one dependent-array `StaticShape<RANK, EXTENTS>` family. The active frontier is
-the [nightly shape conformance
-harness](../tickets/spike-nightly-arbitrary-rank-shape-evidence.md), checked
-shaped-value work, and their integration by the
+one dependent-array `StaticShape<RANK, EXTENTS>` family. The retained
+[nightly shape conformance
+harness](../spikes/shapes/nightly-dependent-static-shapes/README.md) now passes
+on the governed and adjacent compilers. The active frontier is checked
+shaped-value work and its integration by the
 [`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md).
 That is followed by the dependency-ordered
 [`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md),

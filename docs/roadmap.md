@@ -25,11 +25,11 @@ progression rather than blanket implementation authority.
 
 **Research-contract status:** complete. ADRs 0005, 0006, 0008, 0044, and 0045
 fix the graph, shape, registry, and proc-macro visibility boundaries. The
-active semantic ticket chain is implementing and testing the compile-checking
-operation API and normative reference integration; its current untyped draft
-does not yet satisfy this milestone's registry, external-provider, typed-handle,
-or shape-evidence exit requirements. Production implementation remains future
-work.
+semantic type, operation, typed-handle, and reference boundaries are now
+compile-checked, and the retained dependent-array conformance harness passes.
+The checked shaped-value implementation and assembled semantic/reference slice
+remain before this milestone's exit criterion. Production stabilization remains
+future work.
 
 The bullets below are the implementation scope authorized only after the
 research-readiness decision; they are not claims that the implementations
@@ -52,8 +52,8 @@ already exist.
 - Establish multiple named results, sharing, and multi-result representation
   invariants even if the first runtime profile executes a narrower subset.
 - Implement ADR 0067's one arbitrary-rank `StaticShape<RANK, EXTENTS>` evidence
-  family only after its retained conformance harness passes on the governed
-  nightly; reuse that harness for every compiler-pin migration.
+  family using the now-passing retained conformance harness; reuse that harness
+  for every compiler-pin migration.
 
 **Exit criterion:** tensor meaning and graph invariants have a reviewed
 contract, mandatory operation-extension capabilities are explicit, and a small

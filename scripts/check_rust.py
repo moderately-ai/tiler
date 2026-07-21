@@ -31,6 +31,12 @@ def main() -> int:
         ["cargo", "doc", "--workspace", "--no-deps"],
         extra_env={"RUSTDOCFLAGS": rustdocflags},
     )
+    run(
+        [
+            "spikes/shapes/nightly-dependent-static-shapes/check.sh",
+            "nightly-2026-07-19",
+        ]
+    )
     return 0
 
 

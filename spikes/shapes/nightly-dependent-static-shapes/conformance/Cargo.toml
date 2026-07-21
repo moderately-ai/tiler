@@ -1,0 +1,16 @@
+[package]
+name = "nightly-shape-conformance"
+description = "Compile and runtime conformance for dependent static shapes"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+nightly-shape-aliases-a.workspace = true
+nightly-shape-aliases-b.workspace = true
+nightly-shape-api.workspace = true
+nightly-shape-macro.workspace = true
+trybuild.workspace = true
+
+[lints]
+workspace = true

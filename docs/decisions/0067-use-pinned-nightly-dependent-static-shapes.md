@@ -6,7 +6,7 @@ title: "Use pinned-nightly dependent arrays for exact shape evidence"
 topics: ["rust", "toolchains", "shapes", "const-generics", "api"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.frontend-integration"]
 evidence: ["tiler.research.shapes.nightly-const-shape-parameters", "tiler.research.shapes.public-static-shape-spelling", "tiler.research.shapes.stable-rust-shape-evidence"]
 refines: ["ADR-0061"]
@@ -16,7 +16,8 @@ ticket: "adopt-nightly-dependent-static-shapes"
 
 # 0067: Use pinned-nightly dependent arrays for exact shape evidence
 
-**Status:** accepted; conformance harness and workspace pin not yet implemented
+**Status:** accepted; conformance harness and workspace pin implemented,
+production shaped-value API pending
 
 ## Context
 
@@ -93,6 +94,14 @@ The conformance spike is an implementation and upgrade gate, not a reopened
 product choice. A failed compiler conformance blocks the shaped-value
 implementation or pin migration and requires an explicit superseding decision;
 it does not silently select the stable arity-family fallback.
+
+The retained harness passed on the governed compiler and the immediately
+adjacent `nightly-2026-07-20` compiler. It established cross-crate structural
+identity, exact feature requirements, stable-proc-macro token generation,
+rank-zero through rank-64 coverage, compile-fail diagnostics, authority
+isolation, and bounded 1,000-shape compile cost. The repository now uses the
+governed pin and declares no stable `rust-version`. Implementing the production
+`tiler-ir` evidence and shaped-value types remains separate work.
 
 ## Consequences
 

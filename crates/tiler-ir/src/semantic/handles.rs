@@ -11,7 +11,7 @@ pub(super) fn next_graph_id() -> Option<GraphId> {
 }
 
 fn allocate_graph_id(next: &AtomicU64) -> Option<GraphId> {
-    next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+    next.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
         .ok()
         .map(GraphId)
 }

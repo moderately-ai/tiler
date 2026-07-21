@@ -7,8 +7,8 @@ topics: ["shapes", "rust", "const-generics", "api-design"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "not-started"
-evidence_classes: ["primary-source-synthesis"]
+implementation_status: "partial"
+evidence_classes: ["primary-source-synthesis", "executable-model", "bounded-measurement"]
 informs: ["tiler.contract.ir"]
 adopted_by: ["ADR-0067"]
 supersedes: ["tiler.research.shapes.public-static-shape-spelling"]
@@ -205,11 +205,8 @@ borrowed-slice form, but rejected the dependent-array declaration with E0770.
   `generic_const_parameter_types`; and
 - a Tiler-owned structural shape value under `min_adt_const_params`.
 
-These observations establish that the accepted language form exists on the
-governed compiler, but they are not retained conformance evidence. The spike
-ticket still requires reproducible cross-crate fixtures, negative tests,
-diagnostics, compiler-pin comparison, and compile-cost measurements before the
-workspace adopts the pin and the shaped-value API is implemented.
+These direct observations motivated the retained conformance harness described
+below; they are not themselves its evidence.
 
 ## Interim assessment
 
@@ -239,3 +236,28 @@ That conclusion does not establish implementation readiness. The dependent-type
 feature remains experimental and lacks an accepted RFC. ADR 0067 accepts that
 risk; `spike-nightly-arbitrary-rank-shape-evidence` is the required conformance
 and compiler-upgrade harness.
+
+## Retained conformance result
+
+**Measurement:** the retained [nightly dependent-array
+harness](../../../spikes/shapes/nightly-dependent-static-shapes/README.md)
+passed unchanged on `nightly-2026-07-19` (`eff8269f7`) and the adjacent
+`nightly-2026-07-20` (`9f36de775`). It proved structural type unification across
+independent crates, literals, public and private constants, reexports, and a
+stable-API procedural macro. Unequal arrays, rank/array-length mismatch,
+downstream evidence implementation, and shaped-handle forgery produced retained
+compile failures.
+
+**Measurement:** ranks 0, 1, 2, 4, 8, and 64 compiled through the same zero-sized
+family. On the tested Apple M4 Max host, 1,000 distinct governed-pin shapes took
+0.132 seconds and 86.2 MiB peak RSS for a package-clean check, 0.082 seconds for
+an incremental check, and 0.240 seconds for a release build. The 1,000-shape
+binary was 16 bytes larger than the one-shape binary and exposed the same 331
+global symbols. The adjacent compiler produced materially equivalent bounded
+results. Exact provenance and all cases are in the [measurement
+summary](../../../spikes/shapes/nightly-dependent-static-shapes/measurements/summary.json).
+
+**Inference:** the selected form is ready to serve as the prototype's checked
+exact-shape evidence spelling. These single-host measurements reject a
+catastrophic prototype cost; they are not a portable compiler-performance
+guarantee. The production `tiler-ir` API remains unimplemented.

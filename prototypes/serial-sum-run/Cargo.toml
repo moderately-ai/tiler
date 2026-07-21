@@ -3,7 +3,6 @@ name = "tiler-prototype-run"
 description = "Non-published runner for Tiler's serial-Sum value proof"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true

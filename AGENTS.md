@@ -272,9 +272,10 @@ This repository owns its Rust build policy. `AGENTS.md` is the canonical
 cross-harness guidance; harness-specific entry points must reference it rather
 than duplicate or weaken it.
 
-- `rust-toolchain.toml` pins the active contributor toolchain and required
-  components. `[workspace.package].rust-version` is the independently tested
-  MSRV; do not confuse or silently couple those two contracts.
+- `rust-toolchain.toml` pins the exact dated nightly and required components.
+  The workspace deliberately declares no stable `rust-version` while accepted
+  dependent-array const parameters require nightly. A future stable MSRV needs
+  separate conformance evidence and an explicit policy change.
 - Keep workspace Rust and Clippy lints inherited by every crate. New public
   APIs require documentation, unsafe code remains forbidden unless an accepted
   decision changes that boundary, and warnings fail the repository gate.
@@ -303,9 +304,9 @@ uv run --locked python scripts/check_rust.py
 ```
 
 The gate checks the workspace contract, formatting, all targets, strict
-Clippy, tests, doctests, and warning-free rustdoc. Run explicit `cargo +1.89.0`
-commands as well when changing toolchain-sensitive code if the pinned active
-toolchain later differs from the MSRV.
+Clippy, tests, doctests, warning-free rustdoc, and the governed dependent-array
+shape conformance fixture. Use explicit dated-toolchain selectors in compiler-
+migration probes; never replace the repository pin with rolling `nightly`.
 
 Bootstrap a fresh development checkout with `./deps.sh`. It installs or
 verifies the supported host prerequisites, the pinned Rust toolchain, uv,

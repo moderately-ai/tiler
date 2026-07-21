@@ -10,10 +10,10 @@ shared_scopes: [project/tickets, contracts/foundation, contracts/decisions]
 paths: [Cargo.lock]
 tags: [implementation, prototype, semantics, shapes, rust-api]
 ---
-ADR 0067 accepts the pinned-nightly dependent-array spelling. Do not implement
-until its conformance harness passes and updates the repository toolchain
-policy; then implement the accepted `StaticShape<RANK, EXTENTS>` evidence in
-`tiler-ir`.
+ADR 0067 accepts the pinned-nightly dependent-array spelling. Its retained
+conformance harness now passes and the repository toolchain policy uses the
+governed exact pin. Implement the accepted `StaticShape<RANK, EXTENTS>` evidence
+in `tiler-ir`.
 
 - add the accepted sealed or host-controlled `ShapeEvidence` vocabulary;
 - add privately constructed `ShapedValue<T, E>` refinements over `Value<T>`;

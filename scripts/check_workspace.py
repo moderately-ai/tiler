@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_RUST_TOOLCHAIN = "nightly-2026-07-19"
 EXPECTED = {
     "tiler-ir": set(),
     "tiler-reference": {"tiler-ir"},
@@ -42,9 +43,10 @@ def main() -> int:
     packages = {package["name"]: package for package in metadata["packages"]}
     errors = []
 
-    if toolchain.get("channel") != "1.89.0":
+    if toolchain.get("channel") != REQUIRED_RUST_TOOLCHAIN:
         errors.append(
-            f"active Rust toolchain: expected pinned 1.89.0, got {toolchain.get('channel')!r}"
+            "active Rust toolchain: expected pinned "
+            f"{REQUIRED_RUST_TOOLCHAIN}, got {toolchain.get('channel')!r}"
         )
     if toolchain.get("profile") != "minimal":
         errors.append("active Rust toolchain must use the minimal rustup profile")
@@ -91,8 +93,10 @@ def main() -> int:
                 f"{name} local dependencies: expected {sorted(expected_dependencies)}, "
                 f"got {sorted(local_dependencies)}"
             )
-        if package["rust_version"] != "1.89":
-            errors.append(f"{name} rust-version: expected 1.89, got {package['rust_version']!r}")
+        if package["rust_version"] is not None:
+            errors.append(
+                f"{name} must not claim a stable rust-version under the exact-nightly policy"
+            )
         if package["edition"] != "2024":
             errors.append(f"{name} edition: expected 2024, got {package['edition']!r}")
         if package["publish"] != []:

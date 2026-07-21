@@ -1,0 +1,12 @@
+[package]
+name = "nightly-shape-workload"
+description = "Generated compile-cost workloads for dependent static shapes"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+nightly-shape-api.workspace = true
+
+[lints]
+workspace = true
