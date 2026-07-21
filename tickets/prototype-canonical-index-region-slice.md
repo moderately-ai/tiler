@@ -5,7 +5,7 @@ status: in-progress
 priority: p0
 dependencies: [prototype-shared-compiler-ir-ownership, correct-semantic-identity-layering, harden-semantic-registry-and-program-construction]
 related: [harden-compiler-verifier-subject-binding-and-totality]
-scopes: [implementation/ir, implementation/compiler, implementation/workspace, project/tickets, contracts/foundation, contracts/navigation, contracts/decisions, contracts/numerics, implementation/reference, research/indexing, contracts/optimizer, contracts/artifacts]
+scopes: [implementation/ir, implementation/compiler, implementation/workspace, project/tickets, contracts/foundation, contracts/navigation, contracts/decisions, contracts/numerics, implementation/reference, research/indexing, contracts/optimizer, contracts/artifacts, research/artifacts, research/extensions]
 shared_scopes: []
 paths: [.gitignore]
 tags: [implementation, compiler-foundation, indexing]
