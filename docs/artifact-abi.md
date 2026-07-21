@@ -12,21 +12,25 @@ ticket: "synthesize-artifact-contracts"
 
 # Artifact envelope and Metal kernel ABI profile
 
-**Status:** accepted research contract; target-neutral construction spike only
+**Status:** accepted research contract; shared IR ownership established,
+artifact codec unimplemented
 
-The private compiler proof now constructs target-neutral program portfolios,
-neutral entry ABI contracts, checked host expressions, one-way routing state,
-and artifact-construction plans. Each selected alternative records the exact
-lowering-provider key and revision that produced it. Canonical envelope
-serialization, backend payloads, integrity validation, and public artifact APIs
-remain unimplemented.
+The private compiler proof constructs provisional program portfolios and
+artifact-construction inputs. ADRs 0070 and 0071 now assign authoritative
+target-neutral executable meaning and checked construction to shared
+`tiler-ir` representations; the proof-specific structs remain private until
+replaced in dependency order. Canonical envelope serialization, backend
+payloads, integrity validation, and public artifact APIs remain unimplemented.
 
 ## Ownership boundary
 
-This document owns the target-neutral envelope, serialized program portfolio,
-ABI roles, routing commit, guards, digests, and backend payload boundaries. The
-IR contract owns compiler-model meaning and schedule legality; adapters own
-device-specific loading, binding, and execution.
+This document owns envelope framing, wire DTOs and encoding, compatibility,
+runtime fact binding, routing commit, digests, failure classification, and
+backend payload mappings. The IR contract owns program/portfolio meaning,
+canonical identity, ABI-expression semantics, and authoritative verification;
+adapters own device-specific loading, binding, and execution. A decoder must
+reconstruct shared IR through its checked builders and cannot manufacture a
+verified value or retain a second editable authority.
 
 This document describes the accepted first-backend Metal profile of Tiler's
 target-neutral artifact concepts. `MetallibBundle`, Metal binding indices, and

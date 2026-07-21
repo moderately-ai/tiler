@@ -50,6 +50,31 @@ Every durable Tiler representation must satisfy these rules:
 11. Source origins survive lowering sufficiently for diagnostics and `EXPLAIN`.
 12. Artifact identity uses canonical content, never allocation identity.
 
+## Shared IR construction lifecycle
+
+ADR 0070 assigns the experimental target-neutral layers to public modules in
+`tiler-ir`: `index`, `schedule`, `kernel`, and `program`. Compiler-owned region
+candidates, search alternatives, costs, and explain records are not shared IR
+merely because they refer to semantic operations.
+
+ADR 0071 establishes one construction lifecycle for the shared layers:
+
+```text
+LayerBuilder -- build(self) --> VerifiedLayer
+             -- failure -----> { builder, typed diagnostics }
+```
+
+Builders own private mutable storage and perform local admission checks.
+Whole-object verification occurs at consuming build. Verified products are
+immutable and expose read-only meaning rather than arena storage. Backends and
+artifact codecs accept only the verified wrappers; artifact decoding rebuilds
+through the same checked path. Layer-specific opaque `u32` newtypes live with
+their domains and cannot be forged from public numeric constructors.
+
+The implementation order is index region, scheduled region, structured
+kernel, kernel program, then portfolio. A public module declaration or a
+private proof struct is not implemented support for that layer.
+
 ## Layer 0: frontend plan
 
 The frontend plan retains syntax-level information such as axis names,
@@ -904,11 +929,15 @@ initial form.
 See the [structured kernel IR research](research/kernel-ir/structured-kernel-ir-verifier.md)
 for the proposed schema, worked lowerings, and verifier split.
 
-## Layer 5: artifact representation
+## Layer 5: executable program and artifact-facing IR
 
-The artifact is the versioned unit consumed by a runtime. It contains a target
-payload together with semantic, implementation, and program identities, ABI,
-guards, dispatch formulas, target requirements, and compiler fingerprints.
+`KernelProgram` and `ProgramPortfolio` are verified target-neutral executable
+IR owned by `tiler-ir`. A kernel-program stage references the verified
+structured kernel selected for that stage rather than only a schedule or a
+compiler-private candidate. The artifact is the separately encoded versioned
+unit consumed by a runtime; it carries this meaning with target payloads,
+compatibility metadata, and compiler fingerprints without becoming a second
+editable program authority.
 
 Identity is layered:
 

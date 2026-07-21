@@ -30,7 +30,11 @@ established that this remains a graph-specific conformance fixture: occurrence
 construction, region enumeration, legality evidence, KIR, and artifact-facing
 program types are not yet a generic backend-consumable compiler path. Metal
 AOT and device execution remain unimplemented, and no compiler API is public
-or stabilized.
+or stabilized. Shared target-neutral IR ownership and checked-construction
+boundaries are now accepted by ADRs 0070 and 0071. The compiler's bounded proof
+pipeline is compiled as ordinary library code, and the unused backwards
+compiler-to-artifact dependency has been removed. The proof-specific structs
+remain private until their dedicated generic IR/verifier tickets replace them.
 
 ## Authorized prototype
 
@@ -52,9 +56,13 @@ assembled
 [`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md)
 and
 [`target-neutral fusion selection`](../tickets/prototype-target-neutral-fusion-slice.md)
-are complete for their bounded claims. The next dependency-ordered slice is
-[`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md),
-followed by operation capabilities, canonical access relations, generic region
+are complete for their bounded claims. The
+[`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md)
+slice establishes the accepted module, verifier, builder, and dependency
+direction without publishing the graph-specific proof structs. The next
+dependency-ordered slice is
+[`operation compilation capabilities`](../tickets/prototype-operation-compilation-capabilities.md),
+followed by canonical access relations, generic region
 formation, derived legality, complete partition planning, physical
 implementations, structured KIR, neutral program/artifact types, and an
 [`optimizer conformance gate`](../tickets/prototype-optimizer-conformance-gate.md).

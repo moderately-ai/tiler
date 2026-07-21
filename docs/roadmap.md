@@ -171,7 +171,11 @@ structured kernel preserves atomic multiply/add and strict contributor order,
 and a fixed structural policy selects it while retaining the baseline. It does
 not yet establish generic occurrence lowering, region enumeration, legality
 derivation, complete partition search, a public compiler boundary, Metal
-source, artifacts, or runtime execution.
+source, artifacts, or runtime execution. ADRs 0070 and 0071 now establish the
+shared `tiler-ir` ownership and checked-builder/verified-wrapper lifecycle into
+which the dependency-ordered implementation tickets lower. The ordinary
+compiler library target is active, but proof-specific structures remain
+private until replaced rather than being promoted as provisional public IR.
 
 ## Milestone 2Q: quantized-value vertical proof
 

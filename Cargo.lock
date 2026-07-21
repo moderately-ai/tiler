@@ -148,7 +148,6 @@ dependencies = [
 name = "tiler-compiler"
 version = "0.0.0"
 dependencies = [
- "tiler-artifact",
  "tiler-ir",
  "tiler-reference",
 ]

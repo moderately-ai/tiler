@@ -15,7 +15,7 @@ EXPECTED = {
     "tiler-ir": set(),
     "tiler-reference": {"tiler-ir"},
     "tiler-artifact": {"tiler-ir"},
-    "tiler-compiler": {"tiler-artifact", "tiler-ir"},
+    "tiler-compiler": {"tiler-ir"},
     "tiler-metal": {"tiler-artifact", "tiler-ir"},
     "tiler-prototype-compile": {
         "tiler-artifact",

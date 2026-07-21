@@ -6,7 +6,7 @@ title: "Expose a public semantic graph and extension boundary"
 topics: ["semantics", "extensions", "api"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.vision", "tiler.contract.operation-extensions"]
 evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.extensions.operation-extension-surface"]
 ticket: "synthesize-core-contracts"

@@ -44,10 +44,13 @@ CandidateRegionSet
         └◄─ ImplementationFrontier(region, target) ◄────┘
         │ select compatible region implementations
         ▼
-KernelProgram / guarded ProgramPortfolio
-        │ structured lowering
+ScheduledRegion
+        │ verified structured lowering
         ▼
-structured kernel IR
+structured kernel IR per selected implementation
+        │ assemble complete stages, buffers, and routing
+        ▼
+KernelProgram / guarded ProgramPortfolio
         │ target emission
         ▼
 target source/binary + ABI manifest
@@ -236,10 +239,11 @@ initialization and before lifetime end. A later buffer-assignment pass may reuse
 storage only with explicit liveness, size, alignment, memory-space, and alias
 proofs.
 
-## Proposed components
+## Component ownership
 
-These are dependency boundaries, not necessarily the initial published-crate
-layout.
+ADR 0070 accepts these dependency and verifier-ownership boundaries. They are
+not necessarily the final published-crate layout, and individual field sets
+remain experimental until their dedicated implementation tickets land.
 
 | Component | Responsibility | Forbidden dependencies |
 | --- | --- | --- |
@@ -257,6 +261,13 @@ Initially, semantic, index, schedule, and kernel IRs may be modules in one
 crate. Splitting every representation into a crate before its API stabilizes
 would add ceremony without improving the dependency graph.
 
+Shared compiler IR uses checked public builders with private storage. Local
+insertion failures are reported immediately; consuming `build()` performs the
+whole-object verifier and returns an opaque immutable verified product or a
+typed failure retaining builder ownership. Compiler passes, third-party plan
+producers, artifact decoders, and backends use this same verifier authority.
+Only verified products cross those boundaries. See ADR 0071.
+
 ## Accepted prototype packaging profile
 
 ADR 0065 refines ADR 0056 after the evaluator implementation exposed a real
@@ -267,7 +278,7 @@ non-published proof executables:
 tiler-ir       -> []
 tiler-reference -> [tiler-ir]
 tiler-artifact -> [tiler-ir]
-tiler-compiler -> [tiler-ir, tiler-artifact]
+tiler-compiler -> [tiler-ir]
 tiler-metal    -> [tiler-ir, tiler-artifact]
 
 prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal]
@@ -295,13 +306,16 @@ identity.
 ## Dependency direction
 
 ```text
-frontend integrations ─► tiler-ir ◄─ tiler-compiler ─► backend integrations
-                              ▲              │                  │
-                              │              ▼                  ▼
-                        public op       tiler-artifact     target AOT tools
-                        definitions           ▲
-                                              │
-                                      runtime integrations
+frontend integrations ─► tiler-ir ◄─ tiler-compiler
+                              ▲              │
+                              │              ▼
+                        public op       verified IR products
+                        definitions       │             │
+                                          ▼             ▼
+                                   tiler-artifact   backend emitters
+                                          ▲             │
+                                          │             ▼
+                                  runtime adapters  target AOT tools
 ```
 
 The runtime adapter must not link the optimizer merely to execute a compiled

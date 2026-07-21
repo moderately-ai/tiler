@@ -6,7 +6,7 @@ title: "Separate semantic planning from physical scheduling"
 topics: ["architecture", "ir", "scheduling"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.optimizer", "tiler.contract.fusion-and-scheduling", "tiler.contract.vision"]
 evidence: ["tiler.research.scheduling.scheduled-region-model"]
 ticket: "synthesize-core-contracts"

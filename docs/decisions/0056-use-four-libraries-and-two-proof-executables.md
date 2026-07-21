@@ -10,14 +10,14 @@ implementation_status: "partial"
 applies_to: ["tiler.contract.architecture"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv"]
 ticket: "prototype-foundation-contract"
-related: ["ADR-0065"]
+related: ["ADR-0065", "ADR-0070"]
 ---
 
 # 0056: Use four libraries and two proof executables
 
 **Status:** superseded by ADR 0065 for the reusable-crate count and reference
-evaluator placement; the remaining compiler/artifact/backend/runtime boundaries
-are retained
+evaluator placement and by ADR 0070 for the compiler-to-artifact dependency
+edge; the remaining packaging boundaries are retained
 
 ## Context
 

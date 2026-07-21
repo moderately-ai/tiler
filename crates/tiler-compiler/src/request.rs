@@ -72,6 +72,7 @@ pub(crate) struct DeterministicBudgets {
 }
 
 impl DeterministicBudgets {
+    #[cfg(test)]
     pub(crate) const fn governed() -> Self {
         Self {
             semantic_values: 16,
@@ -148,9 +149,10 @@ pub(crate) struct CompilationRequest<'a> {
     pub(crate) capabilities: CompilerCapabilitySnapshot,
 }
 
-impl<'a> CompilationRequest<'a> {
-    pub(crate) fn governed(program: &'a SemanticProgram) -> Self {
-        Self {
+impl CompilationRequest<'_> {
+    #[cfg(test)]
+    pub(crate) fn governed(program: &SemanticProgram) -> CompilationRequest<'_> {
+        CompilationRequest {
             program,
             shape_environment: StaticShapeEnvironment::governed(),
             numerical_contract: StrictF32NumericalContract::governed(),
