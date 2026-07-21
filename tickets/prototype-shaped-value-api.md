@@ -1,7 +1,7 @@
 ---
 id: prototype-shaped-value-api
 title: Implement checked shaped values and shape witnesses
-status: review
+status: done
 priority: p0
 dependencies: [prototype-shape-evidence-spike, research-the-public-static-shape-evidence-spelling, spike-nightly-arbitrary-rank-shape-evidence]
 related: [prototype-semantic-reference-slice]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, research/shapes, contracts/navigation]
 shared_scopes: [project/tickets, contracts/foundation, contracts/decisions]
 paths: [Cargo.lock]
 tags: [implementation, prototype, semantics, shapes, rust-api]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1784601838
 ---
 ADR 0067 accepts the pinned-nightly dependent-array spelling. Its retained
 conformance harness now passes and the repository toolchain policy uses the
