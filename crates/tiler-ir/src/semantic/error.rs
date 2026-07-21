@@ -5,6 +5,7 @@ use std::sync::Arc;
 use super::interface::{InputKey, InterfaceKind, OutputKey};
 use super::registry::{RegistryError, RegistryLookupError};
 use super::types::{ResolvedValueType, TypeIdentityError};
+use crate::shape::{Shape, ShapeExpectation};
 
 /// A fixed-width semantic arena or interface entity category.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -152,6 +153,15 @@ pub enum BuildError {
     /// A typed facade could not recover the result evidence promised by its
     /// registered semantic signature.
     Reify(ReifyError),
+    /// A typed single-result facade resolved a different result arity.
+    TypedResultArity {
+        /// Result count promised by the typed facade.
+        expected: usize,
+        /// Result count inferred by the frozen semantic authority.
+        actual: usize,
+    },
+    /// A typed facade could not revalidate promised result shape evidence.
+    ShapeRefinement(ShapeRefineError),
     /// A tensor rank exceeds the fixed-width logical axis space.
     RankTooLarge {
         /// Rejected logical rank.
@@ -186,6 +196,11 @@ impl fmt::Display for BuildError {
             }
             Self::RegistryLookup(error) => error.fmt(formatter),
             Self::Reify(error) => error.fmt(formatter),
+            Self::TypedResultArity { expected, actual } => write!(
+                formatter,
+                "typed facade expected {expected} operation result(s), but semantic authority inferred {actual}"
+            ),
+            Self::ShapeRefinement(error) => error.fmt(formatter),
             Self::RankTooLarge { rank } => {
                 write!(
                     formatter,
@@ -204,7 +219,114 @@ impl Error for BuildError {
             Self::InvalidOperationAttributes(error) => Some(error),
             Self::RegistryLookup(error) => Some(error),
             Self::Reify(error) => Some(error),
+            Self::ShapeRefinement(error) => Some(error),
             _ => None,
+        }
+    }
+}
+
+/// Failure to attach requested Rust-side shape evidence to a semantic value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ShapeRefineError {
+    /// The value identity is foreign or invalid locally.
+    Handle(HandleError),
+    /// The evidence disagrees with the authoritative graph shape.
+    EvidenceMismatch {
+        /// Requested evidence, rendered independently of Rust type names.
+        expected: ShapeExpectation,
+        /// Authoritative shape recorded by the semantic graph.
+        actual: Shape,
+    },
+}
+
+impl fmt::Display for ShapeRefineError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Handle(error) => error.fmt(formatter),
+            Self::EvidenceMismatch { expected, actual } => write!(
+                formatter,
+                "requested {expected} does not match authoritative shape {actual}"
+            ),
+        }
+    }
+}
+
+impl Error for ShapeRefineError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Handle(error) => Some(error),
+            Self::EvidenceMismatch { .. } => None,
+        }
+    }
+}
+
+/// Position of a value in an ordered binary shape predicate.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ShapeWitnessSubject {
+    /// First predicate subject.
+    Left,
+    /// Second predicate subject.
+    Right,
+}
+
+impl fmt::Display for ShapeWitnessSubject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Left => formatter.write_str("left witness subject"),
+            Self::Right => formatter.write_str("right witness subject"),
+        }
+    }
+}
+
+/// Failure to prove or validate a graph-owned shape relationship.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ShapeWitnessError {
+    /// One requested subject is foreign or invalid locally.
+    SubjectHandle {
+        /// Ordered subject whose handle failed.
+        subject: ShapeWitnessSubject,
+        /// Underlying graph-handle failure.
+        error: HandleError,
+    },
+    /// Canonical subject shapes do not satisfy equality.
+    NotSameShape {
+        /// Authoritative left shape.
+        left: Shape,
+        /// Authoritative right shape.
+        right: Shape,
+    },
+    /// The witness was created by another graph.
+    ForeignWitness,
+    /// The witness proves the predicate for a different ordered subject pair.
+    SubjectMismatch,
+}
+
+impl fmt::Display for ShapeWitnessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SubjectHandle { subject, error } => write!(formatter, "{subject}: {error}"),
+            Self::NotSameShape { left, right } => write!(
+                formatter,
+                "cannot prove equal shapes for {left} and {right}"
+            ),
+            Self::ForeignWitness => {
+                formatter.write_str("shape witness belongs to another semantic graph")
+            }
+            Self::SubjectMismatch => {
+                formatter.write_str("shape witness proves a different ordered subject pair")
+            }
+        }
+    }
+}
+
+impl Error for ShapeWitnessError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::SubjectHandle { error, .. } => Some(error),
+            Self::NotSameShape { .. } | Self::ForeignWitness | Self::SubjectMismatch => None,
         }
     }
 }

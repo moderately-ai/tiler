@@ -1,6 +1,11 @@
 //! Target-independent fixed shape vocabulary.
 
 use std::collections::BTreeSet;
+use std::fmt;
+
+mod evidence;
+
+pub use evidence::{Rank, ShapeEvidence, ShapeExpectation, StaticShape};
 
 /// The size of one logical tensor axis.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -41,6 +46,19 @@ impl Axis {
 /// A fixed-rank, fixed-extent tensor shape.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Shape(Vec<Extent>);
+
+impl fmt::Display for Shape {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[")?;
+        for (index, extent) in self.0.iter().enumerate() {
+            if index != 0 {
+                formatter.write_str(", ")?;
+            }
+            write!(formatter, "{}", extent.get())?;
+        }
+        formatter.write_str("]")
+    }
+}
 
 impl Shape {
     /// Creates a shape from outermost to innermost extents.

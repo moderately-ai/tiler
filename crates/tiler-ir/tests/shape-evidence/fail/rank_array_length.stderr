@@ -1,0 +1,5 @@
+error[E0308]: mismatched types
+ --> tests/shape-evidence/fail/rank_array_length.rs:6:33
+  |
+6 | type Invalid = StaticShape<2, { [1, 2, 3] }>;
+  |                                 ^^^^^^^^^ expected an array with a size of 2, found one with a size of 3

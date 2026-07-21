@@ -26,6 +26,14 @@ token generation, compile-fail diagnostics, evidence forgery, foreign-graph
 rejection, exact feature-gate requirements, and an isolated borrowed-slice
 comparison.
 
+The retained feature-boundary probes also distinguish evidence preservation
+from generic evidence derivation. The governed features admit scalar-broadcast
+preservation and caller-selected checked output evidence. Adding
+`generic_const_exprs` admits `Rank<{ RANK - 1 }>` but still rejects a generic
+exact-extent array with one axis removed. The emerging `generic_const_args`
+path is not usable on either tested compiler without additional solver state
+and remains outside the governed profile.
+
 The repository root has a different toolchain until this spike passes. Always
 use the explicit selector; `--manifest-path` alone does not change rustup's
 working-directory resolution:

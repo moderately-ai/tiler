@@ -174,9 +174,9 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 - Owner/track: [Operation extensions](operation-extensions.md), Milestone 0A.
   ADRs 0005 and 0044 settle the conceptual split. The
   [`resolved-type registry`](../tickets/prototype-resolved-value-type-registry.md),
-  [`typed handles`](../tickets/prototype-typed-value-handles.md), and
-  [`shaped-value API`](../tickets/prototype-shaped-value-api.md) own the active
-  bounded compile/UI proof.
+  [`typed handles`](../tickets/prototype-typed-value-handles.md), and bounded
+  [`shaped-value API`](../tickets/prototype-shaped-value-api.md) now have
+  compile/UI proofs. Consequential public-interface review remains active.
 - Close: concrete visibility and trait ergonomics with compile/UI tests.
 
 ### Q-PKG-003 — Proc-macro to Metal-AOT visibility

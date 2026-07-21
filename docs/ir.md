@@ -5,7 +5,7 @@ kind: "contract"
 title: "IR stack and invariants"
 topics: ["ir", "semantics", "scheduling"]
 contract_status: "mixed"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.indexing.index-access-model", "tiler.research.scheduling.scheduled-region-model", "tiler.research.kernel-ir.structured-kernel-ir-verifier", "tiler.research.shapes.nightly-const-shape-parameters"]
 ---
 

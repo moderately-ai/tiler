@@ -27,9 +27,10 @@ progression rather than blanket implementation authority.
 fix the graph, shape, registry, and proc-macro visibility boundaries. The
 semantic type, operation, typed-handle, and reference boundaries are now
 compile-checked, and the retained dependent-array conformance harness passes.
-The checked shaped-value implementation and assembled semantic/reference slice
-remain before this milestone's exit criterion. Production stabilization remains
-future work.
+The checked shaped-value draft is implemented with compile-fail and identity
+coverage; public-interface review and the assembled semantic/reference slice
+remain before this milestone's exit criterion. Production stabilization
+remains future work.
 
 The bullets below are the implementation scope authorized only after the
 research-readiness decision; they are not claims that the implementations
@@ -51,9 +52,9 @@ already exist.
   and sourceability of every dynamic output/temporary/guard/launch expression.
 - Establish multiple named results, sharing, and multi-result representation
   invariants even if the first runtime profile executes a narrower subset.
-- Implement ADR 0067's one arbitrary-rank `StaticShape<RANK, EXTENTS>` evidence
-  family using the now-passing retained conformance harness; reuse that harness
-  for every compiler-pin migration.
+- Review and integrate ADR 0067's implemented arbitrary-rank
+  `StaticShape<RANK, EXTENTS>` evidence family; reuse the retained conformance
+  harness for every compiler-pin migration.
 
 **Exit criterion:** tensor meaning and graph invariants have a reviewed
 contract, mandatory operation-extension capabilities are explicit, and a small

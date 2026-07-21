@@ -12,12 +12,14 @@ mod interface;
 mod operation;
 mod program;
 mod registry;
+mod shape_evidence;
 mod standard_operations;
 mod types;
 
 pub use error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,
-    ProgramBuildFailure, ReifyError, ValidationDiagnostic, ValidationDiagnostics, ValueRole,
+    ProgramBuildFailure, ReifyError, ShapeRefineError, ShapeWitnessError, ShapeWitnessSubject,
+    ValidationDiagnostic, ValidationDiagnostics, ValueRole,
 };
 pub use handles::{OperationId, Value, ValueId};
 pub use identity::CanonicalIdentity;
@@ -42,6 +44,7 @@ pub use registry::{
     TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey, ValueTypeInstanceValidator,
     ValueTypeMarker,
 };
+pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use standard_operations::{F32Add, F32Constant, F32Multiply, StrictSerialF32Sum};
 pub use types::{
     CanonicalField, CanonicalResolvedValueType, CanonicalValue, CanonicalValueView,

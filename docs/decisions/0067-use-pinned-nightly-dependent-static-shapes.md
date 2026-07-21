@@ -16,8 +16,8 @@ ticket: "adopt-nightly-dependent-static-shapes"
 
 # 0067: Use pinned-nightly dependent arrays for exact shape evidence
 
-**Status:** accepted; conformance harness and workspace pin implemented,
-production shaped-value API pending
+**Status:** accepted; conformance harness, workspace pin, and bounded shaped-
+value API implemented; public-interface review pending
 
 ## Context
 
@@ -101,7 +101,9 @@ identity, exact feature requirements, stable-proc-macro token generation,
 rank-zero through rank-64 coverage, compile-fail diagnostics, authority
 isolation, and bounded 1,000-shape compile cost. The repository now uses the
 governed pin and declares no stable `rust-version`. Implementing the production
-`tiler-ir` evidence and shaped-value types remains separate work.
+`tiler-ir` now implements the selected family as sealed evidence checked by
+builder- and program-owned refinement. The implementation remains an
+experimental public-interface review draft rather than a stabilized API.
 
 ## Consequences
 
