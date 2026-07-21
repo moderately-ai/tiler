@@ -29,9 +29,9 @@ base commit `f6664fd`. They separately attempted to:
 The acceptance pass also ran:
 
 ```sh
-python3 -B scripts/docs.py validate
-python3 -B scripts/docs.py render --check
-python3 -B -m unittest discover -s scripts/tests -v
+uv run --locked python scripts/docs.py validate
+uv run --locked python scripts/docs.py render --check
+uv run --locked pytest
 tkt lint
 tkt reconcile
 ```

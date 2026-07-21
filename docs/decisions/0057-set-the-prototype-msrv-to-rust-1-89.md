@@ -6,7 +6,7 @@ title: "Set the prototype MSRV to Rust 1.89"
 topics: ["rust", "msrv", "cache", "toolchains"]
 catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture", "tiler.contract.frontend-integration"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv"]
 ticket: "prototype-foundation-contract"

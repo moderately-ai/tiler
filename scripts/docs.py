@@ -14,7 +14,16 @@ from datetime import date
 from pathlib import Path, PurePosixPath
 
 SCHEMA = "tiler-doc/v1"
-KINDS = {"portal", "contract", "decision", "research", "experiment", "roadmap", "questions", "prior-art"}
+KINDS = {
+    "portal",
+    "contract",
+    "decision",
+    "research",
+    "experiment",
+    "roadmap",
+    "questions",
+    "prior-art",
+}
 GROUPS = {
     "foundation-semantics-extensions": "Foundation, semantics, and extensions",
     "numerical-operations": "Numerical operations",
@@ -31,17 +40,66 @@ ENUMS = {
     "experiment_status": {"planned", "reproducible", "partial", "blocked"},
     "roadmap_status": {"proposed", "accepted"},
     "questions_status": {"active", "archived"},
-    "disposition": {"pending", "adopted", "partially-adopted", "informational", "rejected", "superseded"},
+    "disposition": {
+        "pending",
+        "adopted",
+        "partially-adopted",
+        "informational",
+        "rejected",
+        "superseded",
+    },
     "implementation_status": {"not-started", "spike-only", "partial", "implemented"},
 }
-EVIDENCE = {"primary-source-synthesis", "executable-model", "bounded-measurement", "exhaustive-finite", "sound-proof", "normative-guarantee", "unknown"}
-COMMON = {"schema", "id", "kind", "title", "topics", "depends_on", "refines", "supersedes", "related"}
+EVIDENCE = {
+    "primary-source-synthesis",
+    "executable-model",
+    "bounded-measurement",
+    "exhaustive-finite",
+    "sound-proof",
+    "normative-guarantee",
+    "unknown",
+}
+COMMON = {
+    "schema",
+    "id",
+    "kind",
+    "title",
+    "topics",
+    "depends_on",
+    "refines",
+    "supersedes",
+    "related",
+}
 FIELDS = {
     "portal": set(),
     "contract": {"contract_status", "implementation_status", "evidence", "ticket"},
-    "decision": {"decision_status", "implementation_status", "applies_to", "evidence", "catalog_group", "ticket"},
-    "research": {"research_status", "disposition", "implementation_status", "evidence_classes", "informs", "adopted_by", "catalog_group", "ticket"},
-    "experiment": {"experiment_status", "implementation_status", "evidence_classes", "supports", "entrypoints", "last_verified", "ticket"},
+    "decision": {
+        "decision_status",
+        "implementation_status",
+        "applies_to",
+        "evidence",
+        "catalog_group",
+        "ticket",
+    },
+    "research": {
+        "research_status",
+        "disposition",
+        "implementation_status",
+        "evidence_classes",
+        "informs",
+        "adopted_by",
+        "catalog_group",
+        "ticket",
+    },
+    "experiment": {
+        "experiment_status",
+        "implementation_status",
+        "evidence_classes",
+        "supports",
+        "entrypoints",
+        "last_verified",
+        "ticket",
+    },
     "roadmap": {"roadmap_status"},
     "questions": {"questions_status"},
     "prior-art": {"informs"},
@@ -49,15 +107,51 @@ FIELDS = {
 REQUIRED = {
     "portal": set(),
     "contract": {"contract_status", "implementation_status"},
-    "decision": {"decision_status", "implementation_status", "applies_to", "evidence", "catalog_group"},
-    "research": {"research_status", "disposition", "implementation_status", "evidence_classes", "informs", "catalog_group"},
+    "decision": {
+        "decision_status",
+        "implementation_status",
+        "applies_to",
+        "evidence",
+        "catalog_group",
+    },
+    "research": {
+        "research_status",
+        "disposition",
+        "implementation_status",
+        "evidence_classes",
+        "informs",
+        "catalog_group",
+    },
     "experiment": {"experiment_status", "implementation_status", "evidence_classes", "supports"},
     "roadmap": {"roadmap_status"},
     "questions": {"questions_status"},
     "prior-art": set(),
 }
-ARRAYS = {"topics", "depends_on", "refines", "supersedes", "related", "evidence", "applies_to", "evidence_classes", "informs", "adopted_by", "supports", "entrypoints"}
-RELATIONS = {"depends_on", "refines", "supersedes", "related", "evidence", "applies_to", "informs", "adopted_by", "supports"}
+ARRAYS = {
+    "topics",
+    "depends_on",
+    "refines",
+    "supersedes",
+    "related",
+    "evidence",
+    "applies_to",
+    "evidence_classes",
+    "informs",
+    "adopted_by",
+    "supports",
+    "entrypoints",
+}
+RELATIONS = {
+    "depends_on",
+    "refines",
+    "supersedes",
+    "related",
+    "evidence",
+    "applies_to",
+    "informs",
+    "adopted_by",
+    "supports",
+}
 MARKERS = {
     "decision": (Path("docs/decisions/README.md"), "ADR TOPICS"),
     "research": (Path("docs/research/README.md"), "RESEARCH CATALOG"),
@@ -108,7 +202,9 @@ def parse(path: Path, root: Path) -> tuple[Record | None, list[str]]:
             errors.append(f"{rel}:{line_no}: invalid JSON value: {exc.msg}")
             continue
         scalar = isinstance(value, (str, bool, int)) and not isinstance(value, float)
-        array = isinstance(value, list) and all(isinstance(v, (str, bool, int)) and not isinstance(v, float) for v in value)
+        array = isinstance(value, list) and all(
+            isinstance(v, (str, bool, int)) and not isinstance(v, float) for v in value
+        )
         if not scalar and not array:
             errors.append(f"{rel}:{line_no}: value must be a scalar or flat scalar array")
             continue
@@ -143,7 +239,11 @@ def validate_record(record: Record, root: Path) -> list[str]:
     if m.get("schema") != SCHEMA:
         errors.append(f"{p}: schema must be {SCHEMA!r}")
     identifier = m.get("id")
-    id_ok = isinstance(identifier, str) and (re.fullmatch(r"ADR-\d{4}", identifier) if kind == "decision" else re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", identifier))
+    id_ok = isinstance(identifier, str) and (
+        re.fullmatch(r"ADR-\d{4}", identifier)
+        if kind == "decision"
+        else re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", identifier)
+    )
     if not id_ok:
         errors.append(f"{p}: invalid stable id {identifier!r}")
     for key in ARRAYS:
@@ -174,7 +274,9 @@ def validate_record(record: Record, root: Path) -> list[str]:
                 errors.append(f"{p}: invalid evidence class {value!r}")
         if "unknown" in classes and len(classes) != 1:
             errors.append(f"{p}: unknown evidence is exclusive")
-    heading = next((line[2:].strip() for line in record.body.splitlines() if line.startswith("# ")), None)
+    heading = next(
+        (line[2:].strip() for line in record.body.splitlines() if line.startswith("# ")), None
+    )
     expected = re.sub(r"^\d{4}:\s*", "", heading or "")
     if expected != m.get("title"):
         errors.append(f"{p}: title {m.get('title')!r} does not match H1 {heading!r}")
@@ -189,13 +291,37 @@ def validate_record(record: Record, root: Path) -> list[str]:
             errors.append(f"{p}: last_verified must be YYYY-MM-DD")
         for entry in m.get("entrypoints", []):
             posix = PurePosixPath(str(entry))
-            if posix.is_absolute() or ".." in posix.parts or "." in posix.parts or "\\" in str(entry) or not (root / posix).is_file():
+            if (
+                posix.is_absolute()
+                or ".." in posix.parts
+                or "." in posix.parts
+                or "\\" in str(entry)
+                or not (root / posix).is_file()
+            ):
                 errors.append(f"{p}: invalid repository-root entrypoint {entry!r}")
     return errors
 
 
 def ticket_ids(root: Path) -> set[str]:
     return {p.stem for p in (root / "tickets").glob("*.md")}
+
+
+def contains_cycle(graph: dict[str, list[str]]) -> bool:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def walk(node: str) -> bool:
+        if node in visiting:
+            return True
+        if node in visited:
+            return False
+        visiting.add(node)
+        cyclic = any(walk(nxt) for nxt in graph[node])
+        visiting.remove(node)
+        visited.add(node)
+        return cyclic
+
+    return any(walk(node) for node in list(graph))
 
 
 def validate_graph(records: list[Record], root: Path) -> list[str]:
@@ -206,7 +332,13 @@ def validate_graph(records: list[Record], root: Path) -> list[str]:
             errors.append(f"{record.path}: duplicate id {record.id} (also {by_id[record.id].path})")
         by_id[record.id] = record
     tickets = ticket_ids(root)
-    type_rules = {"applies_to": {"contract"}, "evidence": {"research"}, "informs": {"contract"}, "adopted_by": {"decision"}, "supports": {"research"}}
+    type_rules = {
+        "applies_to": {"contract"},
+        "evidence": {"research"},
+        "informs": {"contract"},
+        "adopted_by": {"decision"},
+        "supports": {"research"},
+    }
     edges: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for record in records:
         m = record.meta
@@ -219,36 +351,47 @@ def validate_graph(records: list[Record], root: Path) -> list[str]:
                     errors.append(f"{record.path}: unresolved {relation} target {target_id!r}")
                     continue
                 if relation in type_rules and target.meta["kind"] not in type_rules[relation]:
-                    errors.append(f"{record.path}: {relation} cannot target {target.meta['kind']} {target_id}")
+                    errors.append(
+                        f"{record.path}: {relation} cannot target {target.meta['kind']} {target_id}"
+                    )
                 if relation == "related" and record.id >= target.id:
-                    errors.append(f"{record.path}: related edge must be stored on lexicographically smaller id")
+                    errors.append(
+                        f"{record.path}: related edge must be stored on "
+                        "lexicographically smaller id"
+                    )
                 if relation in {"depends_on", "refines", "supersedes"}:
                     edges[relation].append((record.id, target.id))
-    accepted_adrs = [r for r in records if r.meta.get("kind") == "decision" and r.meta.get("decision_status") == "accepted"]
+    accepted_adrs = [
+        r
+        for r in records
+        if r.meta.get("kind") == "decision" and r.meta.get("decision_status") == "accepted"
+    ]
     inbound = {target for r in accepted_adrs for target in r.meta.get("applies_to", [])}
     for record in records:
         m = record.meta
-        if m.get("kind") == "contract" and m.get("contract_status") == "accepted" and record.id not in inbound:
+        if (
+            m.get("kind") == "contract"
+            and m.get("contract_status") == "accepted"
+            and record.id not in inbound
+        ):
             errors.append(f"{record.path}: accepted contract has no inbound accepted ADR")
-        if m.get("kind") == "decision" and m.get("decision_status") == "accepted" and (not m.get("applies_to") or not m.get("evidence")):
+        if (
+            m.get("kind") == "decision"
+            and m.get("decision_status") == "accepted"
+            and (not m.get("applies_to") or not m.get("evidence"))
+        ):
             errors.append(f"{record.path}: accepted decision requires applies_to and evidence")
-        if m.get("kind") == "research" and m.get("disposition") in {"adopted", "partially-adopted"} and not (m.get("informs") or m.get("adopted_by")):
+        if (
+            m.get("kind") == "research"
+            and m.get("disposition") in {"adopted", "partially-adopted"}
+            and not (m.get("informs") or m.get("adopted_by"))
+        ):
             errors.append(f"{record.path}: adopted research requires informs or adopted_by")
     for name, relation_edges in edges.items():
         graph: dict[str, list[str]] = defaultdict(list)
         for source, target in relation_edges:
             graph[source].append(target)
-        visiting, visited = set(), set()
-        def walk(node: str) -> bool:
-            if node in visiting:
-                return True
-            if node in visited:
-                return False
-            visiting.add(node)
-            cyclic = any(walk(nxt) for nxt in graph[node])
-            visiting.remove(node); visited.add(node)
-            return cyclic
-        if any(walk(node) for node in list(graph)):
+        if contains_cycle(graph):
             errors.append(f"metadata graph: {name} contains a cycle")
     return errors
 
@@ -296,7 +439,9 @@ def validate_questions(root: Path) -> list[str]:
         if qid in seen:
             errors.append(f"docs/open-questions.md: duplicate question {qid}")
         seen.add(qid)
-        block = text[match.end() : matches[index + 1].start() if index + 1 < len(matches) else len(text)]
+        block = text[
+            match.end() : matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        ]
         if not re.search(r"^- Owner(?:/track(?:ing)?|/tracking)?:", block, re.MULTILINE):
             errors.append(f"docs/open-questions.md: {qid} lacks owner")
         if not re.search(r"^- (?:Close(?: when)?|Run when|Trigger):", block, re.MULTILINE):
@@ -313,7 +458,11 @@ def catalog(records: list[Record], kind: str) -> str:
     for record in selected:
         group = record.meta.get("catalog_group")
         if kind == "experiment":
-            support_groups = {by_id[s].meta.get("catalog_group") for s in record.meta.get("supports", []) if s in by_id}
+            support_groups = {
+                by_id[s].meta.get("catalog_group")
+                for s in record.meta.get("supports", [])
+                if s in by_id
+            }
             group = sorted(support_groups)[0] if support_groups else "documentation-governance"
         grouped[str(group)].append(record)
     lines = []
@@ -331,7 +480,8 @@ def catalog(records: list[Record], kind: str) -> str:
                 experiments_by_research[str(supported)].append(candidate.id)
     for group in GROUPS:
         items = sorted(grouped.get(group, []), key=lambda r: (str(r.meta.get("title")), r.id))
-        if not items: continue
+        if not items:
+            continue
         lines += [f"### {GROUPS[group]}", ""]
         for record in items:
             if kind == "decision":
@@ -339,12 +489,20 @@ def catalog(records: list[Record], kind: str) -> str:
                 href = record.path.relative_to(Path("docs/decisions"))
                 contracts = ", ".join(link(str(item)) for item in record.meta["applies_to"])
                 evidence = ", ".join(link(str(item)) for item in record.meta["evidence"])
-                detail = f"{record.meta['decision_status']}; contracts: {contracts}; evidence: {evidence}"
+                detail = (
+                    f"{record.meta['decision_status']}; contracts: {contracts}; "
+                    f"evidence: {evidence}"
+                )
             elif kind == "research":
                 label = str(record.meta["title"])
                 href = Path(posixpath.relpath(record.path.as_posix(), portal_dir))
-                detail = f"{record.meta['disposition']}; {', '.join(record.meta['evidence_classes'])}"
-                destinations = [str(item) for item in record.meta.get("informs", []) + record.meta.get("adopted_by", [])]
+                detail = (
+                    f"{record.meta['disposition']}; {', '.join(record.meta['evidence_classes'])}"
+                )
+                destinations = [
+                    str(item)
+                    for item in record.meta.get("informs", []) + record.meta.get("adopted_by", [])
+                ]
                 if destinations:
                     detail += "; informs: " + ", ".join(link(item) for item in destinations)
                 reproduced = sorted(experiments_by_research.get(record.id, []))
@@ -353,8 +511,13 @@ def catalog(records: list[Record], kind: str) -> str:
             else:
                 label = str(record.meta["title"])
                 href = record.path.relative_to(Path("spikes"))
-                detail = f"{record.meta['experiment_status']}; {', '.join(record.meta['evidence_classes'])}"
-                detail += "; supports: " + ", ".join(link(str(item)) for item in record.meta["supports"])
+                detail = (
+                    f"{record.meta['experiment_status']}; "
+                    f"{', '.join(record.meta['evidence_classes'])}"
+                )
+                detail += "; supports: " + ", ".join(
+                    link(str(item)) for item in record.meta["supports"]
+                )
             lines.append(f"- [{label}]({href.as_posix()}) — {detail}")
         lines.append("")
     return "\n".join(lines).rstrip()
@@ -367,23 +530,29 @@ def render(root: Path, records: list[Record], check: bool) -> list[str]:
         text = path.read_text(encoding="utf-8")
         begin, end = f"<!-- BEGIN GENERATED {marker} -->", f"<!-- END GENERATED {marker} -->"
         replacement = f"{begin}\n{catalog(records, kind)}\n{end}"
-        updated, count = re.subn(re.escape(begin) + r".*?" + re.escape(end), replacement, text, flags=re.DOTALL)
+        updated, count = re.subn(
+            re.escape(begin) + r".*?" + re.escape(end), replacement, text, flags=re.DOTALL
+        )
         if count != 1:
             errors.append(f"{relative}: expected exactly one generated {marker} block")
         elif updated != text:
-            if check: errors.append(f"{relative}: generated catalog is stale; run scripts/docs.py render")
-            else: path.write_text(updated, encoding="utf-8")
+            if check:
+                errors.append(f"{relative}: generated catalog is stale; run scripts/docs.py render")
+            else:
+                path.write_text(updated, encoding="utf-8")
     return errors
 
 
 def validate(root: Path, check_render: bool = True) -> list[str]:
     records, errors = load(root)
-    for record in records: errors += validate_record(record, root)
+    for record in records:
+        errors += validate_record(record, root)
     errors += validate_graph(records, root)
     errors += validate_links(records, root)
     errors += validate_tickets(root)
     errors += validate_questions(root)
-    if check_render: errors += render(root, records, True)
+    if check_render:
+        errors += render(root, records, True)
     return sorted(set(errors))
 
 

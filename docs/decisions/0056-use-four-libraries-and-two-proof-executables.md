@@ -6,7 +6,7 @@ title: "Use four libraries and two proof executables"
 topics: ["rust", "workspace", "dependencies", "prototype"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv"]
 ticket: "prototype-foundation-contract"

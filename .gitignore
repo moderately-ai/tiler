@@ -1,4 +1,7 @@
 .agents/skills/ticketsplease
+.claude/skills/ticketsplease
+.pytest_cache/
+.venv/
 __pycache__/
 *.py[cod]
 /target/

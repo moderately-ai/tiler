@@ -1,0 +1,28 @@
+[project]
+name = "tiler-dev"
+version = "0.0.0"
+description = "Repository-local development tooling for Tiler"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "ruff==0.15.15",
+]
+
+[tool.uv]
+package = false
+required-version = ">=0.11.28"
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers", "-ra"]
+testpaths = ["scripts/tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+include = ["scripts/**/*.py"]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "SIM", "UP"]

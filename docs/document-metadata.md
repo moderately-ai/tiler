@@ -139,16 +139,16 @@ derived from metadata and checked in for ordinary GitHub reading.
 The validator uses only the Python standard library:
 
 ```sh
-python3 scripts/docs.py validate
-python3 -m unittest discover -s scripts/tests -v
+uv run --locked python scripts/docs.py validate
+uv run --locked pytest
 ```
 
 After changing cataloged metadata, regenerate the checked-in views and validate
 the result:
 
 ```sh
-python3 scripts/docs.py render
-python3 scripts/docs.py validate
+uv run --locked python scripts/docs.py render
+uv run --locked python scripts/docs.py validate
 ```
 
 CI runs the tests and validator. `render --check` is available when a caller
