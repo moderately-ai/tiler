@@ -438,10 +438,15 @@ cache identity even when generated code bytes happen to remain equal.
 
 ```text
 semantic_digest = H("tiler-semantic-v1" || canonical semantic bytes)
-scheduled_digest = H("tiler-schedule-v1" || semantic_digest
-                     || canonical scheduled bytes)
+index_digest = H("tiler-index-v1" || canonical index-structure bytes)
+schedule_digest = H("tiler-schedule-v1" || index_digest
+                    || canonical schedule-structure bytes)
+refinement_digest = H("tiler-refinement-v1" || region occurrence/binding
+                      || index_digest || reached definitions
+                      || selected providers/evidence)
 plan_digest = H("tiler-program-v1" || semantic_digest
-                || canonical program bytes)
+                || bound refinements/implementations
+                || canonical complete-program bytes)
 section_digest[i] = H("tiler-section-v1" || section_type/schema
                       || exact section bytes)
 manifest_digest = H("tiler-manifest-v1" || exact canonical manifest bytes)
@@ -452,7 +457,7 @@ Section digests are stored only in manifest section descriptors. The manifest
 digest is stored only in the framing header and covers the exact manifest bytes,
 which contain no `manifest_digest` or `envelope_digest` field. `EnvelopeDigest`
 is externally derived and never stored inside the envelope it covers. Semantic,
-scheduled, and plan digests may appear as cross-reference values, but their
+index, schedule, refinement, and plan digests may appear as cross-reference values, but their
 canonical subject bytes and domain separators are fixed and independently
 validated. No field is hashed through a zeroing convention or recursive
 definition.

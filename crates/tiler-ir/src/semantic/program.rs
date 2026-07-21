@@ -11,7 +11,7 @@ use super::error::{
 use super::handles::{
     GraphId, OperationId, OperationIndex, Value, ValueId, ValueIndex, next_graph_id,
 };
-use super::identity::CanonicalIdentity;
+use super::identity::SemanticGraphIdentity;
 use super::interface::{
     InputIndex, InputKey, Output, OutputKey, OutputSelector, ProgramInput, ProgramInputRef,
     ProgramOutput, ProgramOutputRef, TypedProgramOutputRef,
@@ -38,7 +38,7 @@ pub(super) struct ProgramData {
     pub(super) operations: Vec<OperationData>,
     pub(super) values: Vec<ValueData>,
     pub(super) outputs: Vec<ProgramOutput>,
-    pub(super) identity: OnceLock<CanonicalIdentity>,
+    pub(super) identity: OnceLock<SemanticGraphIdentity>,
     pub(super) semantic_registry: FrozenSemanticRegistry,
 }
 
@@ -1188,10 +1188,10 @@ mod tests {
         }
     }
 
-    struct OperationProvider;
+    struct OperationProvider(u32);
     impl SemanticRegistryProvider for OperationProvider {
         fn identity(&self) -> ProviderIdentity {
-            ProviderIdentity::new("test", "operations", 1).unwrap()
+            ProviderIdentity::new("test", "operations", self.0).unwrap()
         }
 
         fn register(
@@ -1619,8 +1619,8 @@ mod tests {
         let second = first.clone();
         assert!(Arc::ptr_eq(&first.data, &second.data));
         assert!(std::ptr::eq(
-            first.canonical_identity(),
-            second.canonical_identity()
+            first.semantic_graph_identity(),
+            second.semantic_graph_identity()
         ));
     }
 
@@ -1633,18 +1633,73 @@ mod tests {
     #[test]
     fn identity_ignores_dead_insertion_order_but_preserves_sharing() {
         assert_eq!(
-            program(true, true).canonical_identity(),
-            program(false, true).canonical_identity()
+            program(true, true).semantic_graph_identity(),
+            program(false, true).semantic_graph_identity()
         );
         assert_ne!(
-            program(false, true).canonical_identity(),
-            program(false, false).canonical_identity()
+            program(false, true).semantic_graph_identity(),
+            program(false, false).semantic_graph_identity()
+        );
+    }
+
+    #[test]
+    fn graph_meaning_excludes_provider_revision_but_provenance_retains_it() {
+        fn build(revision: u32) -> SemanticProgram {
+            let mut registry = SemanticRegistryBuilder::standard().unwrap();
+            registry
+                .register_provider(&OperationProvider(revision))
+                .unwrap();
+            let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+            let input = builder
+                .input::<F32>(input_key("x"), Shape::from_dims([2]))
+                .unwrap();
+            let result = builder
+                .apply_typed_single::<F32>(
+                    OpKey::new("test", "identity", 1).unwrap(),
+                    OperationAttributes::empty(),
+                    &[input.erase()],
+                )
+                .unwrap();
+            builder.output(output_key("result"), result).unwrap();
+            builder.build().unwrap()
+        }
+
+        let first = build(1);
+        let second = build(2);
+        let value_types = [F32::resolved_type()];
+        let operations = [OpKey::new("test", "identity", 1).unwrap()];
+        let first_definitions = first
+            .semantic_registry()
+            .project_reached_definitions(value_types.iter(), operations.iter())
+            .unwrap();
+        let second_definitions = second
+            .semantic_registry()
+            .project_reached_definitions(value_types.iter(), operations.iter())
+            .unwrap();
+        let first_admission = first
+            .semantic_registry()
+            .project_reached_admission_provenance(value_types.iter(), operations.iter())
+            .unwrap();
+        let second_admission = second
+            .semantic_registry()
+            .project_reached_admission_provenance(value_types.iter(), operations.iter())
+            .unwrap();
+
+        assert_eq!(
+            first.semantic_graph_identity(),
+            second.semantic_graph_identity()
+        );
+        assert_eq!(first_definitions, second_definitions);
+        assert_ne!(first_admission, second_admission);
+        assert_ne!(
+            first.semantic_registry().snapshot_identity(),
+            second.semantic_registry().snapshot_identity()
         );
     }
 
     #[test]
     fn identity_preserves_exact_float_bits_and_output_order() {
-        fn identity(bits: u32, reverse: bool) -> CanonicalIdentity {
+        fn identity(bits: u32, reverse: bool) -> SemanticGraphIdentity {
             let mut builder = SemanticProgramBuilder::try_standard().unwrap();
             let x = builder
                 .input::<F32>(input_key("x"), Shape::from_dims([1]))
@@ -1658,7 +1713,7 @@ mod tests {
                 builder.output(output_key("result"), value).unwrap();
                 builder.output(output_key("copy"), value).unwrap();
             }
-            builder.build().unwrap().canonical_identity().clone()
+            builder.build().unwrap().semantic_graph_identity().clone()
         }
 
         assert_ne!(
@@ -1672,7 +1727,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_identity_handles_a_deep_chain_iteratively() {
+    fn semantic_graph_identity_handles_a_deep_chain_iteratively() {
         const DEPTH: usize = 50_000;
 
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -1684,7 +1739,7 @@ mod tests {
         builder.output(output_key("result"), value).unwrap();
         let program = builder.build().unwrap();
 
-        assert!(!program.canonical_identity().as_bytes().is_empty());
+        assert!(!program.semantic_graph_identity().as_bytes().is_empty());
     }
 
     #[test]
@@ -1799,7 +1854,7 @@ mod tests {
     #[test]
     fn external_operation_is_admitted_without_a_closed_operation_enum() {
         let mut registry = SemanticRegistryBuilder::standard().unwrap();
-        registry.register_provider(&OperationProvider).unwrap();
+        registry.register_provider(&OperationProvider(1)).unwrap();
         let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
         let input = builder
             .input::<F32>(input_key("x"), Shape::from_dims([2, 3]))
@@ -1873,13 +1928,16 @@ mod tests {
             .unwrap();
         let separate = separate.build().unwrap();
 
-        assert_ne!(shared.canonical_identity(), separate.canonical_identity());
+        assert_ne!(
+            shared.semantic_graph_identity(),
+            separate.semantic_graph_identity()
+        );
     }
 
     #[test]
     fn typed_result_checks_are_transactional() {
         let mut registry = SemanticRegistryBuilder::standard().unwrap();
-        registry.register_provider(&OperationProvider).unwrap();
+        registry.register_provider(&OperationProvider(1)).unwrap();
         let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
         let input = builder
             .input::<F32>(input_key("x"), Shape::from_dims([2]))

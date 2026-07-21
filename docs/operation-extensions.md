@@ -65,8 +65,9 @@ verification or optimization it freezes into an immutable snapshot:
   independently named provider identities and declared compatibility;
 - collisions or contradictory provider selections fail deterministically;
 - the complete frozen registry participates in compilation-request provenance;
-  only reached semantic authorities and selected capability providers
-  participate directly in selected-plan/artifact identity;
+  reached provider-independent definitions, their admission-provider
+  provenance, and selected capability providers participate independently in
+  selected-plan/artifact identity;
 - Rust `TypeId`, vtable addresses, function addresses, registration addresses,
   and hash-map randomization never participate in durable identity.
 
@@ -98,6 +99,14 @@ Provider revisions are an explicit author trust contract, not automatic source
 attestation. Changing output-affecting behavior without changing the declared
 revision is a provider bug. Compiler and capability-API versions also
 participate in identity.
+
+Provider-independent semantic definitions, graph meaning, and provider
+provenance are separate identity subjects under ADR 0072. A provider-only
+revision does not change an otherwise identical `SemanticGraphIdentity` or its
+reached-definition projection. It does change admission provenance, the frozen
+registry snapshot, and every selected refinement, plan, or artifact whose
+correctness depends on that provider. Unused providers remain request-
+environment provenance and do not enter selected artifact identity.
 
 Value types follow the same durable identity principle. A conceptual
 `TypeKey { namespace, name, semantic_version }` identifies a canonical nominal
@@ -294,7 +303,8 @@ visibility.
 - shuffled, parallel, and repeated registration produces one canonical
   snapshot;
 - duplicate semantic ownership and provider conflicts are rejected;
-- semantic keys and provider revisions affect the intended identities;
+- semantic keys, provider-independent definitions, and provider revisions
+  affect only their separately specified identity subjects;
 - canonical/noncanonical and oversized attributes are accepted/rejected
   exactly as specified;
 - callbacks are checked for deterministic results under repeated/concurrent

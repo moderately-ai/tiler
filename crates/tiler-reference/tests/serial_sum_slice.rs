@@ -37,7 +37,10 @@ fn build_program(insert_dead_value_first: bool) -> SemanticProgram {
 fn public_semantic_program_evaluates_independently_of_construction_history() {
     let first = build_program(false);
     let second = build_program(true);
-    assert_eq!(first.canonical_identity(), second.canonical_identity());
+    assert_eq!(
+        first.semantic_graph_identity(),
+        second.semantic_graph_identity()
+    );
 
     let key = InputKey::new("input").unwrap();
     let input = Tensor::new(Shape::from_dims([2, 3]), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();

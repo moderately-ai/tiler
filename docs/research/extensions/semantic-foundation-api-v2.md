@@ -88,8 +88,9 @@ semantic graph.
   does not imply universal dtype support.
 - Give type arguments, encoded contracts, definition facts, and operation
   attributes distinct public wrappers even when they share canonical storage.
-- Keep graph identity provider-independent; compilation provenance separately
-  projects reached semantic authorities and selected executable capabilities.
+- Keep graph identity provider-independent; ADR 0072 subsequently separates
+  reached provider-independent definitions, admission-provider provenance, and
+  selected executable capabilities.
 
 ## Implementation order
 

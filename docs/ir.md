@@ -254,12 +254,17 @@ retained. Optimizer, evaluator, scheduler, and backend capabilities belong to
 later layer-specific registries; a higher-level compilation session may compose
 them without making `SemanticProgram` own executable provider machinery.
 
-Frozen-registry canonical provenance includes the sorted semantic definitions
-and stable provider revisions but excludes marker `TypeId`s and Rust names.
-Program semantic identity includes the complete resolved type of every retained
-value, not unrelated registry entries. The compilation-request layer remains
-responsible for incorporating the complete frozen registry and selected
-capability provenance into its own identity.
+Frozen-registry snapshot identity includes the sorted semantic definitions and
+stable provider revisions but excludes marker `TypeId`s and Rust names.
+`SemanticGraphIdentity` includes the complete resolved type of every retained
+value and the canonical operation/value graph and interface, but no provider
+revision or unrelated registry entry. Reached provider-independent definitions
+have a separate `SemanticDefinitionProjectionIdentity`; the providers whose
+mandatory capabilities admitted those definitions have a separate
+`SemanticAdmissionProvenanceIdentity`. The compilation-request layer retains
+the complete frozen snapshot and both reached projections independently, then
+adds selected optional capability provenance as planning proceeds. ADR 0072
+owns this separation.
 
 ADR 0061 adds optional, checked Rust-side shape evidence without making it
 canonical graph authority. Conceptually, `ShapedValue<T, E>` refines a
@@ -500,10 +505,12 @@ identity must include the registered dialect's semantic and lowering
 fingerprint.
 
 Semantic graph identity excludes provider revisions. Compilation-request
-provenance records the complete frozen registry, while a selected plan and
-artifact include only semantic authorities reached by the graph and capability
-providers actually selected. Registering an unused provider therefore does not
-change the meaning of a graph or invalidate an otherwise identical artifact.
+provenance records the complete frozen registry, reached provider-independent
+definitions, and admission-provider revisions as distinct subjects. A selected
+plan and artifact include only reached definitions plus admission and optional
+capability providers required by that plan. Registering an unused provider
+therefore does not change graph meaning or invalidate an otherwise identical
+artifact.
 
 The initial extension execution model is trusted, statically linked compiler
 code supplied explicitly to one compiler session. It does not promise native
@@ -683,9 +690,13 @@ distinct operations with documented semantics. Forming this expression is a
 lowering or physical-region decision; it is not evidence that the logical graph
 originally contained one composite `Map` node.
 
-`IndexRegion` identity commits to its semantic-region reference, iteration and
-reduction domains, scalar expressions, access maps, and constraints. It is the
-input to scheduling rather than data independently restated by the schedule.
+`IndexRegion` identity commits only to canonical symbolic iteration and
+reduction domains, scalar expressions, access maps, and constraints. It is
+pure structural content and may be shared by equivalent region occurrences. A
+compiler-owned checked refinement separately binds that structure to one
+semantic-region occurrence, its exact graph-value boundary/access mapping,
+reached definitions, selected providers, and required evidence. The schedule
+refines index structure rather than restating or owning that semantic binding.
 
 Index expressions should be stored in an interned arena/DAG so repeated
 division, modulo, and coordinate arithmetic can be shared and simplified.

@@ -22,7 +22,7 @@ pub use error::{
     ValidationDiagnostic, ValidationDiagnostics, ValueRole,
 };
 pub use handles::{OperationId, Value, ValueId};
-pub use identity::CanonicalIdentity;
+pub use identity::SemanticGraphIdentity;
 pub use interface::{
     InputIndex, InputKey, InterfaceKind, Output, OutputKey, OutputSelector, ProgramInputRef,
     ProgramOutputRef, TypedProgramOutputRef,
@@ -37,12 +37,12 @@ pub use operation::{
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
 pub use registry::{
-    CanonicalSemanticAuthorityProjection, CanonicalSemanticRegistryIdentity, F32,
-    FrozenSemanticRegistry, NormativeDefinitionRef, OperationApplicationRejection,
-    ProviderIdentity, RegistryError, RegistryLookupError, SemanticRegistryBuilder,
-    SemanticRegistryProvider, SemanticRegistryRegistrar, TypeDefinitionFacts, TypeInstanceError,
-    TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey, ValueTypeInstanceValidator,
-    ValueTypeMarker,
+    F32, FrozenSemanticRegistry, NormativeDefinitionRef, OperationApplicationRejection,
+    ProviderIdentity, RegistryError, RegistryLookupError, SemanticAdmissionProvenanceIdentity,
+    SemanticDefinitionProjectionIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
+    SemanticRegistryRegistrar, SemanticRegistrySnapshotIdentity, TypeDefinitionFacts,
+    TypeInstanceError, TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey,
+    ValueTypeInstanceValidator, ValueTypeMarker,
 };
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use standard_operations::{F32Add, F32Constant, F32Multiply, StrictSerialF32Sum};

@@ -46,11 +46,14 @@ generic identifier module or microcrate. Canonical identity is independent of
 transient arena numbering and insertion order wherever the represented
 semantics are equivalent.
 
-Each verified layer retains the exact identity of the lower layer it refines:
-schedule to index region, kernel to schedule, and program stage to verified
-kernel implementation. Artifact decoding reconstructs values through the same
-IR builders and verifiers; deserialization cannot manufacture a verified value
-or maintain a second verifier authority.
+Each verified structural layer retains the exact identity of the lower
+structural layer it refines: schedule to index region and kernel to schedule.
+A compiler-owned checked refinement separately binds index structure to a
+semantic-region occurrence and exact graph-value mappings; a complete program
+binds verified implementations to graph coverage. This separation is governed
+by ADR 0072. Artifact decoding reconstructs values through the same IR builders
+and verifiers; deserialization cannot manufacture a verified value or maintain
+a second verifier authority.
 
 ## Consequences
 

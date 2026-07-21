@@ -52,9 +52,10 @@ identity projection, and reverification. Initial providers are trusted,
 statically linked, immutable `Send + Sync + 'static` compiler code.
 
 Semantic graph identity excludes provider implementations. Compilation-request
-provenance records the frozen snapshot. Selected plan and artifact identity
-include only reached semantic authorities and selected capability providers,
-their revisions, and resulting output-affecting content.
+provenance records the frozen snapshot. ADR 0072 refines selected-plan and
+artifact identity into separate reached provider-independent definitions,
+admission-provider provenance, selected optional capability providers, and
+resulting output-affecting content.
 
 ## Consequences
 

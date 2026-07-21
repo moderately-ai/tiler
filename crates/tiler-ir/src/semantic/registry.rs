@@ -511,7 +511,7 @@ impl SemanticRegistryBuilder {
         for binding in registry.0.marker_bindings.values() {
             registry.validate_type(&binding.resolved_type)?;
         }
-        let _ = registry.canonical_identity();
+        let _ = registry.snapshot_identity();
         Ok(registry)
     }
 }
@@ -635,7 +635,7 @@ struct FrozenRegistryData {
     definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: BTreeMap<OpKey, RegisteredOperation>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
-    identity: OnceLock<CanonicalSemanticRegistryIdentity>,
+    identity: OnceLock<SemanticRegistrySnapshotIdentity>,
 }
 
 impl FrozenSemanticRegistry {
@@ -797,32 +797,31 @@ impl FrozenSemanticRegistry {
         Ok(results)
     }
 
-    /// Returns complete frozen semantic-registry provenance.
+    /// Returns complete frozen semantic-registry snapshot provenance.
     #[must_use]
-    pub fn canonical_identity(&self) -> &CanonicalSemanticRegistryIdentity {
+    pub fn snapshot_identity(&self) -> &SemanticRegistrySnapshotIdentity {
         self.0
             .identity
             .get_or_init(|| compute_identity(&self.0.definitions, &self.0.operations))
     }
 
-    /// Projects deterministic provenance for only the semantic authorities
-    /// reached by one program.
+    /// Projects provider-independent semantic definitions reached by a program.
     ///
     /// # Errors
     ///
     /// Returns [`RegistryError`] if a supplied type family or operation key is
     /// absent from this exact frozen snapshot.
-    pub fn project_reached<'a>(
+    pub fn project_reached_definitions<'a>(
         &self,
         value_types: impl IntoIterator<Item = &'a ResolvedValueType>,
         operations: impl IntoIterator<Item = &'a OpKey>,
-    ) -> Result<CanonicalSemanticAuthorityProjection, RegistryError> {
+    ) -> Result<SemanticDefinitionProjectionIdentity, RegistryError> {
         let type_keys: BTreeSet<_> = value_types
             .into_iter()
             .map(ValueTypeDefinitionKey::for_value)
             .collect();
         let operation_keys: BTreeSet<_> = operations.into_iter().cloned().collect();
-        let mut bytes = b"tiler.semantic-authority-projection.v1\0".to_vec();
+        let mut bytes = b"tiler.semantic-definition-projection.v1\0".to_vec();
         encode_len(&mut bytes, type_keys.len());
         for key in type_keys {
             let registered = self.0.definitions.get(&key).ok_or_else(|| {
@@ -830,7 +829,7 @@ impl FrozenSemanticRegistry {
                     key: Arc::new(key.clone()),
                 }
             })?;
-            encode_registered_type(&mut bytes, &key, registered);
+            encode_type_definition(&mut bytes, &key, &registered.definition);
         }
         encode_len(&mut bytes, operation_keys.len());
         for key in operation_keys {
@@ -839,17 +838,57 @@ impl FrozenSemanticRegistry {
                     key: Arc::new(key.clone()),
                 }
             })?;
-            encode_registered_operation(&mut bytes, &key, registered);
+            encode_operation_definition(&mut bytes, &key, &registered.definition);
         }
-        Ok(CanonicalSemanticAuthorityProjection(bytes))
+        Ok(SemanticDefinitionProjectionIdentity(bytes))
+    }
+
+    /// Projects provider-attributed admission provenance reached by a program.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] if a supplied type family or operation key is
+    /// absent from this exact frozen snapshot.
+    pub fn project_reached_admission_provenance<'a>(
+        &self,
+        value_types: impl IntoIterator<Item = &'a ResolvedValueType>,
+        operations: impl IntoIterator<Item = &'a OpKey>,
+    ) -> Result<SemanticAdmissionProvenanceIdentity, RegistryError> {
+        let type_keys: BTreeSet<_> = value_types
+            .into_iter()
+            .map(ValueTypeDefinitionKey::for_value)
+            .collect();
+        let operation_keys: BTreeSet<_> = operations.into_iter().cloned().collect();
+        let mut bytes = b"tiler.semantic-admission-provenance.v1\0".to_vec();
+        encode_len(&mut bytes, type_keys.len());
+        for key in type_keys {
+            let registered = self.0.definitions.get(&key).ok_or_else(|| {
+                RegistryError::UnregisteredTypeAuthority {
+                    key: Arc::new(key.clone()),
+                }
+            })?;
+            key.encode(&mut bytes);
+            registered.provider.encode(&mut bytes);
+        }
+        encode_len(&mut bytes, operation_keys.len());
+        for key in operation_keys {
+            let registered = self.0.operations.get(&key).ok_or_else(|| {
+                RegistryError::UnregisteredOperationAuthority {
+                    key: Arc::new(key.clone()),
+                }
+            })?;
+            key.encode(&mut bytes);
+            registered.provider.encode(&mut bytes);
+        }
+        Ok(SemanticAdmissionProvenanceIdentity(bytes))
     }
 }
 
-/// Collision-free canonical provenance for a frozen semantic registry.
+/// Collision-free canonical provenance for a complete frozen registry snapshot.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CanonicalSemanticRegistryIdentity(Vec<u8>);
+pub struct SemanticRegistrySnapshotIdentity(Vec<u8>);
 
-impl CanonicalSemanticRegistryIdentity {
+impl SemanticRegistrySnapshotIdentity {
     /// Returns the canonical provenance bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
@@ -857,12 +896,24 @@ impl CanonicalSemanticRegistryIdentity {
     }
 }
 
-/// Deterministic provenance for only the semantic authorities reached by a program.
+/// Provider-independent canonical semantic definitions reached by a program.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CanonicalSemanticAuthorityProjection(Vec<u8>);
+pub struct SemanticDefinitionProjectionIdentity(Vec<u8>);
 
-impl CanonicalSemanticAuthorityProjection {
+impl SemanticDefinitionProjectionIdentity {
     /// Returns the collision-free canonical projection bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// Provider-attributed admission provenance reached by one semantic program.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SemanticAdmissionProvenanceIdentity(Vec<u8>);
+
+impl SemanticAdmissionProvenanceIdentity {
+    /// Returns the collision-free canonical provenance bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
@@ -1377,8 +1428,8 @@ fn op_error(code: &str, message: &str) -> OperationInferenceError {
 fn compute_identity(
     definitions: &BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: &BTreeMap<OpKey, RegisteredOperation>,
-) -> CanonicalSemanticRegistryIdentity {
-    let mut bytes = b"tiler.semantic-registry.v3\0".to_vec();
+) -> SemanticRegistrySnapshotIdentity {
+    let mut bytes = b"tiler.semantic-registry.v4\0".to_vec();
     encode_len(&mut bytes, definitions.len());
     for (key, registered) in definitions {
         encode_registered_type(&mut bytes, key, registered);
@@ -1387,7 +1438,7 @@ fn compute_identity(
     for (key, registered) in operations {
         encode_registered_operation(&mut bytes, key, registered);
     }
-    CanonicalSemanticRegistryIdentity(bytes)
+    SemanticRegistrySnapshotIdentity(bytes)
 }
 
 fn encode_registered_type(
@@ -1395,17 +1446,18 @@ fn encode_registered_type(
     key: &ValueTypeDefinitionKey,
     registered: &RegisteredValueType,
 ) {
-    key.encode(output);
+    encode_type_definition(output, key, &registered.definition);
     registered.provider.encode(output);
-    encode_bytes(
-        output,
-        registered
-            .definition
-            .normative_definition
-            .as_str()
-            .as_bytes(),
-    );
-    registered.definition.canonical_facts.0.encode(output);
+}
+
+fn encode_type_definition(
+    output: &mut Vec<u8>,
+    key: &ValueTypeDefinitionKey,
+    definition: &ValueTypeDefinition,
+) {
+    key.encode(output);
+    encode_bytes(output, definition.normative_definition.as_str().as_bytes());
+    definition.canonical_facts.0.encode(output);
 }
 
 fn encode_registered_operation(
@@ -1413,24 +1465,24 @@ fn encode_registered_operation(
     key: &OpKey,
     registered: &RegisteredOperation,
 ) {
-    key.encode(output);
+    encode_operation_definition(output, key, &registered.definition);
     registered.provider.encode(output);
+}
+
+fn encode_operation_definition(
+    output: &mut Vec<u8>,
+    key: &OpKey,
+    definition: &OperationDefinition,
+) {
+    key.encode(output);
     encode_bytes(
         output,
-        registered
-            .definition
-            .normative_definition()
-            .as_str()
-            .as_bytes(),
+        definition.normative_definition().as_str().as_bytes(),
     );
-    registered.definition.schema().encode(output);
-    registered
-        .definition
-        .canonical_facts()
-        .value()
-        .encode(output);
-    registered.definition.conformance().value().encode(output);
-    output.push(match registered.definition.effect() {
+    definition.schema().encode(output);
+    definition.canonical_facts().value().encode(output);
+    definition.conformance().value().encode(output);
+    output.push(match definition.effect() {
         OperationEffect::Pure => 1,
     });
 }
@@ -1596,7 +1648,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_identity_ignores_provider_registration_order() {
+    fn registry_snapshot_identity_ignores_provider_registration_order() {
         let mut first = SemanticRegistryBuilder::new();
         first.register_provider(&StandardSemantics).unwrap();
         first.register_provider(&ExternalProvider).unwrap();
@@ -1606,8 +1658,8 @@ mod tests {
         second.register_provider(&StandardSemantics).unwrap();
 
         assert_eq!(
-            first.freeze().unwrap().canonical_identity(),
-            second.freeze().unwrap().canonical_identity()
+            first.freeze().unwrap().snapshot_identity(),
+            second.freeze().unwrap().snapshot_identity()
         );
     }
 
@@ -1644,14 +1696,14 @@ mod tests {
         let extended = extended.freeze().unwrap();
 
         let standard_projection = standard
-            .project_reached([&F32::resolved_type()], [&multiply_f32_op()])
+            .project_reached_definitions([&F32::resolved_type()], [&multiply_f32_op()])
             .unwrap();
         let extended_projection = extended
-            .project_reached([&F32::resolved_type()], [&multiply_f32_op()])
+            .project_reached_definitions([&F32::resolved_type()], [&multiply_f32_op()])
             .unwrap();
 
         assert_eq!(standard_projection, extended_projection);
-        assert_ne!(standard.canonical_identity(), extended.canonical_identity());
+        assert_ne!(standard.snapshot_identity(), extended.snapshot_identity());
     }
 
     #[test]

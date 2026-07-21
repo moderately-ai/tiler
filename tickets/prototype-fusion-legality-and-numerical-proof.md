@@ -11,3 +11,8 @@ paths: []
 tags: [implementation, optimizer, fusion, numerics]
 ---
 Derive legality from operation capabilities, access/effect contracts, materialization boundaries, conversions, and numerical policy instead of graph-specific rule tables or asserted proof labels. Produce replayable evidence or typed Unknown/rejection and cover exceptional values, conversion rounding, contraction, empty domains, and reduction order.
+
+The proof output must distinguish reusable refinement content from its checked
+binding to one exact region occurrence, value/access mapping, reached semantic
+definitions, selected providers, and evidence. It must not place provider or
+whole-program identity into pure index structure.

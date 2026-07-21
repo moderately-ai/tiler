@@ -35,6 +35,11 @@ boundaries are now accepted by ADRs 0070 and 0071. The compiler's bounded proof
 pipeline is compiled as ordinary library code, and the unused backwards
 compiler-to-artifact dependency has been removed. The proof-specific structs
 remain private until their dedicated generic IR/verifier tickets replace them.
+ADR 0072 and the semantic/compiler prototype now separate graph meaning,
+reached provider-independent definitions, admission-provider provenance, and
+the complete registry snapshot. Region occurrence, checked refinement,
+structural schedule/KIR, complete-plan, and artifact identities remain explicit
+obligations of their owning tickets rather than implemented support.
 
 ## Authorized prototype
 
@@ -59,8 +64,8 @@ and
 are complete for their bounded claims. The
 [`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md)
 slice establishes the accepted module, verifier, builder, and dependency
-direction without publishing the graph-specific proof structs. The next
-dependency-ordered slice is
+direction without publishing the graph-specific proof structs. The semantic
+identity prerequisite is complete. The next dependency-ordered slice is
 [`operation compilation capabilities`](../tickets/prototype-operation-compilation-capabilities.md),
 followed by canonical access relations, generic region
 formation, derived legality, complete partition planning, physical

@@ -2,9 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::semantic::{
-    CanonicalSemanticAuthorityProjection, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
-    InputKey, OpKey, OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticProgram, ValueId, add_f32_op,
-    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey, OutputKey,
+    REDUCTION_AXES_ATTRIBUTE, SemanticAdmissionProvenanceIdentity,
+    SemanticDefinitionProjectionIdentity, SemanticProgram, ValueId, add_f32_op, constant_f32_op,
+    multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -195,7 +196,8 @@ impl NormalizedProgram {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedCompilationRequest {
     pub(crate) normalized: NormalizedProgram,
-    pub(crate) semantic_authority: CanonicalSemanticAuthorityProjection,
+    pub(crate) semantic_definitions: SemanticDefinitionProjectionIdentity,
+    pub(crate) semantic_admission: SemanticAdmissionProvenanceIdentity,
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
@@ -205,7 +207,8 @@ pub(crate) struct VerifiedCompilationRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedTargetRequest {
     pub(crate) normalized: NormalizedProgram,
-    pub(crate) semantic_authority: CanonicalSemanticAuthorityProjection,
+    pub(crate) semantic_definitions: SemanticDefinitionProjectionIdentity,
+    pub(crate) semantic_admission: SemanticAdmissionProvenanceIdentity,
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profile: PrototypeTargetProfile,
@@ -225,7 +228,8 @@ impl VerifiedCompilationRequest {
     ) -> VerifiedTargetRequest {
         VerifiedTargetRequest {
             normalized: self.normalized.clone(),
-            semantic_authority: self.semantic_authority.clone(),
+            semantic_definitions: self.semantic_definitions.clone(),
+            semantic_admission: self.semantic_admission.clone(),
             numerical_contract: self.numerical_contract,
             budgets: self.budgets,
             target_profile,
@@ -251,7 +255,7 @@ pub(crate) enum RequestError {
     ShapeProductOverflow {
         role: &'static str,
     },
-    SemanticAuthority,
+    SemanticIdentityProjection,
 }
 
 impl fmt::Display for RequestError {
@@ -282,8 +286,8 @@ impl fmt::Display for RequestError {
                 formatter,
                 "compile.shape.{role}.element-count: static element count exceeds u64"
             ),
-            Self::SemanticAuthority => formatter.write_str(
-                "compile.request.semantic-authority: frozen capability projection failed",
+            Self::SemanticIdentityProjection => formatter.write_str(
+                "compile.request.semantic-identity: frozen definition and admission projections failed",
             ),
         }
     }
@@ -349,10 +353,12 @@ pub(crate) fn verify_request(
     check_budget("buffers", request.budgets.buffers, 3)?;
 
     let normalized = select_supported_strategy(request.program)?;
-    let semantic_authority = project_semantic_authority(request.program)?;
+    let (semantic_definitions, semantic_admission) =
+        project_semantic_identity_layers(request.program)?;
     Ok(VerifiedCompilationRequest {
         normalized,
-        semantic_authority,
+        semantic_definitions,
+        semantic_admission,
         numerical_contract: request.numerical_contract,
         budgets: request.budgets,
         target_profiles: request.target_profiles,
@@ -364,9 +370,15 @@ fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProg
     normalize_serial_sum(program).map(NormalizedProgram::SerialSum)
 }
 
-fn project_semantic_authority(
+fn project_semantic_identity_layers(
     program: &SemanticProgram,
-) -> Result<CanonicalSemanticAuthorityProjection, RequestError> {
+) -> Result<
+    (
+        SemanticDefinitionProjectionIdentity,
+        SemanticAdmissionProvenanceIdentity,
+    ),
+    RequestError,
+> {
     let value_types: Vec<_> = program
         .values()
         .map(|value| value.resolved_type().clone())
@@ -375,10 +387,15 @@ fn project_semantic_authority(
         .operations()
         .map(|operation| operation.key().clone())
         .collect();
-    program
+    let definitions = program
         .semantic_registry()
-        .project_reached(value_types.iter(), operations.iter())
-        .map_err(|_| RequestError::SemanticAuthority)
+        .project_reached_definitions(value_types.iter(), operations.iter())
+        .map_err(|_| RequestError::SemanticIdentityProjection)?;
+    let admission = program
+        .semantic_registry()
+        .project_reached_admission_provenance(value_types.iter(), operations.iter())
+        .map_err(|_| RequestError::SemanticIdentityProjection)?;
+    Ok((definitions, admission))
 }
 
 fn check_budget(resource: &'static str, limit: u32, actual: usize) -> Result<(), RequestError> {

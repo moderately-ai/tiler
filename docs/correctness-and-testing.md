@@ -181,9 +181,15 @@ Benchmarks are not substitutes for these correctness cases.
   capability and deterministic-attribute conformance suite.
 - Registry snapshots are identical under shuffled/parallel registration;
   duplicate semantic ownership and provider conflicts are rejected.
-- Semantic operation keys and provider revisions affect only their intended
-  identities; no `TypeId`, pointer, vtable, or registration order leaks into
+- Semantic operation keys, provider-independent definitions, and provider
+  revisions affect only their intended identities. Identical graphs admitted
+  by different provider revisions have equal `SemanticGraphIdentity` and
+  definition projections but unequal admission provenance and registry
+  snapshots. No `TypeId`, pointer, vtable, or registration order leaks into
   durable content.
+- Region identity tests distinguish equal semantic content at different graph
+  occurrences; index/schedule/KIR structure remains reusable while checked
+  refinements and complete-program coverage retain exact occurrence bindings.
 - Canonical attributes reject duplicate keys, noncanonical encodings, invalid
   defaults, excessive depth/count/bytes, and checked-size overflow.
 - Canonical-attribute vectors cover every integer width, signed zero and NaN

@@ -38,8 +38,9 @@ independent relationship through shared IR.
 authority shared across compiler passes, backends, artifact codecs, and future
 third-party plan producers:
 
-- `index`: semantic-region references, symbolic iteration/scalar expressions,
-  access relations, and verified index regions;
+- `index`: pure symbolic iteration/scalar expressions, access relations, and
+  verified index regions; compiler-owned checked refinements bind them to
+  semantic-region occurrences and exact graph-value mappings;
 - `schedule`: target-neutral schedules, launch/resource requirements, and
   verified scheduled regions;
 - `kernel`: structured kernel IR and schedule-refinement verification; and

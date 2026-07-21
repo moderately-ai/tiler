@@ -154,8 +154,11 @@ multi-result operations, and several named program results. A hypergraph may be
 used internally to index overlapping region candidates, but it is not the
 durable graph or physical-program representation. Region identity includes
 boundary values, retained results, and allowed duplication, not only a set of
-member operations. Actual materialization is selected by region
-implementations and the complete kernel program.
+member operations. Canonical region semantic content is separate from its
+occurrence identity and exact graph-value bindings, so equivalent content may
+occur more than once without losing coverage or sharing information. Actual
+materialization is selected by region implementations and the complete kernel
+program.
 
 ### Local kernel scheduler
 
@@ -189,6 +192,14 @@ View(alias/metadata result)
 Every executable body also carries the selected numerical realization,
 machine-checkable guarantee, and scoped evidence identity. These must refine
 the region's effective operation contracts before costing.
+
+Index, schedule, and structured-kernel identities describe canonical
+structural content. A compiler-owned checked refinement binds index structure
+to a particular region occurrence, exact boundary/access mappings, reached
+semantic definitions, selected provider provenance, and evidence. Complete
+program identity—not a nested whole-graph digest inside every structural
+object—proves occurrence coverage and executable composition. ADR 0072 owns
+this identity layering.
 
 A locally slower implementation may provide a layout that removes a downstream
 conversion. Multi-pass reductions are `KernelSubprogram` bodies rather than one

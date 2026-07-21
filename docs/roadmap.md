@@ -33,6 +33,13 @@ downstream-style public construction and evaluation test. The bounded
 Milestone 0A integration proof is complete; production stabilization and the
 broader operation/dtype surface remain future work.
 
+ADR 0072 corrects the prototype identity boundary before generic compilation:
+graph meaning, reached provider-independent definitions, admission-provider
+provenance, and the full registry environment now have independent identities.
+The later region/index/schedule/KIR/program/artifact tickets must preserve that
+layering rather than nesting whole-program or provider identity into reusable
+structural content.
+
 The bullets below are the implementation scope authorized only after the
 research-readiness decision; they are not claims that the implementations
 already exist.
@@ -40,8 +47,9 @@ already exist.
 - Define axes, reindexing, broadcasting, dtype, reduction, empty-domain,
   overflow, alias, and numerical policies.
 - Define operation conformance vectors and oracle precedence.
-- Implement the public semantic operation/value graph and deterministic
-  identity needed for executable examples.
+- Implement the public semantic operation/value graph and deterministic graph-
+  meaning identity needed for executable examples, separately retaining
+  reached definitions and provider-attributed admission provenance.
 - Implement and exercise the public experimental extension path through the ordinary compiler
   API with one built-in and one statically linked external operation definition
   using the same capability interfaces. Separately record which providers the

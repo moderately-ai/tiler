@@ -3,13 +3,14 @@ use super::operation::{OperationData, ValueDefinition};
 use super::program::ProgramData;
 use crate::shape::Shape;
 
-/// Collision-free canonical semantic identity bytes for the bounded prototype.
+/// Collision-free canonical semantic-graph identity bytes.
 ///
-/// This is a canonical encoding, not a cryptographic digest or artifact codec.
+/// This identifies graph meaning. Provider implementations, registry snapshots,
+/// and compilation provenance are deliberately excluded.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CanonicalIdentity(Vec<u8>);
+pub struct SemanticGraphIdentity(Vec<u8>);
 
-impl CanonicalIdentity {
+impl SemanticGraphIdentity {
     /// Returns the canonical byte encoding.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
@@ -24,14 +25,14 @@ impl SemanticProgram {
     /// order, and reduction axes participate. Runtime graph IDs, arena numbering,
     /// and dead operations do not.
     #[must_use]
-    pub fn canonical_identity(&self) -> &CanonicalIdentity {
+    pub fn semantic_graph_identity(&self) -> &SemanticGraphIdentity {
         self.data
             .identity
             .get_or_init(|| compute_identity(&self.data))
     }
 }
 
-fn compute_identity(program: &ProgramData) -> CanonicalIdentity {
+fn compute_identity(program: &ProgramData) -> SemanticGraphIdentity {
     let mut records = Vec::new();
     let mut canonical_ids = vec![None; program.values.len()];
     let mut encoded_operations = vec![false; program.operations.len()];
@@ -55,19 +56,7 @@ fn compute_identity(program: &ProgramData) -> CanonicalIdentity {
     }
 
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.semantic-program.v4\0");
-    let authority = program
-        .semantic_registry
-        .project_reached(
-            program
-                .values
-                .iter()
-                .map(|value| value.resolved_type.as_ref()),
-            program.operations.iter().map(|operation| &operation.key),
-        )
-        .expect("a verified program reaches only registered semantic authority");
-    encode_len(&mut bytes, authority.as_bytes().len());
-    bytes.extend_from_slice(authority.as_bytes());
+    bytes.extend_from_slice(b"tiler.semantic-graph.v1\0");
     encode_len(&mut bytes, program.inputs.len());
     for input in &program.inputs {
         encode_string(&mut bytes, input.key.as_str());
@@ -85,7 +74,7 @@ fn compute_identity(program: &ProgramData) -> CanonicalIdentity {
         encode_string(&mut bytes, output.key.as_str());
         bytes.extend_from_slice(&canonical_id.to_be_bytes());
     }
-    CanonicalIdentity(bytes)
+    SemanticGraphIdentity(bytes)
 }
 
 fn visit_value(

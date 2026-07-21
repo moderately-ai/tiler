@@ -191,8 +191,9 @@ pub(crate) struct KernelProgram {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ArtifactConstructionPlan {
-    pub(crate) semantic_identity: Vec<u8>,
-    pub(crate) reached_semantic_authority: Vec<u8>,
+    pub(crate) semantic_graph_identity: Vec<u8>,
+    pub(crate) reached_semantic_definitions: Vec<u8>,
+    pub(crate) semantic_admission_provenance: Vec<u8>,
     pub(crate) numerical_contract_key: &'static str,
     pub(crate) numerical_realizations: Vec<NumericalRealization>,
     pub(crate) target_profile_key: &'static str,
@@ -710,8 +711,9 @@ pub(crate) fn build_artifact_plan(
         });
     }
     Ok(ArtifactConstructionPlan {
-        semantic_identity: semantic.canonical_identity().as_bytes().to_vec(),
-        reached_semantic_authority: request.semantic_authority.as_bytes().to_vec(),
+        semantic_graph_identity: semantic.semantic_graph_identity().as_bytes().to_vec(),
+        reached_semantic_definitions: request.semantic_definitions.as_bytes().to_vec(),
+        semantic_admission_provenance: request.semantic_admission.as_bytes().to_vec(),
         numerical_contract_key: request.numerical_contract.key,
         numerical_realizations: program
             .entries
@@ -1280,8 +1282,9 @@ mod tests {
                 scheduled[1].region.index.numerical,
             ]
         );
-        assert!(!artifact.semantic_identity.is_empty());
-        assert!(!artifact.reached_semantic_authority.is_empty());
+        assert!(!artifact.semantic_graph_identity.is_empty());
+        assert!(!artifact.reached_semantic_definitions.is_empty());
+        assert!(!artifact.semantic_admission_provenance.is_empty());
     }
 
     #[test]

@@ -77,7 +77,10 @@ fn shaped_and_plain_facades_produce_identical_semantics() {
         builder.build().unwrap()
     }
 
-    assert_eq!(plain().canonical_identity(), shaped().canonical_identity());
+    assert_eq!(
+        plain().semantic_graph_identity(),
+        shaped().semantic_graph_identity()
+    );
 }
 
 #[test]

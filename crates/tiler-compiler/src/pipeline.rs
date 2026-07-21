@@ -173,7 +173,7 @@ impl From<RequestError> for CompileError {
             RequestError::UnsupportedRequestVersion
             | RequestError::EmptyTargetSet
             | RequestError::DuplicateTargetProfile
-            | RequestError::SemanticAuthority => Self::InvalidRequest(value),
+            | RequestError::SemanticIdentityProjection => Self::InvalidRequest(value),
         }
     }
 }
@@ -633,7 +633,10 @@ mod tests {
     fn product_is_deterministic_and_preserves_the_materialized_boundary() {
         let first = semantic(false);
         let second = semantic(true);
-        assert_eq!(first.canonical_identity(), second.canonical_identity());
+        assert_eq!(
+            first.semantic_graph_identity(),
+            second.semantic_graph_identity()
+        );
         let first = compile(CompilationRequest::governed(&first)).unwrap();
         let second = compile(CompilationRequest::governed(&second)).unwrap();
 

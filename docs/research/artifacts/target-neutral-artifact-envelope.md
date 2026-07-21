@@ -126,9 +126,10 @@ These facts are precedents, not imported specifications.
 - `Unknown` feasibility cannot enter an artifact. Every deferred check has an
   admitted query path before `RoutingCommit` and complete fallback/alternate
   coverage.
-- Selected artifact identity includes reached semantic authorities and selected
-  output-affecting capability-provider revisions. Unused registry providers do
-  not invalidate an artifact.
+- Selected artifact identity separately includes reached provider-independent
+  definitions, admission-provider provenance, and selected output-affecting
+  capability-provider revisions. Unused registry providers do not invalidate
+  an artifact.
 - Live-device and prepared-entry fact values scope runtime caches and routing
   observations; they are not portable artifact content identity.
 
@@ -572,15 +573,17 @@ closed.
 | Layer | Included facts | Excluded facts |
 | --- | --- | --- |
 | `SemanticDigest` | canonical semantic graph, root interface, resolved operation/numerical contracts | schedules, providers, backend, runtime device |
-| `ScheduledRegionDigest` | semantic digest, index region, normalized schedule, numerical realization, target policy needed by the schedule | payload bytes, live device observations |
-| `KernelProgramDigest` | scheduled entries, program DAG, buffers/materializations, ABI, expressions, guards, routing, target requirements, selected reached providers | unused registered providers, live/prepared fact values |
+| `IndexRegionDigest` | canonical symbolic domains, scalar/index expressions, access relations, and constraints | graph occurrence, providers, schedule, target |
+| `ScheduledRegionDigest` | index-region digest, normalized schedule, numerical realization, target policy needed by the schedule | graph occurrence, provider provenance, payload bytes, live device observations |
+| `RefinementDigest` | region occurrence and exact boundary/access binding, index-region digest, reached definitions, selected providers and evidence | unused registered providers, unrelated graph occurrences |
+| `KernelProgramDigest` | semantic digest, bound refinements and scheduled entries, complete coverage, program DAG, buffers/materializations, ABI, expressions, guards, routing, and target requirements | unused registered providers, live/prepared fact values |
 | `BackendPayloadDigest` | exact backend metadata/code section bytes, target representation, backend entry mappings | neutral program equality, live runtime state |
 | `ManifestDigest` | exact canonical neutral manifest bytes, including section descriptors and selected provenance | section bodies except through descriptors |
 | `EnvelopeDigest` | every exact byte of the framed envelope | external cache path, embedding location |
 
 Selected provider identity is represented as
 `{ProviderKey, capability_api_version, ProviderRevision}` and appears only for
-semantic authorities reached or capabilities selected by a packaged program.
+admission authorities reached or capabilities selected by a packaged program.
 The complete frozen registry may remain compilation-request provenance outside
 the runtime artifact; unused registrations must not poison the artifact.
 

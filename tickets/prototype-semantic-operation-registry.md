@@ -30,10 +30,11 @@ Implement ADR 0044's canonical semantic-operation path before compiler work.
   resolved signatures, and numerical contracts while keeping provider
   implementations out of graph identity.
 
-Add deterministic projection of only reached semantic authorities for later
-compilation provenance. Keep decomposition, lowering, rewriting, costing, and
-target capabilities reserved behind separate registries; do not implement
-them here.
+Add deterministic projection of reached semantic definitions and their
+admission-provider provenance for later compilation. ADR 0072 subsequently
+separates those two identity subjects. Keep decomposition, lowering,
+rewriting, costing, and target capabilities reserved behind separate
+registries; do not implement them here.
 
 ## Outcome
 

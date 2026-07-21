@@ -18,6 +18,10 @@ downcasting, or a duplicate provider-owned IR. Resolution and provenance must
 be deterministic. Different providers may supply disjoint capability families,
 while competing providers for a singular family remain an explainable
 ambiguity. Missing, ambiguous, or invalid capability output fails closed.
+Selected provider revisions enter checked refinement and compilation
+provenance, never semantic graph or pure index-structure identity. Reached
+provider-independent definitions and admission-provider provenance remain
+separate inputs under ADR 0072.
 
 Physical implementation and opaque-call capability registration is deferred to
 `prototype-physical-implementation-frontier`, where the checked schedule and
