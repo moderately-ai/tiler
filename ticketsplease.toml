@@ -109,8 +109,12 @@ satisfies_dependents = false
 "implementation/reference" = ["crates/tiler-reference/**"]
 "implementation/artifact" = ["crates/tiler-artifact/**"]
 "implementation/compiler" = ["crates/tiler-compiler/**"]
-"implementation/metal" = ["crates/tiler-metal/**", "prototypes/serial-sum-compile/**"]
-"implementation/runtime" = ["prototypes/serial-sum-run/**"]
+"implementation/metal" = ["crates/tiler-metal/**"]
+"implementation/metal-aot" = ["crates/tiler-metal-aot/**", "prototypes/serial-sum-compile/**"]
+"implementation/runtime" = ["crates/tiler-runtime/**", "prototypes/serial-sum-run/**"]
+"implementation/cache" = ["crates/tiler-cache/**"]
+"implementation/frontend" = ["crates/tiler-macros/**", "crates/tiler-frontend-*/**"]
+"implementation/candle" = ["crates/tiler-candle/**", "prototypes/candle-*/**"]
 
 # Optionally map a scope to its owning crate so the Rust backend can expand
 # reverse-dependents (requires `cargo` at runtime).

@@ -3,7 +3,7 @@ id: prototype-metal-runtime-proof
 title: Execute and validate the serial Sum Metal proof end to end
 status: todo
 priority: p0
-dependencies: [prototype-metal-aot-slice]
+dependencies: [prototype-metal-runtime-execution]
 related: []
 scopes: [implementation/runtime, research/runtime]
 shared_scopes: [project/tickets, contracts/integrations, contracts/navigation, contracts/artifacts, contracts/numerics]

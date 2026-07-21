@@ -32,9 +32,34 @@ implementation are tracked work rather than product decisions.
 These have a correctness-derived direction. They require implementation and
 tests, not a product-level choice unless their evidence exposes a new tradeoff.
 
+The implementation graph now maps these contracts to bounded coding tickets:
+
+- semantic/index lowering and fusion search: [operation capabilities](../tickets/prototype-operation-compilation-capabilities.md),
+  [canonical index regions](../tickets/prototype-canonical-index-region-slice.md),
+  [generic region formation](../tickets/prototype-generic-region-formation.md),
+  [legality evidence](../tickets/prototype-fusion-legality-and-numerical-proof.md),
+  and [complete partition planning](../tickets/prototype-region-partition-and-complete-plan.md);
+- physical/kernel/program layers: [physical implementations](../tickets/prototype-physical-implementation-frontier.md),
+  [structured KIR](../tickets/prototype-structured-kir-slice.md), and
+  [neutral program/artifact types](../tickets/prototype-neutral-program-and-artifact-types.md);
+- artifact and Metal AOT: [neutral codec](../tickets/prototype-neutral-artifact-codec.md),
+  [MSL lowering](../tickets/prototype-metal-kir-lowering.md),
+  [numerical realization](../tickets/prototype-metal-numerical-realization.md),
+  [offline driver](../tickets/prototype-apple-aot-driver.md), and
+  [bundle assembly](../tickets/prototype-metal-bundle-assembly.md);
+- runtime safety: [artifact validation](../tickets/prototype-runtime-artifact-validation.md),
+  [preflight](../tickets/prototype-metal-runtime-preflight.md),
+  [routing commit](../tickets/prototype-runtime-routing-commit.md), and
+  [execution mechanics](../tickets/prototype-metal-runtime-execution.md); and
+- inline delivery: [proc-macro frontend](../tickets/prototype-inline-proc-macro-frontend.md),
+  [expansion cache](../tickets/prototype-expansion-content-cache.md),
+  [artifact-family selection](../tickets/prototype-artifact-family-delivery.md),
+  and the [complete inline proof](../tickets/prototype-inline-aot-integration-proof.md).
+
 ### Q-SEM-001 — Numerical-policy presets
 
-- Owner/track: [Numerical semantics](numerical-semantics.md), Milestone 1.
+- Owner/track: [Numerical semantics](numerical-semantics.md),
+  [`implement-first-profile-numerical-policies`](../tickets/implement-first-profile-numerical-policies.md).
 - Close: versioned preset-to-canonical-per-operation expansion table plus
   round-trip and rejection tests.
 
@@ -91,28 +116,30 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 
 ### Q-PLAN-001 — Initial bounded search representation
 
-- Owner/track: [Optimizer](compiler/optimizer.md), Milestone 2.
+- Owner/track: [Optimizer](compiler/optimizer.md),
+  [`prototype-generic-region-formation`](../tickets/prototype-generic-region-formation.md).
 - Close: implementation compared with the exhaustive tiny oracle; introduce a
   memo only if measured quality or cost warrants it.
 
 ### Q-PLAN-002 — Shared-work duplication
 
 - Owner/track: [Fusion and scheduling](compiler/fusion-and-scheduling.md),
-  Milestone 5.
+  [`implement-general-dag-partitioning`](../tickets/implement-general-dag-partitioning.md).
 - Close: legality gate and calibrated cost rule checked against the exhaustive
   oracle.
 
 ### Q-PLAN-004 — Coexisting reductions in one kernel
 
 - Owner/track: [Fusion and scheduling](compiler/fusion-and-scheduling.md),
-  Milestone 4.
+  [`implement-parallel-reduction-strategies`](../tickets/implement-parallel-reduction-strategies.md).
 - Close: topology/order/resource compatibility matrix with positive and
   negative verifier cases.
 
 ### Q-PLAN-005 — Physical multi-output kernels
 
 - Owner/track: [Fusion and scheduling](compiler/fusion-and-scheduling.md),
-  Milestone 5. Semantic multi-result programs are already accepted.
+  [`implement-general-dag-partitioning`](../tickets/implement-general-dag-partitioning.md).
+  Semantic multi-result programs are already accepted.
 - Close: schedule, ABI, runtime profile, and measured value proof.
 
 ### Q-PLAN-007 — First Metal capability keys and feasibility rules
@@ -139,22 +166,23 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 
 ### Q-ART-002 — Private lockstep serialization
 
-- Owner/track: [Artifact ABI](artifact-abi.md), Milestones 0A–0B. The
-  [`Metal AOT proof`](../tickets/prototype-metal-aot-slice.md) owns the bounded
-  canonical bundle instance; broader private compiler/artifact formats remain
-  milestone work.
+- Owner/track: [Artifact ABI](artifact-abi.md),
+  [`prototype-neutral-artifact-codec`](../tickets/prototype-neutral-artifact-codec.md).
+  The [`Metal AOT proof`](../tickets/prototype-metal-aot-slice.md) consumes the
+  bounded codec through bundle assembly rather than owning serialization.
 - Close: deterministic encoder/decoder plus corruption, canonicality, and
   version-rejection tests. This does not promise a public stable format.
 
 ### Q-ART-004 — Expansion-cache root, accounting, and GC policy
 
-- Owner/track: [Frontend integration](integration/frontends.md), Milestones 0B
-  and 7.
+- Owner/track: [Frontend integration](integration/frontends.md),
+  [`prototype-expansion-content-cache`](../tickets/prototype-expansion-content-cache.md).
 - Close: private defaults, quotas, GC, durability diagnostics, and race tests.
 
 ### Q-ART-008 — Ergonomic artifact-family profiles
 
-- Owner/track: [Frontend integration](integration/frontends.md), Milestone 0B.
+- Owner/track: [Frontend integration](integration/frontends.md),
+  [`prototype-artifact-family-delivery`](../tickets/prototype-artifact-family-delivery.md).
 - Close: named profiles expand to canonical `ArtifactFamilySelection` with
   generated `cfg` compile-pass/fail tests.
 
@@ -166,7 +194,9 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 
 ### Q-RUNTIME-002 — Affine-strided Candle layouts
 
-- Owner/track: [Candle integration](integration/candle.md), Milestone 3.
+- Owner/track: [Candle integration](integration/candle.md),
+  [`prototype-candle-metal-adapter`](../tickets/prototype-candle-metal-adapter.md),
+  with affine-strided support remaining beyond its contiguous first profile.
 - Close: exact stride/offset/alias predicates and guarded differential tests.
 
 ### Q-PKG-002 — Rust data APIs and operation capability traits
@@ -182,7 +212,8 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 
 ### Q-PKG-003 — Proc-macro to Metal-AOT visibility
 
-- Owner/track: [Frontend integration](integration/frontends.md), Milestone 0B.
+- Owner/track: [Frontend integration](integration/frontends.md),
+  [`prototype-inline-proc-macro-frontend`](../tickets/prototype-inline-proc-macro-frontend.md).
 - Close: private-by-default visibility audit and compile/UI tests while formats
   remain lockstep.
 

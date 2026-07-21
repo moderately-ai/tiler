@@ -3,9 +3,9 @@ id: prototype-metal-aot-slice
 title: Produce and validate the serial Sum Metal AOT bundle
 status: todo
 priority: p0
-dependencies: [prototype-target-neutral-fusion-slice]
+dependencies: [prototype-metal-bundle-assembly, prototype-proof-case-sidecar]
 related: []
-scopes: [implementation/metal, implementation/artifact, research/apple-targets, research/artifacts]
+scopes: [implementation/metal, implementation/artifact, research/apple-targets, research/artifacts, implementation/metal-aot]
 shared_scopes: [project/tickets, contracts/artifacts, contracts/numerics]
 paths: [Cargo.lock]
 tags: [implementation, prototype, metal, vertical-slice]

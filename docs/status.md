@@ -22,11 +22,15 @@ The dependent-array shape conformance gate, exact nightly migration, checked
 shaped-value implementation, and assembled semantic/reference integration gate
 are now complete. A downstream-style test constructs and evaluates the bounded
 strict-`f32` program through public APIs, while malformed drafts and malformed
-reference results fail closed. The private target-neutral proof now compiles
-that program into both a verified two-stage materialized plan and a verified
-one-stage fused plan, retains both in a deterministic portfolio, and selects
-fusion only as a strict structural Pareto improvement. Metal AOT and device
-execution remain unimplemented, and no compiler API is public or stabilized.
+reference results fail closed. The private target-neutral proof now constructs
+both a verified two-stage materialized plan and a verified one-stage fused
+plan, retains both in a deterministic portfolio, and selects fusion only as a
+strict structural Pareto improvement. An adversarial follow-up audit
+established that this remains a graph-specific conformance fixture: occurrence
+construction, region enumeration, legality evidence, KIR, and artifact-facing
+program types are not yet a generic backend-consumable compiler path. Metal
+AOT and device execution remain unimplemented, and no compiler API is public
+or stabilized.
 
 ## Authorized prototype
 
@@ -48,13 +52,21 @@ assembled
 [`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md)
 and
 [`target-neutral fusion selection`](../tickets/prototype-target-neutral-fusion-slice.md)
-are complete. The next dependency-ordered slices are the
-[`Metal AOT bundle`](../tickets/prototype-metal-aot-slice.md) and the
-[`Metal execution proof`](../tickets/prototype-metal-runtime-proof.md) slices.
+are complete for their bounded claims. The next dependency-ordered slice is
+[`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md),
+followed by operation capabilities, canonical access relations, generic region
+formation, derived legality, complete partition planning, physical
+implementations, structured KIR, neutral program/artifact types, and an
+[`optimizer conformance gate`](../tickets/prototype-optimizer-conformance-gate.md).
+Only after that gate do the Metal lowering/AOT and runtime proof chains become
+eligible.
 
-This chain is an architectural value proof. It does not by itself complete the
-inline proc-macro/cache exit for Milestone 0B, Candle integration, or the full
-Milestone 2 product profile.
+This chain is an architectural value proof. Separate tickets now track the
+neutral artifact codec, Metal lowering and offline driver, runtime validation
+and one-way commit, inline proc macro and expansion cache, artifact-family
+delivery, embedding measurements, and Candle integration. Completion of the
+serial Metal proof still does not by itself complete the inline-DX exit for
+Milestone 0B or the broader Milestone 2 product profile.
 
 ## Evidence boundary
 

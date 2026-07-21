@@ -92,6 +92,29 @@ and device-execution boundaries but intentionally exclude the proc macro,
 generalized cache, and consumer integration. They are prerequisites and
 evidence for this milestone, not its complete exit.
 
+The live ticket graph deliberately gates those proofs on a backend-consumable
+target-neutral compiler path. The dependency-ordered foundation is:
+
+1. [shared compiler IR ownership](../tickets/prototype-shared-compiler-ir-ownership.md),
+2. [operation compilation capabilities](../tickets/prototype-operation-compilation-capabilities.md)
+   and the [canonical index-region slice](../tickets/prototype-canonical-index-region-slice.md),
+3. [generic region formation](../tickets/prototype-generic-region-formation.md),
+   [derived fusion legality](../tickets/prototype-fusion-legality-and-numerical-proof.md),
+   and [complete partition planning](../tickets/prototype-region-partition-and-complete-plan.md),
+4. the [physical implementation frontier](../tickets/prototype-physical-implementation-frontier.md),
+   [structured KIR](../tickets/prototype-structured-kir-slice.md), and
+   [neutral program/artifact types](../tickets/prototype-neutral-program-and-artifact-types.md),
+5. the [target-neutral optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md).
+
+Metal is then split into independently verifiable KIR lowering, strict
+numerical realization, Apple offline compilation, artifact codec/bundle
+assembly, and proof-evidence work before the existing Metal AOT integration
+ticket. Runtime validation, preflight, one-way routing commit, and execution
+mechanics similarly precede the device integration proof. The inline proc
+macro, cache, artifact-family delivery, embedding measurements, complete inline
+workflow, and Candle adapter remain explicit downstream tickets rather than
+implicit promises of the Metal proof.
+
 ## Milestone 1: canonical semantic graph and index IR
 
 - Build the typed operation/value semantic graph.
@@ -141,12 +164,14 @@ path before this broader milestone. It intentionally does not claim the Candle
 adapter, inline macro, general fallback, or einops-derived workload required by
 the milestone exit.
 
-The target-neutral portion of that proof is now implemented privately: the
-same verified request produces a two-stage materialized program and a one-stage
-fused program, the fused structured kernel preserves atomic multiply/add and
-strict contributor order, and a fixed structural policy selects it while
-retaining the baseline. This does not yet provide Metal source, artifacts, or
-runtime execution.
+The target-neutral portion of that proof is now implemented as a private
+graph-specific conformance fixture: the same verified request produces a
+two-stage materialized program and a one-stage fused program, the fused
+structured kernel preserves atomic multiply/add and strict contributor order,
+and a fixed structural policy selects it while retaining the baseline. It does
+not yet establish generic occurrence lowering, region enumeration, legality
+derivation, complete partition search, a public compiler boundary, Metal
+source, artifacts, or runtime execution.
 
 ## Milestone 2Q: quantized-value vertical proof
 
