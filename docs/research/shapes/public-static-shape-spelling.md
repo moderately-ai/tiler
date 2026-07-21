@@ -6,7 +6,7 @@ title: "Public static-shape evidence spelling"
 topics: ["shapes", "rust", "semantics", "api-design"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
-disposition: "pending"
+disposition: "superseded"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis", "executable-model", "bounded-measurement"]
 informs: ["tiler.contract.ir"]
@@ -150,13 +150,13 @@ materially equivalent. These results reject a scaling concern for the bounded
 prototype; they are not a production compile-time guarantee. Full method and
 results are in the [spelling measurement](../../../spikes/shapes/shape-evidence/measurements/spelling-summary.json).
 
-## Recommendation pending review
+## Superseded stable-Rust recommendation
 
-This stable-Rust recommendation is being reconsidered by the follow-up
-[nightly const-parameter research](nightly-const-shape-parameters.md). A July
-2026 nightly accepts one dependent array family across arbitrary ranks. No
-public spelling is accepted until that feature premise and the retained spike
-are reviewed.
+This remains the fallback analysis when stable Rust is mandatory. ADR 0067
+instead accepts the follow-up [nightly const-parameter
+research](nightly-const-shape-parameters.md) and selects one dependent array
+family across arbitrary ranks. The stable arity-family proposal is therefore
+superseded, not invalidated as a measurement.
 
 **Inference:** library-owned arity families are the only candidate that
 combines canonical cross-crate type identity, sealed authority, compact public

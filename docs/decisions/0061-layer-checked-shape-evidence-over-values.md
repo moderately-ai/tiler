@@ -8,14 +8,13 @@ catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.ir"]
-evidence: ["tiler.research.shapes.shape-environment-contract", "tiler.research.shapes.constraint-prover-boundary", "tiler.research.shapes.stable-rust-shape-evidence", "tiler.research.shapes.public-static-shape-spelling", "tiler.research.semantic-graph.rust-construction-lifecycle"]
+evidence: ["tiler.research.shapes.shape-environment-contract", "tiler.research.shapes.constraint-prover-boundary", "tiler.research.shapes.stable-rust-shape-evidence", "tiler.research.shapes.public-static-shape-spelling", "tiler.research.shapes.nightly-const-shape-parameters", "tiler.research.semantic-graph.rust-construction-lifecycle"]
 ticket: "prototype-semantic-reference-slice"
 ---
 
 # 0061: Layer checked shape evidence over canonical typed values
 
-**Status:** accepted; stable-Rust feasibility measured, production API not yet
-implemented
+**Status:** accepted and refined by ADR 0067; production API not yet implemented
 
 ## Context
 
@@ -92,9 +91,9 @@ remain complete and nonduplicative.
 - The prototype must test explicit weakening, checked refinement, forgery
   resistance, foreign-graph rejection, and preservation of the single
   admission path.
-- The exact public spelling remains pending review. The bounded stable-Rust
-  spike established feasibility and the follow-up comparison recommends sealed
-  library-owned arity families; neither report silently stabilizes that API.
+- ADR 0067 selects one pinned-nightly dependent-array `StaticShape` family for
+  exact evidence across arbitrary ranks. The retained conformance spike must
+  pass before the shaped-value implementation lands.
 
 ## Alternatives considered
 

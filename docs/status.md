@@ -29,11 +29,12 @@ proof in [ADR 0055](decisions/0055-use-a-serial-sum-for-the-first-metal-value-pr
 The prototype must pass through the documented semantic, reference, optimizer,
 schedule, structured-kernel, artifact, and guarded-runtime boundaries; a
 handwritten standalone Metal kernel is insufficient. ADR 0065 supersedes ADR
-0056's four-crate count by extracting `tiler-reference`; ADR 0057 retains the
-Rust 1.89 MSRV. The active frontier is the dependency-ordered corrected
-semantic foundation, typed value,
-[shape-evidence spike](../tickets/prototype-shape-evidence-spike.md), and
-checked shaped-value work, integrated by the
+0056's four-crate count by extracting `tiler-reference`; ADR 0067 supersedes
+the stable Rust 1.89 floor and selects the exact `nightly-2026-07-19` pin plus
+one dependent-array `StaticShape<RANK, EXTENTS>` family. The active frontier is
+the [nightly shape conformance
+harness](../tickets/spike-nightly-arbitrary-rank-shape-evidence.md), checked
+shaped-value work, and their integration by the
 [`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md).
 That is followed by the dependency-ordered
 [`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md),

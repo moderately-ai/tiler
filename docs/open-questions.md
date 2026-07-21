@@ -16,14 +16,9 @@ one owner and an explicit way to close or reconsider it.
 
 ## Genuine product decisions
 
-### Q-PKG-005 — Initial checked shape-evidence spelling
-
-- Owner/tracking: [IR](ir.md),
-  [`shape-evidence spike`](../tickets/prototype-shape-evidence-spike.md), and
-  [`shaped-value API`](../tickets/prototype-shaped-value-api.md).
-- Close when: the stable-Rust spike establishes the feasible vocabulary and
-  cost boundary, then Tom approves the consequential public rank/static-shape,
-  refinement, weakening, and witness call-site spelling.
+The initial checked shape-evidence spelling is no longer open: ADR 0067 selects
+one pinned-nightly dependent-array family. Its conformance harness and
+implementation are tracked work rather than product decisions.
 
 ### Q-ART-011 — Apple deployment floors
 

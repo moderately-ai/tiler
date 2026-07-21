@@ -6,7 +6,7 @@ title: "System architecture"
 topics: ["architecture", "compiler"]
 contract_status: "mixed"
 implementation_status: "not-started"
-evidence: ["tiler.research.program-planning.kernel-program-buffer-plan", "tiler.research.semantic-graph.rust-construction-lifecycle"]
+evidence: ["tiler.research.program-planning.kernel-program-buffer-plan", "tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.shapes.nightly-const-shape-parameters"]
 ---
 
 # System architecture
@@ -269,9 +269,19 @@ This is an unstable prototype packaging profile, not the final published crate
 set. It deliberately omits frontend, proc-macro, Candle, generalized cache, and
 reusable Metal-runtime crates until the proof reaches those boundaries.
 
-ADR 0057 sets Rust 2024 and MSRV 1.89 uniformly across this workspace so the
-cache can use stable standard-library advisory locking. Locking remains behind
-an internal adapter to preserve a later older-toolchain compatibility path.
+ADR 0067 supersedes ADR 0057's stable Rust 1.89 floor. The prototype retains
+Rust 2024 but uses the exact `nightly-2026-07-19` toolchain so its optional exact
+shape evidence can use dependent array const parameters. `rust-toolchain.toml`
+is authoritative; the workspace does not claim stable-compiler compatibility
+while those features are required. Cache locking remains behind an internal
+adapter even though the selected nightly includes the Rust 1.89 standard-
+library locking API.
+
+Nightly upgrades are deliberate migrations, not rolling-channel updates. The
+candidate pin must pass the shape-evidence conformance harness alongside the
+governed pin before replacement. This toolchain choice does not authorize
+unstable proc-macro APIs or make Rust evidence part of semantic or artifact
+identity.
 
 ## Dependency direction
 

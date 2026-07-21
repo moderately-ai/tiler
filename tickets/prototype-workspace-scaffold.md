@@ -21,3 +21,9 @@ Create the Rust 2024 workspace at MSRV 1.89 with the four library packages and t
 - Added CI on Rust 1.89.0 and stable for graph, formatting, check, and tests.
 - Kept existing research spike workspaces explicitly outside the prototype
   workspace.
+
+## Supersession note
+
+ADR 0067 subsequently superseded the stable-only Rust 1.89 toolchain policy.
+The scaffold outcome above remains historical evidence; the retained nightly
+conformance spike owns migration of the workspace pin and CI.

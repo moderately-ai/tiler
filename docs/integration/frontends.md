@@ -6,7 +6,7 @@ title: "Frontend and proc-macro integration"
 topics: ["integrations", "frontends", "proc-macros", "aot"]
 contract_status: "accepted"
 implementation_status: "not-started"
-evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.embedding.artifact-costs", "tiler.research.cache.crash-race-protocol"]
+evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.embedding.artifact-costs", "tiler.research.cache.crash-race-protocol", "tiler.research.shapes.nightly-const-shape-parameters"]
 ticket: "synthesize-artifact-contracts"
 ---
 
@@ -27,6 +27,20 @@ semantic declarations present in invocation tokens. A consumer-local Rust
 trait implementation is target-crate code and is not executable by the
 already-compiled proc macro. ADR 0045 records this boundary; it does not narrow
 the provider set accepted by the ordinary compiler API.
+
+## Rust toolchain contract
+
+ADR 0067 requires the exact governed nightly for Tiler crates and Rust
+consumers because generated types may contain dependent array const parameters.
+The initial pin is `nightly-2026-07-19`; a rolling `nightly` channel is not
+supported. An inline macro must emit the same canonical `StaticShape<RANK,
+EXTENTS>` expansion as an ordinary Rust frontend.
+
+Using nightly for that public type does not authorize unstable proc-macro APIs.
+Expansion, artifact embedding, diagnostics, and external-input behavior retain
+their accepted stable proc-macro contracts. A compiler-pin migration must pass
+the retained shape-evidence and proc-macro call-site conformance cases before
+the governed pin changes.
 
 ## Invocation is the compilation unit
 

@@ -3,10 +3,10 @@ id: spike-nightly-arbitrary-rank-shape-evidence
 title: Spike nightly arbitrary-rank static shape evidence
 status: todo
 priority: p0
-dependencies: [research-nightly-const-shape-parameters]
+dependencies: [research-nightly-const-shape-parameters, adopt-nightly-dependent-static-shapes]
 related: [prototype-shaped-value-api]
-scopes: [research/shapes]
-shared_scopes: [project/tickets]
+scopes: [research/shapes, implementation/workspace, contracts/decisions]
+shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [spike, rust-api, const-generics, shapes]
 ---
@@ -14,9 +14,8 @@ tags: [spike, rust-api, const-generics, shapes]
 
 ## Goal
 
-Test whether one pinned nightly Rust type can carry canonical exact extents of
-arbitrary rank as optional, graph-checked evidence without public per-rank
-families or downstream descriptor types.
+Implement the retained conformance and compiler-upgrade harness for ADR 0067's
+accepted pinned-nightly, arbitrary-rank dependent-array shape evidence.
 
 ## Candidate surface
 
@@ -59,18 +58,17 @@ but it must preserve one value-based canonical type identity across ranks.
 
 ## Acceptance gates
 
-Adopt the nightly form only if it demonstrates canonical cross-crate identity,
-arbitrary rank through one family, no unsafe authority leak, acceptable
-diagnostics and bounded compile cost, and a feature premise aligned with Rust's
-documented direction. A dated nightly pin and incomplete-feature allowance must
-be explicit repository policy, not an incidental developer setup.
+The harness passes when the accepted dependent-array form demonstrates
+canonical cross-crate identity, arbitrary rank through one family, no authority
+leak, retained diagnostics, proc-macro-compatible generation, and bounded
+compile cost on the exact governed pin. The dated nightly and incomplete-
+feature allowance must be explicit repository policy, not incidental developer
+setup.
 
-Reject or defer it if identity depends on reference allocation, compiler
-behavior contradicts the intended structural-value model, routine use triggers
-an ICE, the required feature is explicitly headed toward removal, or a compiler
-upgrade would alter Tiler semantic or artifact identity. Failure falls back to
-the already measured stable-Rust `StaticShapeN` families; it does not block
-canonical graph shapes or rank-only evidence.
+A failure blocks the shaped-value implementation or compiler-pin migration and
+reports the exact violated invariant. It does not silently select borrowed
+slices, stable `StaticShapeN` families, or weaker evidence; changing the
+accepted form requires an explicit superseding decision.
 
 ## Deliverables
 
@@ -78,6 +76,5 @@ canonical graph shapes or rank-only evidence.
   harness, and compact results under `spikes/shapes/`;
 - a research update that distinguishes premise, implementation, and measured
   compiler revision;
-- an ADR update accepting either the pinned-nightly form or the stable fallback;
-  and
-- corresponding MSRV/toolchain-policy and implementation-ticket updates.
+- an ADR 0067 implementation-status update after the governed pin passes; and
+- corresponding toolchain-policy, CI, and implementation-ticket updates.

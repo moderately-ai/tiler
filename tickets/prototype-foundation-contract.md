@@ -22,3 +22,9 @@ Select and record the smallest workspace/crate dependency graph and Rust MSRV fo
   stabilization evidence, compatibility costs, and future split seams.
 - Q-PKG-001 and Q-PKG-004 are resolved; implementation tickets are ordered from
   workspace scaffolding through semantic, planning, Metal, and runtime proof.
+
+## Supersession note
+
+ADR 0067 subsequently superseded ADR 0057's stable-only toolchain choice while
+preserving its advisory-locking evidence. The exact dated-nightly migration is
+owned by `spike-nightly-arbitrary-rank-shape-evidence`.

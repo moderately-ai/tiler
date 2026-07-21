@@ -6,7 +6,7 @@ title: "IR stack and invariants"
 topics: ["ir", "semantics", "scheduling"]
 contract_status: "mixed"
 implementation_status: "not-started"
-evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.indexing.index-access-model", "tiler.research.scheduling.scheduled-region-model", "tiler.research.kernel-ir.structured-kernel-ir-verifier"]
+evidence: ["tiler.research.semantic-graph.contract-memo", "tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.indexing.index-access-model", "tiler.research.scheduling.scheduled-region-model", "tiler.research.kernel-ir.structured-kernel-ir-verifier", "tiler.research.shapes.nightly-const-shape-parameters"]
 ---
 
 # IR stack and invariants
@@ -241,6 +241,24 @@ owning builder or completed program may construct it after checking `E` against
 the value's authoritative ranked shape-expression vector and `ShapeEnv`.
 Absence of such evidence means only that the Rust caller does not possess it;
 the semantic value never becomes unranked.
+
+ADR 0067 fixes the initial exact-static evidence spelling to one dependent
+array family on the governed nightly:
+
+```rust,ignore
+pub struct StaticShape<
+    const RANK: usize,
+    const EXTENTS: [u64; RANK],
+>;
+
+type Matrix = ShapedValue<F32, StaticShape<2, { [2, 3] }>>;
+```
+
+`RANK` is `usize` only because Rust array lengths require it; each extent is
+`u64` and is checked into Tiler's canonical extent newtype at refinement. This
+is one arbitrary-rank family, not a finite `StaticShapeN` vocabulary. The
+explicit type is canonical; a future type-position macro may abbreviate it but
+cannot define a second evidence identity.
 
 Weakening a refined handle to `Value<T>` is explicit and zero-cost. Refinement
 is checked and fallible unless the producing operation established the evidence

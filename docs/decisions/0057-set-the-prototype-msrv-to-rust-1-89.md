@@ -5,8 +5,8 @@ kind: "decision"
 title: "Set the prototype MSRV to Rust 1.89"
 topics: ["rust", "msrv", "cache", "toolchains"]
 catalog_group: "artifacts-build-toolchains"
-decision_status: "accepted"
-implementation_status: "not-started"
+decision_status: "superseded"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture", "tiler.contract.frontend-integration"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv"]
 ticket: "prototype-foundation-contract"
@@ -14,7 +14,12 @@ ticket: "prototype-foundation-contract"
 
 # 0057: Set the prototype MSRV to Rust 1.89
 
-**Status:** accepted
+**Status:** superseded by ADR 0067
+
+The Rust 1.89 workspace floor was implemented and remains valid historical
+evidence for standard-library file locking. ADR 0067 replaces the stable-only
+workspace contract with an exact nightly pin required by dependent static-shape
+evidence.
 
 ## Context
 

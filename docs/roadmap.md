@@ -16,9 +16,10 @@ no verified runtime contract.
 
 ADR 0055 authorizes a bounded, unstable implementation prototype whose first
 Metal value proof fuses a resolved `f32` pointwise prologue into a strict serial
-`f32` `Sum`. ADRs 0056 and 0057 fix the prototype crate layout and Rust 1.89
-MSRV. Broader work below remains proposed progression rather than blanket
-implementation authority.
+`f32` `Sum`. ADR 0065 fixes the current prototype crate layout, and ADR 0067
+supersedes the Rust 1.89 floor with the exact `nightly-2026-07-19` toolchain for
+dependent static-shape evidence. Broader work below remains proposed
+progression rather than blanket implementation authority.
 
 ## Milestone 0A: semantic graph and extension feasibility
 
@@ -50,6 +51,9 @@ already exist.
   and sourceability of every dynamic output/temporary/guard/launch expression.
 - Establish multiple named results, sharing, and multi-result representation
   invariants even if the first runtime profile executes a narrower subset.
+- Implement ADR 0067's one arbitrary-rank `StaticShape<RANK, EXTENTS>` evidence
+  family only after its retained conformance harness passes on the governed
+  nightly; reuse that harness for every compiler-pin migration.
 
 **Exit criterion:** tensor meaning and graph invariants have a reviewed
 contract, mandatory operation-extension capabilities are explicit, and a small

@@ -10,10 +10,10 @@ shared_scopes: [project/tickets, contracts/foundation, contracts/decisions]
 paths: [Cargo.lock]
 tags: [implementation, prototype, semantics, shapes, rust-api]
 ---
-Do not implement until the nightly arbitrary-rank spike completes and Tom
-explicitly accepts either its selected spelling or the stable-Rust fallback.
-Acceptance must update ADR 0061 and the repository toolchain policy before this
-ticket changes `tiler-ir`.
+ADR 0067 accepts the pinned-nightly dependent-array spelling. Do not implement
+until its conformance harness passes and updates the repository toolchain
+policy; then implement the accepted `StaticShape<RANK, EXTENTS>` evidence in
+`tiler-ir`.
 
 - add the accepted sealed or host-controlled `ShapeEvidence` vocabulary;
 - add privately constructed `ShapedValue<T, E>` refinements over `Value<T>`;

@@ -97,8 +97,21 @@ them now would add a third-party or platform lock layer before the experimental
 prototype has users, while every macro consumer ultimately depends on the
 host-side AOT/cache path. Per-crate lower MSRV promises are therefore deferred.
 
+## Superseding toolchain evidence
+
+The Rust 1.89 finding remains correct for advisory locking and explains the
+implemented stable workspace floor. It no longer governs the complete
+prototype toolchain. Follow-up [shape-parameter
+research](../shapes/nightly-const-shape-parameters.md) established that one
+arbitrary-rank exact-evidence family requires dependent array const parameters;
+ADR 0067 accepts an exact dated nightly for that capability and supersedes ADR
+0057. Cargo's `rust-version` cannot express this channel requirement, so the
+workspace pin moves to `rust-toolchain.toml` when the conformance harness lands.
+
 ## Traceability
 
-Adopted by [ADR 0056](../../decisions/0056-use-four-libraries-and-two-proof-executables.md)
-and [ADR 0057](../../decisions/0057-set-the-prototype-msrv-to-rust-1-89.md).
+Adopted historically by [ADR 0056](../../decisions/0056-use-four-libraries-and-two-proof-executables.md)
+and [ADR 0057](../../decisions/0057-set-the-prototype-msrv-to-rust-1-89.md),
+whose toolchain portion is superseded by [ADR
+0067](../../decisions/0067-use-pinned-nightly-dependent-static-shapes.md).
 The [architecture contract](../../architecture.md) owns dependency direction.

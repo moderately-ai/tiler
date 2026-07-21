@@ -6,11 +6,12 @@ title: "Nightly arbitrary-rank const shape parameters"
 topics: ["shapes", "rust", "const-generics", "api-design"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
-disposition: "pending"
+disposition: "adopted"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.ir"]
-related: ["tiler.research.shapes.public-static-shape-spelling"]
+adopted_by: ["ADR-0067"]
+supersedes: ["tiler.research.shapes.public-static-shape-spelling"]
 ticket: "research-nightly-const-shape-parameters"
 ---
 
@@ -204,9 +205,11 @@ borrowed-slice form, but rejected the dependent-array declaration with E0770.
   `generic_const_parameter_types`; and
 - a Tiler-owned structural shape value under `min_adt_const_params`.
 
-These are preliminary compiler observations, not retained feasibility evidence.
-The spike ticket requires reproducible cross-crate fixtures, negative tests,
-diagnostics, and compiler-pin comparison before adoption.
+These observations establish that the accepted language form exists on the
+governed compiler, but they are not retained conformance evidence. The spike
+ticket still requires reproducible cross-crate fixtures, negative tests,
+diagnostics, compiler-pin comparison, and compile-cost measurements before the
+workspace adopts the pin and the shaped-value API is implemented.
 
 ## Interim assessment
 
@@ -220,10 +223,9 @@ const-parameter types, both explicitly intended capabilities. The borrowed
 slice depends on reference behavior the Rust project may forbid.
 
 **Proposal:** make the dependent extent array the primary spike candidate and
-retain the slice form only as a comparison. Do not yet replace the stable-Rust
-fallback or accept a nightly repository policy. The spike must first establish
-cross-crate canonical identity, diagnostics, bounded compiler behavior, and the
-cost of pinning an incomplete experimental feature.
+retain the slice form only as a comparison. ADR 0067 subsequently accepted this
+proposal and an exact nightly policy. The spike now establishes conformance and
+upgrade behavior rather than choosing the product contract.
 
 ## Research outcome
 
@@ -233,8 +235,7 @@ and explicitly intends const-parameter types to depend on earlier generics. The
 dependent-array form composes those capabilities without inventing a separate
 Tiler type algebra.
 
-That conclusion does not establish production readiness. The dependent-type
-feature remains experimental and lacks an accepted RFC. The next decision is
-therefore evidence-gated: run `spike-nightly-arbitrary-rank-shape-evidence`, then
-choose the pinned-nightly dependent array or the already measured stable-Rust
-arity-family fallback.
+That conclusion does not establish implementation readiness. The dependent-type
+feature remains experimental and lacks an accepted RFC. ADR 0067 accepts that
+risk; `spike-nightly-arbitrary-rank-shape-evidence` is the required conformance
+and compiler-upgrade harness.
