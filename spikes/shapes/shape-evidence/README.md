@@ -7,8 +7,8 @@ topics: ["shapes", "rust", "semantics", "diagnostics"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
-supports: ["tiler.research.shapes.stable-rust-shape-evidence"]
-entrypoints: ["spikes/shapes/shape-evidence/src/lib.rs", "spikes/shapes/shape-evidence/measure.sh"]
+supports: ["tiler.research.shapes.stable-rust-shape-evidence", "tiler.research.shapes.public-static-shape-spelling"]
+entrypoints: ["spikes/shapes/shape-evidence/src/lib.rs", "spikes/shapes/shape-evidence/measure.sh", "spikes/shapes/shape-evidence/measure-spellings.sh"]
 last_verified: "2026-07-20"
 ticket: "prototype-shape-evidence-spike"
 ---
@@ -45,3 +45,13 @@ Raw run products are ignored. The compact checked-in result is
 [`measurements/summary.json`](measurements/summary.json). One sample per case
 is sufficient to reject catastrophic scaling, not to estimate a production
 compile-time cost distribution.
+
+Compare downstream descriptors, library-owned arity families, and dimension
+tuples with five isolated samples per case:
+
+```sh
+spikes/shapes/shape-evidence/measure-spellings.sh
+```
+
+The checked-in medians and exact host/toolchain description are in
+[`measurements/spelling-summary.json`](measurements/spelling-summary.json).

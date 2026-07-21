@@ -25,6 +25,38 @@ for count in 1 10 100 1000; do
         echo "    assert_eq!(matched, ${count});"
         echo '}'
     } > "${output}"
+
+    output="${experiment_dir}/src/bin/family_${count}.rs"
+    {
+        echo '//! Generated direct const-generic shape-family workload.'
+        echo '#![allow(clippy::too_many_lines)]'
+        echo
+        echo 'use shape_evidence_spike::{Dims3, Exact, exercise_evidence};'
+        echo
+        echo 'fn main() {'
+        echo '    let mut matched = 0_usize;'
+        for ((index = 0; index < count; index++)); do
+            echo "    matched += usize::from(exercise_evidence::<Exact<Dims3<${index}, 2, 3>>>(&[${index}, 2, 3]));"
+        done
+        echo "    assert_eq!(matched, ${count});"
+        echo '}'
+    } > "${output}"
+
+    output="${experiment_dir}/src/bin/tuple_${count}.rs"
+    {
+        echo '//! Generated const-generic dimension-tuple workload.'
+        echo '#![allow(clippy::too_many_lines)]'
+        echo
+        echo 'use shape_evidence_spike::{Dim, Exact, exercise_evidence};'
+        echo
+        echo 'fn main() {'
+        echo '    let mut matched = 0_usize;'
+        for ((index = 0; index < count; index++)); do
+            echo "    matched += usize::from(exercise_evidence::<Exact<(Dim<${index}>, Dim<2>, Dim<3>)>>(&[${index}, 2, 3]));"
+        done
+        echo "    assert_eq!(matched, ${count});"
+        echo '}'
+    } > "${output}"
 done
 
 cargo +1.89.0 fmt --manifest-path "${experiment_dir}/Cargo.toml" --all

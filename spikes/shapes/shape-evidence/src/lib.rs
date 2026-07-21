@@ -75,6 +75,41 @@ pub trait StaticShapeSpec: 'static {
     const EXTENTS: &'static [u64];
 }
 
+/// One static extent used by the tuple spelling comparison.
+pub enum Dim<const N: u64> {}
+
+/// A rank-zero static-shape family used by the owned-family spelling.
+pub enum Dims0 {}
+
+/// A rank-one static-shape family used by the owned-family spelling.
+pub enum Dims1<const A: u64> {}
+
+/// A rank-two static-shape family used by the owned-family spelling.
+pub enum Dims2<const A: u64, const B: u64> {}
+
+/// A rank-three static-shape family used by the direct-family comparison.
+pub enum Dims3<const A: u64, const B: u64, const C: u64> {}
+
+impl StaticShapeSpec for Dims0 {
+    const EXTENTS: &'static [u64] = &[];
+}
+
+impl<const A: u64> StaticShapeSpec for Dims1<A> {
+    const EXTENTS: &'static [u64] = &[A];
+}
+
+impl<const A: u64, const B: u64> StaticShapeSpec for Dims2<A, B> {
+    const EXTENTS: &'static [u64] = &[A, B];
+}
+
+impl<const A: u64, const B: u64, const C: u64> StaticShapeSpec for Dims3<A, B, C> {
+    const EXTENTS: &'static [u64] = &[A, B, C];
+}
+
+impl<const A: u64, const B: u64, const C: u64> StaticShapeSpec for (Dim<A>, Dim<B>, Dim<C>) {
+    const EXTENTS: &'static [u64] = &[A, B, C];
+}
+
 /// Evidence that a value has the exact extents described by `S`.
 pub struct Exact<S>(PhantomData<fn() -> S>);
 
@@ -84,6 +119,32 @@ impl<S: StaticShapeSpec> ShapeEvidence for Exact<S> {
     fn matches(extents: &[u64]) -> bool {
         extents == S::EXTENTS
     }
+}
+
+/// Candidate owned exact-shape evidence for rank zero.
+pub type StaticShape0 = Exact<Dims0>;
+/// Candidate owned exact-shape evidence for rank one.
+pub type StaticShape1<const A: u64> = Exact<Dims1<A>>;
+/// Candidate owned exact-shape evidence for rank two.
+pub type StaticShape2<const A: u64, const B: u64> = Exact<Dims2<A, B>>;
+/// Candidate owned exact-shape evidence for rank three.
+pub type StaticShape3<const A: u64, const B: u64, const C: u64> = Exact<Dims3<A, B, C>>;
+
+/// Expands exact extents into a library-owned static-shape evidence type.
+#[macro_export]
+macro_rules! static_shape {
+    () => {
+        $crate::StaticShape0
+    };
+    ($a:expr) => {
+        $crate::StaticShape1<{ $a }>
+    };
+    ($a:expr, $b:expr) => {
+        $crate::StaticShape2<{ $a }, { $b }>
+    };
+    ($a:expr, $b:expr, $c:expr) => {
+        $crate::StaticShape3<{ $a }, { $b }, { $c }>
+    };
 }
 
 /// A privately constructed typed value carrying checked shape evidence.

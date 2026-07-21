@@ -1,0 +1,41 @@
+{
+  "schema": "tiler.shape-evidence-spelling-measurement/v1",
+  "measured_at": "2026-07-20",
+  "host": {
+    "model": "MacBook Pro MX2K3LL/A",
+    "chip": "Apple M4 Max",
+    "memory_gib": 36,
+    "os": "macOS 27.0.0",
+    "target": "aarch64-apple-darwin"
+  },
+  "toolchain": {
+    "rustc": "1.89.0 (29483883e 2025-08-04)",
+    "cargo": "1.89.0 (c24e10642 2025-06-23)",
+    "llvm": "20.1.7"
+  },
+  "method": {
+    "samples_per_case": 5,
+    "reported_statistic": "median",
+    "isolation": "separate cargo target directory cleaned before every check and release build",
+    "timer": "/usr/bin/time -lp",
+    "spelling_names": {
+      "open_descriptor": "one downstream marker type and StaticShapeSpec implementation per exact shape",
+      "owned_family": "one library-owned Dims3<A, B, C> const-generic family",
+      "dimension_tuple": "one tuple (Dim<A>, Dim<B>, Dim<C>) over a library-owned dimension type"
+    }
+  },
+  "results": [
+    {"spelling":"open_descriptor","distinct_shapes":1,"check_seconds":0.10,"release_seconds":0.16,"check_peak_rss_mib":98.25,"release_peak_rss_mib":111.469,"source_bytes":415,"binary_bytes":404016},
+    {"spelling":"open_descriptor","distinct_shapes":10,"check_seconds":0.10,"release_seconds":0.17,"check_peak_rss_mib":98.25,"release_peak_rss_mib":111.469,"source_bytes":1991,"binary_bytes":404016},
+    {"spelling":"open_descriptor","distinct_shapes":100,"check_seconds":0.11,"release_seconds":0.18,"check_peak_rss_mib":98.2344,"release_peak_rss_mib":111.453,"source_bytes":18192,"binary_bytes":404016},
+    {"spelling":"open_descriptor","distinct_shapes":1000,"check_seconds":0.21,"release_seconds":0.29,"check_peak_rss_mib":122.891,"release_peak_rss_mib":137.344,"source_bytes":184693,"binary_bytes":404016},
+    {"spelling":"owned_family","distinct_shapes":1,"check_seconds":0.10,"release_seconds":0.17,"check_peak_rss_mib":98.2656,"release_peak_rss_mib":111.5,"source_bytes":312,"binary_bytes":404016},
+    {"spelling":"owned_family","distinct_shapes":10,"check_seconds":0.10,"release_seconds":0.17,"check_peak_rss_mib":98.2344,"release_peak_rss_mib":111.484,"source_bytes":1069,"binary_bytes":404016},
+    {"spelling":"owned_family","distinct_shapes":100,"check_seconds":0.11,"release_seconds":0.18,"check_peak_rss_mib":98.2656,"release_peak_rss_mib":111.469,"source_bytes":8810,"binary_bytes":404016},
+    {"spelling":"owned_family","distinct_shapes":1000,"check_seconds":0.21,"release_seconds":0.28,"check_peak_rss_mib":111.828,"release_peak_rss_mib":130.562,"source_bytes":88011,"binary_bytes":404016},
+    {"spelling":"dimension_tuple","distinct_shapes":1,"check_seconds":0.10,"release_seconds":0.17,"check_peak_rss_mib":98.2656,"release_peak_rss_mib":111.484,"source_bytes":331,"binary_bytes":404016},
+    {"spelling":"dimension_tuple","distinct_shapes":10,"check_seconds":0.10,"release_seconds":0.17,"check_peak_rss_mib":98.2656,"release_peak_rss_mib":111.5,"source_bytes":1313,"binary_bytes":404016},
+    {"spelling":"dimension_tuple","distinct_shapes":100,"check_seconds":0.11,"release_seconds":0.18,"check_peak_rss_mib":98.25,"release_peak_rss_mib":111.469,"source_bytes":11304,"binary_bytes":404016},
+    {"spelling":"dimension_tuple","distinct_shapes":1000,"check_seconds":0.22,"release_seconds":0.29,"check_peak_rss_mib":113.75,"release_peak_rss_mib":131.984,"source_bytes":113005,"binary_bytes":404016}
+  ]
+}

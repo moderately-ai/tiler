@@ -58,7 +58,13 @@ this zero-sized evidence workload. These are single-run feasibility bounds,
 not stable performance guarantees. Exact provenance and method are in the
 [measurement summary](../../../spikes/shapes/shape-evidence/measurements/summary.json).
 
-## Recommendation
+## Feasibility recommendation
+
+This spike established that an open descriptor is safe as an input to checked
+refinement; it did not establish that downstream descriptors are the best
+public spelling. The follow-up [public spelling research](public-static-shape-spelling.md)
+compares type canonicalization, semver, ergonomics, precedent, and compiler
+cost. It recommends library-owned arity families, pending explicit review.
 
 Use this bounded initial vocabulary:
 
@@ -71,11 +77,11 @@ Axes2<A, B>
 ShapeWitness<SameShape>
 ```
 
-`ShapeEvidence` and witness predicate classes remain host-controlled. It is
-safe for `StaticShapeSpec` to be downstream-implementable because a descriptor
-cannot construct `ShapedValue`; every refinement is checked. Tiler may later
-add ergonomic built-in rank tuples or declaration macros without changing the
-authority boundary.
+`ShapeEvidence` and witness predicate classes remain host-controlled. The
+measured open `StaticShapeSpec` is sound because a descriptor cannot construct
+`ShapedValue`; every refinement is checked. Its presence here records the
+feasibility model, not a selected production API. Tiler can replace it with
+sealed library-owned families without changing the authority boundary.
 
 Reduction output evidence weakens initially. Do not introduce nightly
 features, recursive type-level extent lists, generated cross-product trait
@@ -87,9 +93,10 @@ and recheck the exact result directly.
 
 - Static authored mismatches can become ordinary Rust errors, while parsed and
   dynamic frontends continue using `Value<T>` and the same semantic graph.
-- The open descriptor permits arbitrary static ranks without making downstream
-  code an authority. Misspelled descriptors fail refinement with Tiler's typed
-  diagnostic rather than corrupting the graph.
+- The measured open descriptor permits arbitrary static ranks without making
+  downstream code an authority, but equivalent downstream descriptors have
+  different Rust type identities. The follow-up report therefore does not
+  recommend it as the public spelling.
 - Exact-shape evidence creates one Rust monomorph per distinct descriptor. The
   1,000-shape result is acceptable for the prototype but must not be generalized
   into an unbounded promise.
@@ -97,4 +104,3 @@ and recheck the exact result directly.
   splits, or solver derivations remain graph proof capabilities.
 - Evidence types and witnesses remain absent from semantic and artifact
   identity and cannot select a physical specialization.
-
