@@ -20,10 +20,12 @@ API shapes below remain proposed.
 ## Ownership boundary
 
 This document owns field-level semantic, index/access, schedule,
-`KernelProgram`, `BufferPlan`, target-requirement, and structured-kernel models,
-including their canonical identity and verifiers. Optimizer documents own how
-candidates are found and ranked; the artifact contract owns their serialized
-envelope and execution routing.
+`KernelProgram`, `BufferPlan`, `AbiExpr`, target-requirement, and
+structured-kernel models, including their canonical identity and verifiers.
+The IR boundary also owns the authoritative pure checked `AbiExpr` evaluation
+semantics. Optimizer documents own how candidates are found and ranked; the
+artifact contract owns versioned encoding, runtime fact binding, compatibility,
+failure classification, and the serialized envelope.
 
 Tiler uses several representations because tensor semantics, symbolic indexing,
 hardware scheduling, and imperative kernel code have different invariants.

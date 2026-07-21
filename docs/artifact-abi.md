@@ -150,6 +150,13 @@ Parser expression depth and collection lengths are bounded. Shape formulas,
 accessible ranges, metadata, allocation, dispatch, and routing reuse this
 evaluator.
 
+The domain type, admitted root vocabulary, validation, canonical identity, and
+authoritative pure checked evaluation semantics belong to the executable
+program IR in `tiler-ir`. This artifact contract owns their versioned wire
+encoding, runtime fact binding and phase checks, compatibility behavior, and
+failure classification; it must not recreate a second editable expression
+authority.
+
 ## Constraint, guard, and error outcomes
 
 The runtime distinguishes three outcomes:

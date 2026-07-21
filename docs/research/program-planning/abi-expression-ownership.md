@@ -6,16 +6,17 @@ title: "Ownership of target-neutral ABI expressions"
 topics: ["program-planning", "abi", "expressions", "rust"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
-disposition: "pending"
+disposition: "adopted"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.artifact-abi"]
+adopted_by: ["ADR-0068"]
 ticket: "prototype-target-neutral-baseline-slice"
 ---
 
 # Ownership of target-neutral ABI expressions
 
-**Status:** research complete; crate-placement recommendation awaits acceptance
+**Status:** research complete; accepted by ADR 0068
 
 ## Question
 
@@ -182,7 +183,7 @@ program expressions.
 
 ## Recommendation
 
-**Proposal:** place public `AbiExpr` and its authoritative pure checked
+**Accepted by Tom on 2026-07-21:** place public `AbiExpr` and its authoritative pure checked
 evaluation semantics in the same experimental `tiler-ir` physical-program
 surface as `KernelProgram`. Keep `ShapeExpr` a distinct newtyped IR. Share
 private arithmetic components only where semantics coincide. Keep artifact
