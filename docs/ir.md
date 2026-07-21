@@ -655,11 +655,11 @@ begins.
 
 ## Layer 2: index and iteration IR
 
-This layer converts a proposed semantic region into a canonical `IndexRegion`
-containing symbolic iteration domains, scalar computation, and access maps.
-Atomic semantic operations may be composed
-here into a fused scalar-expression DAG after a region candidate has been
-formed. An access map answers:
+This layer represents a canonical `IndexRegion` containing symbolic iteration
+domains, scalar computation, and access maps. Operation compilation
+capabilities may compose atomic semantic operations into this representation
+after a region candidate has been formed. The structural region neither names
+nor authenticates a semantic source by itself. An access map answers:
 
 ```text
 (output coordinates, reduction coordinates, shape/interface parameters)
@@ -675,7 +675,7 @@ address conversion. See ADR 0046.
 Core concepts:
 
 ```text
-ExtentExpr        IndexExpr          ScalarExpr
+ExtentExpr        IndexExpr          ScalarOperation / ScalarValue
 IterationVar      IterationDomain    ReductionDomain
 TensorAccessMap   ProvenFact
 ```
@@ -683,20 +683,58 @@ TensorAccessMap   ProvenFact
 `StorageLayout` and `BufferView` are adjacent physical-plan concepts used only
 when realizing these logical accesses.
 
-The typed `ScalarExpr` vocabulary contains argument references, constants,
-booleans, comparisons, select, arithmetic, min/max, casts, and an explicit set
-of elementary functions. Integer and floating-point division/modulo are
-distinct operations with documented semantics. Forming this expression is a
-lowering or physical-region decision; it is not evidence that the logical graph
-originally contained one composite `Map` node.
+The proposed scalar representation is a typed operation/value SSA graph, not a
+closed Rust enum with one variant per dtype and operation. Each scalar
+operation has a distinct namespaced and versioned `ScalarOpKey`, bounded
+host-canonical attributes, ordered operands, and one or more ordered,
+individually typed results. Each scalar value has one complete
+`ResolvedValueType` and is either an access read or one result of exactly one
+scalar operation. `ScalarOpKey` is deliberately distinct from semantic
+`OpKey`: one semantic tensor operation may lower into several scalar
+operations, and one fused scalar graph may implement several semantic
+operations.
 
-`IndexRegion` identity commits only to canonical symbolic iteration and
-reduction domains, scalar expressions, access maps, and constraints. It is
-pure structural content and may be shared by equivalent region occurrences. A
-compiler-owned checked refinement separately binds that structure to one
-semantic-region occurrence, its exact graph-value boundary/access mapping,
-reached definitions, selected providers, and required evidence. The schedule
-refines index structure rather than restating or owning that semantic binding.
+A frozen scalar-definition registry supplies the checked schema and semantic
+authority for each `ScalarOpKey`. The schema owns operand and result arities,
+canonical attributes, normative identity, and deterministic result inference.
+Only ordinary scalar applications use these definitions; reduction is a
+separate structural region whose body contains such applications. The host
+exclusively derives and revalidates ordered result types; providers cannot
+inject an asserted result type, untyped payload, `Any`, downcast value, or
+unchecked node. Constants are zero-operand scalar operations with
+schema-validated canonical attributes. Built-in and provider-defined dtypes
+use the same `ResolvedValueType` path.
+
+Reduction is a structural region form rather than one enum variant per
+reduction or dtype. It owns ordered bound dimensions, ordered initial state,
+ordered contributor values, a checked nested scalar operation/value body, and
+ordered results. The body receives typed state and contributor parameters and
+yields the next state, so an N-state reducer may contain several generic
+`ScalarOpKey` applications. The first supported traversal is an exact
+lexicographic left fold whose empty result is its initial state; alternative
+ordering contracts remain explicit rather than being inferred from a combiner.
+This admits strict sum initially without freezing the representation around a
+binary combiner, and preserves the structure needed for value/index pairs,
+checked arithmetic, and other multi-operation, multi-result reductions.
+
+`IndexRegion` identity commits only to the canonical structural program:
+iteration and reduction domains, typed tensor boundaries, access maps, scalar
+operations and values, constraints, and ordered outputs. Ordinary scalar
+operation identity includes the key, normalized attributes, ordered operand
+identities, and ordered resolved result types. Reduction identity additionally
+includes its traversal, bound-dimension order, init/contributor identities,
+nested body, and yields. Multi-result sharing is preserved by identifying one
+operation occurrence and deriving each result identity from its result position.
+Ownership tokens, arena indices, insertion order, provider addresses,
+executable callbacks, proof caches, targets, and any semantic-region identity
+are excluded.
+
+The structural index verifier does not establish that an `IndexRegion`
+implements any semantic operation or region. Compiler-owned legality evidence
+separately binds a generated region to its selected semantic source and records
+the reached scalar-definition and lowering-provider provenance required by
+compilation and artifact identity. Matching shapes, dtypes, or operation names
+cannot substitute for that evidence.
 
 Index expressions should be stored in an interned arena/DAG so repeated
 division, modulo, and coordinate arithmetic can be shared and simplified.
@@ -751,10 +789,12 @@ logical totality.
   dimensions are initially unsupported.
 - Semantic/index-domain bounds are proved or retained as semantic obligations.
 
-### Implemented static index profile
+### Proposed first static index profile
 
-The first experimental `tiler_ir::index` slice implements a deliberately
-smaller, fail-closed subset of this contract:
+The in-progress first experimental `tiler_ir::index` slice is intended to
+implement a deliberately smaller, fail-closed subset of this contract. This is
+a required implementation profile, not a claim that the corrected generic
+scalar model is complete:
 
 - public owner-checked draft handles, a recoverable checked builder, borrowed
   structural views, and an opaque immutable `VerifiedIndexRegion`;
@@ -765,35 +805,41 @@ smaller, fail-closed subset of this contract:
   explicit lexical evaluation domains that end at tensor coordinates and
   retain no allocation, stride, byte-address, target-width, or physical
   execution-scope state;
-- structural strict `f32` constants, multiply, add, and serial-sum scalar
-  expressions, with ordered floating-point operands, scalar evaluation scope,
-  and lexical reduction dimensions preserved;
+- a generic checked scalar operation/value SSA representation with distinct
+  `ScalarOpKey` authority, host-canonical attributes, registry-derived
+  `ResolvedValueType` results, ordered multi-result values, and structural
+  N-state reduction regions with lexical reduction dimensions;
+- registry fixtures proving zero-operand constants, ordinary applications,
+  multi-result operations, and exact serial reduction without dtype branches;
+  the downstream initial executable profile remains strict `f32`, which is a
+  capability limit rather than an intrinsic limit of scalar IR;
 - interval bounds proofs, resource-bounded finite fallback when a conservative
   interval overlaps a boundary, structural permutation proofs for large
   ordinary writes, resource-bounded exhaustive ownership fallback,
-  zero/rank-zero behavior, and region-owned bounds/write-ownership witnesses
+  zero/rank-zero behavior, and access-owned bounds/write-ownership evidence
   with inspectable proof kinds; and
-- reachable compaction plus canonical identity that excludes draft ownership,
-  raw semantic handles, dead builder history, proof caches, and target choices,
-  while including ordered tensor bindings and the correlated semantic-region
-  identity.
+- reachable compaction plus canonical structural identity that excludes draft
+  ownership, raw semantic handles, dead builder history, semantic-region
+  identity, proof caches, provider addresses, and target choices.
 
-The implemented verifier proves only structural well-formedness, bounds,
-lexical reduction closure, and ordinary write ownership. It intentionally does
-not claim semantic sourceability or operation equivalence. A relation such as
+The structural verifier proves only structural well-formedness, bounds,
+lexical reduction closure, and ordinary write ownership. It does not claim
+semantic sourceability or operation equivalence. A relation such as
 `y[i] = x[0]` can be structurally valid and in bounds while being an incorrect
 lowering of semantic `y[i] = x[i]`; later legality evidence must reject that
 mismatch.
 
-This first profile is out-of-place and `f32`-scalar-only: input boundaries may
-be read but not written, output boundaries may be written but not read, and
-every declared output boundary requires exactly one complete ordinary write
-root. In-place/read-modify-write relations, output partitions, non-`f32`
-scalar computation, atomics, and other reduction organizations require later
-specialized contracts rather than implicit relaxation.
+The first access profile remains out-of-place: input boundaries may be read but
+not written, output boundaries may be written but not read, and every declared
+output boundary requires exactly one complete ordinary write root.
+In-place/read-modify-write relations, output partitions, atomics, and other
+reduction organizations require later specialized contracts rather than
+implicit relaxation. The first registered executable scalar capability set is
+strict `f32`; other resolved dtypes reject through missing checked capability,
+not through a closed scalar representation.
 
-This is implemented support for static extents, not a claim that the complete
-symbolic contract above is finished. `ShapeEnv`-backed root bindings,
+Completing this bounded static-extent profile will not complete the symbolic
+contract above. `ShapeEnv`-backed root bindings,
 semi-affine symbolic coefficients/divisors, typed index-domain predicates, and
 durable solver evidence are tracked by
 [`implement-shapeenv-index-bindings`](../tickets/implement-shapeenv-index-bindings.md)

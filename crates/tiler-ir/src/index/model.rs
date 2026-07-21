@@ -1,96 +1,62 @@
 use std::collections::BTreeSet;
-use std::collections::btree_set;
-use std::iter::Zip;
-use std::ops::RangeFrom;
-use std::slice::Iter;
 use std::sync::Arc;
 
-use num_bigint::BigInt;
-
-use crate::semantic::{ResolvedValueType, SemanticProgram};
+use crate::semantic::ResolvedValueType;
 use crate::shape::Shape;
 
+use super::handles::VerifiedRegionOwner;
 use super::{
-    BoundsWitnessId, IndexInteger, VerifiedDimensionId, VerifiedIndexExprId, VerifiedScalarExprId,
-    VerifiedTensorAccessId, VerifiedTensorId, WriteOwnershipWitnessId,
+    IndexEntityKind, IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex,
+    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError,
+    VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
+    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
 
-/// Canonical identity of the semantic region refined by an index relation.
-///
-/// The first profile authenticates this correlation from a completed semantic
-/// program. It is not evidence that the relation implements a selected region;
-/// a later compiler legality layer owns that proof.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct SemanticRegionIdentity(Vec<u8>);
-
-impl SemanticRegionIdentity {
-    /// Correlates an index relation with an authentic completed semantic program.
-    #[must_use]
-    pub fn for_program(program: &SemanticProgram) -> Self {
-        Self(program.canonical_identity().as_bytes().to_vec())
-    }
-
-    /// Returns the exact canonical bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-/// Whether one region boundary tensor is consumed or produced.
+/// Whether one boundary tensor is consumed or produced.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum TensorRole {
-    /// A value supplied at the region boundary.
+    /// Caller-provided tensor boundary.
     Input,
-    /// A value produced at the region boundary.
+    /// Region-produced tensor boundary.
     Output,
 }
-
-/// Whether a domain dimension names independent outputs or reduction contributors.
+/// Whether a dimension names output points or reduction contributors.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum DomainRole {
-    /// Independently owned logical output points.
+    /// Dimension that remains free across output elements.
     Parallel,
-    /// Lexically bound contributors to a scalar reduction.
+    /// Dimension consumed by an explicit reduction.
     Reduction,
 }
-
-/// A logical tensor access mode supported by the first index profile.
+/// Logical tensor access mode.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum AccessMode {
-    /// A potentially many-to-one logical read.
+    /// Logical tensor read.
     Read,
-    /// One complete, uniquely owned logical output write.
+    /// Logical tensor write.
     Write,
 }
-
-/// Exact contributor order for the first serial reduction profile.
+/// Exact reduction traversal contract.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
-pub enum ContributorOrder {
-    /// Axes are visited in declared order; each axis increases from zero.
-    AxisLexicographic,
+pub enum ReductionTraversal {
+    /// Visit the Cartesian domain in dimension order, folding strictly left.
+    ExactLexicographicLeftFold,
 }
-
-/// Classification of one canonical logical index expression.
+/// Index expression classification.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum IndexExprClass {
-    /// Constant coefficients and no division or modulo.
+    /// Integer-affine expression.
     Affine,
-    /// A positive constant divisor introduces floor division or modulo.
+    /// Affine expression extended with constant floor division or modulo.
     QuasiAffine,
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(super) struct LinearTermData {
-    pub(super) coefficient: IndexInteger,
-    pub(super) value: u32,
+    pub coefficient: IndexInteger,
+    pub value: u32,
 }
-
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(super) enum IndexNode {
     Constant(IndexInteger),
@@ -108,693 +74,1059 @@ pub(super) enum IndexNode {
         divisor: u64,
     },
 }
-
 #[derive(Clone, Debug)]
 pub(super) struct IndexExprData {
-    pub(super) node: IndexNode,
-    pub(super) canonical: Vec<u8>,
-    pub(super) dimensions: BTreeSet<u32>,
-    pub(super) class: IndexExprClass,
-    pub(super) interval: Option<(BigInt, BigInt)>,
+    pub node: IndexNode,
+    pub class: IndexExprClass,
 }
-
 #[derive(Clone, Debug)]
 pub(super) struct DimensionData {
-    pub(super) role: DomainRole,
-    pub(super) extent: u64,
+    pub role: DomainRole,
+    pub extent: u64,
 }
-
 #[derive(Clone, Debug)]
 pub(super) struct TensorData {
-    pub(super) role: TensorRole,
-    pub(super) value_type: ResolvedValueType,
-    pub(super) shape: Shape,
+    pub role: TensorRole,
+    pub value_type: ResolvedValueType,
+    pub shape: Shape,
 }
-
-#[derive(Clone, Debug)]
-pub(super) struct AccessData {
-    pub(super) tensor: u32,
-    pub(super) mode: AccessMode,
-    pub(super) domain: Vec<u32>,
-    pub(super) coordinates: Vec<u32>,
-    pub(super) canonical: Vec<u8>,
-}
-
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(super) enum ScalarNode {
-    Load {
-        access: u32,
-    },
-    F32Constant {
-        bits: u32,
-    },
-    F32Multiply {
-        left: u32,
-        right: u32,
-    },
-    F32Add {
-        left: u32,
-        right: u32,
-    },
-    StrictSerialF32Sum {
-        value: u32,
-        dimensions: Vec<u32>,
-        order: ContributorOrder,
-        empty_identity_bits: u32,
-    },
+pub(super) struct AccessData {
+    pub tensor: u32,
+    pub mode: AccessMode,
+    pub domain: Vec<u32>,
+    pub coordinates: Vec<u32>,
 }
-
-#[derive(Clone, Debug)]
-pub(super) struct ScalarExprData {
-    pub(super) node: ScalarNode,
-    pub(super) free_dimensions: BTreeSet<u32>,
-    pub(super) depth: usize,
-    pub(super) canonical: Vec<u8>,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct OutputData {
-    pub(super) access: u32,
-    pub(super) value: u32,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(super) enum BoundsProof {
     VacuousEmptyDomain,
     Interval,
     Exhaustive { points: u64 },
 }
-
 #[derive(Clone, Copy, Debug)]
 pub(super) enum WriteOwnershipProof {
     CoordinatePermutation,
     Exhaustive { points: u64 },
 }
+#[derive(Clone, Debug)]
+pub(super) struct VerifiedAccessData {
+    pub tensor: u32,
+    pub mode: AccessMode,
+    pub domain: Vec<u32>,
+    pub coordinates: Vec<u32>,
+    pub bounds_proof: BoundsProof,
+    pub ownership_proof: Option<WriteOwnershipProof>,
+}
 
-/// Opaque canonical bytes for one verified index region.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(super) enum ScalarValueDefinition {
+    AccessRead {
+        access: u32,
+    },
+    OperationResult {
+        operation: u32,
+        result: ScalarResultIndex,
+    },
+}
+#[derive(Clone, Debug)]
+pub(super) struct ScalarValueData {
+    pub definition: ScalarValueDefinition,
+    pub value_type: ResolvedValueType,
+    pub free_dimensions: BTreeSet<u32>,
+    pub depth: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum ReducerBodyValueSource {
+    StateParameter(u32),
+    ContributorParameter(u32),
+    OperationResult {
+        operation: u32,
+        result: ScalarResultIndex,
+    },
+}
+#[derive(Clone, Debug)]
+pub(super) struct ReducerBodyValueData {
+    pub source: ReducerBodyValueSource,
+    pub value_type: ResolvedValueType,
+}
+#[derive(Clone, Debug)]
+pub(super) struct ReducerBodyOperationData {
+    pub key: ScalarOpKey,
+    pub attributes: ScalarAttributes,
+    pub operands: Vec<u32>,
+    pub results: Vec<u32>,
+}
+#[derive(Clone, Debug)]
+pub(super) struct ScalarReducerBodyData {
+    pub values: Vec<ReducerBodyValueData>,
+    pub operations: Vec<ReducerBodyOperationData>,
+    pub yields: Vec<u32>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum ScalarOperationKindData {
+    Apply {
+        key: ScalarOpKey,
+        attributes: ScalarAttributes,
+    },
+    Reduce {
+        dimensions: Vec<u32>,
+        traversal: ReductionTraversal,
+        init: Vec<u32>,
+        contributors: Vec<u32>,
+        body: ScalarReducerBodyData,
+    },
+}
+#[derive(Clone, Debug)]
+pub(super) struct ScalarOperationData {
+    pub kind: ScalarOperationKindData,
+    pub operands: Vec<u32>,
+    pub results: Vec<u32>,
+    pub depth: u32,
+}
+#[derive(Clone, Debug)]
+pub(super) struct OutputData {
+    pub access: u32,
+    pub value: u32,
+}
+
+/// Opaque canonical bytes for one verified region.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CanonicalIndexRegionIdentity(pub(super) Vec<u8>);
-
 impl CanonicalIndexRegionIdentity {
-    /// Returns the collision-free canonical encoding.
+    /// Returns canonical bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
 
-/// Immutable, structurally and relationally verified index region.
+/// Immutable, compacted and verified index region.
 #[derive(Clone, Debug)]
 pub struct VerifiedIndexRegion {
     pub(super) data: Arc<VerifiedIndexRegionData>,
 }
-
 #[derive(Clone, Debug)]
 pub(super) struct VerifiedIndexRegionData {
-    pub(super) semantic_region: SemanticRegionIdentity,
-    pub(super) dimensions: Vec<DimensionData>,
-    pub(super) tensors: Vec<TensorData>,
-    pub(super) expressions: Vec<IndexExprData>,
-    pub(super) accesses: Vec<VerifiedAccessData>,
-    pub(super) scalars: Vec<ScalarExprData>,
-    pub(super) outputs: Vec<OutputData>,
-    pub(super) identity: CanonicalIndexRegionIdentity,
+    pub owner: VerifiedRegionOwner,
+    pub dimensions: Vec<DimensionData>,
+    pub tensors: Vec<TensorData>,
+    pub expressions: Vec<IndexExprData>,
+    pub accesses: Vec<VerifiedAccessData>,
+    pub operations: Vec<ScalarOperationData>,
+    pub values: Vec<ScalarValueData>,
+    pub outputs: Vec<OutputData>,
+    pub identity: CanonicalIndexRegionIdentity,
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct VerifiedAccessData {
-    pub(super) tensor: u32,
-    pub(super) mode: AccessMode,
-    pub(super) domain: Vec<u32>,
-    pub(super) coordinates: Vec<u32>,
-    pub(super) bounds: BoundsWitnessId,
-    pub(super) bounds_proof: BoundsProof,
-    pub(super) ownership: Option<(WriteOwnershipWitnessId, WriteOwnershipProof)>,
-}
-
-macro_rules! arena_iterator {
-    ($name:ident, $item:ident, $data:ty) => {
-        #[doc = concat!("Iterator over verified ", stringify!($item), " values.")]
-        pub struct $name<'a> {
-            pub(super) inner: Zip<Iter<'a, $data>, RangeFrom<u32>>,
-        }
-
-        impl<'a> Iterator for $name<'a> {
-            type Item = $item<'a>;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                self.inner.next().map(|(data, index)| $item { index, data })
-            }
-
-            fn size_hint(&self) -> (usize, Option<usize>) {
-                self.inner.size_hint()
-            }
-        }
-
-        impl ExactSizeIterator for $name<'_> {}
-    };
-}
-
-/// Borrowed inspection of one domain dimension.
-#[derive(Clone, Copy, Debug)]
-pub struct DomainDimensionRef<'a> {
-    pub(super) index: u32,
-    pub(super) data: &'a DimensionData,
-}
-
-arena_iterator!(DomainDimensions, DomainDimensionRef, DimensionData);
-
-impl DomainDimensionRef<'_> {
-    /// Returns its verified-region-local identity.
+impl VerifiedIndexRegion {
+    /// Returns canonical structural identity.
     #[must_use]
-    pub const fn id(self) -> VerifiedDimensionId {
-        VerifiedDimensionId(self.index)
+    pub fn canonical_identity(&self) -> &CanonicalIndexRegionIdentity {
+        &self.data.identity
+    }
+    /// Returns dimensions in canonical order.
+    #[must_use]
+    pub fn dimensions(&self) -> impl ExactSizeIterator<Item = DomainDimensionRef<'_>> {
+        self.data
+            .dimensions
+            .iter()
+            .enumerate()
+            .map(|(i, data)| DomainDimensionRef {
+                id: self.dimension_id(i),
+                data,
+            })
+    }
+    /// Returns boundary tensors, inputs before outputs.
+    #[must_use]
+    pub fn tensors(&self) -> impl ExactSizeIterator<Item = TensorRef<'_>> {
+        self.data
+            .tensors
+            .iter()
+            .enumerate()
+            .map(|(i, data)| TensorRef {
+                id: self.tensor_id(i),
+                data,
+            })
+    }
+    /// Returns index expressions.
+    #[must_use]
+    pub fn index_expressions(&self) -> impl ExactSizeIterator<Item = IndexExprRef<'_>> {
+        self.data
+            .expressions
+            .iter()
+            .enumerate()
+            .map(|(i, data)| IndexExprRef {
+                id: self.expr_id(i),
+                data,
+            })
+    }
+    /// Returns logical accesses.
+    #[must_use]
+    pub fn accesses(&self) -> impl ExactSizeIterator<Item = TensorAccessRef<'_>> {
+        self.data
+            .accesses
+            .iter()
+            .enumerate()
+            .map(|(i, data)| TensorAccessRef {
+                id: self.access_id(i),
+                data,
+                region: self,
+            })
+    }
+    /// Returns scalar operation occurrences.
+    #[must_use]
+    pub fn scalar_operations(&self) -> impl ExactSizeIterator<Item = ScalarOperationRef<'_>> {
+        self.data
+            .operations
+            .iter()
+            .enumerate()
+            .map(|(i, data)| ScalarOperationRef {
+                id: self.operation_id(i),
+                data,
+                region: self,
+            })
+    }
+    /// Returns scalar SSA values.
+    #[must_use]
+    pub fn scalar_values(&self) -> impl ExactSizeIterator<Item = ScalarValueRef<'_>> {
+        self.data
+            .values
+            .iter()
+            .enumerate()
+            .map(|(i, data)| ScalarValueRef {
+                id: self.value_id(i),
+                data,
+                region: self,
+            })
+    }
+    /// Returns ordered graph outputs.
+    #[must_use]
+    pub fn outputs(&self) -> impl ExactSizeIterator<Item = OutputRef<'_>> {
+        self.data
+            .outputs
+            .iter()
+            .map(|data| OutputRef { data, region: self })
     }
 
-    /// Returns whether the dimension is parallel or reduction.
+    fn dimension_id(&self, i: usize) -> VerifiedDimensionId {
+        VerifiedDimensionId::from_verified(self.data.owner, u32::try_from(i).expect("bounded"))
+    }
+    fn tensor_id(&self, i: usize) -> VerifiedTensorId {
+        VerifiedTensorId::from_verified(self.data.owner, u32::try_from(i).expect("bounded"))
+    }
+    fn expr_id(&self, i: usize) -> VerifiedIndexExprId {
+        VerifiedIndexExprId::from_verified(self.data.owner, u32::try_from(i).expect("bounded"))
+    }
+    fn access_id(&self, i: usize) -> VerifiedTensorAccessId {
+        VerifiedTensorAccessId::from_verified(self.data.owner, u32::try_from(i).expect("bounded"))
+    }
+    fn operation_id(&self, i: usize) -> VerifiedScalarOperationId {
+        VerifiedScalarOperationId::from_verified(
+            self.data.owner,
+            u32::try_from(i).expect("bounded"),
+        )
+    }
+    fn value_id(&self, i: usize) -> VerifiedScalarValueId {
+        VerifiedScalarValueId::from_verified(self.data.owner, u32::try_from(i).expect("bounded"))
+    }
+
+    /// Resolves a verified scalar value handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign-region or invalid handle.
+    pub fn scalar_value(
+        &self,
+        id: VerifiedScalarValueId,
+    ) -> Result<ScalarValueRef<'_>, VerifiedIndexHandleError> {
+        if id.owner != self.data.owner {
+            return Err(VerifiedIndexHandleError::ForeignRegion {
+                entity: IndexEntityKind::ScalarValue,
+            });
+        }
+        let data =
+            self.data
+                .values
+                .get(id.as_usize())
+                .ok_or(VerifiedIndexHandleError::InvalidHandle {
+                    entity: IndexEntityKind::ScalarValue,
+                })?;
+        Ok(ScalarValueRef {
+            id,
+            data,
+            region: self,
+        })
+    }
+    /// Resolves a domain dimension in constant time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign-region or invalid handle.
+    pub fn dimension(
+        &self,
+        id: VerifiedDimensionId,
+    ) -> Result<DomainDimensionRef<'_>, VerifiedIndexHandleError> {
+        self.check_owner(id.owner, IndexEntityKind::Dimension)?;
+        let data = self.data.dimensions.get(id.as_usize()).ok_or(
+            VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::Dimension,
+            },
+        )?;
+        Ok(DomainDimensionRef { id, data })
+    }
+    /// Resolves a boundary tensor in constant time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign-region or invalid handle.
+    pub fn tensor(&self, id: VerifiedTensorId) -> Result<TensorRef<'_>, VerifiedIndexHandleError> {
+        self.check_owner(id.owner, IndexEntityKind::Tensor)?;
+        let data = self.data.tensors.get(id.as_usize()).ok_or(
+            VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::Tensor,
+            },
+        )?;
+        Ok(TensorRef { id, data })
+    }
+    /// Resolves an index expression in constant time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign-region or invalid handle.
+    pub fn index_expression(
+        &self,
+        id: VerifiedIndexExprId,
+    ) -> Result<IndexExprRef<'_>, VerifiedIndexHandleError> {
+        self.check_owner(id.owner, IndexEntityKind::IndexExpression)?;
+        let data = self.data.expressions.get(id.as_usize()).ok_or(
+            VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::IndexExpression,
+            },
+        )?;
+        Ok(IndexExprRef { id, data })
+    }
+    /// Resolves a logical access in constant time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign-region or invalid handle.
+    pub fn access(
+        &self,
+        id: VerifiedTensorAccessId,
+    ) -> Result<TensorAccessRef<'_>, VerifiedIndexHandleError> {
+        self.check_owner(id.owner, IndexEntityKind::TensorAccess)?;
+        let data = self.data.accesses.get(id.as_usize()).ok_or(
+            VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::TensorAccess,
+            },
+        )?;
+        Ok(TensorAccessRef {
+            id,
+            data,
+            region: self,
+        })
+    }
+    /// Resolves a scalar operation in constant time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign-region or invalid handle.
+    pub fn scalar_operation(
+        &self,
+        id: VerifiedScalarOperationId,
+    ) -> Result<ScalarOperationRef<'_>, VerifiedIndexHandleError> {
+        self.check_owner(id.owner, IndexEntityKind::ScalarOperation)?;
+        let data = self.data.operations.get(id.as_usize()).ok_or(
+            VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::ScalarOperation,
+            },
+        )?;
+        Ok(ScalarOperationRef {
+            id,
+            data,
+            region: self,
+        })
+    }
+    fn check_owner(
+        &self,
+        owner: VerifiedRegionOwner,
+        entity: IndexEntityKind,
+    ) -> Result<(), VerifiedIndexHandleError> {
+        if owner == self.data.owner {
+            Ok(())
+        } else {
+            Err(VerifiedIndexHandleError::ForeignRegion { entity })
+        }
+    }
+    /// Resolves a reducer-body value in constant time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid region, reduction, or local index.
+    pub fn reducer_body_value(
+        &self,
+        id: VerifiedReducerBodyValueId,
+    ) -> Result<ReducerBodyValueRef<'_>, VerifiedIndexHandleError> {
+        self.check_owner(id.owner, IndexEntityKind::ScalarValue)?;
+        let operation = self.data.operations.get(id.reduction as usize).ok_or(
+            VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::ScalarOperation,
+            },
+        )?;
+        let ScalarOperationKindData::Reduce { body, .. } = &operation.kind else {
+            return Err(VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::ScalarOperation,
+            });
+        };
+        let data =
+            body.values
+                .get(id.index as usize)
+                .ok_or(VerifiedIndexHandleError::InvalidHandle {
+                    entity: IndexEntityKind::ScalarValue,
+                })?;
+        Ok(ReducerBodyValueRef { id, data })
+    }
+    /// Resolves a reducer-body operation in constant time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid region, reduction, or local index.
+    pub fn reducer_body_operation(
+        &self,
+        id: VerifiedReducerBodyOperationId,
+    ) -> Result<ReducerBodyOperationRef<'_>, VerifiedIndexHandleError> {
+        self.check_owner(id.owner, IndexEntityKind::ScalarOperation)?;
+        let operation = self.data.operations.get(id.reduction as usize).ok_or(
+            VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::ScalarOperation,
+            },
+        )?;
+        let ScalarOperationKindData::Reduce { body, .. } = &operation.kind else {
+            return Err(VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::ScalarOperation,
+            });
+        };
+        let data = body.operations.get(id.index as usize).ok_or(
+            VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::ScalarOperation,
+            },
+        )?;
+        Ok(ReducerBodyOperationRef { id, data })
+    }
+}
+
+/// Borrowed dimension inspection.
+#[derive(Clone, Copy, Debug)]
+pub struct DomainDimensionRef<'a> {
+    id: VerifiedDimensionId,
+    data: &'a DimensionData,
+}
+impl DomainDimensionRef<'_> {
+    /// Returns the verified dimension identity.
+    #[must_use]
+    pub const fn id(self) -> VerifiedDimensionId {
+        self.id
+    }
+    /// Returns the semantic dimension role.
     #[must_use]
     pub const fn role(self) -> DomainRole {
         self.data.role
     }
-
     /// Returns the static half-open extent.
     #[must_use]
     pub const fn extent(self) -> u64 {
         self.data.extent
     }
 }
-
-/// Borrowed inspection of one ordered tensor boundary.
+/// Borrowed tensor inspection.
 #[derive(Clone, Copy, Debug)]
 pub struct TensorRef<'a> {
-    pub(super) index: u32,
-    pub(super) data: &'a TensorData,
+    id: VerifiedTensorId,
+    data: &'a TensorData,
 }
-
-arena_iterator!(Tensors, TensorRef, TensorData);
-
 impl<'a> TensorRef<'a> {
-    /// Returns its verified-region-local identity.
+    /// Returns the verified tensor identity.
     #[must_use]
     pub const fn id(self) -> VerifiedTensorId {
-        VerifiedTensorId(self.index)
+        self.id
     }
-
-    /// Returns whether the tensor is consumed or produced.
+    /// Returns the boundary role.
     #[must_use]
     pub const fn role(self) -> TensorRole {
         self.data.role
     }
-
-    /// Returns its canonical logical value type.
+    /// Returns the complete semantic element type.
     #[must_use]
-    pub const fn resolved_type(self) -> &'a ResolvedValueType {
+    pub const fn value_type(self) -> &'a ResolvedValueType {
         &self.data.value_type
     }
-
-    /// Returns its logical shape.
+    /// Returns the static tensor shape.
     #[must_use]
     pub const fn shape(self) -> &'a Shape {
         &self.data.shape
     }
 }
 
-/// One term in a canonical linear combination.
+/// Borrowed index expression inspection.
 #[derive(Clone, Copy, Debug)]
-pub struct LinearTermRef<'a> {
-    data: &'a LinearTermData,
+pub struct IndexExprRef<'a> {
+    id: VerifiedIndexExprId,
+    data: &'a IndexExprData,
 }
-
-impl<'a> LinearTermRef<'a> {
-    /// Returns the exact coefficient.
-    #[must_use]
-    pub const fn coefficient(self) -> &'a IndexInteger {
-        &self.data.coefficient
-    }
-
-    /// Returns the scaled expression.
-    #[must_use]
-    pub const fn value(self) -> VerifiedIndexExprId {
-        VerifiedIndexExprId(self.data.value)
-    }
-}
-
-/// Iterator over canonical linear-combination terms.
+/// One index expression view.
 #[derive(Clone, Debug)]
-pub struct LinearTerms<'a> {
-    inner: Iter<'a, LinearTermData>,
-}
-
-impl<'a> Iterator for LinearTerms<'a> {
-    type Item = LinearTermRef<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|data| LinearTermRef { data })
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl ExactSizeIterator for LinearTerms<'_> {}
-
-/// Borrowed structural inspection of a canonical index expression.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
 pub enum IndexExprView<'a> {
-    /// An exact integer constant.
+    /// Exact integer constant.
     Constant(&'a IndexInteger),
-    /// One domain dimension.
+    /// Reference to a domain dimension.
     Dimension(VerifiedDimensionId),
-    /// A normalized exact linear combination.
+    /// Normalized affine sum.
     LinearCombination {
-        /// Exact constant term.
+        /// Additive constant.
         constant: &'a IndexInteger,
-        /// Nonzero, structurally ordered coefficients and bases.
+        /// Ordered, combined nonzero terms.
         terms: LinearTerms<'a>,
     },
     /// Euclidean floor division by a positive constant.
     FloorDiv {
         /// Dividend expression.
         dividend: VerifiedIndexExprId,
-        /// Positive constant divisor.
+        /// Positive divisor.
         divisor: u64,
     },
     /// Euclidean modulo by a positive constant.
     Modulo {
         /// Dividend expression.
         dividend: VerifiedIndexExprId,
-        /// Positive constant divisor.
+        /// Positive divisor.
         divisor: u64,
     },
 }
-
-/// Borrowed inspection of one canonical index expression.
-#[derive(Clone, Copy, Debug)]
-pub struct IndexExprRef<'a> {
-    pub(super) index: u32,
-    pub(super) data: &'a IndexExprData,
+/// Iterator over ordered normalized linear terms.
+#[derive(Clone, Debug)]
+pub struct LinearTerms<'a> {
+    inner: std::slice::Iter<'a, LinearTermData>,
+    owner: VerifiedRegionOwner,
 }
-
-arena_iterator!(IndexExpressions, IndexExprRef, IndexExprData);
-
+impl<'a> Iterator for LinearTerms<'a> {
+    type Item = LinearTermRef<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|data| LinearTermRef {
+            data,
+            owner: self.owner,
+        })
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+impl ExactSizeIterator for LinearTerms<'_> {}
+/// Borrowed normalized linear term.
+#[derive(Clone, Copy, Debug)]
+pub struct LinearTermRef<'a> {
+    data: &'a LinearTermData,
+    owner: VerifiedRegionOwner,
+}
+impl<'a> LinearTermRef<'a> {
+    /// Returns the exact coefficient.
+    #[must_use]
+    pub const fn coefficient(self) -> &'a IndexInteger {
+        &self.data.coefficient
+    }
+    /// Returns the referenced child expression.
+    #[must_use]
+    pub fn value(self) -> VerifiedIndexExprId {
+        VerifiedIndexExprId::from_verified(self.owner, self.data.value)
+    }
+}
 impl<'a> IndexExprRef<'a> {
-    /// Returns its verified-region-local identity.
+    /// Returns the verified expression identity.
     #[must_use]
     pub const fn id(self) -> VerifiedIndexExprId {
-        VerifiedIndexExprId(self.index)
+        self.id
     }
-
-    /// Returns its strongest verified expression class.
+    /// Returns the strongest implemented expression class.
     #[must_use]
     pub const fn class(self) -> IndexExprClass {
         self.data.class
     }
-
-    /// Returns a borrowed structural view.
+    /// Returns the typed structural view.
     #[must_use]
     pub fn view(self) -> IndexExprView<'a> {
         match &self.data.node {
-            IndexNode::Constant(value) => IndexExprView::Constant(value),
-            IndexNode::Dimension(dimension) => {
-                IndexExprView::Dimension(VerifiedDimensionId(*dimension))
+            IndexNode::Constant(v) => IndexExprView::Constant(v),
+            IndexNode::Dimension(i) => {
+                IndexExprView::Dimension(VerifiedDimensionId::from_verified(self.id.owner, *i))
             }
             IndexNode::LinearCombination { constant, terms } => IndexExprView::LinearCombination {
                 constant,
                 terms: LinearTerms {
                     inner: terms.iter(),
+                    owner: self.id.owner,
                 },
             },
             IndexNode::FloorDiv { dividend, divisor } => IndexExprView::FloorDiv {
-                dividend: VerifiedIndexExprId(*dividend),
+                dividend: VerifiedIndexExprId::from_verified(self.id.owner, *dividend),
                 divisor: *divisor,
             },
             IndexNode::Modulo { dividend, divisor } => IndexExprView::Modulo {
-                dividend: VerifiedIndexExprId(*dividend),
+                dividend: VerifiedIndexExprId::from_verified(self.id.owner, *dividend),
                 divisor: *divisor,
             },
         }
     }
 }
 
-/// Iterator over verified dimension identities stored by another entity.
-#[derive(Clone, Debug)]
-pub struct VerifiedDimensionIds<'a> {
-    inner: Iter<'a, u32>,
-}
-
-impl Iterator for VerifiedDimensionIds<'_> {
-    type Item = VerifiedDimensionId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied().map(VerifiedDimensionId)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl ExactSizeIterator for VerifiedDimensionIds<'_> {}
-
-/// Iterator over verified index-expression identities stored by an access.
-#[derive(Clone, Debug)]
-pub struct VerifiedIndexExprIds<'a> {
-    inner: Iter<'a, u32>,
-}
-
-impl Iterator for VerifiedIndexExprIds<'_> {
-    type Item = VerifiedIndexExprId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied().map(VerifiedIndexExprId)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl ExactSizeIterator for VerifiedIndexExprIds<'_> {}
-
-/// Iterator over verified dimensions in a scalar evaluation scope.
-#[derive(Clone, Debug)]
-pub struct ScalarEvaluationDimensions<'a> {
-    inner: btree_set::Iter<'a, u32>,
-}
-
-impl Iterator for ScalarEvaluationDimensions<'_> {
-    type Item = VerifiedDimensionId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied().map(VerifiedDimensionId)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl ExactSizeIterator for ScalarEvaluationDimensions<'_> {}
-
-/// How an access-bounds witness was established.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum BoundsProofView {
-    /// The access domain is empty.
-    VacuousEmptyDomain,
-    /// Static interval propagation proved every coordinate.
-    Interval,
-    /// Bounded exhaustive evaluation proved every finite point.
-    Exhaustive {
-        /// Evaluated point count.
-        points: u64,
-    },
-}
-
-/// How ordinary write completeness and uniqueness were established.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum WriteOwnershipProofView {
-    /// Coordinates are a permutation of the complete parallel domain.
-    CoordinatePermutation,
-    /// Bounded exhaustive evaluation proved a bijection.
-    Exhaustive {
-        /// Evaluated writer-point count.
-        points: u64,
-    },
-}
-
-/// Borrowed inspection of one verified logical tensor access.
+/// Borrowed tensor-access inspection.
 #[derive(Clone, Copy, Debug)]
 pub struct TensorAccessRef<'a> {
-    pub(super) index: u32,
-    pub(super) data: &'a VerifiedAccessData,
+    id: VerifiedTensorAccessId,
+    data: &'a VerifiedAccessData,
+    region: &'a VerifiedIndexRegion,
 }
-
-arena_iterator!(TensorAccesses, TensorAccessRef, VerifiedAccessData);
-
 impl<'a> TensorAccessRef<'a> {
-    /// Returns its verified-region-local identity.
+    /// Returns the verified access identity.
     #[must_use]
     pub const fn id(self) -> VerifiedTensorAccessId {
-        VerifiedTensorAccessId(self.index)
+        self.id
     }
-
-    /// Returns the accessed tensor boundary.
-    #[must_use]
-    pub const fn tensor(self) -> VerifiedTensorId {
-        VerifiedTensorId(self.data.tensor)
-    }
-
-    /// Returns the logical access mode.
+    /// Returns whether this access reads or writes.
     #[must_use]
     pub const fn mode(self) -> AccessMode {
         self.data.mode
     }
-
-    /// Returns the explicit evaluation domain in canonical declaration order.
+    /// Returns the referenced tensor boundary.
     #[must_use]
-    pub fn domain(self) -> VerifiedDimensionIds<'a> {
-        VerifiedDimensionIds {
-            inner: self.data.domain.iter(),
-        }
+    pub fn tensor(self) -> VerifiedTensorId {
+        self.region.tensor_id(self.data.tensor as usize)
     }
-
-    /// Returns coordinates in logical tensor-axis order.
+    /// Returns the canonical in-scope dimension set.
     #[must_use]
-    pub fn coordinates(self) -> VerifiedIndexExprIds<'a> {
-        VerifiedIndexExprIds {
-            inner: self.data.coordinates.iter(),
-        }
+    pub fn domain(self) -> impl ExactSizeIterator<Item = VerifiedDimensionId> + 'a {
+        let owner = self.region.data.owner;
+        self.data
+            .domain
+            .iter()
+            .copied()
+            .map(move |index| VerifiedDimensionId::from_verified(owner, index))
     }
-
-    /// Returns the region-owned bounds witness.
+    /// Returns ordered tensor-coordinate expressions.
     #[must_use]
-    pub const fn bounds_witness(self) -> BoundsWitnessId {
-        self.data.bounds
+    pub fn coordinates(self) -> impl ExactSizeIterator<Item = VerifiedIndexExprId> + 'a {
+        let owner = self.region.data.owner;
+        self.data
+            .coordinates
+            .iter()
+            .copied()
+            .map(move |index| VerifiedIndexExprId::from_verified(owner, index))
     }
-
-    /// Returns how bounds were proved.
+    /// Returns retained bounds evidence.
     #[must_use]
-    pub const fn bounds_proof(self) -> BoundsProofView {
+    pub fn bounds_proof(self) -> BoundsProofView {
         match self.data.bounds_proof {
             BoundsProof::VacuousEmptyDomain => BoundsProofView::VacuousEmptyDomain,
             BoundsProof::Interval => BoundsProofView::Interval,
             BoundsProof::Exhaustive { points } => BoundsProofView::Exhaustive { points },
         }
     }
-
-    /// Returns complete unique-write evidence for an ordinary write.
+    /// Returns retained complete-write evidence when this is a write.
     #[must_use]
-    pub const fn write_ownership_witness(self) -> Option<WriteOwnershipWitnessId> {
-        match self.data.ownership {
-            Some((witness, _)) => Some(witness),
-            None => None,
-        }
-    }
-
-    /// Returns how ordinary write ownership was proved.
-    #[must_use]
-    pub const fn write_ownership_proof(self) -> Option<WriteOwnershipProofView> {
-        match self.data.ownership {
-            Some((_, WriteOwnershipProof::CoordinatePermutation)) => {
-                Some(WriteOwnershipProofView::CoordinatePermutation)
+    pub fn write_ownership_proof(self) -> Option<WriteOwnershipProofView> {
+        self.data.ownership_proof.map(|proof| match proof {
+            WriteOwnershipProof::CoordinatePermutation => {
+                WriteOwnershipProofView::CoordinatePermutation
             }
-            Some((_, WriteOwnershipProof::Exhaustive { points })) => {
-                Some(WriteOwnershipProofView::Exhaustive { points })
+            WriteOwnershipProof::Exhaustive { points } => {
+                WriteOwnershipProofView::Exhaustive { points }
             }
-            None => None,
-        }
+        })
     }
 }
 
-/// Borrowed structural inspection of one scalar expression.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub enum ScalarExprView<'a> {
-    /// Load through one verified read.
-    Load {
-        /// Verified read access.
-        access: VerifiedTensorAccessId,
+/// Public view of one sound bounds proof.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundsProofView {
+    /// The iteration domain is empty, so bounds hold vacuously.
+    VacuousEmptyDomain,
+    /// Exact interval propagation proved every coordinate in bounds.
+    Interval,
+    /// Finite enumeration proved every coordinate in bounds.
+    Exhaustive {
+        /// Enumerated domain points.
+        points: u64,
     },
-    /// Exact IEEE binary32 payload.
-    F32Constant {
-        /// Exact IEEE binary32 payload.
-        bits: u32,
-    },
-    /// Ordered binary32 multiplication.
-    F32Multiply {
-        /// Ordered left operand.
-        left: VerifiedScalarExprId,
-        /// Ordered right operand.
-        right: VerifiedScalarExprId,
-    },
-    /// Ordered binary32 addition.
-    F32Add {
-        /// Ordered left operand.
-        left: VerifiedScalarExprId,
-        /// Ordered right operand.
-        right: VerifiedScalarExprId,
-    },
-    /// Exact serial binary32 reduction.
-    StrictSerialF32Sum {
-        /// Contributor expression.
-        value: VerifiedScalarExprId,
-        /// Lexically bound reduction dimensions.
-        dimensions: VerifiedDimensionIds<'a>,
-        /// Exact contributor traversal order.
-        order: ContributorOrder,
-        /// Exact empty-domain result payload.
-        empty_identity_bits: u32,
+}
+/// Public view of one sound complete-write proof.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WriteOwnershipProofView {
+    /// Coordinates are a dimension permutation matching output shape.
+    CoordinatePermutation,
+    /// Finite enumeration proved total, injective ownership.
+    Exhaustive {
+        /// Enumerated domain points.
+        points: u64,
     },
 }
 
-/// Borrowed inspection of one scalar expression.
+/// One scalar value definition.
 #[derive(Clone, Copy, Debug)]
-pub struct ScalarExprRef<'a> {
-    pub(super) index: u32,
-    pub(super) data: &'a ScalarExprData,
+pub enum ScalarValueDefinitionView {
+    /// Value loaded by a logical read access.
+    AccessRead(VerifiedTensorAccessId),
+    /// Ordered result of a scalar operation occurrence.
+    OperationResult {
+        /// Defining operation.
+        operation: VerifiedScalarOperationId,
+        /// Result position.
+        result: ScalarResultIndex,
+    },
 }
-
-arena_iterator!(ScalarExpressions, ScalarExprRef, ScalarExprData);
-
-impl<'a> ScalarExprRef<'a> {
-    /// Returns its verified-region-local identity.
+/// Borrowed scalar SSA value.
+#[derive(Clone, Copy, Debug)]
+pub struct ScalarValueRef<'a> {
+    id: VerifiedScalarValueId,
+    data: &'a ScalarValueData,
+    region: &'a VerifiedIndexRegion,
+}
+impl<'a> ScalarValueRef<'a> {
+    /// Returns the verified scalar value identity.
     #[must_use]
-    pub const fn id(self) -> VerifiedScalarExprId {
-        VerifiedScalarExprId(self.index)
+    pub const fn id(self) -> VerifiedScalarValueId {
+        self.id
     }
-
-    /// Returns dimensions in the expression's remaining evaluation scope.
+    /// Returns the complete inferred semantic type.
     #[must_use]
-    pub fn evaluation_domain(self) -> ScalarEvaluationDimensions<'a> {
-        ScalarEvaluationDimensions {
-            inner: self.data.free_dimensions.iter(),
+    pub const fn value_type(self) -> &'a ResolvedValueType {
+        &self.data.value_type
+    }
+    /// Returns free iteration dimensions in canonical order.
+    #[must_use]
+    pub fn free_dimensions(self) -> impl ExactSizeIterator<Item = VerifiedDimensionId> + 'a {
+        let owner = self.region.data.owner;
+        self.data
+            .free_dimensions
+            .iter()
+            .copied()
+            .map(move |i| VerifiedDimensionId::from_verified(owner, i))
+    }
+    /// Returns the SSA definition.
+    #[must_use]
+    pub fn definition(self) -> ScalarValueDefinitionView {
+        match self.data.definition {
+            ScalarValueDefinition::AccessRead { access } => {
+                ScalarValueDefinitionView::AccessRead(self.region.access_id(access as usize))
+            }
+            ScalarValueDefinition::OperationResult { operation, result } => {
+                ScalarValueDefinitionView::OperationResult {
+                    operation: self.region.operation_id(operation as usize),
+                    result,
+                }
+            }
         }
     }
+}
 
-    /// Returns a borrowed structural view.
+/// One scalar operation kind.
+#[derive(Clone, Copy, Debug)]
+pub enum ScalarOperationKindRef<'a> {
+    /// One registered pointwise scalar application.
+    Apply {
+        /// Stable operation identity.
+        key: &'a ScalarOpKey,
+        /// Checked canonical attributes.
+        attributes: &'a ScalarAttributes,
+    },
+    /// One exact N-state reduction occurrence.
+    Reduce(ScalarReductionRef<'a>),
+}
+/// Borrowed inspection of one exact reduction occurrence.
+#[derive(Clone, Copy, Debug)]
+pub struct ScalarReductionRef<'a> {
+    operation: u32,
+    dimensions: &'a [u32],
+    traversal: ReductionTraversal,
+    init: &'a [u32],
+    contributors: &'a [u32],
+    body: &'a ScalarReducerBodyData,
+    region: &'a VerifiedIndexRegion,
+}
+impl<'a> ScalarReductionRef<'a> {
+    /// Returns ordered lexicographic reduction dimensions.
     #[must_use]
-    pub fn view(self) -> ScalarExprView<'a> {
-        match &self.data.node {
-            ScalarNode::Load { access } => ScalarExprView::Load {
-                access: VerifiedTensorAccessId(*access),
-            },
-            ScalarNode::F32Constant { bits } => ScalarExprView::F32Constant { bits: *bits },
-            ScalarNode::F32Multiply { left, right } => ScalarExprView::F32Multiply {
-                left: VerifiedScalarExprId(*left),
-                right: VerifiedScalarExprId(*right),
-            },
-            ScalarNode::F32Add { left, right } => ScalarExprView::F32Add {
-                left: VerifiedScalarExprId(*left),
-                right: VerifiedScalarExprId(*right),
-            },
-            ScalarNode::StrictSerialF32Sum {
-                value,
-                dimensions,
-                order,
-                empty_identity_bits,
-            } => ScalarExprView::StrictSerialF32Sum {
-                value: VerifiedScalarExprId(*value),
-                dimensions: VerifiedDimensionIds {
-                    inner: dimensions.iter(),
+    pub fn dimensions(self) -> impl ExactSizeIterator<Item = VerifiedDimensionId> + 'a {
+        let owner = self.region.data.owner;
+        self.dimensions
+            .iter()
+            .copied()
+            .map(move |index| VerifiedDimensionId::from_verified(owner, index))
+    }
+    /// Returns the exact traversal contract.
+    #[must_use]
+    pub const fn traversal(self) -> ReductionTraversal {
+        self.traversal
+    }
+    /// Returns ordered initial state values.
+    #[must_use]
+    pub fn init(self) -> impl ExactSizeIterator<Item = VerifiedScalarValueId> + 'a {
+        self.init
+            .iter()
+            .copied()
+            .map(move |index| self.region.value_id(index as usize))
+    }
+    /// Returns ordered contributor values.
+    #[must_use]
+    pub fn contributors(self) -> impl ExactSizeIterator<Item = VerifiedScalarValueId> + 'a {
+        self.contributors
+            .iter()
+            .copied()
+            .map(move |index| self.region.value_id(index as usize))
+    }
+    /// Returns the closed reducer-body SSA region.
+    #[must_use]
+    pub const fn body(self) -> ScalarReducerBodyRef<'a> {
+        ScalarReducerBodyRef {
+            data: self.body,
+            reduction: self.operation,
+            region: self.region,
+        }
+    }
+}
+/// Borrowed inspection of one closed reducer-body SSA region.
+#[derive(Clone, Copy, Debug)]
+pub struct ScalarReducerBodyRef<'a> {
+    data: &'a ScalarReducerBodyData,
+    reduction: u32,
+    region: &'a VerifiedIndexRegion,
+}
+impl<'a> ScalarReducerBodyRef<'a> {
+    /// Returns all body-local values in canonical order.
+    #[must_use]
+    pub fn values(self) -> impl ExactSizeIterator<Item = ReducerBodyValueRef<'a>> {
+        self.data
+            .values
+            .iter()
+            .zip(0..verified_count(self.data.values.len()))
+            .map(move |(data, index)| ReducerBodyValueRef {
+                id: VerifiedReducerBodyValueId {
+                    owner: self.region.data.owner,
+                    reduction: self.reduction,
+                    index,
                 },
-                order: *order,
-                empty_identity_bits: *empty_identity_bits,
-            },
+                data,
+            })
+    }
+    /// Returns generic scalar applications retained in the reachable body.
+    #[must_use]
+    pub fn operations(self) -> impl ExactSizeIterator<Item = ReducerBodyOperationRef<'a>> {
+        self.data
+            .operations
+            .iter()
+            .zip(0..verified_count(self.data.operations.len()))
+            .map(move |(data, index)| ReducerBodyOperationRef {
+                id: VerifiedReducerBodyOperationId {
+                    owner: self.region.data.owner,
+                    reduction: self.reduction,
+                    index,
+                },
+                data,
+            })
+    }
+    /// Returns the ordered yielded state values.
+    #[must_use]
+    pub fn yields(self) -> impl ExactSizeIterator<Item = VerifiedReducerBodyValueId> + 'a {
+        self.data
+            .yields
+            .iter()
+            .copied()
+            .map(move |index| VerifiedReducerBodyValueId {
+                owner: self.region.data.owner,
+                reduction: self.reduction,
+                index,
+            })
+    }
+}
+/// Definition of one reducer-body SSA value.
+#[derive(Clone, Copy, Debug)]
+pub enum ReducerBodyValueDefinitionView {
+    /// Ordered accumulator state parameter.
+    StateParameter(u32),
+    /// Ordered contributor parameter.
+    ContributorParameter(u32),
+    /// Result of one body-local scalar operation.
+    OperationResult {
+        /// Defining body-local operation.
+        operation: VerifiedReducerBodyOperationId,
+        /// Result position.
+        result: ScalarResultIndex,
+    },
+}
+/// Borrowed reducer-body value inspection.
+#[derive(Clone, Copy, Debug)]
+pub struct ReducerBodyValueRef<'a> {
+    id: VerifiedReducerBodyValueId,
+    data: &'a ReducerBodyValueData,
+}
+impl<'a> ReducerBodyValueRef<'a> {
+    /// Returns the owner-checked local value identity.
+    #[must_use]
+    pub const fn id(self) -> VerifiedReducerBodyValueId {
+        self.id
+    }
+    /// Returns the complete inferred semantic type.
+    #[must_use]
+    pub const fn value_type(self) -> &'a ResolvedValueType {
+        &self.data.value_type
+    }
+    /// Returns the SSA definition.
+    #[must_use]
+    pub fn definition(self) -> ReducerBodyValueDefinitionView {
+        match self.data.source {
+            ReducerBodyValueSource::StateParameter(index) => {
+                ReducerBodyValueDefinitionView::StateParameter(index)
+            }
+            ReducerBodyValueSource::ContributorParameter(index) => {
+                ReducerBodyValueDefinitionView::ContributorParameter(index)
+            }
+            ReducerBodyValueSource::OperationResult { operation, result } => {
+                ReducerBodyValueDefinitionView::OperationResult {
+                    operation: VerifiedReducerBodyOperationId {
+                        owner: self.id.owner,
+                        reduction: self.id.reduction,
+                        index: operation,
+                    },
+                    result,
+                }
+            }
+        }
+    }
+}
+/// Borrowed inspection of one generic application in a reducer body.
+#[derive(Clone, Copy, Debug)]
+pub struct ReducerBodyOperationRef<'a> {
+    id: VerifiedReducerBodyOperationId,
+    data: &'a ReducerBodyOperationData,
+}
+impl<'a> ReducerBodyOperationRef<'a> {
+    /// Returns the owner-checked local operation identity.
+    #[must_use]
+    pub const fn id(self) -> VerifiedReducerBodyOperationId {
+        self.id
+    }
+    /// Returns the registered scalar operation identity.
+    #[must_use]
+    pub const fn key(self) -> &'a ScalarOpKey {
+        &self.data.key
+    }
+    /// Returns checked canonical attributes.
+    #[must_use]
+    pub const fn attributes(self) -> &'a ScalarAttributes {
+        &self.data.attributes
+    }
+    /// Returns ordered operands.
+    #[must_use]
+    pub fn operands(self) -> impl ExactSizeIterator<Item = VerifiedReducerBodyValueId> + 'a {
+        self.data
+            .operands
+            .iter()
+            .copied()
+            .map(move |index| VerifiedReducerBodyValueId {
+                owner: self.id.owner,
+                reduction: self.id.reduction,
+                index,
+            })
+    }
+    /// Returns ordered inferred results.
+    #[must_use]
+    pub fn results(self) -> impl ExactSizeIterator<Item = VerifiedReducerBodyValueId> + 'a {
+        self.data
+            .results
+            .iter()
+            .copied()
+            .map(move |index| VerifiedReducerBodyValueId {
+                owner: self.id.owner,
+                reduction: self.id.reduction,
+                index,
+            })
+    }
+}
+/// Borrowed scalar operation occurrence.
+#[derive(Clone, Copy, Debug)]
+pub struct ScalarOperationRef<'a> {
+    id: VerifiedScalarOperationId,
+    data: &'a ScalarOperationData,
+    region: &'a VerifiedIndexRegion,
+}
+impl<'a> ScalarOperationRef<'a> {
+    /// Returns the verified operation identity.
+    #[must_use]
+    pub const fn id(self) -> VerifiedScalarOperationId {
+        self.id
+    }
+    /// Returns ordered operand values.
+    #[must_use]
+    pub fn operands(self) -> impl ExactSizeIterator<Item = VerifiedScalarValueId> + 'a {
+        self.data
+            .operands
+            .iter()
+            .copied()
+            .map(move |i| self.region.value_id(i as usize))
+    }
+    /// Returns ordered result values.
+    #[must_use]
+    pub fn results(self) -> impl ExactSizeIterator<Item = VerifiedScalarValueId> + 'a {
+        self.data
+            .results
+            .iter()
+            .copied()
+            .map(move |i| self.region.value_id(i as usize))
+    }
+    /// Returns the typed operation-kind view.
+    #[must_use]
+    pub fn kind(self) -> ScalarOperationKindRef<'a> {
+        match &self.data.kind {
+            ScalarOperationKindData::Apply { key, attributes } => {
+                ScalarOperationKindRef::Apply { key, attributes }
+            }
+            ScalarOperationKindData::Reduce {
+                dimensions,
+                traversal,
+                body,
+                init,
+                contributors,
+            } => ScalarOperationKindRef::Reduce(ScalarReductionRef {
+                operation: self.id.index,
+                dimensions,
+                traversal: *traversal,
+                init,
+                contributors,
+                body,
+                region: self.region,
+            }),
         }
     }
 }
 
-/// Borrowed inspection of one ordered output root.
+/// Borrowed output root.
 #[derive(Clone, Copy, Debug)]
 pub struct OutputRef<'a> {
-    pub(super) index: u32,
-    pub(super) data: &'a OutputData,
+    data: &'a OutputData,
+    region: &'a VerifiedIndexRegion,
 }
-
-arena_iterator!(Outputs, OutputRef, OutputData);
-
 impl OutputRef<'_> {
-    /// Returns the stable ordered output position.
+    /// Returns the logical write access bound to this root.
     #[must_use]
-    pub const fn position(self) -> usize {
-        self.index as usize
+    pub fn access(self) -> VerifiedTensorAccessId {
+        self.region.access_id(self.data.access as usize)
     }
-
-    /// Returns the output write access.
+    /// Returns the scalar value written by this root.
     #[must_use]
-    pub const fn access(self) -> VerifiedTensorAccessId {
-        VerifiedTensorAccessId(self.data.access)
-    }
-
-    /// Returns the scalar value written at each output point.
-    #[must_use]
-    pub const fn value(self) -> VerifiedScalarExprId {
-        VerifiedScalarExprId(self.data.value)
+    pub fn value(self) -> VerifiedScalarValueId {
+        self.region.value_id(self.data.value as usize)
     }
 }
 
-impl VerifiedIndexRegion {
-    /// Returns the semantic-region identity this relation claims to refine.
-    #[must_use]
-    pub fn semantic_region_identity(&self) -> &SemanticRegionIdentity {
-        &self.data.semantic_region
-    }
-
-    /// Returns domain dimensions in declared semantic iteration order.
-    #[must_use]
-    pub fn dimensions(&self) -> DomainDimensions<'_> {
-        DomainDimensions {
-            inner: self.data.dimensions.iter().zip(0_u32..),
-        }
-    }
-
-    /// Returns ordered input and output tensor boundaries.
-    #[must_use]
-    pub fn tensors(&self) -> Tensors<'_> {
-        Tensors {
-            inner: self.data.tensors.iter().zip(0_u32..),
-        }
-    }
-
-    /// Returns canonical index expressions in verified topological order.
-    #[must_use]
-    pub fn index_expressions(&self) -> IndexExpressions<'_> {
-        IndexExpressions {
-            inner: self.data.expressions.iter().zip(0_u32..),
-        }
-    }
-
-    /// Returns verified logical accesses.
-    #[must_use]
-    pub fn accesses(&self) -> TensorAccesses<'_> {
-        TensorAccesses {
-            inner: self.data.accesses.iter().zip(0_u32..),
-        }
-    }
-
-    /// Returns scalar expressions in verified topological order.
-    #[must_use]
-    pub fn scalar_expressions(&self) -> ScalarExpressions<'_> {
-        ScalarExpressions {
-            inner: self.data.scalars.iter().zip(0_u32..),
-        }
-    }
-
-    /// Returns ordered output roots.
-    #[must_use]
-    pub fn outputs(&self) -> Outputs<'_> {
-        Outputs {
-            inner: self.data.outputs.iter().zip(0_u32..),
-        }
-    }
-
-    /// Returns the canonical content identity.
-    #[must_use]
-    pub fn canonical_identity(&self) -> &CanonicalIndexRegionIdentity {
-        &self.data.identity
-    }
+fn verified_count(count: usize) -> u32 {
+    u32::try_from(count).expect("verified region entity counts fit u32")
 }

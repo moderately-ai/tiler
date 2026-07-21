@@ -1,58 +1,121 @@
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
-use super::{DimensionId, IndexRegionBuilder, ScalarExprId, TensorAccessId, TensorId};
+use crate::semantic::ResolvedValueType;
 
-/// Builder-owned entity categories used by typed diagnostics.
+use super::{
+    DimensionId, IndexRegionBuilder, ScalarRegistryError, ScalarValueId, TensorAccessId, TensorId,
+};
+
+/// A governed structural resource in the canonical index profile.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum IndexLimitKind {
+    /// Domain-dimension count.
+    DomainDimensions,
+    /// Boundary-tensor count.
+    BoundaryTensors,
+    /// Rank of one boundary tensor.
+    TensorRank,
+    /// Canonical boundary-description bytes.
+    BoundaryCanonicalBytes,
+    /// Index-expression count.
+    IndexExpressions,
+    /// Operand count of one index expression.
+    IndexExpressionOperands,
+    /// Canonical index-expression bytes.
+    IndexCanonicalBytes,
+    /// Logical tensor-access count.
+    TensorAccesses,
+    /// Canonical access-description bytes.
+    AccessCanonicalBytes,
+    /// Scalar-operation count.
+    ScalarOperations,
+    /// Scalar-value count.
+    ScalarValues,
+    /// Operand count of one scalar operation.
+    ScalarOperands,
+    /// Canonical scalar-SSA bytes.
+    ScalarCanonicalBytes,
+    /// Named output-root count.
+    OutputRoots,
+}
+
+impl fmt::Display for IndexLimitKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+/// Builder-owned or verified entity category used by typed errors.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum IndexEntityKind {
-    /// An iteration-domain dimension.
+    /// Domain dimension.
     Dimension,
-    /// A tensor at the region boundary.
+    /// Boundary tensor.
     Tensor,
-    /// An exact index expression.
+    /// Symbolic index expression.
     IndexExpression,
-    /// A logical tensor access.
+    /// Logical tensor access.
     TensorAccess,
-    /// A scalar expression.
-    ScalarExpression,
-    /// An output root.
+    /// Scalar operation occurrence.
+    ScalarOperation,
+    /// Scalar SSA value.
+    ScalarValue,
+    /// Named output root.
     OutputRoot,
 }
 
 impl fmt::Display for IndexEntityKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Dimension => "domain dimension",
-            Self::Tensor => "boundary tensor",
-            Self::IndexExpression => "index expression",
-            Self::TensorAccess => "tensor access",
-            Self::ScalarExpression => "scalar expression",
-            Self::OutputRoot => "output root",
-        })
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
     }
 }
 
-/// Failure during one transactional index-region insertion.
+/// Failure to resolve a verified handle against a region.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum VerifiedIndexHandleError {
+    /// The handle belongs to another verified region.
+    ForeignRegion {
+        /// Category of rejected handle.
+        entity: IndexEntityKind,
+    },
+    /// The handle index does not identify a retained entity.
+    InvalidHandle {
+        /// Category of rejected handle.
+        entity: IndexEntityKind,
+    },
+}
+
+impl fmt::Display for VerifiedIndexHandleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+impl Error for VerifiedIndexHandleError {}
+
+/// Failure during one transactional builder insertion.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum IndexBuildError {
-    /// The process-local builder identity space was exhausted.
+    /// No fresh builder ownership identity remained.
     BuilderIdentityExhausted,
-    /// An arena exhausted its fixed-width handle space.
+    /// A handle-representable entity count was exhausted.
     TooManyEntities {
-        /// Arena category that overflowed its compact index.
+        /// Category whose handle space was exhausted.
         entity: IndexEntityKind,
     },
-    /// A handle belongs to another builder.
+    /// A builder-owned handle came from another builder.
     ForeignHandle {
-        /// Rejected handle category.
+        /// Category of rejected handle.
         entity: IndexEntityKind,
     },
-    /// A handle has the correct owner but no local entity.
+    /// A builder-owned handle did not identify a live entity.
     InvalidHandle {
-        /// Rejected handle category.
+        /// Category of rejected handle.
         entity: IndexEntityKind,
     },
     /// An access domain repeated a dimension.
@@ -60,171 +123,156 @@ pub enum IndexBuildError {
         /// Repeated dimension.
         dimension: DimensionId,
     },
-    /// A coordinate depends on a dimension outside the access domain.
+    /// A coordinate depends on a dimension outside its access domain.
     CoordinateOutsideAccessDomain,
-    /// An access coordinate count disagrees with tensor rank.
+    /// Coordinate count differs from tensor rank.
     AccessRank {
-        /// Authoritative logical tensor rank.
+        /// Tensor rank.
         expected: usize,
         /// Supplied coordinate count.
         actual: usize,
     },
-    /// A read was requested from an output boundary tensor.
+    /// An output tensor was used as a read boundary.
     ReadFromOutput,
-    /// A write was requested to an input boundary tensor.
+    /// An input tensor was used as a write boundary.
     WriteToInput,
-    /// An ordinary write domain was not exactly the parallel domain.
+    /// A write domain is not exactly the parallel region domain.
     InvalidWriteDomain,
-    /// A scalar load referenced a write access.
-    LoadFromWrite,
-    /// An output root referenced a read access.
+    /// An output root referred to a read access.
     OutputUsesRead,
-    /// A scalar primitive or tensor requires the first profile's F32 type.
-    ScalarTypeMismatch,
-    /// A floor-div or modulo divisor was zero.
+    /// Floor division or modulo used a zero divisor.
     NonPositiveDivisor,
-    /// A reduction dimension was not declared with reduction role.
+    /// A reduction listed a non-reduction dimension.
     ExpectedReductionDimension {
         /// Rejected dimension.
         dimension: DimensionId,
     },
-    /// A reduction dimension was repeated.
+    /// A reduction listed one dimension more than once.
     DuplicateReductionDimension {
         /// Repeated dimension.
         dimension: DimensionId,
     },
-    /// The authoritative structural budget was exceeded.
+    /// A scalar evaluation scope listed one dimension more than once.
+    DuplicateEvaluationDimension {
+        /// Repeated dimension.
+        dimension: DimensionId,
+    },
+    /// A reduction had no reduction dimensions.
+    EmptyReductionDimensions,
+    /// A pointwise result retained a free reduction dimension.
+    PointwiseDomainContainsReductionDimension {
+        /// Free reduction dimension.
+        dimension: DimensionId,
+    },
+    /// A reduction had no accumulator state.
+    EmptyReductionState,
+    /// A reducer body did not declare its yielded state.
+    MissingReducerYield,
+    /// A reducer body attempted to set its yielded state more than once.
+    ReducerYieldAlreadySet,
+    /// Reducer yielded-state arity differs from accumulator-state arity.
+    ReducerYieldArity {
+        /// Accumulator-state arity.
+        expected: usize,
+        /// Yielded-state arity.
+        actual: usize,
+    },
+    /// One yielded reducer state has the wrong semantic type.
+    ReducerYieldTypeMismatch {
+        /// Ordered state position.
+        position: usize,
+        /// Initial accumulator type.
+        expected: Arc<ResolvedValueType>,
+        /// Yielded value type.
+        actual: Arc<ResolvedValueType>,
+    },
+    /// More than one root writes the same output tensor.
+    DuplicateOutputTensor,
+    /// Output tensor and scalar value types differ.
+    OutputTypeMismatch,
+    /// Scalar authority rejected registration, typing, or application.
+    ScalarAuthority(Arc<ScalarRegistryError>),
+    /// A governed construction resource exceeded its limit.
     StructuralLimit {
-        /// Bounded entity category.
-        entity: IndexEntityKind,
-        /// Authoritative maximum count or byte budget.
-        limit: usize,
+        /// Governed resource.
+        resource: IndexLimitKind,
+        /// Attempted quantity.
+        actual: u128,
+        /// Maximum admitted quantity.
+        limit: u128,
     },
 }
 
 impl fmt::Display for IndexBuildError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BuilderIdentityExhausted => {
-                formatter.write_str("index-region builder identity space is exhausted")
-            }
-            Self::TooManyEntities { entity } => write!(formatter, "too many {entity} entities"),
-            Self::ForeignHandle { entity } => {
-                write!(
-                    formatter,
-                    "{entity} handle belongs to another index builder"
-                )
-            }
-            Self::InvalidHandle { entity } => {
-                write!(
-                    formatter,
-                    "{entity} handle is invalid in this index builder"
-                )
-            }
-            Self::DuplicateAccessDimension { dimension } => {
-                write!(formatter, "access domain repeats dimension {dimension:?}")
-            }
-            Self::CoordinateOutsideAccessDomain => formatter.write_str(
-                "an access coordinate depends on a dimension outside its evaluation domain",
-            ),
-            Self::AccessRank { expected, actual } => write!(
-                formatter,
-                "access rank {actual} does not match tensor rank {expected}"
-            ),
-            Self::ReadFromOutput => {
-                formatter.write_str("an output boundary tensor cannot be read in this profile")
-            }
-            Self::WriteToInput => formatter.write_str("an input boundary tensor cannot be written"),
-            Self::InvalidWriteDomain => formatter.write_str(
-                "an ordinary write domain must be exactly the declared parallel dimensions",
-            ),
-            Self::LoadFromWrite => formatter.write_str("a scalar load requires a read access"),
-            Self::OutputUsesRead => formatter.write_str("an output root requires a write access"),
-            Self::ScalarTypeMismatch => {
-                formatter.write_str("the first scalar profile requires governed F32 values")
-            }
-            Self::NonPositiveDivisor => {
-                formatter.write_str("Euclidean division and modulo require a positive divisor")
-            }
-            Self::ExpectedReductionDimension { dimension } => {
-                write!(formatter, "{dimension:?} is not a reduction dimension")
-            }
-            Self::DuplicateReductionDimension { dimension } => {
-                write!(formatter, "reduction dimension {dimension:?} is repeated")
-            }
-            Self::StructuralLimit { entity, limit } => {
-                write!(formatter, "{entity} exceeds authoritative limit {limit}")
-            }
-        }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+impl Error for IndexBuildError {}
+
+impl From<ScalarRegistryError> for IndexBuildError {
+    fn from(value: ScalarRegistryError) -> Self {
+        Self::ScalarAuthority(Arc::new(value))
     }
 }
 
-impl Error for IndexBuildError {}
-
-/// One whole-region verification failure.
+/// One deterministic whole-region verification failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum IndexRegionDiagnostic {
-    /// The region has no output root.
+    /// No named output root was declared.
     NoOutputs,
-    /// A declared output tensor has no ordinary write root.
+    /// A declared output tensor has no root.
     MissingOutputTensor {
-        /// Unwritten output tensor.
+        /// Missing tensor.
         tensor: TensorId,
     },
-    /// A declared reduction dimension was never bound by a reachable reduction.
+    /// A declared input tensor is unreachable from outputs.
+    UnusedInputTensor {
+        /// Unused tensor.
+        tensor: TensorId,
+    },
+    /// A declared domain dimension is unreachable from outputs.
     UnusedDomainDimension {
-        /// Unused reduction dimension.
+        /// Unused dimension.
         dimension: DimensionId,
     },
-    /// An access coordinate could not be proven in bounds.
-    BoundsNotProven {
-        /// Access whose bounds remain unknown.
-        access: TensorAccessId,
-    },
-    /// Sound interval or finite evidence proved an access coordinate out of bounds.
+    /// Exhaustive evaluation found an out-of-bounds coordinate.
     CoordinateOutOfBounds {
-        /// Access disproved by a concrete point.
+        /// Invalid access.
         access: TensorAccessId,
     },
-    /// An ordinary write was not proven complete and unique.
+    /// Bounds could not be proved within governed resources.
+    BoundsNotProven {
+        /// Unproved access.
+        access: TensorAccessId,
+    },
+    /// A write was not proved total and injective.
     WriteOwnershipNotProven {
-        /// Write whose coverage or uniqueness remains unknown.
+        /// Unproved write access.
         access: TensorAccessId,
     },
-    /// One output tensor was assigned more than one ordinary write root.
-    DuplicateOutputTensor {
-        /// Repeated output tensor.
-        tensor: TensorId,
-    },
-    /// A reduction variable reaches an output without a reduction binder.
+    /// A reachable scalar value retained an unreduced dimension.
     FreeReductionDimension {
-        /// Output scalar expression.
-        expression: ScalarExprId,
-        /// Unbound reduction dimension.
+        /// Invalid scalar value.
+        value: ScalarValueId,
+        /// Free reduction dimension.
         dimension: DimensionId,
     },
-    /// A reduction binder names a dimension unused by its body.
-    UnusedReductionDimension {
-        /// Reduction scalar expression.
-        expression: ScalarExprId,
-        /// Named but unused reduction dimension.
-        dimension: DimensionId,
-    },
-    /// Exhaustive proof would exceed the governed work or memory cap.
+    /// A finite proof exceeded a governed resource budget.
     ProofResourceLimit {
-        /// Governed resource that would be exceeded.
+        /// Exhausted proof resource.
         resource: ProofResource,
-        /// Required cell count or conservative estimated integer-byte count.
+        /// Required amount.
         required: u128,
-        /// Governed resource cap.
+        /// Configured limit.
         limit: u64,
     },
-    /// The final canonical identity exceeded its governed byte limit.
+    /// The fully encoded canonical identity exceeded its bound.
     CanonicalIdentityLimit {
-        /// Required canonical bytes.
+        /// Encoded byte count.
         bytes: usize,
-        /// Governed byte limit.
+        /// Maximum byte count.
         limit: usize,
     },
 }
@@ -233,83 +281,17 @@ pub enum IndexRegionDiagnostic {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ProofResource {
-    /// Evaluated coordinate/expression cells.
+    /// Evaluated expression cells across enumerated points.
     Cells,
-    /// Estimated aggregate arbitrary-precision integer bytes.
+    /// Conservative integer storage and dense ownership-bitset bytes.
     IntegerBytes,
 }
 
 impl fmt::Display for IndexRegionDiagnostic {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoOutputs => formatter.write_str("an index region requires at least one output"),
-            Self::MissingOutputTensor { tensor } => {
-                write!(formatter, "output tensor {tensor:?} has no write root")
-            }
-            Self::UnusedDomainDimension { dimension } => {
-                write!(
-                    formatter,
-                    "reduction dimension {dimension:?} is never bound"
-                )
-            }
-            Self::BoundsNotProven { access } => {
-                write!(formatter, "bounds were not proved for access {access:?}")
-            }
-            Self::CoordinateOutOfBounds { access } => {
-                write!(
-                    formatter,
-                    "access {access:?} has an out-of-bounds coordinate"
-                )
-            }
-            Self::WriteOwnershipNotProven { access } => write!(
-                formatter,
-                "complete unique ownership was not proved for write {access:?}"
-            ),
-            Self::DuplicateOutputTensor { tensor } => {
-                write!(
-                    formatter,
-                    "output tensor {tensor:?} has more than one write root"
-                )
-            }
-            Self::FreeReductionDimension {
-                expression,
-                dimension,
-            } => write!(
-                formatter,
-                "scalar expression {expression:?} leaves reduction dimension {dimension:?} free"
-            ),
-            Self::UnusedReductionDimension {
-                expression,
-                dimension,
-            } => write!(
-                formatter,
-                "scalar expression {expression:?} binds unused reduction dimension {dimension:?}"
-            ),
-            Self::ProofResourceLimit {
-                resource,
-                required,
-                limit,
-            } => write!(
-                formatter,
-                "proof requires {required} {resource}, exceeding governed cap {limit}"
-            ),
-            Self::CanonicalIdentityLimit { bytes, limit } => write!(
-                formatter,
-                "canonical index-region identity requires {bytes} bytes, exceeding limit {limit}"
-            ),
-        }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
     }
 }
-
-impl fmt::Display for ProofResource {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Cells => "evaluation cells",
-            Self::IntegerBytes => "estimated integer bytes",
-        })
-    }
-}
-
 impl Error for IndexRegionDiagnostic {}
 
 /// Recoverable failure from consuming whole-region verification.
@@ -325,7 +307,6 @@ impl IndexRegionBuildError {
     pub fn diagnostics(&self) -> &[IndexRegionDiagnostic] {
         &self.diagnostics
     }
-
     /// Recovers the intact builder and diagnostics.
     #[must_use]
     pub fn into_parts(self) -> (IndexRegionBuilder, Vec<IndexRegionDiagnostic>) {
@@ -334,15 +315,14 @@ impl IndexRegionBuildError {
 }
 
 impl fmt::Display for IndexRegionBuildError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
-            formatter,
+            f,
             "index-region verification failed with {} diagnostic(s)",
             self.diagnostics.len()
         )
     }
 }
-
 impl Error for IndexRegionBuildError {}
 
 pub(super) fn invalid_handle(entity: IndexEntityKind, foreign: bool) -> IndexBuildError {
