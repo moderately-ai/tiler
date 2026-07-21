@@ -18,11 +18,12 @@ reference crate boundary. Graph ownership, recoverable commitment,
 output-reachable compaction, origin-bound output selectors, independent type
 authority, open operation registration, generic typed values, and exact
 reference-capability dispatch are compile-checked for the bounded profile.
-The dependent-array shape conformance gate, exact nightly migration, and
-bounded checked shaped-value implementation are now complete. Its consequential
-public names and call-site boundaries remain under review before integration.
-Target-neutral compilation, Metal AOT, and device execution remain
-unimplemented and no public API is stabilized.
+The dependent-array shape conformance gate, exact nightly migration, checked
+shaped-value implementation, and assembled semantic/reference integration gate
+are now complete. A downstream-style test constructs and evaluates the bounded
+strict-`f32` program through public APIs, while malformed drafts and malformed
+reference results fail closed. Target-neutral compilation, Metal AOT, and
+device execution remain unimplemented and no public API is stabilized.
 
 ## Authorized prototype
 
@@ -36,12 +37,12 @@ the stable Rust 1.89 floor and selects the exact `nightly-2026-07-19` pin plus
 one dependent-array `StaticShape<RANK, EXTENTS>` family. The retained
 [nightly shape conformance
 harness](../spikes/shapes/nightly-dependent-static-shapes/README.md) now passes
-on the governed and adjacent compilers. The checked shaped-value draft now adds
-sealed exact/rank evidence, graph-owned same-shape witnesses, and revalidated
-evidence propagation through the existing builder admission path. Public API
-review remains active before integration by the
-[`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md).
-That is followed by the dependency-ordered
+on the governed and adjacent compilers. The checked shaped-value layer now adds
+sealed exact/rank evidence, graph-owned same-shape witnesses, and transactional
+evidence propagation through the existing builder admission path. The
+assembled
+[`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md)
+is complete. It is followed by the dependency-ordered
 [`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md),
 [`target-neutral fusion selection`](../tickets/prototype-target-neutral-fusion-slice.md),
 [`Metal AOT bundle`](../tickets/prototype-metal-aot-slice.md), and

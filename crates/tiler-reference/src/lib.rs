@@ -1141,6 +1141,29 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum MalformedReferenceResult {
+        WrongArity,
+        WrongShape,
+    }
+
+    struct MalformedReference {
+        result: MalformedReferenceResult,
+    }
+
+    impl ReferenceOperation for MalformedReference {
+        fn evaluate(
+            &self,
+            _: &[&Tensor],
+            _: &OperationAttributes,
+        ) -> Result<Vec<Tensor>, ReferenceOperationError> {
+            Ok(match self.result {
+                MalformedReferenceResult::WrongArity => Vec::new(),
+                MalformedReferenceResult::WrongShape => vec![Tensor::scalar(0.0)],
+            })
+        }
+    }
+
     struct ExternalReferenceProvider {
         capability_revision: u32,
     }
@@ -1159,6 +1182,30 @@ mod tests {
                 ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()]),
                 ReferenceCapabilityRevision::new(self.capability_revision)?,
                 Arc::new(IdentityReference),
+            )
+        }
+    }
+
+    struct MalformedReferenceProvider {
+        result: MalformedReferenceResult,
+    }
+
+    impl ReferenceRegistryProvider for MalformedReferenceProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "malformed-reference-capability", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut ReferenceRegistryRegistrar<'_>,
+        ) -> Result<(), ReferenceRegistryError> {
+            registrar.register(
+                external_identity_op(),
+                ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()]),
+                ReferenceCapabilityRevision::new(1)?,
+                Arc::new(MalformedReference {
+                    result: self.result,
+                }),
             )
         }
     }
@@ -1333,6 +1380,46 @@ mod tests {
     }
 
     #[test]
+    fn f32_arithmetic_preserves_subnormals_and_signed_zero_and_overflows_to_infinity() {
+        let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+        let one = constant(&mut graph, 1.0);
+        let two = constant(&mut graph, 2.0);
+        let half = constant(&mut graph, 0.5);
+        let minimum_subnormal = constant_bits(&mut graph, 0x0000_0001);
+        let minimum_normal = constant_bits(&mut graph, 0x0080_0000);
+        let maximum_finite = constant_bits(&mut graph, 0x7f7f_ffff);
+        let negative_zero = constant_bits(&mut graph, 0x8000_0000);
+        let positive_infinity = constant_bits(&mut graph, f32::INFINITY.to_bits());
+        let negative_infinity = constant_bits(&mut graph, f32::NEG_INFINITY.to_bits());
+
+        let preserved_subnormal = multiply(&mut graph, minimum_subnormal, one);
+        let produced_subnormal = multiply(&mut graph, minimum_normal, half);
+        let overflow = multiply(&mut graph, maximum_finite, two);
+        let signed_zero = multiply(&mut graph, negative_zero, two);
+        let invalid_infinities = add(&mut graph, positive_infinity, negative_infinity);
+
+        for (key, value) in [
+            ("preserved-subnormal", preserved_subnormal),
+            ("produced-subnormal", produced_subnormal),
+            ("overflow", overflow),
+            ("signed-zero", signed_zero),
+            ("invalid-infinities", invalid_infinities),
+        ] {
+            graph.output(OutputKey::new(key).unwrap(), value).unwrap();
+        }
+        let outputs = evaluate_program(&graph.build().unwrap(), &[]).unwrap();
+
+        assert_eq!(outputs[0].elements()[0].to_bits(), 0x0000_0001);
+        assert_eq!(outputs[1].elements()[0].to_bits(), 0x0040_0000);
+        assert_eq!(outputs[2].elements()[0].to_bits(), f32::INFINITY.to_bits());
+        assert_eq!(outputs[3].elements()[0].to_bits(), 0x8000_0000);
+        assert_eq!(
+            outputs[4].elements()[0].to_bits(),
+            CANONICAL_F32_ARITHMETIC_NAN_BITS
+        );
+    }
+
+    #[test]
     fn commitment_removes_dead_operations_and_inputs_before_evaluation() {
         let mut graph = SemanticProgramBuilder::try_standard().unwrap();
         let live = constant(&mut graph, 7.0);
@@ -1399,6 +1486,47 @@ mod tests {
             evaluator.evaluate(&program, &bindings).unwrap(),
             vec![tensor]
         );
+    }
+
+    #[test]
+    fn malformed_reference_results_fail_closed() {
+        let mut semantics = SemanticRegistryBuilder::standard().unwrap();
+        semantics
+            .register_provider(&ExternalSemanticProvider)
+            .unwrap();
+        let mut graph = SemanticProgramBuilder::try_new(semantics.freeze().unwrap()).unwrap();
+        let input: Value<F32> = graph
+            .input(InputKey::new("x").unwrap(), Shape::from_dims([2]))
+            .unwrap();
+        let result = graph
+            .apply(
+                external_identity_op(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            )
+            .unwrap();
+        graph
+            .output_resolved(OutputKey::new("result").unwrap(), result[0])
+            .unwrap();
+        let program = graph.build().unwrap();
+        let key = InputKey::new("x").unwrap();
+        let tensor = Tensor::new(Shape::from_dims([2]), vec![1.0, 2.0]).unwrap();
+        let bindings = [InputBinding::new(&key, &tensor)];
+
+        for result in [
+            MalformedReferenceResult::WrongArity,
+            MalformedReferenceResult::WrongShape,
+        ] {
+            let mut references = ReferenceRegistryBuilder::new();
+            references
+                .register_provider(&MalformedReferenceProvider { result })
+                .unwrap();
+            let evaluator = ReferenceEvaluator::new(references.freeze().unwrap());
+            assert_eq!(
+                evaluator.evaluate(&program, &bindings),
+                Err(EvaluationError::MalformedProgram)
+            );
+        }
     }
 
     #[test]
