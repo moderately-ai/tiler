@@ -141,6 +141,13 @@ path before this broader milestone. It intentionally does not claim the Candle
 adapter, inline macro, general fallback, or einops-derived workload required by
 the milestone exit.
 
+The target-neutral portion of that proof is now implemented privately: the
+same verified request produces a two-stage materialized program and a one-stage
+fused program, the fused structured kernel preserves atomic multiply/add and
+strict contributor order, and a fixed structural policy selects it while
+retaining the baseline. This does not yet provide Metal source, artifacts, or
+runtime execution.
+
 ## Milestone 2Q: quantized-value vertical proof
 
 - Verify and reference-evaluate strict affine `i4/u4/i8/u8` code tensors with

@@ -8,7 +8,7 @@ use crate::physical::{
     NumericalRealization, RegionId, ResourceRequirements, TensorRole, VerifiedScheduledRegion,
     VerifiedStructuredKernel,
 };
-use crate::request::VerifiedTargetRequest;
+use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct HostExprId(u8);
@@ -198,6 +198,7 @@ pub(crate) struct ArtifactConstructionPlan {
     pub(crate) target_profile_key: &'static str,
     pub(crate) entry_regions: Vec<RegionId>,
     pub(crate) routing_guard: HostExprId,
+    pub(crate) lowering_providers: Vec<LoweringProviderIdentity>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -273,7 +274,79 @@ pub(crate) fn build_kernel_program(
         }],
         routing: routing_policy(),
     };
-    verify_kernel_program(program, scheduled)
+    verify_materialized_serial_sum_program(program, scheduled)
+}
+
+pub(crate) fn build_fused_kernel_program(
+    request: &VerifiedTargetRequest,
+    scheduled: &VerifiedScheduledRegion,
+) -> Result<KernelProgram, ProgramError> {
+    let expressions = host_expressions(request)?;
+    let input_bytes = HostExprId(2);
+    let output_bytes = HostExprId(4);
+    let scheduled = std::slice::from_ref(scheduled);
+    let program = KernelProgram {
+        target_profile_key: request.target_profile.key,
+        host_expressions: expressions,
+        applicability_guard: HostExprId(7),
+        stages: vec![ProgramStage {
+            id: StageId(0),
+            scheduled_region: scheduled[0].region.index.id,
+            values: vec![
+                StageValueAccess {
+                    value: MaterializedValueId(0),
+                    access: StageAccess::Read,
+                },
+                StageValueAccess {
+                    value: MaterializedValueId(1),
+                    access: StageAccess::Write,
+                },
+            ],
+        }],
+        dependencies: Vec::new(),
+        buffer_plan: BufferPlan {
+            values: vec![
+                materialized(
+                    0,
+                    TensorRole::Input,
+                    ValueRole::Input,
+                    request.serial_sum().input_shape.clone(),
+                    input_bytes,
+                    None,
+                    0,
+                ),
+                materialized(
+                    1,
+                    TensorRole::Output,
+                    ValueRole::Output,
+                    request.serial_sum().output_shape.clone(),
+                    output_bytes,
+                    Some(StageId(0)),
+                    1,
+                ),
+            ],
+            allocations: vec![
+                allocation(0, input_bytes, AllocationOwnership::External),
+                allocation(1, output_bytes, AllocationOwnership::Program),
+            ],
+        },
+        entries: vec![entry(
+            0,
+            vec![
+                binding(0, 0, ComponentRole::Input, AbiAccess::Read, input_bytes),
+                binding(1, 1, ComponentRole::Output, AbiAccess::Write, output_bytes),
+            ],
+            HostExprId(6),
+            scheduled[0].requirements,
+            scheduled[0].region.index.numerical,
+        )],
+        outputs: vec![ProgramOutput {
+            key: request.serial_sum().output_key.as_str().to_owned(),
+            value: MaterializedValueId(1),
+        }],
+        routing: routing_policy(),
+    };
+    verify_fused_serial_sum_program(program, scheduled)
 }
 
 fn program_stages(scheduled: &[VerifiedScheduledRegion]) -> Vec<ProgramStage> {
@@ -414,7 +487,7 @@ fn routing_policy() -> Vec<RoutingTransition> {
     ]
 }
 
-pub(crate) fn verify_kernel_program(
+pub(crate) fn verify_materialized_serial_sum_program(
     program: KernelProgram,
     scheduled: &[VerifiedScheduledRegion],
 ) -> Result<KernelProgram, ProgramError> {
@@ -430,20 +503,7 @@ pub(crate) fn verify_kernel_program(
             rule: "strategy-cardinality",
         });
     }
-    let values = evaluate_expressions(&program.host_expressions)?;
-    if values.get(usize::from(program.applicability_guard.0)) != Some(&HostValue::Bool(true)) {
-        return Err(ProgramError::Structure {
-            rule: "applicability-guard",
-        });
-    }
-    if scheduled
-        .iter()
-        .any(|region| region.target_profile_key != program.target_profile_key)
-    {
-        return Err(ProgramError::Structure {
-            rule: "target-profile",
-        });
-    }
+    let values = verify_program_structure(&program, scheduled)?;
     if program.stages != program_stages(scheduled) {
         return Err(ProgramError::Structure { rule: "stages" });
     }
@@ -491,36 +551,143 @@ pub(crate) fn verify_kernel_program(
             rule: "semantic-output-coverage",
         });
     }
-    if program.routing
-        != [
-            RoutingTransition {
-                from: RoutingState::Preflight,
-                to: RoutingState::Committed,
-                fallback_permitted: true,
-            },
-            RoutingTransition {
-                from: RoutingState::Committed,
-                to: RoutingState::Executing,
-                fallback_permitted: false,
-            },
-            RoutingTransition {
-                from: RoutingState::Executing,
-                to: RoutingState::Published,
-                fallback_permitted: false,
-            },
-        ]
+    Ok(program)
+}
+
+#[cfg(test)]
+fn verify_kernel_program(
+    program: KernelProgram,
+    scheduled: &[VerifiedScheduledRegion],
+) -> Result<KernelProgram, ProgramError> {
+    verify_materialized_serial_sum_program(program, scheduled)
+}
+
+pub(crate) fn verify_fused_serial_sum_program(
+    program: KernelProgram,
+    scheduled: &[VerifiedScheduledRegion],
+) -> Result<KernelProgram, ProgramError> {
+    if scheduled.len() != 1
+        || program.stages.len() != 1
+        || !program.dependencies.is_empty()
+        || program.entries.len() != 1
+        || program.outputs.len() != 1
+        || program.buffer_plan.values.len() != 2
+        || program.buffer_plan.allocations.len() != 2
     {
+        return Err(ProgramError::Structure {
+            rule: "fused-strategy-cardinality",
+        });
+    }
+    let values = verify_program_structure(&program, scheduled)?;
+    let expected_stage = ProgramStage {
+        id: StageId(0),
+        scheduled_region: scheduled[0].region.index.id,
+        values: vec![
+            StageValueAccess {
+                value: MaterializedValueId(0),
+                access: StageAccess::Read,
+            },
+            StageValueAccess {
+                value: MaterializedValueId(1),
+                access: StageAccess::Write,
+            },
+        ],
+    };
+    if program.stages != [expected_stage] {
+        return Err(ProgramError::Structure {
+            rule: "fused-stage",
+        });
+    }
+    verify_fused_storage(&program, &values, scheduled)?;
+    verify_entry(
+        &program,
+        &program.entries[0],
+        StageId(0),
+        &scheduled[0],
+        &values,
+    )?;
+    if program.outputs[0].value != MaterializedValueId(1) || program.outputs[0].key.is_empty() {
+        return Err(ProgramError::Structure {
+            rule: "semantic-output-coverage",
+        });
+    }
+    Ok(program)
+}
+
+fn verify_program_structure(
+    program: &KernelProgram,
+    scheduled: &[VerifiedScheduledRegion],
+) -> Result<Vec<HostValue>, ProgramError> {
+    if program.stages.is_empty()
+        || program.stages.len() != scheduled.len()
+        || program.entries.len() != program.stages.len()
+        || program.outputs.is_empty()
+        || program.buffer_plan.values.is_empty()
+        || program.buffer_plan.allocations.is_empty()
+    {
+        return Err(ProgramError::Structure {
+            rule: "cardinality",
+        });
+    }
+    let values = evaluate_expressions(&program.host_expressions)?;
+    if values.get(usize::from(program.applicability_guard.0)) != Some(&HostValue::Bool(true)) {
+        return Err(ProgramError::Structure {
+            rule: "applicability-guard",
+        });
+    }
+    if scheduled
+        .iter()
+        .any(|region| region.target_profile_key != program.target_profile_key)
+    {
+        return Err(ProgramError::Structure {
+            rule: "target-profile",
+        });
+    }
+    for (index, stage) in program.stages.iter().enumerate() {
+        if stage.id
+            != StageId(u8::try_from(index).map_err(|_| ProgramError::Structure {
+                rule: "stage-id-overflow",
+            })?)
+            || stage.scheduled_region != scheduled[index].region.index.id
+            || stage.values.is_empty()
+        {
+            return Err(ProgramError::Structure { rule: "stage-id" });
+        }
+    }
+    for (index, value) in program.buffer_plan.values.iter().enumerate() {
+        if value.id
+            != MaterializedValueId(u8::try_from(index).map_err(|_| ProgramError::Storage {
+                rule: "value-id-overflow",
+            })?)
+            || usize::from(value.allocation.0) >= program.buffer_plan.allocations.len()
+        {
+            return Err(ProgramError::Storage { rule: "value-id" });
+        }
+    }
+    for (index, allocation) in program.buffer_plan.allocations.iter().enumerate() {
+        if allocation.id
+            != AllocationId(u8::try_from(index).map_err(|_| ProgramError::Storage {
+                rule: "allocation-id-overflow",
+            })?)
+        {
+            return Err(ProgramError::Storage {
+                rule: "allocation-id",
+            });
+        }
+    }
+    if program.routing != routing_policy() {
         return Err(ProgramError::Routing {
             rule: "fallback-after-commit",
         });
     }
-    Ok(program)
+    Ok(values)
 }
 
 pub(crate) fn build_artifact_plan(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     program: &KernelProgram,
+    providers: Vec<LoweringProviderIdentity>,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
     let semantic_output = semantic.outputs().next().ok_or(ProgramError::Structure {
         rule: "semantic-output-coverage",
@@ -558,6 +725,7 @@ pub(crate) fn build_artifact_plan(
             .map(|stage| stage.scheduled_region)
             .collect(),
         routing_guard: program.applicability_guard,
+        lowering_providers: providers,
     })
 }
 
@@ -737,6 +905,71 @@ fn verify_storage(
     Ok(())
 }
 
+fn verify_fused_storage(
+    program: &KernelProgram,
+    values: &[HostValue],
+    scheduled: &[VerifiedScheduledRegion],
+) -> Result<(), ProgramError> {
+    let [input, output] = program.buffer_plan.values.as_slice() else {
+        return Err(ProgramError::Storage {
+            rule: "fused-cardinality",
+        });
+    };
+    let [input_allocation, output_allocation] = program.buffer_plan.allocations.as_slice() else {
+        return Err(ProgramError::Storage {
+            rule: "fused-cardinality",
+        });
+    };
+    if scheduled.len() != 1
+        || input.tensor != TensorRole::Input
+        || input.role != ValueRole::Input
+        || input.definition.is_some()
+        || output.tensor != TensorRole::Output
+        || output.role != ValueRole::Output
+        || output.definition != Some(StageId(0))
+        || input.shape
+            != match &scheduled[0].region.index.accesses[0].map {
+                crate::physical::LogicalAccess::ReductionContributor { input_shape, .. } => {
+                    input_shape.clone()
+                }
+                crate::physical::LogicalAccess::LinearIdentity => {
+                    return Err(ProgramError::Storage {
+                        rule: "fused-input-map",
+                    });
+                }
+            }
+        || output.shape != scheduled[0].region.index.iteration_shape
+        || input_allocation.ownership != AllocationOwnership::External
+        || output_allocation.ownership != AllocationOwnership::Program
+        || input.allocation == output.allocation
+    {
+        return Err(ProgramError::Storage {
+            rule: "fused-values",
+        });
+    }
+    for value in [input, output] {
+        let allocation = &program.buffer_plan.allocations[usize::from(value.allocation.0)];
+        let expected_bytes = shape_elements(&value.shape)
+            .and_then(|elements| elements.checked_mul(4))
+            .ok_or(ProgramError::Storage {
+                rule: "required-byte-overflow",
+            })?;
+        if value.memory_space != MemorySpace::Device
+            || value.alignment != 4
+            || allocation.capacity_bytes != value.required_bytes
+            || allocation.memory_space != value.memory_space
+            || allocation.alignment != value.alignment
+            || values.get(usize::from(value.required_bytes.0))
+                != Some(&HostValue::U64(expected_bytes))
+        {
+            return Err(ProgramError::Storage {
+                rule: "fused-allocation-binding",
+            });
+        }
+    }
+    Ok(())
+}
+
 fn verify_entry(
     program: &KernelProgram,
     entry: &EntryContract,
@@ -750,7 +983,6 @@ fn verify_entry(
         || entry.requirements != scheduled.requirements
         || entry.numerical != scheduled.region.index.numerical
         || entry.threads_per_workgroup != HostExprId(8)
-        || entry.launch_threads != [HostExprId(5), HostExprId(6)][stage]
     {
         return Err(ProgramError::Abi {
             rule: "entry-contract",
@@ -793,18 +1025,7 @@ fn verify_entry(
             || binding.access != expected_access
             || binding.alignment != 4
             || binding.accessible_bytes != materialized_value.required_bytes
-            || binding.role
-                != match binding.value.0 {
-                    0 => ComponentRole::Input,
-                    1 => ComponentRole::Intermediate,
-                    2 => ComponentRole::Output,
-                    _ => {
-                        return Err(ProgramError::Abi {
-                            rule: "binding-value",
-                            stage: entry.stage,
-                        });
-                    }
-                }
+            || binding.role != component_role(materialized_value)
         {
             return Err(ProgramError::Abi {
                 rule: "binding",
@@ -813,6 +1034,14 @@ fn verify_entry(
         }
     }
     Ok(())
+}
+
+const fn component_role(value: &MaterializedValue) -> ComponentRole {
+    match value.role {
+        ValueRole::Input => ComponentRole::Input,
+        ValueRole::Temporary => ComponentRole::Intermediate,
+        ValueRole::Output => ComponentRole::Output,
+    }
 }
 
 fn shape_elements(shape: &Shape) -> Option<u64> {
@@ -918,13 +1147,31 @@ pub(crate) fn assert_kernels_match_program(
                 rule: "kernel-buffer-cardinality",
             });
         }
+        let stage_values = &program.stages[index].values;
+        if stage_values.len() != 2 {
+            return Err(ProgramError::Structure {
+                rule: "kernel-stage-value-cardinality",
+            });
+        }
+        let read = program
+            .buffer_plan
+            .values
+            .get(usize::from(stage_values[0].value.0))
+            .ok_or(ProgramError::Structure {
+                rule: "kernel-stage-value",
+            })?;
+        let write = program
+            .buffer_plan
+            .values
+            .get(usize::from(stage_values[1].value.0))
+            .ok_or(ProgramError::Structure {
+                rule: "kernel-stage-value",
+            })?;
         if kernel.kernel.scheduled_region != program.stages[index].scheduled_region
             || kernel.kernel.requirements != program.entries[index].requirements
             || kernel.kernel.numerical != program.entries[index].numerical
-            || kernel.kernel.buffers[0].tensor
-                != [TensorRole::Input, TensorRole::Intermediate][index]
-            || kernel.kernel.buffers[1].tensor
-                != [TensorRole::Intermediate, TensorRole::Output][index]
+            || kernel.kernel.buffers[0].tensor != read.tensor
+            || kernel.kernel.buffers[1].tensor != write.tensor
         {
             return Err(ProgramError::Structure {
                 rule: "kernel-entry-refinement",
@@ -950,7 +1197,9 @@ pub(crate) fn verify_semantic_output_type(program: &SemanticProgram) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physical::{build_scheduled_regions, lower_structured_kernel};
+    use crate::physical::{
+        build_fused_scheduled_region, build_scheduled_regions, lower_structured_kernel,
+    };
     use crate::request::{CompilationRequest, verify_request};
     use tiler_ir::semantic::{
         F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
@@ -992,7 +1241,13 @@ mod tests {
         ];
         assert_kernels_match_program(&program, &kernels).unwrap();
         verify_semantic_output_type(&semantic).unwrap();
-        let artifact = build_artifact_plan(&semantic, &request, &program).unwrap();
+        let artifact = build_artifact_plan(
+            &semantic,
+            &request,
+            &program,
+            vec![request.capabilities.materialized_serial_sum],
+        )
+        .unwrap();
 
         assert_eq!(program.buffer_plan.values[1].role, ValueRole::Temporary);
         assert_eq!(
@@ -1154,6 +1409,46 @@ mod tests {
             assert_kernels_match_program(&valid, &kernels),
             Err(ProgramError::Structure {
                 rule: "kernel-entry-cardinality"
+            })
+        );
+    }
+
+    #[test]
+    fn fused_program_verifier_is_cardinality_independent_and_fails_closed() {
+        let (_, request, _) = fixture();
+        let scheduled = build_fused_scheduled_region(&request).unwrap();
+        let valid = build_fused_kernel_program(&request, &scheduled).unwrap();
+        let kernel = lower_structured_kernel(&scheduled).unwrap();
+        assert_kernels_match_program(&valid, std::slice::from_ref(&kernel)).unwrap();
+
+        let mut malformed = valid.clone();
+        malformed.buffer_plan.values[1].definition = None;
+        assert_eq!(
+            verify_fused_serial_sum_program(malformed, std::slice::from_ref(&scheduled)),
+            Err(ProgramError::Storage {
+                rule: "fused-values"
+            })
+        );
+
+        let mut malformed = valid.clone();
+        malformed.stages[0].values[1].value = MaterializedValueId(7);
+        assert_eq!(
+            verify_fused_serial_sum_program(malformed, std::slice::from_ref(&scheduled)),
+            Err(ProgramError::Structure {
+                rule: "fused-stage"
+            })
+        );
+
+        let mut malformed = valid;
+        malformed.dependencies.push(Dependency {
+            predecessor: StageId(0),
+            successor: StageId(0),
+            reason: DependencyReason::Data(MaterializedValueId(1)),
+        });
+        assert_eq!(
+            verify_fused_serial_sum_program(malformed, std::slice::from_ref(&scheduled)),
+            Err(ProgramError::Structure {
+                rule: "fused-strategy-cardinality"
             })
         );
     }

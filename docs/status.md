@@ -22,8 +22,11 @@ The dependent-array shape conformance gate, exact nightly migration, checked
 shaped-value implementation, and assembled semantic/reference integration gate
 are now complete. A downstream-style test constructs and evaluates the bounded
 strict-`f32` program through public APIs, while malformed drafts and malformed
-reference results fail closed. Target-neutral compilation, Metal AOT, and
-device execution remain unimplemented and no public API is stabilized.
+reference results fail closed. The private target-neutral proof now compiles
+that program into both a verified two-stage materialized plan and a verified
+one-stage fused plan, retains both in a deterministic portfolio, and selects
+fusion only as a strict structural Pareto improvement. Metal AOT and device
+execution remain unimplemented, and no compiler API is public or stabilized.
 
 ## Authorized prototype
 
@@ -41,11 +44,12 @@ on the governed and adjacent compilers. The checked shaped-value layer now adds
 sealed exact/rank evidence, graph-owned same-shape witnesses, and transactional
 evidence propagation through the existing builder admission path. The
 assembled
-[`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md)
-is complete. It is followed by the dependency-ordered
-[`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md),
-[`target-neutral fusion selection`](../tickets/prototype-target-neutral-fusion-slice.md),
-[`Metal AOT bundle`](../tickets/prototype-metal-aot-slice.md), and
+[`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md),
+[`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md)
+and
+[`target-neutral fusion selection`](../tickets/prototype-target-neutral-fusion-slice.md)
+are complete. The next dependency-ordered slices are the
+[`Metal AOT bundle`](../tickets/prototype-metal-aot-slice.md) and the
 [`Metal execution proof`](../tickets/prototype-metal-runtime-proof.md) slices.
 
 This chain is an architectural value proof. It does not by itself complete the

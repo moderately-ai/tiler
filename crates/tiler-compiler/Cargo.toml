@@ -11,5 +11,8 @@ publish.workspace = true
 tiler-artifact.workspace = true
 tiler-ir.workspace = true
 
+[dev-dependencies]
+tiler-reference.workspace = true
+
 [lints]
 workspace = true

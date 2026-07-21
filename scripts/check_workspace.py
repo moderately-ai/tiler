@@ -26,6 +26,9 @@ EXPECTED = {
     },
     "tiler-prototype-run": {"tiler-artifact"},
 }
+EXPECTED_DEV = {
+    "tiler-compiler": {"tiler-reference"},
+}
 
 
 def main() -> int:
@@ -86,12 +89,23 @@ def main() -> int:
         local_dependencies = {
             dependency["name"]
             for dependency in package["dependencies"]
-            if dependency["name"] in EXPECTED
+            if dependency["name"] in EXPECTED and dependency["kind"] != "dev"
+        }
+        local_dev_dependencies = {
+            dependency["name"]
+            for dependency in package["dependencies"]
+            if dependency["name"] in EXPECTED and dependency["kind"] == "dev"
         }
         if local_dependencies != expected_dependencies:
             errors.append(
                 f"{name} local dependencies: expected {sorted(expected_dependencies)}, "
                 f"got {sorted(local_dependencies)}"
+            )
+        expected_dev_dependencies = EXPECTED_DEV.get(name, set())
+        if local_dev_dependencies != expected_dev_dependencies:
+            errors.append(
+                f"{name} local dev dependencies: expected "
+                f"{sorted(expected_dev_dependencies)}, got {sorted(local_dev_dependencies)}"
             )
         if package["rust_version"] is not None:
             errors.append(

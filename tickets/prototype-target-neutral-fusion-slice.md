@@ -1,12 +1,12 @@
 ---
 id: prototype-target-neutral-fusion-slice
 title: Fuse serial Sum into one verified target-neutral program
-status: todo
+status: done
 priority: p0
 dependencies: [prototype-target-neutral-baseline-slice]
 related: []
-scopes: [implementation/compiler, implementation/artifact, implementation/ir]
-shared_scopes: [project/tickets, contracts/optimizer, contracts/artifacts, contracts/foundation, contracts/numerics]
+scopes: [implementation/compiler, implementation/artifact, implementation/ir, implementation/workspace]
+shared_scopes: [project/tickets, contracts/optimizer, contracts/artifacts, contracts/foundation, contracts/numerics, contracts/navigation]
 paths: [Cargo.lock]
 tags: [implementation, prototype, compiler, vertical-slice]
 ---
@@ -36,3 +36,27 @@ stable explanations for both successful fusion and each rejected legality or
 feasibility case. Do not add unrelated fusion patterns, a memo, a general
 region partitioner, calibrated costing, Metal emission, serialization, or
 device execution.
+
+## Outcome
+
+- Enumerated a deterministic seven-candidate occurrence projection with five
+  singletons, the complete pointwise region, and the complete fused region;
+  membership, boundaries, connectivity, convexity, and candidate budget fail
+  closed.
+- Proved the bounded fused plan preserves separate `f32` multiply/add
+  operations, canonical arithmetic-NaN boundaries, original contributor order,
+  positive-zero empty identity, dtype boundaries, and forbidden contraction,
+  reassociation, and permutation.
+- Added and verified a one-thread-per-output fused schedule and explicit
+  structured kernel alongside the existing two-stage materialized program.
+- Produced a deterministic two-alternative portfolio with provider revisions,
+  exact dispatch/allocation/global-intermediate metrics, stable explanations,
+  and selection only under strict structural Pareto dominance.
+- Differentially checked the fused test interpreter against `tiler-reference`
+  on finite, empty, singleton, signed-zero, subnormal, infinity, NaN, and
+  contraction-sensitive vectors; malformed schedules, kernels, programs,
+  providers, and budgets remain explicit failures or baseline retention.
+
+This completes only the private target-neutral proof. It adds no public
+compiler API, general fusion search, calibrated performance model, Metal
+lowering, serialization, or runtime routing implementation.

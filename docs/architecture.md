@@ -5,7 +5,7 @@ kind: "contract"
 title: "System architecture"
 topics: ["architecture", "compiler"]
 contract_status: "mixed"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence: ["tiler.research.program-planning.kernel-program-buffer-plan", "tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.shapes.nightly-const-shape-parameters"]
 ---
 

@@ -4,6 +4,8 @@
 //! not depend on Metal emission, live runtime APIs, Candle, or frontend syntax.
 
 #[cfg(test)]
+mod fusion;
+#[cfg(test)]
 mod physical;
 #[cfg(test)]
 mod pipeline;

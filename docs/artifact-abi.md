@@ -5,14 +5,21 @@ kind: "contract"
 title: "Artifact envelope and Metal kernel ABI profile"
 topics: ["artifacts", "abi", "metal", "runtime"]
 contract_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "spike-only"
 evidence: ["tiler.research.artifacts.target-neutral-envelope", "tiler.research.cache.crash-race-protocol", "tiler.research.runtime.execution-contract"]
 ticket: "synthesize-artifact-contracts"
 ---
 
 # Artifact envelope and Metal kernel ABI profile
 
-**Status:** accepted research contract; concrete serialization remains internal
+**Status:** accepted research contract; target-neutral construction spike only
+
+The private compiler proof now constructs target-neutral program portfolios,
+neutral entry ABI contracts, checked host expressions, one-way routing state,
+and artifact-construction plans. Each selected alternative records the exact
+lowering-provider key and revision that produced it. Canonical envelope
+serialization, backend payloads, integrity validation, and public artifact APIs
+remain unimplemented.
 
 ## Ownership boundary
 

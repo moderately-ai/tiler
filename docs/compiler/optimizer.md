@@ -5,13 +5,21 @@ kind: "contract"
 title: "Optimizer model"
 topics: ["optimizer", "search", "planning"]
 contract_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.research.reference.normative-reference-slice", "tiler.research.cost-model.bootstrap-cost-model"]
 ---
 
 # Optimizer model
 
-**Status:** accepted research contract; implementation pending
+**Status:** accepted research contract; bounded prototype implementation
+
+The first private compiler slice now retains complete materialized and fused
+program alternatives, carries exact structural metrics, and selects the fused
+program only when it strictly Pareto-dominates the baseline. Its stable policy
+key makes no latency claim. Missing fusion capability, candidate-budget
+exhaustion, or fused target infeasibility rejects only the fused alternative;
+failure of a compiler-produced verifier remains a hard compiler error. General
+memo search, partitioning, and calibrated cost estimation remain unimplemented.
 
 ## Ownership boundary
 

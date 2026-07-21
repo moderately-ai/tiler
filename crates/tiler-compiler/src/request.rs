@@ -11,6 +11,9 @@ use tiler_ir::shape::{Axis, Shape};
 const REQUEST_SCHEMA_VERSION: u32 = 1;
 const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
 const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
+const BASELINE_PROVIDER_KEY: &str = "tiler.prototype.materialized-serial-sum";
+const FUSED_PROVIDER_KEY: &str = "tiler.prototype.fused-serial-sum";
+const PROVIDER_REVISION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StaticShapeEnvironment {
@@ -65,6 +68,7 @@ pub(crate) struct DeterministicBudgets {
     pub(crate) regions: u32,
     pub(crate) host_expression_nodes: u32,
     pub(crate) buffers: u32,
+    pub(crate) fusion_candidates: u32,
 }
 
 impl DeterministicBudgets {
@@ -75,6 +79,36 @@ impl DeterministicBudgets {
             regions: 2,
             host_expression_nodes: 32,
             buffers: 3,
+            fusion_candidates: 7,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LoweringProviderIdentity {
+    pub(crate) key: &'static str,
+    pub(crate) revision: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CompilerCapabilitySnapshot {
+    pub(crate) schema_version: u32,
+    pub(crate) materialized_serial_sum: LoweringProviderIdentity,
+    pub(crate) fused_serial_sum: Option<LoweringProviderIdentity>,
+}
+
+impl CompilerCapabilitySnapshot {
+    pub(crate) const fn governed() -> Self {
+        Self {
+            schema_version: REQUEST_SCHEMA_VERSION,
+            materialized_serial_sum: LoweringProviderIdentity {
+                key: BASELINE_PROVIDER_KEY,
+                revision: PROVIDER_REVISION,
+            },
+            fused_serial_sum: Some(LoweringProviderIdentity {
+                key: FUSED_PROVIDER_KEY,
+                revision: PROVIDER_REVISION,
+            }),
         }
     }
 }
@@ -111,6 +145,7 @@ pub(crate) struct CompilationRequest<'a> {
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
+    pub(crate) capabilities: CompilerCapabilitySnapshot,
 }
 
 impl<'a> CompilationRequest<'a> {
@@ -121,6 +156,7 @@ impl<'a> CompilationRequest<'a> {
             numerical_contract: StrictF32NumericalContract::governed(),
             budgets: DeterministicBudgets::governed(),
             target_profiles: vec![PrototypeTargetProfile::governed()],
+            capabilities: CompilerCapabilitySnapshot::governed(),
         }
     }
 }
@@ -161,6 +197,7 @@ pub(crate) struct VerifiedCompilationRequest {
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
+    pub(crate) capabilities: CompilerCapabilitySnapshot,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -170,6 +207,7 @@ pub(crate) struct VerifiedTargetRequest {
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profile: PrototypeTargetProfile,
+    pub(crate) capabilities: CompilerCapabilitySnapshot,
 }
 
 impl VerifiedTargetRequest {
@@ -189,6 +227,7 @@ impl VerifiedCompilationRequest {
             numerical_contract: self.numerical_contract,
             budgets: self.budgets,
             target_profile,
+            capabilities: self.capabilities,
         }
     }
 }
@@ -256,6 +295,17 @@ pub(crate) fn verify_request(
     if request.shape_environment != StaticShapeEnvironment::governed() {
         return Err(RequestError::UnsupportedRequestVersion);
     }
+    let governed_capabilities = CompilerCapabilitySnapshot::governed();
+    if request.capabilities.schema_version != governed_capabilities.schema_version
+        || request.capabilities.materialized_serial_sum
+            != governed_capabilities.materialized_serial_sum
+        || request
+            .capabilities
+            .fused_serial_sum
+            .is_some_and(|provider| Some(provider) != governed_capabilities.fused_serial_sum)
+    {
+        return Err(RequestError::UnsupportedRequestVersion);
+    }
     if request.target_profiles.is_empty() {
         return Err(RequestError::EmptyTargetSet);
     }
@@ -304,6 +354,7 @@ pub(crate) fn verify_request(
         numerical_contract: request.numerical_contract,
         budgets: request.budgets,
         target_profiles: request.target_profiles,
+        capabilities: request.capabilities,
     })
 }
 

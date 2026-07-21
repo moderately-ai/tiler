@@ -60,3 +60,21 @@ construction; do not split by crate unless branch duration becomes unsafe. The
 conservative prototype target profile is a named, versioned fixture whose
 identity is refined by later artifact and live-device evidence rather than
 silently replaced by ambient Metal facts.
+
+## Outcome
+
+- Added a general private compilation request and product boundary around the
+  bounded strict-`f32` program, with explicit static shapes, numerical policy,
+  deterministic budgets, semantic authority, and target profile.
+- Produced and verified the complete two-stage materialized program: pointwise
+  and strict serial-reduction schedules, structured kernels, an initialized
+  non-aliasing temporary, neutral ABI contracts, checked host expressions,
+  named output coverage, and one-way routing commit.
+- Separated malformed requests, unsupported capability, exhausted budget,
+  infeasible plans, and invalid compiler output in stable diagnostics.
+- Recorded provider-independent artifact-construction inputs without adding a
+  backend payload, serialization format, public compiler API, or Metal state.
+
+The slice is target-neutral in representation ownership, not hardware-free:
+its verified schedules retain explicit physical requirements. Fusion and
+program selection were deliberately left to the dependent fusion ticket.

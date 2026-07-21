@@ -5,13 +5,21 @@ kind: "contract"
 title: "Fusion and scheduling"
 topics: ["fusion", "scheduling", "optimizer"]
 contract_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.research.scheduling.scheduled-region-model", "tiler.research.target-profiles.physical-feasibility-model", "tiler.research.program-planning.kernel-program-buffer-plan"]
 ---
 
 # Fusion and scheduling
 
-**Status:** accepted research contract; implementation pending
+**Status:** accepted research contract; bounded prototype implementation
+
+The private strict-`f32` serial-`Sum` slice now enumerates five singleton
+candidates, the four-operation pointwise candidate, and the complete fused
+candidate from canonical semantic occurrence roles. It checks membership,
+boundaries, connectivity, convexity, numerical permissions, deterministic
+candidate budget, schedule feasibility, and structured-kernel refinement. This
+is evidence for the architecture, not a general region enumerator or public
+fusion API.
 
 ## Ownership boundary
 
