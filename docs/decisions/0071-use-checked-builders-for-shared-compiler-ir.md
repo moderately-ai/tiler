@@ -6,7 +6,7 @@ title: "Use checked builders for shared compiler IR"
 topics: ["ir", "rust", "api", "verification"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.artifact-abi"]
 evidence: ["tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.kernel-ir.structured-kernel-ir-verifier"]
 ticket: "prototype-shared-compiler-ir-ownership"
@@ -65,6 +65,25 @@ a second verifier authority.
   later IRs without changing the existing semantic API.
 - The additional builder and verified-wrapper types are deliberate correctness
   machinery rather than alternate representations.
+
+## Implementation boundary
+
+The first public checked-builder implementation is the static-extent
+`tiler_ir::index` profile. Schedule, kernel, and program builders remain
+unimplemented. Symbolic extent roots and index-domain predicates remain
+separate follow-up work because the accepted `ShapeEnv` authority does not yet
+exist; the index module does not invent a competing binding system.
+The implemented index verifier derives an opaque correlation identity from an
+authentic completed semantic program and accepts ordered typed tensor
+boundaries, but proves only the structural index relation. Arbitrary caller
+bytes cannot impersonate lower-layer identity. Operation capabilities and
+compiler legality evidence must separately prove that the relation implements
+the selected semantic region; verified index structure is not
+semantic-equivalence evidence.
+The accepted closure convenience is not part of this first implementation; it
+is tracked by
+[`add-checked-closure-convenience-for-shared-ir-builders`](../../tickets/add-checked-closure-convenience-for-shared-ir-builders.md)
+after the manual public call-site and error boundary are reviewed.
 
 ## Alternatives considered
 

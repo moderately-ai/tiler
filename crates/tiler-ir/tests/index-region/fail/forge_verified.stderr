@@ -1,0 +1,5 @@
+error: cannot construct `VerifiedIndexRegion` with struct literal syntax due to private fields
+ --> tests/index-region/fail/forge_verified.rs:4:19
+  |
+4 |     let _forged = VerifiedIndexRegion {};
+  |                   ^^^^^^^^^^^^^^^^^^^

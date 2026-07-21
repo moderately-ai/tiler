@@ -227,6 +227,14 @@ Benchmarks are not substitutes for these correctness cases.
   or dynamic reshape maps; distinguish read aliasing from exact unique write
   ownership; reject out-of-bounds/data-dependent accesses; and verify
   noncontiguous positive-stride views with nonzero starts.
+- The implemented static index-profile gate additionally covers huge
+  permutations without enumeration, bounded exhaustive ownership evidence,
+  explicit access domains, exact linear normalization, rank-zero output
+  ownership, zero-contributor reductions, unused/free reduction rejection,
+  tensor-binding identity separation, dead-draft compaction, proof resource
+  caps, and compile-time rejection of forged verified regions. Dynamic ShapeEnv
+  bindings, predicate exchange, split/merge, semantic-lowering equivalence, and
+  physical views remain requirements rather than completed coverage.
 - Width tests prove every narrowed coordinate, linearization, element-offset,
   byte/packed-offset, and dispatch intermediate. They include cases where every
   extent fits `u32` but stride multiplication does not, and require the guarded

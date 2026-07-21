@@ -3,9 +3,9 @@
 #![allow(incomplete_features)]
 //! Target-independent representations and verifiers for Tiler.
 //!
-//! This crate currently implements only the bounded semantic/reference slice
-//! selected for the first value proof. It is intentionally not a general
-//! tensor IR yet.
+//! This crate currently implements the bounded semantic and canonical-index
+//! slices selected for the first value proof. It is intentionally not yet the
+//! complete tensor compiler IR.
 //!
 //! Construction and read APIs are grouped by the invariants they protect:
 //!
@@ -26,6 +26,8 @@
 //! # }
 //! ```
 
+/// Public target-independent iteration, access, and scalar-region vocabulary.
+pub mod index;
 /// Public semantic tensor-program vocabulary.
 pub mod semantic;
 /// Target-independent fixed shape vocabulary.

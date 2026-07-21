@@ -39,7 +39,10 @@ ADR 0072 and the semantic/compiler prototype now separate graph meaning,
 reached provider-independent definitions, admission-provider provenance, and
 the complete registry snapshot. Region occurrence, checked refinement,
 structural schedule/KIR, complete-plan, and artifact identities remain explicit
-obligations of their owning tickets rather than implemented support.
+obligations of their owning tickets rather than implemented support. The first
+public static-extent `tiler_ir::index` builder/verifier draft now exists, but
+its corrected generic scalar-SSA public boundary remains under Tom's required
+review before integration.
 
 ## Authorized prototype
 
@@ -65,12 +68,14 @@ are complete for their bounded claims. The
 [`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md)
 slice establishes the accepted module, verifier, builder, and dependency
 direction without publishing the graph-specific proof structs. The semantic
-identity prerequisite is complete. The next dependency-ordered slice is
+identity prerequisite is complete. The canonical index-region slice is in
+review; once accepted, the next dependency-ordered slice is
 [`operation compilation capabilities`](../tickets/prototype-operation-compilation-capabilities.md),
-followed by canonical access relations, generic region
-formation, derived legality, complete partition planning, physical
+so typed lowering callbacks emit checked shared IR rather than placeholders.
+Generic region formation, derived legality, complete partition planning, physical
 implementations, structured KIR, neutral program/artifact types, and an
-[`optimizer conformance gate`](../tickets/prototype-optimizer-conformance-gate.md).
+[`optimizer conformance gate`](../tickets/prototype-optimizer-conformance-gate.md)
+remain downstream.
 Only after that gate do the Metal lowering/AOT and runtime proof chains become
 eligible.
 

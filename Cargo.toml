@@ -24,6 +24,9 @@ repository = "https://github.com/moderately-ai/tiler"
 publish = false
 
 [workspace.dependencies]
+num-bigint = "0.4.6"
+num-integer = "0.1.46"
+num-traits = "0.2.19"
 tiler-artifact = { path = "crates/tiler-artifact" }
 tiler-compiler = { path = "crates/tiler-compiler" }
 tiler-ir = { path = "crates/tiler-ir" }

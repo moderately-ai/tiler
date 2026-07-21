@@ -5,3 +5,5 @@
 __pycache__/
 *.py[cod]
 /target/
+# Compiler crash reports are regenerable diagnostics, not repository evidence.
+/rustc-ice-*.txt

@@ -39,6 +39,8 @@ The implementation graph now maps these contracts to bounded coding tickets:
   [generic region formation](../tickets/prototype-generic-region-formation.md),
   [legality evidence](../tickets/prototype-fusion-legality-and-numerical-proof.md),
   and [complete partition planning](../tickets/prototype-region-partition-and-complete-plan.md);
+- mature symbolic indexing: [ShapeEnv-backed index bindings](../tickets/implement-shapeenv-index-bindings.md)
+  followed by [typed index-domain predicates and proof exchange](../tickets/implement-index-domain-predicates.md);
 - physical/kernel/program layers: [physical implementations](../tickets/prototype-physical-implementation-frontier.md),
   [structured KIR](../tickets/prototype-structured-kir-slice.md), and
   [neutral program/artifact types](../tickets/prototype-neutral-program-and-artifact-types.md);

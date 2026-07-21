@@ -751,6 +751,57 @@ logical totality.
   dimensions are initially unsupported.
 - Semantic/index-domain bounds are proved or retained as semantic obligations.
 
+### Implemented static index profile
+
+The first experimental `tiler_ir::index` slice implements a deliberately
+smaller, fail-closed subset of this contract:
+
+- public owner-checked draft handles, a recoverable checked builder, borrowed
+  structural views, and an opaque immutable `VerifiedIndexRegion`;
+- exact mathematical-integer index constants backed by arbitrary-precision
+  arithmetic, static parallel/reduction dimensions, canonical addition,
+  constant scaling, and Euclidean floor division/modulo by positive constants;
+- ordered typed input/output tensor boundaries and logical accesses with
+  explicit lexical evaluation domains that end at tensor coordinates and
+  retain no allocation, stride, byte-address, target-width, or physical
+  execution-scope state;
+- structural strict `f32` constants, multiply, add, and serial-sum scalar
+  expressions, with ordered floating-point operands, scalar evaluation scope,
+  and lexical reduction dimensions preserved;
+- interval bounds proofs, resource-bounded finite fallback when a conservative
+  interval overlaps a boundary, structural permutation proofs for large
+  ordinary writes, resource-bounded exhaustive ownership fallback,
+  zero/rank-zero behavior, and region-owned bounds/write-ownership witnesses
+  with inspectable proof kinds; and
+- reachable compaction plus canonical identity that excludes draft ownership,
+  raw semantic handles, dead builder history, proof caches, and target choices,
+  while including ordered tensor bindings and the correlated semantic-region
+  identity.
+
+The implemented verifier proves only structural well-formedness, bounds,
+lexical reduction closure, and ordinary write ownership. It intentionally does
+not claim semantic sourceability or operation equivalence. A relation such as
+`y[i] = x[0]` can be structurally valid and in bounds while being an incorrect
+lowering of semantic `y[i] = x[i]`; later legality evidence must reject that
+mismatch.
+
+This first profile is out-of-place and `f32`-scalar-only: input boundaries may
+be read but not written, output boundaries may be written but not read, and
+every declared output boundary requires exactly one complete ordinary write
+root. In-place/read-modify-write relations, output partitions, non-`f32`
+scalar computation, atomics, and other reduction organizations require later
+specialized contracts rather than implicit relaxation.
+
+This is implemented support for static extents, not a claim that the complete
+symbolic contract above is finished. `ShapeEnv`-backed root bindings,
+semi-affine symbolic coefficients/divisors, typed index-domain predicates, and
+durable solver evidence are tracked by
+[`implement-shapeenv-index-bindings`](../tickets/implement-shapeenv-index-bindings.md)
+and
+[`implement-index-domain-predicates`](../tickets/implement-index-domain-predicates.md).
+Unsupported dynamic cases must reject rather than entering an index-local
+symbol or untyped predicate escape hatch.
+
 ### Physical view and address verifier
 
 - Logical accesses compose with exactly one selected view/address convention.

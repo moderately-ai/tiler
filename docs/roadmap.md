@@ -104,15 +104,15 @@ The live ticket graph deliberately gates those proofs on a backend-consumable
 target-neutral compiler path. The dependency-ordered foundation is:
 
 1. [shared compiler IR ownership](../tickets/prototype-shared-compiler-ir-ownership.md),
-2. [operation compilation capabilities](../tickets/prototype-operation-compilation-capabilities.md)
-   and the [canonical index-region slice](../tickets/prototype-canonical-index-region-slice.md),
-3. [generic region formation](../tickets/prototype-generic-region-formation.md),
+2. the [canonical index-region slice](../tickets/prototype-canonical-index-region-slice.md),
+3. [operation compilation capabilities](../tickets/prototype-operation-compilation-capabilities.md),
+4. [generic region formation](../tickets/prototype-generic-region-formation.md),
    [derived fusion legality](../tickets/prototype-fusion-legality-and-numerical-proof.md),
    and [complete partition planning](../tickets/prototype-region-partition-and-complete-plan.md),
-4. the [physical implementation frontier](../tickets/prototype-physical-implementation-frontier.md),
+5. the [physical implementation frontier](../tickets/prototype-physical-implementation-frontier.md),
    [structured KIR](../tickets/prototype-structured-kir-slice.md), and
    [neutral program/artifact types](../tickets/prototype-neutral-program-and-artifact-types.md),
-5. the [target-neutral optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md).
+6. the [target-neutral optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md).
 
 Metal is then split into independently verifiable KIR lowering, strict
 numerical realization, Apple offline compilation, artifact codec/bundle
