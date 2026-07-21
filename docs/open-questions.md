@@ -176,7 +176,8 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
   [`resolved-type registry`](../tickets/prototype-resolved-value-type-registry.md),
   [`typed handles`](../tickets/prototype-typed-value-handles.md), and bounded
   [`shaped-value API`](../tickets/prototype-shaped-value-api.md) now have
-  compile/UI proofs. Consequential public-interface review remains active.
+  integrated compile/UI proofs. Broader trait ergonomics and stabilization
+  remain active rather than blocking the bounded prototype.
 - Close: concrete visibility and trait ergonomics with compile/UI tests.
 
 ### Q-PKG-003 — Proc-macro to Metal-AOT visibility

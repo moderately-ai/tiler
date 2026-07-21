@@ -1,11 +1,11 @@
 ---
 id: prototype-semantic-reference-slice
 title: Implement the serial Sum semantic and reference slice
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-workspace-scaffold, prototype-shaped-value-api, prototype-reference-evaluator-crate]
 related: []
-scopes: [implementation/ir, research/semantic-graph, research/shapes, implementation/workspace, research/documentation]
+scopes: [implementation/ir, research/semantic-graph, research/shapes, implementation/workspace, research/documentation, implementation/reference]
 shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions, contracts/navigation]
 paths: [AGENTS.md, CLAUDE.md, .gitignore]
 tags: [implementation, prototype, semantics, vertical-slice]
@@ -35,57 +35,26 @@ bounded evaluator and operation set onto them, versions semantic identity away
 from the prototype's implicit graph-wide `f32` assumption, completes malformed
 and numerical boundary cases, and proves the assembled public path.
 
-## Current checkpoint
+## Outcome
 
-An initial untyped implementation, adversarial tests, semantic lifecycle ADR,
-contributor bootstrap, and repository validation gates are present in the
-working tree. The accepted API review exposed the prerequisite tickets above;
-the current code is a tested draft rather than the completed slice. Tom's only
-remaining blocking review is the consequential shape-evidence spelling after
-its measurement spike. The
-contributor bootstrap changes are cross-cutting proof infrastructure discovered
-while implementing this slice; they do not add semantic product scope.
+- Integrated the dependency-ordered semantic authority, operation registry,
+  typed handles, checked shape evidence, graph ownership, recoverable build,
+  output-reachable compaction, and downstream reference-evaluator boundaries.
+- Exercised the ordinary public API from a downstream-style integration test:
+  an exact-shaped `f32` input flows through scalar Multiply, scalar Add, strict
+  serial Sum, two ordered named outputs, immutable commitment, and reference
+  evaluation without a frontend, optimizer, artifact, Metal, or runtime
+  dependency.
+- Proved equivalent live graphs retain identical canonical identity and output
+  tensors despite different dead construction history.
+- Completed the first-profile numerical vectors for constant NaN payloads,
+  canonical arithmetic NaN, infinities, preserved and produced subnormals,
+  signed zero, finite overflow, separate Multiply/Add rounding, strict
+  contributor order, singleton reductions, and both empty-domain cases.
+- Added fail-closed coverage showing corrupted private draft state cannot be
+  committed and external reference capabilities cannot return an incorrect
+  result arity or shape.
 
-The first API-review decision is recorded in ADR 0059: exact nominal `Value<T>`
-is the primary authoring capability over a runtime-typed heterogeneous graph;
-`ValueId` has `unknown`, never `any`, semantics; and resolved numerical choices
-remain explicit rather than ambient promotion. The current implementation must
-be revised after the remaining typed-surface limitations are reviewed.
-
-ADR 0060 additionally binds built-in and external Rust type markers through the
-explicit frozen registry. Marker traits carry no semantic authority, duplicate
-marker/key claims fail before graph construction, and process-local `TypeId`
-lookup never enters durable identity.
-
-ADR 0061 retains canonical `Value<T>` while adding optional graph-checked
-`ShapedValue<T, E>` refinements and typed multi-value shape witnesses as early
-core components. Shape evidence is non-authoritative, explicitly weakened,
-checked when refined, and must delegate to the same builder-centered semantic
-admission path. The initial bounded spike must cover rank and exact-static
-evidence, forgery resistance, foreign-graph rejection, compile-fail behavior,
-and compile-time cost before the public spelling is stabilized.
-
-ADR 0062 defines `T` as one complete shape-independent resolved semantic value
-type, not necessarily one primitive `TypeKey`. Primitive, parameterized complex,
-and encoded-numeric/quantized values share `Value<T>`; the frozen registry binds
-the marker to the complete canonical identity, while runtime quantization
-parameters remain ordinary graph operands.
-
-ADR 0063 keeps graph ownership as opaque runtime-checked handle metadata rather
-than a mandatory Rust lifetime or generative brand. Every handle-consuming API
-must reject foreign values or witnesses before indexing or mutation, preserve
-builder state on failure, exclude owner tokens from durable identity, and test
-coincident local indices plus owner-token exhaustion.
-
-ADR 0064 requires successful commitment to prune unreachable draft state,
-compact live storage, assign a distinct completed-program owner, and invalidate
-all draft handles. Typed output selectors and retained provenance cross the
-boundary without stabilizing arena indices. The internal commit remap keeps an
-additive future `build_with_report` possible, but ordinary `build` does not pay
-for or expose a mandatory correlation report.
-
-The ticket remains open but implementation is paused while the dependency-
-ordered semantic-foundation v2 tickets correct the type-authority, operation-
-registry, typed-construction, and reference-crate boundaries exposed by review
-of the initial draft. No compiler work may treat the current public F32 builder
-surface or in-IR evaluator placement as accepted architecture.
+This completes the bounded integration gate. The API remains experimental and
+unstable; completion does not broaden the implemented operation or dtype
+profile.

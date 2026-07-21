@@ -27,10 +27,11 @@ progression rather than blanket implementation authority.
 fix the graph, shape, registry, and proc-macro visibility boundaries. The
 semantic type, operation, typed-handle, and reference boundaries are now
 compile-checked, and the retained dependent-array conformance harness passes.
-The checked shaped-value draft is implemented with compile-fail and identity
-coverage; public-interface review and the assembled semantic/reference slice
-remain before this milestone's exit criterion. Production stabilization
-remains future work.
+The checked shaped-value layer is implemented with compile-fail and identity
+coverage, and the assembled semantic/reference slice passes through a
+downstream-style public construction and evaluation test. The bounded
+Milestone 0A integration proof is complete; production stabilization and the
+broader operation/dtype surface remain future work.
 
 The bullets below are the implementation scope authorized only after the
 research-readiness decision; they are not claims that the implementations

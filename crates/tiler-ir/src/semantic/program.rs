@@ -1364,6 +1364,24 @@ mod tests {
     }
 
     #[test]
+    fn commitment_rejects_corrupted_internal_graph_state() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let value = constant(&mut builder, 1.0).unwrap();
+        builder.output(output_key("result"), value).unwrap();
+        builder.operations[0].results.clear();
+
+        let diagnostics = builder.validate().unwrap_err();
+        assert_eq!(
+            diagnostics.as_slice(),
+            &[ValidationDiagnostic::InvalidInternalGraph {
+                reason: "an operation has no results",
+            }]
+        );
+        let error = builder.build().unwrap_err();
+        assert_eq!(error.diagnostics(), Some(&diagnostics));
+    }
+
+    #[test]
     fn reification_requires_an_exact_marker_binding() {
         struct External;
         impl super::super::ValueTypeMarker for External {}
