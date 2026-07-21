@@ -120,6 +120,15 @@ embedding, and runtime loading are later integration/backend steps. A proc-macro
 invocation may aggregate or package compiler results, but it is not the
 consumer-independent compilation unit.
 
+The compiler entry point remains general even when implemented support is
+narrow. Capability resolution distinguishes an invalid semantic request from a
+valid program lacking access, scheduling, target, or lowering support, and
+from a candidate that is intrinsically or target-infeasible. Initial vertical
+slices remain private strategy and conformance identities; they do not create
+graph-specific compiler entry points or public support-profile namespaces.
+Fixed region, stage, entry, and buffer cardinalities in a slice are not
+`CompilationRequest` or compiler-product invariants. See ADR 0069.
+
 ## Hierarchical planning with feedback
 
 The design deliberately separates global tensor planning from local kernel
@@ -234,10 +243,10 @@ layout.
 
 | Component | Responsibility | Forbidden dependencies |
 | --- | --- | --- |
-| `tiler-ir` | Public semantic graph and operation-extension contracts; internal/experimental index, schedule, and kernel representations; verifiers | Frontend syntax, reference execution, Candle, and Metal runtime APIs |
+| `tiler-ir` | Public semantic graph and operation-extension contracts; experimental index, schedule, kernel, executable-program, `BufferPlan`, and `AbiExpr` representations; authoritative IR verifiers and pure checked expression semantics | Frontend syntax, reference execution, artifact encoding, runtime fact binding, Candle, and Metal runtime APIs |
 | `tiler-reference` | Host reference values, executable semantic-operation capabilities, interpreter traversal, and conformance utilities | Optimizer, scheduler, backend, and live device APIs |
 | `tiler-compiler` | Normalization, rule engine, fusion planning, index lowering, schedule search, costing | Candle |
-| `tiler-artifact` | Versioned target-neutral artifact/ABI schema and checked expression evaluator | Candle, optimizer, and Metal device APIs |
+| `tiler-artifact` | Versioned target-neutral artifact/ABI encoding, compatibility, runtime fact binding, failure classification, and backend-payload mappings | Candle, optimizer, and Metal device APIs |
 | `tiler-metal` | Pure structured-kernel-to-MSL translation and Metal target metadata | Candle and Metal device APIs |
 | `tiler-metal-aot` | Expansion-time Apple tool invocation, cross-process content cache, atomic publication, byte embedding | Candle tensor APIs |
 | Frontend core | Translate source syntax into semantic IR and map diagnostics back to users | Backend-specific scheduling |
