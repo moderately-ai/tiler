@@ -346,9 +346,10 @@ Integers never use host `usize`/`isize`, and floats are raw governed-format bits
 so signed zero and NaN payloads are not host-normalized. Recursion, bytes,
 items, string length, and collection sizes are checked against host limits.
 
-The schema resolves defaults before canonicalization: a field equal to its
-declared default has one canonical representation, which is omission unless the
-schema marks presence itself semantic. Unknown fields are rejected in the
+The schema validates and normalizes attributes before storing or hashing them:
+a field equal to its declared default has one canonical representation, which
+is omission unless the schema marks presence itself semantic. It resolves the
+default again only for checked inference. Unknown fields are rejected in the
 initial lockstep schema. The v1 identity encoder uses explicit one-byte kind and
 integer-width tags, big-endian integer payloads, big-endian `u64` byte/item
 lengths, big-endian `u32` field IDs, and exact payload bytes; records use sorted
@@ -705,6 +706,15 @@ unchecked node. Constants are zero-operand scalar operations with
 schema-validated canonical attributes. Built-in and provider-defined dtypes
 use the same `ResolvedValueType` path.
 
+Canonical scalar attributes use the same `CanonicalValue` representation as
+semantic operation attributes. Integer values retain their declared 8/16/32/64
+bit width, floating values retain a registered format key plus exact bytes,
+and field IDs are the `AttributeFieldId` newtype. A schema may own a typed
+default. Inference observes the resolved default, while stored structural IR
+and canonical identity omit an explicit value equal to that default. This
+keeps construction spelling out of identity without delegating normalization
+to a provider serializer.
+
 Reduction is a structural region form rather than one enum variant per
 reduction or dtype. It owns ordered bound dimensions, ordered initial state,
 ordered contributor values, a checked nested scalar operation/value body, and
@@ -735,6 +745,15 @@ separately binds a generated region to its selected semantic source and records
 the reached scalar-definition and lowering-provider provenance required by
 compilation and artifact identity. Matching shapes, dtypes, or operation names
 cannot substitute for that evidence.
+
+Before that semantic binding, a selected frozen scalar registry revalidates
+every ordinary and reducer-body scalar application in a verified structural
+region. It checks canonical attributes, operand/result arity, inferred result
+types, and referenced type authority, then returns a receipt bound to the exact
+`IndexRegion` identity. The receipt keeps the reached provider-independent
+definition projection separate from provider-attributed admission provenance.
+It is scalar-authority evidence only: it does not authenticate access maps or
+prove semantic lowering equivalence.
 
 Index expressions should be stored in an interned arena/DAG so repeated
 division, modulo, and coordinate arithmetic can be shared and simplified.
@@ -821,6 +840,12 @@ scalar model is complete:
 - reachable compaction plus canonical structural identity that excludes draft
   ownership, raw semantic handles, dead builder history, semantic-region
   identity, proof caches, provider addresses, and target choices.
+
+Static dimensions and tensor boundaries expose optional `static_extent()` and
+`static_shape()` facts rather than unconditional universal extents/shapes.
+They return `Some` throughout this bounded profile. A future symbolic profile
+can return `None` and expose its `ShapeEnv` expression through an additive
+borrowed view instead of changing the meaning of an existing accessor.
 
 The structural verifier proves only structural well-formedness, bounds,
 lexical reduction closure, and ordinary write ownership. It does not claim

@@ -25,7 +25,7 @@ impl F32Constant {
     ) -> Result<Value<F32>, BuildError> {
         let attributes = OperationAttributes::new([CanonicalField::new(
             F32_CONSTANT_BITS_ATTRIBUTE,
-            CanonicalValue::unsigned(u64::from(bits)),
+            canonical_f32_bits(bits)?,
         )])
         .map_err(BuildError::InvalidOperationAttributes)?;
         apply_single(builder, constant_f32_op(), attributes, &[])
@@ -228,7 +228,7 @@ impl StrictSerialF32Sum {
     ) -> Result<Value<F32>, BuildError> {
         let axes = CanonicalValue::sequence(
             axes.into_iter()
-                .map(|axis| CanonicalValue::unsigned(u64::from(axis.get()))),
+                .map(|axis| CanonicalValue::unsigned_u32(axis.get())),
         )
         .map_err(BuildError::InvalidOperationAttributes)?;
         let attributes =
@@ -264,7 +264,15 @@ fn apply_shaped_single<E: ShapeEvidence>(
 fn constant_attributes(bits: u32) -> Result<OperationAttributes, BuildError> {
     OperationAttributes::new([CanonicalField::new(
         F32_CONSTANT_BITS_ATTRIBUTE,
-        CanonicalValue::unsigned(u64::from(bits)),
+        canonical_f32_bits(bits)?,
     )])
+    .map_err(BuildError::InvalidOperationAttributes)
+}
+
+fn canonical_f32_bits(bits: u32) -> Result<CanonicalValue, BuildError> {
+    CanonicalValue::float_bits(
+        super::TypeKey::new("tiler", "f32", 1).expect("the governed F32 type identity is valid"),
+        bits.to_be_bytes(),
+    )
     .map_err(BuildError::InvalidOperationAttributes)
 }

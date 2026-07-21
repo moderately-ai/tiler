@@ -73,12 +73,21 @@ The first public checked-builder implementation is the static-extent
 unimplemented. Symbolic extent roots and index-domain predicates remain
 separate follow-up work because the accepted `ShapeEnv` authority does not yet
 exist; the index module does not invent a competing binding system.
-The implemented index verifier derives an opaque correlation identity from an
-authentic completed semantic program and accepts ordered typed tensor
-boundaries, but proves only the structural index relation. Arbitrary caller
-bytes cannot impersonate lower-layer identity. Operation capabilities and
-compiler legality evidence must separately prove that the relation implements
-the selected semantic region; verified index structure is not
+The implemented index verifier accepts ordered typed tensor boundaries but
+derives no semantic-program or semantic-region correlation identity. Its
+borrowed static-shape and static-extent views are explicitly optional so the
+future `ShapeEnv` profile can add symbolic expressions without changing a
+static fact into a false universal guarantee.
+
+A selected frozen scalar registry can separately revalidate every reached
+scalar application and produce region-bound authority evidence containing a
+provider-independent definition projection and distinct provider-attributed
+admission provenance. This receipt authenticates the scalar definitions and
+stored result types used by one exact structural region; it still does not
+prove that the region implements a selected semantic operation. Operation
+capabilities and compiler legality evidence must separately bind coordinates,
+values, effects, and numerical behavior to the authoritative semantic source.
+Verified index structure and scalar-authority evidence are not
 semantic-equivalence evidence.
 The accepted closure convenience is not part of this first implementation; it
 is tracked by

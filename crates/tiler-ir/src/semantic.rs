@@ -47,7 +47,8 @@ pub use registry::{
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use standard_operations::{F32Add, F32Constant, F32Multiply, StrictSerialF32Sum};
 pub use types::{
-    CanonicalField, CanonicalResolvedValueType, CanonicalValue, CanonicalValueView,
-    EncodedNumericContract, IdentityComponent, QuantSchemeKey, ResolvedValueType, TypeArguments,
-    TypeIdentityError, TypeKey,
+    AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,
+    CanonicalResolvedValueType, CanonicalValue, CanonicalValueView, EncodedNumericContract,
+    IdentityComponent, QuantSchemeKey, ResolvedValueType, TypeArguments, TypeIdentityError,
+    TypeKey,
 };

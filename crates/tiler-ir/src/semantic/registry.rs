@@ -14,8 +14,8 @@ use super::operation::{
     multiply_f32_op, strict_serial_sum_f32_op,
 };
 use super::types::{
-    CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey, ResolvedValueType,
-    TypeIdentityError, TypeKey,
+    AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
+    ResolvedValueType, TypeIdentityError, TypeKey,
 };
 
 const MAX_DEFINITION_REFERENCE_BYTES: usize = 4 * 1024;
@@ -511,6 +511,16 @@ impl SemanticRegistryBuilder {
         for binding in registry.0.marker_bindings.values() {
             registry.validate_type(&binding.resolved_type)?;
         }
+        for registered in registry.0.operations.values() {
+            for field in registered.definition.schema().attributes() {
+                if let Some(default) = field.default() {
+                    registry.validate_canonical_value_types(default)?;
+                }
+            }
+            registry
+                .validate_canonical_value_types(registered.definition.canonical_facts().value())?;
+            registry.validate_canonical_value_types(registered.definition.conformance().value())?;
+        }
         let _ = registry.snapshot_identity();
         Ok(registry)
     }
@@ -639,6 +649,18 @@ struct FrozenRegistryData {
 }
 
 impl FrozenSemanticRegistry {
+    fn validate_canonical_value_types(&self, value: &CanonicalValue) -> Result<(), RegistryError> {
+        let mut failure = None;
+        value.visit_referenced_types(&mut |component| {
+            if failure.is_none()
+                && let Err(error) = self.validate_type(component)
+            {
+                failure = Some(error);
+            }
+        });
+        failure.map_or(Ok(()), Err)
+    }
+
     /// Builds the governed standard registry profile.
     ///
     /// # Errors
@@ -774,6 +796,9 @@ impl FrozenSemanticRegistry {
         for operand in operands {
             self.validate_type(operand.resolved_type())?;
         }
+        for field in attributes.fields() {
+            self.validate_canonical_value_types(field.value())?;
+        }
         let results = registered
             .definition
             .infer(operands, attributes)
@@ -795,6 +820,43 @@ impl FrozenSemanticRegistry {
             self.validate_type(result.resolved_type())?;
         }
         Ok(results)
+    }
+
+    /// Validates and canonicalizes one operation attribute record under its registered schema.
+    ///
+    /// Explicit values equal to schema defaults normalize to omission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] for missing authority or invalid attributes.
+    pub fn normalize_operation_attributes(
+        &self,
+        key: &OpKey,
+        attributes: OperationAttributes,
+    ) -> Result<OperationAttributes, RegistryError> {
+        let registered = self.0.operations.get(key).ok_or_else(|| {
+            RegistryError::UnregisteredOperationAuthority {
+                key: Arc::new(key.clone()),
+            }
+        })?;
+        let canonical = registered
+            .definition
+            .schema()
+            .normalize_attributes(&attributes)
+            .map_err(|source| {
+                RegistryError::RejectedOperationApplication(Arc::new(
+                    OperationApplicationRejection {
+                        key: key.clone(),
+                        provider: registered.provider.clone(),
+                        source,
+                    },
+                ))
+            })?;
+        for field in canonical.fields() {
+            self.validate_canonical_value_types(field.value())?;
+        }
+        drop(attributes);
+        Ok(canonical)
     }
 
     /// Returns complete frozen semantic-registry snapshot provenance.
@@ -821,7 +883,7 @@ impl FrozenSemanticRegistry {
             .map(ValueTypeDefinitionKey::for_value)
             .collect();
         let operation_keys: BTreeSet<_> = operations.into_iter().cloned().collect();
-        let mut bytes = b"tiler.semantic-definition-projection.v1\0".to_vec();
+        let mut bytes = b"tiler.semantic-definition-projection.v2\0".to_vec();
         encode_len(&mut bytes, type_keys.len());
         for key in type_keys {
             let registered = self.0.definitions.get(&key).ok_or_else(|| {
@@ -1131,7 +1193,7 @@ struct StandardSemantics;
 
 impl SemanticRegistryProvider for StandardSemantics {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-semantics", 3)
+        ProviderIdentity::new("tiler", "standard-semantics", 4)
             .expect("the governed standard provider identity is valid")
     }
 
@@ -1139,10 +1201,10 @@ impl SemanticRegistryProvider for StandardSemantics {
         let facts = TypeDefinitionFacts::new(
             CanonicalValue::record([
                 CanonicalField::new(
-                    1,
+                    AttributeFieldId::new(1),
                     CanonicalValue::utf8("ieee-binary").expect("the governed F32 class is bounded"),
                 ),
-                CanonicalField::new(2, CanonicalValue::unsigned(32)),
+                CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::unsigned_u32(32)),
             ])
             .expect("the governed F32 facts are canonical"),
         );
@@ -1163,13 +1225,13 @@ impl SemanticRegistryProvider for StandardSemantics {
                 1,
                 [OperationAttributeSchema::required(
                     F32_CONSTANT_BITS_ATTRIBUTE,
-                    CanonicalValueKind::Unsigned,
+                    CanonicalValueKind::FloatBits,
                 )],
             ),
             NormativeDefinitionRef::new("tiler::constant-f32@1; exact IEEE-754 payload")?,
             OperationDefinitionFacts::new(
                 CanonicalValue::record([CanonicalField::new(
-                    1,
+                    AttributeFieldId::new(1),
                     CanonicalValue::utf8("exact-binary32-bits")
                         .expect("the governed constant fact is bounded"),
                 )])
@@ -1213,20 +1275,18 @@ impl SemanticRegistryProvider for StandardSemantics {
             OperationDefinitionFacts::new(
                 CanonicalValue::record([
                     CanonicalField::new(
-                        1,
+                        AttributeFieldId::new(1),
                         CanonicalValue::utf8("strict-left-fold")
                             .expect("the governed reduction fact is bounded"),
                     ),
                     CanonicalField::new(
-                        2,
+                        AttributeFieldId::new(2),
                         CanonicalValue::utf8("binary32-each-step")
                             .expect("the governed accumulation fact is bounded"),
                     ),
                     CanonicalField::new(
-                        3,
-                        CanonicalValue::unsigned(u64::from(
-                            super::operation::CANONICAL_F32_ARITHMETIC_NAN_BITS,
-                        )),
+                        AttributeFieldId::new(3),
+                        canonical_f32_bits(super::operation::CANONICAL_F32_ARITHMETIC_NAN_BITS),
                     ),
                 ])
                 .expect("the governed reduction facts are canonical"),
@@ -1255,11 +1315,11 @@ fn standard_conformance(name: &str) -> OperationConformance {
     OperationConformance::new(
         CanonicalValue::record([
             CanonicalField::new(
-                1,
+                AttributeFieldId::new(1),
                 CanonicalValue::utf8(format!("tiler.conformance.{name}"))
                     .expect("governed conformance identity is bounded"),
             ),
-            CanonicalField::new(2, CanonicalValue::unsigned(1)),
+            CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::unsigned_u32(1)),
         ])
         .expect("governed conformance identity is canonical"),
     )
@@ -1268,22 +1328,28 @@ fn standard_conformance(name: &str) -> OperationConformance {
 fn arithmetic_f32_facts() -> CanonicalValue {
     CanonicalValue::record([
         CanonicalField::new(
-            1,
+            AttributeFieldId::new(1),
             CanonicalValue::utf8("binary32-round-to-nearest-ties-even")
                 .expect("the governed rounding fact is bounded"),
         ),
         CanonicalField::new(
-            2,
-            CanonicalValue::unsigned(u64::from(
-                super::operation::CANONICAL_F32_ARITHMETIC_NAN_BITS,
-            )),
+            AttributeFieldId::new(2),
+            canonical_f32_bits(super::operation::CANONICAL_F32_ARITHMETIC_NAN_BITS),
         ),
-        CanonicalField::new(3, CanonicalValue::boolean(false)),
+        CanonicalField::new(AttributeFieldId::new(3), CanonicalValue::boolean(false)),
     ])
     .expect("the governed f32 arithmetic facts are canonical")
 }
 
 struct ConstantF32;
+
+fn canonical_f32_bits(bits: u32) -> CanonicalValue {
+    CanonicalValue::float_bits(
+        TypeKey::new("tiler", "f32", 1).expect("the governed F32 key is valid"),
+        bits.to_be_bytes(),
+    )
+    .expect("binary32 has a nonempty bounded payload")
+}
 
 impl OperationInferencer for ConstantF32 {
     fn infer(
@@ -1300,17 +1366,22 @@ impl OperationInferencer for ConstantF32 {
                 "constant requires exactly the bits attribute",
             ));
         }
-        let Some(CanonicalValueView::Unsigned(bits)) = attributes
+        let Some(CanonicalValueView::FloatBits(bits)) = attributes
             .get(F32_CONSTANT_BITS_ATTRIBUTE)
             .map(CanonicalValue::view)
         else {
             return Err(op_error(
                 "constant.bits",
-                "constant bits must be an unsigned canonical value",
+                "constant bits must be exact binary32 FloatBits",
             ));
         };
-        if u32::try_from(bits).is_err() {
-            return Err(op_error("constant.bits", "constant bits exceed u32"));
+        if bits.format() != &TypeKey::new("tiler", "f32", 1).expect("the governed F32 key is valid")
+            || bits.bits().len() != 4
+        {
+            return Err(op_error(
+                "constant.bits",
+                "constant bits must use the binary32 format and width",
+            ));
         }
         Ok(vec![ValueFact::new(
             F32::resolved_type(),
@@ -1392,12 +1463,16 @@ impl OperationInferencer for StrictSerialSumF32 {
         }
         let mut reduced_axes = Vec::with_capacity(values.len());
         for value in values {
-            let CanonicalValueView::Unsigned(axis_value) = value.view() else {
+            let CanonicalValueView::Unsigned { width, bits } = value.view() else {
                 return Err(op_error("sum.axes.type", "Sum axes must be unsigned"));
             };
-            let logical_axis = u32::try_from(axis_value)
-                .map(Axis::new)
-                .map_err(|_| op_error("sum.axes.width", "Sum axis exceeds u32"))?;
+            if width != super::types::CanonicalIntegerWidth::Bits32 {
+                return Err(op_error("sum.axes.width", "Sum axes must use u32"));
+            }
+            let logical_axis = Axis::new(
+                u32::try_from(bits)
+                    .map_err(|_| op_error("sum.axes.width", "Sum axis exceeds u32"))?,
+            );
             if usize::try_from(logical_axis.get())
                 .map_or(true, |position| position >= operands[0].shape().rank())
             {
@@ -1429,7 +1504,7 @@ fn compute_identity(
     definitions: &BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: &BTreeMap<OpKey, RegisteredOperation>,
 ) -> SemanticRegistrySnapshotIdentity {
-    let mut bytes = b"tiler.semantic-registry.v4\0".to_vec();
+    let mut bytes = b"tiler.semantic-registry.v5\0".to_vec();
     encode_len(&mut bytes, definitions.len());
     for (key, registered) in definitions {
         encode_registered_type(&mut bytes, key, registered);
@@ -1531,7 +1606,7 @@ mod tests {
             registrar.register_value_type(ValueTypeDefinition::structurally_valid(
                 ValueTypeDefinitionKey::Nominal(TypeKey::new("acme", "f8-special", 1).unwrap()),
                 NormativeDefinitionRef::new("acme f8 special v1")?,
-                TypeDefinitionFacts::new(CanonicalValue::unsigned(8)),
+                TypeDefinitionFacts::new(CanonicalValue::unsigned_u32(8)),
             ))?;
             registrar.bind_marker::<ExternalF8>(external_f8())
         }
@@ -1627,7 +1702,7 @@ mod tests {
         let encoded = ResolvedValueType::encoded_numeric(
             QuantSchemeKey::new("tiler", "affine", 1).unwrap(),
             EncodedNumericContract::new([CanonicalField::new(
-                1,
+                AttributeFieldId::new(1),
                 CanonicalValue::value_type(external_f8()),
             )])
             .unwrap(),
@@ -1681,6 +1756,28 @@ mod tests {
             .unwrap();
 
         assert_eq!(results, vec![operand]);
+    }
+
+    #[test]
+    fn operation_attributes_require_registered_embedded_type_authority() {
+        let registry = SemanticRegistryBuilder::standard()
+            .unwrap()
+            .freeze()
+            .unwrap();
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            F32_CONSTANT_BITS_ATTRIBUTE,
+            CanonicalValue::float_bits(
+                TypeKey::new("external", "unregistered-float", 1).unwrap(),
+                [0_u8; 4],
+            )
+            .unwrap(),
+        )])
+        .unwrap();
+
+        assert!(matches!(
+            registry.normalize_operation_attributes(&constant_f32_op(), attributes),
+            Err(RegistryError::UnregisteredTypeAuthority { .. })
+        ));
     }
 
     #[test]

@@ -32,10 +32,11 @@ pub use model::{
     TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
 };
 pub use scalar::{
-    CanonicalScalarDefinitionProjection, FrozenScalarRegistry, ScalarArity, ScalarAttributeField,
-    ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
-    ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError,
+    CanonicalScalarDefinitionProjection, FrozenScalarRegistry, ScalarAdmissionProvenanceIdentity,
+    ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes,
+    ScalarAuthorityEvidence, ScalarEffect, ScalarInferenceError, ScalarInferenceRequest,
+    ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
+    ScalarRegistryBuilder, ScalarRegistryError,
 };
 
 /// Maximum dimensions admitted by one region.

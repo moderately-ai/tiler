@@ -11,7 +11,7 @@ paths: [.gitignore]
 tags: [implementation, compiler-foundation, indexing]
 claimed_from: todo
 assignee: codex
-lease_expires_at: 1784648951
+lease_expires_at: 1784669146
 ---
 Implement the public checked static-extent index-region profile needed by the
 first supported operations: typed interned iteration expressions, a generic
@@ -65,7 +65,10 @@ This verifier proves the structural index relation, not that the relation is a
 correct implementation of a semantic operation. Operation capabilities emit
 the relation and compiler-owned legality evidence must separately bind the
 generated region to its selected authoritative semantic source. That evidence
-also owns reached scalar-definition and selected lowering-provider provenance.
+consumes separately revalidated, region-bound scalar authority evidence and
+adds selected lowering-provider provenance. The scalar receipt keeps reached
+provider-independent definitions distinct from provider-attributed admission
+provenance; neither receipt alone proves semantic equivalence.
 Treating structural checks or a correlation identity as semantic sourceability
 would admit wrong-coordinate implementations and would make external
 operations impossible to support soundly.

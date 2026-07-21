@@ -693,6 +693,10 @@ impl SemanticProgramBuilder {
                 ValueFact::new(value.resolved_type.as_ref().clone(), value.shape.clone())
             })
             .collect();
+        let attributes = self
+            .semantic_registry
+            .normalize_operation_attributes(&key, attributes)
+            .map_err(BuildError::SemanticRegistry)?;
         let inferred = self
             .semantic_registry
             .infer_operation(&key, &operand_facts, &attributes)
@@ -1105,10 +1109,11 @@ fn checked_index(index: usize, entity: EntityKind) -> Result<ValueIndex, BuildEr
 #[cfg(test)]
 mod tests {
     use super::super::{
-        CanonicalValue, F32, F32Add, F32Constant, F32Multiply, NormativeDefinitionRef, OpKey,
-        OperationArity, OperationConformance, OperationDefinition, OperationDefinitionFacts,
-        OperationEffect, OperationInferenceError, OperationInferencer, OperationSchema,
-        ProviderIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
+        AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, F32, F32Add,
+        F32Constant, F32Multiply, NormativeDefinitionRef, OpKey, OperationArity,
+        OperationAttributeSchema, OperationConformance, OperationDefinition,
+        OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
+        OperationSchema, ProviderIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
         SemanticRegistryRegistrar, StrictSerialF32Sum, add_f32_op,
     };
     use super::*;
@@ -1188,6 +1193,27 @@ mod tests {
         }
     }
 
+    struct DefaultedIdentity;
+    impl OperationInferencer for DefaultedIdentity {
+        fn infer(
+            &self,
+            operands: &[ValueFact],
+            attributes: &OperationAttributes,
+        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            let field = AttributeFieldId::new(7);
+            if operands.len() == 1
+                && attributes.get(field) == Some(&CanonicalValue::unsigned_u32(4))
+            {
+                Ok(vec![operands[0].clone()])
+            } else {
+                Err(OperationInferenceError::new(
+                    "test.defaulted-identity.signature",
+                    "defaulted identity requires one operand and the resolved default",
+                ))
+            }
+        }
+    }
+
     struct OperationProvider(u32);
     impl SemanticRegistryProvider for OperationProvider {
         fn identity(&self) -> ProviderIdentity {
@@ -1199,7 +1225,28 @@ mod tests {
             registrar: &mut SemanticRegistryRegistrar<'_>,
         ) -> Result<(), super::super::RegistryError> {
             registrar.register_operation(test_operation("identity", 1, Arc::new(Identity)))?;
-            registrar.register_operation(test_operation("pair", 2, Arc::new(Pair)))
+            registrar.register_operation(test_operation("pair", 2, Arc::new(Pair)))?;
+            registrar.register_operation(OperationDefinition::new(
+                OpKey::new("test", "defaulted-identity", 1).unwrap(),
+                OperationSchema::new(
+                    OperationArity::exact(1),
+                    OperationArity::exact(1),
+                    [OperationAttributeSchema::defaulted(
+                        AttributeFieldId::new(7),
+                        CanonicalValueKind::Unsigned,
+                        CanonicalValue::unsigned_u32(4),
+                    )
+                    .unwrap()],
+                )
+                .unwrap(),
+                NormativeDefinitionRef::new("test defaulted-identity v1").unwrap(),
+                OperationDefinitionFacts::new(CanonicalValue::record([]).unwrap()),
+                OperationConformance::new(
+                    CanonicalValue::utf8("test.defaulted-identity.v1").unwrap(),
+                ),
+                OperationEffect::Pure,
+                Arc::new(DefaultedIdentity),
+            ))
         }
     }
 
@@ -1931,6 +1978,57 @@ mod tests {
         assert_ne!(
             shared.semantic_graph_identity(),
             separate.semantic_graph_identity()
+        );
+    }
+
+    #[test]
+    fn semantic_program_identity_normalizes_explicit_schema_defaults() {
+        fn build(
+            registry: FrozenSemanticRegistry,
+            attributes: OperationAttributes,
+        ) -> SemanticProgram {
+            let mut builder = SemanticProgramBuilder::try_new(registry).unwrap();
+            let input = builder
+                .input::<F32>(input_key("x"), Shape::from_dims([2]))
+                .unwrap();
+            let result = builder
+                .apply(
+                    OpKey::new("test", "defaulted-identity", 1).unwrap(),
+                    attributes,
+                    &[input.erase()],
+                )
+                .unwrap()[0];
+            builder
+                .output_resolved(output_key("result"), result)
+                .unwrap();
+            builder.build().unwrap()
+        }
+
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&OperationProvider(1)).unwrap();
+        let registry = registry.freeze().unwrap();
+        let omitted = build(registry.clone(), OperationAttributes::empty());
+        let explicit = build(
+            registry,
+            OperationAttributes::new([CanonicalField::new(
+                AttributeFieldId::new(7),
+                CanonicalValue::unsigned_u32(4),
+            )])
+            .unwrap(),
+        );
+
+        assert_eq!(
+            omitted.semantic_graph_identity(),
+            explicit.semantic_graph_identity()
+        );
+        assert!(
+            explicit
+                .operations()
+                .next()
+                .unwrap()
+                .attributes()
+                .fields()
+                .is_empty()
         );
     }
 

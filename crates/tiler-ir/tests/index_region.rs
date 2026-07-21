@@ -11,7 +11,7 @@ use tiler_ir::index::{
     WriteOwnershipProofView,
 };
 use tiler_ir::semantic::{
-    CanonicalField, CanonicalValue, CanonicalValueKind, FrozenSemanticRegistry,
+    AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, FrozenSemanticRegistry,
     NormativeDefinitionRef, ProviderIdentity, RegistryError, ResolvedValueType,
     SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
     TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey,
@@ -116,11 +116,20 @@ fn registries() -> (
     FrozenSemanticRegistry,
     tiler_ir::index::FrozenScalarRegistry,
 ) {
+    registries_with_revision(1)
+}
+
+fn registries_with_revision(
+    revision: u32,
+) -> (
+    FrozenSemanticRegistry,
+    tiler_ir::index::FrozenScalarRegistry,
+) {
     let mut semantic = SemanticRegistryBuilder::new();
     semantic.register_provider(&Types).unwrap();
     let semantic = semantic.freeze().unwrap();
     let mut scalar = ScalarRegistryBuilder::new(semantic.clone());
-    let provider = ProviderIdentity::new("example", "scalar", 1).unwrap();
+    let provider = ProviderIdentity::new("example", "scalar", revision).unwrap();
     scalar
         .register(
             provider.clone(),
@@ -157,10 +166,9 @@ fn registries() -> (
                 ScalarOpKey::new("example", "attributed", 1).unwrap(),
                 NormativeDefinitionRef::new("urn:example:attributed:v1").unwrap(),
                 ScalarOperationContract {
-                    attributes: ScalarAttributeSchema::new([ScalarAttributeField::new(
-                        7,
+                    attributes: ScalarAttributeSchema::new([ScalarAttributeField::required(
+                        AttributeFieldId::new(7),
                         CanonicalValueKind::Unsigned,
-                        true,
                     )])
                     .unwrap(),
                     operands: ScalarArity::exact(0).unwrap(),
@@ -227,6 +235,91 @@ fn external_non_f32_constant_and_multi_result_apply_form_generic_ssa() {
 }
 
 #[test]
+fn scalar_authority_revalidation_is_region_bound_and_provider_separate() {
+    let (_, first_registry) = registries_with_revision(1);
+    let (_, second_registry) = registries_with_revision(2);
+    let mut builder = IndexRegionBuilder::new(first_registry.clone()).unwrap();
+    let value = builder
+        .apply(
+            ScalarOpKey::new("example", "constant", 1).unwrap(),
+            ScalarAttributes::empty(),
+            &[],
+        )
+        .unwrap()
+        .get(0)
+        .unwrap();
+    scalar_output(&mut builder, value);
+    let region = builder.build().unwrap();
+
+    let first = first_registry.revalidate_region(&region).unwrap();
+    let second = second_registry.revalidate_region(&region).unwrap();
+    assert_eq!(first.region(), region.canonical_identity());
+    assert_eq!(first.definitions(), second.definitions());
+    assert_ne!(first.admission(), second.admission());
+}
+
+#[test]
+fn scalar_schema_defaults_normalize_before_structural_identity() {
+    fn build(explicit: bool) -> Vec<u8> {
+        let (semantic, _) = registries();
+        let field = AttributeFieldId::new(11);
+        let default = CanonicalValue::unsigned_u32(4);
+        let mut scalar = ScalarRegistryBuilder::new(semantic);
+        scalar
+            .register(
+                ProviderIdentity::new("example", "defaulted-scalar", 1).unwrap(),
+                ScalarOperationDefinition::new(
+                    ScalarOpKey::new("example", "defaulted", 1).unwrap(),
+                    NormativeDefinitionRef::new("urn:example:defaulted:v1").unwrap(),
+                    ScalarOperationContract {
+                        attributes: ScalarAttributeSchema::new([ScalarAttributeField::defaulted(
+                            field,
+                            CanonicalValueKind::Unsigned,
+                            default.clone(),
+                        )
+                        .unwrap()])
+                        .unwrap(),
+                        operands: ScalarArity::exact(0).unwrap(),
+                        results: ScalarArity::exact(1).unwrap(),
+                        effect: ScalarEffect::Pure,
+                        facts: record(),
+                        conformance: record(),
+                    },
+                    Arc::new(Fixed(vec![test_type()])),
+                ),
+            )
+            .unwrap();
+        let mut builder = IndexRegionBuilder::new(scalar.freeze()).unwrap();
+        let attributes = if explicit {
+            ScalarAttributes::new(
+                CanonicalValue::record([CanonicalField::new(field, default)]).unwrap(),
+            )
+            .unwrap()
+        } else {
+            ScalarAttributes::empty()
+        };
+        let value = builder
+            .apply(
+                ScalarOpKey::new("example", "defaulted", 1).unwrap(),
+                attributes,
+                &[],
+            )
+            .unwrap()
+            .get(0)
+            .unwrap();
+        scalar_output(&mut builder, value);
+        builder
+            .build()
+            .unwrap()
+            .canonical_identity()
+            .as_bytes()
+            .to_vec()
+    }
+
+    assert_eq!(build(false), build(true));
+}
+
+#[test]
 fn binary_pointwise_and_generic_n_state_reduction_are_typed() {
     let (_, registry) = registries();
     let mut builder = IndexRegionBuilder::new(registry).unwrap();
@@ -288,8 +381,11 @@ fn constant_region(extra_dead_first: bool, attribute: u64) -> Vec<u8> {
         let _ = builder.constant(999_i128.into()).unwrap();
     }
     let attributes = ScalarAttributes::new(
-        CanonicalValue::record([CanonicalField::new(9, CanonicalValue::unsigned(attribute))])
-            .unwrap(),
+        CanonicalValue::record([CanonicalField::new(
+            AttributeFieldId::new(9),
+            CanonicalValue::unsigned_u64(attribute),
+        )])
+        .unwrap(),
     );
     // The governed constant has an empty schema, so use the attribute only to exercise deterministic rejection separately.
     assert!(attributes.is_ok());
@@ -400,11 +496,19 @@ fn identity_distinguishes_operation_key_attributes_and_resolved_types() {
         operation_identity("constant_alt_key", empty.clone(), test_type())
     );
     let attrs1 = ScalarAttributes::new(
-        CanonicalValue::record([CanonicalField::new(7, CanonicalValue::unsigned(1))]).unwrap(),
+        CanonicalValue::record([CanonicalField::new(
+            AttributeFieldId::new(7),
+            CanonicalValue::unsigned_u64(1),
+        )])
+        .unwrap(),
     )
     .unwrap();
     let attrs2 = ScalarAttributes::new(
-        CanonicalValue::record([CanonicalField::new(7, CanonicalValue::unsigned(2))]).unwrap(),
+        CanonicalValue::record([CanonicalField::new(
+            AttributeFieldId::new(7),
+            CanonicalValue::unsigned_u64(2),
+        )])
+        .unwrap(),
     )
     .unwrap();
     assert_ne!(
@@ -624,10 +728,9 @@ fn multi_result_structural_key_storage_is_preflighted_transactionally() {
                 ScalarOpKey::new("example", "wide", 1).unwrap(),
                 NormativeDefinitionRef::new("urn:example:wide:v1").unwrap(),
                 ScalarOperationContract {
-                    attributes: ScalarAttributeSchema::new([ScalarAttributeField::new(
-                        1,
+                    attributes: ScalarAttributeSchema::new([ScalarAttributeField::required(
+                        AttributeFieldId::new(1),
                         CanonicalValueKind::Bytes,
-                        true,
                     )])
                     .unwrap(),
                     operands: ScalarArity::exact(0).unwrap(),
@@ -643,7 +746,7 @@ fn multi_result_structural_key_storage_is_preflighted_transactionally() {
     let mut builder = IndexRegionBuilder::new(scalar.freeze()).unwrap();
     let attributes = ScalarAttributes::new(
         CanonicalValue::record([CanonicalField::new(
-            1,
+            AttributeFieldId::new(1),
             CanonicalValue::bytes(vec![0; 5_000]).unwrap(),
         )])
         .unwrap(),

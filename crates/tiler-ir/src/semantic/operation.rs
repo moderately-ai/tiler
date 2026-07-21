@@ -7,14 +7,16 @@ use crate::shape::Shape;
 use super::handles::{GraphId, OperationId, OperationIndex, ValueId, ValueIndex};
 use super::interface::InputIndex;
 use super::registry::NormativeDefinitionRef;
-use super::types::{CanonicalField, CanonicalValue, ResolvedValueType, TypeIdentityError, TypeKey};
+use super::types::{
+    AttributeFieldId, CanonicalField, CanonicalValue, ResolvedValueType, TypeIdentityError, TypeKey,
+};
 
 /// The bounded profile's canonical quiet NaN produced by arithmetic.
 pub const CANONICAL_F32_ARITHMETIC_NAN_BITS: u32 = 0x7fc0_0000;
 /// Stable field ID carrying exact f32 bits on the standard constant operation.
-pub const F32_CONSTANT_BITS_ATTRIBUTE: u32 = 1;
+pub const F32_CONSTANT_BITS_ATTRIBUTE: AttributeFieldId = AttributeFieldId::new(1);
 /// Stable field ID carrying canonical axes on the standard strict Sum.
-pub const REDUCTION_AXES_ATTRIBUTE: u32 = 1;
+pub const REDUCTION_AXES_ATTRIBUTE: AttributeFieldId = AttributeFieldId::new(1);
 /// Maximum declared fields in one operation-attribute schema.
 pub const MAX_OPERATION_ATTRIBUTES: usize = 1_024;
 
@@ -130,7 +132,7 @@ impl OperationAttributes {
 
     /// Looks up one stable field ID.
     #[must_use]
-    pub fn get(&self, id: u32) -> Option<&CanonicalValue> {
+    pub fn get(&self, id: AttributeFieldId) -> Option<&CanonicalValue> {
         self.0
             .binary_search_by_key(&id, CanonicalField::id)
             .ok()
@@ -144,7 +146,7 @@ impl OperationAttributes {
                 .to_be_bytes(),
         );
         for field in &self.0 {
-            output.extend_from_slice(&field.id().to_be_bytes());
+            output.extend_from_slice(&field.id().get().to_be_bytes());
             field.value().encode(output);
         }
     }
@@ -162,6 +164,8 @@ pub enum CanonicalValueKind {
     Signed,
     /// An unsigned integer.
     Unsigned,
+    /// Exact floating-point bits with explicit format identity.
+    FloatBits,
     /// Exact bytes.
     Bytes,
     /// UTF-8 text.
@@ -178,10 +182,17 @@ impl CanonicalValueKind {
             (self, value.view()),
             (Self::Type, super::types::CanonicalValueView::Type(_))
                 | (Self::Bool, super::types::CanonicalValueView::Bool(_))
-                | (Self::Signed, super::types::CanonicalValueView::Signed(_))
                 | (
                     Self::Unsigned,
-                    super::types::CanonicalValueView::Unsigned(_)
+                    super::types::CanonicalValueView::Unsigned { .. }
+                )
+                | (
+                    Self::Signed,
+                    super::types::CanonicalValueView::Signed { .. }
+                )
+                | (
+                    Self::FloatBits,
+                    super::types::CanonicalValueView::FloatBits(_)
                 )
                 | (Self::Bytes, super::types::CanonicalValueView::Bytes(_))
                 | (Self::Utf8, super::types::CanonicalValueView::Utf8(_))
@@ -199,59 +210,90 @@ impl CanonicalValueKind {
             Self::Bool => 2,
             Self::Signed => 3,
             Self::Unsigned => 4,
-            Self::Bytes => 5,
-            Self::Utf8 => 6,
-            Self::Sequence => 7,
-            Self::Record => 8,
+            Self::FloatBits => 5,
+            Self::Bytes => 6,
+            Self::Utf8 => 7,
+            Self::Sequence => 8,
+            Self::Record => 9,
         }
     }
 }
 
 /// One field in a host-owned canonical operation-attribute schema.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct OperationAttributeSchema {
-    id: u32,
+    id: AttributeFieldId,
     kind: CanonicalValueKind,
     required: bool,
+    default: Option<CanonicalValue>,
 }
 
 impl OperationAttributeSchema {
     /// Creates one required attribute field.
     #[must_use]
-    pub const fn required(id: u32, kind: CanonicalValueKind) -> Self {
+    pub const fn required(id: AttributeFieldId, kind: CanonicalValueKind) -> Self {
         Self {
             id,
             kind,
             required: true,
+            default: None,
         }
     }
 
     /// Creates one optional attribute field.
     #[must_use]
-    pub const fn optional(id: u32, kind: CanonicalValueKind) -> Self {
+    pub const fn optional(id: AttributeFieldId, kind: CanonicalValueKind) -> Self {
         Self {
             id,
             kind,
             required: false,
+            default: None,
         }
+    }
+
+    /// Creates an optional field whose explicit default is canonicalized to omission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationSchemaError::AttributeDefaultKind`] when the value category differs.
+    pub fn defaulted(
+        id: AttributeFieldId,
+        kind: CanonicalValueKind,
+        default: CanonicalValue,
+    ) -> Result<Self, OperationSchemaError> {
+        if !kind.accepts(&default) {
+            return Err(OperationSchemaError::AttributeDefaultKind { field_id: id });
+        }
+        Ok(Self {
+            id,
+            kind,
+            required: false,
+            default: Some(default),
+        })
     }
 
     /// Returns the stable schema-local field ID.
     #[must_use]
-    pub const fn id(self) -> u32 {
+    pub const fn id(&self) -> AttributeFieldId {
         self.id
     }
 
     /// Returns the required canonical value category.
     #[must_use]
-    pub const fn kind(self) -> CanonicalValueKind {
+    pub const fn kind(&self) -> CanonicalValueKind {
         self.kind
     }
 
     /// Returns whether the field must occur.
     #[must_use]
-    pub const fn is_required(self) -> bool {
+    pub const fn is_required(&self) -> bool {
         self.required
+    }
+
+    /// Returns the schema-owned default, if explicit-default elision is enabled.
+    #[must_use]
+    pub const fn default(&self) -> Option<&CanonicalValue> {
+        self.default.as_ref()
     }
 }
 
@@ -308,12 +350,17 @@ pub enum OperationSchemaError {
     /// Two attribute declarations used one field ID.
     DuplicateAttribute {
         /// Duplicated schema-local field ID.
-        field_id: u32,
+        field_id: AttributeFieldId,
     },
     /// The schema declared too many attribute fields.
     TooManyAttributes {
         /// Actual declared field count.
         fields: usize,
+    },
+    /// A schema default had the wrong canonical value category.
+    AttributeDefaultKind {
+        /// Invalid default field.
+        field_id: AttributeFieldId,
     },
 }
 
@@ -333,6 +380,12 @@ impl fmt::Display for OperationSchemaError {
                 formatter,
                 "operation schema has {fields} attributes, exceeding {MAX_OPERATION_ATTRIBUTES}"
             ),
+            Self::AttributeDefaultKind { field_id } => {
+                write!(
+                    formatter,
+                    "operation attribute field {field_id} has a mismatched default"
+                )
+            }
         }
     }
 }
@@ -379,6 +432,12 @@ impl OperationSchema {
         })
     }
 
+    /// Returns canonical attribute fields in stable field-ID order.
+    #[must_use]
+    pub fn attributes(&self) -> &[OperationAttributeSchema] {
+        &self.attributes
+    }
+
     fn validate_inputs(
         &self,
         operands: &[ValueFact],
@@ -390,12 +449,19 @@ impl OperationSchema {
                 "operand arity is outside the registered schema",
             ));
         }
+        self.validate_attributes(attributes)
+    }
+
+    fn validate_attributes(
+        &self,
+        attributes: &OperationAttributes,
+    ) -> Result<(), OperationInferenceError> {
         for field in attributes.fields() {
             let Some(schema) = self
                 .attributes
                 .binary_search_by_key(&field.id(), |candidate| candidate.id)
                 .ok()
-                .map(|index| self.attributes[index])
+                .map(|index| &self.attributes[index])
             else {
                 return Err(OperationInferenceError::new(
                     "tiler.schema.unknown-attribute",
@@ -422,6 +488,40 @@ impl OperationSchema {
         Ok(())
     }
 
+    pub(super) fn normalize_attributes(
+        &self,
+        attributes: &OperationAttributes,
+    ) -> Result<OperationAttributes, OperationInferenceError> {
+        self.validate_attributes(attributes)?;
+        let fields = attributes.fields().iter().filter(|field| {
+            self.attributes
+                .binary_search_by_key(&field.id(), |candidate| candidate.id)
+                .ok()
+                .and_then(|index| self.attributes[index].default.as_ref())
+                != Some(field.value())
+        });
+        OperationAttributes::new(fields.cloned()).map_err(|error| {
+            OperationInferenceError::new("tiler.schema.attribute-normalization", error.to_string())
+        })
+    }
+
+    fn resolved_attributes(
+        &self,
+        canonical: &OperationAttributes,
+    ) -> Result<OperationAttributes, OperationInferenceError> {
+        let mut fields = canonical.fields().to_vec();
+        for schema in &self.attributes {
+            if let Some(default) = &schema.default
+                && canonical.get(schema.id).is_none()
+            {
+                fields.push(CanonicalField::new(schema.id, default.clone()));
+            }
+        }
+        OperationAttributes::new(fields).map_err(|error| {
+            OperationInferenceError::new("tiler.schema.attribute-resolution", error.to_string())
+        })
+    }
+
     fn validate_results(&self, results: &[ValueFact]) -> Result<(), OperationInferenceError> {
         if !self.results.admits(results.len()) {
             return Err(OperationInferenceError::new(
@@ -441,9 +541,17 @@ impl OperationSchema {
                 .to_be_bytes(),
         );
         for field in &self.attributes {
-            output.extend_from_slice(&field.id.to_be_bytes());
+            output.extend_from_slice(&field.id.get().to_be_bytes());
             output.push(field.kind.encode());
-            output.push(u8::from(field.required));
+            output.push(match (&field.default, field.required) {
+                (None, true) => 1,
+                (None, false) => 2,
+                (Some(_), false) => 3,
+                (Some(_), true) => unreachable!("required fields cannot carry defaults"),
+            });
+            if let Some(default) = &field.default {
+                default.encode(output);
+            }
         }
     }
 }
@@ -667,7 +775,9 @@ impl OperationDefinition {
         attributes: &OperationAttributes,
     ) -> Result<Vec<ValueFact>, OperationInferenceError> {
         self.schema.validate_inputs(operands, attributes)?;
-        let results = self.inferencer.infer(operands, attributes)?;
+        let canonical = self.schema.normalize_attributes(attributes)?;
+        let resolved = self.schema.resolved_attributes(&canonical)?;
+        let results = self.inferencer.infer(operands, &resolved)?;
         self.schema.validate_results(&results)?;
         Ok(results)
     }
@@ -832,5 +942,39 @@ impl OperationRef<'_> {
             owner: self.owner,
             index,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_defaults_have_one_canonical_identity_and_resolve_for_inference() {
+        let field = AttributeFieldId::new(7);
+        let default = CanonicalValue::unsigned_u32(4);
+        let schema = OperationSchema::new(
+            OperationArity::exact(0),
+            OperationArity::exact(1),
+            [OperationAttributeSchema::defaulted(
+                field,
+                CanonicalValueKind::Unsigned,
+                default.clone(),
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        let omitted = OperationAttributes::empty();
+        let explicit =
+            OperationAttributes::new([CanonicalField::new(field, default.clone())]).unwrap();
+
+        assert_eq!(
+            schema.normalize_attributes(&omitted).unwrap(),
+            schema.normalize_attributes(&explicit).unwrap()
+        );
+        assert_eq!(
+            schema.resolved_attributes(&omitted).unwrap().get(field),
+            Some(&default)
+        );
     }
 }

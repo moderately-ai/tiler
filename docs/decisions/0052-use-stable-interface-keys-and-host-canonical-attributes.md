@@ -6,7 +6,7 @@ title: "Use stable interface keys and host-canonical attributes"
 topics: ["identity", "attributes", "semantics"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.ir", "tiler.contract.operation-extensions"]
 evidence: ["tiler.research.extensions.operation-extension-surface"]
 ticket: "research-readiness-gate"
@@ -54,6 +54,21 @@ future public artifact serialization codec.
   makes them meaningful.
 - Schema evolution changes an operation's semantic version or follows a future
   explicitly governed compatibility rule; unknown fields are not guessed.
+
+## Implementation boundary
+
+The semantic and scalar-operation registries now share the governed canonical
+value representation, including `AttributeFieldId`, explicit integer widths,
+format-typed exact float bits, schema-owned defaults, and normalization of an
+explicit default to omission before structural identity is computed. Registry
+definition identities commit to the field requirement/default policy, and
+registered defaults are checked against the semantic type authority.
+
+This is still partial implementation of the ADR. The current Rust type is named
+`CanonicalValue` rather than the design-document spelling
+`CanonicalAttrValue`, and the broader artifact codec and schema-evolution
+compatibility policy remain intentionally unselected. The canonical identity
+encoding is internal and versioned; it is not yet a public interchange format.
 
 ## Alternatives considered
 

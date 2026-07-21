@@ -55,6 +55,10 @@ Later layers follow the same rule:
 - region semantic content is separate from the region occurrence and exact
   graph-value boundary binding;
 - index-region identity covers pure symbolic index/access structure;
+- selected scalar-definition authority revalidates an exact index region and
+  yields a separate region-bound receipt containing reached
+  provider-independent definitions and provider-attributed admission
+  provenance;
 - a compiler-owned checked refinement binds index structure to one region
   occurrence, exact value/access mappings, reached definitions, selected
   providers, and required evidence;
@@ -94,12 +98,16 @@ artifact + live device/context/specialization -> runtime cache
   without falsely changing a graph's tensor meaning.
 - Structural index, schedule, and kernel content can be shared across graph
   occurrences while occurrence-specific verification remains explicit.
+- Scalar registry revisions can be rechecked against the same structural index
+  region without changing that region's identity; definition changes and
+  provider-only changes remain distinguishable evidence subjects.
 - Every cache or artifact key must compose the identities and provenance needed
   by its own contract; no lower-layer digest is a substitute for complete plan
   coverage or selected-provider evidence.
-- The semantic and bounded compiler split is implemented. Region occurrence,
-  checked refinement, schedule/KIR, complete-plan, and artifact identities
-  remain obligations of their owning implementation tickets.
+- The semantic identity split and the index region's separate scalar-authority
+  receipt are implemented for their bounded profiles. Region occurrence,
+  semantic checked refinement, schedule/KIR, complete-plan, and artifact
+  identities remain obligations of their owning implementation tickets.
 
 ## Alternatives considered
 

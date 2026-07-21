@@ -255,6 +255,7 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
             .iter()
             .map(|id| self.resolve(*id).map(|value| value.value_type.clone()))
             .collect::<Result<_, _>>()?;
+        let attributes = self.registry.normalize_attributes(&key, attributes)?;
         let structural_key = Arc::new(nested_operation_key(
             &key,
             &attributes,
@@ -859,6 +860,7 @@ impl IndexRegionBuilder {
                 });
             }
         }
+        let attributes = self.registry.normalize_attributes(&key, attributes)?;
         let structural_key = Arc::new(apply_operation_key(
             &key,
             &attributes,
@@ -2292,7 +2294,7 @@ fn nested_operation_key(
     operands: &[u32],
     value_keys: &[Arc<Vec<u8>>],
 ) -> Vec<u8> {
-    let mut output = b"tiler.index.reducer-apply.v1\0".to_vec();
+    let mut output = b"tiler.index.reducer-apply.v2\0".to_vec();
     encode_key(&mut output, key);
     encode_canonical(&mut output, attributes.value());
     encode_len(&mut output, operands.len());
@@ -2308,7 +2310,7 @@ fn apply_operation_key(
     values: &[DraftScalarValue],
     free_dimensions: &BTreeSet<u32>,
 ) -> Vec<u8> {
-    let mut output = b"tiler.index.scalar-operation.v1\0".to_vec();
+    let mut output = b"tiler.index.scalar-operation.v2\0".to_vec();
     output.push(1);
     encode_key(&mut output, key);
     encode_canonical(&mut output, attributes.value());
@@ -2328,7 +2330,7 @@ fn operation_structural_key(
     values: &[DraftScalarValue],
     free_dimensions: &BTreeSet<u32>,
 ) -> Vec<u8> {
-    let mut output = b"tiler.index.scalar-operation.v1\0".to_vec();
+    let mut output = b"tiler.index.scalar-operation.v2\0".to_vec();
     match kind {
         ScalarOperationKindData::Apply { key, attributes } => {
             output.push(1);
@@ -2455,7 +2457,7 @@ fn encode_region(
     values: &[ScalarValueData],
     outputs: &[OutputData],
 ) -> CanonicalIndexRegionIdentity {
-    let mut out = b"tiler.index-region.v2\0".to_vec();
+    let mut out = b"tiler.index-region.v3\0".to_vec();
     encode_len(&mut out, dimensions.len());
     for d in dimensions {
         out.push(match d.role {

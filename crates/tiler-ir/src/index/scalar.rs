@@ -4,9 +4,14 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::semantic::{
-    CanonicalValue, CanonicalValueKind, CanonicalValueView, FrozenSemanticRegistry,
-    NormativeDefinitionRef, ProviderIdentity, RegistryError, ResolvedValueType, TypeIdentityError,
-    TypeKey,
+    AttributeFieldId, CanonicalValue, CanonicalValueKind, CanonicalValueView,
+    FrozenSemanticRegistry, NormativeDefinitionRef, ProviderIdentity, RegistryError,
+    ResolvedValueType, TypeIdentityError, TypeKey,
+};
+
+use super::{
+    CanonicalIndexRegionIdentity, ScalarOperationKindRef, VerifiedIndexHandleError,
+    VerifiedIndexRegion,
 };
 
 const MAX_SCALAR_ATTRIBUTES: usize = 256;
@@ -82,33 +87,74 @@ impl ScalarAttributes {
 }
 
 /// One scalar attribute-schema field.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ScalarAttributeField {
-    id: u32,
+    id: AttributeFieldId,
     kind: CanonicalValueKind,
     required: bool,
+    default: Option<CanonicalValue>,
 }
 
 impl ScalarAttributeField {
-    /// Creates one field.
+    /// Creates one required field.
     #[must_use]
-    pub const fn new(id: u32, kind: CanonicalValueKind, required: bool) -> Self {
-        Self { id, kind, required }
+    pub const fn required(id: AttributeFieldId, kind: CanonicalValueKind) -> Self {
+        Self {
+            id,
+            kind,
+            required: true,
+            default: None,
+        }
+    }
+    /// Creates one optional field without a default.
+    #[must_use]
+    pub const fn optional(id: AttributeFieldId, kind: CanonicalValueKind) -> Self {
+        Self {
+            id,
+            kind,
+            required: false,
+            default: None,
+        }
+    }
+    /// Creates an optional field whose explicit default canonicalizes to omission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalarRegistryError::AttributeDefaultKind`] for a category mismatch.
+    pub fn defaulted(
+        id: AttributeFieldId,
+        kind: CanonicalValueKind,
+        default: CanonicalValue,
+    ) -> Result<Self, ScalarRegistryError> {
+        if canonical_kind(&default) != kind {
+            return Err(ScalarRegistryError::AttributeDefaultKind { id });
+        }
+        Ok(Self {
+            id,
+            kind,
+            required: false,
+            default: Some(default),
+        })
     }
     /// Returns the stable field ID.
     #[must_use]
-    pub const fn id(self) -> u32 {
+    pub const fn id(&self) -> AttributeFieldId {
         self.id
     }
     /// Returns the required canonical value kind.
     #[must_use]
-    pub const fn kind(self) -> CanonicalValueKind {
+    pub const fn kind(&self) -> CanonicalValueKind {
         self.kind
     }
     /// Returns whether the field must be present.
     #[must_use]
-    pub const fn is_required(self) -> bool {
+    pub const fn is_required(&self) -> bool {
         self.required
+    }
+    /// Returns the schema-owned default, if any.
+    #[must_use]
+    pub const fn default(&self) -> Option<&CanonicalValue> {
+        self.default.as_ref()
     }
 }
 
@@ -166,14 +212,58 @@ impl ScalarAttributeSchema {
         }
         Ok(())
     }
+
+    fn normalize(
+        &self,
+        attributes: &ScalarAttributes,
+    ) -> Result<ScalarAttributes, ScalarRegistryError> {
+        self.validate(attributes)?;
+        let CanonicalValueView::Record(values) = attributes.value().view() else {
+            return Err(ScalarRegistryError::AttributesNotRecord);
+        };
+        let fields = values.iter().filter(|field| {
+            self.0
+                .binary_search_by_key(&field.id(), ScalarAttributeField::id)
+                .ok()
+                .and_then(|index| self.0[index].default.as_ref())
+                != Some(field.value())
+        });
+        let value = CanonicalValue::record(fields.cloned())
+            .map_err(|error| ScalarRegistryError::CanonicalAttributes(Arc::new(error)))?;
+        ScalarAttributes::new(value)
+    }
+
+    fn resolve_defaults(
+        &self,
+        canonical: &ScalarAttributes,
+    ) -> Result<ScalarAttributes, ScalarRegistryError> {
+        let CanonicalValueView::Record(values) = canonical.value().view() else {
+            return Err(ScalarRegistryError::AttributesNotRecord);
+        };
+        let mut fields = values.to_vec();
+        for schema in &self.0 {
+            if let Some(default) = &schema.default
+                && !values.iter().any(|field| field.id() == schema.id)
+            {
+                fields.push(crate::semantic::CanonicalField::new(
+                    schema.id,
+                    default.clone(),
+                ));
+            }
+        }
+        let value = CanonicalValue::record(fields)
+            .map_err(|error| ScalarRegistryError::CanonicalAttributes(Arc::new(error)))?;
+        ScalarAttributes::new(value)
+    }
 }
 
 fn canonical_kind(value: &CanonicalValue) -> CanonicalValueKind {
     match value.view() {
         CanonicalValueView::Type(_) => CanonicalValueKind::Type,
         CanonicalValueView::Bool(_) => CanonicalValueKind::Bool,
-        CanonicalValueView::Signed(_) => CanonicalValueKind::Signed,
-        CanonicalValueView::Unsigned(_) => CanonicalValueKind::Unsigned,
+        CanonicalValueView::Signed { .. } => CanonicalValueKind::Signed,
+        CanonicalValueView::Unsigned { .. } => CanonicalValueKind::Unsigned,
+        CanonicalValueView::FloatBits(_) => CanonicalValueKind::FloatBits,
         CanonicalValueView::Bytes(_) => CanonicalValueKind::Bytes,
         CanonicalValueView::Utf8(_) => CanonicalValueKind::Utf8,
         CanonicalValueView::Sequence(_) => CanonicalValueKind::Sequence,
@@ -248,6 +338,16 @@ impl ScalarInferenceError {
             code: code.into(),
             message: message.into(),
         }
+    }
+    /// Returns the stable diagnostic code.
+    #[must_use]
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+    /// Returns diagnostic detail.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 impl fmt::Display for ScalarInferenceError {
@@ -437,18 +537,32 @@ pub enum ScalarRegistryError {
     /// Attributes contained an undeclared field.
     UnknownAttribute {
         /// Undeclared field ID.
-        id: u32,
+        id: AttributeFieldId,
     },
     /// Attributes omitted a required field.
     MissingAttribute {
         /// Missing field ID.
-        id: u32,
+        id: AttributeFieldId,
     },
     /// An attribute value did not match its declared kind.
     AttributeKind {
         /// Mismatched field ID.
-        id: u32,
+        id: AttributeFieldId,
     },
+    /// A schema default had the wrong canonical value category.
+    AttributeDefaultKind {
+        /// Invalid default field.
+        id: AttributeFieldId,
+    },
+    /// Canonical attribute normalization failed.
+    CanonicalAttributes(Arc<TypeIdentityError>),
+    /// A stored application retained an explicit schema default or otherwise noncanonical record.
+    NonCanonicalAttributes {
+        /// Scalar operation carrying the record.
+        key: ScalarOpKey,
+    },
+    /// An opaque verified region exposed an internally inconsistent handle.
+    InvalidVerifiedRegionHandle(VerifiedIndexHandleError),
     /// The semantic type authority rejected embedded or inferred type data.
     TypeAuthority(Arc<RegistryError>),
     /// The operation-specific inferencer rejected an application.
@@ -480,6 +594,26 @@ pub enum ScalarRegistryError {
         actual: usize,
         /// Maximum aggregate canonical bytes.
         limit: usize,
+    },
+    /// Revalidation inferred a result type different from the stored structural result.
+    RevalidatedResultTypeMismatch {
+        /// Scalar operation being revalidated.
+        key: ScalarOpKey,
+        /// Ordered result position.
+        position: usize,
+        /// Type stored by the region.
+        stored: Arc<ResolvedValueType>,
+        /// Type inferred by the selected authority.
+        inferred: Arc<ResolvedValueType>,
+    },
+    /// Revalidation inferred a different number of ordered results.
+    RevalidatedResultArity {
+        /// Scalar operation being revalidated.
+        key: ScalarOpKey,
+        /// Result count stored by the region.
+        stored: usize,
+        /// Result count inferred by the selected authority.
+        inferred: usize,
     },
 }
 impl fmt::Display for ScalarRegistryError {
@@ -528,6 +662,11 @@ impl ScalarRegistryBuilder {
         }
         if definition.results.min == 0 {
             return Err(ScalarRegistryError::ZeroResultDefinition);
+        }
+        for field in definition.attributes.fields() {
+            if let Some(default) = field.default() {
+                validate_canonical_types(&self.semantic, default)?;
+            }
         }
         validate_canonical_types(&self.semantic, &definition.facts)?;
         validate_canonical_types(&self.semantic, &definition.conformance)?;
@@ -605,7 +744,8 @@ impl FrozenScalarRegistry {
                 actual: operands.len(),
             });
         }
-        definition.attributes.validate(attributes)?;
+        let canonical = definition.attributes.normalize(attributes)?;
+        let resolved = definition.attributes.resolve_defaults(&canonical)?;
         validate_canonical_types(&self.0.semantic, attributes.value())?;
         for operand in operands {
             self.validate_type(operand)?;
@@ -614,7 +754,7 @@ impl FrozenScalarRegistry {
             .inferencer
             .infer(ScalarInferenceRequest {
                 operands,
-                attributes,
+                attributes: &resolved,
             })
             .map_err(|error| ScalarRegistryError::Inference(Arc::new(error)))?;
         if !definition.results.accepts(results.len()) {
@@ -627,6 +767,21 @@ impl FrozenScalarRegistry {
             self.validate_type(result)?;
         }
         Ok(results)
+    }
+
+    pub(super) fn normalize_attributes(
+        &self,
+        key: &ScalarOpKey,
+        attributes: ScalarAttributes,
+    ) -> Result<ScalarAttributes, ScalarRegistryError> {
+        let registered = self
+            .0
+            .definitions
+            .get(key)
+            .ok_or_else(|| ScalarRegistryError::UnknownOperation { key: key.clone() })?;
+        let canonical = registered.definition.attributes.normalize(&attributes);
+        drop(attributes);
+        canonical
     }
 
     /// Returns admission provenance for diagnostics; it is not structural IR identity.
@@ -664,7 +819,7 @@ impl FrozenScalarRegistry {
                 });
             }
         }
-        let mut output = b"tiler.scalar-definition-projection.v1\0".to_vec();
+        let mut output = b"tiler.scalar-definition-projection.v2\0".to_vec();
         encode_len(&mut output, reached_keys.len());
         for key in reached_keys {
             let definition = self
@@ -681,6 +836,130 @@ impl FrozenScalarRegistry {
             output.extend_from_slice(&encoded);
         }
         Ok(CanonicalScalarDefinitionProjection(output))
+    }
+
+    /// Revalidates every reached scalar application and binds exact authority evidence to it.
+    ///
+    /// The returned receipt is separate from structural region identity. It records the selected
+    /// definitions and admission providers without changing structural reuse equality.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing authority, rejected inference, or any stored/inferred type
+    /// disagreement.
+    pub fn revalidate_region(
+        &self,
+        region: &VerifiedIndexRegion,
+    ) -> Result<ScalarAuthorityEvidence, ScalarRegistryError> {
+        for tensor in region.tensors() {
+            self.validate_type(tensor.value_type())?;
+        }
+        let mut reached = std::collections::BTreeSet::new();
+        for operation in region.scalar_operations() {
+            match operation.kind() {
+                ScalarOperationKindRef::Apply { key, attributes } => {
+                    reached.insert(key.clone());
+                    let operands = operation
+                        .operands()
+                        .map(|id| {
+                            region
+                                .scalar_value(id)
+                                .map(|value| value.value_type().clone())
+                                .map_err(ScalarRegistryError::InvalidVerifiedRegionHandle)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let stored = operation
+                        .results()
+                        .map(|id| {
+                            region
+                                .scalar_value(id)
+                                .map(|value| value.value_type().clone())
+                                .map_err(ScalarRegistryError::InvalidVerifiedRegionHandle)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    self.revalidate_application(key, attributes, &operands, &stored)?;
+                }
+                ScalarOperationKindRef::Reduce(reduction) => {
+                    let body = reduction.body();
+                    for application in body.operations() {
+                        reached.insert(application.key().clone());
+                        let operands = application
+                            .operands()
+                            .map(|id| {
+                                region
+                                    .reducer_body_value(id)
+                                    .map(|value| value.value_type().clone())
+                                    .map_err(ScalarRegistryError::InvalidVerifiedRegionHandle)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let stored = application
+                            .results()
+                            .map(|id| {
+                                region
+                                    .reducer_body_value(id)
+                                    .map(|value| value.value_type().clone())
+                                    .map_err(ScalarRegistryError::InvalidVerifiedRegionHandle)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        self.revalidate_application(
+                            application.key(),
+                            application.attributes(),
+                            &operands,
+                            &stored,
+                        )?;
+                    }
+                }
+            }
+        }
+        let definitions = self.project_reached(reached.iter())?;
+        let mut admission = b"tiler.scalar-admission-provenance.v1\0".to_vec();
+        encode_len(&mut admission, reached.len());
+        for key in reached {
+            encode_key(&mut admission, &key);
+            let provider = self
+                .provider(&key)
+                .ok_or_else(|| ScalarRegistryError::UnknownOperation { key: key.clone() })?;
+            encode_bytes(&mut admission, provider.namespace().as_bytes());
+            encode_bytes(&mut admission, provider.name().as_bytes());
+            admission.extend_from_slice(&provider.revision().to_be_bytes());
+        }
+        Ok(ScalarAuthorityEvidence {
+            region: region.canonical_identity().clone(),
+            definitions,
+            admission: ScalarAdmissionProvenanceIdentity(admission),
+        })
+    }
+
+    fn revalidate_application(
+        &self,
+        key: &ScalarOpKey,
+        attributes: &ScalarAttributes,
+        operands: &[ResolvedValueType],
+        stored: &[ResolvedValueType],
+    ) -> Result<(), ScalarRegistryError> {
+        let canonical = self.normalize_attributes(key, attributes.clone())?;
+        if &canonical != attributes {
+            return Err(ScalarRegistryError::NonCanonicalAttributes { key: key.clone() });
+        }
+        let inferred = self.infer(key, operands, attributes)?;
+        if stored.len() != inferred.len() {
+            return Err(ScalarRegistryError::RevalidatedResultArity {
+                key: key.clone(),
+                stored: stored.len(),
+                inferred: inferred.len(),
+            });
+        }
+        for (position, (stored, inferred)) in stored.iter().zip(&inferred).enumerate() {
+            if stored != inferred {
+                return Err(ScalarRegistryError::RevalidatedResultTypeMismatch {
+                    key: key.clone(),
+                    position,
+                    stored: Arc::new(stored.clone()),
+                    inferred: Arc::new(inferred.clone()),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -700,9 +979,17 @@ fn encode_definition(definition: &ScalarOperationDefinition) -> Vec<u8> {
     encode_len(&mut encoded, definition.results.max);
     encode_len(&mut encoded, definition.attributes.0.len());
     for field in &definition.attributes.0 {
-        encoded.extend_from_slice(&field.id.to_be_bytes());
+        encoded.extend_from_slice(&field.id.get().to_be_bytes());
         encoded.push(canonical_kind_tag(field.kind));
-        encoded.push(u8::from(field.required));
+        encoded.push(match (&field.default, field.required) {
+            (None, true) => 1,
+            (None, false) => 2,
+            (Some(_), false) => 3,
+            (Some(_), true) => unreachable!("required fields cannot carry defaults"),
+        });
+        if let Some(default) = &field.default {
+            encode_canonical(&mut encoded, default);
+        }
     }
     encode_canonical(&mut encoded, &definition.facts);
     encode_canonical(&mut encoded, &definition.conformance);
@@ -720,6 +1007,42 @@ impl CanonicalScalarDefinitionProjection {
     }
 }
 
+/// Provider-attributed scalar admission provenance for one reached operation set.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ScalarAdmissionProvenanceIdentity(Vec<u8>);
+impl ScalarAdmissionProvenanceIdentity {
+    /// Returns collision-free provenance bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// Checked scalar authority evidence bound to one exact structural region.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScalarAuthorityEvidence {
+    region: CanonicalIndexRegionIdentity,
+    definitions: CanonicalScalarDefinitionProjection,
+    admission: ScalarAdmissionProvenanceIdentity,
+}
+impl ScalarAuthorityEvidence {
+    /// Returns the structural region identity this evidence revalidated.
+    #[must_use]
+    pub const fn region(&self) -> &CanonicalIndexRegionIdentity {
+        &self.region
+    }
+    /// Returns reached provider-independent definitions.
+    #[must_use]
+    pub const fn definitions(&self) -> &CanonicalScalarDefinitionProjection {
+        &self.definitions
+    }
+    /// Returns reached provider-attributed admission provenance.
+    #[must_use]
+    pub const fn admission(&self) -> &ScalarAdmissionProvenanceIdentity {
+        &self.admission
+    }
+}
+
 fn validate_canonical_types(
     registry: &FrozenSemanticRegistry,
     value: &CanonicalValue,
@@ -727,6 +1050,9 @@ fn validate_canonical_types(
     match value.view() {
         CanonicalValueView::Type(value_type) => registry
             .validate_type(value_type)
+            .map_err(|error| ScalarRegistryError::TypeAuthority(Arc::new(error)))?,
+        CanonicalValueView::FloatBits(value) => registry
+            .validate_type(&ResolvedValueType::nominal(value.format().clone()))
             .map_err(|error| ScalarRegistryError::TypeAuthority(Arc::new(error)))?,
         CanonicalValueView::Sequence(values) => {
             for value in values {
@@ -739,8 +1065,8 @@ fn validate_canonical_types(
             }
         }
         CanonicalValueView::Bool(_)
-        | CanonicalValueView::Signed(_)
-        | CanonicalValueView::Unsigned(_)
+        | CanonicalValueView::Signed { .. }
+        | CanonicalValueView::Unsigned { .. }
         | CanonicalValueView::Bytes(_)
         | CanonicalValueView::Utf8(_) => {}
     }
@@ -753,10 +1079,11 @@ fn canonical_kind_tag(kind: CanonicalValueKind) -> u8 {
         CanonicalValueKind::Bool => 2,
         CanonicalValueKind::Signed => 3,
         CanonicalValueKind::Unsigned => 4,
-        CanonicalValueKind::Bytes => 5,
-        CanonicalValueKind::Utf8 => 6,
-        CanonicalValueKind::Sequence => 7,
-        CanonicalValueKind::Record => 8,
+        CanonicalValueKind::FloatBits => 5,
+        CanonicalValueKind::Bytes => 6,
+        CanonicalValueKind::Utf8 => 7,
+        CanonicalValueKind::Sequence => 8,
+        CanonicalValueKind::Record => 9,
     }
 }
 
@@ -766,47 +1093,7 @@ pub(super) fn encode_key(output: &mut Vec<u8>, key: &ScalarOpKey) {
     output.extend_from_slice(&key.semantic_version().to_be_bytes());
 }
 pub(super) fn encode_canonical(output: &mut Vec<u8>, value: &CanonicalValue) {
-    match value.view() {
-        CanonicalValueView::Type(value) => {
-            output.push(1);
-            encode_bytes(output, value.canonical_encoding().as_bytes());
-        }
-        CanonicalValueView::Bool(value) => {
-            output.push(2);
-            output.push(u8::from(value));
-        }
-        CanonicalValueView::Signed(value) => {
-            output.push(3);
-            output.extend_from_slice(&value.to_be_bytes());
-        }
-        CanonicalValueView::Unsigned(value) => {
-            output.push(4);
-            output.extend_from_slice(&value.to_be_bytes());
-        }
-        CanonicalValueView::Bytes(value) => {
-            output.push(5);
-            encode_bytes(output, value);
-        }
-        CanonicalValueView::Utf8(value) => {
-            output.push(6);
-            encode_bytes(output, value.as_bytes());
-        }
-        CanonicalValueView::Sequence(values) => {
-            output.push(7);
-            encode_len(output, values.len());
-            for value in values {
-                encode_canonical(output, value);
-            }
-        }
-        CanonicalValueView::Record(fields) => {
-            output.push(8);
-            encode_len(output, fields.len());
-            for field in fields {
-                output.extend_from_slice(&field.id().to_be_bytes());
-                encode_canonical(output, field.value());
-            }
-        }
-    }
+    value.encode(output);
 }
 pub(super) fn encode_len(output: &mut Vec<u8>, len: usize) {
     output.extend_from_slice(

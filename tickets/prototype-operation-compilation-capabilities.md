@@ -21,7 +21,10 @@ ambiguity. Missing, ambiguous, or invalid capability output fails closed.
 Selected provider revisions enter checked refinement and compilation
 provenance, never semantic graph or pure index-structure identity. Reached
 provider-independent definitions and admission-provider provenance remain
-separate inputs under ADR 0072.
+separate inputs under ADR 0072. Capabilities must consume a
+`ScalarAuthorityEvidence` receipt bound to the exact emitted index region;
+they must not re-infer scalar authority through an untracked provider path or
+mistake that receipt for semantic lowering equivalence.
 
 Physical implementation and opaque-call capability registration is deferred to
 `prototype-physical-implementation-frontier`, where the checked schedule and

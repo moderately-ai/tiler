@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::semantic::ResolvedValueType;
-use crate::shape::Shape;
+use crate::shape::{Extent, Shape};
 
 use super::handles::VerifiedRegionOwner;
 use super::{
@@ -534,10 +534,12 @@ impl DomainDimensionRef<'_> {
     pub const fn role(self) -> DomainRole {
         self.data.role
     }
-    /// Returns the static half-open extent.
+    /// Returns the static half-open extent in this bounded profile.
+    ///
+    /// A future symbolic dimension returns `None` here and exposes its expression separately.
     #[must_use]
-    pub const fn extent(self) -> u64 {
-        self.data.extent
+    pub const fn static_extent(self) -> Option<Extent> {
+        Some(Extent::new(self.data.extent))
     }
 }
 /// Borrowed tensor inspection.
@@ -562,10 +564,12 @@ impl<'a> TensorRef<'a> {
     pub const fn value_type(self) -> &'a ResolvedValueType {
         &self.data.value_type
     }
-    /// Returns the static tensor shape.
+    /// Returns the exact static tensor shape in this bounded profile.
+    ///
+    /// A future symbolic boundary returns `None` here and exposes shape expressions separately.
     #[must_use]
-    pub const fn shape(self) -> &'a Shape {
-        &self.data.shape
+    pub const fn static_shape(self) -> Option<&'a Shape> {
+        Some(&self.data.shape)
     }
 }
 

@@ -192,10 +192,12 @@ pub enum TypeIdentityError {
     EmptyTypeArguments,
     /// An encoded-numeric contract supplied no static fields.
     EmptyEncodedNumericContract,
+    /// An exact floating-point payload supplied no bits.
+    EmptyFloatBits,
     /// Two record fields used the same stable field ID.
     DuplicateFieldId {
         /// Duplicated field identifier.
-        field_id: u32,
+        field_id: AttributeFieldId,
     },
     /// A collection exceeded the per-collection item bound.
     TooManyItems {
@@ -236,6 +238,9 @@ impl fmt::Display for TypeIdentityError {
             }
             Self::EmptyEncodedNumericContract => {
                 formatter.write_str("an encoded-numeric type requires a nonempty static contract")
+            }
+            Self::EmptyFloatBits => {
+                formatter.write_str("an exact floating-point payload requires at least one byte")
             }
             Self::DuplicateFieldId { field_id } => {
                 write!(formatter, "duplicate canonical field ID {field_id}")
@@ -360,7 +365,7 @@ impl ResolvedValueType {
     /// Returns the collision-free versioned canonical identity bytes.
     #[must_use]
     pub fn canonical_encoding(&self) -> CanonicalResolvedValueType {
-        let mut bytes = b"tiler.resolved-value-type.v1\0".to_vec();
+        let mut bytes = b"tiler.resolved-value-type.v2\0".to_vec();
         self.encode(&mut bytes);
         CanonicalResolvedValueType(bytes)
     }
@@ -458,12 +463,101 @@ impl TypeArguments {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CanonicalValue(CanonicalValueData);
 
+/// Stable schema-local field identity for canonical records.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AttributeFieldId(u32);
+
+impl AttributeFieldId {
+    /// Creates a field identity from its portable fixed-width representation.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the portable fixed-width representation.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl fmt::Display for AttributeFieldId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// Width carried by one canonical signed or unsigned integer.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum CanonicalIntegerWidth {
+    /// Eight bits.
+    Bits8,
+    /// Sixteen bits.
+    Bits16,
+    /// Thirty-two bits.
+    Bits32,
+    /// Sixty-four bits.
+    Bits64,
+}
+
+impl CanonicalIntegerWidth {
+    pub(super) const fn tag(self) -> u8 {
+        match self {
+            Self::Bits8 => 8,
+            Self::Bits16 => 16,
+            Self::Bits32 => 32,
+            Self::Bits64 => 64,
+        }
+    }
+
+    const fn byte_count(self) -> usize {
+        match self {
+            Self::Bits8 => 1,
+            Self::Bits16 => 2,
+            Self::Bits32 => 4,
+            Self::Bits64 => 8,
+        }
+    }
+}
+
+/// Borrowed exact floating-point attribute payload.
+#[derive(Clone, Copy, Debug)]
+pub struct CanonicalFloatBitsRef<'a> {
+    format: &'a TypeKey,
+    bits: &'a [u8],
+}
+
+impl<'a> CanonicalFloatBitsRef<'a> {
+    /// Returns the nominal floating-point format identity.
+    #[must_use]
+    pub const fn format(self) -> &'a TypeKey {
+        self.format
+    }
+
+    /// Returns the exact big-endian payload bytes.
+    #[must_use]
+    pub const fn bits(self) -> &'a [u8] {
+        self.bits
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 enum CanonicalValueData {
     Type(ResolvedValueType),
     Bool(bool),
-    Signed(i64),
-    Unsigned(u64),
+    Signed {
+        width: CanonicalIntegerWidth,
+        bits: u64,
+    },
+    Unsigned {
+        width: CanonicalIntegerWidth,
+        bits: u64,
+    },
+    FloatBits {
+        format: TypeKey,
+        bits: Vec<u8>,
+    },
     Bytes(Vec<u8>),
     Utf8(String),
     Sequence(Vec<CanonicalValue>),
@@ -479,9 +573,21 @@ pub enum CanonicalValueView<'a> {
     /// A Boolean value.
     Bool(bool),
     /// A signed fixed-width host value.
-    Signed(i64),
+    Signed {
+        /// Declared integer width.
+        width: CanonicalIntegerWidth,
+        /// Exact two's-complement bits in the low part of this word.
+        bits: u64,
+    },
     /// An unsigned fixed-width host value.
-    Unsigned(u64),
+    Unsigned {
+        /// Declared integer width.
+        width: CanonicalIntegerWidth,
+        /// Exact unsigned bits in the low part of this word.
+        bits: u64,
+    },
+    /// Exact floating-point bits with an explicit nominal format.
+    FloatBits(CanonicalFloatBitsRef<'a>),
     /// Exact bytes.
     Bytes(&'a [u8]),
     /// Exact UTF-8.
@@ -499,8 +605,17 @@ impl CanonicalValue {
         match &self.0 {
             CanonicalValueData::Type(value) => CanonicalValueView::Type(value),
             CanonicalValueData::Bool(value) => CanonicalValueView::Bool(*value),
-            CanonicalValueData::Signed(value) => CanonicalValueView::Signed(*value),
-            CanonicalValueData::Unsigned(value) => CanonicalValueView::Unsigned(*value),
+            CanonicalValueData::Signed { width, bits } => CanonicalValueView::Signed {
+                width: *width,
+                bits: *bits,
+            },
+            CanonicalValueData::Unsigned { width, bits } => CanonicalValueView::Unsigned {
+                width: *width,
+                bits: *bits,
+            },
+            CanonicalValueData::FloatBits { format, bits } => {
+                CanonicalValueView::FloatBits(CanonicalFloatBitsRef { format, bits })
+            }
             CanonicalValueData::Bytes(value) => CanonicalValueView::Bytes(value),
             CanonicalValueData::Utf8(value) => CanonicalValueView::Utf8(value),
             CanonicalValueData::Sequence(value) => CanonicalValueView::Sequence(value),
@@ -519,16 +634,77 @@ impl CanonicalValue {
         Self(CanonicalValueData::Bool(value))
     }
 
-    /// Creates a fixed-width signed integer argument.
+    /// Creates a canonical signed `i8` argument.
     #[must_use]
-    pub const fn signed(value: i64) -> Self {
-        Self(CanonicalValueData::Signed(value))
+    pub const fn signed_i8(value: i8) -> Self {
+        Self::signed_bits(CanonicalIntegerWidth::Bits8, value.cast_unsigned() as u64)
     }
 
-    /// Creates a fixed-width unsigned integer argument.
+    /// Creates a canonical signed `i16` argument.
     #[must_use]
-    pub const fn unsigned(value: u64) -> Self {
-        Self(CanonicalValueData::Unsigned(value))
+    pub const fn signed_i16(value: i16) -> Self {
+        Self::signed_bits(CanonicalIntegerWidth::Bits16, value.cast_unsigned() as u64)
+    }
+
+    /// Creates a canonical signed `i32` argument.
+    #[must_use]
+    pub const fn signed_i32(value: i32) -> Self {
+        Self::signed_bits(CanonicalIntegerWidth::Bits32, value.cast_unsigned() as u64)
+    }
+
+    /// Creates a canonical signed `i64` argument.
+    #[must_use]
+    pub const fn signed_i64(value: i64) -> Self {
+        Self::signed_bits(CanonicalIntegerWidth::Bits64, value.cast_unsigned())
+    }
+
+    const fn signed_bits(width: CanonicalIntegerWidth, bits: u64) -> Self {
+        Self(CanonicalValueData::Signed { width, bits })
+    }
+
+    /// Creates a canonical unsigned `u8` argument.
+    #[must_use]
+    pub const fn unsigned_u8(value: u8) -> Self {
+        Self::unsigned_bits(CanonicalIntegerWidth::Bits8, value as u64)
+    }
+
+    /// Creates a canonical unsigned `u16` argument.
+    #[must_use]
+    pub const fn unsigned_u16(value: u16) -> Self {
+        Self::unsigned_bits(CanonicalIntegerWidth::Bits16, value as u64)
+    }
+
+    /// Creates a canonical unsigned `u32` argument.
+    #[must_use]
+    pub const fn unsigned_u32(value: u32) -> Self {
+        Self::unsigned_bits(CanonicalIntegerWidth::Bits32, value as u64)
+    }
+
+    /// Creates a canonical unsigned `u64` argument.
+    #[must_use]
+    pub const fn unsigned_u64(value: u64) -> Self {
+        Self::unsigned_bits(CanonicalIntegerWidth::Bits64, value)
+    }
+
+    const fn unsigned_bits(width: CanonicalIntegerWidth, bits: u64) -> Self {
+        Self(CanonicalValueData::Unsigned { width, bits })
+    }
+
+    /// Creates an exact floating-point payload with explicit format identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] when the payload is empty or exceeds canonical bounds.
+    pub fn float_bits(
+        format: TypeKey,
+        bits: impl Into<Vec<u8>>,
+    ) -> Result<Self, TypeIdentityError> {
+        let bits = bits.into();
+        if bits.is_empty() {
+            return Err(TypeIdentityError::EmptyFloatBits);
+        }
+        validate_payload_len(bits.len())?;
+        Ok(Self(CanonicalValueData::FloatBits { format, bits }))
     }
 
     /// Creates a bounded exact byte argument.
@@ -580,7 +756,7 @@ impl CanonicalValue {
         Ok(value)
     }
 
-    pub(super) fn encode(&self, output: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, output: &mut Vec<u8>) {
         match &self.0 {
             CanonicalValueData::Type(value) => {
                 output.push(1);
@@ -590,34 +766,43 @@ impl CanonicalValue {
                 output.push(2);
                 output.push(u8::from(*value));
             }
-            CanonicalValueData::Signed(value) => {
+            CanonicalValueData::Signed { width, bits } => {
                 output.push(3);
-                output.extend_from_slice(&value.to_be_bytes());
+                output.push(width.tag());
+                let bytes = bits.to_be_bytes();
+                output.extend_from_slice(&bytes[bytes.len() - width.byte_count()..]);
             }
-            CanonicalValueData::Unsigned(value) => {
+            CanonicalValueData::Unsigned { width, bits } => {
                 output.push(4);
-                output.extend_from_slice(&value.to_be_bytes());
+                output.push(width.tag());
+                let bytes = bits.to_be_bytes();
+                output.extend_from_slice(&bytes[bytes.len() - width.byte_count()..]);
+            }
+            CanonicalValueData::FloatBits { format, bits } => {
+                output.push(5);
+                format.encode(output);
+                encode_bytes(output, bits);
             }
             CanonicalValueData::Bytes(value) => {
-                output.push(5);
+                output.push(6);
                 encode_bytes(output, value);
             }
             CanonicalValueData::Utf8(value) => {
-                output.push(6);
+                output.push(7);
                 encode_bytes(output, value.as_bytes());
             }
             CanonicalValueData::Sequence(values) => {
-                output.push(7);
+                output.push(8);
                 encode_len(output, values.len());
                 for value in values {
                     value.encode(output);
                 }
             }
             CanonicalValueData::Record(fields) => {
-                output.push(8);
+                output.push(9);
                 encode_len(output, fields.len());
                 for field in fields {
-                    output.extend_from_slice(&field.id.to_be_bytes());
+                    output.extend_from_slice(&field.id.get().to_be_bytes());
                     field.value.encode(output);
                 }
             }
@@ -630,6 +815,9 @@ impl CanonicalValue {
                 visitor(value);
                 value.visit_referenced_types(visitor);
             }
+            CanonicalValueData::FloatBits { format, .. } => {
+                visitor(&ResolvedValueType::nominal(format.clone()));
+            }
             CanonicalValueData::Sequence(values) => {
                 for value in values {
                     value.visit_referenced_types(visitor);
@@ -641,8 +829,8 @@ impl CanonicalValue {
                 }
             }
             CanonicalValueData::Bool(_)
-            | CanonicalValueData::Signed(_)
-            | CanonicalValueData::Unsigned(_)
+            | CanonicalValueData::Signed { .. }
+            | CanonicalValueData::Unsigned { .. }
             | CanonicalValueData::Bytes(_)
             | CanonicalValueData::Utf8(_) => {}
         }
@@ -652,20 +840,20 @@ impl CanonicalValue {
 /// One stable field in a canonical type record.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CanonicalField {
-    id: u32,
+    id: AttributeFieldId,
     value: CanonicalValue,
 }
 
 impl CanonicalField {
     /// Creates a field with a stable schema-local ID.
     #[must_use]
-    pub const fn new(id: u32, value: CanonicalValue) -> Self {
+    pub const fn new(id: AttributeFieldId, value: CanonicalValue) -> Self {
         Self { id, value }
     }
 
     /// Returns the stable field ID.
     #[must_use]
-    pub const fn id(&self) -> u32 {
+    pub const fn id(&self) -> AttributeFieldId {
         self.id
     }
 
@@ -710,7 +898,7 @@ impl EncodedNumericContract {
     fn encode(&self, output: &mut Vec<u8>) {
         encode_len(output, self.fields.len());
         for field in &self.fields {
-            output.extend_from_slice(&field.id.to_be_bytes());
+            output.extend_from_slice(&field.id.get().to_be_bytes());
             field.value.encode(output);
         }
     }
@@ -845,7 +1033,9 @@ fn validate_argument_at(
     budget.node(depth)?;
     match &value.0 {
         CanonicalValueData::Type(value) => validate_type_at(value, depth + 1, budget),
-        CanonicalValueData::Bytes(value) => budget.payload(value.len()),
+        CanonicalValueData::FloatBits { bits, .. } | CanonicalValueData::Bytes(bits) => {
+            budget.payload(bits.len())
+        }
         CanonicalValueData::Utf8(value) => budget.payload(value.len()),
         CanonicalValueData::Sequence(values) => {
             validate_items(values.len())?;
@@ -862,8 +1052,8 @@ fn validate_argument_at(
             Ok(())
         }
         CanonicalValueData::Bool(_)
-        | CanonicalValueData::Signed(_)
-        | CanonicalValueData::Unsigned(_) => Ok(()),
+        | CanonicalValueData::Signed { .. }
+        | CanonicalValueData::Unsigned { .. } => Ok(()),
     }
 }
 
@@ -904,23 +1094,56 @@ mod tests {
     #[test]
     fn records_sort_fields_and_reject_duplicates() {
         let record = CanonicalValue::record([
-            CanonicalField::new(9, CanonicalValue::unsigned(1)),
-            CanonicalField::new(2, CanonicalValue::boolean(true)),
+            CanonicalField::new(AttributeFieldId::new(9), CanonicalValue::unsigned_u32(1)),
+            CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::boolean(true)),
         ])
         .unwrap();
         let duplicate = CanonicalValue::record([
-            CanonicalField::new(2, CanonicalValue::unsigned(1)),
-            CanonicalField::new(2, CanonicalValue::unsigned(2)),
+            CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::unsigned_u32(1)),
+            CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::unsigned_u32(2)),
         ]);
 
         let CanonicalValueData::Record(fields) = record.0 else {
             panic!("record constructor produced another argument family")
         };
-        assert_eq!(fields[0].id(), 2);
-        assert_eq!(fields[1].id(), 9);
+        assert_eq!(fields[0].id(), AttributeFieldId::new(2));
+        assert_eq!(fields[1].id(), AttributeFieldId::new(9));
         assert_eq!(
             duplicate,
-            Err(TypeIdentityError::DuplicateFieldId { field_id: 2 })
+            Err(TypeIdentityError::DuplicateFieldId {
+                field_id: AttributeFieldId::new(2)
+            })
+        );
+    }
+
+    #[test]
+    fn canonical_numeric_values_preserve_width_format_and_exact_bits() {
+        fn encoding(value: &CanonicalValue) -> Vec<u8> {
+            let mut output = Vec::new();
+            value.encode(&mut output);
+            output
+        }
+
+        assert_ne!(
+            encoding(&CanonicalValue::unsigned_u8(1)),
+            encoding(&CanonicalValue::unsigned_u32(1))
+        );
+        assert_eq!(encoding(&CanonicalValue::unsigned_u8(1)), [4, 8, 1]);
+        assert_eq!(
+            encoding(&CanonicalValue::unsigned_u32(1)),
+            [4, 32, 0, 0, 0, 1]
+        );
+        assert_ne!(
+            encoding(&CanonicalValue::signed_i8(-1)),
+            encoding(&CanonicalValue::unsigned_u8(u8::MAX))
+        );
+        assert_eq!(encoding(&CanonicalValue::signed_i8(-1)), [3, 8, 255]);
+        let f32_bits = CanonicalValue::float_bits(key("f32"), 1_u32.to_be_bytes()).unwrap();
+        let bf16_bits = CanonicalValue::float_bits(key("bf16"), 1_u16.to_be_bytes()).unwrap();
+        assert_ne!(encoding(&f32_bits), encoding(&bf16_bits));
+        assert_eq!(
+            CanonicalValue::float_bits(key("f32"), []),
+            Err(TypeIdentityError::EmptyFloatBits)
         );
     }
 
@@ -933,8 +1156,11 @@ mod tests {
         )
         .unwrap();
         let contract = EncodedNumericContract::new([
-            CanonicalField::new(1, CanonicalValue::value_type(nominal.clone())),
-            CanonicalField::new(2, CanonicalValue::unsigned(32)),
+            CanonicalField::new(
+                AttributeFieldId::new(1),
+                CanonicalValue::value_type(nominal.clone()),
+            ),
+            CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::unsigned_u32(32)),
         ])
         .unwrap();
         let encoded = ResolvedValueType::encoded_numeric(
@@ -956,7 +1182,7 @@ mod tests {
 
     #[test]
     fn complete_structure_is_depth_bounded() {
-        let mut argument = CanonicalValue::unsigned(1);
+        let mut argument = CanonicalValue::unsigned_u32(1);
         for _ in 0..(MAX_RESOLVED_TYPE_DEPTH - 1) {
             argument = CanonicalValue::sequence([argument]).unwrap();
         }

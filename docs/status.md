@@ -40,9 +40,13 @@ reached provider-independent definitions, admission-provider provenance, and
 the complete registry snapshot. Region occurrence, checked refinement,
 structural schedule/KIR, complete-plan, and artifact identities remain explicit
 obligations of their owning tickets rather than implemented support. The first
-public static-extent `tiler_ir::index` builder/verifier draft now exists, but
-its corrected generic scalar-SSA public boundary remains under Tom's required
-review before integration.
+public static-extent `tiler_ir::index` builder/verifier draft now exists. Its
+corrective pass uses generic typed scalar SSA, shared canonical attributes with
+width/format-preserving values and schema-default normalization, optional
+static fact views, and a separate region-bound scalar authority receipt. The
+public boundary remains under Tom's required review before integration;
+semantic lowering equivalence is deliberately still the next
+capability/refinement obligation.
 
 ## Authorized prototype
 
@@ -69,7 +73,8 @@ are complete for their bounded claims. The
 slice establishes the accepted module, verifier, builder, and dependency
 direction without publishing the graph-specific proof structs. The semantic
 identity prerequisite is complete. The canonical index-region slice is in
-review; once accepted, the next dependency-ordered slice is
+public-interface review after its corrective implementation pass; once
+accepted, the next dependency-ordered slice is
 [`operation compilation capabilities`](../tickets/prototype-operation-compilation-capabilities.md),
 so typed lowering callbacks emit checked shared IR rather than placeholders.
 Generic region formation, derived legality, complete partition planning, physical

@@ -6,10 +6,10 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use tiler_ir::semantic::{
-    CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalValueView, Definition, F32,
+    CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalIntegerWidth, CanonicalValueView, Definition, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey, OperationAttributes, OperationId,
-    ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, SemanticProgram, ValueId,
-    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, SemanticProgram, TypeKey,
+    ValueId, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -599,10 +599,13 @@ fn reduction_axes(
     values
         .iter()
         .map(|value| {
-            let CanonicalValueView::Unsigned(axis) = value.view() else {
+            let CanonicalValueView::Unsigned { width, bits } = value.view() else {
                 return Err(ReferenceOperationError::InvalidApplication);
             };
-            u32::try_from(axis)
+            if width != CanonicalIntegerWidth::Bits32 {
+                return Err(ReferenceOperationError::InvalidApplication);
+            }
+            u32::try_from(bits)
                 .map(Axis::new)
                 .map_err(|_| ReferenceOperationError::InvalidApplication)
         })
@@ -757,7 +760,7 @@ struct StandardReferenceProvider;
 
 impl ReferenceRegistryProvider for StandardReferenceProvider {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-reference", 1)
+        ProviderIdentity::new("tiler", "standard-reference", 2)
             .expect("the governed reference provider identity is valid")
     }
 
@@ -765,7 +768,7 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         &self,
         registrar: &mut ReferenceRegistryRegistrar<'_>,
     ) -> Result<(), ReferenceRegistryError> {
-        let revision = ReferenceCapabilityRevision::new(1)?;
+        let revision = ReferenceCapabilityRevision::new(2)?;
         registrar.register(
             constant_f32_op(),
             ReferenceSignature::new([], [F32::resolved_type()]),
@@ -808,13 +811,21 @@ impl ReferenceOperation for F32ConstantReference {
         if !operands.is_empty() || attributes.fields().len() != 1 {
             return Err(ReferenceOperationError::InvalidApplication);
         }
-        let Some(CanonicalValueView::Unsigned(bits)) = attributes
+        let Some(CanonicalValueView::FloatBits(bits)) = attributes
             .get(F32_CONSTANT_BITS_ATTRIBUTE)
             .map(tiler_ir::semantic::CanonicalValue::view)
         else {
             return Err(ReferenceOperationError::InvalidApplication);
         };
-        let bits = u32::try_from(bits).map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        if bits.format()
+            != &TypeKey::new("tiler", "f32", 1)
+                .map_err(|_| ReferenceOperationError::InvalidApplication)?
+        {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let bits = <[u8; 4]>::try_from(bits.bits())
+            .map(u32::from_be_bytes)
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
         Ok(vec![Tensor::scalar(f32::from_bits(bits))])
     }
 }

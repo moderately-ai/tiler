@@ -2,10 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::semantic::{
-    CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey, OutputKey,
-    REDUCTION_AXES_ATTRIBUTE, SemanticAdmissionProvenanceIdentity,
-    SemanticDefinitionProjectionIdentity, SemanticProgram, ValueId, add_f32_op, constant_f32_op,
-    multiply_f32_op, strict_serial_sum_f32_op,
+    CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
+    OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticAdmissionProvenanceIdentity,
+    SemanticDefinitionProjectionIdentity, SemanticProgram, TypeKey, ValueId, add_f32_op,
+    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -520,17 +520,22 @@ fn constant_bits(program: &SemanticProgram, value: ValueId) -> Result<u32, Reque
     if operation.operands().len() != 0 || operation.results().len() != 1 {
         return mismatch("constant-signature");
     }
-    let Some(CanonicalValueView::Unsigned(bits)) = operation
+    let Some(CanonicalValueView::FloatBits(bits)) = operation
         .attributes()
         .get(F32_CONSTANT_BITS_ATTRIBUTE)
         .map(tiler_ir::semantic::CanonicalValue::view)
     else {
         return mismatch("constant-bits");
     };
-    u32::try_from(bits).map_err(|_| RequestError::UnsupportedCapability {
-        phase: "strategy",
-        rule: "constant-bits",
-    })
+    if bits.format() != &TypeKey::new("tiler", "f32", 1).expect("the governed F32 key is valid") {
+        return mismatch("constant-bits-format");
+    }
+    <[u8; 4]>::try_from(bits.bits())
+        .map(u32::from_be_bytes)
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "constant-bits",
+        })
 }
 
 fn reduction_axes(
@@ -545,10 +550,13 @@ fn reduction_axes(
     values
         .iter()
         .map(|value| {
-            let CanonicalValueView::Unsigned(axis) = value.view() else {
+            let CanonicalValueView::Unsigned { width, bits } = value.view() else {
                 return mismatch("sum-axes");
             };
-            u32::try_from(axis)
+            if width != CanonicalIntegerWidth::Bits32 {
+                return mismatch("sum-axes-width");
+            }
+            u32::try_from(bits)
                 .map(Axis::new)
                 .map_err(|_| RequestError::UnsupportedCapability {
                     phase: "strategy",

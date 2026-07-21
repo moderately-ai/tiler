@@ -56,7 +56,7 @@ fn compute_identity(program: &ProgramData) -> SemanticGraphIdentity {
     }
 
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.semantic-graph.v1\0");
+    bytes.extend_from_slice(b"tiler.semantic-graph.v2\0");
     encode_len(&mut bytes, program.inputs.len());
     for input in &program.inputs {
         encode_string(&mut bytes, input.key.as_str());
