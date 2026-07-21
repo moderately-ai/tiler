@@ -152,6 +152,12 @@ results are in the [spelling measurement](../../../spikes/shapes/shape-evidence/
 
 ## Recommendation pending review
 
+This stable-Rust recommendation is being reconsidered by the follow-up
+[nightly const-parameter research](nightly-const-shape-parameters.md). A July
+2026 nightly accepts one dependent array family across arbitrary ranks. No
+public spelling is accepted until that feature premise and the retained spike
+are reviewed.
+
 **Inference:** library-owned arity families are the only candidate that
 combines canonical cross-crate type identity, sealed authority, compact public
 syntax, and a bounded stable-Rust implementation.
