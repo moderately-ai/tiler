@@ -1,7 +1,7 @@
 ---
 id: prototype-target-neutral-baseline-slice
 title: Compile serial Sum into a verified materialized baseline plan
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-semantic-reference-slice]
 related: [prototype-artifact-slice]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/artifact, implementation/ir]
 shared_scopes: [project/tickets, contracts/optimizer, contracts/artifacts, contracts/foundation, contracts/numerics]
 paths: [Cargo.lock]
 tags: [implementation, prototype, compiler, vertical-slice]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1784606188
 ---
 Compile the accepted immutable semantic program into one complete verified
 materialized baseline. The bounded `CompilationRequest` must make its static
