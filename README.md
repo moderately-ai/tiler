@@ -30,6 +30,9 @@ production compiler implementation.
 - **Continue the work:** read [AGENTS.md](AGENTS.md) and the
   [work-tracking guide](docs/work-tracking.md) before editing.
 
+Bootstrap a supported macOS or Debian/Ubuntu development host with
+`./deps.sh`. Use `./deps.sh --check` for a non-mutating dependency diagnosis.
+
 Accepted ADRs govern durable architectural choices. A `mixed` contract treats
 unmarked field-level detail as proposed unless an accepted ADR is cited; every
 document states implementation maturity. A measured spike is evidence, not

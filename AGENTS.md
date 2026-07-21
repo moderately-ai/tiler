@@ -61,6 +61,12 @@ decisions in a long design dump. If Tom asks for more detail, walk through the
 example step by step and distinguish node semantics, graph structure, logical
 properties, physical properties, and chosen implementation.
 
+Tom must review key public crate, module, trait, type, and call-site boundaries
+before they are accepted or merged. A tested implementation may serve as a
+concrete draft, but it is not implicit approval of its public interface.
+Present consequential alternatives one atomic decision at a time using the
+question format above.
+
 In all research and design writing, label these separately:
 
 - **Fact:** supported by primary documentation, inspected source, or a direct
@@ -223,9 +229,11 @@ normative text has not defined.
 Before completing documentation work, run:
 
 ```sh
-python3 scripts/docs.py render
-python3 scripts/docs.py validate
-python3 -B -m unittest discover -s scripts/tests -v
+uv run --locked python scripts/docs.py render
+uv run --locked python scripts/docs.py validate
+uv run --locked ruff format --check
+uv run --locked ruff check
+uv run --locked pytest
 ```
 
 Generated catalog blocks are checked-in views over frontmatter. Edit source
@@ -257,6 +265,55 @@ or rolling up research work.
   never sweep unrelated modifications into a commit.
 
 ## Repository and toolchain operations
+
+### Rust contributor standards
+
+This repository owns its Rust build policy. `AGENTS.md` is the canonical
+cross-harness guidance; harness-specific entry points must reference it rather
+than duplicate or weaken it.
+
+- `rust-toolchain.toml` pins the active contributor toolchain and required
+  components. `[workspace.package].rust-version` is the independently tested
+  MSRV; do not confuse or silently couple those two contracts.
+- Keep workspace Rust and Clippy lints inherited by every crate. New public
+  APIs require documentation, unsafe code remains forbidden unless an accepted
+  decision changes that boundary, and warnings fail the repository gate.
+- Preserve the workspace dev-profile defaults: line-table debug information,
+  unpacked split debug information, and optimization level 1 for dependencies.
+  If a debugger needs full information, add a temporary or justified
+  per-package override rather than inflating the whole workspace.
+- Keep release tuning local to an actual shipping package. Do not enable
+  workspace-wide LTO for ordinary development; CI or release automation may
+  select it through Cargo profile environment variables when measured need
+  justifies it.
+- Do not vendor third-party Rust repositories as submodules. Pin an actively
+  used fork by exact Git revision and keep editable checkouts in the workspace
+  hierarchy outside this repository.
+- Do not share one `CARGO_TARGET_DIR` across unrelated workspaces. Use a
+  compiler cache for cross-workspace reuse, and prefer targeted sweeping over
+  destructive cleanup when disk usage grows.
+- Nightly-only Cargo settings belong in `.cargo/config.toml` only when the
+  pinned toolchain is nightly and the setting is explicitly required. Do not
+  introduce ambient user configuration as a repository requirement.
+
+Run the complete Rust gate from the repository root with:
+
+```sh
+uv run --locked python scripts/check_rust.py
+```
+
+The gate checks the workspace contract, formatting, all targets, strict
+Clippy, tests, doctests, and warning-free rustdoc. Run explicit `cargo +1.89.0`
+commands as well when changing toolchain-sensitive code if the pinned active
+toolchain later differs from the MSRV.
+
+Bootstrap a fresh development checkout with `./deps.sh`. It installs or
+verifies the supported host prerequisites, the pinned Rust toolchain, uv,
+Python, pytest, Ruff, ticketsplease, and the locked development environment.
+`./deps.sh --check` is the non-mutating diagnostic form. Tiler supports this
+bootstrap path on macOS and Debian-family Linux only; Windows and other Linux
+distributions are explicitly unsupported rather than maintained as untested
+branches.
 
 When cloning any repository for research, use only the workspace-aware helper:
 

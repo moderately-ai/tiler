@@ -175,6 +175,7 @@ dependencies = [
  "tiler-compiler",
  "tiler-ir",
  "tiler-metal",
+ "tiler-reference",
 ]
 
 [[package]]

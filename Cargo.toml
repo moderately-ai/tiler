@@ -32,10 +32,20 @@ tiler-metal = { path = "crates/tiler-metal" }
 tiler-reference = { path = "crates/tiler-reference" }
 trybuild = "1.0.114"
 
+# Keep useful file/line backtraces without paying for full variable debug data.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Compile dependencies enough to keep tests and tools responsive as the
+# workspace grows. Override a specific package when debugging requires it.
+[profile.dev.package."*"]
+opt-level = 1
+
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

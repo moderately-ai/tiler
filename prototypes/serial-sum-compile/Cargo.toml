@@ -13,6 +13,7 @@ tiler-artifact.workspace = true
 tiler-compiler.workspace = true
 tiler-ir.workspace = true
 tiler-metal.workspace = true
+tiler-reference.workspace = true
 
 [lints]
 workspace = true

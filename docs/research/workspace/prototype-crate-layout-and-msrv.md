@@ -47,11 +47,16 @@ prototype-compile -> [tiler-ir, tiler-compiler, tiler-metal, tiler-artifact]
 prototype-run     -> [tiler-artifact, platform Metal bindings]
 ```
 
-`prototype-compile` constructs the fixed graph, reference-evaluates it, selects
-the serial schedule, lowers to MSL, invokes Apple's offline compiler, and writes
-the bounded artifact. `prototype-run` validates and loads that artifact,
-preflights the live device, commits routing, dispatches, and compares readback.
-Separating them prevents the runtime proof from importing optimizer internals.
+`prototype-compile` constructs the fixed graph, reference-evaluates bounded
+proof cases, selects the serial schedule, lowers to MSL, invokes Apple's offline
+compiler, and writes the bounded artifact plus a separate versioned,
+digest-bound input/expected-value proof sidecar. `prototype-run` validates and
+loads that artifact, verifies that the sidecar names the exact envelope and
+reads it as test data, preflights the live device, commits routing, dispatches,
+and compares readback with the producer's normative expected bytes. The sidecar
+is not part of artifact semantics. Separating the executables prevents the
+runtime proof from importing either the reference evaluator or optimizer
+internals while retaining an end-to-end numerical comparison.
 
 Semantic, index/access, schedule, program, and structured-kernel IRs remain
 modules in `tiler-ir`. Fusion, scheduling, costing, and explainability remain

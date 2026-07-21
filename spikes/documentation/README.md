@@ -24,7 +24,7 @@ From the repository root:
 ```sh
 python3 -B scripts/docs.py validate
 python3 -B scripts/docs.py render --check
-python3 -B -m unittest discover -s scripts/tests -v
+uv run --locked pytest
 ```
 
 The executable model checks structural integrity. It cannot prove that prose is
