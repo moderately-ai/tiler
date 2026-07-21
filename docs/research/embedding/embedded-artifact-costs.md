@@ -58,7 +58,7 @@ expands every invocation in the binary crate. `cross` expands one invocation in
 each dependency crate and links them into the same binary. Payload scanning of
 the final Mach-O counts exact retained copies; `size -m` records sections.
 
-The complete decision run was:
+The historical decision run was:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 spikes/embedding/measure.py \
@@ -76,6 +76,31 @@ metrics are in [`results.json`](measurements/2026-07-20-macos-arm64/results.json
 and [`results.csv`](measurements/2026-07-20-macos-arm64/results.csv). Freshness
 metrics are in
 [`freshness.json`](measurements/2026-07-20-macos-arm64/freshness.json).
+
+### Retained-evidence boundary
+
+The 2026-07-20 directory retains 81 derived result rows, 12 derived freshness
+rows, their CSV projections, and schema-v1 metadata. A strict verifier confirms
+that all required metrics have valid shapes, the CSV and JSON views agree, and
+the retained files match the digests in
+[`integrity.json`](measurements/2026-07-20-macos-arm64/integrity.json).
+
+Contrary to the original harness documentation, the run did **not** retain raw
+Cargo stdout/stderr, `size -m` output, or generated source workspaces. Schema v1
+also omitted the source revision, harness and input digests, inherited
+Cargo/Rust environment, executable identities, and command deadlines. The
+quantitative tables below therefore remain bounded historical derived evidence;
+they are not a claim that the exact run can be independently reconstructed or
+that it was reproduced on the current toolchain.
+
+The repaired schema-v2 harness fails closed on missing or malformed required
+metrics, applies both per-command and complete-run hard deadlines, records
+source/input/tool/environment provenance, retains raw outputs for new runs, and
+requires a fresh output directory. An atomically published `complete.json`
+marker identifies every retained evidence file outside the optional
+`--keep-work` debugging tree and is the only successful terminal state. Its
+smoke and negative paths were verified on 2026-07-21; the historical
+decision matrix was deliberately not rerun on a changed toolchain.
 
 ## Measurement environment
 
@@ -215,6 +240,9 @@ section is an observed optimization, never a new budget baseline.
 
 ## Limitations
 
+- The retained 2026-07-20 fixture is derived-only evidence: its raw command
+  outputs and generated inputs are unavailable, and exact regeneration was not
+  attempted on the changed toolchain.
 - This is one prerelease macOS host, one stable Rust/LLVM pair, Apple Mach-O,
   and one linker. ELF, COFF, other Apple releases, and future toolchains remain
   unmeasured.

@@ -49,13 +49,24 @@ checks no-change freshness, unrelated consumer edits, macro-crate edits, cache
 deletion, a simulated compiler-fingerprint change, and `cargo test` expansion.
 [`run-target.sh`](../../../spikes/macro-environment/run-target.sh) performs the
 same environment capture for an explicitly selected installed Rust target.
+It rejects a missing, host-equal, or unavailable target before Cargo runs.
+
+The harness parses a versioned, length-unambiguous hex trace and fails unless
+every record has the expected invocation tokens, explicit fingerprint, cache
+state, package identity, and environment-field state. It also requires the
+post-`cargo test` expansion count instead of merely running the command. Each
+harness has one overall deadline shared by all compiler and Cargo subprocesses.
+Exact raw and decoded records from the latest native run are retained in
+[`native-2026-07-21.json`](../../../spikes/macro-environment/results/native-2026-07-21.json).
 
 The proc macro records only a fixed allowlist of non-secret environment names.
 It simulates a content-addressed entry using the canonical invocation tokens and
 an explicit `TILER_TOOLCHAIN_FINGERPRINT`; the simulation is evidence about
 freshness, not the cache protocol.
 
-## Measurement environment
+## Measurement environments
+
+The original 2026-07-20 measurement used:
 
 - macOS on Apple silicon
 - `rustc 1.97.0 (2d8144b78)` and Cargo 1.97.0
@@ -65,6 +76,13 @@ freshness, not the cache protocol.
   executable analyzer
 
 No toolchain component was installed or mutated for this experiment.
+
+The fail-closed harness was reverified on 2026-07-21 using macOS 27.0 on arm64,
+`rustc 1.99.0-nightly (eff8269f7)` and Cargo 1.99.0-nightly
+`(3efb1f477)`. The retained result binds the exact harness and fixture source
+digests plus the base repository revision. Only `aarch64-apple-darwin` was
+installed, so a genuinely distinct target remained unavailable and was not
+simulated.
 
 ## Observations
 
@@ -96,7 +114,7 @@ Tiler-owned configuration.
 | cache deletion only | no | n/a |
 | next consumer source edit | yes | miss |
 | proc-macro crate source edit | yes | hit |
-| `cargo test` after check | yes, for additional compilation contexts | hit |
+| `cargo test` after check | yes, three additional expansions (count 4 -> 7) | hit for all three |
 
 Thus the external cache is load-bearing when rustc chooses to expand, but it is
 neither a generated-code dependency nor an input Cargo tracks for freshness.
@@ -104,8 +122,9 @@ neither a generated-code dependency nor an input Cargo tracks for freshness.
 ### Unavailable measurements
 
 A truly different cross target could not be executed because only the native
-Rust standard library is installed. `run-target.sh` fails closed and lists the
-installed targets rather than downloading one. rust-analyzer cold/warm behavior
+Rust standard library is installed. `run-target.sh` now requires an explicit
+target distinct from the host, fails closed, and lists the installed targets
+rather than downloading one. rust-analyzer cold/warm behavior
 could not be measured because the component is absent. Neither gap weakens the
 contract: Tiler does not consume implicit target variables or depend on an IDE
 mode. They remain useful performance measurements when a suitable environment
@@ -141,13 +160,18 @@ already exists.
    `FallbackOnly` is an explicit valid selection and performs no AOT work.
 
 The checked-in [`run-family-cfg.sh`](../../../spikes/macro-environment/run-family-cfg.sh)
-probe confirms on the measured host that a nonmatching family removes its
-`compile_error!` and executes fallback, while a matching macOS family produces
-the retained diagnostic. `rustc --print cfg` also confirms the governed Apple
+probe confirms on the measured macOS host that a nonmatching iOS family removes
+its `compile_error!` and executes fallback, while the matching macOS family
+produces the retained diagnostic. On non-macOS supported hosts it instead
+requires the macOS diagnostic source to compile and run its fallback, so the
+test does not depend on a macOS-only failure. `rustc --print cfg` also confirms
+the governed Apple
 distinctions used by generated predicates: macOS has `target_os="macos"`, iOS
 device has empty `target_abi`, iOS simulator uses `target_abi="sim"`, and
 Catalyst uses `target_abi="macabi"`. The exact predicates remain versioned
 generated-code data and require compile tests for every supported Rust target.
+The retained macOS result and diagnostic are in
+[`family-cfg-2026-07-21.json`](../../../spikes/macro-environment/results/family-cfg-2026-07-21.json).
 
 ## Options rejected
 
@@ -173,4 +197,5 @@ generated-code data and require compile tests for every supported Rust target.
 The findings are adopted by ADRs 0049 and 0053 and the
 [frontend contract](../../integration/frontends.md). The
 [macro-environment spike](../../../spikes/macro-environment/README.md) preserves
-the fixtures; rust-analyzer performance remains unmeasured.
+the fixtures, raw trace, decoded records, source digests, and host-specific
+family diagnostic; rust-analyzer performance remains unmeasured.

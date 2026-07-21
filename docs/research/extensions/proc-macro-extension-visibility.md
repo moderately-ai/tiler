@@ -57,6 +57,19 @@ Run it with:
 sh spikes/extensions/proc-macro-visibility/run.sh
 ```
 
+The shell file is an interpreter-invoked compatibility wrapper around the
+bounded Python harness. The harness runs the positive observation twice,
+requires the named Rust test and successful test summary, requires Cargo's
+specific dependency-cycle diagnostic, caps each command's combined output at
+four MiB, and records the live source revision, full tracked/untracked dirty
+state, bounded fixture-input digests, verbose Rust/Cargo provenance, commands,
+exit codes, and output in
+an ignored local trace. Its default five-minute deadline covers the complete
+selected suite; timeout and malformed-output behavior have a separate
+`--self-test`. Process-tree termination requires Python 3.11 or newer and
+POSIX process groups on the supported macOS and Debian-family development
+hosts.
+
 Measured results:
 
 | Probe | Result |

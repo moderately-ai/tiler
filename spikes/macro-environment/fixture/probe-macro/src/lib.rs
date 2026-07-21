@@ -55,12 +55,21 @@ pub fn probe(input: TokenStream) -> TokenStream {
             .unwrap();
         write!(
             trace,
-            "selection={selection:?}\tfingerprint={fingerprint:?}\tcache={cache_state}"
+            "version=1\tselection_hex={}\tfingerprint_hex={}\tcache={cache_state}",
+            hex(&selection),
+            hex(&fingerprint)
         )
         .unwrap();
         for name in OBSERVED {
-            let value = std::env::var(name).unwrap_or_else(|_| "<absent>".into());
-            write!(trace, "\t{name}={value:?}").unwrap();
+            match std::env::var(name) {
+                Ok(value) => write!(trace, "\tenv.{name}.hex={}", hex(&value)).unwrap(),
+                Err(std::env::VarError::NotPresent) => {
+                    write!(trace, "\tenv.{name}.absent=1").unwrap()
+                }
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    write!(trace, "\tenv.{name}.nonunicode=1").unwrap()
+                }
+            }
         }
         writeln!(trace).unwrap();
     }
@@ -73,4 +82,14 @@ fn sanitize(value: &str) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect()
+}
+
+fn hex(value: &str) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut result = String::with_capacity(value.len() * 2);
+    for byte in value.as_bytes() {
+        result.push(DIGITS[(byte >> 4) as usize] as char);
+        result.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    result
 }

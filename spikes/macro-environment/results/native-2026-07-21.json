@@ -1,0 +1,247 @@
+{
+  "probe": "native-freshness",
+  "provenance": {
+    "cargo_version": "cargo 1.99.0-nightly (3efb1f477 2026-07-17)",
+    "host": "aarch64-apple-darwin",
+    "input_sha256": {
+      "family_cfg_fallback.rs": "b7e07af68b8f0022654eeab6297bf465ae3a79ea7c605813e2fb2506965071fb",
+      "family_cfg_required_fail.rs": "13c11ef9877052d6766d80251cbb85fea7776caf60cdfbfbceee2050446aa082",
+      "fixture/Cargo.lock": "5bfd074454d74facf2bb4dba73788ada146760563c7a970e2ff815ac06bed0b4",
+      "fixture/Cargo.toml": "251f3fe78d32bc494ec0398d5ceeb9cad8f316af637f671376f95c8155d42750",
+      "fixture/consumer/Cargo.toml": "6df8ebb207966853876d7b669215900720ba563fca7a97ea862fcf79ec94283d",
+      "fixture/consumer/src/lib.rs": "5c392164a5b317bdd28de7fc226066e5bf04863015b0ea5063326e229c9a4297",
+      "fixture/probe-macro/Cargo.toml": "0ba36989b36d8f76f7db762c94af9145584762826542475008812a4156d9eded",
+      "fixture/probe-macro/src/lib.rs": "89f6bad3e8dafd50f8799d68df7f48597617df01df08293a849bb03613e55175",
+      "probe.py": "3a775767e65c52a93cdc03038ba2513997b7de623f107e467a5c54905563e8bc",
+      "run-family-cfg.sh": "1c0da7bd7488f1eb8006924ab7fae36005dca854695feb8a68d982fbfb759085",
+      "run-target.sh": "1d96d24c9185dee9d81720c6b43ec180056a5c40e4e60503be250afb1b49490d",
+      "run.sh": "91cda2cddbd67c6dc31c1f8b448fdeb71db9375b55b39d2131b81d534de79d93"
+    },
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "repository_revision": "840806cee5c60281cf5907468d3ee27c8b69321d",
+    "rustc_verbose": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)\nbinary: rustc\ncommit-hash: eff8269f797067c30555e77f160ec84c0ed15cd9\ncommit-date: 2026-07-18\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8"
+  },
+  "raw_trace": [
+    "version=1\tselection_hex=74617267657473203d205b6d61636f732c20696f735f6465766963652c20696f735f73696d756c61746f725d\tfingerprint_hex=78636f64652d61\tcache=miss\tenv.HOST.absent=1\tenv.TARGET.absent=1\tenv.CARGO_BUILD_TARGET.absent=1\tenv.CARGO_CFG_TARGET_ARCH.absent=1\tenv.CARGO_CFG_TARGET_OS.absent=1\tenv.CARGO_CFG_TARGET_ENV.absent=1\tenv.CARGO_CFG_TARGET_FAMILY.absent=1\tenv.CARGO_MANIFEST_DIR.hex=2f7661722f666f6c646572732f376b2f303067626a38703932643933387737627166336b3738303430303030676e2f542f74696c65722d6d6163726f2d656e762d37723239613264312f666978747572652f636f6e73756d6572\tenv.CARGO_PKG_NAME.hex=74696c65722d656e7669726f6e6d656e742d70726f62652d636f6e73756d6572\tenv.OUT_DIR.absent=1\tenv.PROFILE.absent=1\tenv.OPT_LEVEL.absent=1\tenv.DEBUG.absent=1\tenv.RUSTC.absent=1\tenv.SDKROOT.absent=1\tenv.MACOSX_DEPLOYMENT_TARGET.absent=1\tenv.IPHONEOS_DEPLOYMENT_TARGET.absent=1",
+    "version=1\tselection_hex=74617267657473203d205b6d61636f732c20696f735f6465766963652c20696f735f73696d756c61746f725d\tfingerprint_hex=78636f64652d62\tcache=miss\tenv.HOST.absent=1\tenv.TARGET.absent=1\tenv.CARGO_BUILD_TARGET.absent=1\tenv.CARGO_CFG_TARGET_ARCH.absent=1\tenv.CARGO_CFG_TARGET_OS.absent=1\tenv.CARGO_CFG_TARGET_ENV.absent=1\tenv.CARGO_CFG_TARGET_FAMILY.absent=1\tenv.CARGO_MANIFEST_DIR.hex=2f7661722f666f6c646572732f376b2f303067626a38703932643933387737627166336b3738303430303030676e2f542f74696c65722d6d6163726f2d656e762d37723239613264312f666978747572652f636f6e73756d6572\tenv.CARGO_PKG_NAME.hex=74696c65722d656e7669726f6e6d656e742d70726f62652d636f6e73756d6572\tenv.OUT_DIR.absent=1\tenv.PROFILE.absent=1\tenv.OPT_LEVEL.absent=1\tenv.DEBUG.absent=1\tenv.RUSTC.absent=1\tenv.SDKROOT.absent=1\tenv.MACOSX_DEPLOYMENT_TARGET.absent=1\tenv.IPHONEOS_DEPLOYMENT_TARGET.absent=1",
+    "version=1\tselection_hex=74617267657473203d205b6d61636f732c20696f735f6465766963652c20696f735f73696d756c61746f725d\tfingerprint_hex=78636f64652d62\tcache=miss\tenv.HOST.absent=1\tenv.TARGET.absent=1\tenv.CARGO_BUILD_TARGET.absent=1\tenv.CARGO_CFG_TARGET_ARCH.absent=1\tenv.CARGO_CFG_TARGET_OS.absent=1\tenv.CARGO_CFG_TARGET_ENV.absent=1\tenv.CARGO_CFG_TARGET_FAMILY.absent=1\tenv.CARGO_MANIFEST_DIR.hex=2f7661722f666f6c646572732f376b2f303067626a38703932643933387737627166336b3738303430303030676e2f542f74696c65722d6d6163726f2d656e762d37723239613264312f666978747572652f636f6e73756d6572\tenv.CARGO_PKG_NAME.hex=74696c65722d656e7669726f6e6d656e742d70726f62652d636f6e73756d6572\tenv.OUT_DIR.absent=1\tenv.PROFILE.absent=1\tenv.OPT_LEVEL.absent=1\tenv.DEBUG.absent=1\tenv.RUSTC.absent=1\tenv.SDKROOT.absent=1\tenv.MACOSX_DEPLOYMENT_TARGET.absent=1\tenv.IPHONEOS_DEPLOYMENT_TARGET.absent=1",
+    "version=1\tselection_hex=74617267657473203d205b6d61636f732c20696f735f6465766963652c20696f735f73696d756c61746f725d\tfingerprint_hex=78636f64652d62\tcache=hit\tenv.HOST.absent=1\tenv.TARGET.absent=1\tenv.CARGO_BUILD_TARGET.absent=1\tenv.CARGO_CFG_TARGET_ARCH.absent=1\tenv.CARGO_CFG_TARGET_OS.absent=1\tenv.CARGO_CFG_TARGET_ENV.absent=1\tenv.CARGO_CFG_TARGET_FAMILY.absent=1\tenv.CARGO_MANIFEST_DIR.hex=2f7661722f666f6c646572732f376b2f303067626a38703932643933387737627166336b3738303430303030676e2f542f74696c65722d6d6163726f2d656e762d37723239613264312f666978747572652f636f6e73756d6572\tenv.CARGO_PKG_NAME.hex=74696c65722d656e7669726f6e6d656e742d70726f62652d636f6e73756d6572\tenv.OUT_DIR.absent=1\tenv.PROFILE.absent=1\tenv.OPT_LEVEL.absent=1\tenv.DEBUG.absent=1\tenv.RUSTC.absent=1\tenv.SDKROOT.absent=1\tenv.MACOSX_DEPLOYMENT_TARGET.absent=1\tenv.IPHONEOS_DEPLOYMENT_TARGET.absent=1",
+    "version=1\tselection_hex=74617267657473203d205b6d61636f732c20696f735f6465766963652c20696f735f73696d756c61746f725d\tfingerprint_hex=78636f64652d62\tcache=hit\tenv.HOST.absent=1\tenv.TARGET.absent=1\tenv.CARGO_BUILD_TARGET.absent=1\tenv.CARGO_CFG_TARGET_ARCH.absent=1\tenv.CARGO_CFG_TARGET_OS.absent=1\tenv.CARGO_CFG_TARGET_ENV.absent=1\tenv.CARGO_CFG_TARGET_FAMILY.absent=1\tenv.CARGO_MANIFEST_DIR.hex=2f7661722f666f6c646572732f376b2f303067626a38703932643933387737627166336b3738303430303030676e2f542f74696c65722d6d6163726f2d656e762d37723239613264312f666978747572652f636f6e73756d6572\tenv.CARGO_PKG_NAME.hex=74696c65722d656e7669726f6e6d656e742d70726f62652d636f6e73756d6572\tenv.OUT_DIR.absent=1\tenv.PROFILE.absent=1\tenv.OPT_LEVEL.absent=1\tenv.DEBUG.absent=1\tenv.RUSTC.absent=1\tenv.SDKROOT.absent=1\tenv.MACOSX_DEPLOYMENT_TARGET.absent=1\tenv.IPHONEOS_DEPLOYMENT_TARGET.absent=1",
+    "version=1\tselection_hex=74617267657473203d205b6d61636f732c20696f735f6465766963652c20696f735f73696d756c61746f725d\tfingerprint_hex=78636f64652d62\tcache=hit\tenv.HOST.absent=1\tenv.TARGET.absent=1\tenv.CARGO_BUILD_TARGET.absent=1\tenv.CARGO_CFG_TARGET_ARCH.absent=1\tenv.CARGO_CFG_TARGET_OS.absent=1\tenv.CARGO_CFG_TARGET_ENV.absent=1\tenv.CARGO_CFG_TARGET_FAMILY.absent=1\tenv.CARGO_MANIFEST_DIR.hex=2f7661722f666f6c646572732f376b2f303067626a38703932643933387737627166336b3738303430303030676e2f542f74696c65722d6d6163726f2d656e762d37723239613264312f666978747572652f636f6e73756d6572\tenv.CARGO_PKG_NAME.hex=74696c65722d656e7669726f6e6d656e742d70726f62652d636f6e73756d6572\tenv.OUT_DIR.absent=1\tenv.PROFILE.absent=1\tenv.OPT_LEVEL.absent=1\tenv.DEBUG.absent=1\tenv.RUSTC.absent=1\tenv.SDKROOT.absent=1\tenv.MACOSX_DEPLOYMENT_TARGET.absent=1\tenv.IPHONEOS_DEPLOYMENT_TARGET.absent=1",
+    "version=1\tselection_hex=74617267657473203d205b6d61636f732c20696f735f6465766963652c20696f735f73696d756c61746f725d\tfingerprint_hex=78636f64652d62\tcache=hit\tenv.HOST.absent=1\tenv.TARGET.absent=1\tenv.CARGO_BUILD_TARGET.absent=1\tenv.CARGO_CFG_TARGET_ARCH.absent=1\tenv.CARGO_CFG_TARGET_OS.absent=1\tenv.CARGO_CFG_TARGET_ENV.absent=1\tenv.CARGO_CFG_TARGET_FAMILY.absent=1\tenv.CARGO_MANIFEST_DIR.hex=2f7661722f666f6c646572732f376b2f303067626a38703932643933387737627166336b3738303430303030676e2f542f74696c65722d6d6163726f2d656e762d37723239613264312f666978747572652f636f6e73756d6572\tenv.CARGO_PKG_NAME.hex=74696c65722d656e7669726f6e6d656e742d70726f62652d636f6e73756d6572\tenv.OUT_DIR.absent=1\tenv.PROFILE.absent=1\tenv.OPT_LEVEL.absent=1\tenv.DEBUG.absent=1\tenv.RUSTC.absent=1\tenv.SDKROOT.absent=1\tenv.MACOSX_DEPLOYMENT_TARGET.absent=1\tenv.IPHONEOS_DEPLOYMENT_TARGET.absent=1"
+  ],
+  "schema": "tiler-macro-environment/v1",
+  "steps": [
+    {
+      "after": 1,
+      "before": 0,
+      "name": "cold_check"
+    },
+    {
+      "after": 1,
+      "before": 1,
+      "name": "no_change_check"
+    },
+    {
+      "after": 1,
+      "before": 1,
+      "name": "fingerprint_environment_only"
+    },
+    {
+      "after": 2,
+      "before": 1,
+      "name": "consumer_edit_after_fingerprint"
+    },
+    {
+      "after": 2,
+      "before": 2,
+      "name": "cache_deletion_only"
+    },
+    {
+      "after": 3,
+      "before": 2,
+      "name": "consumer_edit_after_cache_delete"
+    },
+    {
+      "after": 4,
+      "before": 3,
+      "name": "macro_crate_edit"
+    },
+    {
+      "after": 7,
+      "before": 4,
+      "name": "cargo_test"
+    }
+  ],
+  "success": true,
+  "trace": [
+    {
+      "cache": "miss",
+      "environment": {
+        "CARGO_BUILD_TARGET": null,
+        "CARGO_CFG_TARGET_ARCH": null,
+        "CARGO_CFG_TARGET_ENV": null,
+        "CARGO_CFG_TARGET_FAMILY": null,
+        "CARGO_CFG_TARGET_OS": null,
+        "CARGO_MANIFEST_DIR": "/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macro-env-7r29a2d1/fixture/consumer",
+        "CARGO_PKG_NAME": "tiler-environment-probe-consumer",
+        "DEBUG": null,
+        "HOST": null,
+        "IPHONEOS_DEPLOYMENT_TARGET": null,
+        "MACOSX_DEPLOYMENT_TARGET": null,
+        "OPT_LEVEL": null,
+        "OUT_DIR": null,
+        "PROFILE": null,
+        "RUSTC": null,
+        "SDKROOT": null,
+        "TARGET": null
+      },
+      "fingerprint": "xcode-a",
+      "selection": "targets = [macos, ios_device, ios_simulator]"
+    },
+    {
+      "cache": "miss",
+      "environment": {
+        "CARGO_BUILD_TARGET": null,
+        "CARGO_CFG_TARGET_ARCH": null,
+        "CARGO_CFG_TARGET_ENV": null,
+        "CARGO_CFG_TARGET_FAMILY": null,
+        "CARGO_CFG_TARGET_OS": null,
+        "CARGO_MANIFEST_DIR": "/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macro-env-7r29a2d1/fixture/consumer",
+        "CARGO_PKG_NAME": "tiler-environment-probe-consumer",
+        "DEBUG": null,
+        "HOST": null,
+        "IPHONEOS_DEPLOYMENT_TARGET": null,
+        "MACOSX_DEPLOYMENT_TARGET": null,
+        "OPT_LEVEL": null,
+        "OUT_DIR": null,
+        "PROFILE": null,
+        "RUSTC": null,
+        "SDKROOT": null,
+        "TARGET": null
+      },
+      "fingerprint": "xcode-b",
+      "selection": "targets = [macos, ios_device, ios_simulator]"
+    },
+    {
+      "cache": "miss",
+      "environment": {
+        "CARGO_BUILD_TARGET": null,
+        "CARGO_CFG_TARGET_ARCH": null,
+        "CARGO_CFG_TARGET_ENV": null,
+        "CARGO_CFG_TARGET_FAMILY": null,
+        "CARGO_CFG_TARGET_OS": null,
+        "CARGO_MANIFEST_DIR": "/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macro-env-7r29a2d1/fixture/consumer",
+        "CARGO_PKG_NAME": "tiler-environment-probe-consumer",
+        "DEBUG": null,
+        "HOST": null,
+        "IPHONEOS_DEPLOYMENT_TARGET": null,
+        "MACOSX_DEPLOYMENT_TARGET": null,
+        "OPT_LEVEL": null,
+        "OUT_DIR": null,
+        "PROFILE": null,
+        "RUSTC": null,
+        "SDKROOT": null,
+        "TARGET": null
+      },
+      "fingerprint": "xcode-b",
+      "selection": "targets = [macos, ios_device, ios_simulator]"
+    },
+    {
+      "cache": "hit",
+      "environment": {
+        "CARGO_BUILD_TARGET": null,
+        "CARGO_CFG_TARGET_ARCH": null,
+        "CARGO_CFG_TARGET_ENV": null,
+        "CARGO_CFG_TARGET_FAMILY": null,
+        "CARGO_CFG_TARGET_OS": null,
+        "CARGO_MANIFEST_DIR": "/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macro-env-7r29a2d1/fixture/consumer",
+        "CARGO_PKG_NAME": "tiler-environment-probe-consumer",
+        "DEBUG": null,
+        "HOST": null,
+        "IPHONEOS_DEPLOYMENT_TARGET": null,
+        "MACOSX_DEPLOYMENT_TARGET": null,
+        "OPT_LEVEL": null,
+        "OUT_DIR": null,
+        "PROFILE": null,
+        "RUSTC": null,
+        "SDKROOT": null,
+        "TARGET": null
+      },
+      "fingerprint": "xcode-b",
+      "selection": "targets = [macos, ios_device, ios_simulator]"
+    },
+    {
+      "cache": "hit",
+      "environment": {
+        "CARGO_BUILD_TARGET": null,
+        "CARGO_CFG_TARGET_ARCH": null,
+        "CARGO_CFG_TARGET_ENV": null,
+        "CARGO_CFG_TARGET_FAMILY": null,
+        "CARGO_CFG_TARGET_OS": null,
+        "CARGO_MANIFEST_DIR": "/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macro-env-7r29a2d1/fixture/consumer",
+        "CARGO_PKG_NAME": "tiler-environment-probe-consumer",
+        "DEBUG": null,
+        "HOST": null,
+        "IPHONEOS_DEPLOYMENT_TARGET": null,
+        "MACOSX_DEPLOYMENT_TARGET": null,
+        "OPT_LEVEL": null,
+        "OUT_DIR": null,
+        "PROFILE": null,
+        "RUSTC": null,
+        "SDKROOT": null,
+        "TARGET": null
+      },
+      "fingerprint": "xcode-b",
+      "selection": "targets = [macos, ios_device, ios_simulator]"
+    },
+    {
+      "cache": "hit",
+      "environment": {
+        "CARGO_BUILD_TARGET": null,
+        "CARGO_CFG_TARGET_ARCH": null,
+        "CARGO_CFG_TARGET_ENV": null,
+        "CARGO_CFG_TARGET_FAMILY": null,
+        "CARGO_CFG_TARGET_OS": null,
+        "CARGO_MANIFEST_DIR": "/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macro-env-7r29a2d1/fixture/consumer",
+        "CARGO_PKG_NAME": "tiler-environment-probe-consumer",
+        "DEBUG": null,
+        "HOST": null,
+        "IPHONEOS_DEPLOYMENT_TARGET": null,
+        "MACOSX_DEPLOYMENT_TARGET": null,
+        "OPT_LEVEL": null,
+        "OUT_DIR": null,
+        "PROFILE": null,
+        "RUSTC": null,
+        "SDKROOT": null,
+        "TARGET": null
+      },
+      "fingerprint": "xcode-b",
+      "selection": "targets = [macos, ios_device, ios_simulator]"
+    },
+    {
+      "cache": "hit",
+      "environment": {
+        "CARGO_BUILD_TARGET": null,
+        "CARGO_CFG_TARGET_ARCH": null,
+        "CARGO_CFG_TARGET_ENV": null,
+        "CARGO_CFG_TARGET_FAMILY": null,
+        "CARGO_CFG_TARGET_OS": null,
+        "CARGO_MANIFEST_DIR": "/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-macro-env-7r29a2d1/fixture/consumer",
+        "CARGO_PKG_NAME": "tiler-environment-probe-consumer",
+        "DEBUG": null,
+        "HOST": null,
+        "IPHONEOS_DEPLOYMENT_TARGET": null,
+        "MACOSX_DEPLOYMENT_TARGET": null,
+        "OPT_LEVEL": null,
+        "OUT_DIR": null,
+        "PROFILE": null,
+        "RUSTC": null,
+        "SDKROOT": null,
+        "TARGET": null
+      },
+      "fingerprint": "xcode-b",
+      "selection": "targets = [macos, ios_device, ios_simulator]"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "verification_status": "verified-derived-legacy",
+  "verified_on": "2026-07-21",
+  "result_rows": 81,
+  "freshness_rows": 12,
+  "fixture_sha256": {
+    "metadata.json": "f4a9b79fdf4e00b548e239f56a8d4ce9be945a70f6bacea974464514eebeaf1c",
+    "results.json": "06d45e732c085fa931810f0060d948f10244d2095d4bd6beb2be85293adb2351",
+    "results.csv": "1461c1f6362d2eb2b4376a3481c0521cd5f16184acc39e14b7741e70658c6cc1",
+    "freshness.json": "fd3d3d141d40e9ae676e4522680062815b1846db09f54bf6da86c7b180aa2826",
+    "freshness.csv": "72571e4f2b088bcb20801c73cb6e66b6f42db5437cf09f1dc0dc1ff72457fe54"
+  },
+  "limitations": [
+    "The originally claimed raw stdout/stderr and size -m files were not retained.",
+    "Schema v1 did not record source revision, harness/input digests, inherited Cargo/Rust environment, executable identities, or deadlines.",
+    "The derived metrics are structurally consistent but cannot be regenerated as exact evidence on the changed toolchain."
+  ]
+}

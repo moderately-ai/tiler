@@ -18,7 +18,12 @@ required-version = ">=0.11.28"
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-ra"]
-testpaths = ["scripts/tests", "spikes/numerics/sound_accuracy"]
+testpaths = [
+    "scripts/tests",
+    "spikes/embedding",
+    "spikes/macro-environment",
+    "spikes/numerics/sound_accuracy",
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -26,6 +31,9 @@ line-length = 100
 include = [
     "scripts/**/*.py",
     "spikes/cost-model/*.py",
+    "spikes/embedding/*.py",
+    "spikes/extensions/*.py",
+    "spikes/macro-environment/*.py",
     "spikes/numerics/*.py",
     "spikes/numerics/sound_accuracy/*.py",
     "spikes/reference/*.py",

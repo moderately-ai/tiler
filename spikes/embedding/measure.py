@@ -9,18 +9,45 @@ whose cost this spike measures.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import hashlib
 import json
+import math
 import os
 import platform
 import re
+import selectors
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 600
+DEFAULT_OVERALL_TIMEOUT_SECONDS = 3600
+METADATA_COMMAND_TIMEOUT_SECONDS = 30
+MAX_CAPTURE_BYTES = 16 << 20
+HARNESS_SCHEMA_VERSION = 2
+HARNESS_DEADLINE: float | None = None
+
+
+class MeasurementFailure(RuntimeError):
+    """The harness could not produce a complete, bounded measurement."""
+
+
+def require(condition: bool, message: str) -> None:
+    """Reject incomplete evidence without relying on removable assertions."""
+    if not condition:
+        raise MeasurementFailure(message)
+
+
+def overall_timeout_handler(_signum: int, _frame: object) -> None:
+    """Interrupt non-subprocess harness work at the overall wall deadline."""
+    raise MeasurementFailure("embedding harness exceeded its overall deadline")
 
 
 @dataclass(frozen=True)
@@ -46,35 +73,66 @@ def decision_cases() -> list[Case]:
     # Literal-token scaling and the deliberately worse per-byte-token control.
     for size in (10 * 1024, 100 * 1024, 1024 * 1024):
         for representation in ("byte-string", "per-byte"):
-            add(name=f"repr-{representation}-{size}", size=size, count=1,
-                representation=representation, identity="unique", boundary="same",
-                profile="release")
-        add(name=f"debug-byte-string-{size}", size=size, count=1,
-            representation="byte-string", identity="unique", boundary="same",
-            profile="dev")
+            add(
+                name=f"repr-{representation}-{size}",
+                size=size,
+                count=1,
+                representation=representation,
+                identity="unique",
+                boundary="same",
+                profile="release",
+            )
+        add(
+            name=f"debug-byte-string-{size}",
+            size=size,
+            count=1,
+            representation="byte-string",
+            identity="unique",
+            boundary="same",
+            profile="dev",
+        )
 
     # Multiplicity: enough to reveal both linear growth and any identical folding.
     for count in (8, 32):
         for identity in ("identical", "unique"):
-            add(name=f"count-{count}-{identity}", size=100 * 1024, count=count,
-                representation="byte-string", identity=identity, boundary="same",
-                profile="release")
+            add(
+                name=f"count-{count}-{identity}",
+                size=100 * 1024,
+                count=count,
+                representation="byte-string",
+                identity=identity,
+                boundary="same",
+                profile="release",
+            )
 
     # Crate boundary and profile are crossed for the central 8 x 100 KiB case.
     for boundary in ("same", "cross"):
         for profile in ("dev", "release"):
             for identity in ("identical", "unique"):
-                add(name=f"boundary-{boundary}-{profile}-{identity}", size=100 * 1024,
-                    count=8, representation="byte-string", identity=identity,
-                    boundary=boundary, profile=profile)
+                add(
+                    name=f"boundary-{boundary}-{profile}-{identity}",
+                    size=100 * 1024,
+                    count=8,
+                    representation="byte-string",
+                    identity=identity,
+                    boundary=boundary,
+                    profile=profile,
+                )
 
     # Keep payload constant while varying release linker/codegen settings.
     for boundary in ("same", "cross"):
         for codegen_units, lto in ((1, "off"), (16, "thin"), (1, "fat")):
-            add(name=f"config-{boundary}-cgu{codegen_units}-{lto}", size=100 * 1024,
-                count=8, representation="byte-string", identity="identical",
-                boundary=boundary, profile="release", codegen_units=codegen_units,
-                lto=lto)
+            add(
+                name=f"config-{boundary}-cgu{codegen_units}-{lto}",
+                size=100 * 1024,
+                count=8,
+                representation="byte-string",
+                identity="identical",
+                boundary=boundary,
+                profile="release",
+                codegen_units=codegen_units,
+                lto=lto,
+            )
     return list(cases.values())
 
 
@@ -126,13 +184,14 @@ def main_source_same(case: Case) -> str:
     modules = []
     calls = []
     for index in range(case.count):
-        modules.append(f"mod blob_{index} {{\n{library_source(case.size, index, case.identity, case.representation)}}}\n")
+        source = library_source(case.size, index, case.identity, case.representation)
+        modules.append(f"mod blob_{index} {{\n{source}}}\n")
         calls.append(f"blob_{index}::artifact()")
     return "".join(modules) + main_body(calls)
 
 
 def macro_source() -> str:
-    return r'''use proc_macro::{Delimiter, Group, Literal, Punct, Spacing, TokenStream, TokenTree};
+    return r"""use proc_macro::{Delimiter, Group, Literal, Punct, Spacing, TokenStream, TokenTree};
 
 fn artifact_bytes(size: usize, index: u64, identical: bool) -> Vec<u8> {
     let mut state = 0xd1b54a32d192ed03u64 ^ if identical { 0 } else { index };
@@ -173,7 +232,7 @@ pub fn embed(input: TokenStream) -> TokenStream {
         other => panic!("unknown representation {other}"),
     }
 }
-'''
+"""
 
 
 def main_body(calls: list[str]) -> str:
@@ -190,20 +249,23 @@ def main_body(calls: list[str]) -> str:
         "fn main() {\n"
         f"    let artifacts: [&'static [u8]; {len(calls)}] = [{', '.join(calls)}];\n"
         "    let digest = artifacts.iter().fold(0u64, |acc, bytes| acc ^ witness(bytes));\n"
-        "    println!(\"{}:{}\", artifacts.len(), digest);\n"
+        '    println!("{}:{}", artifacts.len(), digest);\n'
         "}\n"
     )
 
 
 def make_workspace(root: Path, case: Case) -> list[bytes]:
-    payloads = [artifact_bytes(case.size, 0 if case.identity == "identical" else i, case.identity)
-                for i in range(case.count)]
+    payloads = [
+        artifact_bytes(case.size, 0 if case.identity == "identical" else i, case.identity)
+        for i in range(case.count)
+    ]
     app = root / "app"
     (app / "src").mkdir(parents=True)
     macro_crate = root / "embed_macro"
     (macro_crate / "src").mkdir(parents=True)
     (macro_crate / "Cargo.toml").write_text(
-        package_toml("embed_macro") + "\n[lib]\nproc-macro = true\n", encoding="utf-8")
+        package_toml("embed_macro") + "\n[lib]\nproc-macro = true\n", encoding="utf-8"
+    )
     (macro_crate / "src/lib.rs").write_text(macro_source(), encoding="utf-8")
     if case.boundary == "same":
         members = ["app", "embed_macro"]
@@ -217,10 +279,14 @@ def make_workspace(root: Path, case: Case) -> list[bytes]:
             crate = root / f"blob_{index}"
             (crate / "src").mkdir(parents=True)
             (crate / "src/lib.rs").write_text(
-                library_source(case.size, index, case.identity, case.representation), encoding="utf-8")
+                library_source(case.size, index, case.identity, case.representation),
+                encoding="utf-8",
+            )
             (crate / "Cargo.toml").write_text(
-                package_toml(f"embed_blob_{index}") +
-                '\n[dependencies]\nembed_macro = { path = "../embed_macro" }\n', encoding="utf-8")
+                package_toml(f"embed_blob_{index}")
+                + '\n[dependencies]\nembed_macro = { path = "../embed_macro" }\n',
+                encoding="utf-8",
+            )
             dep_lines.append(f'embed_blob_{index} = {{ path = "../blob_{index}" }}')
             calls.append(f"embed_blob_{index}::artifact()")
         deps = "\n[dependencies]\n" + "\n".join(dep_lines) + "\n"
@@ -229,7 +295,7 @@ def make_workspace(root: Path, case: Case) -> list[bytes]:
     (app / "src/main.rs").write_text(source, encoding="utf-8")
     lto_value = "false" if case.lto == "off" else f'"{case.lto}"'
     manifest = (
-        "[workspace]\nresolver = \"2\"\n"
+        '[workspace]\nresolver = "2"\n'
         f"members = {json.dumps(members)}\n\n"
         "[profile.dev]\ndebug = 2\nincremental = true\n"
         f"codegen-units = {case.codegen_units}\n\n"
@@ -240,87 +306,274 @@ def make_workspace(root: Path, case: Case) -> list[bytes]:
     return payloads
 
 
-def parse_time(path: Path) -> tuple[float | None, int | None]:
-    text = path.read_text(encoding="utf-8")
+def read_bounded(path: Path, label: str) -> str:
+    """Read one retained tool output under the experiment's evidence limit."""
+    try:
+        size = path.stat().st_size
+    except OSError as error:
+        raise MeasurementFailure(f"missing {label}: {path}: {error}") from error
+    require(size <= MAX_CAPTURE_BYTES, f"{label} exceeds {MAX_CAPTURE_BYTES} bytes: {path}")
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise MeasurementFailure(f"cannot decode {label}: {path}: {error}") from error
+
+
+def run_logged(
+    command: list[str],
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    *,
+    cwd: Path | None = None,
+) -> int:
+    """Run a command tree under one deadline while retaining its exact output."""
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    if HARNESS_DEADLINE is not None:
+        deadline = min(deadline, HARNESS_DEADLINE)
+    require(deadline > started, f"overall harness deadline expired before {command!r}")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise MeasurementFailure(f"cannot start {command[0]}: {error}") from error
+    require(process.stdout is not None and process.stderr is not None, "capture pipes are missing")
+    selector = selectors.DefaultSelector()
+    total = 0
+    with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
+        outputs = {process.stdout: stdout_file, process.stderr: stderr_file}
+        for stream in outputs:
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        try:
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                    raise MeasurementFailure(
+                        f"command exceeded {timeout_seconds}s after "
+                        f"{time.monotonic() - started:.3f}s: {command!r}"
+                    )
+                for key, _ in selector.select(remaining):
+                    stream = key.fileobj
+                    chunk = os.read(stream.fileno(), 65536)
+                    if not chunk:
+                        selector.unregister(stream)
+                        continue
+                    if total + len(chunk) > MAX_CAPTURE_BYTES:
+                        with contextlib.suppress(ProcessLookupError):
+                            os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                        raise MeasurementFailure(
+                            f"command output exceeded {MAX_CAPTURE_BYTES} bytes: {command!r}"
+                        )
+                    outputs[stream].write(chunk)
+                    total += len(chunk)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout_seconds)
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired as error:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise MeasurementFailure(
+                f"command exceeded {timeout_seconds}s after {time.monotonic() - started:.3f}s: "
+                f"{command!r}"
+            ) from error
+        finally:
+            if process.poll() is None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            selector.close()
+            process.stdout.close()
+            process.stderr.close()
+    require(
+        stdout_path.stat().st_size + stderr_path.stat().st_size <= MAX_CAPTURE_BYTES,
+        f"command output exceeds {MAX_CAPTURE_BYTES} bytes: {command!r}",
+    )
+    read_bounded(stdout_path, "command stdout")
+    read_bounded(stderr_path, "command stderr")
+    return returncode
+
+
+def parse_time(path: Path) -> tuple[float, int]:
+    """Parse both required `/usr/bin/time -l` metrics exactly once."""
+    text = read_bounded(path, "time output")
     wall_match = re.search(r"\s([0-9.]+) real\s", text)
     rss_match = re.search(r"^\s*([0-9]+)\s+maximum resident set size", text, re.MULTILINE)
-    return (float(wall_match.group(1)) if wall_match else None,
-            int(rss_match.group(1)) if rss_match else None)
+    require(wall_match is not None, f"missing wall-clock metric in {path}")
+    require(rss_match is not None, f"missing peak-RSS metric in {path}")
+    wall = float(wall_match.group(1))
+    rss = int(rss_match.group(1))
+    require(math.isfinite(wall) and wall >= 0, f"invalid wall-clock metric in {path}")
+    require(rss > 0, f"invalid peak-RSS metric in {path}")
+    return wall, rss
 
 
 def file_sum(root: Path, suffix: str) -> int:
     return sum(path.stat().st_size for path in root.rglob(f"*{suffix}") if path.is_file())
 
 
-def macho_sections(binary: Path) -> tuple[int | None, int | None, str]:
-    proc = subprocess.run(["size", "-m", str(binary)], text=True, capture_output=True, check=True)
+def parse_macho_sections(text: str) -> tuple[int, int]:
+    """Require a recognized Mach-O report and its primary const section."""
     values: dict[str, int] = {}
     current_segment = ""
-    for line in proc.stdout.splitlines():
+    segments = 0
+    sections = 0
+    for line in text.splitlines():
         segment = re.match(r"Segment (\S+): (\d+)", line.strip())
         if segment:
             current_segment = segment.group(1)
+            segments += 1
             continue
         section = re.match(r"Section (\S+): (\d+)", line.strip())
         if section:
+            require(bool(current_segment), "Mach-O section appeared before a segment")
             values[f"{current_segment},{section.group(1)}"] = int(section.group(2))
-    text_const = sum(value for key, value in values.items() if key.startswith("__TEXT,") and key.endswith(",__const"))
-    data_const = sum(value for key, value in values.items() if key.startswith("__DATA") and key.endswith(",__const"))
-    return text_const or None, data_const or None, proc.stdout
+            sections += 1
+    require(segments > 0 and sections > 0, "unparseable `size -m` Mach-O output")
+    require("__TEXT,__const" in values, "missing required __TEXT,__const metric")
+    text_const = sum(
+        value
+        for key, value in values.items()
+        if key.startswith("__TEXT,") and key.endswith(",__const")
+    )
+    data_const = sum(
+        value
+        for key, value in values.items()
+        if key.startswith("__DATA") and key.endswith(",__const")
+    )
+    return text_const, data_const
+
+
+def macho_sections(binary: Path, raw_path: Path, timeout_seconds: int) -> tuple[int, int]:
+    stderr_path = raw_path.with_suffix(".stderr")
+    returncode = run_logged(["size", "-m", str(binary)], raw_path, stderr_path, timeout_seconds)
+    require(returncode == 0, f"size -m failed with status {returncode}: {binary}")
+    return parse_macho_sections(read_bounded(raw_path, "size -m output"))
 
 
 def build_command(root: Path, case: Case, target: Path, timing: Path) -> list[str]:
-    return ["/usr/bin/time", "-l", "-o", str(timing), "cargo", "build", "--offline",
-            "--manifest-path", str(root / "Cargo.toml"), "--target-dir", str(target),
-            "--profile", case.profile]
+    return [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        str(timing),
+        "cargo",
+        "build",
+        "--offline",
+        "--manifest-path",
+        str(root / "Cargo.toml"),
+        "--target-dir",
+        str(target),
+        "--profile",
+        case.profile,
+    ]
 
 
-def run_build(root: Path, case: Case, payloads: list[bytes], raw: Path,
-              repetition: int) -> dict[str, object]:
+def source_identity(root: Path) -> dict[str, object]:
+    """Identify every generated manifest and Rust source that enters Cargo."""
+    digest = hashlib.sha256()
+    files = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file()
+        and "target" not in path.relative_to(root).parts
+        and (path.name == "Cargo.toml" or path.suffix == ".rs")
+    )
+    records = []
+    for path in files:
+        relative = path.relative_to(root).as_posix()
+        contents = path.read_bytes()
+        file_digest = hashlib.sha256(contents).hexdigest()
+        records.append({"path": relative, "bytes": len(contents), "sha256": file_digest})
+        digest.update(relative.encode())
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(file_digest))
+    require(bool(records), f"generated workspace has no source inputs: {root}")
+    return {"sha256": digest.hexdigest(), "files": records}
+
+
+def payload_identity(payloads: list[bytes]) -> dict[str, object]:
+    digests = [hashlib.sha256(payload).hexdigest() for payload in payloads]
+    return {"sha256": hashlib.sha256("\n".join(digests).encode()).hexdigest(), "digests": digests}
+
+
+def run_build(
+    root: Path,
+    case: Case,
+    payloads: list[bytes],
+    raw: Path,
+    repetition: int,
+    timeout_seconds: int,
+) -> dict[str, object]:
     target = root / "target"
     timing = root / "time.txt"
     command = build_command(root, case, target, timing)
-    started = time.monotonic()
-    proc = subprocess.run(command, text=True, capture_output=True)
-    elapsed = time.monotonic() - started
+    source_inputs = source_identity(root)
     label = f"{case.name}-r{repetition}"
-    (raw / f"{label}.stdout").write_text(proc.stdout, encoding="utf-8")
-    (raw / f"{label}.stderr").write_text(proc.stderr, encoding="utf-8")
-    if proc.returncode != 0:
-        raise RuntimeError(f"{case.name} failed ({proc.returncode}); see raw stderr")
+    returncode = run_logged(
+        command,
+        raw / f"{label}.stdout",
+        raw / f"{label}.stderr",
+        timeout_seconds,
+        cwd=root,
+    )
+    if returncode != 0:
+        raise MeasurementFailure(f"{case.name} failed ({returncode}); see raw stderr")
     wall, rss = parse_time(timing)
     binary = target / ("debug" if case.profile == "dev" else "release") / "embed_app"
+    require(binary.is_file(), f"missing linked binary: {binary}")
     binary_bytes = binary.read_bytes()
     occurrences = [binary_bytes.count(payload) for payload in payloads]
-    text_const, data_const, size_raw = macho_sections(binary)
-    (raw / f"{label}.size-m.txt").write_text(size_raw, encoding="utf-8")
+    text_const, data_const = macho_sections(binary, raw / f"{label}.size-m.txt", timeout_seconds)
     source_bytes = sum(path.stat().st_size for path in root.rglob("*.rs"))
     result = asdict(case)
-    result.update({
-        "command": command,
-        "repetition": repetition,
-        "wall_seconds": wall if wall is not None else round(elapsed, 6),
-        "peak_rss_bytes": rss,
-        "source_bytes": source_bytes,
-        "logical_payload_bytes": case.size * case.count,
-        "byte_value_literal_tokens": case.count if case.representation == "byte-string" else case.size * case.count,
-        "expanded_text_proxy_bytes": sum(len(rust_literal(payload, case.representation)) for payload in payloads),
-        "rlib_bytes": file_sum(target, ".rlib"),
-        "rmeta_bytes": file_sum(target, ".rmeta"),
-        "object_bytes": file_sum(target, ".o"),
-        "target_tree_bytes": sum(p.stat().st_size for p in target.rglob("*") if p.is_file()),
-        "final_binary_bytes": binary.stat().st_size,
-        "macho_text_const_bytes": text_const,
-        "macho_data_const_bytes": data_const,
-        "payload_occurrences_min": min(occurrences),
-        "payload_occurrences_max": max(occurrences),
-        "distinct_payloads": len(set(payloads)),
-        "binary_sha256": hashlib.sha256(binary_bytes).hexdigest(),
-    })
+    result.update(
+        {
+            "command": command,
+            "repetition": repetition,
+            "wall_seconds": wall,
+            "peak_rss_bytes": rss,
+            "source_identity": source_inputs,
+            "payload_identity": payload_identity(payloads),
+            "source_bytes": source_bytes,
+            "logical_payload_bytes": case.size * case.count,
+            "byte_value_literal_tokens": case.count
+            if case.representation == "byte-string"
+            else case.size * case.count,
+            "expanded_text_proxy_bytes": sum(
+                len(rust_literal(payload, case.representation)) for payload in payloads
+            ),
+            "rlib_bytes": file_sum(target, ".rlib"),
+            "rmeta_bytes": file_sum(target, ".rmeta"),
+            "object_bytes": file_sum(target, ".o"),
+            "target_tree_bytes": sum(p.stat().st_size for p in target.rglob("*") if p.is_file()),
+            "final_binary_bytes": binary.stat().st_size,
+            "macho_text_const_bytes": text_const,
+            "macho_data_const_bytes": data_const,
+            "payload_occurrences_min": min(occurrences),
+            "payload_occurrences_max": max(occurrences),
+            "distinct_payloads": len(set(payloads)),
+            "binary_sha256": hashlib.sha256(binary_bytes).hexdigest(),
+        }
+    )
     return result
 
 
-def freshness_case(output: Path, raw: Path, boundary: str) -> list[dict[str, object]]:
+def freshness_case(
+    output: Path, raw: Path, boundary: str, timeout_seconds: int
+) -> list[dict[str, object]]:
     case = Case(f"freshness-{boundary}", 100 * 1024, 8, "byte-string", "identical", boundary, "dev")
     root = output / "work" / case.name
     root.mkdir(parents=True)
@@ -331,15 +584,30 @@ def freshness_case(output: Path, raw: Path, boundary: str) -> list[dict[str, obj
     def phase(name: str) -> None:
         timing = root / f"time-{name}.txt"
         command = build_command(root, case, target, timing)
-        proc = subprocess.run(command, text=True, capture_output=True)
-        (raw / f"{case.name}-{name}.stdout").write_text(proc.stdout, encoding="utf-8")
-        (raw / f"{case.name}-{name}.stderr").write_text(proc.stderr, encoding="utf-8")
-        if proc.returncode != 0:
-            raise RuntimeError(f"{case.name}/{name} failed; see raw stderr")
+        returncode = run_logged(
+            command,
+            raw / f"{case.name}-{name}.stdout",
+            raw / f"{case.name}-{name}.stderr",
+            timeout_seconds,
+            cwd=root,
+        )
+        if returncode != 0:
+            raise MeasurementFailure(f"{case.name}/{name} failed ({returncode}); see raw stderr")
         wall, rss = parse_time(timing)
-        rows.append({"boundary": boundary, "phase": name, "wall_seconds": wall,
-                     "peak_rss_bytes": rss, "command": command,
-                     "target_tree_bytes": sum(p.stat().st_size for p in target.rglob("*") if p.is_file())})
+        rows.append(
+            {
+                "boundary": boundary,
+                "phase": name,
+                "wall_seconds": wall,
+                "peak_rss_bytes": rss,
+                "command": command,
+                "source_identity": source_identity(root),
+                "payload_identity": payload_identity(payloads),
+                "target_tree_bytes": sum(
+                    p.stat().st_size for p in target.rglob("*") if p.is_file()
+                ),
+            }
+        )
 
     phase("fresh")
     phase("noop")
@@ -360,8 +628,22 @@ def freshness_case(output: Path, raw: Path, boundary: str) -> list[dict[str, obj
 
 
 def command_output(command: list[str], include_stderr: bool = False) -> str:
-    proc = subprocess.run(command, text=True, capture_output=True, check=True)
-    output = proc.stdout + (proc.stderr if include_stderr else "")
+    """Collect required nonempty metadata under a short deadline."""
+    with tempfile.TemporaryDirectory(prefix="tiler-embedding-metadata-") as temporary:
+        root = Path(temporary)
+        stdout_path = root / "stdout"
+        stderr_path = root / "stderr"
+        returncode = run_logged(
+            command,
+            stdout_path,
+            stderr_path,
+            METADATA_COMMAND_TIMEOUT_SECONDS,
+        )
+        require(returncode == 0, f"metadata command exited {returncode}: {command!r}")
+        output = read_bounded(stdout_path, "metadata stdout")
+        if include_stderr:
+            output += read_bounded(stderr_path, "metadata stderr")
+    require(bool(output.strip()), f"metadata command returned no output: {command!r}")
     return output.strip()
 
 
@@ -373,24 +655,241 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows({key: row.get(key) for key in fields} for row in rows)
 
 
+def inherited_environment_identity() -> dict[str, dict[str, str | int]]:
+    """Identify every inherited environment value without publishing secrets."""
+    values = {}
+    for key, value in sorted(os.environ.items()):
+        encoded = value.encode()
+        values[key] = {
+            "bytes": len(encoded),
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+        }
+    return values
+
+
+def executable_identity(name: str) -> dict[str, object]:
+    selected = shutil.which(name)
+    require(selected is not None, f"required executable is not on PATH: {name}")
+    path = Path(selected).resolve()
+    contents = path.read_bytes()
+    return {
+        "path": str(path),
+        "bytes": len(contents),
+        "sha256": hashlib.sha256(contents).hexdigest(),
+    }
+
+
+def path_identity(path: Path) -> dict[str, object]:
+    """Identify an executable selected by an absolute harness path."""
+    require(path.is_file(), f"required executable does not exist: {path}")
+    resolved = path.resolve()
+    contents = resolved.read_bytes()
+    return {
+        "path": str(resolved),
+        "bytes": len(contents),
+        "sha256": hashlib.sha256(contents).hexdigest(),
+    }
+
+
+def repository_revision() -> str:
+    repository = Path(__file__).resolve().parents[2]
+    revision = command_output(["git", "-C", str(repository), "rev-parse", "HEAD"])
+    require(bool(re.fullmatch(r"[0-9a-f]{40}", revision)), "git returned an invalid revision")
+    return revision
+
+
+def evidence_identity(output: Path) -> list[dict[str, object]]:
+    """Identify every published evidence file except the completion marker."""
+    records = []
+    for path in sorted(output.rglob("*")):
+        relative = path.relative_to(output)
+        if not path.is_file() or "work" in relative.parts or path.name == "complete.json":
+            continue
+        contents = path.read_bytes()
+        records.append(
+            {
+                "path": relative.as_posix(),
+                "bytes": len(contents),
+                "sha256": hashlib.sha256(contents).hexdigest(),
+            }
+        )
+    require(bool(records), "measurement produced no evidence files")
+    return records
+
+
+def validate_rows(rows: object, *, freshness: bool) -> list[dict[str, object]]:
+    require(isinstance(rows, list) and rows, "measurement rows must be a nonempty list")
+    required = {"wall_seconds", "peak_rss_bytes", "command", "target_tree_bytes"}
+    if not freshness:
+        required |= {
+            "binary_sha256",
+            "final_binary_bytes",
+            "macho_text_const_bytes",
+            "macho_data_const_bytes",
+            "payload_occurrences_min",
+            "payload_occurrences_max",
+        }
+    for index, row in enumerate(rows):
+        require(isinstance(row, dict), f"row {index} is not an object")
+        missing = sorted(required - row.keys())
+        require(not missing, f"row {index} is missing metrics: {missing}")
+        require(
+            isinstance(row["wall_seconds"], (int, float))
+            and math.isfinite(row["wall_seconds"])
+            and row["wall_seconds"] >= 0,
+            f"row {index} has invalid wall_seconds",
+        )
+        require(
+            isinstance(row["peak_rss_bytes"], int) and row["peak_rss_bytes"] > 0,
+            f"row {index} has invalid peak_rss_bytes",
+        )
+        require(isinstance(row["command"], list) and row["command"], f"row {index} has no command")
+        if not freshness:
+            require(
+                isinstance(row["macho_text_const_bytes"], int)
+                and row["macho_text_const_bytes"] > 0,
+                f"row {index} has invalid Mach-O text const metric",
+            )
+            require(
+                isinstance(row["macho_data_const_bytes"], int)
+                and row["macho_data_const_bytes"] >= 0,
+                f"row {index} has invalid Mach-O data const metric",
+            )
+            require(
+                isinstance(row["binary_sha256"], str)
+                and bool(re.fullmatch(r"[0-9a-f]{64}", row["binary_sha256"])),
+                f"row {index} has invalid binary identity",
+            )
+    return rows
+
+
+def validate_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    try:
+        with path.open(newline="", encoding="utf-8") as source:
+            parsed = list(csv.DictReader(source))
+    except (OSError, UnicodeError, csv.Error) as error:
+        raise MeasurementFailure(f"cannot parse retained CSV {path}: {error}") from error
+    require(len(parsed) == len(rows), f"CSV/JSON row-count mismatch: {path}")
+    require(parsed and parsed[0].keys(), f"retained CSV has no schema: {path}")
+    for index, (csv_row, json_row) in enumerate(zip(parsed, rows, strict=True)):
+        for key, value in csv_row.items():
+            expected = "" if json_row.get(key) is None else str(json_row.get(key))
+            require(value == expected, f"CSV/JSON mismatch at row {index}, field {key}: {path}")
+
+
+def verify_retained(root: Path) -> dict[str, object]:
+    """Validate retained derived fixtures and state their evidence boundary."""
+    required = ("metadata.json", "results.json", "results.csv", "freshness.json", "freshness.csv")
+    for name in required:
+        require((root / name).is_file(), f"missing retained fixture: {root / name}")
+    integrity_path = root / "integrity.json"
+    require(integrity_path.is_file(), f"missing retained fixture: {integrity_path}")
+    try:
+        integrity = json.loads(integrity_path.read_text(encoding="utf-8"))
+        metadata = json.loads((root / "metadata.json").read_text(encoding="utf-8"))
+        results = validate_rows(
+            json.loads((root / "results.json").read_text(encoding="utf-8")), freshness=False
+        )
+        freshness = validate_rows(
+            json.loads((root / "freshness.json").read_text(encoding="utf-8")), freshness=True
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise MeasurementFailure(f"cannot parse retained fixture: {error}") from error
+    require(
+        isinstance(metadata, dict) and metadata.get("schema_version") == 1,
+        "unexpected legacy metadata schema",
+    )
+    validate_csv(root / "results.csv", results)
+    validate_csv(root / "freshness.csv", freshness)
+    digests = {}
+    for name in required:
+        contents = (root / name).read_bytes()
+        digests[name] = hashlib.sha256(contents).hexdigest()
+    require(
+        isinstance(integrity, dict) and integrity.get("schema_version") == 1,
+        "unexpected legacy integrity schema",
+    )
+    require(
+        integrity.get("verification_status") == "verified-derived-legacy",
+        "unexpected legacy verification status",
+    )
+    require(integrity.get("result_rows") == len(results), "legacy result-row count changed")
+    require(
+        integrity.get("freshness_rows") == len(freshness),
+        "legacy freshness-row count changed",
+    )
+    require(integrity.get("fixture_sha256") == digests, "legacy fixture digest mismatch")
+    limitations = integrity.get("limitations")
+    require(
+        isinstance(limitations, list)
+        and limitations
+        and all(isinstance(item, str) and item for item in limitations),
+        "legacy integrity limitations are missing",
+    )
+    return {
+        "status": "verified-derived-legacy",
+        "result_rows": len(results),
+        "freshness_rows": len(freshness),
+        "fixture_sha256": digests,
+        "limitations": limitations,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
+    destination = parser.add_mutually_exclusive_group(required=True)
+    destination.add_argument("--output", type=Path)
+    destination.add_argument(
+        "--verify-retained",
+        type=Path,
+        help="validate a retained legacy result set without running Cargo",
+    )
     parser.add_argument("--preset", choices=("smoke", "decision"), default="decision")
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--repetitions", type=int,
-                        help="fresh builds per matrix cell (default: decision=3, smoke=1)")
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        help="fresh builds per matrix cell (default: decision=3, smoke=1)",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        help="hard deadline for each Cargo and inspection command",
+    )
+    parser.add_argument(
+        "--overall-timeout-seconds",
+        type=int,
+        default=DEFAULT_OVERALL_TIMEOUT_SECONDS,
+        help="hard deadline for the complete measurement run",
+    )
     parser.add_argument("--keep-work", action="store_true")
     args = parser.parse_args()
+    if args.verify_retained is not None:
+        print(json.dumps(verify_retained(args.verify_retained.resolve()), indent=2))
+        return
+    require(sys.platform == "darwin", "measurement execution requires macOS")
+    require(1 <= args.timeout_seconds <= 3600, "--timeout-seconds must be in 1..=3600")
+    require(
+        1 <= args.overall_timeout_seconds <= 21600,
+        "--overall-timeout-seconds must be in 1..=21600",
+    )
+    global HARNESS_DEADLINE
+    HARNESS_DEADLINE = time.monotonic() + args.overall_timeout_seconds
+    signal.signal(signal.SIGALRM, overall_timeout_handler)
+    signal.setitimer(signal.ITIMER_REAL, args.overall_timeout_seconds)
+    require(args.output is not None, "--output is required for measurement execution")
     output = args.output.resolve()
+    if output.exists():
+        require(not any(output.iterdir()), f"output directory is not empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     raw = output / "raw"
     raw.mkdir(exist_ok=True)
     work = output / "work"
-    if work.exists():
-        shutil.rmtree(work)
     work.mkdir()
     cases = smoke_cases() if args.preset == "smoke" else decision_cases()
-    repetitions = args.repetitions if args.repetitions is not None else (1 if args.preset == "smoke" else 3)
+    repetitions = (
+        args.repetitions if args.repetitions is not None else (1 if args.preset == "smoke" else 3)
+    )
     if repetitions < 1:
         parser.error("--repetitions must be positive")
     results = []
@@ -400,16 +899,45 @@ def main() -> None:
             root = work / f"{case.name}-r{repetition}"
             root.mkdir()
             payloads = make_workspace(root, case)
-            results.append(run_build(root, case, payloads, raw, repetition))
+            results.append(
+                run_build(
+                    root,
+                    case,
+                    payloads,
+                    raw,
+                    repetition,
+                    args.timeout_seconds,
+                )
+            )
     freshness = []
     if args.preset == "decision":
         for boundary in ("same", "cross"):
             print(f"[freshness] {boundary}", flush=True)
-            freshness.extend(freshness_case(output, raw, boundary))
+            freshness.extend(freshness_case(output, raw, boundary, args.timeout_seconds))
+    validate_rows(results, freshness=False)
+    if freshness:
+        validate_rows(freshness, freshness=True)
+    script = Path(__file__).resolve()
     metadata = {
-        "schema_version": 1,
+        "schema_version": HARNESS_SCHEMA_VERSION,
         "preset": args.preset,
         "repetitions": repetitions,
+        "command_timeout_seconds": args.timeout_seconds,
+        "overall_timeout_seconds": args.overall_timeout_seconds,
+        "harness": {
+            "repository_revision": repository_revision(),
+            "path": str(script),
+            "bytes": script.stat().st_size,
+            "sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
+        },
+        "inherited_environment_identity": inherited_environment_identity(),
+        "executables": {
+            "cargo": executable_identity("cargo"),
+            "rustc": executable_identity("rustc"),
+            "size": executable_identity("size"),
+            "time": path_identity(Path("/usr/bin/time")),
+            "python": path_identity(Path(sys.executable)),
+        },
         "host": platform.platform(),
         "uname": command_output(["uname", "-s", "-r", "-m", "-v"]),
         "sw_vers": command_output(["sw_vers"]),
@@ -429,8 +957,20 @@ def main() -> None:
     write_csv(output / "results.csv", results)
     if freshness:
         write_csv(output / "freshness.csv", freshness)
+    validate_csv(output / "results.csv", results)
+    if freshness:
+        validate_csv(output / "freshness.csv", freshness)
     if not args.keep_work:
         shutil.rmtree(work)
+    completion = {
+        "schema_version": HARNESS_SCHEMA_VERSION,
+        "status": "complete",
+        "evidence": evidence_identity(output),
+    }
+    temporary_completion = output / ".complete.json.tmp"
+    temporary_completion.write_text(json.dumps(completion, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary_completion, output / "complete.json")
+    signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 if __name__ == "__main__":

@@ -6,5 +6,8 @@ fn main() {
         };
         "semantic-fallback"
     };
-    assert_eq!(selected, "semantic-fallback");
+    if selected != "semantic-fallback" {
+        eprintln!("nonmatching family did not select the semantic fallback");
+        std::process::exit(1);
+    }
 }

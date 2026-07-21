@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model"]
 supports: ["tiler.research.extensions.semantic-foundation-api-v2"]
 entrypoints: ["spikes/extensions/semantic-foundation-api-v2/consumer/src/main.rs"]
-last_verified: "2026-07-20"
+last_verified: "2026-07-21"
 ticket: "prototype-semantic-foundation-api-v2"
 ---
 
@@ -31,9 +31,11 @@ facades, and reference capabilities outside the IR crate.
 Run:
 
 ```sh
-cargo check --manifest-path spikes/extensions/semantic-foundation-api-v2/Cargo.toml --workspace --all-targets
-cargo run --manifest-path spikes/extensions/semantic-foundation-api-v2/Cargo.toml -p semantic-api-consumer
+python3 spikes/extensions/run.py --suite semantic-foundation
 ```
+
+The shared runner applies an overall timeout and records the exact source,
+toolchain, commands, exit status, and output in its ignored local trace.
 
 The code intentionally omits production canonical codecs, diagnostics, owner
 checks, and numerical implementations. It proves dependency and API shape,
