@@ -1,7 +1,7 @@
 ---
 id: correct-semantic-identity-layering
 title: Correct semantic identity layering
-status: review
+status: in-progress
 priority: p0
 dependencies: []
 related: []
@@ -33,15 +33,30 @@ their owning tickets implement the corresponding verifier authority.
 
 ## Outcome
 
-- Replaced the overloaded semantic identity with explicit graph-meaning,
-  reached-definition, admission-provenance, and full-registry-snapshot public
-  identity types.
-- Made graph identity provider-independent and retained the definition and
-  admission projections independently through the bounded compilation request
-  and artifact-construction plan.
-- Added a regression proving a provider-only revision preserves graph meaning
-  and reached definitions while changing admission and registry provenance.
-- Accepted ADR 0072 and reconciled the IR, architecture, extension, artifact,
-  correctness, roadmap, status, research, and downstream ticket contracts.
-  Later region/refinement/schedule/KIR/program identities remain explicit work
-  for their owning tickets; no placeholder types were added.
+The initial correction replaced the overloaded semantic identity with explicit
+graph-meaning, reached-definition, admission-provenance, and full-registry-
+snapshot public identity types, but adversarial review found that its reached
+authority projection is not yet transitively complete. This ticket remains in
+progress until all of the following hold:
+
+- one deterministic, cycle-safe, resource-bounded semantic authority closure
+  starts from every committed value type, operation key, and occurrence
+  attribute value;
+- the closure follows nested parameterized and encoded types, `Type` and
+  `FloatBits` attribute values, type-definition facts, and operation schema
+  defaults, facts, and conformance values;
+- freezing validates every authority referenced by a registered type
+  definition, including finite cyclic definition graphs without recursion or
+  nontermination;
+- `SemanticProgram` owns or exposes the complete reached definition and
+  admission projections so compiler callers cannot silently omit roots;
+- the compilation request retains graph meaning, reached definitions,
+  admission provenance, and full registry snapshot provenance as distinct
+  subjects; and
+- tests cover nested constructors, encoded components, attribute-only type
+  references, `FloatBits`-only references, missing definitions, finite cycles,
+  resource exhaustion, and provider-only revisions.
+
+ADR 0072 remains the accepted contract. Later region, refinement, schedule,
+KIR, program, artifact, and runtime identities remain work for their owning
+tickets; this correction must not add placeholder forms for them.

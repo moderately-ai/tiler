@@ -53,3 +53,9 @@ format.
   markers and resolved identities, transactional provider failure, dangling
   components, order-independent provenance, structural bounds, and compile-time
   prevention of post-freeze mutation.
+
+The later `correct-semantic-identity-layering` ticket owns the corrective
+transitive reached-authority closure across type-definition facts and operation
+metadata. This completed slice established the registry and local validation
+boundary; its outcome must not be read as claiming that the first downstream
+projection implementation was transitively complete.

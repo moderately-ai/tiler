@@ -51,3 +51,9 @@ preserves multi-result sharing and includes only deterministically projected
 reached semantic authority. Tests cover external authority, missing/invalid
 applications, rollback, projection, and multi-result identity; strict Clippy,
 tests, and doctests pass.
+
+The later `correct-semantic-identity-layering` ticket owns the corrective
+transitive projection across nested types, definition facts, schema defaults,
+facts, conformance values, and occurrence attributes. The projection added by
+this completed slice was an initial boundary, not the final proof that every
+admission-time authority is retained downstream.

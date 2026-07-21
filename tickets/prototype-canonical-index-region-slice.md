@@ -1,9 +1,9 @@
 ---
 id: prototype-canonical-index-region-slice
 title: Implement the canonical index-region slice
-status: review
+status: in-progress
 priority: p0
-dependencies: [prototype-shared-compiler-ir-ownership]
+dependencies: [prototype-shared-compiler-ir-ownership, correct-semantic-identity-layering]
 related: []
 scopes: [implementation/ir, implementation/compiler, implementation/workspace, project/tickets, contracts/foundation, contracts/navigation, contracts/decisions, contracts/numerics, implementation/reference, research/indexing, contracts/optimizer, contracts/artifacts]
 shared_scopes: []
@@ -72,6 +72,17 @@ provenance; neither receipt alone proves semantic equivalence.
 Treating structural checks or a correlation identity as semantic sourceability
 would admit wrong-coordinate implementations and would make external
 operations impossible to support soundly.
+
+Adversarial review found one remaining authority obligation. Scalar authority
+evidence must separately retain semantic type-definition and type-admission
+projections for every boundary type, ordinary SSA result, reduction state,
+contributor, result, and every `Type` or `FloatBits` dependency reachable from
+scalar definition attributes, defaults, facts, and conformance values. It must
+also retain complete scalar-registry snapshot provenance as compilation-
+environment identity without admitting that snapshot into structural
+`IndexRegion` identity. Tests must distinguish type-provider-only and scalar-
+provider-only revisions and prove that neither can disappear behind an
+otherwise identical structural region.
 
 The accepted dynamic contract is not misrepresented as complete. The semantic
 crate does not yet implement `ShapeEnv`, so symbolic root bindings,

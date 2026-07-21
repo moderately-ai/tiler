@@ -3,7 +3,7 @@ id: prototype-operation-compilation-capabilities
 title: Implement operation compilation capabilities
 status: todo
 priority: p0
-dependencies: [prototype-canonical-index-region-slice, correct-semantic-identity-layering]
+dependencies: [prototype-canonical-index-region-slice, correct-semantic-identity-layering, reconcile-implementation-work-graph-after-authority-audit]
 related: []
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: []

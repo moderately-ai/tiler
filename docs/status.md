@@ -35,18 +35,22 @@ boundaries are now accepted by ADRs 0070 and 0071. The compiler's bounded proof
 pipeline is compiled as ordinary library code, and the unused backwards
 compiler-to-artifact dependency has been removed. The proof-specific structs
 remain private until their dedicated generic IR/verifier tickets replace them.
-ADR 0072 and the semantic/compiler prototype now separate graph meaning,
-reached provider-independent definitions, admission-provider provenance, and
-the complete registry snapshot. Region occurrence, checked refinement,
+ADR 0072 defines separate graph meaning, reached provider-independent
+definitions, admission-provider provenance, and complete registry snapshot
+subjects. Adversarial review found that the initial implementation does not
+yet compute a transitively complete reached-authority closure for nested type
+and attribute dependencies, so that correction is again active rather than
+complete. Region occurrence, checked refinement,
 structural schedule/KIR, complete-plan, and artifact identities remain explicit
 obligations of their owning tickets rather than implemented support. The first
 public static-extent `tiler_ir::index` builder/verifier draft now exists. Its
 corrective pass uses generic typed scalar SSA, shared canonical attributes with
 width/format-preserving values and schema-default normalization, optional
 static fact views, and a separate region-bound scalar authority receipt. The
-public boundary remains under Tom's required review before integration;
-semantic lowering equivalence is deliberately still the next
-capability/refinement obligation.
+public boundary remains under Tom's required review and now also requires
+complete semantic type-authority evidence for all scalar boundary and
+intermediate types before integration. Semantic lowering equivalence remains a
+separate capability/refinement obligation.
 
 ## Authorized prototype
 
@@ -72,9 +76,9 @@ are complete for their bounded claims. The
 [`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md)
 slice establishes the accepted module, verifier, builder, and dependency
 direction without publishing the graph-specific proof structs. The semantic
-identity prerequisite is complete. The canonical index-region slice is in
-public-interface review after its corrective implementation pass; once
-accepted, the next dependency-ordered slice is
+identity prerequisite and canonical index-region slice are both back in
+corrective implementation after adversarial authority-closure review. Once
+corrected and accepted, the next dependency-ordered slice is
 [`operation compilation capabilities`](../tickets/prototype-operation-compilation-capabilities.md),
 so typed lowering callbacks emit checked shared IR rather than placeholders.
 Generic region formation, derived legality, complete partition planning, physical
