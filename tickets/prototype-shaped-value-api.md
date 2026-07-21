@@ -42,9 +42,13 @@ independent fluent operation API.
   builders and completed programs.
 - Added graph- and ordered-subject-bound `ShapeWitness<SameShape>` capabilities
   with typed proof and validation failures.
-- Added evidence-preserving scalar constant, addition, and multiplication
-  facades. They delegate to the existing builder admission path and revalidate
-  inferred result shapes; reduction intentionally returns unrefined values.
+- Added evidence-preserving scalar constant, equal-evidence pointwise, and
+  scalar-broadcast facades plus exact-to-rank weakening. They delegate to the
+  existing builder admission path and validate typed result arity, value type,
+  and shape evidence before committing any graph mutation.
+  Shape-changing runtime-attribute calls return unrefined values while callers
+  and frontends retain the general checked-refinement path for concrete output
+  evidence.
 - Added runtime, canonical-identity, and downstream compile-pass/fail coverage
   for refinement, evidence loss, foreign graphs and witnesses, subject
   mismatch, forgery, sealed evidence, unequal static shapes, and invalid

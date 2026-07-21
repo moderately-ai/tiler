@@ -4,10 +4,10 @@
 
 use std::mem::{size_of, size_of_val};
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, InputKey, OutputKey, SemanticProgramBuilder, ShapeRefineError,
-    ShapeWitnessError, StrictSerialF32Sum, Value,
+    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
+    ShapeRefineError, ShapeWitnessError, ShapedValue, StrictSerialF32Sum, Value,
 };
-use tiler_ir::shape::{Axis, Shape, ShapeExpectation, StaticShape};
+use tiler_ir::shape::{Axis, Rank, Shape, ShapeExpectation, StaticShape};
 
 type Matrix = StaticShape<2, { [2, 3] }>;
 type Transposed = StaticShape<2, { [3, 2] }>;
@@ -87,8 +87,11 @@ fn evidence_is_preserved_only_for_revalidated_exact_relationships() {
     let matrix = input(&mut builder, "matrix", [2, 3]);
     let matrix = builder.refine::<_, Matrix>(matrix).unwrap();
     let sum = F32Add::apply_shaped(&mut builder, matrix, matrix).unwrap();
+    let sum = F32Add::apply_scalar_right(&mut builder, sum, scalar).unwrap();
+    let sum = F32Multiply::apply_scalar_left(&mut builder, scalar, sum).unwrap();
+    let ranked: ShapedValue<F32, Rank<2>> = sum.forget_extents();
     let reduced: Value<F32> =
-        StrictSerialF32Sum::apply(&mut builder, sum.weaken(), [Axis::new(1)]).unwrap();
+        StrictSerialF32Sum::apply(&mut builder, ranked.weaken(), [Axis::new(1)]).unwrap();
 
     let _: Value<F32> = scalar.weaken();
     builder

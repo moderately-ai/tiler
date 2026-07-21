@@ -153,6 +153,13 @@ pub enum BuildError {
     /// A typed facade could not recover the result evidence promised by its
     /// registered semantic signature.
     Reify(ReifyError),
+    /// A typed single-result facade resolved a different result arity.
+    TypedResultArity {
+        /// Result count promised by the typed facade.
+        expected: usize,
+        /// Result count inferred by the frozen semantic authority.
+        actual: usize,
+    },
     /// A typed facade could not revalidate promised result shape evidence.
     ShapeRefinement(ShapeRefineError),
     /// A tensor rank exceeds the fixed-width logical axis space.
@@ -189,6 +196,10 @@ impl fmt::Display for BuildError {
             }
             Self::RegistryLookup(error) => error.fmt(formatter),
             Self::Reify(error) => error.fmt(formatter),
+            Self::TypedResultArity { expected, actual } => write!(
+                formatter,
+                "typed facade expected {expected} operation result(s), but semantic authority inferred {actual}"
+            ),
             Self::ShapeRefinement(error) => error.fmt(formatter),
             Self::RankTooLarge { rank } => {
                 write!(

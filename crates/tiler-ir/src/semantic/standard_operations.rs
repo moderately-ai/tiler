@@ -41,8 +41,8 @@ impl F32Constant {
         builder: &mut SemanticProgramBuilder,
         bits: u32,
     ) -> Result<ShapedValue<F32, StaticShape<0, { [] }>>, BuildError> {
-        let value = Self::apply(builder, bits)?;
-        builder.refine(value).map_err(BuildError::ShapeRefinement)
+        let attributes = constant_attributes(bits)?;
+        apply_shaped_single(builder, constant_f32_op(), attributes, &[])
     }
 }
 
@@ -81,8 +81,50 @@ impl F32Multiply {
         left: ShapedValue<F32, E>,
         right: ShapedValue<F32, E>,
     ) -> Result<ShapedValue<F32, E>, BuildError> {
-        let value = Self::apply(builder, left.weaken(), right.weaken())?;
-        builder.refine(value).map_err(BuildError::ShapeRefinement)
+        apply_shaped_single(
+            builder,
+            multiply_f32_op(),
+            OperationAttributes::empty(),
+            &[left.weaken().erase(), right.weaken().erase()],
+        )
+    }
+
+    /// Multiplies a scalar left operand by a shaped right operand and
+    /// preserves the right operand's evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_scalar_left<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        left: ShapedValue<F32, StaticShape<0, { [] }>>,
+        right: ShapedValue<F32, E>,
+    ) -> Result<ShapedValue<F32, E>, BuildError> {
+        apply_shaped_single(
+            builder,
+            multiply_f32_op(),
+            OperationAttributes::empty(),
+            &[left.weaken().erase(), right.weaken().erase()],
+        )
+    }
+
+    /// Multiplies a shaped left operand by a scalar right operand and
+    /// preserves the left operand's evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_scalar_right<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        left: ShapedValue<F32, E>,
+        right: ShapedValue<F32, StaticShape<0, { [] }>>,
+    ) -> Result<ShapedValue<F32, E>, BuildError> {
+        apply_shaped_single(
+            builder,
+            multiply_f32_op(),
+            OperationAttributes::empty(),
+            &[left.weaken().erase(), right.weaken().erase()],
+        )
     }
 }
 
@@ -121,8 +163,50 @@ impl F32Add {
         left: ShapedValue<F32, E>,
         right: ShapedValue<F32, E>,
     ) -> Result<ShapedValue<F32, E>, BuildError> {
-        let value = Self::apply(builder, left.weaken(), right.weaken())?;
-        builder.refine(value).map_err(BuildError::ShapeRefinement)
+        apply_shaped_single(
+            builder,
+            add_f32_op(),
+            OperationAttributes::empty(),
+            &[left.weaken().erase(), right.weaken().erase()],
+        )
+    }
+
+    /// Adds a scalar left operand to a shaped right operand and preserves the
+    /// right operand's evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_scalar_left<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        left: ShapedValue<F32, StaticShape<0, { [] }>>,
+        right: ShapedValue<F32, E>,
+    ) -> Result<ShapedValue<F32, E>, BuildError> {
+        apply_shaped_single(
+            builder,
+            add_f32_op(),
+            OperationAttributes::empty(),
+            &[left.weaken().erase(), right.weaken().erase()],
+        )
+    }
+
+    /// Adds a shaped left operand to a scalar right operand and preserves the
+    /// left operand's evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_scalar_right<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        left: ShapedValue<F32, E>,
+        right: ShapedValue<F32, StaticShape<0, { [] }>>,
+    ) -> Result<ShapedValue<F32, E>, BuildError> {
+        apply_shaped_single(
+            builder,
+            add_f32_op(),
+            OperationAttributes::empty(),
+            &[left.weaken().erase(), right.weaken().erase()],
+        )
     }
 }
 
@@ -165,7 +249,22 @@ fn apply_single(
     attributes: OperationAttributes,
     operands: &[super::ValueId],
 ) -> Result<Value<F32>, BuildError> {
-    let mut results = builder.apply(key, attributes, operands)?;
-    debug_assert_eq!(results.len(), 1);
-    builder.reify(results.remove(0)).map_err(BuildError::Reify)
+    builder.apply_typed_single(key, attributes, operands)
+}
+
+fn apply_shaped_single<E: ShapeEvidence>(
+    builder: &mut SemanticProgramBuilder,
+    key: super::OpKey,
+    attributes: OperationAttributes,
+    operands: &[super::ValueId],
+) -> Result<ShapedValue<F32, E>, BuildError> {
+    builder.apply_shaped_single(key, attributes, operands)
+}
+
+fn constant_attributes(bits: u32) -> Result<OperationAttributes, BuildError> {
+    OperationAttributes::new([CanonicalField::new(
+        F32_CONSTANT_BITS_ATTRIBUTE,
+        CanonicalValue::unsigned(u64::from(bits)),
+    )])
+    .map_err(BuildError::InvalidOperationAttributes)
 }

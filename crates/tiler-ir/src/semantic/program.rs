@@ -493,7 +493,72 @@ impl SemanticProgramBuilder {
         attributes: OperationAttributes,
         operands: &[ValueId],
     ) -> Result<Vec<ValueId>, BuildError> {
-        self.push_operation(key, attributes, operands)
+        self.push_operation(key, attributes, operands, |_, _| Ok(()))
+    }
+
+    pub(super) fn apply_typed_single<T: super::registry::ValueTypeMarker>(
+        &mut self,
+        key: super::operation::OpKey,
+        attributes: OperationAttributes,
+        operands: &[ValueId],
+    ) -> Result<Value<T>, BuildError> {
+        self.apply_typed_single_checked(key, attributes, operands, |_| Ok(()))
+    }
+
+    pub(super) fn apply_shaped_single<T: super::registry::ValueTypeMarker, E: ShapeEvidence>(
+        &mut self,
+        key: super::operation::OpKey,
+        attributes: OperationAttributes,
+        operands: &[ValueId],
+    ) -> Result<ShapedValue<T, E>, BuildError> {
+        self.apply_typed_single_checked(key, attributes, operands, |fact| {
+            if E::matches(fact.shape()) {
+                Ok(())
+            } else {
+                Err(BuildError::ShapeRefinement(
+                    ShapeRefineError::EvidenceMismatch {
+                        expected: E::expectation(),
+                        actual: fact.shape().clone(),
+                    },
+                ))
+            }
+        })
+        .map(ShapedValue::from_verified)
+    }
+
+    fn apply_typed_single_checked<T, F>(
+        &mut self,
+        key: super::operation::OpKey,
+        attributes: OperationAttributes,
+        operands: &[ValueId],
+        validate_fact: F,
+    ) -> Result<Value<T>, BuildError>
+    where
+        T: super::registry::ValueTypeMarker,
+        F: FnOnce(&ValueFact) -> Result<(), BuildError>,
+    {
+        let mut results = self.push_operation(key, attributes, operands, |registry, facts| {
+            let expected = registry
+                .resolve_marker::<T>()
+                .map_err(BuildError::RegistryLookup)?;
+            let [fact] = facts else {
+                return Err(BuildError::TypedResultArity {
+                    expected: 1,
+                    actual: facts.len(),
+                });
+            };
+            if fact.resolved_type() != expected {
+                return Err(BuildError::Reify(ReifyError::TypeMismatch {
+                    expected: Arc::new(expected.clone()),
+                    actual: Arc::new(fact.resolved_type().clone()),
+                }));
+            }
+            validate_fact(fact)
+        })?;
+        let result = results
+            .pop()
+            .expect("single-result facade was validated before graph mutation");
+        Ok(Value::from_verified(result))
     }
 
     /// Adds an ordered named output with exact static type evidence.
@@ -599,12 +664,16 @@ impl SemanticProgramBuilder {
         })
     }
 
-    fn push_operation(
+    fn push_operation<F>(
         &mut self,
         key: super::operation::OpKey,
         attributes: OperationAttributes,
         operands: &[ValueId],
-    ) -> Result<Vec<ValueId>, BuildError> {
+        validate_results: F,
+    ) -> Result<Vec<ValueId>, BuildError>
+    where
+        F: FnOnce(&FrozenSemanticRegistry, &[ValueFact]) -> Result<(), BuildError>,
+    {
         let operand_indices: Vec<_> = operands
             .iter()
             .enumerate()
@@ -631,6 +700,7 @@ impl SemanticProgramBuilder {
         for fact in &inferred {
             validate_shape(fact.shape())?;
         }
+        validate_results(&self.semantic_registry, &inferred)?;
         let operation_index =
             OperationIndex::from_len(self.operations.len()).ok_or(BuildError::TooManyEntities {
                 entity: EntityKind::Operation,
@@ -1042,7 +1112,7 @@ mod tests {
         SemanticRegistryRegistrar, StrictSerialF32Sum, add_f32_op,
     };
     use super::*;
-    use crate::shape::{Axis, Shape};
+    use crate::shape::{Axis, Shape, StaticShape};
 
     fn input_key(value: &str) -> InputKey {
         InputKey::new(value).unwrap()
@@ -1786,5 +1856,48 @@ mod tests {
         let separate = separate.build().unwrap();
 
         assert_ne!(shared.canonical_identity(), separate.canonical_identity());
+    }
+
+    #[test]
+    fn typed_result_checks_are_transactional() {
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&OperationProvider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input::<F32>(input_key("x"), Shape::from_dims([2]))
+            .unwrap();
+        let operation_count = builder.operations.len();
+        let value_count = builder.values.len();
+
+        let arity_error = builder
+            .apply_typed_single::<F32>(
+                OpKey::new("test", "pair", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            )
+            .unwrap_err();
+        assert_eq!(
+            arity_error,
+            BuildError::TypedResultArity {
+                expected: 1,
+                actual: 2,
+            }
+        );
+        assert_eq!(builder.operations.len(), operation_count);
+        assert_eq!(builder.values.len(), value_count);
+
+        let shape_error = builder
+            .apply_shaped_single::<F32, StaticShape<1, { [3] }>>(
+                OpKey::new("test", "identity", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            )
+            .unwrap_err();
+        assert!(matches!(
+            shape_error,
+            BuildError::ShapeRefinement(ShapeRefineError::EvidenceMismatch { .. })
+        ));
+        assert_eq!(builder.operations.len(), operation_count);
+        assert_eq!(builder.values.len(), value_count);
     }
 }

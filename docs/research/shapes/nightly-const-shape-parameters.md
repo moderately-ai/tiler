@@ -262,3 +262,29 @@ exact-shape evidence spelling. These single-host measurements reject a
 catastrophic prototype cost; they are not a portable compiler-performance
 guarantee. The bounded production `tiler-ir` draft now implements this form;
 its public names and call-site details remain under review.
+
+## Result-evidence transformation boundary
+
+**Measurement:** direct governed-pin probes show that scalar broadcast can
+return the non-scalar operand's evidence and a runtime-axis operation can accept
+caller-selected concrete output evidence using only the selected feature set.
+Generated frontends can likewise emit a concrete `StaticShape` instantiation
+and request checked graph refinement; no generated trait implementation is
+required.
+
+**Measurement:** `Rank<{ RANK - 1 }>` compiled only after additionally enabling
+`generic_const_exprs`. A generic exact reduction result of the form
+`StaticShape<{ RANK - 1 }, { remove_axis(EXTENTS, AXIS) }>` remained rejected
+as an anonymous constant referencing generics, including through an associated
+type. The emerging `generic_const_args` spelling also failed on both tested
+compiler pins and required non-governed next-solver state before reaching its
+remaining generic-const limitations. The retained probes are in the
+[nightly conformance fixture](../../../spikes/shapes/nightly-dependent-static-shapes/README.md).
+
+**Inference:** evidence preservation and automatic generic evidence derivation
+are separate capabilities. Tiler should preserve relationships directly
+expressible by the selected features, let generated/static frontends request
+concrete checked output evidence, and use graph witnesses for symbolic/runtime
+relationships. It should not enable the older `generic_const_exprs` mechanism
+solely for weaker rank arithmetic while generic exact-array transformation
+remains unavailable and Rust's replacement design is incomplete.

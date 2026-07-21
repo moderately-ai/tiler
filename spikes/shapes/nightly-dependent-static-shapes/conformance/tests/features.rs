@@ -59,3 +59,39 @@ fn borrowed_slice_remains_an_isolated_nonselected_comparison() {
     assert!(!source.contains("generic_const_args"));
     assert!(!source.contains("generic_const_exprs"));
 }
+
+#[test]
+fn evidence_transforms_match_the_governed_feature_boundary() {
+    for name in [
+        "runtime_axis_expected_output",
+        "scalar_broadcast_preserves_operand",
+    ] {
+        let output = compile_probe(name);
+        assert!(output.status.success(), "{name}: {}", stderr(&output));
+    }
+
+    let rank_selected = compile_probe("reduction_rank_selected");
+    assert!(!rank_selected.status.success());
+    assert!(stderr(&rank_selected).contains("generic_const_exprs"));
+
+    let rank_generic = compile_probe("reduction_rank_generic_const_exprs");
+    assert!(rank_generic.status.success(), "{}", stderr(&rank_generic));
+
+    for name in [
+        "reduction_transform_selected",
+        "reduction_transform_generic_const_exprs",
+        "reduction_transform_associated_type",
+    ] {
+        let output = compile_probe(name);
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+    }
+    let exact_generic = compile_probe("reduction_transform_generic_const_exprs");
+    assert!(
+        stderr(&exact_generic)
+            .contains("anonymous constants referencing generics are not yet supported")
+    );
+
+    let generic_args = compile_probe("reduction_transform_generic_const_args");
+    assert!(!generic_args.status.success());
+    assert!(stderr(&generic_args).contains("requires -Znext-solver=globally"));
+}

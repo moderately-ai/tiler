@@ -87,10 +87,16 @@ constructed `ShapedValue<T, E>` capabilities under `tiler_ir::semantic`, and a
 graph-owned `ShapeWitness<SameShape>` for the first selected multi-value
 predicate. Both draft builders and completed programs check refinement and
 witness ownership against their canonical shapes. `F32Constant`, `F32Add`, and
-`F32Multiply` provide builder-centered evidence-preserving facades only where
-the result relationship is exact; each delegates to ordinary operation
-admission and rechecks the returned value. Reduction deliberately weakens to
-`Value<T>`.
+`F32Multiply` provide builder-centered evidence-preserving facades for equal
+evidence and scalar broadcast. Each uses the ordinary inference and admission
+path, checks its typed result arity, value type, and shape postconditions before
+commit, and therefore leaves the builder unchanged on any failure. Exact
+evidence can weaken directly to its proved rank. Shape-changing operations
+return `Value<T>` when runtime
+attributes do not determine one Rust return type; callers and statically
+informed frontends may immediately request concrete output evidence through
+checked refinement. Generated code instantiates existing evidence families; it
+does not generate new implementations that claim checking authority.
 
 Runtime, identity, and compile-fail tests cover mismatch diagnostics, foreign
 graphs and witnesses, subject binding, forgery resistance, explicit weakening,

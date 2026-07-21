@@ -2,6 +2,7 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::{Value, ValueId};
+use crate::shape::{Rank, StaticShape};
 
 /// A privately constructed typed value carrying checked shape evidence.
 ///
@@ -25,6 +26,14 @@ impl<T, E> ShapedValue<T, E> {
     #[must_use]
     pub const fn weaken(self) -> Value<T> {
         self.value
+    }
+}
+
+impl<T, const RANK: usize, const EXTENTS: [u64; RANK]> ShapedValue<T, StaticShape<RANK, EXTENTS>> {
+    /// Discards exact extents while retaining statically proved rank.
+    #[must_use]
+    pub const fn forget_extents(self) -> ShapedValue<T, Rank<RANK>> {
+        ShapedValue::from_verified(self.value)
     }
 }
 
