@@ -7,6 +7,7 @@
 //! rustc --edition 2021 spikes/cache/cache_harness.rs -o /tmp/tiler-cache-harness
 //! /tmp/tiler-cache-harness selftest
 //! /tmp/tiler-cache-harness selftest --stress 32
+//! /tmp/tiler-cache-harness selftest --stress 32 --repetitions 10 --evidence /tmp/cache-evidence.tsv
 //! ```
 
 use std::env;
@@ -21,6 +22,8 @@ const MAGIC: &[u8; 8] = b"TLRCCH01";
 const VERSION: u16 = 1;
 const HEADER_LEN: usize = 92;
 const MAX_PAYLOAD: usize = 16 * 1024 * 1024;
+const DEFAULT_CHILD_TIMEOUT: Duration = Duration::from_secs(20);
+const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 type AnyResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -143,6 +146,103 @@ struct Paths {
     entry: PathBuf,
     lock: PathBuf,
     temp_dir: PathBuf,
+}
+
+#[derive(Debug)]
+struct ManagedChild {
+    child: Child,
+    label: String,
+    deadline: Instant,
+    timeout: Duration,
+    reaped: bool,
+}
+
+impl ManagedChild {
+    fn spawn(mut command: Command, label: impl Into<String>, timeout: Duration) -> AnyResult<Self> {
+        let label = label.into();
+        let child = command.spawn()?;
+        Ok(Self {
+            child,
+            label,
+            deadline: Instant::now() + timeout,
+            timeout,
+            reaped: false,
+        })
+    }
+
+    fn wait_success(&mut self) -> AnyResult<ExitStatus> {
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                self.reaped = true;
+                if status.success() {
+                    return Ok(status);
+                }
+                return Err(format!("child {} exited with {status}", self.label).into());
+            }
+            self.check_deadline()?;
+            thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    fn wait_for_path(&mut self, path: &Path) -> AnyResult<()> {
+        loop {
+            if path.exists() {
+                return Ok(());
+            }
+            if let Some(status) = self.child.try_wait()? {
+                self.reaped = true;
+                return Err(format!(
+                    "child {} exited with {status} before creating {}",
+                    self.label,
+                    path.display()
+                )
+                .into());
+            }
+            self.check_deadline()?;
+            thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    fn kill_and_reap(&mut self) -> AnyResult<ExitStatus> {
+        if self.reaped {
+            return Err(format!("child {} was already reaped", self.label).into());
+        }
+        match self.child.kill() {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput => {}
+            Err(error) => return Err(error.into()),
+        }
+        let status = self.child.wait()?;
+        self.reaped = true;
+        Ok(status)
+    }
+
+    fn check_deadline(&mut self) -> AnyResult<()> {
+        if Instant::now() < self.deadline {
+            return Ok(());
+        }
+        let _ = self.kill_and_reap();
+        Err(format!(
+            "child {} exceeded overall deadline of {} ms",
+            self.label,
+            self.timeout.as_millis()
+        )
+        .into())
+    }
+}
+
+impl Drop for ManagedChild {
+    fn drop(&mut self) {
+        if !self.reaped {
+            // Never turn cleanup itself into an unbounded wait. A successful
+            // kill permits a blocking reap; a kill error leaves the operating
+            // system to reclaim the child when this parent exits.
+            if self.child.kill().is_ok() {
+                let _ = self.child.wait();
+                self.reaped = true;
+            }
+        }
+    }
 }
 
 impl Cache {
@@ -443,6 +543,12 @@ fn held_reader(args: &[String]) -> AnyResult<()> {
     Ok(())
 }
 
+fn blocked_child() -> AnyResult<()> {
+    loop {
+        thread::sleep(Duration::from_secs(60));
+    }
+}
+
 fn required<'a>(args: &'a [String], flag: &str) -> AnyResult<&'a str> {
     optional(args, flag).ok_or_else(|| format!("missing {flag}").into())
 }
@@ -466,6 +572,7 @@ fn wait_for(path: &Path, timeout: Duration) -> AnyResult<()> {
 }
 
 fn spawn_worker(
+    label: impl Into<String>,
     root: &Path,
     key: &str,
     payload: &str,
@@ -474,7 +581,7 @@ fn spawn_worker(
     go: Option<&Path>,
     pause: Option<(Phase, &Path)>,
     durability: Durability,
-) -> AnyResult<Child> {
+) -> AnyResult<ManagedChild> {
     let mut command = Command::new(env::current_exe()?);
     command
         .arg("worker")
@@ -503,15 +610,7 @@ fn spawn_worker(
             .arg("--marker")
             .arg(marker);
     }
-    Ok(command.spawn()?)
-}
-
-fn wait_success(child: &mut Child) -> AnyResult<ExitStatus> {
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(format!("child exited with {status}").into());
-    }
-    Ok(status)
+    ManagedChild::spawn(command, label, DEFAULT_CHILD_TIMEOUT)
 }
 
 fn line_count(path: &Path) -> AnyResult<usize> {
@@ -539,6 +638,7 @@ fn test_identical(root: &Path, process_count: usize) -> AnyResult<()> {
     let mut children = Vec::new();
     for index in 0..process_count {
         children.push(spawn_worker(
+            format!("identical-worker-{index}"),
             &cache_root,
             &key,
             "same-payload",
@@ -551,7 +651,7 @@ fn test_identical(root: &Path, process_count: usize) -> AnyResult<()> {
     }
     fs::write(&go, "go")?;
     for child in &mut children {
-        wait_success(child)?;
+        child.wait_success()?;
     }
     assert_eq!(
         line_count(&compile_log)?,
@@ -575,6 +675,7 @@ fn test_distinct(root: &Path, process_count: usize) -> AnyResult<()> {
     let mut children = Vec::new();
     for index in 0..process_count {
         children.push(spawn_worker(
+            format!("distinct-worker-{index}"),
             &cache_root,
             &cache_key(&format!("distinct-{index}")),
             &format!("payload-{index}"),
@@ -587,7 +688,7 @@ fn test_distinct(root: &Path, process_count: usize) -> AnyResult<()> {
     }
     fs::write(&go, "go")?;
     for child in &mut children {
-        wait_success(child)?;
+        child.wait_success()?;
     }
     assert_eq!(line_count(&compile_log)?, process_count);
     Ok(())
@@ -601,6 +702,7 @@ fn test_killed_writers(root: &Path) -> AnyResult<()> {
         let marker = case.join("paused");
         let key = cache_key(phase.label());
         let mut killed = spawn_worker(
+            format!("kill-worker-{}", phase.label()),
             &cache_root,
             &key,
             "recoverable",
@@ -610,11 +712,11 @@ fn test_killed_writers(root: &Path) -> AnyResult<()> {
             Some((phase, &marker)),
             Durability::Fsync,
         )?;
-        wait_for(&marker, Duration::from_secs(20))?;
-        killed.kill()?;
-        let _ = killed.wait()?;
+        killed.wait_for_path(&marker)?;
+        let _ = killed.kill_and_reap()?;
 
         let mut recovery = spawn_worker(
+            format!("recovery-worker-{}", phase.label()),
             &cache_root,
             &key,
             "recoverable",
@@ -624,7 +726,7 @@ fn test_killed_writers(root: &Path) -> AnyResult<()> {
             None,
             Durability::Fsync,
         )?;
-        wait_success(&mut recovery)?;
+        recovery.wait_success()?;
         assert_eq!(
             Cache::new(cache_root).read(&key)?.as_deref(),
             Some(&b"recoverable"[..])
@@ -666,6 +768,7 @@ fn test_corruption(root: &Path) -> AnyResult<()> {
         fs::write(&paths.entry, corrupt)?;
         let compile_log = case.join("compiles");
         let mut child = spawn_worker(
+            format!("corruption-worker-{name}"),
             &cache_root,
             &key,
             "rebuilt",
@@ -675,7 +778,7 @@ fn test_corruption(root: &Path) -> AnyResult<()> {
             None,
             Durability::ProcessCrash,
         )?;
-        wait_success(&mut child)?;
+        child.wait_success()?;
         assert_eq!(line_count(&compile_log)?, 1);
         assert_eq!(cache.read(&key)?.as_deref(), Some(&b"rebuilt"[..]));
     }
@@ -690,6 +793,7 @@ fn test_deletion(root: &Path) -> AnyResult<()> {
     let compile_log = case.join("compiles");
     for generation in 0..3 {
         let mut child = spawn_worker(
+            format!("deletion-worker-{generation}"),
             &cache_root,
             &key,
             "replaceable",
@@ -699,7 +803,7 @@ fn test_deletion(root: &Path) -> AnyResult<()> {
             None,
             Durability::ProcessCrash,
         )?;
-        wait_success(&mut child)?;
+        child.wait_success()?;
         if generation == 0 {
             fs::remove_file(cache.paths(&key)?.entry)?;
         } else if generation == 1 {
@@ -718,6 +822,7 @@ fn test_active_whole_cache_deletion(root: &Path) -> AnyResult<()> {
     let compile_log = case.join("compiles");
     let marker = case.join("first-paused");
     let mut first = spawn_worker(
+        "active-delete-first-worker",
         &cache_root,
         &key,
         "same-correct-output",
@@ -727,13 +832,14 @@ fn test_active_whole_cache_deletion(root: &Path) -> AnyResult<()> {
         Some((Phase::AfterTempCreate, &marker)),
         Durability::ProcessCrash,
     )?;
-    wait_for(&marker, Duration::from_secs(20))?;
+    first.wait_for_path(&marker)?;
 
     // This models an external recursive deletion, not coordinated GC. It
     // unlinks the stable lock inode, so duplicate work suppression is lost.
     // Correctness still comes from validation plus immutable publication.
     fs::remove_dir_all(&cache_root)?;
     let mut second = spawn_worker(
+        "active-delete-second-worker",
         &cache_root,
         &key,
         "same-correct-output",
@@ -743,9 +849,8 @@ fn test_active_whole_cache_deletion(root: &Path) -> AnyResult<()> {
         None,
         Durability::ProcessCrash,
     )?;
-    wait_success(&mut second)?;
-    first.kill()?;
-    let _ = first.wait()?;
+    second.wait_success()?;
+    let _ = first.kill_and_reap()?;
 
     assert_eq!(line_count(&compile_log)?, 2);
     assert_eq!(
@@ -762,6 +867,7 @@ fn test_unwritable(root: &Path) -> AnyResult<()> {
     let compile_log = case.join("compiles");
     let result = case.join("result");
     let mut child = spawn_worker(
+        "unwritable-root-worker",
         &unusable_root,
         &cache_key("unwritable"),
         "still-correct",
@@ -771,7 +877,7 @@ fn test_unwritable(root: &Path) -> AnyResult<()> {
         None,
         Durability::ProcessCrash,
     )?;
-    wait_success(&mut child)?;
+    child.wait_success()?;
     assert_eq!(fs::read_to_string(result)?, "uncached");
     assert_eq!(line_count(&compile_log)?, 1);
     Ok(())
@@ -783,6 +889,7 @@ fn test_eviction_reader(root: &Path) -> AnyResult<()> {
     let key = cache_key("eviction-reader");
     let compile_log = case.join("compiles");
     let mut writer = spawn_worker(
+        "eviction-writer",
         &cache_root,
         &key,
         "reader-keeps-open-inode",
@@ -792,12 +899,13 @@ fn test_eviction_reader(root: &Path) -> AnyResult<()> {
         None,
         Durability::ProcessCrash,
     )?;
-    wait_success(&mut writer)?;
+    writer.wait_success()?;
 
     let marker = case.join("reader-opened");
     let resume = case.join("reader-resume");
     let result = case.join("reader-result");
-    let mut reader = Command::new(env::current_exe()?)
+    let mut reader_command = Command::new(env::current_exe()?);
+    reader_command
         .arg("held-reader")
         .arg("--root")
         .arg(&cache_root)
@@ -808,25 +916,128 @@ fn test_eviction_reader(root: &Path) -> AnyResult<()> {
         .arg("--resume")
         .arg(&resume)
         .arg("--result")
-        .arg(&result)
-        .spawn()?;
-    wait_for(&marker, Duration::from_secs(20))?;
+        .arg(&result);
+    let mut reader = ManagedChild::spawn(
+        reader_command,
+        "eviction-held-reader",
+        DEFAULT_CHILD_TIMEOUT,
+    )?;
+    reader.wait_for_path(&marker)?;
     Cache::new(cache_root.clone()).evict_key(&key)?;
     fs::write(&resume, "resume")?;
-    wait_success(&mut reader)?;
+    reader.wait_success()?;
     assert_eq!(fs::read_to_string(result)?, "valid");
     assert!(Cache::new(cache_root).read(&key)?.is_none());
     Ok(())
 }
 
+fn test_blocked_child_deadline() -> AnyResult<()> {
+    const BLOCKED_TIMEOUT: Duration = Duration::from_millis(100);
+    let mut command = Command::new(env::current_exe()?);
+    command.arg("blocked-child");
+    let mut child = ManagedChild::spawn(command, "injected-blocked-worker", BLOCKED_TIMEOUT)?;
+    let started = Instant::now();
+    let error = child
+        .wait_success()
+        .expect_err("permanently blocked child unexpectedly succeeded");
+    let expected = "child injected-blocked-worker exceeded overall deadline of 100 ms";
+    if error.to_string() != expected {
+        return Err(format!("unexpected blocked-child diagnostic: {error}").into());
+    }
+    if started.elapsed() > Duration::from_secs(2) {
+        return Err("blocked-child deadline test exceeded two-second outer bound".into());
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct EvidenceWriter {
+    file: File,
+}
+
+impl EvidenceWriter {
+    fn create(path: &Path, stress: usize, repetitions: usize) -> AnyResult<Self> {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = File::create(path)?;
+        writeln!(file, "schema\ttiler-cache-harness-evidence-v1")?;
+        writeln!(file, "stress\t{stress}")?;
+        writeln!(file, "repetitions\t{repetitions}")?;
+        writeln!(file, "kill_points\t{}", Phase::KILL_POINTS.len())?;
+        writeln!(
+            file,
+            "columns\trepetition\tstatus\tidentical_processes\tidentical_compiles\tdistinct_processes\tdistinct_compiles\tkill_points\tcorrupt_cases\tdeletion_rebuilds\tactive_delete_compiles\tunwritable_compiles\teviction_reader_valid\tblocked_child_deadline_ms\telapsed_ms"
+        )?;
+        file.sync_all()?;
+        Ok(Self { file })
+    }
+
+    fn record_pass(
+        &mut self,
+        repetition: usize,
+        stress: usize,
+        elapsed: Duration,
+    ) -> AnyResult<()> {
+        writeln!(
+            self.file,
+            "run\t{repetition}\tpassed\t{stress}\t1\t{stress}\t{stress}\t{}\t2\t3\t2\t1\t1\t100\t{}",
+            Phase::KILL_POINTS.len(),
+            elapsed.as_millis()
+        )?;
+        self.file.sync_all()?;
+        Ok(())
+    }
+}
+
+fn run_once(root: &Path, stress: usize) -> AnyResult<()> {
+    assert_eq!(
+        to_hex(&sha256(b"abc")),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    test_identical(root, stress)?;
+    println!("ok concurrent-identical processes={stress}");
+    test_distinct(root, stress)?;
+    println!("ok concurrent-distinct processes={stress}");
+    test_killed_writers(root)?;
+    println!("ok killed-writers phases={}", Phase::KILL_POINTS.len());
+    test_corruption(root)?;
+    println!("ok corrupt-and-truncated-recovery");
+    test_deletion(root)?;
+    println!("ok entry-and-whole-cache-deletion");
+    test_active_whole_cache_deletion(root)?;
+    println!("ok active-whole-cache-deletion-remains-correct");
+    test_unwritable(root)?;
+    println!("ok unavailable-root-uncached-fallback");
+    test_eviction_reader(root)?;
+    println!("ok eviction-racing-open-reader");
+    test_blocked_child_deadline()?;
+    println!("ok blocked-child-bounded-failure deadline-ms=100");
+    Ok(())
+}
+
 fn selftest(args: &[String]) -> AnyResult<()> {
-    let stress = optional(args, "--stress")
+    let stress: usize = optional(args, "--stress")
         .map(str::parse)
         .transpose()?
         .unwrap_or(12usize);
     if stress == 0 || stress > 256 {
         return Err("--stress must be in 1..=256".into());
     }
+    let repetitions: usize = optional(args, "--repetitions")
+        .map(str::parse)
+        .transpose()?
+        .unwrap_or(1);
+    if repetitions == 0 || repetitions > 100 {
+        return Err("--repetitions must be in 1..=100".into());
+    }
+    let mut evidence = optional(args, "--evidence")
+        .map(Path::new)
+        .map(|path| EvidenceWriter::create(path, stress, repetitions))
+        .transpose()?;
     let root = env::temp_dir().join(format!(
         "tiler-cache-harness-{}-{}",
         process::id(),
@@ -835,37 +1046,31 @@ fn selftest(args: &[String]) -> AnyResult<()> {
     fs::create_dir_all(&root)?;
     let started = Instant::now();
 
-    assert_eq!(
-        to_hex(&sha256(b"abc")),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    );
-    test_identical(&root, stress)?;
-    println!("ok concurrent-identical processes={stress}");
-    test_distinct(&root, stress)?;
-    println!("ok concurrent-distinct processes={stress}");
-    test_killed_writers(&root)?;
-    println!("ok killed-writers phases={}", Phase::KILL_POINTS.len());
-    test_corruption(&root)?;
-    println!("ok corrupt-and-truncated-recovery");
-    test_deletion(&root)?;
-    println!("ok entry-and-whole-cache-deletion");
-    test_active_whole_cache_deletion(&root)?;
-    println!("ok active-whole-cache-deletion-remains-correct");
-    test_unwritable(&root)?;
-    println!("ok unavailable-root-uncached-fallback");
-    test_eviction_reader(&root)?;
-    println!("ok eviction-racing-open-reader");
+    for repetition in 1..=repetitions {
+        let run_root = root.join(format!("run-{repetition:03}"));
+        fs::create_dir_all(&run_root)?;
+        let run_started = Instant::now();
+        run_once(&run_root, stress)?;
+        let elapsed = run_started.elapsed();
+        if let Some(evidence) = &mut evidence {
+            evidence.record_pass(repetition, stress, elapsed)?;
+        }
+        println!(
+            "ok repetition={repetition}/{repetitions} elapsed-ms={}",
+            elapsed.as_millis()
+        );
+    }
 
     fs::remove_dir_all(&root)?;
     println!(
-        "all cache harness cases passed in {:.2?}",
+        "all cache harness cases passed repetitions={repetitions} stress={stress} in {:.2?}",
         started.elapsed()
     );
     Ok(())
 }
 
 fn usage() {
-    eprintln!("usage: cache_harness selftest [--stress N]");
+    eprintln!("usage: cache_harness selftest [--stress N] [--repetitions N] [--evidence PATH]");
 }
 
 fn main() {
@@ -874,6 +1079,7 @@ fn main() {
         Some("selftest") => selftest(&args[1..]),
         Some("worker") => worker(&args[1..]),
         Some("held-reader") => held_reader(&args[1..]),
+        Some("blocked-child") => blocked_child(),
         _ => {
             usage();
             process::exit(2);

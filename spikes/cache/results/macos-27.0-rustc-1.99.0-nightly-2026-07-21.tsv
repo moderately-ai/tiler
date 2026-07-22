@@ -1,0 +1,15 @@
+schema	tiler-cache-harness-evidence-v1
+stress	32
+repetitions	10
+kill_points	9
+columns	repetition	status	identical_processes	identical_compiles	distinct_processes	distinct_compiles	kill_points	corrupt_cases	deletion_rebuilds	active_delete_compiles	unwritable_compiles	eviction_reader_valid	blocked_child_deadline_ms	elapsed_ms
+run	1	passed	32	1	32	32	9	2	3	2	1	1	100	407
+run	2	passed	32	1	32	32	9	2	3	2	1	1	100	407
+run	3	passed	32	1	32	32	9	2	3	2	1	1	100	417
+run	4	passed	32	1	32	32	9	2	3	2	1	1	100	418
+run	5	passed	32	1	32	32	9	2	3	2	1	1	100	423
+run	6	passed	32	1	32	32	9	2	3	2	1	1	100	419
+run	7	passed	32	1	32	32	9	2	3	2	1	1	100	424
+run	8	passed	32	1	32	32	9	2	3	2	1	1	100	433
+run	9	passed	32	1	32	32	9	2	3	2	1	1	100	417
+run	10	passed	32	1	32	32	9	2	3	2	1	1	100	423
