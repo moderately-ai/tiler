@@ -264,6 +264,46 @@ or rolling up research work.
 - Preserve other agents' and Tom's dirty changes. Stage and commit exact paths;
   never sweep unrelated modifications into a commit.
 
+### Isolated worktree convention
+
+Coordinator-created worktrees live outside the repository under:
+
+```text
+/Users/tsanterre/workspace/github.com/moderately-ai/.worktrees/tiler
+```
+
+Use these layouts and ownership rules:
+
+- A ticket has one writable editor worktree at `<root>/<ticket>/edit`, for
+  example
+  `/Users/tsanterre/workspace/github.com/moderately-ai/.worktrees/tiler/prototype-canonical-index-region-slice/edit`.
+  It checks out `tkt/<ticket>` from the ticket's recorded exact base commit.
+- Claim the ticket before creating its branch or worktree. The coordinator must
+  record the exact base commit and give the worker a task message containing
+  the ticket ID, role, branch, absolute worktree path, exact base, allowed
+  scope, and whether edits are permitted. A worker must verify those facts and
+  a clean status before acting.
+- Reviews use a new read-only, detached worktree at the exact commit being
+  reviewed. Name it `<root>/<ticket>/review-<role>-<short-sha>`, for example
+  `.../prototype-canonical-index-region-slice/review-authority-2a06be1`.
+  Reviewers must not inspect or run commands from a live editor worktree, and a
+  review is not valid unless its detached worktree starts clean and resolves to
+  the requested commit.
+- The integration worktree is reserved to one explicitly named integrator at a
+  time. Ticket editors and reviewers must not mutate it, and no second actor
+  may perform integration, conflict resolution, ticket finalization, or local
+  merging there concurrently.
+- Keep Cargo outputs worktree-local. Use each worktree's ordinary `target/` or
+  another directory unique to that worktree; never share one
+  `CARGO_TARGET_DIR` across editor, reviewer, or integration worktrees.
+
+The coordinator owns cleanup. First verify the worktree is clean and that its
+commit or branch is preserved as intended. Then run `git worktree remove` with
+the exact registered worktree path, followed by `git worktree prune` from a
+surviving checkout when stale administrative records may remain. Stop on dirty
+or ambiguous state; do not force removal or delete a registered worktree with
+`rm`, Finder, or another raw filesystem operation.
+
 ## Repository and toolchain operations
 
 ### Rust contributor standards
