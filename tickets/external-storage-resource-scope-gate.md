@@ -3,8 +3,8 @@ id: external-storage-resource-scope-gate
 title: External storage resource scope gate
 status: deferred
 priority: p2
-dependencies: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract]
-related: []
+dependencies: [transfer-synchronization-and-resource-lifetime-contract]
+related: [device-placement-and-memory-domain-contract]
 scopes: [research/external-storage]
 shared_scopes: [project/tickets]
 paths: []

@@ -79,7 +79,7 @@ verification boundaries:
    it does not select schedules or implementations.
 7. `ExploreScheduledRegions` intrinsically verifies normalized schedules for
    individual legal regions. Typed target-feasibility assessment then admits
-   bounded local physical frontiers. This local authority does not require a
+   bounded per-region physical frontiers. This authority does not require a
    previously selected global cover.
 8. `SelectCompletePhysicalPlans` joins complete covers with compatible local
    implementations, boundary contracts, proposed materializations,

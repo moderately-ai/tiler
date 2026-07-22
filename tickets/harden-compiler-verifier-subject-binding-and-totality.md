@@ -3,8 +3,8 @@ id: harden-compiler-verifier-subject-binding-and-totality
 title: Harden compiler verifier subject binding and totality
 status: todo
 priority: p0
-dependencies: [prototype-canonical-index-region-slice, prototype-target-neutral-fusion-slice]
-related: []
+dependencies: [prototype-canonical-index-region-slice]
+related: [prototype-target-neutral-fusion-slice]
 scopes: [implementation/compiler, implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []

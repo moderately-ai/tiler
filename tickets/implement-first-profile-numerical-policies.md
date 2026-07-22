@@ -3,8 +3,8 @@ id: implement-first-profile-numerical-policies
 title: Implement first-profile numerical policy presets
 status: todo
 priority: p1
-dependencies: [prototype-optimizer-conformance-gate, repair-numerical-witness-integrity]
-related: []
+dependencies: [prototype-optimizer-conformance-gate]
+related: [repair-numerical-witness-integrity]
 scopes: [implementation/ir, implementation/reference, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []

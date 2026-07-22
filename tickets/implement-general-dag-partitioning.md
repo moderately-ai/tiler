@@ -3,7 +3,7 @@ id: implement-general-dag-partitioning
 title: Implement general DAG partition search
 status: todo
 priority: p1
-dependencies: [prototype-optimizer-conformance-gate, implement-boundary-property-enforcers, implement-analytical-component-cost-model]
+dependencies: [implement-boundary-property-enforcers, implement-analytical-component-cost-model]
 related: []
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]

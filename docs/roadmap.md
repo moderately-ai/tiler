@@ -125,7 +125,8 @@ target-neutral compiler path. Its dependency direction is:
 
 Opaque physical calls are not part of this bounded frontier. Their reviewed
 [provider ticket](../tickets/implement-opaque-physical-call-providers.md) follows
-optimizer conformance and the mature boundary-property authority.
+optimizer conformance and the mature boundary-property and analytical-cost
+authorities.
 
 Metal is then split into independently verifiable KIR lowering, strict
 numerical realization, Apple offline compilation, artifact codec/bundle

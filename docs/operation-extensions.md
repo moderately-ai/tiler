@@ -251,7 +251,7 @@ The bounded P0 physical frontier implements scheduled-kernel providers only.
 The reviewed
 [`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md)
 ticket owns the later opaque-call capability after optimizer conformance and
-mature boundary-property authority.
+mature boundary-property and analytical-cost authorities.
 
 ## Capability coherence
 

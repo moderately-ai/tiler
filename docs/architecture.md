@@ -420,8 +420,8 @@ storage and layout explicitly.
 ## Future opaque implementations
 
 Not every semantic operation should eventually be implemented as primitive
-scalar work. After optimizer conformance and mature boundary-property
-authority, the physical planner and `KernelProgram` may admit reviewed
+scalar work. After optimizer conformance and mature boundary-property and
+analytical-cost authorities, the physical planner and `KernelProgram` may admit reviewed
 `OpaqueCall` implementations
 with explicit boundary contracts, target requirements, resource/hazard
 metadata, exact function/accuracy/special-value behavior, and costs, for

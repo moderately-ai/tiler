@@ -18,8 +18,9 @@ provider-owned IR. Registration does not prove that emitted index work refines
 an operation occurrence: `prototype-semantic-index-refinement` owns that
 separate checked authority.
 
-Semantic effects remain authoritative in the semantic registry. Physical
-implementation and opaque-call providers remain owned by the physical
-frontier after checked schedule proposal surfaces exist.
+Semantic effects remain authoritative in the semantic registry. The bounded
+P0 physical frontier owns scheduled-kernel provider registration only. The
+later reviewed `implement-opaque-physical-call-providers` ticket owns opaque
+registration after optimizer conformance and mature boundary/cost authorities.
 
 Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

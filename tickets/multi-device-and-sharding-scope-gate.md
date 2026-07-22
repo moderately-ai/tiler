@@ -3,8 +3,8 @@ id: multi-device-and-sharding-scope-gate
 title: Multi-device and sharding scope gate
 status: deferred
 priority: p2
-dependencies: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract, numerical-policy-contract]
-related: [spike-cuda-multi-device-transfers, spike-metal-multi-device-transfers]
+dependencies: [transfer-synchronization-and-resource-lifetime-contract]
+related: [spike-cuda-multi-device-transfers, spike-metal-multi-device-transfers, device-placement-and-memory-domain-contract, numerical-policy-contract]
 scopes: [research/distributed]
 shared_scopes: [project/tickets]
 paths: []
