@@ -5,7 +5,7 @@ status: in-progress
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
 related: [prototype-target-neutral-fusion-slice]
-scopes: [implementation/compiler, implementation/ir, implementation/artifact]
+scopes: [implementation/compiler, implementation/ir, implementation/artifact, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, optimizer]
