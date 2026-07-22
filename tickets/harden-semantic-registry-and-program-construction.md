@@ -1,7 +1,7 @@
 ---
 id: harden-semantic-registry-and-program-construction
 title: Harden semantic registry and program construction
-status: in-progress
+status: done
 priority: p0
 dependencies: [correct-semantic-identity-layering]
 related: []
@@ -9,8 +9,6 @@ scopes: [implementation/ir, contracts/foundation, implementation/compiler, imple
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, semantic-ir]
-assignee: codex
-lease_expires_at: 1784720644
 ---
 
 Correct the semantic registry and program builder defects found by the
