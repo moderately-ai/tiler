@@ -5,14 +5,14 @@ kind: "contract"
 title: "Correctness and testing"
 topics: ["correctness", "testing", "verification"]
 contract_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence: ["tiler.research.numerics.operation-conformance-matrix", "tiler.research.numerics.region-accuracy-contract", "tiler.research.numerics.sound-region-analyzer-spike"]
-ticket: "reference-evaluator-slice"
+ticket: "prototype-optimizer-conformance-gate"
 ---
 
 # Correctness and testing
 
-**Status:** accepted research contract; implementation pending
+**Status:** accepted contract; bounded semantic/reference/index gates implemented
 
 Tiler must define semantics before asking a GPU compiler to accept generated
 source. Backend compilation is a validation layer, not the type system or the
@@ -54,6 +54,13 @@ The evaluator is independently tested with hand-authored conformance vectors,
 small exhaustive cases, and higher-precision arithmetic where appropriate so a
 shared evaluator/lowering bug is not mistaken for agreement.
 
+The current reference evaluator covers the admitted semantic profile. A generic
+slow evaluator for checked `IndexRegion` values and N-state reductions remains
+owned by
+[`prototype-index-region-reference-oracle`](../tickets/prototype-index-region-reference-oracle.md).
+Until that ticket passes, the compiler's graph-specific proof is not evidence
+that arbitrary registered lowering agrees with semantic meaning.
+
 Bounded transcendental evaluation computes the named immutable reference with
 enough precision or certified intervals to decide the exact rational predicate;
 it does not round an oracle and then measure against that rounded value. A
@@ -78,6 +85,13 @@ Each lowering verifies its input and output:
 
 Verification is mandatory during expansion-time generation. Debug APIs may expose
 additional expensive proofs, but core safety checks are never optional.
+
+The table is a required gate inventory, not a claim that every row is already
+implemented. The optimizer conformance owner must exercise an external
+operation through the ordinary capability/refinement path, non-isomorphic and
+fan-out or multi-output graphs, deterministic typed explain records, and
+identity/provenance assertions at every implemented layer before the public
+compiler facade is accepted.
 
 ## Property and differential testing
 

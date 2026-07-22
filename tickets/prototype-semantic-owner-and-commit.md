@@ -6,8 +6,8 @@ priority: p0
 dependencies: [prototype-workspace-scaffold]
 related: [prototype-semantic-reference-slice]
 scopes: [implementation/ir, research/semantic-graph]
-shared_scopes: [project/tickets, contracts/foundation, contracts/decisions]
-paths: [Cargo.lock]
+shared_scopes: [project/tickets, contracts/foundation, contracts/decisions, implementation/cargo-lock]
+paths: []
 tags: [implementation, prototype, semantics, rust-api]
 ---
 Implement the settled graph-owner and draft-to-program commitment contracts in

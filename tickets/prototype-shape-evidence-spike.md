@@ -6,8 +6,8 @@ priority: p0
 dependencies: [prototype-typed-value-handles]
 related: [prototype-shaped-value-api, prototype-semantic-reference-slice]
 scopes: [research/shapes]
-shared_scopes: [project/tickets, contracts/foundation, contracts/decisions, contracts/navigation]
-paths: [Cargo.lock]
+shared_scopes: [project/tickets, contracts/foundation, contracts/decisions, contracts/navigation, implementation/cargo-lock]
+paths: []
 tags: [tiler-research, spike, prototype, shapes, rust-api, measurement]
 ---
 Build a dependency-minimal retained experiment against Rust 1.89 that measures

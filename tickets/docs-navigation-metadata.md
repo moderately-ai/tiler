@@ -5,7 +5,7 @@ status: done
 priority: p0
 dependencies: []
 related: []
-scopes: [contracts/navigation, contracts/core]
+scopes: [contracts/navigation, contracts/foundation]
 shared_scopes: [contracts/decisions, project/tickets]
 paths: []
 tags: [docs-ia]

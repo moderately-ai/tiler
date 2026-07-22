@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: [scheduled-region-model, index-access-model, target-profile-feasibility-model]
 related: []
-scopes: [research/kernel-ir, contracts/core, contracts/compiler, contracts/artifacts]
+scopes: [research/kernel-ir, contracts/artifacts, contracts/foundation, contracts/optimizer]
 shared_scopes: []
 paths: []
 tags: [tiler-research, spike, kernel-ir, gpu]

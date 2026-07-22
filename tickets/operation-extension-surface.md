@@ -5,7 +5,7 @@ status: done
 priority: p0
 dependencies: [semantic-graph-contract]
 related: []
-scopes: [research/extensions, contracts/core]
+scopes: [research/extensions, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research, spike]

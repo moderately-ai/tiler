@@ -7,7 +7,7 @@ dependencies: [prototype-shared-compiler-ir-ownership, correct-semantic-identity
 related: [harden-compiler-verifier-subject-binding-and-totality]
 scopes: [implementation/ir, implementation/compiler, implementation/workspace, project/tickets, contracts/foundation, contracts/navigation, contracts/decisions, contracts/numerics, implementation/reference, research/indexing, contracts/optimizer, contracts/artifacts, research/artifacts, research/extensions]
 shared_scopes: []
-paths: [.gitignore]
+paths: []
 tags: [implementation, compiler-foundation, indexing]
 ---
 Implement the public checked static-extent index-region profile needed by the
@@ -87,12 +87,12 @@ semi-affine symbolic coefficients/divisors, and typed index-domain predicates
 are split into `implement-shapeenv-index-bindings` and
 `implement-index-domain-predicates`. This profile leaves additive public seams
 for those authorities and rejects unsupported dynamic construction rather than
-introducing an index-local duplicate.
+introducing a duplicate index authority.
 
 ## Fixed-point audit corrections
 
 The codebase audit at `ad6e9f463de6eabad44af47eaddad9317e0935fd`
-identified additional obligations owned by this still-open ticket:
+identified additional obligations that this ticket resolved before completion:
 
 - Make domain cardinality zero-absorbing before overflow checks. A domain such
   as `[u64::MAX, 2, 0]` is empty, and empty accesses must reach the vacuous
@@ -134,4 +134,4 @@ The complete Rust gate, ticket lint, true-base scope guard, and diff checks
 passed. Repeated independent adversarial reviews converged after their resource
 accounting, authority attribution, and transactional-boundary findings were
 fixed and regression-tested. Tom explicitly approved the public scalar-provider
-and authority API draft at that exact implementation commit.
+and authority API at that exact implementation commit.

@@ -5,13 +5,13 @@ kind: "contract"
 title: "Operation extension contract"
 topics: ["extensions", "operations", "semantics"]
 contract_status: "mixed"
-implementation_status: "spike-only"
+implementation_status: "partial"
 evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.extensions.proc-macro-extension-visibility"]
 ---
 
 # Operation extension contract
 
-**Status:** proposed details under the accepted public extension direction
+**Status:** accepted semantic registration boundary; compiler capabilities proposed
 
 ## Ownership boundary
 
@@ -100,6 +100,17 @@ Under ADR 0065, executable reference capabilities compose in
 rather than introducing an inward dependency from semantic IR.
 Provider objects are expected to be `Send + Sync + 'static` unless an explicit
 compiler mode serializes a capability.
+
+The semantic registry, value-type registry, and reference capability dispatch
+are implemented for the bounded profile. Compiler capability registration is
+not: its owner is
+[`prototype-operation-capability-registry`](../tickets/prototype-operation-capability-registry.md).
+That registry resolves available lowering knowledge but does not prove an
+occurrence was lowered correctly. Exact occurrence, value, access, numerical,
+and provider bindings belong to the separate checked
+[`semantic-to-index refinement`](../tickets/prototype-semantic-index-refinement.md).
+The ordinary public compiler session remains a later reviewed boundary, so
+these implementation tickets must not silently stabilize its call-site API.
 
 ## Semantic and provider identity
 
@@ -235,6 +246,12 @@ separately versioned optional capabilities. An opaque physical implementation
 must expose typed ABI, effect, alias, placement, target, numerical, resource,
 and failure-stage boundary contracts; it is not an unrestricted callback in
 semantic IR.
+
+The bounded P0 physical frontier implements scheduled-kernel providers only.
+The reviewed
+[`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md)
+ticket owns the later opaque-call capability after optimizer conformance and
+mature boundary-property and analytical-cost authorities.
 
 ## Capability coherence
 

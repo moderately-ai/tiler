@@ -1,17 +1,14 @@
 ---
 id: reconcile-implementation-work-graph-after-authority-audit
 title: Reconcile the implementation work graph after the authority audit
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
 related: []
-scopes: [project/tickets, contracts/navigation, contracts/optimizer, implementation/workspace]
+scopes: [contracts/navigation, contracts/optimizer, implementation/workspace, contracts/foundation, contracts/numerics, project/tickets]
 shared_scopes: []
 paths: []
 tags: [maintenance, architecture, implementation]
-claimed_from: todo
-assignee: gpt-sol-reconcile
-lease_expires_at: 1784735955
 ---
 
 Apply the adversarial ticket-DAG, implementation-coverage, and ticket-quality
@@ -39,6 +36,13 @@ The two already-open owners, `correct-semantic-identity-layering` and
 `prototype-canonical-index-region-slice`, retain their transitive-authority and
 index-canonicality findings respectively. Do not duplicate those obligations
 into a competing ticket.
+
+While in progress, this bulk reconciliation ticket temporarily claimed
+`project/tickets` exclusively because it rewrote the shared work graph as one
+transaction. That was a deliberate exception to the repository convention:
+ordinary nonterminal successor tickets use additive shared `project/tickets`
+coverage so independent ticket-file updates do not conflict. Acceptance made
+this ticket terminal; the exception must not be copied into successor work.
 
 ## Required outcome
 
@@ -142,3 +146,16 @@ Run `tkt lint`, `tkt reconcile`, `tkt ready`, `tkt tracks`, critical-path
 queries for the optimizer and inline milestones, the full documentation gate,
 and `git diff --check`. The resulting immediate frontier must expose only work
 whose prerequisites and public verifier authorities actually exist.
+
+## Reconciliation evidence boundary
+
+The implementation audit was performed from integrated base
+`92b9b37b92fb3c2e6c13fde48c9ed499edb6ced6`. All registered worktrees were
+inspected individually and were clean. No required content was found stranded
+on the three non-patch-equivalent historical heads; completed worktree and
+branch cleanup remains a separate coordinated maintenance action. The named
+stale `tkt/prototype-operation-compilation-capabilities` branch was already
+absent locally and remotely and had no unique commit, so this ticket performs
+no destructive branch or worktree operation. Local `main` was ahead of
+`origin/main`; new dispatch must use the exact integrated base until remote
+coordination catches up rather than pretending stale remote state is current.

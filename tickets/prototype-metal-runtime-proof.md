@@ -6,8 +6,8 @@ priority: p0
 dependencies: [prototype-metal-runtime-execution]
 related: []
 scopes: [implementation/runtime, research/runtime]
-shared_scopes: [project/tickets, contracts/integrations, contracts/navigation, contracts/artifacts, contracts/numerics]
-paths: [Cargo.lock]
+shared_scopes: [project/tickets, contracts/integrations, contracts/navigation, contracts/artifacts, contracts/numerics, implementation/cargo-lock]
+paths: []
 tags: [implementation, prototype, metal, runtime, vertical-slice]
 ---
 Execute the produced bundle through the non-published `serial-sum-run` consumer

@@ -47,8 +47,10 @@ SemanticTensorGraph
   -> deterministic normalization
   -> bounded logical exploration
   -> overlapping RegionCandidates
-  -> bounded ImplementationFrontier per region
-  -> compatible RegionPartition + implementations
+     |-> independent complete-cover enumeration ---------|
+     `-> checked schedules + ImplementationFrontier -----|
+  -> compatible complete physical-plan selection
+  -> structured KIR refinement
   -> KernelProgram or guarded ProgramPortfolio
 ```
 
@@ -73,18 +75,32 @@ verification boundaries:
    retains complete singleton coverage.
 5. `LowerIndexRegions` derives width-independent domains/access maps and proves
    read bounds plus exact unique ordinary writes.
-6. `ExploreScheduledRegions` returns bounded normalized schedules after
-   intrinsic schedule verification and typed target-feasibility assessment.
-7. `SelectKernelPrograms` chooses compatible region implementations, explicit
-   materializations, dependencies, buffers, and guarded complete portfolios;
-   the whole-program verifier checks coverage, lifetimes, aliasing, and typed
-   storage handoffs.
-8. `RefineStructuredKernels` lowers each scheduled kernel and proves typed,
+6. `EnumerateCompleteCovers` independently enumerates legal whole-graph covers;
+   it does not select schedules or implementations.
+7. `ExploreScheduledRegions` intrinsically verifies normalized schedules for
+   individual legal regions. Typed target-feasibility assessment then admits
+   bounded per-region physical frontiers. This authority does not require a
+   previously selected global cover.
+8. `SelectCompletePhysicalPlans` joins complete covers with compatible local
+   implementations, boundary contracts, proposed materializations,
+   dependencies, and guards. It emits a checked selected-plan or portfolio
+   receipt for cover/implementation compatibility, not final executable-program
+   authority. Buffer requirements remain provisional at this stage.
+9. `RefineStructuredKernels` lowers each selected scheduled kernel and proves typed,
    effect-safe refinement of exactly that schedule before backend emission.
+10. `AssembleKernelPrograms` constructs verified executable programs from the
+    checked physical-plan receipt and verified KIR. Only this post-KIR verifier
+    authoritatively checks executable stage coverage, buffers, initialization,
+    lifetimes, aliasing, storage handoffs, ABI/launch references, and routing.
 
 Semantic, index, schedule, program/buffer, and structured-kernel verifiers have
 separate authority. Target feasibility cannot repair intrinsic invalidity;
 costing observes only candidates that have passed the applicable gates.
+Search implementations may interleave cover and local-frontier exploration,
+feed pruning information in either direction, and lazily schedule only regions
+retained by viable covers. Such feedback is implementation freedom: it cannot
+make a cover receipt prove schedule feasibility, or a local frontier prove
+whole-program coverage.
 
 ## Bounded hierarchical search
 
@@ -180,6 +196,13 @@ Implementation rules produce schedules such as:
 - direct or tiled rearrangement;
 - serial, subgroup, threadgroup, or multi-pass reduction;
 - direct or GEMM-backed contraction.
+
+The bounded P0 frontier admits only checked `ScheduledKernel` proposals and
+rejects opaque-call proposals explicitly. Its provider/body representation
+must retain an additive sum-type seam so the later reviewed
+[`implement-opaque-physical-call-providers`](../../tickets/implement-opaque-physical-call-providers.md)
+ticket can add opaque implementations without weakening scheduled-kernel
+verification.
 
 Each implementation candidate advertises a machine-checkable numerical
 guarantee, realization/provider identity, and scoped evidence. It is admitted

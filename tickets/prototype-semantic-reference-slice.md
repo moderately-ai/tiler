@@ -7,7 +7,7 @@ dependencies: [prototype-workspace-scaffold, prototype-shaped-value-api, prototy
 related: []
 scopes: [implementation/ir, research/semantic-graph, research/shapes, implementation/workspace, research/documentation, implementation/reference]
 shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions, contracts/navigation]
-paths: [AGENTS.md, CLAUDE.md, .gitignore]
+paths: [AGENTS.md, CLAUDE.md]
 tags: [implementation, prototype, semantics, vertical-slice]
 ---
 Build and evaluate the complete target-independent input to the first value

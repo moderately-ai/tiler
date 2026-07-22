@@ -34,16 +34,22 @@ tests, not a product-level choice unless their evidence exposes a new tradeoff.
 
 The implementation graph now maps these contracts to bounded coding tickets:
 
-- semantic/index lowering and fusion search: [operation capabilities](../tickets/prototype-operation-compilation-capabilities.md),
+- semantic/index lowering and fusion search: [capability registration](../tickets/prototype-operation-capability-registry.md),
+  [checked refinement](../tickets/prototype-semantic-index-refinement.md),
   [canonical index regions](../tickets/prototype-canonical-index-region-slice.md),
+  [generic index oracle](../tickets/prototype-index-region-reference-oracle.md),
   [generic region formation](../tickets/prototype-generic-region-formation.md),
   [legality evidence](../tickets/prototype-fusion-legality-and-numerical-proof.md),
-  and [complete partition planning](../tickets/prototype-region-partition-and-complete-plan.md);
+  and [complete cover enumeration](../tickets/prototype-region-cover-enumeration.md);
 - mature symbolic indexing: [ShapeEnv-backed index bindings](../tickets/implement-shapeenv-index-bindings.md)
   followed by [typed index-domain predicates and proof exchange](../tickets/implement-index-domain-predicates.md);
-- physical/kernel/program layers: [physical implementations](../tickets/prototype-physical-implementation-frontier.md),
+- physical/kernel/program layers: [target feasibility](../tickets/prototype-target-feasibility-authority.md),
+  [checked schedules](../tickets/prototype-scheduled-region-ir.md),
+  [physical implementations](../tickets/prototype-physical-implementation-frontier.md),
+  [complete physical-plan selection](../tickets/prototype-complete-physical-plan-selection.md),
   [structured KIR](../tickets/prototype-structured-kir-slice.md), and
-  [neutral program/artifact types](../tickets/prototype-neutral-program-and-artifact-types.md);
+  separate [kernel-program](../tickets/prototype-kernel-program-ir.md) and
+  [artifact-program](../tickets/prototype-artifact-program-model.md) models;
 - artifact and Metal AOT: [neutral codec](../tickets/prototype-neutral-artifact-codec.md),
   [MSL lowering](../tickets/prototype-metal-kir-lowering.md),
   [numerical realization](../tickets/prototype-metal-numerical-realization.md),
@@ -96,7 +102,8 @@ The implementation graph now maps these contracts to bounded coding tickets:
 
 ### Q-SEM-007 — Concrete transactional rewrite API
 
-- Owner/track: [Operation extensions](operation-extensions.md), Milestone 1.
+- Owner/track: [Operation extensions](operation-extensions.md),
+  [`implement-transactional-rewrite-engine`](../tickets/implement-transactional-rewrite-engine.md).
 - Close: Rust API and deterministic recursion, cycle, transaction, and
   per-rule/global budget tests implementing the settled high-level contract.
 
@@ -127,8 +134,10 @@ The implementation graph now maps these contracts to bounded coding tickets:
 
 - Owner/track: [Fusion and scheduling](compiler/fusion-and-scheduling.md),
   [`implement-general-dag-partitioning`](../tickets/implement-general-dag-partitioning.md).
-- Close: legality gate and calibrated cost rule checked against the exhaustive
-  oracle.
+- Close: legality plus an uncertainty-bearing analytical cost rule checked
+  against the exhaustive oracle. Calibrated device selection becomes
+  authoritative only after the separate calibration ticket's activation
+  conditions and measurements pass.
 
 ### Q-PLAN-004 — Coexisting reductions in one kernel
 

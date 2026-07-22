@@ -6,7 +6,7 @@ priority: p2
 dependencies: [transfer-synchronization-and-resource-lifetime-contract]
 related: []
 scopes: [research/metal-transfers]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, spike, metal, transfer, measurement]
 ---

@@ -101,18 +101,32 @@ generalized cache, and consumer integration. They are prerequisites and
 evidence for this milestone, not its complete exit.
 
 The live ticket graph deliberately gates those proofs on a backend-consumable
-target-neutral compiler path. The dependency-ordered foundation is:
+target-neutral compiler path. Its dependency direction is:
 
-1. [shared compiler IR ownership](../tickets/prototype-shared-compiler-ir-ownership.md),
-2. the [canonical index-region slice](../tickets/prototype-canonical-index-region-slice.md),
-3. [operation compilation capabilities](../tickets/prototype-operation-compilation-capabilities.md),
-4. [generic region formation](../tickets/prototype-generic-region-formation.md),
-   [derived fusion legality](../tickets/prototype-fusion-legality-and-numerical-proof.md),
-   and [complete partition planning](../tickets/prototype-region-partition-and-complete-plan.md),
-5. the [physical implementation frontier](../tickets/prototype-physical-implementation-frontier.md),
-   [structured KIR](../tickets/prototype-structured-kir-slice.md), and
-   [neutral program/artifact types](../tickets/prototype-neutral-program-and-artifact-types.md),
-6. the [target-neutral optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md).
+1. [compiler verifier hardening](../tickets/harden-compiler-verifier-subject-binding-and-totality.md),
+   [typed explain](../tickets/prototype-typed-explain-infrastructure.md), and
+   [bounded normalization](../tickets/prototype-semantic-normalization.md);
+2. parallel [operation capability registration](../tickets/prototype-operation-capability-registry.md)
+   and [generic index oracle](../tickets/prototype-index-region-reference-oracle.md)
+   authorities;
+3. [generic region formation](../tickets/prototype-generic-region-formation.md),
+   then [checked semantic/index refinement](../tickets/prototype-semantic-index-refinement.md),
+   then [fusion legality](../tickets/prototype-fusion-legality-and-numerical-proof.md),
+   then [legal complete-region covers](../tickets/prototype-region-cover-enumeration.md);
+4. independently developed [target feasibility](../tickets/prototype-target-feasibility-authority.md),
+   [checked scheduled regions](../tickets/prototype-scheduled-region-ir.md), and
+   [physical implementation frontiers](../tickets/prototype-physical-implementation-frontier.md);
+5. [complete physical-plan selection](../tickets/prototype-complete-physical-plan-selection.md),
+   [structured KIR](../tickets/prototype-structured-kir-slice.md),
+   [target-neutral KernelProgram IR](../tickets/prototype-kernel-program-ir.md), and
+   the [artifact-facing program model](../tickets/prototype-artifact-program-model.md);
+6. the [optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md)
+   followed by the reviewed [public compiler API](../tickets/prototype-public-compiler-api.md).
+
+Opaque physical calls are not part of this bounded frontier. Their reviewed
+[provider ticket](../tickets/implement-opaque-physical-call-providers.md) follows
+optimizer conformance and the mature boundary-property and analytical-cost
+authorities.
 
 Metal is then split into independently verifiable KIR lowering, strict
 numerical realization, Apple offline compilation, artifact codec/bundle
@@ -215,7 +229,8 @@ and 4-bit program agree with the strict reference evaluator.
   `Proven`/`Deferred`/`Rejected`/`Unknown` feasibility and `RoutingCommit`.
 - Keep hard resource proofs distinct from register, occupancy, cache, and
   throughput estimates; validate fixed and scalable vector legality.
-- Structured rejection reasons and plan comparison.
+- Typed explain data for rejection reasons and plan comparison, with
+  deterministic text rendering as presentation.
 
 **Exit criterion:** the optimizer chooses among several valid region
 implementations and complete `KernelProgram`s and explains the choice.

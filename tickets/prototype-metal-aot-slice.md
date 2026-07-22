@@ -6,8 +6,8 @@ priority: p0
 dependencies: [prototype-metal-bundle-assembly, prototype-proof-case-sidecar]
 related: []
 scopes: [implementation/metal, implementation/artifact, research/apple-targets, research/artifacts, implementation/metal-aot]
-shared_scopes: [project/tickets, contracts/artifacts, contracts/numerics]
-paths: [Cargo.lock]
+shared_scopes: [project/tickets, contracts/artifacts, contracts/numerics, implementation/cargo-lock]
+paths: []
 tags: [implementation, prototype, metal, vertical-slice]
 ---
 Turn the selected fused program and retained materialized reference program into

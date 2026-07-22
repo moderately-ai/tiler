@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: []
 related: []
-scopes: [research/macro-environment, contracts/core, contracts/integrations]
+scopes: [research/macro-environment, contracts/integrations, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, spike, macro, measurement]

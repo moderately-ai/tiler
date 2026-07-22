@@ -4,7 +4,7 @@ title: Harden compiler verifier subject binding and totality
 status: todo
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
-related: []
+related: [prototype-target-neutral-fusion-slice]
 scopes: [implementation/compiler, implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
@@ -61,7 +61,8 @@ This correction hardens the verifier products already present in the bounded
 proof and establishes mandatory refinement seams for later stages. It must not
 invent the mature KIR, program, ABI, or artifact structures owned by
 `prototype-structured-kir-slice` and
-`prototype-neutral-program-and-artifact-types`; those tickets consume and
+`prototype-kernel-program-ir` and `prototype-artifact-program-model`; those
+tickets consume and
 extend these subject-binding invariants when their fields exist.
 
 ## Acceptance

@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: [semantic-graph-contract, shape-environment-contract, operation-extension-surface, proc-macro-extension-visibility]
 related: []
-scopes: [contracts/core]
+scopes: [contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, synthesis, decision]

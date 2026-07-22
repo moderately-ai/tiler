@@ -6,8 +6,8 @@ priority: p0
 dependencies: [prototype-resolved-value-type-registry, prototype-semantic-operation-registry]
 related: [prototype-semantic-reference-slice]
 scopes: [implementation/ir]
-shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions]
-paths: [Cargo.lock]
+shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions, implementation/cargo-lock]
+paths: []
 tags: [implementation, prototype, semantics, rust-api, compile-tests]
 ---
 Implement ADR 0059's exact typed authoring capability over the runtime-typed

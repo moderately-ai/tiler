@@ -6,8 +6,8 @@ priority: p0
 dependencies: [prototype-semantic-owner-and-commit]
 related: [prototype-semantic-reference-slice]
 scopes: [implementation/ir, research/extensions, research/numerics]
-shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions]
-paths: [Cargo.lock]
+shared_scopes: [project/tickets, contracts/foundation, contracts/numerics, contracts/decisions, implementation/cargo-lock]
+paths: []
 tags: [implementation, prototype, semantics, registry, dtypes]
 ---
 Implement the bounded type-identity and registry authority required by ADRs

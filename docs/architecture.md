@@ -38,17 +38,16 @@ SemanticTensorGraph
         │ normalization + logical alternatives
         ▼
 CandidateRegionSet
-        │
-        ├── derive iteration/access representation ─────┐
-        │                                               │
-        └◄─ ImplementationFrontier(region, target) ◄────┘
-        │ select compatible region implementations
+        ├── independent legal complete covers ──────────┐
+        └── checked per-region schedules                │
+              + local ImplementationFrontiers ─────────┤
+        │ select and verify compatible complete plan    │
         ▼
-ScheduledRegion
+CheckedSelectedPhysicalPlan / guarded plan portfolio
         │ verified structured lowering
         ▼
-structured kernel IR per selected implementation
-        │ assemble complete stages, buffers, and routing
+structured kernel IR per selected scheduled implementation
+        │ assemble verified stages, buffers, and routing
         ▼
 KernelProgram / guarded ProgramPortfolio
         │ target emission
@@ -179,8 +178,7 @@ winner. Every retained `RegionImplementation` contains boundary
 requirements/guarantees, applicability predicates, target requirements,
 consumed compile guarantees, deferred target predicates with evaluation phases,
 exact/proven resource requirements, estimates, calibration identity, and a cost
-estimate. Its implementation
-body is one of:
+estimate. The mature implementation body is one of:
 
 ```text
 ScheduledKernel(ScheduledRegion)
@@ -188,6 +186,11 @@ KernelSubprogram(stages, internal temporaries, dependencies)
 OpaqueCall(call contract)
 View(alias/metadata result)
 ```
+
+The bounded P0 physical frontier admits only checked `ScheduledKernel` values
+and rejects the other variants explicitly while retaining this additive
+sum-type seam. Opaque physical calls are a later reviewed extension, not part of
+the first frontier proof.
 
 Every executable body also carries the selected numerical realization,
 machine-checkable guarantee, and scoped evidence identity. These must refine
@@ -205,12 +208,19 @@ A locally slower implementation may provide a layout that removes a downstream
 conversion. Multi-pass reductions are `KernelSubprogram` bodies rather than one
 oversized `KernelSchedule`; opaque library calls need not invent a schedule.
 
-The program planner selects a compatible covering `RegionPartition` and one
-implementation per selected region only after candidate regions have legal
-schedules and costs. Conversely, boundary and materialization choices determine
-which schedules the local scheduler can consider. This feedback is why the
-architecture is hierarchical planning rather than “choose fusion, then
-schedule.”
+Complete-cover enumeration independently proves legal coverage using candidate
+regions. Per-region schedule verification and target-aware frontier formation
+independently prove local implementations; they do not depend on a globally
+selected cover. The program planner then joins one complete cover with
+compatible implementations and emits a checked selected-physical-plan or
+portfolio receipt. Structured KIR refinement follows that selection.
+
+An implementation may interleave these searches, schedule only regions still
+present in viable covers, and feed boundary, materialization, or cost bounds in
+both directions. This feedback is why the architecture is hierarchical
+planning rather than a rigid batch pipeline. It does not invert authority: a
+cover is not schedule evidence, a frontier is not whole-program coverage, and
+neither substitutes for checked complete-plan selection.
 
 The selected `KernelProgram` is an executable dependency DAG of kernel stages,
 materializations, temporaries, and opaque calls. A guarded `ProgramPortfolio`
@@ -407,17 +417,26 @@ artifact. The initial custom-op path produces one newly allocated output; view
 return plans are deferred until the runtime integration can return aliased
 storage and layout explicitly.
 
-## Core opaque implementations
+## Future opaque implementations
 
-Not every semantic operation should be implemented as primitive scalar work.
-The physical planner and `KernelProgram` admit `OpaqueCall` implementations
-with explicit boundary contracts, target requirements, resource/hazard
-metadata, exact function/accuracy/special-value behavior, and costs, for
-example an optimized matrix multiplication or a
+Not every semantic operation should eventually be implemented as primitive
+scalar work. After optimizer conformance and mature boundary-property and
+analytical-cost authorities, the physical planner and `KernelProgram` may admit
+reviewed `OpaqueCall` implementations with explicit boundary contracts, target
+requirements, exact function/accuracy/special-value behavior, and three
+separate typed evidence classes: exact or proven `ResourceRequirements` for
+hard feasibility; uncertain resource-pressure estimates with provenance and
+`Unknown` (such as registers, occupancy, and source size); and analytical cost
+estimates with model provenance and `Unknown`. Unknown pressure estimates never
+prove feasibility, and unknown cost never silently wins. Examples include an
+optimized matrix multiplication or a
 handwritten reduction. These form deliberate fusion boundaries unless a
 backend-specific implementation rule can legally absorb adjacent operations.
 Opaque execution effects order physical stages; they do not introduce hidden
 effects into the initial pure semantic graph.
+
+The implementation owner is
+[`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md).
 
 ## Architectural constraints
 

@@ -6,7 +6,7 @@ priority: p0
 dependencies: [prototype-metal-runtime-preflight, prototype-runtime-routing-commit]
 related: []
 scopes: [implementation/runtime]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, metal, execution]
 ---

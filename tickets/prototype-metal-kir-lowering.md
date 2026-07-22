@@ -3,10 +3,10 @@ id: prototype-metal-kir-lowering
 title: Lower verified kernel IR to deterministic MSL
 status: todo
 priority: p0
-dependencies: [prototype-optimizer-conformance-gate]
+dependencies: [prototype-structured-kir-slice]
 related: []
 scopes: [implementation/metal]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, codegen]
 ---

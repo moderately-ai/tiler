@@ -5,7 +5,7 @@ status: done
 priority: p0
 dependencies: []
 related: []
-scopes: [research/shapes, contracts/core, contracts/artifacts, contracts/integrations]
+scopes: [research/shapes, contracts/artifacts, contracts/integrations, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, research]

@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: [semantic-graph-contract, shape-environment-contract]
 related: []
-scopes: [research/indexing, contracts/core, contracts/compiler, contracts/artifacts, contracts/integrations]
+scopes: [research/indexing, contracts/artifacts, contracts/integrations, contracts/foundation, contracts/optimizer]
 shared_scopes: []
 paths: []
 tags: [tiler-research, spike, indexing]
