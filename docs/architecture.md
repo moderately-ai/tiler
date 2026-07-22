@@ -421,11 +421,15 @@ storage and layout explicitly.
 
 Not every semantic operation should eventually be implemented as primitive
 scalar work. After optimizer conformance and mature boundary-property and
-analytical-cost authorities, the physical planner and `KernelProgram` may admit reviewed
-`OpaqueCall` implementations
-with explicit boundary contracts, target requirements, resource/hazard
-metadata, exact function/accuracy/special-value behavior, and costs, for
-example an optimized matrix multiplication or a
+analytical-cost authorities, the physical planner and `KernelProgram` may admit
+reviewed `OpaqueCall` implementations with explicit boundary contracts, target
+requirements, exact function/accuracy/special-value behavior, and three
+separate typed evidence classes: exact or proven `ResourceRequirements` for
+hard feasibility; uncertain resource-pressure estimates with provenance and
+`Unknown` (such as registers, occupancy, and source size); and analytical cost
+estimates with model provenance and `Unknown`. Unknown pressure estimates never
+prove feasibility, and unknown cost never silently wins. Examples include an
+optimized matrix multiplication or a
 handwritten reduction. These form deliberate fusion boundaries unless a
 backend-specific implementation rule can legally absorb adjacent operations.
 Opaque execution effects order physical stages; they do not introduce hidden
