@@ -248,8 +248,10 @@ after rename
 after directory sync
 ```
 
-On an Apple-silicon host running macOS 27.0, APFS, and Rust 1.97.0, the full
-suite was repeated ten times with a concurrency setting of 32:
+On an Apple-silicon host running macOS 27.0 build 26A5388g and
+`rustc 1.99.0-nightly (eff8269f7 2026-07-18)`, the published entrypoint ran the
+full suite ten times with a concurrency setting of 32. The
+[compact per-run evidence][cache-evidence] records every repetition and count:
 
 - 32 simultaneous processes for one key produced one compilation record and
   one valid final entry;
@@ -262,6 +264,8 @@ suite was repeated ten times with a concurrency setting of 32:
 - an unusable cache root returned a validated uncached result;
 - a reader that opened an entry before coordinated eviction completed reading
   and validating its open descriptor after unlink;
+- an injected permanently blocked child was killed and reaped at its 100 ms
+  overall deadline in every repetition;
 - file and containing-directory `sync_all` succeeded on the tested APFS volume.
 
 These are observations, not portable guarantees. The harness does not emulate
@@ -301,3 +305,4 @@ power-loss durability, filesystem portability, and production GC remain open.
 [darwin-unlink]: https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/unlink.2.html
 [darwin-fsync]: https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html
 [darwin-fcntl]: https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fcntl.2.html
+[cache-evidence]: ../../../spikes/cache/results/macos-27.0-rustc-1.99.0-nightly-2026-07-21.tsv
