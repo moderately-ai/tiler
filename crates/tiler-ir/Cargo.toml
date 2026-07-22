@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+test = true
+doctest = true
+doc = true
+
 [lints]
 workspace = true
 

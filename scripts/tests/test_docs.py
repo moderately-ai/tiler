@@ -91,3 +91,140 @@ def test_dependency_cycles_fail():
     ]
     errors = docs.validate_graph(records, Path("."))
     assert any("contains a cycle" in error for error in errors)
+
+
+def test_reference_links_and_images_validate_local_targets(tmp_path: Path):
+    (tmp_path / "docs").mkdir()
+    record = docs.Record(
+        Path("docs/test.md"),
+        {"id": "tiler.test", "kind": "portal"},
+        "[contract][missing]\n\n[undefined][nowhere]\n\n[missing]\n\n"
+        "[missing]: absent.md\n\n![diagram](absent.png)\n",
+    )
+
+    errors = docs.validate_links([record], tmp_path)
+
+    assert any("broken local link absent.md" in error for error in errors)
+    assert any("broken local link absent.png" in error for error in errors)
+
+
+def test_commonmark_nested_links_and_images_are_validated(tmp_path: Path):
+    record = docs.Record(
+        Path("README.md"),
+        {"id": "tiler.test", "kind": "portal"},
+        "[outer [inner]](missing.md)\n\n![alt [nested]](missing.png)\n",
+    )
+
+    errors = docs.validate_links([record], tmp_path)
+
+    assert any("broken local link missing.md" in error for error in errors)
+    assert any("broken local link missing.png" in error for error in errors)
+
+
+def test_link_validation_ignores_fenced_indented_and_inline_code(tmp_path: Path):
+    record = docs.Record(
+        Path("README.md"),
+        {"id": "tiler.test", "kind": "portal"},
+        "```markdown\n![example](not-present.png)\n[ref]: absent.md\n```\n\n"
+        "    [indented](missing.md)\n\n`[inline](missing.md)`\n",
+    )
+
+    assert docs.validate_links([record], tmp_path) == []
+
+
+def test_link_validation_rejects_duplicate_definitions_file_uris_and_html(tmp_path: Path):
+    (tmp_path / "present.md").write_text("", encoding="utf-8")
+    record = docs.Record(
+        Path("README.md"),
+        {"id": "tiler.test", "kind": "portal"},
+        "[x][ref]\n\n[ref]: present.md\n[ref]: other.md\n\n"
+        '<!-- --> <picture><source src="missing.png"></picture> <!-- -->\n',
+    )
+
+    errors = docs.validate_links([record], tmp_path)
+
+    assert any("duplicate reference-style" in error for error in errors)
+    assert any("raw HTML" in error for error in errors)
+    assert "file URI" in docs.validate_local_target(record, "file:///tmp/private", tmp_path)
+
+
+def test_reproducible_experiment_requires_canonical_date_and_entrypoint(tmp_path: Path):
+    entrypoint = tmp_path / "probe.py"
+    entrypoint.write_text("", encoding="utf-8")
+    metadata = {
+        "schema": docs.SCHEMA,
+        "id": "tiler.spike.test",
+        "kind": "experiment",
+        "title": "Test",
+        "topics": ["test"],
+        "experiment_status": "reproducible",
+        "implementation_status": "spike-only",
+        "evidence_classes": ["bounded-measurement"],
+        "supports": ["tiler.research.test"],
+        "entrypoints": ["probe.py"],
+        "last_verified": "20260720",
+    }
+    record = docs.Record(Path("README.md"), metadata, "# Test\n")
+
+    errors = docs.validate_record(record, tmp_path)
+
+    assert any("last_verified must be YYYY-MM-DD" in error for error in errors)
+
+
+def test_frontmatter_identifiers_are_lexically_canonical(tmp_path: Path):
+    metadata = {
+        "schema": docs.SCHEMA,
+        "id": "tiler.portal.test",
+        "kind": "portal",
+        "title": "Test",
+        "topics": ["Not Canonical"],
+        "related": [" tiler.other"],
+    }
+    record = docs.Record(Path("README.md"), metadata, "# Test\n")
+
+    errors = docs.validate_record(record, tmp_path)
+
+    assert any("invalid topic slug" in error for error in errors)
+    assert any("nonempty, trimmed strings" in error for error in errors)
+    assert any("invalid related stable id" in error for error in errors)
+
+
+def test_malformed_question_heading_is_rejected(tmp_path: Path):
+    path = tmp_path / "docs" / "open-questions.md"
+    path.parent.mkdir()
+    path.write_text(
+        "### Q-SEM-001 — Valid\n\n- Owner: compiler\n- Close when: measured\n\n"
+        "### Q-bad — Not stable\n",
+        encoding="utf-8",
+    )
+
+    errors = docs.validate_questions(tmp_path)
+
+    assert any("malformed question heading" in error for error in errors)
+
+
+def test_direct_entrypoints_must_be_executable(tmp_path: Path):
+    deps = tmp_path / "deps.sh"
+    deps.write_text("#!/bin/sh\n", encoding="utf-8")
+    internal = tmp_path / "spikes/shapes/shape-evidence/generate-workloads.sh"
+    internal.parent.mkdir(parents=True)
+    internal.write_text("#!/bin/sh\n", encoding="utf-8")
+    script = tmp_path / "spikes/test/run.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    record = docs.Record(
+        Path("spikes/test/README.md"),
+        {"id": "tiler.test", "kind": "experiment", "entrypoints": ["spikes/test/run.sh"]},
+        "```sh\nspikes/test/run.sh --measure\n```\n",
+    )
+    (tmp_path / "deps.sh").chmod(0o644)
+    script.chmod(0o644)
+
+    errors = docs.validate_executable_modes([record], tmp_path)
+
+    assert errors == [
+        "deps.sh: directly invoked entrypoint must be executable",
+        "spikes/shapes/shape-evidence/generate-workloads.sh: directly invoked entrypoint "
+        "must be executable",
+        "spikes/test/run.sh: directly invoked entrypoint must be executable",
+    ]

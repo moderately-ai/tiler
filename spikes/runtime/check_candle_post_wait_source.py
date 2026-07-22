@@ -70,9 +70,7 @@ def main() -> None:
         and result["success_after_waits"]
     )
     if not expected_gap:
-        raise SystemExit(
-            "source no longer has the verified pre-wait-only status-check shape"
-        )
+        raise SystemExit("source no longer has the verified pre-wait-only status-check shape")
 
 
 if __name__ == "__main__":

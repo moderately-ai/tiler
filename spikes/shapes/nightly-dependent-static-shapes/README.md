@@ -34,13 +34,14 @@ exact-extent array with one axis removed. The emerging `generic_const_args`
 path is not usable on either tested compiler without additional solver state
 and remains outside the governed profile.
 
-The repository root has a different toolchain until this spike passes. Always
-use the explicit selector; `--manifest-path` alone does not change rustup's
-working-directory resolution:
+The repository root `rust-toolchain.toml` is the sole governed compiler pin.
+The check entrypoint deliberately has no fallback: callers pass that canonical
+pin explicitly, while adjacent-nightly migration probes may pass another exact
+dated nightly without adding a second toolchain file:
 
 ```sh
-spikes/shapes/nightly-dependent-static-shapes/check.sh nightly-2026-07-19
-spikes/shapes/nightly-dependent-static-shapes/check.sh nightly-2026-07-20
+spikes/shapes/nightly-dependent-static-shapes/check.sh "$(command -v rustup)" nightly-2026-07-19
+spikes/shapes/nightly-dependent-static-shapes/check.sh "$(command -v rustup)" nightly-2026-07-20
 ```
 
 Regenerate the ignored 1/10/100/1,000-shape sources and the compact checked-in

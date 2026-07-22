@@ -1,14 +1,17 @@
 ---
 id: enforce-repository-validation-gate-integrity
 title: Enforce repository validation gate integrity
-status: todo
+status: review
 priority: p0
 dependencies: [repair-macro-and-embedding-harness-integrity, repair-numerical-witness-integrity]
 related: []
-scopes: [implementation/workspace, contracts/navigation]
+scopes: [implementation/workspace, contracts/navigation, research/runtime, research/documentation, implementation/ir, implementation/reference, implementation/artifact, implementation/compiler, implementation/metal, implementation/metal-aot, implementation/runtime, research/shapes]
 shared_scopes: [project/tickets]
-paths: []
+paths: [.shellcheckrc, AGENTS.md, scripts/check_ci.py, scripts/check_repository.py, tool-versions.toml]
 tags: [tooling, correctness, developer-experience]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1784680697
 ---
 
 Make the repository gates prove the contributor contract instead of trusting
@@ -58,3 +61,27 @@ Create mutation tests for every bypass above. Each mutation must fail the gate
 for the intended typed reason; the unmodified repository must pass on macOS
 and the supported Debian-family CI profile. Do not rely on arbitrary ambient
 user configuration as part of the proof.
+
+## Outcome
+
+- Added one canonical repository gate covering exact Python/uv/tool provenance,
+  Ruff and pytest discovery, CommonMark documentation integrity, CI structure,
+  all shell entrypoints, ticketsplease lint, and the complete Rust sub-gate.
+- Made the Rust gate validate the exact workspace package, dependency, target,
+  lint, formatter, toolchain, host, Cargo-config, lockfile, release-numerics,
+  rustdoc, and dependent-array shape contracts. Ambient executable, compiler,
+  runner, flag, `HOME`, and `PATH` redirection now fails closed or is replaced
+  by a governed absolute tool path.
+- Reworked bootstrap authority and repair behavior around exact Rust, Python,
+  uv, locked development dependencies, and immutable ticketsplease revision
+  provenance. Debian prerequisites now include the governed shell and timing
+  tools.
+- Replaced split CI with one exact, mutation-tested macOS arm64 and Ubuntu x64
+  matrix that invokes only the canonical gate. Action revisions, runners,
+  permissions, triggers, tool placement, and the complete command are
+  structurally validated as strict YAML 1.2.
+- Added adversarial mutation coverage for every reproduced false-green family.
+  The complete gate passed locally on macOS arm64 with 140 Python tests plus all
+  development/release Rust tests, doctests, rustdoc, and the nightly shape
+  conformance fixture. Hosted Ubuntu and macOS results are recorded by the
+  ticket branch pull request before integration.

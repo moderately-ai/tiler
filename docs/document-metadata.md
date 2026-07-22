@@ -136,11 +136,12 @@ derived from metadata and checked in for ordinary GitHub reading.
 
 ## Validation and catalog updates
 
-The validator uses only the Python standard library:
+The documentation validator uses the locked `markdown-it-py` CommonMark parser
+in the repository development environment. The canonical repository gate
+invokes it together with its mutation tests and the other governed checks:
 
 ```sh
-uv run --locked python scripts/docs.py validate
-uv run --locked pytest
+uv run --locked python scripts/check_repository.py
 ```
 
 After changing cataloged metadata, regenerate the checked-in views and validate
@@ -148,11 +149,12 @@ the result:
 
 ```sh
 uv run --locked python scripts/docs.py render
-uv run --locked python scripts/docs.py validate
+uv run --locked python scripts/check_repository.py
 ```
 
-CI runs the tests and validator. `render --check` is available when a caller
-needs only the deterministic generated-block freshness check.
+CI runs the same complete gate on the supported macOS arm64 and Ubuntu x64
+profiles. `render --check` is available when a caller needs only the
+deterministic generated-block freshness check.
 
 ## Ownership
 

@@ -230,14 +230,14 @@ Before completing documentation work, run:
 
 ```sh
 uv run --locked python scripts/docs.py render
-uv run --locked python scripts/docs.py validate
-uv run --locked ruff format --check
-uv run --locked ruff check
-uv run --locked pytest
+uv run --locked python scripts/check_repository.py
 ```
 
 Generated catalog blocks are checked-in views over frontmatter. Edit source
-metadata, not generated list items, and rerun the renderer.
+metadata, not generated list items, and rerun the renderer. The complete gate
+owns documentation validation, Python discovery and execution, Ruff,
+ShellCheck and shell syntax, ticketsplease lint, and the Rust gate; do not
+substitute a hand-picked subset of those commands.
 
 ## Ticketsplease and parallel work
 
@@ -297,16 +297,31 @@ than duplicate or weaken it.
   pinned toolchain is nightly and the setting is explicitly required. Do not
   introduce ambient user configuration as a repository requirement.
 
-Run the complete Rust gate from the repository root with:
+Run the Rust-only sub-gate from the repository root with:
 
 ```sh
 uv run --locked python scripts/check_rust.py
 ```
 
-The gate checks the workspace contract, formatting, all targets, strict
-Clippy, tests, doctests, warning-free rustdoc, and the governed dependent-array
-shape conformance fixture. Use explicit dated-toolchain selectors in compiler-
-migration probes; never replace the repository pin with rolling `nightly`.
+The Rust sub-gate checks the exact workspace/dependency/target contract,
+formatting, all targets, strict Clippy, development tests, optimized numerical
+tests, doctests, warning-free rustdoc, immutable Cargo locks, and the governed
+dependent-array shape conformance fixture. It accepts only the CI-proven macOS
+arm64 and GNU Linux x86-64 profiles, each with a 64-bit little-endian address
+space and native 64-bit atomics. Use explicit dated-toolchain selectors in
+compiler-migration probes; never replace the repository pin with rolling
+`nightly`.
+
+The canonical complete contributor and CI gate is:
+
+```sh
+uv run --locked python scripts/check_repository.py
+```
+
+`rust-toolchain.toml`, `.python-version`, `pyproject.toml`, and
+`tool-versions.toml` are the sole Rust, Python, uv/development-dependency, and
+ticketsplease version authorities respectively. Do not duplicate their values
+in scripts or CI configuration.
 
 Bootstrap a fresh development checkout with `./deps.sh`. It installs or
 verifies the supported host prerequisites, the pinned Rust toolchain, uv,

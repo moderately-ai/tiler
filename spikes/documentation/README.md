@@ -15,16 +15,16 @@ ticket: "docs-integrity-gate"
 
 # Documentation integrity gate
 
-This standard-library-only checker validates the governed Markdown schemas,
-typed graph, ticket and entrypoint references, local links, open-question shape,
-and deterministic generated catalogs.
+This checker uses the repository's locked CommonMark parser to validate the
+governed Markdown schemas, typed graph, ticket and entrypoint references, local
+links, open-question shape, and deterministic generated catalogs.
 
 From the repository root:
 
 ```sh
-python3 -B scripts/docs.py validate
-python3 -B scripts/docs.py render --check
-uv run --locked pytest
+uv run --locked python scripts/docs.py validate
+uv run --locked python scripts/docs.py render --check
+uv run --locked python scripts/check_repository.py
 ```
 
 The executable model checks structural integrity. It cannot prove that prose is

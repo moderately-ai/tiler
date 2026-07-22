@@ -1,4 +1,4 @@
-name: Rust prototype
+name: Repository validation
 
 on:
   pull_request:
@@ -10,13 +10,70 @@ permissions:
 
 jobs:
   check:
-    runs-on: macos-latest
+    name: Complete gate (${{ matrix.profile }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: macOS arm64
+            runner: macos-15
+          - profile: Ubuntu x64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          version: "0.11.29"
-          python-version: "3.11"
+          version-file: "pyproject.toml"
           enable-cache: true
-      - run: rustup toolchain install nightly-2026-07-19 --profile minimal --component clippy,rustfmt
-      - run: uv run --locked python scripts/check_rust.py
+      - name: Normalize the governed uv location
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$(command -v uv)" "$HOME/.local/bin/uv"
+      - name: Read governed tool versions
+        id: tool-versions
+        shell: bash
+        run: |
+          uv run --locked python - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          from pathlib import Path
+
+          rust = tomllib.loads(Path("rust-toolchain.toml").read_text())["toolchain"]
+          tools = tomllib.loads(Path("tool-versions.toml").read_text())
+          print(f"rust_channel={rust['channel']}")
+          print(f"rust_profile={rust['profile']}")
+          print(f"rust_components={','.join(rust['components'])}")
+          print(f"ticketsplease={tools['ticketsplease']}")
+          print(f"ticketsplease_rev={tools['ticketsplease_rev']}")
+          PY
+      - name: Install the governed Rust toolchain
+        run: >-
+          rustup toolchain install
+          '${{ steps.tool-versions.outputs.rust_channel }}'
+          --profile '${{ steps.tool-versions.outputs.rust_profile }}'
+          --component '${{ steps.tool-versions.outputs.rust_components }}'
+      - name: Install ticketsplease
+        run: >-
+          rustup run '${{ steps.tool-versions.outputs.rust_channel }}'
+          cargo install
+          --git https://github.com/moderately-ai/ticketsplease
+          --rev '${{ steps.tool-versions.outputs.ticketsplease_rev }}'
+          --locked
+          --root "$HOME/.local"
+          ticketsplease-cli
+      - name: Record the governed ticketsplease revision
+        run: |
+          mkdir -p "$HOME/.local/share/tiler"
+          printf '%s\n' '${{ steps.tool-versions.outputs.ticketsplease_rev }}' \
+            > "$HOME/.local/share/tiler/ticketsplease-revision"
+      - name: Install Ubuntu system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y shellcheck time zsh
+      - name: Install macOS system dependencies
+        if: runner.os == 'macOS'
+        run: brew install shellcheck
+      - name: Run the complete repository gate
+        run: uv run --locked python scripts/check_repository.py

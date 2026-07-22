@@ -7,11 +7,15 @@ import argparse
 import json
 import posixpath
 import re
+import stat
 import sys
+import urllib.parse
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
+
+from markdown_it import MarkdownIt
 
 SCHEMA = "tiler-doc/v1"
 KINDS = {
@@ -157,6 +161,9 @@ MARKERS = {
     "research": (Path("docs/research/README.md"), "RESEARCH CATALOG"),
     "experiment": (Path("spikes/README.md"), "EXPERIMENT CATALOG"),
 }
+STABLE_ID = re.compile(r"(?:ADR-\d{4}|[a-z0-9]+(?:[.-][a-z0-9]+)*)")
+SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 @dataclass(frozen=True)
@@ -236,6 +243,8 @@ def validate_record(record: Record, root: Path) -> list[str]:
     for key, value in m.items():
         if key not in ARRAYS and not isinstance(value, str):
             errors.append(f"{p}: {key} must be a string")
+        if isinstance(value, str) and (not value or value != value.strip()):
+            errors.append(f"{p}: {key} must be a nonempty, trimmed string")
     if m.get("schema") != SCHEMA:
         errors.append(f"{p}: schema must be {SCHEMA!r}")
     identifier = m.get("id")
@@ -254,6 +263,18 @@ def validate_record(record: Record, root: Path) -> list[str]:
             errors.append(f"{p}: {key} must be a nonempty array")
         elif any(not isinstance(v, str) for v in value) or len(value) != len(set(value)):
             errors.append(f"{p}: {key} must contain unique strings")
+        elif any(not v or v != v.strip() for v in value):
+            errors.append(f"{p}: {key} must contain nonempty, trimmed strings")
+    for topic in m.get("topics", []):
+        if isinstance(topic, str) and not SLUG.fullmatch(topic):
+            errors.append(f"{p}: invalid topic slug {topic!r}")
+    ticket = m.get("ticket")
+    if isinstance(ticket, str) and not SLUG.fullmatch(ticket):
+        errors.append(f"{p}: invalid ticket slug {ticket!r}")
+    for relation in RELATIONS:
+        for target in m.get(relation, []):
+            if isinstance(target, str) and not STABLE_ID.fullmatch(target):
+                errors.append(f"{p}: invalid {relation} stable id {target!r}")
     for key, values in ENUMS.items():
         if key in m and m[key] not in values:
             errors.append(f"{p}: invalid {key} {m[key]!r}")
@@ -284,8 +305,11 @@ def validate_record(record: Record, root: Path) -> list[str]:
         for key in ("evidence_classes", "entrypoints", "last_verified"):
             if key not in m:
                 errors.append(f"{p}: reproducible experiment requires {key}")
+        verified = m.get("last_verified")
         try:
-            if date.fromisoformat(str(m.get("last_verified"))) > date.today():
+            if not isinstance(verified, str) or not ISO_DATE.fullmatch(verified):
+                raise ValueError
+            if date.fromisoformat(verified) > date.today():
                 errors.append(f"{p}: last_verified is in the future")
         except ValueError:
             errors.append(f"{p}: last_verified must be YYYY-MM-DD")
@@ -296,6 +320,7 @@ def validate_record(record: Record, root: Path) -> list[str]:
                 or ".." in posix.parts
                 or "." in posix.parts
                 or "\\" in str(entry)
+                or posix.as_posix() != entry
                 or not (root / posix).is_file()
             ):
                 errors.append(f"{p}: invalid repository-root entrypoint {entry!r}")
@@ -396,24 +421,86 @@ def validate_graph(records: list[Record], root: Path) -> list[str]:
     return errors
 
 
-LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^) >]+)(?:\s+[^)]*)?\)")
+MARKDOWN = MarkdownIt("commonmark")
+COMMENT_ONLY_HTML = re.compile(r"(?:\s*<!--(?:(?!-->)[\s\S])*-->)*\s*")
+DIRECT_INTERNAL_ENTRYPOINTS = {Path("spikes/shapes/shape-evidence/generate-workloads.sh")}
+
+
+def validate_local_target(record: Record, raw: str, root: Path) -> str | None:
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.scheme.lower() == "file":
+        return f"{record.path}: file URI is not allowed: {raw}"
+    if parsed.scheme or parsed.netloc:
+        return None
+    target = urllib.parse.unquote(parsed.path)
+    if not target:
+        return None
+    try:
+        path = (root / record.path.parent / target).resolve()
+    except (OSError, ValueError) as error:
+        return f"{record.path}: invalid local link {raw}: {error}"
+    try:
+        path.relative_to(root.resolve())
+    except ValueError:
+        return f"{record.path}: link escapes repository: {raw}"
+    if not path.exists():
+        return f"{record.path}: broken local link {raw}"
+    return None
 
 
 def validate_links(records: list[Record], root: Path) -> list[str]:
     errors = []
     for record in records:
-        for raw in LINK.findall(record.body):
-            target = raw.split("#", 1)[0]
-            if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
+        environment: dict[str, object] = {}
+        tokens = MARKDOWN.parse(record.body, environment)
+        references = environment.get("references", {})
+        if not isinstance(references, dict):
+            references = {}
+        for definition in references.values():
+            if not isinstance(definition, dict) or not isinstance(definition.get("href"), str):
+                errors.append(f"{record.path}: malformed reference-style link definition")
                 continue
-            path = (root / record.path.parent / target).resolve()
-            try:
-                path.relative_to(root.resolve())
-            except ValueError:
-                errors.append(f"{record.path}: link escapes repository: {raw}")
-                continue
-            if not path.exists():
-                errors.append(f"{record.path}: broken local link {raw}")
+            error = validate_local_target(record, definition["href"], root)
+            if error:
+                errors.append(error)
+        duplicate_references = environment.get("duplicate_refs", [])
+        if duplicate_references:
+            errors.append(f"{record.path}: duplicate reference-style link definitions")
+        for token in tokens:
+            if token.type in {"html_block", "html_inline"} and not COMMENT_ONLY_HTML.fullmatch(
+                token.content
+            ):
+                errors.append(f"{record.path}: raw HTML is outside governed Markdown")
+            for child in token.children or []:
+                if child.type == "html_inline" and not COMMENT_ONLY_HTML.fullmatch(child.content):
+                    errors.append(f"{record.path}: raw HTML is outside governed Markdown")
+                if child.type in {"link_open", "image"}:
+                    attribute = "href" if child.type == "link_open" else "src"
+                    target = child.attrGet(attribute)
+                    if target is not None:
+                        error = validate_local_target(record, target, root)
+                        if error:
+                            errors.append(error)
+    return errors
+
+
+def validate_executable_modes(records: list[Record], root: Path) -> list[str]:
+    """Require executable mode for root and metadata-declared script entrypoints."""
+    errors = []
+    entrypoints = {Path("deps.sh"), *DIRECT_INTERNAL_ENTRYPOINTS}
+    for record in records:
+        for value in record.meta.get("entrypoints", []):
+            relative = Path(str(value))
+            path = root / relative
+            command = re.compile(rf"^\s*{re.escape(relative.as_posix())}(?:\s|$)", re.MULTILINE)
+            if path.is_file() and command.search(record.body):
+                entrypoints.add(relative)
+    for relative in sorted(entrypoints):
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"{relative}: directly invoked entrypoint is missing")
+        elif not path.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+            errors.append(f"{relative}: directly invoked entrypoint must be executable")
     return errors
 
 
@@ -432,16 +519,22 @@ def validate_tickets(root: Path) -> list[str]:
 def validate_questions(root: Path) -> list[str]:
     path = root / "docs/open-questions.md"
     text = path.read_text(encoding="utf-8")
-    matches = list(re.finditer(r"^### (Q-[A-Z]+-\d+(?:-[A-Z])?) — .+$", text, re.MULTILINE))
+    valid = re.compile(r"^### (Q-[A-Z]+-\d+(?:-[A-Z])?) — .+$", re.MULTILINE)
+    matches = list(valid.finditer(text))
     errors, seen = [], set()
-    for index, match in enumerate(matches):
+    for line_no, line in enumerate(text.splitlines(), 1):
+        if re.match(r"^###\s+Q", line) and not valid.fullmatch(line):
+            errors.append(f"docs/open-questions.md:{line_no}: malformed question heading")
+    headings = list(re.finditer(r"^### .+$", text, re.MULTILINE))
+    for match in matches:
         qid = match.group(1)
         if qid in seen:
             errors.append(f"docs/open-questions.md: duplicate question {qid}")
         seen.add(qid)
-        block = text[
-            match.end() : matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        ]
+        next_heading = next(
+            (heading.start() for heading in headings if heading.start() > match.start()), len(text)
+        )
+        block = text[match.end() : next_heading]
         if not re.search(r"^- Owner(?:/track(?:ing)?|/tracking)?:", block, re.MULTILINE):
             errors.append(f"docs/open-questions.md: {qid} lacks owner")
         if not re.search(r"^- (?:Close(?: when)?|Run when|Trigger):", block, re.MULTILINE):
@@ -549,6 +642,7 @@ def validate(root: Path, check_render: bool = True) -> list[str]:
         errors += validate_record(record, root)
     errors += validate_graph(records, root)
     errors += validate_links(records, root)
+    errors += validate_executable_modes(records, root)
     errors += validate_tickets(root)
     errors += validate_questions(root)
     if check_render:

@@ -7,6 +7,12 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "tiler-prototype-compile"
+path = "src/main.rs"
+test = true
+doc = true
+
 [dependencies]
 tiler-artifact.workspace = true
 tiler-compiler.workspace = true

@@ -10,10 +10,73 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR
-readonly REQUIRED_RUST_TOOLCHAIN="nightly-2026-07-19"
-readonly REQUIRED_UV_VERSION="0.11.28"
-readonly REQUIRED_PYTHON="3.11"
-readonly REQUIRED_TICKETSPLEASE_VERSION="0.11.0"
+
+toml_string() {
+    local file="$1" section="$2" key="$3"
+    awk -v section="$section" -v key="$key" '
+        BEGIN { active = (section == "") }
+        $0 == "[" section "]" { active = 1; next }
+        /^\[/ { active = 0 }
+        active && $0 ~ "^" key " = \"[^\"]+\"$" {
+            count += 1
+            value = $0
+            sub("^" key " = \"", "", value)
+            sub("\"$", "", value)
+        }
+        END {
+            if (count != 1) exit 1
+            print value
+        }
+    ' "$file"
+}
+
+toml_integer() {
+    local file="$1" section="$2" key="$3"
+    awk -v section="$section" -v key="$key" '
+        BEGIN { active = (section == "") }
+        $0 == "[" section "]" { active = 1; next }
+        /^\[/ { active = 0 }
+        active && $0 ~ "^" key " = [0-9]+$" {
+            count += 1
+            value = $0
+            sub("^" key " = ", "", value)
+        }
+        END {
+            if (count != 1) exit 1
+            print value
+        }
+    ' "$file"
+}
+
+REQUIRED_RUST_TOOLCHAIN="$(toml_string "$ROOT_DIR/rust-toolchain.toml" toolchain channel)" \
+    || { printf 'invalid Rust toolchain authority\n' >&2; exit 1; }
+uv_requirement="$(toml_string "$ROOT_DIR/pyproject.toml" tool.uv required-version)" \
+    || { printf 'invalid uv version authority\n' >&2; exit 1; }
+if [[ "$uv_requirement" =~ ^==([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+    REQUIRED_UV_VERSION="${BASH_REMATCH[1]}"
+else
+    printf 'uv required-version must be an exact ==X.Y.Z pin\n' >&2
+    exit 1
+fi
+tool_versions_schema="$(toml_integer "$ROOT_DIR/tool-versions.toml" '' schema_version)" \
+    || { printf 'invalid tool version authority schema\n' >&2; exit 1; }
+[ "$tool_versions_schema" = '1' ] \
+    || { printf 'unsupported tool version authority schema: %s\n' "$tool_versions_schema" >&2; exit 1; }
+REQUIRED_TICKETSPLEASE_VERSION="$(
+    toml_string "$ROOT_DIR/tool-versions.toml" '' ticketsplease
+)" || { printf 'invalid ticketsplease version authority\n' >&2; exit 1; }
+REQUIRED_TICKETSPLEASE_REV="$(
+    toml_string "$ROOT_DIR/tool-versions.toml" '' ticketsplease_rev
+)" || { printf 'invalid ticketsplease revision authority\n' >&2; exit 1; }
+[[ "$REQUIRED_TICKETSPLEASE_REV" =~ ^[0-9a-f]{40}$ ]] \
+    || { printf 'invalid ticketsplease revision authority\n' >&2; exit 1; }
+readonly REQUIRED_RUST_TOOLCHAIN REQUIRED_UV_VERSION REQUIRED_TICKETSPLEASE_VERSION
+readonly REQUIRED_TICKETSPLEASE_REV
+REQUIRED_PYTHON="$(tr -d '[:space:]' < "$ROOT_DIR/.python-version")"
+[[ "$REQUIRED_PYTHON" =~ ^3\.11(\.[0-9]+)?$ ]] \
+    || { printf 'invalid Python version authority\n' >&2; exit 1; }
+readonly REQUIRED_PYTHON
+unset uv_requirement tool_versions_schema
 
 CHECK_ONLY=0
 for argument in "$@"; do
@@ -50,17 +113,6 @@ ok() { printf '  %s[ok]%s %s\n' "$C_GREEN" "$C_RESET" "$1"; }
 warn() { printf '  %s[warn]%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
 die() { printf '  %s[fail]%s %s\n' "$C_RED" "$C_RESET" "$1" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
-
-version_ge() {
-    local current_major current_minor current_patch required_major required_minor required_patch
-    IFS=. read -r current_major current_minor current_patch <<<"${1%%-*}"
-    IFS=. read -r required_major required_minor required_patch <<<"${2%%-*}"
-    (( 10#$current_major > 10#$required_major )) && return 0
-    (( 10#$current_major < 10#$required_major )) && return 1
-    (( 10#$current_minor > 10#$required_minor )) && return 0
-    (( 10#$current_minor < 10#$required_minor )) && return 1
-    (( 10#$current_patch >= 10#$required_patch ))
-}
 
 OS_FAMILY=''
 LINUX_ID=''
@@ -115,7 +167,7 @@ apt_command() {
 ensure_apt_packages() {
     have apt-get || die 'apt-get is required on Debian/Ubuntu'
     local package
-    local packages=(build-essential ca-certificates curl git pkg-config shellcheck)
+    local packages=(build-essential ca-certificates curl git pkg-config shellcheck time zsh)
     local missing=()
     for package in "${packages[@]}"; do
         dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed' || missing+=("$package")
@@ -174,39 +226,66 @@ ensure_rust() {
     ok "$(rustup run "$REQUIRED_RUST_TOOLCHAIN" rustc --version)"
 }
 
+ensure_tkt_alias() {
+    local managed_bin="$HOME/.local/bin"
+    local managed_alias="$managed_bin/tkt"
+    export PATH="$managed_bin:$PATH"
+    hash -r
+    if [ -e "$managed_alias" ] && [ ! -L "$managed_alias" ]; then
+        die "$managed_alias is user-owned and cannot be replaced with the managed tkt alias"
+    fi
+    local ticketsplease_path
+    ticketsplease_path="$(command -v ticketsplease)"
+    if [ ! -L "$managed_alias" ] || [ "$(readlink "$managed_alias")" != "$ticketsplease_path" ]; then
+        if [ "$CHECK_ONLY" -eq 1 ]; then
+            die 'the managed tkt alias is missing or stale; run ./deps.sh to repair it'
+        fi
+        mkdir -p "$managed_bin"
+        local temporary_alias="$managed_alias.tmp.$$"
+        ln -s "$ticketsplease_path" "$temporary_alias"
+        mv -f "$temporary_alias" "$managed_alias"
+        hash -r
+    fi
+    [ "$(command -v tkt)" = "$managed_alias" ] \
+        || die "tkt does not resolve through the managed alias $managed_alias"
+    [ "$(tkt --version | awk '{print $2}')" = "$REQUIRED_TICKETSPLEASE_VERSION" ] \
+        || die "tkt does not resolve to ticketsplease $REQUIRED_TICKETSPLEASE_VERSION"
+}
+
 ensure_ticketsplease() {
     info 'ticketsplease'
     local current=''
+    local revision_receipt="$HOME/.local/share/tiler/ticketsplease-revision"
+    local installed_revision=''
+    export PATH="$HOME/.local/bin:$PATH"
+    hash -r
     if have ticketsplease; then
         current="$(ticketsplease --version | awk '{print $2}')"
     fi
-    if [ "$current" != "$REQUIRED_TICKETSPLEASE_VERSION" ]; then
+    if [ -f "$revision_receipt" ]; then
+        installed_revision="$(tr -d '[:space:]' < "$revision_receipt")"
+    fi
+    if [ "$current" != "$REQUIRED_TICKETSPLEASE_VERSION" ] \
+        || [ "$installed_revision" != "$REQUIRED_TICKETSPLEASE_REV" ]; then
         if [ "$CHECK_ONLY" -eq 1 ]; then
-            die "ticketsplease ${current:-missing}; need $REQUIRED_TICKETSPLEASE_VERSION"
+            die "ticketsplease ${current:-missing} revision ${installed_revision:-unknown}; run ./deps.sh"
         fi
         rustup run "$REQUIRED_RUST_TOOLCHAIN" cargo install \
             --git https://github.com/moderately-ai/ticketsplease \
-            --tag "v${REQUIRED_TICKETSPLEASE_VERSION}" \
+            --rev "$REQUIRED_TICKETSPLEASE_REV" \
             --locked --force --root "$HOME/.local" ticketsplease-cli
-        export PATH="$HOME/.local/bin:$PATH"
+        mkdir -p "$(dirname "$revision_receipt")"
+        local receipt_temp
+        receipt_temp="$(mktemp "${revision_receipt}.XXXXXX")"
+        printf '%s\n' "$REQUIRED_TICKETSPLEASE_REV" > "$receipt_temp"
+        mv -f "$receipt_temp" "$revision_receipt"
+        hash -r
     fi
 
     current="$(ticketsplease --version | awk '{print $2}')"
     [ "$current" = "$REQUIRED_TICKETSPLEASE_VERSION" ] \
         || die "ticketsplease $current does not match $REQUIRED_TICKETSPLEASE_VERSION"
-
-    if ! have tkt; then
-        if [ "$CHECK_ONLY" -eq 1 ]; then
-            die 'the tkt alias is missing; run ./deps.sh to create it'
-        fi
-        mkdir -p "$HOME/.local/bin"
-        [ ! -e "$HOME/.local/bin/tkt" ] && [ ! -L "$HOME/.local/bin/tkt" ] \
-            || die "$HOME/.local/bin/tkt already exists but is not executable on PATH"
-        ln -s "$(command -v ticketsplease)" "$HOME/.local/bin/tkt"
-        export PATH="$HOME/.local/bin:$PATH"
-    fi
-    [ "$(tkt --version | awk '{print $2}')" = "$REQUIRED_TICKETSPLEASE_VERSION" ] \
-        || die "tkt does not resolve to ticketsplease $REQUIRED_TICKETSPLEASE_VERSION"
+    ensure_tkt_alias
 
     if [ "$CHECK_ONLY" -eq 0 ]; then
         ticketsplease skill sync >/dev/null
@@ -231,6 +310,13 @@ install_uv_standalone() {
     export PATH="$HOME/.local/bin:$PATH"
 }
 
+sanitize_uv_environment() {
+    local name
+    while IFS= read -r name; do
+        unset "$name"
+    done < <(compgen -A variable UV_)
+}
+
 ensure_uv() {
     info 'uv'
     export PATH="$HOME/.local/bin:$PATH"
@@ -247,18 +333,16 @@ ensure_uv() {
 
     local current
     current="$(uv_version)"
-    if ! version_ge "$current" "$REQUIRED_UV_VERSION"; then
+    if [ "$current" != "$REQUIRED_UV_VERSION" ]; then
         if [ "$CHECK_ONLY" -eq 1 ]; then
-            die "uv $current is too old; need >= $REQUIRED_UV_VERSION"
+            die "uv $current does not match required $REQUIRED_UV_VERSION"
         fi
-        if [ "$OS_FAMILY" = 'macos' ]; then
-            brew upgrade uv
-        else
+        if ! uv self update "$REQUIRED_UV_VERSION"; then
             install_uv_standalone
         fi
         current="$(uv_version)"
-        version_ge "$current" "$REQUIRED_UV_VERSION" \
-            || die "uv $current is too old after installation"
+        [ "$current" = "$REQUIRED_UV_VERSION" ] \
+            || die "uv $current does not match $REQUIRED_UV_VERSION after installation"
     fi
     ok "uv $current"
 }
@@ -266,19 +350,17 @@ ensure_uv() {
 ensure_python_environment() {
     info 'locked Python development environment'
     cd "$ROOT_DIR"
-    uv lock --check
+    uv --project "$ROOT_DIR" --no-config lock --check
     if [ "$CHECK_ONLY" -eq 1 ]; then
-        uv sync --locked --check
+        uv --project "$ROOT_DIR" --no-config sync --locked --check
         [ -x .venv/bin/python ] || die 'the project environment is missing; run ./deps.sh'
-        [ -x .venv/bin/pytest ] || die 'pytest is missing from the project environment; run ./deps.sh'
-        [ -x .venv/bin/ruff ] || die 'Ruff is missing from the project environment; run ./deps.sh'
-        [ "$(.venv/bin/python -c 'import mpmath; print(mpmath.__version__)')" = '1.3.0' ] \
-            || die 'mpmath 1.3.0 is missing from the project environment; run ./deps.sh'
-        ok "$(.venv/bin/python --version) with locked mpmath, pytest, and Ruff"
+        [ -x .venv/bin/pytest ] || die 'pytest is missing from the locked environment; run ./deps.sh'
+        [ -x .venv/bin/ruff ] || die 'Ruff is missing from the locked environment; run ./deps.sh'
+        ok "$(.venv/bin/python --version) with the locked development dependencies"
     else
-        uv python install "$REQUIRED_PYTHON"
-        uv sync --locked
-        ok "$(uv run --locked python --version) with locked mpmath, pytest, and Ruff"
+        uv --project "$ROOT_DIR" --no-config python install "$REQUIRED_PYTHON"
+        uv --project "$ROOT_DIR" --no-config sync --locked
+        ok "$(uv --project "$ROOT_DIR" --no-config run --locked python --version) with the locked development dependencies"
     fi
 }
 
@@ -315,15 +397,17 @@ verify_tools() {
         .venv/bin/pytest --version
         .venv/bin/ruff --version
     else
-        uv run --locked python --version
-        uv run --locked python -c 'import mpmath; print("mpmath", mpmath.__version__)'
-        uv run --locked pytest --version
-        uv run --locked ruff --version
+        uv --project "$ROOT_DIR" --no-config run --locked python --version
+        uv --project "$ROOT_DIR" --no-config run --locked python \
+            -c 'import mpmath; print("mpmath", mpmath.__version__)'
+        uv --project "$ROOT_DIR" --no-config run --locked pytest --version
+        uv --project "$ROOT_DIR" --no-config run --locked ruff --version
     fi
 }
 
 main() {
     cd "$ROOT_DIR"
+    sanitize_uv_environment
     local mode='install'
     [ "$CHECK_ONLY" -eq 1 ] && mode='check-only'
     printf 'tiler dependencies (%s)\n' "$mode"
@@ -337,4 +421,6 @@ main() {
     printf '%sdevelopment dependencies are ready%s\n' "$C_GREEN" "$C_RESET"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
