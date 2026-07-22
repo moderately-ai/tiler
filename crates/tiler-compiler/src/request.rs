@@ -293,6 +293,104 @@ impl VerifiedRequestSubject {
     pub(crate) const fn numerical_contract(&self) -> StrictF32NumericalContract {
         self.numerical_contract
     }
+
+    pub(crate) fn canonical_explain_subject_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"tiler.compiler.request-subject.v1\0");
+        encode_explain_bytes(&mut bytes, self.semantic_identity.graph().as_bytes());
+        encode_explain_bytes(
+            &mut bytes,
+            self.semantic_identity.reached_definitions().as_bytes(),
+        );
+        encode_explain_bytes(
+            &mut bytes,
+            self.semantic_identity.admission_provenance().as_bytes(),
+        );
+        encode_explain_bytes(
+            &mut bytes,
+            self.semantic_identity.registry_snapshot().as_bytes(),
+        );
+        encode_explain_bytes(&mut bytes, self.normalized.input_key.as_str().as_bytes());
+        encode_explain_bytes(&mut bytes, self.normalized.output_key.as_str().as_bytes());
+        encode_explain_shape(&mut bytes, &self.normalized.input_shape);
+        encode_explain_shape(&mut bytes, &self.normalized.output_shape);
+        bytes.extend_from_slice(
+            &u64::try_from(self.normalized.reduction_axes.len())
+                .unwrap_or(u64::MAX)
+                .to_be_bytes(),
+        );
+        for axis in &self.normalized.reduction_axes {
+            bytes.extend_from_slice(&axis.get().to_be_bytes());
+        }
+        bytes.extend_from_slice(&self.normalized.scale_bits.to_be_bytes());
+        bytes.extend_from_slice(&self.normalized.bias_bits.to_be_bytes());
+        bytes.extend_from_slice(&self.normalized.input_elements.to_be_bytes());
+        bytes.extend_from_slice(&self.normalized.output_elements.to_be_bytes());
+        encode_explain_bytes(&mut bytes, self.numerical_contract.key.as_bytes());
+        bytes.extend_from_slice(
+            &self
+                .numerical_contract
+                .canonical_arithmetic_nan_bits
+                .to_be_bytes(),
+        );
+        bytes.push(self.numerical_contract.input_subnormals as u8);
+        bytes.push(self.numerical_contract.result_subnormals as u8);
+        bytes.push(self.numerical_contract.contraction as u8);
+        bytes.push(self.numerical_contract.reassociation as u8);
+        for budget in [
+            self.budgets.semantic_values,
+            self.budgets.semantic_operations,
+            self.budgets.regions,
+            self.budgets.host_expression_nodes,
+            self.budgets.buffers,
+            self.budgets.fusion_candidates,
+        ] {
+            bytes.extend_from_slice(&budget.to_be_bytes());
+        }
+        encode_explain_bytes(&mut bytes, self.target_profile.key.as_bytes());
+        bytes.extend_from_slice(&self.target_profile.max_threads_per_grid_axis.to_be_bytes());
+        bytes.extend_from_slice(&self.target_profile.max_threads_per_workgroup.to_be_bytes());
+        bytes.extend_from_slice(
+            &self
+                .target_profile
+                .max_buffer_bindings_per_entry
+                .to_be_bytes(),
+        );
+        bytes.push(self.target_profile.index_bits);
+        bytes.push(u8::from(self.target_profile.supports_device_memory));
+        bytes.push(u8::from(self.target_profile.supports_strict_f32));
+        bytes.extend_from_slice(&self.capabilities.schema_version.to_be_bytes());
+        encode_explain_provider(&mut bytes, self.capabilities.materialized_serial_sum);
+        match self.capabilities.fused_serial_sum {
+            Some(provider) => {
+                bytes.push(1);
+                encode_explain_provider(&mut bytes, provider);
+            }
+            None => bytes.push(0),
+        }
+        bytes
+    }
+}
+
+fn encode_explain_bytes(output: &mut Vec<u8>, value: &[u8]) {
+    output.extend_from_slice(&u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    output.extend_from_slice(value);
+}
+
+fn encode_explain_shape(output: &mut Vec<u8>, shape: &Shape) {
+    output.extend_from_slice(
+        &u64::try_from(shape.rank())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    for extent in shape.extents() {
+        output.extend_from_slice(&extent.get().to_be_bytes());
+    }
+}
+
+fn encode_explain_provider(output: &mut Vec<u8>, provider: LoweringProviderIdentity) {
+    encode_explain_bytes(output, provider.key.as_bytes());
+    output.extend_from_slice(&provider.revision.to_be_bytes());
 }
 
 impl NormalizedSerialSumSubject {

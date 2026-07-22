@@ -21,3 +21,27 @@ Require deterministic ordering, bounded retention, causal errors, and stable
 positive and negative conformance fixtures.
 
 Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.
+
+## Review handoff
+
+The implementation draft deliberately keeps `tiler_compiler::explain` private.
+It adds a sealed, request-qualified `VerifiedExplainTrace` to each successful
+target compilation product and migrates the current normalization, fusion,
+feasibility, costing, selection, kernel, program, and artifact-plan flow to
+typed records. Canonical identity uses an explicit schema encoding; the
+versioned text renderer is presentation only. Retention is bounded across the
+complete canonical trace, preserves the current portfolio's terminal selection
+records, and emits a typed truncation record.
+
+Tom still needs to review these public-boundary choices before this ticket can
+be completed:
+
+- compiler-owned public module versus a future `tiler-explain` crate;
+- how successful and failed compilations return partial or complete reports;
+- whether canonical traces are serialized or embedded in artifacts;
+- which renderer guarantees, retention controls, and provider-detail/redaction
+  policy form part of the public contract.
+
+No provider emission trait is proposed yet. The draft keeps emission
+compiler-owned and exposes only private read accessors, avoiding a premature
+extension contract while preserving typed provider and rule identities.
