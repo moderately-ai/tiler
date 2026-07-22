@@ -59,19 +59,19 @@ pub(crate) struct RegionCandidate {
     pub(crate) members: Vec<SemanticOccurrence>,
     pub(crate) boundary_inputs: BTreeSet<BoundaryValue>,
     pub(crate) boundary_outputs: BTreeSet<BoundaryValue>,
-    pub(crate) request_subject: VerifiedRequestSubject,
+    request_subject: VerifiedRequestSubject,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FusionNumericalProof {
-    pub(crate) candidate: RegionCandidate,
-    pub(crate) request_subject: VerifiedRequestSubject,
-    pub(crate) materialized_reference_provider: LoweringProviderIdentity,
-    pub(crate) atomic_operations: AtomicOperationProof,
-    pub(crate) contributor_order: ContributorOrderProof,
-    pub(crate) nan_boundaries: NaNBoundaryProof,
-    pub(crate) materialization_boundaries: MaterializationBoundaryProof,
-    pub(crate) forbidden_transforms: ForbiddenTransformProof,
+    candidate: RegionCandidate,
+    request_subject: VerifiedRequestSubject,
+    materialized_reference_provider: LoweringProviderIdentity,
+    atomic_operations: AtomicOperationProof,
+    contributor_order: ContributorOrderProof,
+    nan_boundaries: NaNBoundaryProof,
+    materialization_boundaries: MaterializationBoundaryProof,
+    forbidden_transforms: ForbiddenTransformProof,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -151,9 +151,10 @@ pub(crate) fn enumerate_candidates(
         CandidateKind::FusedSerialSum,
         SemanticOccurrence::ALL,
     ));
-    if candidates.len() > usize::try_from(request.budgets.fusion_candidates).unwrap_or(usize::MAX) {
+    if candidates.len() > usize::try_from(request.budgets().fusion_candidates).unwrap_or(usize::MAX)
+    {
         return Err(CandidateError::Budget {
-            limit: request.budgets.fusion_candidates,
+            limit: request.budgets().fusion_candidates,
             actual: candidates.len(),
         });
     }
@@ -176,7 +177,7 @@ pub(crate) fn prove_fused_numerics(
     let proof = FusionNumericalProof {
         candidate: candidate.clone(),
         request_subject: request.subject(),
-        materialized_reference_provider: request.capabilities.materialized_serial_sum,
+        materialized_reference_provider: request.capabilities().materialized_serial_sum,
         atomic_operations: AtomicOperationProof::MultiplyThenAdd,
         contributor_order: ContributorOrderProof::OriginalAxisLexicographic,
         nan_boundaries: NaNBoundaryProof::CanonicalizeAfterEveryArithmeticOperation,
@@ -187,8 +188,8 @@ pub(crate) fn prove_fused_numerics(
             permutation: NumericalPermission::Forbidden,
         },
     };
-    if request.numerical_contract.contraction != NumericalPermission::Forbidden
-        || request.numerical_contract.reassociation != NumericalPermission::Forbidden
+    if request.numerical_contract().contraction != NumericalPermission::Forbidden
+        || request.numerical_contract().reassociation != NumericalPermission::Forbidden
         || proof.forbidden_transforms.contraction != NumericalPermission::Forbidden
         || proof.forbidden_transforms.reassociation != NumericalPermission::Forbidden
         || proof.forbidden_transforms.permutation != NumericalPermission::Forbidden
@@ -433,7 +434,7 @@ mod tests {
             .unwrap();
         let semantic = builder.build().unwrap();
         let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
-        verified.for_target(verified.target_profiles[0]).unwrap()
+        verified.for_target(verified.target_profiles()[0]).unwrap()
     }
 
     #[test]
@@ -552,16 +553,6 @@ mod tests {
             verify_fused_numerics(&request, fused, &wrong_proof),
             Err(CandidateError::Invalid {
                 rule: "numerical-proof-subject",
-                ..
-            })
-        ));
-
-        let mut wrong_subject = fused.clone();
-        wrong_subject.request_subject.normalized.scale_bits ^= 1;
-        assert!(matches!(
-            prove_fused_numerics(&request, &wrong_subject),
-            Err(CandidateError::Invalid {
-                rule: "numerical-proof-kind",
                 ..
             })
         ));

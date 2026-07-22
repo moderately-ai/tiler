@@ -190,49 +190,58 @@ impl NormalizedProgram {
             Self::SerialSum(normalized) => normalized,
         }
     }
+
+    #[cfg(test)]
+    fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
+        match self {
+            Self::SerialSum(normalized) => normalized,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedCompilationRequest {
-    pub(crate) normalized: NormalizedProgram,
-    pub(crate) semantic_identity: SemanticIdentity,
-    pub(crate) numerical_contract: StrictF32NumericalContract,
-    pub(crate) budgets: DeterministicBudgets,
-    pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
-    pub(crate) capabilities: CompilerCapabilitySnapshot,
+    normalized: NormalizedProgram,
+    semantic_identity: SemanticIdentity,
+    numerical_contract: StrictF32NumericalContract,
+    budgets: DeterministicBudgets,
+    target_profiles: Vec<PrototypeTargetProfile>,
+    capabilities: CompilerCapabilitySnapshot,
+    authorities: Vec<VerifiedRequestSubject>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedTargetRequest {
-    pub(crate) normalized: NormalizedProgram,
-    pub(crate) semantic_identity: SemanticIdentity,
-    pub(crate) numerical_contract: StrictF32NumericalContract,
-    pub(crate) budgets: DeterministicBudgets,
-    pub(crate) target_profile: PrototypeTargetProfile,
-    pub(crate) capabilities: CompilerCapabilitySnapshot,
+    normalized: NormalizedProgram,
+    semantic_identity: SemanticIdentity,
+    numerical_contract: StrictF32NumericalContract,
+    budgets: DeterministicBudgets,
+    target_profile: PrototypeTargetProfile,
+    capabilities: CompilerCapabilitySnapshot,
+    authority: VerifiedRequestSubject,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedRequestSubject {
-    pub(crate) normalized: NormalizedSerialSumSubject,
-    pub(crate) semantic_identity: SemanticIdentity,
-    pub(crate) numerical_contract: StrictF32NumericalContract,
-    pub(crate) budgets: DeterministicBudgets,
-    pub(crate) target_profile: PrototypeTargetProfile,
-    pub(crate) capabilities: CompilerCapabilitySnapshot,
+    normalized: NormalizedSerialSumSubject,
+    semantic_identity: SemanticIdentity,
+    numerical_contract: StrictF32NumericalContract,
+    budgets: DeterministicBudgets,
+    target_profile: PrototypeTargetProfile,
+    capabilities: CompilerCapabilitySnapshot,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedSerialSumSubject {
-    pub(crate) input_key: InputKey,
-    pub(crate) output_key: OutputKey,
-    pub(crate) input_shape: Shape,
-    pub(crate) output_shape: Shape,
-    pub(crate) reduction_axes: Vec<Axis>,
-    pub(crate) scale_bits: u32,
-    pub(crate) bias_bits: u32,
-    pub(crate) input_elements: u64,
-    pub(crate) output_elements: u64,
+    input_key: InputKey,
+    output_key: OutputKey,
+    input_shape: Shape,
+    output_shape: Shape,
+    reduction_axes: Vec<Axis>,
+    scale_bits: u32,
+    bias_bits: u32,
+    input_elements: u64,
+    output_elements: u64,
 }
 
 impl VerifiedTargetRequest {
@@ -241,34 +250,107 @@ impl VerifiedTargetRequest {
     }
 
     pub(crate) fn subject(&self) -> VerifiedRequestSubject {
-        let normalized = self.serial_sum();
-        VerifiedRequestSubject {
-            normalized: NormalizedSerialSumSubject {
-                input_key: normalized.input_key.clone(),
-                output_key: normalized.output_key.clone(),
-                input_shape: normalized.input_shape.clone(),
-                output_shape: normalized.output_shape.clone(),
-                reduction_axes: normalized.reduction_axes.clone(),
-                scale_bits: normalized.scale_bits,
-                bias_bits: normalized.bias_bits,
-                input_elements: normalized.input_elements,
-                output_elements: normalized.output_elements,
-            },
-            semantic_identity: self.semantic_identity.clone(),
-            numerical_contract: self.numerical_contract,
-            budgets: self.budgets,
-            target_profile: self.target_profile,
-            capabilities: self.capabilities,
-        }
+        request_subject(
+            &self.normalized,
+            &self.semantic_identity,
+            self.numerical_contract,
+            self.budgets,
+            self.target_profile,
+            self.capabilities,
+        )
+    }
+
+    pub(crate) fn is_authoritative(&self) -> bool {
+        self.subject() == self.authority
+    }
+
+    pub(crate) const fn numerical_contract(&self) -> StrictF32NumericalContract {
+        self.numerical_contract
+    }
+
+    pub(crate) const fn budgets(&self) -> DeterministicBudgets {
+        self.budgets
+    }
+
+    pub(crate) const fn target_profile(&self) -> PrototypeTargetProfile {
+        self.target_profile
+    }
+
+    pub(crate) const fn capabilities(&self) -> CompilerCapabilitySnapshot {
+        self.capabilities
+    }
+
+    pub(crate) const fn semantic_identity(&self) -> &SemanticIdentity {
+        &self.semantic_identity
+    }
+}
+
+impl VerifiedRequestSubject {
+    pub(crate) const fn normalized(&self) -> &NormalizedSerialSumSubject {
+        &self.normalized
+    }
+
+    pub(crate) const fn numerical_contract(&self) -> StrictF32NumericalContract {
+        self.numerical_contract
+    }
+}
+
+impl NormalizedSerialSumSubject {
+    pub(crate) const fn input_shape(&self) -> &Shape {
+        &self.input_shape
+    }
+    pub(crate) const fn output_shape(&self) -> &Shape {
+        &self.output_shape
+    }
+    pub(crate) fn reduction_axes(&self) -> &[Axis] {
+        &self.reduction_axes
+    }
+    pub(crate) const fn scale_bits(&self) -> u32 {
+        self.scale_bits
+    }
+    pub(crate) const fn bias_bits(&self) -> u32 {
+        self.bias_bits
+    }
+    pub(crate) const fn input_elements(&self) -> u64 {
+        self.input_elements
+    }
+    pub(crate) const fn output_elements(&self) -> u64 {
+        self.output_elements
     }
 }
 
 impl VerifiedCompilationRequest {
+    pub(crate) fn target_profiles(&self) -> &[PrototypeTargetProfile] {
+        &self.target_profiles
+    }
+
     pub(crate) fn for_target(
         &self,
         target_profile: PrototypeTargetProfile,
     ) -> Result<VerifiedTargetRequest, RequestError> {
-        if !self.target_profiles.contains(&target_profile) {
+        let Some(index) = self
+            .target_profiles
+            .iter()
+            .position(|profile| *profile == target_profile)
+        else {
+            return Err(RequestError::UnverifiedTargetSelection);
+        };
+        let current_authority = request_subject(
+            &self.normalized,
+            &self.semantic_identity,
+            self.numerical_contract,
+            self.budgets,
+            target_profile,
+            self.capabilities,
+        );
+        if target_profile != PrototypeTargetProfile::governed()
+            || self
+                .target_profiles
+                .iter()
+                .any(|profile| *profile != PrototypeTargetProfile::governed())
+            || self.numerical_contract != StrictF32NumericalContract::governed()
+            || self.authorities.get(index) != Some(&current_authority)
+        {
             return Err(RequestError::UnverifiedTargetSelection);
         }
         Ok(VerifiedTargetRequest {
@@ -278,7 +360,37 @@ impl VerifiedCompilationRequest {
             budgets: self.budgets,
             target_profile,
             capabilities: self.capabilities,
+            authority: current_authority,
         })
+    }
+}
+
+fn request_subject(
+    normalized: &NormalizedProgram,
+    semantic_identity: &SemanticIdentity,
+    numerical_contract: StrictF32NumericalContract,
+    budgets: DeterministicBudgets,
+    target_profile: PrototypeTargetProfile,
+    capabilities: CompilerCapabilitySnapshot,
+) -> VerifiedRequestSubject {
+    let normalized = normalized.serial_sum();
+    VerifiedRequestSubject {
+        normalized: NormalizedSerialSumSubject {
+            input_key: normalized.input_key.clone(),
+            output_key: normalized.output_key.clone(),
+            input_shape: normalized.input_shape.clone(),
+            output_shape: normalized.output_shape.clone(),
+            reduction_axes: normalized.reduction_axes.clone(),
+            scale_bits: normalized.scale_bits,
+            bias_bits: normalized.bias_bits,
+            input_elements: normalized.input_elements,
+            output_elements: normalized.output_elements,
+        },
+        semantic_identity: semantic_identity.clone(),
+        numerical_contract,
+        budgets,
+        target_profile,
+        capabilities,
     }
 }
 
@@ -397,13 +509,29 @@ pub(crate) fn verify_request(
     check_budget("buffers", request.budgets.buffers, 3)?;
 
     let normalized = select_supported_strategy(request.program)?;
+    let semantic_identity = request.program.semantic_identity().clone();
+    let authorities = request
+        .target_profiles
+        .iter()
+        .map(|target| {
+            request_subject(
+                &normalized,
+                &semantic_identity,
+                request.numerical_contract,
+                request.budgets,
+                *target,
+                request.capabilities,
+            )
+        })
+        .collect();
     Ok(VerifiedCompilationRequest {
         normalized,
-        semantic_identity: request.program.semantic_identity().clone(),
+        semantic_identity,
         numerical_contract: request.numerical_contract,
         budgets: request.budgets,
         target_profiles: request.target_profiles,
         capabilities: request.capabilities,
+        authorities,
     })
 }
 
@@ -918,6 +1046,86 @@ mod tests {
             verify_request(duplicate),
             Err(RequestError::DuplicateTargetProfile)
         );
+    }
+
+    #[test]
+    fn verified_request_receipts_reject_post_verification_mutation() {
+        let program = program();
+        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let governed_target = PrototypeTargetProfile::governed();
+
+        let mut forged = verified.clone();
+        forged.budgets.buffers += 1;
+        assert_eq!(
+            forged.for_target(governed_target),
+            Err(RequestError::UnverifiedTargetSelection)
+        );
+
+        let mut forged = verified.clone();
+        forged.capabilities.materialized_serial_sum.revision += 1;
+        assert_eq!(
+            forged.for_target(governed_target),
+            Err(RequestError::UnverifiedTargetSelection)
+        );
+
+        let mut forged = verified.clone();
+        forged.target_profiles[0].max_threads_per_grid_axis -= 1;
+        assert_eq!(
+            forged.for_target(governed_target),
+            Err(RequestError::UnverifiedTargetSelection)
+        );
+
+        let mut forged = verified.clone();
+        forged.semantic_identity = program_with_unused_provider(7).semantic_identity().clone();
+        assert_eq!(
+            forged.for_target(governed_target),
+            Err(RequestError::UnverifiedTargetSelection)
+        );
+
+        let mut forged = verified.clone();
+        forged.normalized.serial_sum_mut().scale_bits = 3.0_f32.to_bits();
+        assert_eq!(
+            forged.for_target(governed_target),
+            Err(RequestError::UnverifiedTargetSelection)
+        );
+
+        let mut forged = verified;
+        forged.normalized.serial_sum_mut().output_key = OutputKey::new("forged").unwrap();
+        assert_eq!(
+            forged.for_target(governed_target),
+            Err(RequestError::UnverifiedTargetSelection)
+        );
+    }
+
+    #[test]
+    fn verified_target_receipt_detects_every_governed_subject_mutation_class() {
+        let program = program();
+        let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let target = verified.for_target(verified.target_profiles[0]).unwrap();
+
+        let mut forged = target.clone();
+        forged.target_profile.max_buffer_bindings_per_entry -= 1;
+        assert!(!forged.is_authoritative());
+
+        let mut forged = target.clone();
+        forged.capabilities.materialized_serial_sum.revision += 1;
+        assert!(!forged.is_authoritative());
+
+        let mut forged = target.clone();
+        forged.budgets.regions += 1;
+        assert!(!forged.is_authoritative());
+
+        let mut forged = target.clone();
+        forged.semantic_identity = program_with_unused_provider(11).semantic_identity().clone();
+        assert!(!forged.is_authoritative());
+
+        let mut forged = target.clone();
+        forged.normalized.serial_sum_mut().bias_bits ^= 1;
+        assert!(!forged.is_authoritative());
+
+        let mut forged = target;
+        forged.normalized.serial_sum_mut().input_key = InputKey::new("forged").unwrap();
+        assert!(!forged.is_authoritative());
     }
 
     #[test]
