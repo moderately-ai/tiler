@@ -3,7 +3,7 @@ id: prototype-fusion-legality-and-numerical-proof
 title: Derive fusion legality and numerical evidence
 status: todo
 priority: p0
-dependencies: [prototype-generic-region-formation, repair-numerical-witness-integrity, prototype-semantic-index-refinement, prototype-index-region-reference-oracle]
+dependencies: [repair-numerical-witness-integrity, prototype-semantic-index-refinement, prototype-index-region-reference-oracle]
 related: []
 scopes: [implementation/compiler, implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]

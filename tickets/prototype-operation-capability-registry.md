@@ -21,3 +21,5 @@ separate checked authority.
 Semantic effects remain authoritative in the semantic registry. Physical
 implementation and opaque-call providers remain owned by the physical
 frontier after checked schedule proposal surfaces exist.
+
+Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

@@ -3,7 +3,7 @@ id: prototype-metal-kir-lowering
 title: Lower verified kernel IR to deterministic MSL
 status: todo
 priority: p0
-dependencies: [prototype-structured-kir-slice, prototype-target-feasibility-authority]
+dependencies: [prototype-structured-kir-slice]
 related: []
 scopes: [implementation/metal]
 shared_scopes: [project/tickets]

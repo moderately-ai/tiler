@@ -20,3 +20,5 @@ Carry the ADR 0072 layers explicitly: semantic graph identity, bound
 refinements/implementations and complete coverage in program identity. The
 artifact-facing projection owns packaged admission/provider provenance and
 routing/ABI representation.
+
+Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

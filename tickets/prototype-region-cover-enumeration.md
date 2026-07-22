@@ -18,5 +18,7 @@ implementations or claim a complete executable program.
 
 Cover identity binds semantic graph meaning, exact region occurrences,
 coverage, deliberate duplication, and proposed materialization edges. Local
-physical frontiers are enumerated next; complete program selection follows
-both.
+local physical frontiers are independently enumerated without depending on a
+global cover; complete physical-plan selection follows both authorities.
+
+Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

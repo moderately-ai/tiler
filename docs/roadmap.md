@@ -115,7 +115,7 @@ target-neutral compiler path. Its dependency direction is:
 4. [target feasibility](../tickets/prototype-target-feasibility-authority.md),
    [checked scheduled regions](../tickets/prototype-scheduled-region-ir.md), and
    [physical implementation frontiers](../tickets/prototype-physical-implementation-frontier.md);
-5. [complete-program selection](../tickets/prototype-complete-program-selection.md),
+5. [complete physical-plan selection](../tickets/prototype-complete-physical-plan-selection.md),
    [structured KIR](../tickets/prototype-structured-kir-slice.md),
    [target-neutral KernelProgram IR](../tickets/prototype-kernel-program-ir.md), and
    the [artifact-facing program model](../tickets/prototype-artifact-program-model.md);
@@ -223,7 +223,8 @@ and 4-bit program agree with the strict reference evaluator.
   `Proven`/`Deferred`/`Rejected`/`Unknown` feasibility and `RoutingCommit`.
 - Keep hard resource proofs distinct from register, occupancy, cache, and
   throughput estimates; validate fixed and scalable vector legality.
-- Structured rejection reasons and plan comparison.
+- Typed explain data for rejection reasons and plan comparison, with
+  deterministic text rendering as presentation.
 
 **Exit criterion:** the optimizer chooses among several valid region
 implementations and complete `KernelProgram`s and explains the choice.

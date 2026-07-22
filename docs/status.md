@@ -85,8 +85,8 @@ slice establishes the accepted module, verifier, builder, and dependency
 direction without publishing the graph-specific proof structs. The semantic
 identity and canonical index-region corrections are integrated. The immediate
 compiler frontier is the
-[`verifier subject-binding correction`](../tickets/harden-compiler-verifier-subject-binding-and-totality.md)
-and work-graph reconciliation. Downstream work is split into typed explain,
+[`verifier subject-binding correction`](../tickets/harden-compiler-verifier-subject-binding-and-totality.md).
+Downstream work is split into typed explain,
 bounded normalization, capability registration, checked semantic/index
 refinement, a generic index reference oracle, legal region covers, target
 feasibility, scheduled-region verification, physical frontiers,

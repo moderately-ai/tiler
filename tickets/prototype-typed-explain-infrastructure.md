@@ -16,3 +16,5 @@ disposition, reason/rule/provider keys, subject references, evidence classes,
 predicates, and exact budget stops are data; rendered strings are presentation.
 Require deterministic ordering, bounded retention, causal errors, and stable
 positive and negative conformance fixtures.
+
+Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

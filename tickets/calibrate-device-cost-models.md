@@ -15,3 +15,5 @@ and a reproducible benchmark protocol are selected. Fit and validate component
 parameters with held-out measurements, provenance, uncertainty, drift policy,
 and an explicit activation threshold. Until then the analytical model remains
 uncalibrated and must not claim device-optimal latency.
+
+Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

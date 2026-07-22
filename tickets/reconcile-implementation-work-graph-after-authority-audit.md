@@ -5,8 +5,8 @@ status: in-progress
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
 related: []
-scopes: [contracts/navigation, contracts/optimizer, implementation/workspace, contracts/foundation, contracts/numerics]
-shared_scopes: [project/tickets]
+scopes: [contracts/navigation, contracts/optimizer, implementation/workspace, contracts/foundation, contracts/numerics, project/tickets]
+shared_scopes: []
 paths: []
 tags: [maintenance, architecture, implementation]
 claimed_from: todo

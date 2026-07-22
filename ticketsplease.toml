@@ -126,6 +126,11 @@ satisfies_dependents = false
 "implementation/metal-aot" = "tiler-prototype-compile"
 "implementation/runtime" = "tiler-prototype-run"
 
+# Cache, frontend, and Candle scopes have no crate mapping until their owning
+# crates are admitted. The Metal-AOT and runtime mappings are temporary owners
+# while their production crates are absent. Each crate-admission ticket must
+# atomically add the real workspace package and add or move its mapping here.
+
 # Name a forked/external dependency (pinned via `git = … rev = …`) as a scope.
 # The guard flags a branch that bumps the pin (matched by `repo`) or edits an
 # in-tree fork `paths` glob, against tickets declaring the same scope.

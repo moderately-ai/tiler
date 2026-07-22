@@ -82,6 +82,16 @@ requirements, exact/proven resource requirements, resource estimates, and a
 cost estimate. Program selection chooses a compatible covering set only after
 these frontiers are available.
 
+Complete-cover enumeration is an independent legality authority over region
+candidates. It neither waits for nor proves a local schedule. Conversely,
+checked schedules and target-feasible local frontiers are per-region
+authorities and do not depend on one globally chosen cover. A search may lazily
+explore frontiers only for regions retained by viable covers, or pass bounds
+between the two searches, but complete physical-plan selection is the first
+authority allowed to join a complete cover with compatible implementations.
+It emits a checked selected-plan or portfolio receipt; structured KIR
+refinement follows that selection.
+
 For a shared producer `p` with consumers `left` and `right`, legal alternatives
 include one materialized `p`, a multi-output region `{p,left,right}`, or—only
 with explicit duplication capability—two occurrences in `{p,left}` and

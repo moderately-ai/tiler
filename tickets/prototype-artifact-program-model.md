@@ -16,3 +16,5 @@ target requirements, reached admission and selected-provider provenance, and
 backend payload descriptors. Runtime and codecs consume this model without
 optimizer internals; unused compilation-environment providers do not become
 packaged artifact identity.
+
+Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

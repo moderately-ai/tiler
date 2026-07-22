@@ -46,7 +46,7 @@ The implementation graph now maps these contracts to bounded coding tickets:
 - physical/kernel/program layers: [target feasibility](../tickets/prototype-target-feasibility-authority.md),
   [checked schedules](../tickets/prototype-scheduled-region-ir.md),
   [physical implementations](../tickets/prototype-physical-implementation-frontier.md),
-  [complete-program selection](../tickets/prototype-complete-program-selection.md),
+  [complete physical-plan selection](../tickets/prototype-complete-physical-plan-selection.md),
   [structured KIR](../tickets/prototype-structured-kir-slice.md), and
   separate [kernel-program](../tickets/prototype-kernel-program-ir.md) and
   [artifact-program](../tickets/prototype-artifact-program-model.md) models;
@@ -134,8 +134,10 @@ The implementation graph now maps these contracts to bounded coding tickets:
 
 - Owner/track: [Fusion and scheduling](compiler/fusion-and-scheduling.md),
   [`implement-general-dag-partitioning`](../tickets/implement-general-dag-partitioning.md).
-- Close: legality gate and calibrated cost rule checked against the exhaustive
-  oracle.
+- Close: legality plus an uncertainty-bearing analytical cost rule checked
+  against the exhaustive oracle. Calibrated device selection becomes
+  authoritative only after the separate calibration ticket's activation
+  conditions and measurements pass.
 
 ### Q-PLAN-004 — Coexisting reductions in one kernel
 

@@ -134,4 +134,4 @@ The complete Rust gate, ticket lint, true-base scope guard, and diff checks
 passed. Repeated independent adversarial reviews converged after their resource
 accounting, authority attribution, and transactional-boundary findings were
 fixed and regression-tested. Tom explicitly approved the public scalar-provider
-and authority API draft at that exact implementation commit.
+and authority API at that exact implementation commit.

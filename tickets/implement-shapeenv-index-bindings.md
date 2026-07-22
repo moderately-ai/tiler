@@ -15,3 +15,5 @@ InputDimension, InterfaceParameter, and phased TargetProperty bindings. Preserve
 mathematical-integer identity, phase ordering, guards/proofs, and explicit
 rejection of free, ambiguous, tensor-data-derived, or too-late sources. Do not
 create an index-local duplicate symbol authority.
+
+Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

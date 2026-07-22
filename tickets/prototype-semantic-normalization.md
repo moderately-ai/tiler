@@ -16,3 +16,5 @@ set, but it must establish termination, traversal order, budgets, semantic and
 reference revalidation, transactional failure, canonical identity, and typed
 explain records. Normalization must not imply the later alternative-producing
 rewrite engine.
+
+Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.
