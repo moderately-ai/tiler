@@ -1,9 +1,46 @@
+import Dispatch
 import Foundation
 import Metal
-import Dispatch
+
+enum UnexpectedStage: String, CaseIterable {
+    case corruptLibraryAccepted = "corrupt-library-accepted"
+    case sourceLibraryRejected = "source-library-rejected"
+    case missingFunctionFound = "missing-function-found"
+    case validFunctionMissing = "valid-function-missing"
+    case validPipelineRejected = "valid-pipeline-rejected"
+    case vertexFunctionMissing = "vertex-function-missing"
+    case wrongStagePipelineAccepted = "wrong-stage-pipeline-accepted"
+}
 
 func oneLine(_ error: Error) -> String {
     String(describing: error).replacingOccurrences(of: "\n", with: " ")
+}
+
+func unexpected(_ stage: UnexpectedStage, _ detail: String = "") -> Never {
+    let suffix = detail.isEmpty ? "" : " detail=\(detail)"
+    print("probe=unexpected stage=\(stage.rawValue)\(suffix)")
+    exit(1)
+}
+
+let environment = ProcessInfo.processInfo.environment
+if let requested = environment["TILER_APPLE_RUNTIME_INJECT"] {
+    guard let stage = UnexpectedStage(rawValue: requested) else {
+        print("probe=invalid-injection value=\(requested)")
+        exit(64)
+    }
+    unexpected(stage, "injected")
+}
+
+if CommandLine.arguments == [CommandLine.arguments[0], "--list-injections"] {
+    for stage in UnexpectedStage.allCases {
+        print(stage.rawValue)
+    }
+    exit(0)
+}
+
+guard CommandLine.arguments.count == 1 else {
+    print("usage: \(CommandLine.arguments[0]) [--list-injections]")
+    exit(64)
 }
 
 guard let device = MTLCreateSystemDefaultDevice() else {
@@ -16,7 +53,7 @@ let corruptBytes = Data([0x4d, 0x54, 0x4c, 0x42, 0x00, 0x01, 0x02, 0x03])
 let corrupt = corruptBytes.withUnsafeBytes { DispatchData(bytes: $0) }
 do {
     _ = try device.makeLibrary(data: corrupt)
-    print("corrupt_library=unexpected-success")
+    unexpected(.corruptLibraryAccepted)
 } catch {
     print("corrupt_library=load-error error=\(oneLine(error))")
 }
@@ -35,38 +72,38 @@ vertex float4 vertex_only(uint id [[vertex_id]]) {
 }
 """
 
+let library: MTLLibrary
 do {
-    let library = try device.makeLibrary(source: source, options: nil)
+    library = try device.makeLibrary(source: source, options: nil)
     print("source_library=success")
-
-    if library.makeFunction(name: "missing_entry") == nil {
-        print("missing_function=lookup-miss")
-    } else {
-        print("missing_function=unexpected-success")
-    }
-
-    if let valid = library.makeFunction(name: "valid_compute") {
-        do {
-            _ = try device.makeComputePipelineState(function: valid)
-            print("valid_pipeline=success")
-        } catch {
-            print("valid_pipeline=pipeline-error error=\(oneLine(error))")
-        }
-    } else {
-        print("valid_function=unexpected-lookup-miss")
-    }
-
-    if let vertex = library.makeFunction(name: "vertex_only") {
-        do {
-            _ = try device.makeComputePipelineState(function: vertex)
-            print("wrong_stage_pipeline=unexpected-success")
-        } catch {
-            print("wrong_stage_pipeline=pipeline-error error=\(oneLine(error))")
-        }
-    } else {
-        print("vertex_function=unexpected-lookup-miss")
-    }
 } catch {
-    print("source_library=compile-error error=\(oneLine(error))")
-    exit(3)
+    unexpected(.sourceLibraryRejected, oneLine(error))
 }
+
+if library.makeFunction(name: "missing_entry") == nil {
+    print("missing_function=lookup-miss")
+} else {
+    unexpected(.missingFunctionFound)
+}
+
+guard let valid = library.makeFunction(name: "valid_compute") else {
+    unexpected(.validFunctionMissing)
+}
+do {
+    _ = try device.makeComputePipelineState(function: valid)
+    print("valid_pipeline=success")
+} catch {
+    unexpected(.validPipelineRejected, oneLine(error))
+}
+
+guard let vertex = library.makeFunction(name: "vertex_only") else {
+    unexpected(.vertexFunctionMissing)
+}
+do {
+    _ = try device.makeComputePipelineState(function: vertex)
+    unexpected(.wrongStagePipelineAccepted)
+} catch {
+    print("wrong_stage_pipeline=pipeline-error error=\(oneLine(error))")
+}
+
+print("probe=validated")

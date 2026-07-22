@@ -1,6 +1,6 @@
 [package]
 name = "tiler-metal"
-description = "Metal source emission and offline compilation for Tiler"
+description = "Pure structured-kernel-to-Metal-source lowering for Tiler"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

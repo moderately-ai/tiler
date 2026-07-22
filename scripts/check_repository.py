@@ -23,6 +23,7 @@ LOCKS = (ROOT / "Cargo.lock", ROOT / "uv.lock")
 EXPECTED_PYTEST_ADDOPTS = ["--noconftest", "--strict-config", "--strict-markers", "-ra"]
 EXPECTED_PYTEST_PATHS = [
     "scripts/tests",
+    "spikes/apple-targets",
     "spikes/embedding",
     "spikes/macro-environment",
     "spikes/numerics/sound_accuracy",

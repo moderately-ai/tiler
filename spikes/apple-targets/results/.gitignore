@@ -1,0 +1,4 @@
+# Regenerable compiler outputs. Retain record.tsv, SDK settings, and logs.
+*.air
+*.metallib
+copy.metal
