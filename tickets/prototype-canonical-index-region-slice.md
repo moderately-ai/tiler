@@ -1,7 +1,7 @@
 ---
 id: prototype-canonical-index-region-slice
 title: Implement the canonical index-region slice
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-shared-compiler-ir-ownership, correct-semantic-identity-layering, harden-semantic-registry-and-program-construction]
 related: [harden-compiler-verifier-subject-binding-and-totality]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/workspace, p
 shared_scopes: []
 paths: [.gitignore]
 tags: [implementation, compiler-foundation, indexing]
-claimed_from: todo
-assignee: gpt-sol-index
-lease_expires_at: 1784741818
 ---
 Implement the public checked static-extent index-region profile needed by the
 first supported operations: typed interned iteration expressions, a generic
@@ -129,3 +126,12 @@ its private anti-forgery owner nonce: body-local handles can escape the closure,
 so rewinding or reusing that nonce could make a stale failed-attempt handle
 valid in a later reduction. These private nonces are not structural identity or
 otherwise observable semantic state.
+
+## Outcome
+
+Implemented and verified at `32e190f4b22a02611314a9db7625e2cdb54e26c4`.
+The complete Rust gate, ticket lint, true-base scope guard, and diff checks
+passed. Repeated independent adversarial reviews converged after their resource
+accounting, authority attribution, and transactional-boundary findings were
+fixed and regression-tested. Tom explicitly approved the public scalar-provider
+and authority API draft at that exact implementation commit.
