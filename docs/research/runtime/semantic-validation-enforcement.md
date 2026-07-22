@@ -236,16 +236,19 @@ errors, failed private-result discard, post-completion status precedence,
 witness version/view mismatch, and structural accounting.
 
 The optimized CPU model was run on an Apple M4 Max with 14 logical CPUs,
-macOS 27.0, and rustc 1.97.0. Values are median microseconds over nine runs for
-64 Ki elements and five runs for larger inputs:
+macOS 27.0, and `nightly-2026-07-19` (`eff8269f7`). Values are median
+microseconds over nine runs for 64 Ki elements and five runs for larger inputs:
 
 | Elements | Proof | Host scan | Parallel pre-scan | Transactional |
 | ---: | ---: | ---: | ---: | ---: |
-| 65,536 | 5 | 30 | 72 | 65 |
-| 1,048,576 | 62 | 413 | 170 | 132 |
-| 8,388,608 | 518 | 3,297 | 917 | 586 |
+| 65,536 | 4 | 26 | 67 | 66 |
+| 1,048,576 | 62 | 464 | 169 | 137 |
+| 8,388,608 | 526 | 3,514 | 912 | 614 |
 
 These timings validate the model and harness, not Metal/CUDA performance. The
+retained [measurement record](../../../spikes/runtime/measurements/semantic-validation.json)
+contains all 76 individual samples, derived medians, exact host/compiler/source
+identity, and deadline policy; the table is a view over that bounded run. The
 portable findings are the accounting ratios: proof performs one compute read;
 host and pre-scan perform two reads; pre-scan has two modeled dispatches and
 one completion observation; transactional performs one read/dispatch but writes

@@ -4,7 +4,7 @@
 //! not a GPU performance model. Run with:
 //!
 //! `rustc --edition 2021 --test spikes/runtime/semantic_validation_enforcement.rs -o /tmp/tiler-validation-tests && /tmp/tiler-validation-tests`
-//! `rustc -O --edition 2021 spikes/runtime/semantic_validation_enforcement.rs -o /tmp/tiler-validation-bench && /tmp/tiler-validation-bench`
+//! `uv run --locked python spikes/runtime/measure_semantic_validation.py`
 
 #![allow(dead_code)]
 
@@ -394,15 +394,10 @@ fn dependency() -> WitnessDependency {
     }
 }
 
-fn median_duration(mut samples: Vec<Duration>) -> Duration {
-    samples.sort_unstable();
-    samples[samples.len() / 2]
-}
-
 fn time_strategy(
     mut strategy: impl FnMut() -> Result<RunResult, ExecutionError>,
     iterations: usize,
-) -> Duration {
+) -> Vec<Duration> {
     let mut samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         let start = Instant::now();
@@ -410,11 +405,11 @@ fn time_strategy(
         black_box(result.public_output.unwrap());
         samples.push(start.elapsed());
     }
-    median_duration(samples)
+    samples
 }
 
 fn main() {
-    println!("elements,strategy,median_us,validation_elements,input_bytes,private_bytes,dispatches,observations");
+    println!("elements,strategy,sample_index,elapsed_ns,validation_elements,input_bytes,private_bytes,dispatches,observations");
     for &elements in &[65_536_usize, 1_048_576, 8_388_608] {
         let input = vec![0.25_f32; elements];
         let iterations = if elements < 1_000_000 { nine() } else { 5 };
@@ -434,16 +429,17 @@ fn main() {
         ];
         for (name, strategy) in strategies {
             let sample = strategy().unwrap();
-            let elapsed = time_strategy(strategy, iterations);
-            println!(
-                "{elements},{name},{},{},{},{},{},{}",
-                elapsed.as_nanos() / 1_000,
-                sample.metrics.validation_elements,
-                sample.metrics.input_bytes_read,
-                sample.metrics.private_bytes_written,
-                sample.metrics.dispatches,
-                sample.metrics.completion_observations,
-            );
+            for (sample_index, elapsed) in time_strategy(strategy, iterations).into_iter().enumerate() {
+                println!(
+                    "{elements},{name},{sample_index},{},{},{},{},{},{}",
+                    elapsed.as_nanos(),
+                    sample.metrics.validation_elements,
+                    sample.metrics.input_bytes_read,
+                    sample.metrics.private_bytes_written,
+                    sample.metrics.dispatches,
+                    sample.metrics.completion_observations,
+                );
+            }
         }
     }
 }

@@ -145,12 +145,13 @@ error, never be treated as a validation miss or trigger fallback.
 audits the concrete checkout rather than relying on a prose transcription:
 
 ```sh
-python3 spikes/runtime/check_candle_post_wait_source.py \
-  /Users/tsanterre/workspace/github.com/huggingface/candle/\
-candle-metal-kernels/src/metal/commands.rs
+uv run --locked python spikes/runtime/check_candle_post_wait_source.py \
+  /Users/tsanterre/workspace/github.com/huggingface/candle
 ```
 
-The local result reports one status read, two waits, zero post-wait status
+The entrypoint first verifies that the checkout is clean and exactly at commit
+`31f35b147389700ed2a178ee66a91c3cc25cc80d`; either mismatch fails closed. The
+local result then reports one status read, two waits, zero post-wait status
 reads, one error read in the initial status match, and success after the waits.
 
 [`candle_metal_post_wait.rs`](../../../spikes/runtime/candle_metal_post_wait.rs)

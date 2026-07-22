@@ -5,7 +5,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
+
+EXPECTED_REVISION = "31f35b147389700ed2a178ee66a91c3cc25cc80d"
+COMMANDS_RS = Path("candle-metal-kernels/src/metal/commands.rs")
+
+
+def git(checkout: Path, *arguments: str) -> str:
+    """Run a read-only Git query against the candidate checkout."""
+    result = subprocess.run(
+        ["git", "-C", str(checkout), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"git query failed ({result.returncode}): {' '.join(arguments)}\n{result.stderr}"
+        )
+    return result.stdout.strip()
 
 
 def extract_function(source: str, signature: str) -> tuple[str, int]:
@@ -25,10 +45,21 @@ def extract_function(source: str, signature: str) -> tuple[str, int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("commands_rs", type=Path)
+    parser.add_argument("candle_checkout", type=Path)
     args = parser.parse_args()
 
-    source = args.commands_rs.read_text()
+    checkout = args.candle_checkout.resolve()
+    revision = git(checkout, "rev-parse", "HEAD")
+    if revision != EXPECTED_REVISION:
+        raise SystemExit(f"expected Candle revision {EXPECTED_REVISION}, found {revision}")
+    dirty = git(checkout, "status", "--porcelain=v1", "--untracked-files=all")
+    if dirty:
+        raise SystemExit("Candle checkout must be clean before source evidence is accepted")
+    commands_rs = checkout / COMMANDS_RS
+    if not commands_rs.is_file():
+        raise SystemExit(f"expected source file is missing: {commands_rs}")
+
+    source = commands_rs.read_text()
     function, first_line = extract_function(
         source,
         "fn ensure_completed(cb: &CommandBuffer) -> Result<(), MetalKernelError>",
@@ -52,7 +83,10 @@ def main() -> None:
     post_wait_status_reads = [offset for offset in status_offsets if offset > last_wait]
 
     result = {
-        "source": str(args.commands_rs.resolve()),
+        "checkout": str(checkout),
+        "revision": revision,
+        "worktree_clean": True,
+        "source": str(commands_rs),
         "function_first_line": first_line,
         "status_reads": len(status_offsets),
         "wait_calls": len(wait_offsets),
