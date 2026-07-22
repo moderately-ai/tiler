@@ -1,7 +1,7 @@
 ---
 id: enforce-repository-validation-gate-integrity
 title: Enforce repository validation gate integrity
-status: review
+status: done
 priority: p0
 dependencies: [repair-macro-and-embedding-harness-integrity, repair-numerical-witness-integrity]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, contracts/navigation, research/runtime, resea
 shared_scopes: [project/tickets]
 paths: [.shellcheckrc, AGENTS.md, scripts/check_ci.py, scripts/check_repository.py, tool-versions.toml]
 tags: [tooling, correctness, developer-experience]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1784680697
 ---
 
 Make the repository gates prove the contributor contract instead of trusting
@@ -83,5 +80,5 @@ user configuration as part of the proof.
 - Added adversarial mutation coverage for every reproduced false-green family.
   The complete gate passed locally on macOS arm64 with 140 Python tests plus all
   development/release Rust tests, doctests, rustdoc, and the nightly shape
-  conformance fixture. Hosted Ubuntu and macOS results are recorded by the
-  ticket branch pull request before integration.
+  conformance fixture. Hosted Ubuntu x64 and macOS arm64 both passed the exact
+  ticket head in GitHub Actions run `29880871284` before integration.
