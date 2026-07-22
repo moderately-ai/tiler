@@ -10,8 +10,8 @@ shared_scopes: []
 paths: [.gitignore]
 tags: [implementation, compiler-foundation, indexing]
 claimed_from: todo
-assignee: codex
-lease_expires_at: 1784669146
+assignee: gpt-sol-index
+lease_expires_at: 1784741818
 ---
 Implement the public checked static-extent index-region profile needed by the
 first supported operations: typed interned iteration expressions, a generic
