@@ -1,7 +1,7 @@
 ---
 id: harden-compiler-verifier-subject-binding-and-totality
 title: Harden compiler verifier subject binding and totality
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
 related: [prototype-target-neutral-fusion-slice]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, implementation/artifact, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, optimizer]
-claimed_from: todo
-assignee: gpt-sol-verifier
-lease_expires_at: 1784739571
 ---
 
 Turn the current target-neutral proof slice into a verifier boundary whose
