@@ -3,9 +3,10 @@ use std::fmt;
 
 use crate::explain::{
     CostDisposition, CostModelKey, CostTerm, EvidenceBasis, ExplainError, ExplainEvent,
-    ExplainLimits, ExplainRecordId, ExplainStage, ExplainWriter, PredicateAssessment, PredicateKey,
-    ProviderRef, Quantity, ReasonCode, RejectionClass, ResourceKey, RuleRef, SelectionOutcome,
-    SelectionPolicyKey, SubjectKind, VerifiedEvidenceRef, VerifiedExplainTrace,
+    ExplainFact, ExplainLimits, ExplainRecordId, ExplainStage, ExplainWriter, FactValue,
+    FailureDescriptor, PredicateAssessment, PredicateKey, ProviderRef, Quantity, ReasonCode,
+    RejectionClass, ResourceKey, RuleRef, SelectionOutcome, SubjectKind, VerifiedEvidenceRef,
+    VerifiedExplainTrace,
 };
 use crate::fusion::{
     CandidateError, CandidateKind, FusionNumericalProof, enumerate_candidates,
@@ -234,8 +235,8 @@ fn compile_target(
             })
         }
         Err(source) => {
-            let reason = ReasonCode::new(compile_error_reason(&source))?;
-            let explain = explain.finish_failure(reason)?;
+            let failure = failure_descriptor(&source, explain.last_detail())?;
+            let explain = explain.finish_failure(failure)?;
             Err(CompileError::Explained {
                 source: Box::new(source),
                 explain,
@@ -333,15 +334,116 @@ fn compile_target_with_explain(
     })
 }
 
-fn compile_error_reason(error: &CompileError) -> &'static str {
+fn failure_descriptor(
+    error: &CompileError,
+    cause: Option<ExplainRecordId>,
+) -> Result<FailureDescriptor, ExplainError> {
     match error {
-        CompileError::InvalidRequest(_) => "invalid-request",
-        CompileError::UnsupportedCapability(_) => "unsupported-capability",
-        CompileError::BudgetExhausted(_) => "budget-exhausted",
-        CompileError::NoFeasiblePlan(_) => "no-feasible-plan",
-        CompileError::InvalidCompilerOutput(_) => "invalid-compiler-output",
-        CompileError::Explained { .. } => "nested-explained-error",
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
+            rule,
+            region,
+            ..
+        }))
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Target { rule, region, .. },
+        )) => FailureDescriptor::new(
+            ExplainStage::TargetFeasibility,
+            format!("target-{rule}"),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.0),
+            cause,
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(
+            CandidateError::Budget { limit, actual },
+        )) => FailureDescriptor::new(
+            ExplainStage::CandidateEnumeration,
+            format!("candidate-budget-{limit}-{actual}"),
+            SubjectKind::Candidate,
+            "candidate-enumeration",
+            cause,
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(
+            CandidateError::Invalid { candidate, rule },
+        )) => FailureDescriptor::new(
+            ExplainStage::CandidateEnumeration,
+            format!("candidate-{rule}"),
+            SubjectKind::Candidate,
+            candidate,
+            cause,
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Intrinsic { rule, region },
+        )) => FailureDescriptor::new(
+            ExplainStage::IntrinsicScheduling,
+            format!("intrinsic-{rule}"),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.0),
+            cause,
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Refinement { rule, region },
+        )) => FailureDescriptor::new(
+            ExplainStage::KernelRefinement,
+            format!("refinement-{rule}"),
+            SubjectKind::Kernel,
+            format!("failed-region:{}", region.0),
+            cause,
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Program(error)) => {
+            program_failure_descriptor(error, cause)
+        }
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::ShapeProductOverflow { region },
+        )) => FailureDescriptor::new(
+            ExplainStage::IntrinsicScheduling,
+            "shape-product-overflow",
+            SubjectKind::Region,
+            format!("failed-region:{}", region.0),
+            cause,
+        ),
+        CompileError::NoFeasiblePlan(_)
+        | CompileError::InvalidRequest(_)
+        | CompileError::UnsupportedCapability(_)
+        | CompileError::BudgetExhausted(_)
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Explain(_))
+        | CompileError::Explained { .. } => FailureDescriptor::new(
+            ExplainStage::RequestVerification,
+            "verified-request-compilation-failure",
+            SubjectKind::SemanticProgram,
+            "semantic-program",
+            cause,
+        ),
     }
+}
+
+fn program_failure_descriptor(
+    error: &ProgramError,
+    cause: Option<ExplainRecordId>,
+) -> Result<FailureDescriptor, ExplainError> {
+    let (reason, subject) = match error {
+        ProgramError::HostExpression { rule, expression } => (
+            format!("host-expression-{rule}"),
+            format!("host-expression:{}", expression.index()),
+        ),
+        ProgramError::Structure { rule } => {
+            (format!("structure-{rule}"), "kernel-program".to_owned())
+        }
+        ProgramError::Dependency { rule } => {
+            (format!("dependency-{rule}"), "kernel-program".to_owned())
+        }
+        ProgramError::Storage { rule } => (format!("storage-{rule}"), "kernel-program".to_owned()),
+        ProgramError::Abi { rule, stage } => {
+            (format!("abi-{rule}"), format!("stage:{}", stage.index()))
+        }
+        ProgramError::Routing { rule } => (format!("routing-{rule}"), "kernel-program".to_owned()),
+    };
+    FailureDescriptor::new(
+        ExplainStage::ProgramVerification,
+        reason,
+        SubjectKind::KernelProgram,
+        subject,
+        cause,
+    )
 }
 
 fn build_baseline_alternative(
@@ -413,6 +515,23 @@ fn check(
     })
 }
 
+fn check_with_count(
+    stage: ExplainStage,
+    predicate: &str,
+    fact: &str,
+    count: usize,
+) -> Result<ExplainEvent, ExplainError> {
+    Ok(ExplainEvent::Check {
+        stage,
+        assessment: PredicateAssessment::proven(predicate, EvidenceBasis::CheckedInvariant)?
+            .with_fact(ExplainFact::new(
+                fact,
+                FactValue::Count(u64::try_from(count).unwrap_or(u64::MAX)),
+            )?)?,
+        rejection: RejectionClass::IntrinsicInvalid,
+    })
+}
+
 fn optional_cause(cause: Option<ExplainRecordId>) -> Vec<ExplainRecordId> {
     cause.into_iter().collect()
 }
@@ -448,19 +567,16 @@ fn record_baseline_explain(
     }
     let boundary = explain.subject(
         SubjectKind::Boundary,
-        format!(
-            "{}/materialized-dependencies:{}",
-            alternative.stable_id,
-            alternative.program.dependencies().len()
-        ),
+        format!("{}/materialized-boundary", alternative.stable_id),
     )?;
     let boundary = explain.push_detail(
         RuleRef::builtin("compile.boundary.materialized")?,
         vec![boundary],
-        check(
+        check_with_count(
             ExplainStage::RegionFormation,
             "boundary.materialized",
-            EvidenceBasis::CheckedInvariant,
+            "dependency-count",
+            alternative.program.dependencies().len(),
         )?,
         boundary_causes,
     )?;
@@ -475,75 +591,63 @@ fn record_baseline_refinement(
 ) -> Result<Option<ExplainRecordId>, CompileError> {
     let schedule = explain.subject(
         SubjectKind::Schedule,
-        format!(
-            "{}/schedules:{}",
-            alternative.stable_id,
-            alternative.scheduled_regions.len()
-        ),
+        format!("{}/schedules", alternative.stable_id),
     )?;
     let schedule = explain.push_detail(
         RuleRef::builtin("schedule.coverage-and-ownership")?,
         vec![schedule],
-        check(
+        check_with_count(
             ExplainStage::IntrinsicScheduling,
             "schedule.intrinsic-valid",
-            EvidenceBasis::CheckedInvariant,
+            "schedule-count",
+            alternative.scheduled_regions.len(),
         )?,
         optional_cause(boundary),
     )?;
     let target = record_target_admissions(explain, request, alternative, schedule)?;
     let kernel = explain.subject(
         SubjectKind::Kernel,
-        format!(
-            "{}/kernels:{}",
-            alternative.stable_id,
-            alternative.kernels.len()
-        ),
+        format!("{}/kernels", alternative.stable_id),
     )?;
     let kernel = explain.push_detail(
         RuleRef::builtin("kernel.schedule-refinement")?,
         vec![kernel],
-        check(
+        check_with_count(
             ExplainStage::KernelRefinement,
             "kernel.exact-refinement",
-            EvidenceBasis::CheckedInvariant,
+            "kernel-count",
+            alternative.kernels.len(),
         )?,
         optional_cause(target),
     )?;
     let program = explain.subject(
         SubjectKind::KernelProgram,
-        format!(
-            "{}/program-stages:{}",
-            alternative.stable_id,
-            alternative.program.stages().len()
-        ),
+        format!("{}/program", alternative.stable_id),
     )?;
     let program = explain.push_detail(
         RuleRef::builtin("program.two-stage-materialized")?,
         vec![program],
-        check(
+        check_with_count(
             ExplainStage::ProgramVerification,
             "program.verified",
-            EvidenceBasis::CheckedInvariant,
+            "stage-count",
+            alternative.program.stages().len(),
         )?,
         optional_cause(kernel),
     )?;
     let artifact = explain.subject(
         SubjectKind::ArtifactPlan,
-        format!(
-            "{}/artifact-providers:{}",
-            alternative.stable_id,
-            alternative.artifact_plan.lowering_providers().len()
-        ),
+        format!("{}/artifact", alternative.stable_id),
     )?;
     explain
         .push_detail(
             RuleRef::builtin("artifact.neutral-construction-plan")?,
             vec![artifact],
-            check(
+            check_with_count(
                 ExplainStage::ArtifactPlanning,
                 "artifact.plan-verified",
-                EvidenceBasis::CheckedInvariant,
+                "provider-count",
+                alternative.artifact_plan.lowering_providers().len(),
             )?,
             optional_cause(program),
         )
@@ -826,75 +930,63 @@ fn record_fused_refinement(
 ) -> Result<Option<ExplainRecordId>, CompileError> {
     let schedule = explain.subject(
         SubjectKind::Schedule,
-        format!(
-            "{}/schedules:{}",
-            alternative.stable_id,
-            alternative.scheduled_regions.len()
-        ),
+        format!("{}/schedules", alternative.stable_id),
     )?;
     let schedule = explain.push_detail(
         RuleRef::builtin("schedule.fused-serial-sum")?,
         vec![schedule],
-        check(
+        check_with_count(
             ExplainStage::IntrinsicScheduling,
             "schedule.intrinsic-valid",
-            EvidenceBasis::CheckedInvariant,
+            "schedule-count",
+            alternative.scheduled_regions.len(),
         )?,
         optional_cause(root),
     )?;
     let target = record_target_admissions(explain, request, alternative, schedule)?;
     let kernel = explain.subject(
         SubjectKind::Kernel,
-        format!(
-            "{}/kernels:{}",
-            alternative.stable_id,
-            alternative.kernels.len()
-        ),
+        format!("{}/kernels", alternative.stable_id),
     )?;
     let kernel = explain.push_detail(
         RuleRef::builtin("kernel.fused-schedule-refinement")?,
         vec![kernel],
-        check(
+        check_with_count(
             ExplainStage::KernelRefinement,
             "kernel.exact-refinement",
-            EvidenceBasis::CheckedInvariant,
+            "kernel-count",
+            alternative.kernels.len(),
         )?,
         optional_cause(target),
     )?;
     let program = explain.subject(
         SubjectKind::KernelProgram,
-        format!(
-            "{}/program-stages:{}",
-            alternative.stable_id,
-            alternative.program.stages().len()
-        ),
+        format!("{}/program", alternative.stable_id),
     )?;
     let program = explain.push_detail(
         RuleRef::builtin("program.fused-serial-sum")?,
         vec![program],
-        check(
+        check_with_count(
             ExplainStage::ProgramVerification,
             "program.verified",
-            EvidenceBasis::CheckedInvariant,
+            "stage-count",
+            alternative.program.stages().len(),
         )?,
         optional_cause(kernel),
     )?;
     let artifact = explain.subject(
         SubjectKind::ArtifactPlan,
-        format!(
-            "{}/artifact-providers:{}",
-            alternative.stable_id,
-            alternative.artifact_plan.lowering_providers().len()
-        ),
+        format!("{}/artifact", alternative.stable_id),
     )?;
     explain
         .push_detail(
             RuleRef::builtin("artifact.fused-construction-plan")?,
             vec![artifact],
-            check(
+            check_with_count(
                 ExplainStage::ArtifactPlanning,
                 "artifact.plan-verified",
-                EvidenceBasis::CheckedInvariant,
+                "provider-count",
+                alternative.artifact_plan.lowering_providers().len(),
             )?,
             optional_cause(program),
         )
@@ -986,15 +1078,7 @@ fn record_cost_and_selection(
         } else {
             SelectionOutcome::NotSelectedTradeoff
         };
-        explain.push_terminal(
-            RuleRef::builtin(SELECTION_POLICY_KEY)?,
-            vec![subject],
-            ExplainEvent::Selection {
-                policy: SelectionPolicyKey::new(SELECTION_POLICY_KEY)?,
-                outcome,
-            },
-            optional_cause(cost_record),
-        )?;
+        explain.note_selection(subject, outcome, cost_record)?;
     }
     Ok(())
 }
@@ -1430,41 +1514,6 @@ mod tests {
 
         assert_eq!(first, second);
         let first = &first.targets[0];
-        if crate::explain::EXPLAIN_RENDERER_VERSION == 1 {
-            assert_eq!(
-                first.explain.render(),
-                concat!(
-                    "tiler-explain-v1\n",
-                    "0 request-verification admitted rule=compile.request.general-boundary@1 provider=tiler.compiler@1 subject=semantic-program:semantic-program event=check:compile.request.verified:proven:checked-invariant causes=-\n",
-                    "1 normalization admitted rule=normalize.serial-sum.v1@1 provider=tiler.compiler@1 subject=normalization:normalization:serial-sum event=check:normalize.semantic-equivalence:proven:checked-invariant causes=0\n",
-                    "2 region-formation admitted rule=compile.region.pointwise@1 provider=tiler.prototype.materialized-serial-sum@1 subject=region:alternative:materialized-serial-sum.v1/region:0 event=check:region.semantic-coverage:proven:checked-invariant causes=1\n",
-                    "3 region-formation admitted rule=compile.region.strict-sum@1 provider=tiler.prototype.materialized-serial-sum@1 subject=region:alternative:materialized-serial-sum.v1/region:1 event=check:region.semantic-coverage:proven:checked-invariant causes=1\n",
-                    "4 region-formation admitted rule=compile.boundary.materialized@1 provider=tiler.compiler@1 subject=boundary:pointwise-to-sum event=check:boundary.materialized:proven:checked-invariant causes=2,3\n",
-                    "5 intrinsic-scheduling admitted rule=schedule.coverage-and-ownership@1 provider=tiler.compiler@1 subject=schedule:alternative:materialized-serial-sum.v1/schedule event=check:schedule.intrinsic-valid:proven:checked-invariant causes=4\n",
-                    "6 target-feasibility admitted rule=target.prototype-target-neutral-baseline.v1@1 provider=tiler.compiler@1 subject=target:tiler.prototype-target-neutral-baseline.v1 event=feasibility:grid-axis:admitted:threads=6:65535 causes=5\n",
-                    "7 kernel-refinement admitted rule=kernel.schedule-refinement@1 provider=tiler.compiler@1 subject=kernel:alternative:materialized-serial-sum.v1/kernels event=check:kernel.exact-refinement:proven:checked-invariant causes=6\n",
-                    "8 program-verification admitted rule=program.two-stage-materialized@1 provider=tiler.compiler@1 subject=kernel-program:alternative:materialized-serial-sum.v1/program event=check:program.verified:proven:checked-invariant causes=7\n",
-                    "9 artifact-planning admitted rule=artifact.neutral-construction-plan@1 provider=tiler.compiler@1 subject=artifact-plan:alternative:materialized-serial-sum.v1/artifact event=check:artifact.plan-verified:proven:checked-invariant causes=8\n",
-                    "10 candidate-enumeration admitted rule=fusion.candidate.legal@1 provider=tiler.compiler@1 subject=candidate:candidate:scale-constant event=check:candidate.legal:proven:checked-invariant causes=1\n",
-                    "11 candidate-enumeration admitted rule=fusion.candidate.legal@1 provider=tiler.compiler@1 subject=candidate:candidate:multiply event=check:candidate.legal:proven:checked-invariant causes=1\n",
-                    "12 candidate-enumeration admitted rule=fusion.candidate.legal@1 provider=tiler.compiler@1 subject=candidate:candidate:bias-constant event=check:candidate.legal:proven:checked-invariant causes=1\n",
-                    "13 candidate-enumeration admitted rule=fusion.candidate.legal@1 provider=tiler.compiler@1 subject=candidate:candidate:add event=check:candidate.legal:proven:checked-invariant causes=1\n",
-                    "14 candidate-enumeration admitted rule=fusion.candidate.legal@1 provider=tiler.compiler@1 subject=candidate:candidate:strict-sum event=check:candidate.legal:proven:checked-invariant causes=1\n",
-                    "15 candidate-enumeration admitted rule=fusion.candidate.legal@1 provider=tiler.compiler@1 subject=candidate:candidate:scale-constant+multiply+bias-constant+add event=check:candidate.legal:proven:checked-invariant causes=1\n",
-                    "16 candidate-enumeration admitted rule=fusion.candidate.legal@1 provider=tiler.compiler@1 subject=candidate:candidate:scale-constant+multiply+bias-constant+add+strict-sum event=check:candidate.legal:proven:checked-invariant causes=1\n",
-                    "17 numerical-legality admitted rule=fusion.strict-f32-equivalence@1 provider=tiler.prototype.fused-serial-sum@1 subject=candidate:candidate:scale-constant+multiply+bias-constant+add+strict-sum event=check:fusion.strict-f32-equivalence:proven:sound-proof causes=16\n",
-                    "18 intrinsic-scheduling admitted rule=schedule.fused-serial-sum@1 provider=tiler.compiler@1 subject=schedule:alternative:fused-serial-sum.v1/schedule event=check:schedule.intrinsic-valid:proven:checked-invariant causes=17\n",
-                    "19 target-feasibility admitted rule=target.fused-serial-sum@1 provider=tiler.compiler@1 subject=target:tiler.prototype-target-neutral-baseline.v1 event=feasibility:grid-axis:admitted:threads=2:65535 causes=18\n",
-                    "20 kernel-refinement admitted rule=kernel.fused-schedule-refinement@1 provider=tiler.compiler@1 subject=kernel:alternative:fused-serial-sum.v1/kernel event=check:kernel.exact-refinement:proven:checked-invariant causes=19\n",
-                    "21 program-verification admitted rule=program.fused-serial-sum@1 provider=tiler.compiler@1 subject=kernel-program:alternative:fused-serial-sum.v1/program event=check:program.verified:proven:checked-invariant causes=20\n",
-                    "22 artifact-planning admitted rule=artifact.fused-construction-plan@1 provider=tiler.compiler@1 subject=artifact-plan:alternative:fused-serial-sum.v1/artifact event=check:artifact.plan-verified:proven:checked-invariant causes=21\n",
-                    "23 costing retained rule=tiler.cost.structural.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:materialized-serial-sum.v1 event=cost:tiler.cost.structural.v1:checked-invariant:retained:dispatch-count:count=2,temporary-allocation-count:count=1,materialized-bytes:bytes=24,intermediate-global-reads:bytes=24,intermediate-global-writes:bytes=24 causes=9\n",
-                    "24 selection dominance-pruned rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:materialized-serial-sum.v1 event=selection:tiler.selection.structural-pareto.v1:dominated causes=23\n",
-                    "25 costing retained rule=tiler.cost.structural.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:fused-serial-sum.v1 event=cost:tiler.cost.structural.v1:checked-invariant:retained:dispatch-count:count=1,temporary-allocation-count:count=0,materialized-bytes:bytes=0,intermediate-global-reads:bytes=0,intermediate-global-writes:bytes=0 causes=22\n",
-                    "26 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:fused-serial-sum.v1 event=selection:tiler.selection.structural-pareto.v1:selected causes=25\n",
-                )
-            );
-        }
         let rendered = first.explain.render();
         assert!(rendered.starts_with("tiler-explain-v2 request="));
         assert!(rendered.contains("feasibility:threads-per-workgroup:admitted"));
@@ -1707,6 +1756,19 @@ mod tests {
                 .count(),
             1
         );
+        let failure = explain
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+            .unwrap();
+        assert!(matches!(
+            failure.event(),
+            ExplainEvent::CompilerFailure {
+                stage: ExplainStage::TargetFeasibility,
+                reason,
+            } if reason.as_str() == "target-grid-axis"
+        ));
+        assert!(!failure.causes().is_empty());
     }
 
     #[test]

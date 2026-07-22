@@ -50,10 +50,17 @@ No provider emission trait is proposed yet. The draft keeps emission
 compiler-owned and exposes only private read accessors, avoiding a premature
 extension contract while preserving typed provider and rule identities.
 
+The request-qualified trace boundary begins only after a
+`VerifiedTargetRequest` exists. Malformed requests, request-budget failures,
+unsupported semantic signatures, and semantic-output preflight failures retain
+their existing typed errors and do not forge a target-qualified
+`VerifiedExplainTrace`. A future public facade may carry separate unverified
+attempt evidence, but that is a distinct authority and API decision.
+
 The correction pass after immutable review also keeps terminal decisions in a
 typed ledger: successful traces require one selected alternative and one
-selection disposition per feasible or target-rejected considered alternative; failed target
-compilations retain their original typed source plus one terminal failure
-record. Configured limits govern optional detail only. Mandatory decisions and
-the typed truncation summary are retained independently under the compiler's
-hard aggregate bound, so detail retention cannot change planning.
+selection disposition per feasible or target-rejected considered alternative;
+failed target compilations retain their original typed source plus one terminal
+failure record. Configured limits govern optional detail only. Mandatory
+decisions and the typed truncation summary are retained independently under the
+compiler's hard aggregate bound, so detail retention cannot change planning.

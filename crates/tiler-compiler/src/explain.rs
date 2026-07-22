@@ -3,6 +3,7 @@
     reason = "private draft reserves reviewed stage/evidence views before the public facade"
 )]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,6 +16,8 @@ pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 2;
 const MAX_KEY_BYTES: usize = 255;
 const MAX_RECORDS: u32 = 4_096;
 const MAX_CANONICAL_BYTES: u32 = 1024 * 1024;
+const MAX_TRACE_RECORDS: u32 = MAX_RECORDS * 2 + 1;
+const MAX_TRACE_CANONICAL_BYTES: u32 = MAX_CANONICAL_BYTES * 3;
 const MAX_SUBJECTS_PER_RECORD: u32 = 16;
 const MAX_CAUSES_PER_RECORD: u32 = 16;
 const MAX_FACTS_PER_ASSESSMENT: u32 = 32;
@@ -315,7 +318,13 @@ impl PredicateAssessment {
         reason: ReasonCode,
         basis: EvidenceBasis,
     ) -> Result<Self, ExplainError> {
-        if matches!(basis, EvidenceBasis::Unknown) {
+        if !matches!(
+            basis,
+            EvidenceBasis::NormativeGuarantee
+                | EvidenceBasis::CheckedInvariant
+                | EvidenceBasis::SoundProof(_)
+                | EvidenceBasis::ExhaustiveFinite
+        ) {
             return Err(ExplainError::EvidenceEscalation);
         }
         Ok(Self {
@@ -593,7 +602,10 @@ impl ExplainEvent {
             } if required.kind() != available.kind() => {
                 return Err(ExplainError::QuantityKindMismatch);
             }
-            Self::CostAssessment { terms, .. } => {
+            Self::CostAssessment { basis, terms, .. } => {
+                if matches!(basis, EvidenceBasis::SoundProof(_) | EvidenceBasis::Unknown) {
+                    return Err(ExplainError::EvidenceEscalation);
+                }
                 if terms.is_empty() {
                     return Err(ExplainError::EmptyCostEvidence);
                 }
@@ -698,7 +710,7 @@ impl Default for ExplainLimits {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct ExplainWriter {
     subject: CompilationSubject,
     authority: u64,
@@ -711,7 +723,43 @@ pub(crate) struct ExplainWriter {
     retained_detail_bytes: usize,
     omitted_records: u64,
     omitted_bytes: u64,
-    infeasible_alternatives: Vec<(SubjectRef, Option<ExplainRecordId>)>,
+    last_detail: Option<ExplainRecordId>,
+    selection_ledger: BTreeMap<SubjectKey, PendingSelection>,
+    infeasible_authority: BTreeSet<SubjectKey>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingSelection {
+    subject: SubjectRef,
+    outcome: SelectionOutcome,
+    cause: Option<ExplainRecordId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FailureDescriptor {
+    pub(crate) stage: ExplainStage,
+    pub(crate) reason: ReasonCode,
+    pub(crate) subject_kind: SubjectKind,
+    pub(crate) subject_key: SubjectKey,
+    pub(crate) cause: Option<ExplainRecordId>,
+}
+
+impl FailureDescriptor {
+    pub(crate) fn new(
+        stage: ExplainStage,
+        reason: impl AsRef<str>,
+        subject_kind: SubjectKind,
+        subject_key: impl AsRef<str>,
+        cause: Option<ExplainRecordId>,
+    ) -> Result<Self, ExplainError> {
+        Ok(Self {
+            stage,
+            reason: ReasonCode::new(reason)?,
+            subject_kind,
+            subject_key: SubjectKey::new(subject_key)?,
+            cause,
+        })
+    }
 }
 
 impl ExplainWriter {
@@ -742,7 +790,9 @@ impl ExplainWriter {
             retained_detail_bytes: 0,
             omitted_records: 0,
             omitted_bytes: 0,
-            infeasible_alternatives: Vec::new(),
+            last_detail: None,
+            selection_ledger: BTreeMap::new(),
+            infeasible_authority: BTreeSet::new(),
         })
     }
 
@@ -765,16 +815,32 @@ impl ExplainWriter {
         event: ExplainEvent,
         causes: Vec<ExplainRecordId>,
     ) -> Result<Option<ExplainRecordId>, ExplainError> {
+        if matches!(
+            event,
+            ExplainEvent::Selection { .. }
+                | ExplainEvent::CompilerFailure { .. }
+                | ExplainEvent::Truncated { .. }
+        ) {
+            return Err(ExplainError::InvalidEventClass);
+        }
         self.push(rule, subjects, event, causes, false)
     }
 
-    pub(crate) fn push_terminal(
+    fn push_terminal(
         &mut self,
         rule: RuleRef,
         subjects: Vec<SubjectRef>,
         event: ExplainEvent,
         causes: Vec<ExplainRecordId>,
     ) -> Result<ExplainRecordId, ExplainError> {
+        if !matches!(
+            event,
+            ExplainEvent::Selection { .. }
+                | ExplainEvent::CompilerFailure { .. }
+                | ExplainEvent::Truncated { .. }
+        ) {
+            return Err(ExplainError::InvalidEventClass);
+        }
         self.push(rule, subjects, event, causes, true)?
             .ok_or(ExplainError::TerminalCapacity)
     }
@@ -854,9 +920,9 @@ impl ExplainWriter {
         let bytes = encode_record(&record).len();
         let exceeds = if terminal {
             self.records.len().saturating_add(1)
-                > usize::try_from(MAX_RECORDS).unwrap_or(usize::MAX)
+                > usize::try_from(MAX_TRACE_RECORDS).unwrap_or(usize::MAX)
                 || self.retained_bytes.saturating_add(bytes)
-                    > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX)
+                    > usize::try_from(MAX_TRACE_CANONICAL_BYTES).unwrap_or(usize::MAX)
         } else {
             self.retained_detail_records.saturating_add(1)
                 > usize::try_from(self.limits.max_records).unwrap_or(usize::MAX)
@@ -879,6 +945,9 @@ impl ExplainWriter {
             self.retained_detail_bytes += bytes;
         }
         self.records.push(record);
+        if !terminal {
+            self.last_detail = Some(next);
+        }
         Ok(Some(next))
     }
 
@@ -887,70 +956,66 @@ impl ExplainWriter {
         alternatives: &[&str],
         selected: &str,
     ) -> Result<VerifiedExplainTrace, ExplainError> {
-        for (subject, cause) in std::mem::take(&mut self.infeasible_alternatives) {
+        let mut expected = BTreeSet::new();
+        for alternative in alternatives {
+            let key = SubjectKey::new(alternative)?;
+            if !expected.insert(key) {
+                return Err(ExplainError::InvalidTerminalLedger);
+            }
+        }
+        for key in &self.infeasible_authority {
+            if !expected.insert(key.clone()) {
+                return Err(ExplainError::InvalidTerminalLedger);
+            }
+        }
+        let selected = SubjectKey::new(selected)?;
+        if !expected.contains(&selected)
+            || self.selection_ledger.len() != expected.len()
+            || self.selection_ledger.keys().ne(expected.iter())
+        {
+            return Err(ExplainError::InvalidTerminalLedger);
+        }
+        for (key, pending) in &self.selection_ledger {
+            let should_select = key == &selected;
+            let is_infeasible = self.infeasible_authority.contains(key);
+            if (pending.outcome == SelectionOutcome::Selected) != should_select
+                || (pending.outcome == SelectionOutcome::Infeasible) != is_infeasible
+            {
+                return Err(ExplainError::InvalidTerminalLedger);
+            }
+        }
+        let truncation = self.append_truncation_summary()?;
+        for (_, pending) in std::mem::take(&mut self.selection_ledger) {
+            let cause = truncation.or(pending.cause);
             self.push_terminal(
                 RuleRef::builtin("tiler.selection.structural-pareto.v1")?,
-                vec![subject],
+                vec![pending.subject],
                 ExplainEvent::Selection {
                     policy: SelectionPolicyKey::new("tiler.selection.structural-pareto.v1")?,
-                    outcome: SelectionOutcome::Infeasible,
+                    outcome: pending.outcome,
                 },
                 cause.into_iter().collect(),
             )?;
-        }
-        self.append_truncation_summary()?;
-        if self.records.is_empty() {
-            return Err(ExplainError::EmptyTrace);
-        }
-        let mut expected = alternatives
-            .iter()
-            .map(SubjectKey::new)
-            .collect::<Result<Vec<_>, _>>()?;
-        let selected = SubjectKey::new(selected)?;
-        let mut observed = Vec::new();
-        let mut observed_selected = Vec::new();
-        for record in &self.records {
-            if let ExplainEvent::Selection { outcome, .. } = record.event {
-                let [subject] = record.subjects.as_slice() else {
-                    return Err(ExplainError::InvalidTerminalLedger);
-                };
-                if subject.kind != SubjectKind::Alternative {
-                    return Err(ExplainError::InvalidTerminalLedger);
-                }
-                observed.push(subject.key.clone());
-                if outcome == SelectionOutcome::Selected {
-                    observed_selected.push(subject.key.clone());
-                }
-                if outcome == SelectionOutcome::Infeasible {
-                    expected.push(subject.key.clone());
-                }
-            }
-        }
-        observed.sort();
-        let mut expected_sorted = expected;
-        expected_sorted.sort();
-        if observed != expected_sorted
-            || observed_selected.as_slice() != std::slice::from_ref(&selected)
-        {
-            return Err(ExplainError::InvalidTerminalLedger);
         }
         self.seal()
     }
 
     pub(crate) fn finish_failure(
         mut self,
-        reason: ReasonCode,
+        failure: FailureDescriptor,
     ) -> Result<VerifiedExplainTrace, ExplainError> {
-        self.append_truncation_summary()?;
-        let subject = self.subject(SubjectKind::KernelProgram, "compilation")?;
+        self.selection_ledger.clear();
+        self.infeasible_authority.clear();
+        let truncation = self.append_truncation_summary()?;
+        let subject = self.subject(failure.subject_kind, failure.subject_key.as_str())?;
         self.push_terminal(
             RuleRef::builtin("compile.failure")?,
             vec![subject],
             ExplainEvent::CompilerFailure {
-                stage: ExplainStage::ProgramVerification,
-                reason,
+                stage: failure.stage,
+                reason: failure.reason,
             },
-            Vec::new(),
+            truncation.or(failure.cause).into_iter().collect(),
         )?;
         let failures = self
             .records
@@ -976,13 +1041,53 @@ impl ExplainWriter {
         if subject.compilation != self.subject || subject.kind != SubjectKind::Alternative {
             return Err(ExplainError::CrossCompilationSubject);
         }
-        self.infeasible_alternatives.push((subject, cause));
+        let key = subject.key.clone();
+        if self.infeasible_authority.contains(&key) || self.selection_ledger.contains_key(&key) {
+            return Err(ExplainError::InvalidTerminalLedger);
+        }
+        self.selection_ledger.insert(
+            key.clone(),
+            PendingSelection {
+                subject,
+                outcome: SelectionOutcome::Infeasible,
+                cause,
+            },
+        );
+        self.infeasible_authority.insert(key);
         Ok(())
     }
 
-    fn append_truncation_summary(&mut self) -> Result<(), ExplainError> {
+    pub(crate) const fn last_detail(&self) -> Option<ExplainRecordId> {
+        self.last_detail
+    }
+
+    pub(crate) fn note_selection(
+        &mut self,
+        subject: SubjectRef,
+        outcome: SelectionOutcome,
+        cause: Option<ExplainRecordId>,
+    ) -> Result<(), ExplainError> {
+        if subject.compilation != self.subject || subject.kind != SubjectKind::Alternative {
+            return Err(ExplainError::CrossCompilationSubject);
+        }
+        let key = subject.key.clone();
+        if outcome == SelectionOutcome::Infeasible || self.selection_ledger.contains_key(&key) {
+            return Err(ExplainError::InvalidTerminalLedger);
+        }
+        self.selection_ledger.insert(
+            key,
+            PendingSelection {
+                subject,
+                outcome,
+                cause,
+            },
+        );
+        Ok(())
+    }
+
+    fn append_truncation_summary(&mut self) -> Result<Option<ExplainRecordId>, ExplainError> {
         if self.omitted_records == 0 {
-            return Ok(());
+            return Ok(None);
         }
         let subject = self.subject(SubjectKind::KernelProgram, "explain-report")?;
         self.push_terminal(
@@ -993,8 +1098,8 @@ impl ExplainWriter {
                 omitted_bytes: self.omitted_bytes,
             },
             Vec::new(),
-        )?;
-        Ok(())
+        )
+        .map(Some)
     }
 
     fn seal(self) -> Result<VerifiedExplainTrace, ExplainError> {
@@ -1127,9 +1232,9 @@ impl VerifiedExplainTrace {
     #[cfg(test)]
     fn verify(&self) -> Result<(), ExplainError> {
         if self.records.is_empty()
-            || self.records.len() > usize::try_from(MAX_RECORDS).unwrap_or(usize::MAX)
+            || self.records.len() > usize::try_from(MAX_TRACE_RECORDS).unwrap_or(usize::MAX)
             || self.canonical_identity.0.len()
-                > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX)
+                > usize::try_from(MAX_TRACE_CANONICAL_BYTES).unwrap_or(usize::MAX)
             || self.schema_version != EXPLAIN_SCHEMA_VERSION
             || encode_trace(
                 self.schema_version,
@@ -1407,6 +1512,7 @@ pub(crate) enum ExplainError {
     },
     InvalidLimits,
     InvalidTerminalLedger,
+    InvalidEventClass,
     BoundExceeded {
         bound: BoundKind,
         limit: u32,
@@ -1803,15 +1909,7 @@ mod tests {
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();
         writer
-            .push_terminal(
-                RuleRef::builtin("selection.v1").unwrap(),
-                vec![subject],
-                ExplainEvent::Selection {
-                    policy: SelectionPolicyKey::new("pareto.v1").unwrap(),
-                    outcome: SelectionOutcome::Selected,
-                },
-                Vec::new(),
-            )
+            .note_selection(subject, SelectionOutcome::Selected, None)
             .unwrap();
         writer
             .finish_success(&["alternative:test"], "alternative:test")
@@ -1826,16 +1924,21 @@ mod tests {
         first
             .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
             .unwrap();
+        let detail_only = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
         assert_eq!(
-            first
-                .clone()
-                .finish_success(&["alternative:test"], "alternative:test"),
+            detail_only.finish_success(&["alternative:test"], "alternative:test"),
             Err(ExplainError::InvalidTerminalLedger)
         );
         let trace = finish_test_trace(first);
         assert!(trace.verify().is_ok());
-        assert_eq!(trace.render(), trace.render());
-        assert!(trace.render().starts_with("tiler-explain-v2 request="));
+        assert_eq!(
+            trace.render(),
+            concat!(
+                "tiler-explain-v2 request=9d93c7444c678abd\n",
+                "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
+                "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
+            )
+        );
         assert!(!trace.identity().0.is_empty());
     }
 
@@ -1953,6 +2056,14 @@ mod tests {
             PredicateAssessment::proven("assumed", EvidenceBasis::Assumption),
             Err(ExplainError::EvidenceEscalation)
         );
+        assert_eq!(
+            PredicateAssessment::disproved(
+                "assumed-false",
+                ReasonCode::new("assumption").unwrap(),
+                EvidenceBasis::Assumption,
+            ),
+            Err(ExplainError::EvidenceEscalation)
+        );
         let request = request(2.0);
         let mut writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
         let subject = writer
@@ -1974,6 +2085,41 @@ mod tests {
                 Vec::new()
             ),
             Err(ExplainError::InvalidStageEvent)
+        );
+        let alternative = writer
+            .subject(SubjectKind::Alternative, "alternative:invalid-detail")
+            .unwrap();
+        assert_eq!(
+            writer.push_detail(
+                RuleRef::builtin("selection.invalid").unwrap(),
+                vec![alternative],
+                ExplainEvent::Selection {
+                    policy: SelectionPolicyKey::new("selection.invalid").unwrap(),
+                    outcome: SelectionOutcome::Selected,
+                },
+                Vec::new(),
+            ),
+            Err(ExplainError::InvalidEventClass)
+        );
+        let candidate = writer
+            .subject(SubjectKind::Candidate, "candidate:invalid-terminal")
+            .unwrap();
+        assert_eq!(
+            writer.push_terminal(
+                RuleRef::builtin("check.invalid").unwrap(),
+                vec![candidate],
+                ExplainEvent::Check {
+                    stage: ExplainStage::CandidateEnumeration,
+                    assessment: PredicateAssessment::proven(
+                        "candidate.legal",
+                        EvidenceBasis::CheckedInvariant,
+                    )
+                    .unwrap(),
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+                Vec::new(),
+            ),
+            Err(ExplainError::InvalidEventClass)
         );
         let subject = writer
             .subject(SubjectKind::Candidate, "candidate:b")
@@ -2034,6 +2180,29 @@ mod tests {
             ),
             Err(ExplainError::EvidenceSubjectMismatch)
         );
+        let invalid_cost_receipt = VerifiedEvidenceRef::from_fusion_numerical(
+            &first_request,
+            &proof,
+            ProviderRef::lowering(first_request.capabilities().fused_serial_sum.unwrap()).unwrap(),
+        )
+        .unwrap();
+        let subject = writer
+            .subject(SubjectKind::Alternative, "alternative:invalid-cost-proof")
+            .unwrap();
+        assert_eq!(
+            writer.push_detail(
+                RuleRef::builtin("cost.invalid-proof").unwrap(),
+                vec![subject],
+                ExplainEvent::CostAssessment {
+                    model: CostModelKey::new("cost.invalid-proof").unwrap(),
+                    basis: EvidenceBasis::SoundProof(invalid_cost_receipt),
+                    terms: vec![CostTerm::new("dispatches", Quantity::Count(1)).unwrap()],
+                    disposition: CostDisposition::Retained,
+                },
+                Vec::new(),
+            ),
+            Err(ExplainError::EvidenceEscalation)
+        );
     }
 
     #[test]
@@ -2051,29 +2220,13 @@ mod tests {
             .subject(SubjectKind::Alternative, "alternative:baseline")
             .unwrap();
         writer
-            .push_terminal(
-                RuleRef::builtin("selection.v1").unwrap(),
-                vec![rejected],
-                ExplainEvent::Selection {
-                    policy: SelectionPolicyKey::new("pareto.v1").unwrap(),
-                    outcome: SelectionOutcome::Dominated,
-                },
-                Vec::new(),
-            )
+            .note_selection(rejected, SelectionOutcome::Dominated, None)
             .unwrap();
         let terminal = writer
             .subject(SubjectKind::Alternative, "alternative:a")
             .unwrap();
         writer
-            .push_terminal(
-                RuleRef::builtin("selection.v1").unwrap(),
-                vec![terminal],
-                ExplainEvent::Selection {
-                    policy: SelectionPolicyKey::new("pareto.v1").unwrap(),
-                    outcome: SelectionOutcome::Selected,
-                },
-                Vec::new(),
-            )
+            .note_selection(terminal, SelectionOutcome::Selected, None)
             .unwrap();
         let trace = writer
             .finish_success(&["alternative:baseline", "alternative:a"], "alternative:a")
@@ -2112,7 +2265,16 @@ mod tests {
             None
         );
         let trace = writer
-            .finish_failure(ReasonCode::new("invalid-compiler-output").unwrap())
+            .finish_failure(
+                FailureDescriptor::new(
+                    ExplainStage::KernelRefinement,
+                    "invalid-compiler-output",
+                    SubjectKind::Kernel,
+                    "failed-kernel",
+                    None,
+                )
+                .unwrap(),
+            )
             .unwrap();
         assert_eq!(
             trace
@@ -2126,6 +2288,77 @@ mod tests {
             record.event(),
             ExplainEvent::Truncated {
                 omitted_records: 1,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn terminal_ledger_rejects_duplicates_unknowns_and_max_detail_pressure() {
+        let request = request(2.0);
+        let mut duplicate = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let subject = duplicate
+            .subject(SubjectKind::Alternative, "alternative:test")
+            .unwrap();
+        duplicate
+            .note_selection(subject.clone(), SelectionOutcome::Selected, None)
+            .unwrap();
+        assert_eq!(
+            duplicate.note_selection(subject.clone(), SelectionOutcome::Dominated, None),
+            Err(ExplainError::InvalidTerminalLedger)
+        );
+        assert!(
+            duplicate
+                .finish_success(&["alternative:test"], "alternative:test")
+                .is_ok()
+        );
+
+        let mut infeasible = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        assert_eq!(
+            infeasible.note_selection(subject.clone(), SelectionOutcome::Infeasible, None),
+            Err(ExplainError::InvalidTerminalLedger)
+        );
+        infeasible
+            .note_infeasible_alternative(subject, None)
+            .unwrap();
+
+        let mut unknown = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let subject = unknown
+            .subject(SubjectKind::Alternative, "alternative:unknown")
+            .unwrap();
+        unknown
+            .note_selection(subject, SelectionOutcome::Selected, None)
+            .unwrap();
+        assert_eq!(
+            unknown.finish_success(&["alternative:test"], "alternative:test"),
+            Err(ExplainError::InvalidTerminalLedger)
+        );
+
+        let mut pressured = ExplainWriter::new(
+            &request,
+            ExplainLimits::new(MAX_RECORDS, MAX_CANONICAL_BYTES).unwrap(),
+        )
+        .unwrap();
+        for index in 0..MAX_RECORDS {
+            let key = format!("candidate:{index}");
+            let parts = admitted(&pressured, &key);
+            pressured
+                .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
+                .unwrap();
+        }
+        let subject = pressured
+            .subject(SubjectKind::Alternative, "alternative:test")
+            .unwrap();
+        pressured
+            .note_selection(subject, SelectionOutcome::Selected, None)
+            .unwrap();
+        let trace = pressured
+            .finish_success(&["alternative:test"], "alternative:test")
+            .unwrap();
+        assert!(trace.records().iter().any(|record| matches!(
+            record.event(),
+            ExplainEvent::Selection {
+                outcome: SelectionOutcome::Selected,
                 ..
             }
         )));
