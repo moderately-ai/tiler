@@ -3,9 +3,10 @@ use std::fmt;
 
 use tiler_ir::shape::{Axis, Shape};
 
+use crate::fusion::SemanticOccurrence;
 use crate::request::{
     NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract, SubnormalMode,
-    VerifiedTargetRequest,
+    VerifiedRequestSubject, VerifiedTargetRequest,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -121,6 +122,7 @@ pub(crate) struct IndexRegion {
     pub(crate) ownership_proof: OwnershipProof,
     pub(crate) scalar_program: ScalarProgram,
     pub(crate) numerical: NumericalRealization,
+    pub(crate) semantic_members: Vec<SemanticOccurrence>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -203,9 +205,25 @@ pub(crate) struct ResourceRequirements {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedScheduledRegion {
-    pub(crate) region: ScheduledRegion,
-    pub(crate) requirements: ResourceRequirements,
-    pub(crate) target_profile_key: &'static str,
+    region: ScheduledRegion,
+    requirements: ResourceRequirements,
+    target_profile_key: &'static str,
+    request_subject: VerifiedRequestSubject,
+}
+
+impl VerifiedScheduledRegion {
+    pub(crate) const fn region(&self) -> &ScheduledRegion {
+        &self.region
+    }
+    pub(crate) const fn requirements(&self) -> ResourceRequirements {
+        self.requirements
+    }
+    pub(crate) const fn target_profile_key(&self) -> &'static str {
+        self.target_profile_key
+    }
+    pub(crate) fn matches_request(&self, request: &VerifiedTargetRequest) -> bool {
+        self.request_subject == request.subject()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -309,7 +327,13 @@ pub(crate) struct StructuredKernel {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedStructuredKernel {
-    pub(crate) kernel: StructuredKernel,
+    kernel: StructuredKernel,
+}
+
+impl VerifiedStructuredKernel {
+    pub(crate) const fn kernel(&self) -> &StructuredKernel {
+        &self.kernel
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -373,15 +397,15 @@ pub(crate) fn build_scheduled_regions(
     request: &VerifiedTargetRequest,
 ) -> Result<Vec<VerifiedScheduledRegion>, PhysicalError> {
     Ok(vec![
-        verify_schedule(pointwise_region(request), &request.target_profile)?,
-        verify_schedule(reduction_region(request), &request.target_profile)?,
+        verify_schedule(pointwise_region(request), request)?,
+        verify_schedule(reduction_region(request), request)?,
     ])
 }
 
 pub(crate) fn build_fused_scheduled_region(
     request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
-    verify_schedule(fused_region(request), &request.target_profile)
+    verify_schedule(fused_region(request), request)
 }
 
 fn pointwise_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
@@ -431,11 +455,17 @@ fn pointwise_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
             scalar_program: ScalarProgram::MultiplyThenAdd {
                 scale_bits: request.serial_sum().scale_bits,
                 bias_bits: request.serial_sum().bias_bits,
-                canonical_nan_bits: request.numerical_contract.canonical_arithmetic_nan_bits,
-                contraction: request.numerical_contract.contraction
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                contraction: request.numerical_contract().contraction
                     != NumericalPermission::Forbidden,
             },
-            numerical: request.numerical_contract.into(),
+            numerical: request.numerical_contract().into(),
+            semantic_members: vec![
+                SemanticOccurrence::ScaleConstant,
+                SemanticOccurrence::Multiply,
+                SemanticOccurrence::BiasConstant,
+                SemanticOccurrence::Add,
+            ],
         },
         schedule: linear_schedule(request.serial_sum().input_elements, OwnershipWitnessId(0)),
     }
@@ -496,16 +526,17 @@ fn reduction_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
             scalar_program: ScalarProgram::StrictSerialSum {
                 axes: request.serial_sum().reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract.canonical_arithmetic_nan_bits,
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
                 empty_identity_bits: 0.0_f32.to_bits(),
             },
-            numerical: request.numerical_contract.into(),
+            numerical: request.numerical_contract().into(),
+            semantic_members: vec![SemanticOccurrence::StrictSum],
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
                 axes: request.serial_sum().reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
-                permits_reassociation: request.numerical_contract.reassociation
+                permits_reassociation: request.numerical_contract().reassociation
                     != NumericalPermission::Forbidden,
                 permits_permutation: false,
             },
@@ -571,11 +602,12 @@ fn fused_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
                 bias_bits: request.serial_sum().bias_bits,
                 axes: request.serial_sum().reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
-                canonical_nan_bits: request.numerical_contract.canonical_arithmetic_nan_bits,
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
                 empty_identity_bits: 0.0_f32.to_bits(),
                 contraction: false,
             },
-            numerical: request.numerical_contract.into(),
+            numerical: request.numerical_contract().into(),
+            semantic_members: SemanticOccurrence::ALL.to_vec(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -607,10 +639,17 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
 
 pub(crate) fn verify_schedule(
     region: ScheduledRegion,
-    target: &PrototypeTargetProfile,
+    request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
     let id = region.index.id;
-    if region.index.numerical != StrictF32NumericalContract::governed().into() {
+    let subject = request.subject();
+    if !request.is_authoritative()
+        || request.target_profile() != PrototypeTargetProfile::governed()
+        || request.numerical_contract() != StrictF32NumericalContract::governed()
+    {
+        return intrinsic("request-subject", id);
+    }
+    if region.index.numerical != request.numerical_contract().into() {
         return intrinsic("numerical-realization", id);
     }
     let iteration_count = element_count(&region.index.iteration_shape, id)?;
@@ -619,6 +658,7 @@ pub(crate) fn verify_schedule(
         || region.schedule.work_items != iteration_count
         || region.schedule.launch.grid_threads != iteration_count
         || region.schedule.launch.threads_per_workgroup != region.schedule.threads_per_workgroup
+        || region.schedule.threads_per_workgroup == 0
         || !region.schedule.launch.zero_work_skips_dispatch
     {
         return intrinsic("launch-coverage", id);
@@ -627,6 +667,7 @@ pub(crate) fn verify_schedule(
         return intrinsic("access-count", id);
     };
     verify_access_and_semantics(&region, read, write)?;
+    verify_region_subject_binding(&region, &subject)?;
 
     let requirements = ResourceRequirements {
         buffer_bindings: 2,
@@ -636,12 +677,104 @@ pub(crate) fn verify_schedule(
         requires_device_memory: true,
         requires_strict_f32: true,
     };
-    assess_target(id, requirements, region.schedule.work_items, target)?;
+    assess_target(
+        id,
+        requirements,
+        region.schedule.work_items,
+        &request.target_profile(),
+    )?;
     Ok(VerifiedScheduledRegion {
         region,
         requirements,
-        target_profile_key: target.key,
+        target_profile_key: request.target_profile().key,
+        request_subject: subject,
     })
+}
+
+fn verify_region_subject_binding(
+    region: &ScheduledRegion,
+    subject: &VerifiedRequestSubject,
+) -> Result<(), PhysicalError> {
+    let normalized = subject.normalized();
+    if !axes_are_canonical(normalized.reduction_axes(), normalized.input_shape().rank())
+        || element_count(normalized.input_shape(), region.index.id)? != normalized.input_elements()
+        || element_count(normalized.output_shape(), region.index.id)?
+            != normalized.output_elements()
+        || normalized
+            .input_shape()
+            .without_axes(normalized.reduction_axes())
+            != *normalized.output_shape()
+    {
+        return intrinsic("request-subject-shape", region.index.id);
+    }
+    let expected = match &region.index.scalar_program {
+        ScalarProgram::MultiplyThenAdd {
+            scale_bits,
+            bias_bits,
+            canonical_nan_bits,
+            contraction,
+        } => {
+            region.index.semantic_members
+                == [
+                    SemanticOccurrence::ScaleConstant,
+                    SemanticOccurrence::Multiply,
+                    SemanticOccurrence::BiasConstant,
+                    SemanticOccurrence::Add,
+                ]
+                && region.index.id == RegionId(0)
+                && region.index.iteration_shape == *normalized.input_shape()
+                && *scale_bits == normalized.scale_bits()
+                && *bias_bits == normalized.bias_bits()
+                && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
+                && *contraction
+                    == (subject.numerical_contract().contraction != NumericalPermission::Forbidden)
+        }
+        ScalarProgram::StrictSerialSum {
+            axes,
+            canonical_nan_bits,
+            ..
+        } => {
+            region.index.semantic_members == [SemanticOccurrence::StrictSum]
+                && region.index.id == RegionId(1)
+                && region.index.iteration_shape == *normalized.output_shape()
+                && axes == normalized.reduction_axes()
+                && reduction_access_matches(&region.index.accesses[0], normalized)
+                && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
+        }
+        ScalarProgram::FusedMultiplyAddSerialSum {
+            scale_bits,
+            bias_bits,
+            axes,
+            canonical_nan_bits,
+            ..
+        } => {
+            region.index.semantic_members == SemanticOccurrence::ALL
+                && region.index.id == RegionId(0)
+                && region.index.iteration_shape == *normalized.output_shape()
+                && *scale_bits == normalized.scale_bits()
+                && *bias_bits == normalized.bias_bits()
+                && axes == normalized.reduction_axes()
+                && reduction_access_matches(&region.index.accesses[0], normalized)
+                && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
+        }
+    };
+    if !expected {
+        return intrinsic("request-binding", region.index.id);
+    }
+    Ok(())
+}
+
+fn reduction_access_matches(
+    access: &Access,
+    normalized: &crate::request::NormalizedSerialSumSubject,
+) -> bool {
+    matches!(
+        &access.map,
+        LogicalAccess::ReductionContributor { input_shape, output_shape, axes, .. }
+            if input_shape == normalized.input_shape()
+                && output_shape == normalized.output_shape()
+                && axes == normalized.reduction_axes()
+    )
 }
 
 fn verify_access_and_semantics(
@@ -752,6 +885,7 @@ fn verify_proof_records(
         || read_proof.tensor != read.tensor
         || write_proof.id != write.bounds
         || write_proof.tensor != write.tensor
+        || read_proof.id == write_proof.id
         || region.index.ownership_proof.id != region.schedule.output_owner
         || region.index.ownership_proof.tensor != write.tensor
         || region.index.ownership_proof.kind
@@ -1068,7 +1202,7 @@ fn body_refines_schedule(
         (
             body @ StructuredBody::EmptyReduction { .. },
             scalar @ ScalarProgram::StrictSerialSum { .. },
-        ) => empty_reduction_body_refines(body, scalar, scheduled, write),
+        ) => empty_reduction_body_refines(body, scalar, scheduled, read, write),
         (
             body @ StructuredBody::NonEmptySerialReduction { .. },
             scalar @ ScalarProgram::StrictSerialSum { .. },
@@ -1076,7 +1210,7 @@ fn body_refines_schedule(
         (
             body @ StructuredBody::FusedEmptyReduction { .. },
             scalar @ ScalarProgram::FusedMultiplyAddSerialSum { .. },
-        ) => fused_empty_body_refines(body, scalar, scheduled, write),
+        ) => fused_empty_body_refines(body, scalar, scheduled, read, write),
         (
             body @ StructuredBody::FusedNonEmptySerialReduction { .. },
             scalar @ ScalarProgram::FusedMultiplyAddSerialSum { .. },
@@ -1090,23 +1224,53 @@ fn contributor_count(
     access: &LogicalAccess,
     region: RegionId,
 ) -> Result<u64, PhysicalError> {
-    axes.iter()
-        .try_fold(1_u64, |count, axis| {
-            let index = usize::try_from(axis.get()).expect("u32 fits every supported host");
-            count.checked_mul(match access {
-                LogicalAccess::ReductionContributor { input_shape, .. } => {
-                    input_shape.extents()[index].get()
-                }
-                LogicalAccess::LinearIdentity => 0,
-            })
+    let LogicalAccess::ReductionContributor { input_shape, .. } = access else {
+        return intrinsic("contributor-access", region);
+    };
+    if !axes_are_canonical(axes, input_shape.rank()) {
+        return intrinsic("contributor-axes", region);
+    }
+    let extents = axes
+        .iter()
+        .map(|axis| {
+            usize::try_from(axis.get())
+                .ok()
+                .and_then(|index| input_shape.extents().get(index))
+                .map(|extent| extent.get())
+                .ok_or(PhysicalError::Intrinsic {
+                    rule: "contributor-axis",
+                    region,
+                })
         })
-        .ok_or(PhysicalError::ShapeProductOverflow { region })
+        .collect::<Result<Vec<_>, _>>()?;
+    if extents.contains(&0) {
+        return Ok(0);
+    }
+    extents.into_iter().try_fold(1_u64, |count, extent| {
+        count.checked_mul(extent).ok_or(PhysicalError::Intrinsic {
+            rule: "contributor-product",
+            region,
+        })
+    })
+}
+
+fn axes_are_canonical(axes: &[Axis], rank: usize) -> bool {
+    let mut previous = None;
+    axes.iter().all(|axis| {
+        let Ok(index) = usize::try_from(axis.get()) else {
+            return false;
+        };
+        let canonical = index < rank && previous.is_none_or(|previous| previous < axis.get());
+        previous = Some(axis.get());
+        canonical
+    })
 }
 
 fn fused_empty_body_refines(
     body: &StructuredBody,
     scalar: &ScalarProgram,
     scheduled: &VerifiedScheduledRegion,
+    read: &Access,
     write: &Access,
 ) -> bool {
     let StructuredBody::FusedEmptyReduction {
@@ -1127,6 +1291,14 @@ fn fused_empty_body_refines(
         return false;
     };
     *value_type == KernelValueType::F32
+        && contributor_count(
+            match scalar {
+                ScalarProgram::FusedMultiplyAddSerialSum { axes, .. } => axes,
+                _ => return false,
+            },
+            &read.map,
+            scheduled.region.index.id,
+        ) == Ok(0)
         && *output_count == scheduled.region.schedule.work_items
         && identity_bits == empty_identity_bits
         && *output_bounds == write.bounds
@@ -1175,6 +1347,8 @@ fn fused_nonempty_body_refines(
     };
     *value_type == KernelValueType::F32
         && *output_count == scheduled.region.schedule.work_items
+        && self::contributor_count(expected_axes, &read.map, scheduled.region.index.id)
+            == Ok(*contributor_count)
         && *contributor_count > 0
         && *loop_start == 1
         && *loop_end == *contributor_count
@@ -1209,12 +1383,15 @@ fn pointwise_body_refines(
         operations,
         canonical_nan_bits,
         contraction,
-        ..
+        scale_bits,
+        bias_bits,
     } = body
     else {
         return false;
     };
     let ScalarProgram::MultiplyThenAdd {
+        scale_bits: expected_scale,
+        bias_bits: expected_bias,
         canonical_nan_bits: expected_nan,
         contraction: expected_contraction,
         ..
@@ -1229,6 +1406,8 @@ fn pointwise_body_refines(
         && *input_bounds == read.bounds
         && *output_bounds == write.bounds
         && *output_ownership == scheduled.region.schedule.output_owner
+        && scale_bits == expected_scale
+        && bias_bits == expected_bias
         && *operations == [BinaryF32::Multiply, BinaryF32::Add]
         && canonical_nan_bits == expected_nan
         && contraction == expected_contraction
@@ -1238,6 +1417,7 @@ fn empty_reduction_body_refines(
     body: &StructuredBody,
     scalar: &ScalarProgram,
     scheduled: &VerifiedScheduledRegion,
+    read: &Access,
     write: &Access,
 ) -> bool {
     let StructuredBody::EmptyReduction {
@@ -1252,12 +1432,14 @@ fn empty_reduction_body_refines(
     };
     let ScalarProgram::StrictSerialSum {
         empty_identity_bits,
+        axes,
         ..
     } = scalar
     else {
         return false;
     };
     *value_type == KernelValueType::F32
+        && contributor_count(axes, &read.map, scheduled.region.index.id) == Ok(0)
         && *output_count == scheduled.region.schedule.work_items
         && identity_bits == empty_identity_bits
         && *output_bounds == write.bounds
@@ -1299,6 +1481,8 @@ fn nonempty_reduction_body_refines(
     };
     *value_type == KernelValueType::F32
         && *output_count == scheduled.region.schedule.work_items
+        && self::contributor_count(expected_axes, &read.map, scheduled.region.index.id)
+            == Ok(*contributor_count)
         && *contributor_count > 0
         && *loop_start == 1
         && *loop_end == *contributor_count
@@ -1368,7 +1552,7 @@ mod tests {
             .unwrap();
         let program = builder.build().unwrap();
         let request = verify_request(CompilationRequest::governed(&program)).unwrap();
-        request.for_target(request.target_profiles[0])
+        request.for_target(request.target_profiles()[0]).unwrap()
     }
 
     #[test]
@@ -1411,26 +1595,14 @@ mod tests {
     }
 
     #[test]
-    fn schedule_and_kernel_fail_closed_on_target_and_refinement_mismatches() {
+    fn schedule_and_kernel_fail_closed_on_refinement_mismatches() {
         let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
         let regions = build_scheduled_regions(&request).unwrap();
-
-        let mut target = request.target_profile;
-        target.max_buffer_bindings_per_entry = 1;
-        assert_eq!(
-            verify_schedule(regions[0].region.clone(), &target),
-            Err(PhysicalError::Target {
-                rule: "buffer-bindings",
-                region: RegionId(0),
-                required: 2,
-                available: 1,
-            })
-        );
 
         let mut invalid_schedule = regions[1].region.clone();
         invalid_schedule.schedule.reduction = ReductionTopology::None;
         assert_eq!(
-            verify_schedule(invalid_schedule, &request.target_profile),
+            verify_schedule(invalid_schedule, &request),
             Err(PhysicalError::Intrinsic {
                 rule: "numerical-or-access-refinement",
                 region: RegionId(1),
@@ -1440,7 +1612,7 @@ mod tests {
         let mut invalid_access = regions[0].region.clone();
         invalid_access.index.accesses[0].bounds = BoundsWitnessId(9);
         assert_eq!(
-            verify_schedule(invalid_access, &request.target_profile),
+            verify_schedule(invalid_access, &request),
             Err(PhysicalError::Intrinsic {
                 rule: "proof-reference",
                 region: RegionId(0),
@@ -1451,7 +1623,7 @@ mod tests {
         invalid_proof.index.bounds_proofs[0].kind =
             BoundsProofKind::LinearRange { element_count: 5 };
         assert_eq!(
-            verify_schedule(invalid_proof, &request.target_profile),
+            verify_schedule(invalid_proof, &request),
             Err(PhysicalError::Intrinsic {
                 rule: "bounds-proof",
                 region: RegionId(0),
@@ -1464,7 +1636,7 @@ mod tests {
             .numerical
             .canonical_arithmetic_nan_bits ^= 1;
         assert_eq!(
-            verify_schedule(invalid_numerics, &request.target_profile),
+            verify_schedule(invalid_numerics, &request),
             Err(PhysicalError::Intrinsic {
                 rule: "numerical-realization",
                 region: RegionId(0),
@@ -1489,6 +1661,37 @@ mod tests {
     }
 
     #[test]
+    fn reduction_access_and_proof_shapes_are_bound_to_the_verified_request() {
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let regions = build_scheduled_regions(&request).unwrap();
+        let fused = build_fused_scheduled_region(&request).unwrap();
+
+        for mut forged in [regions[1].region.clone(), fused.region.clone()] {
+            let region = forged.index.id;
+            let LogicalAccess::ReductionContributor { input_shape, .. } =
+                &mut forged.index.accesses[0].map
+            else {
+                panic!("expected reduction access")
+            };
+            *input_shape = Shape::from_dims([2, 4]);
+            let BoundsProofKind::ReductionDomain { input_shape, .. } =
+                &mut forged.index.bounds_proofs[0].kind
+            else {
+                panic!("expected reduction proof")
+            };
+            *input_shape = Shape::from_dims([2, 4]);
+
+            assert_eq!(
+                verify_schedule(forged, &request),
+                Err(PhysicalError::Intrinsic {
+                    rule: "request-binding",
+                    region,
+                })
+            );
+        }
+    }
+
+    #[test]
     fn fused_schedule_and_kernel_reject_numerical_and_body_corruption() {
         let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
         let scheduled = build_fused_scheduled_region(&request).unwrap();
@@ -1500,7 +1703,7 @@ mod tests {
         };
         *contraction = true;
         assert_eq!(
-            verify_schedule(invalid_schedule, &request.target_profile),
+            verify_schedule(invalid_schedule, &request),
             Err(PhysicalError::Intrinsic {
                 rule: "numerical-or-access-refinement",
                 region: RegionId(0),
@@ -1523,5 +1726,102 @@ mod tests {
                 region: RegionId(0),
             })
         );
+    }
+
+    #[test]
+    fn malformed_axes_zero_launch_and_late_zero_products_fail_without_panicking() {
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let scheduled = build_fused_scheduled_region(&request).unwrap();
+
+        let mut zero_threads = scheduled.region.clone();
+        zero_threads.schedule.threads_per_workgroup = 0;
+        zero_threads.schedule.launch.threads_per_workgroup = 0;
+        assert!(matches!(
+            verify_schedule(zero_threads, &request),
+            Err(PhysicalError::Intrinsic {
+                rule: "launch-coverage",
+                ..
+            })
+        ));
+
+        for axes in [vec![Axis::new(1), Axis::new(1)], vec![Axis::new(99)]] {
+            let mut malformed = scheduled.region.clone();
+            if let ScalarProgram::FusedMultiplyAddSerialSum {
+                axes: scalar_axes, ..
+            } = &mut malformed.index.scalar_program
+            {
+                *scalar_axes = axes.clone();
+            }
+            if let ReductionTopology::Serial {
+                axes: schedule_axes,
+                ..
+            } = &mut malformed.schedule.reduction
+            {
+                *schedule_axes = axes.clone();
+            }
+            if let LogicalAccess::ReductionContributor {
+                axes: access_axes, ..
+            } = &mut malformed.index.accesses[0].map
+            {
+                *access_axes = axes.clone();
+            }
+            if let BoundsProofKind::ReductionDomain {
+                axes: proof_axes, ..
+            } = &mut malformed.index.bounds_proofs[0].kind
+            {
+                *proof_axes = axes;
+            }
+            assert!(matches!(
+                verify_schedule(malformed, &request),
+                Err(PhysicalError::Intrinsic { .. })
+            ));
+        }
+
+        let late_zero = LogicalAccess::ReductionContributor {
+            input_shape: Shape::from_dims([u64::MAX, 2, 0]),
+            output_shape: Shape::from_dims([]),
+            axes: vec![Axis::new(0), Axis::new(1), Axis::new(2)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+        };
+        assert_eq!(
+            contributor_count(
+                &[Axis::new(0), Axis::new(1), Axis::new(2)],
+                &late_zero,
+                RegionId(7),
+            ),
+            Ok(0)
+        );
+    }
+
+    #[test]
+    fn structured_kernel_constants_and_contributor_counts_are_rederived() {
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let regions = build_scheduled_regions(&request).unwrap();
+
+        let mut pointwise = lower_structured_kernel(&regions[0]).unwrap().kernel;
+        let StructuredBody::PredicatedPointwise { scale_bits, .. } = &mut pointwise.body else {
+            panic!("expected pointwise body")
+        };
+        *scale_bits ^= 1;
+        assert!(matches!(
+            verify_kernel(pointwise, &regions[0]),
+            Err(PhysicalError::Refinement { rule: "body", .. })
+        ));
+
+        let mut reduction = lower_structured_kernel(&regions[1]).unwrap().kernel;
+        let StructuredBody::NonEmptySerialReduction {
+            contributor_count,
+            loop_end,
+            ..
+        } = &mut reduction.body
+        else {
+            panic!("expected reduction body")
+        };
+        *contributor_count += 1;
+        *loop_end += 1;
+        assert!(matches!(
+            verify_kernel(reduction, &regions[1]),
+            Err(PhysicalError::Refinement { rule: "body", .. })
+        ));
     }
 }

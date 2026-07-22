@@ -2,20 +2,22 @@ use std::error::Error;
 use std::fmt;
 
 use crate::fusion::{
-    CandidateError, CandidateKind, FusionNumericalProof, enumerate_candidates, prove_fused_numerics,
+    CandidateError, CandidateKind, FusionNumericalProof, enumerate_candidates,
+    prove_fused_numerics, verify_fused_numerics,
 };
 use crate::physical::{
-    PhysicalError, VerifiedScheduledRegion, VerifiedStructuredKernel, build_fused_scheduled_region,
-    build_scheduled_regions, lower_structured_kernel,
+    PhysicalError, RegionId, VerifiedScheduledRegion, VerifiedStructuredKernel,
+    build_fused_scheduled_region, build_scheduled_regions, lower_structured_kernel,
 };
 use crate::program::{
     ArtifactConstructionPlan, KernelProgram, ProgramError, assert_kernels_match_program,
-    build_artifact_plan, build_fused_kernel_program, build_kernel_program,
+    build_artifact_plan, build_fused_kernel_program, build_kernel_program, verify_artifact_plan,
     verify_semantic_output_type,
 };
 use crate::request::{CompilationRequest, RequestError, verify_request};
 
 const SELECTION_POLICY_KEY: &str = "tiler.selection.structural-pareto.v1";
+const STRUCTURAL_COST_MODEL_KEY: &str = "tiler.cost.structural.v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ExplainPhase {
@@ -43,8 +45,47 @@ pub(crate) enum ExplainOutcome {
 pub(crate) struct ExplainRecord {
     pub(crate) phase: ExplainPhase,
     pub(crate) rule: &'static str,
-    pub(crate) subject: String,
+    pub(crate) subject: ExplainSubject,
     pub(crate) outcome: ExplainOutcome,
+    pub(crate) evidence: ExplainEvidence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ExplainSubject {
+    SemanticProgram,
+    Region(RegionId),
+    Regions(Vec<RegionId>),
+    Boundary(&'static str),
+    Candidate(String),
+    CandidateRegion { stable_id: String, region: RegionId },
+    Alternative(&'static str),
+    KernelProgram,
+    ArtifactPlan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EvidenceClass {
+    ValidatedInvariant,
+    SoundNumericalProof,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExplainEvidence {
+    Predicate {
+        class: EvidenceClass,
+    },
+    Budget {
+        limit: u32,
+        actual: usize,
+    },
+    Feasibility {
+        required: u64,
+        available: u64,
+    },
+    Cost {
+        model_key: &'static str,
+        cost: StructuralCost,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -67,6 +108,7 @@ pub(crate) enum ProgramAlternativeKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StructuralCost {
+    pub(crate) model_key: &'static str,
     pub(crate) dispatch_count: u32,
     pub(crate) temporary_allocation_count: u32,
     pub(crate) materialized_bytes: u64,
@@ -74,10 +116,10 @@ pub(crate) struct StructuralCost {
     pub(crate) intermediate_global_writes: u64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum EquivalenceEvidence {
     MaterializedReference,
-    Fused(FusionNumericalProof),
+    Fused(Box<FusionNumericalProof>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,7 +137,7 @@ pub(crate) struct ProgramAlternative {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PortfolioSelection {
     pub(crate) policy_key: &'static str,
-    pub(crate) selected_alternative: usize,
+    pub(crate) selected_alternative_id: &'static str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -172,7 +214,8 @@ impl From<RequestError> for CompileError {
             RequestError::BudgetExceeded { .. } => Self::BudgetExhausted(value),
             RequestError::UnsupportedRequestVersion
             | RequestError::EmptyTargetSet
-            | RequestError::DuplicateTargetProfile => Self::InvalidRequest(value),
+            | RequestError::DuplicateTargetProfile
+            | RequestError::UnverifiedTargetSelection => Self::InvalidRequest(value),
         }
     }
 }
@@ -180,12 +223,12 @@ impl From<RequestError> for CompileError {
 impl From<PhysicalError> for CompileError {
     fn from(value: PhysicalError) -> Self {
         match value {
-            PhysicalError::Refinement { .. } => {
+            PhysicalError::Intrinsic { .. }
+            | PhysicalError::Refinement { .. }
+            | PhysicalError::ShapeProductOverflow { .. } => {
                 Self::InvalidCompilerOutput(CompilerOutputError::Physical(value))
             }
-            PhysicalError::Intrinsic { .. }
-            | PhysicalError::Target { .. }
-            | PhysicalError::ShapeProductOverflow { .. } => {
+            PhysicalError::Target { .. } => {
                 Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(value))
             }
         }
@@ -203,10 +246,13 @@ pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProd
     let verified = verify_request(request)?;
     verify_semantic_output_type(semantic)?;
     let targets = verified
-        .target_profiles
+        .target_profiles()
         .iter()
         .copied()
-        .map(|target| compile_target(semantic, &verified.for_target(target)))
+        .map(|target| {
+            let target_request = verified.for_target(target)?;
+            compile_target(semantic, &target_request)
+        })
         .collect::<Result<_, _>>()?;
     Ok(CompilationProduct { targets })
 }
@@ -215,19 +261,51 @@ fn compile_target(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
 ) -> Result<TargetCompilationProduct, CompileError> {
-    let baseline = build_baseline_alternative(semantic, verified)?;
-    let mut explain = baseline_explain();
-    let mut alternatives = vec![baseline];
-    consider_fused_alternative(semantic, verified, &mut alternatives, &mut explain)?;
-    let selected_alternative = select_structural_pareto(&alternatives);
-    record_selection(&alternatives, selected_alternative, &mut explain);
+    let mut explain = request_explain();
+    let mut alternatives = Vec::new();
+    let mut target_rejection = None;
+    match build_baseline_alternative(semantic, verified) {
+        Ok(baseline) => {
+            explain.extend(baseline_explain());
+            alternatives.push(baseline);
+        }
+        Err(CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+            error @ PhysicalError::Target { .. },
+        ))) => {
+            explain.push(target_rejection_record(&error, None));
+            target_rejection = Some(error);
+        }
+        Err(error) => return Err(error),
+    }
+    consider_fused_alternative(
+        semantic,
+        verified,
+        &mut alternatives,
+        &mut explain,
+        &mut target_rejection,
+    )?;
+    if alternatives.is_empty() {
+        let error = target_rejection.ok_or({
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                ProgramError::Structure {
+                    rule: "portfolio-empty-without-target-rejection",
+                },
+            ))
+        })?;
+        return Err(CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+            error,
+        )));
+    }
+    let selected_alternative_id = select_structural_pareto(&alternatives)?;
+    verify_portfolio(semantic, verified, &alternatives, selected_alternative_id)?;
+    record_selection(&alternatives, selected_alternative_id, &mut explain);
     Ok(TargetCompilationProduct {
-        target_profile_key: verified.target_profile.key,
+        target_profile_key: verified.target_profile().key,
         portfolio: ProgramPortfolio {
             alternatives,
             selection: PortfolioSelection {
                 policy_key: SELECTION_POLICY_KEY,
-                selected_alternative,
+                selected_alternative_id,
             },
         },
         explain,
@@ -244,12 +322,19 @@ fn build_baseline_alternative(
         .map(lower_structured_kernel)
         .collect::<Result<Vec<_>, _>>()?;
     let baseline_program = build_kernel_program(verified, &baseline_regions)?;
-    assert_kernels_match_program(&baseline_program, &baseline_kernels)?;
+    assert_kernels_match_program(
+        verified,
+        &baseline_regions,
+        &baseline_program,
+        &baseline_kernels,
+    )?;
     let baseline_artifact = build_artifact_plan(
         semantic,
         verified,
+        &baseline_regions,
+        &baseline_kernels,
         &baseline_program,
-        vec![verified.capabilities.materialized_serial_sum],
+        vec![verified.capabilities().materialized_serial_sum],
     )?;
     let input_bytes =
         verified
@@ -269,6 +354,7 @@ fn build_baseline_alternative(
         program: baseline_program,
         artifact_plan: baseline_artifact,
         structural_cost: StructuralCost {
+            model_key: STRUCTURAL_COST_MODEL_KEY,
             dispatch_count: 2,
             temporary_allocation_count: 1,
             materialized_bytes: input_bytes,
@@ -279,52 +365,55 @@ fn build_baseline_alternative(
     })
 }
 
+fn request_explain() -> Vec<ExplainRecord> {
+    vec![accepted(
+        ExplainPhase::RequestVerification,
+        "compile.request.general-boundary",
+        ExplainSubject::SemanticProgram,
+    )]
+}
+
 fn baseline_explain() -> Vec<ExplainRecord> {
     vec![
         accepted(
-            ExplainPhase::RequestVerification,
-            "compile.request.general-boundary",
-            "semantic-program",
-        ),
-        accepted(
             ExplainPhase::RegionFormation,
             "compile.region.pointwise",
-            "region-0",
+            ExplainSubject::Region(RegionId(0)),
         ),
         accepted(
             ExplainPhase::RegionFormation,
             "compile.region.strict-sum",
-            "region-1",
+            ExplainSubject::Region(RegionId(1)),
         ),
         accepted(
             ExplainPhase::RegionFormation,
             "compile.boundary.materialized",
-            "pointwise-to-sum",
+            ExplainSubject::Boundary("pointwise-to-sum"),
         ),
         accepted(
             ExplainPhase::IntrinsicSchedule,
             "schedule.coverage-and-ownership",
-            "both-regions",
+            ExplainSubject::Regions(vec![RegionId(0), RegionId(1)]),
         ),
         accepted(
             ExplainPhase::TargetFeasibility,
             "target.prototype-target-neutral-baseline.v1",
-            "both-regions",
+            ExplainSubject::Regions(vec![RegionId(0), RegionId(1)]),
         ),
         accepted(
             ExplainPhase::KernelRefinement,
             "kernel.schedule-refinement",
-            "both-entries",
+            ExplainSubject::Regions(vec![RegionId(0), RegionId(1)]),
         ),
         accepted(
             ExplainPhase::ProgramVerification,
             "program.two-stage-materialized",
-            "kernel-program",
+            ExplainSubject::KernelProgram,
         ),
         accepted(
             ExplainPhase::ArtifactPlanning,
             "artifact.neutral-construction-plan",
-            "artifact-plan",
+            ExplainSubject::ArtifactPlan,
         ),
     ]
 }
@@ -334,13 +423,16 @@ fn consider_fused_alternative(
     verified: &crate::request::VerifiedTargetRequest,
     alternatives: &mut Vec<ProgramAlternative>,
     explain: &mut Vec<ExplainRecord>,
+    target_rejection: &mut Option<PhysicalError>,
 ) -> Result<(), CompileError> {
     match enumerate_candidates(verified) {
-        Err(CandidateError::Budget { .. }) => explain.push(rejected(
-            ExplainPhase::CandidateEnumeration,
-            "fusion.candidates.budget",
-            "candidate:fused-serial-sum",
-        )),
+        Err(CandidateError::Budget { limit, actual }) => explain.push(ExplainRecord {
+            phase: ExplainPhase::CandidateEnumeration,
+            rule: "fusion.candidates.budget",
+            subject: ExplainSubject::Candidate("bounded-recognizer".to_owned()),
+            outcome: ExplainOutcome::Rejected,
+            evidence: ExplainEvidence::Budget { limit, actual },
+        }),
         Err(error @ CandidateError::Invalid { .. }) => {
             return Err(CompileError::InvalidCompilerOutput(
                 CompilerOutputError::Candidate(error),
@@ -351,39 +443,52 @@ fn consider_fused_alternative(
                 explain.push(accepted(
                     ExplainPhase::CandidateEnumeration,
                     "fusion.candidate.legal",
-                    candidate.stable_id.clone(),
+                    ExplainSubject::Candidate(candidate.stable_id.clone()),
                 ));
             }
-            let fused_candidate = candidates
+            let Some(fused_candidate) = candidates
                 .iter()
                 .find(|candidate| candidate.kind == CandidateKind::FusedSerialSum)
-                .expect("governed enumeration always includes the fused candidate");
-            if let Some(provider) = verified.capabilities.fused_serial_sum {
+            else {
+                return Err(CompileError::InvalidCompilerOutput(
+                    CompilerOutputError::Candidate(CandidateError::Invalid {
+                        candidate: "bounded-recognizer".to_owned(),
+                        rule: "missing-fused-candidate",
+                    }),
+                ));
+            };
+            if let Some(provider) = verified.capabilities().fused_serial_sum {
                 let proof = prove_fused_numerics(verified, fused_candidate).map_err(|error| {
                     CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error))
                 })?;
                 explain.push(accepted(
                     ExplainPhase::NumericalLegality,
                     "fusion.strict-f32-equivalence",
-                    fused_candidate.stable_id.clone(),
+                    ExplainSubject::Candidate(fused_candidate.stable_id.clone()),
                 ));
                 match build_fused_scheduled_region(verified) {
-                    Err(PhysicalError::Target { .. }) => explain.push(rejected(
-                        ExplainPhase::TargetFeasibility,
-                        "fusion.target-infeasible",
-                        fused_candidate.stable_id.clone(),
-                    )),
+                    Err(error @ PhysicalError::Target { .. }) => {
+                        explain.push(target_rejection_record(
+                            &error,
+                            Some(&fused_candidate.stable_id),
+                        ));
+                        target_rejection.get_or_insert(error);
+                    }
                     Err(error) => return Err(error.into()),
                     Ok(fused_region) => {
                         let fused_kernel = lower_structured_kernel(&fused_region)?;
                         let fused_program = build_fused_kernel_program(verified, &fused_region)?;
                         assert_kernels_match_program(
+                            verified,
+                            std::slice::from_ref(&fused_region),
                             &fused_program,
                             std::slice::from_ref(&fused_kernel),
                         )?;
                         let fused_artifact = build_artifact_plan(
                             semantic,
                             verified,
+                            std::slice::from_ref(&fused_region),
+                            std::slice::from_ref(&fused_kernel),
                             &fused_program,
                             vec![provider],
                         )?;
@@ -400,12 +505,39 @@ fn consider_fused_alternative(
                 explain.push(rejected(
                     ExplainPhase::KernelRefinement,
                     "fusion.provider-unavailable",
-                    fused_candidate.stable_id.clone(),
+                    ExplainSubject::Candidate(fused_candidate.stable_id.clone()),
                 ));
             }
         }
     }
     Ok(())
+}
+
+fn target_rejection_record(error: &PhysicalError, candidate: Option<&str>) -> ExplainRecord {
+    let PhysicalError::Target {
+        rule,
+        region,
+        required,
+        available,
+    } = error
+    else {
+        unreachable!("target rejection records require a target-feasibility error")
+    };
+    ExplainRecord {
+        phase: ExplainPhase::TargetFeasibility,
+        rule,
+        subject: candidate.map_or(ExplainSubject::Region(*region), |stable_id| {
+            ExplainSubject::CandidateRegion {
+                stable_id: stable_id.to_owned(),
+                region: *region,
+            }
+        }),
+        outcome: ExplainOutcome::Rejected,
+        evidence: ExplainEvidence::Feasibility {
+            required: *required,
+            available: *available,
+        },
+    }
 }
 
 fn fused_alternative(
@@ -423,46 +555,269 @@ fn fused_alternative(
         program,
         artifact_plan,
         structural_cost: StructuralCost {
+            model_key: STRUCTURAL_COST_MODEL_KEY,
             dispatch_count: 1,
             temporary_allocation_count: 0,
             materialized_bytes: 0,
             intermediate_global_reads: 0,
             intermediate_global_writes: 0,
         },
-        equivalence: EquivalenceEvidence::Fused(proof),
+        equivalence: EquivalenceEvidence::Fused(Box::new(proof)),
     }
 }
 
 fn record_selection(
     alternatives: &[ProgramAlternative],
-    selected_alternative: usize,
+    selected_alternative_id: &str,
     explain: &mut Vec<ExplainRecord>,
 ) {
-    for (index, alternative) in alternatives.iter().enumerate() {
+    for alternative in alternatives {
         explain.push(ExplainRecord {
             phase: ExplainPhase::PortfolioSelection,
             rule: SELECTION_POLICY_KEY,
-            subject: alternative.stable_id.to_owned(),
-            outcome: if index == selected_alternative {
+            subject: ExplainSubject::Alternative(alternative.stable_id),
+            outcome: if alternative.stable_id == selected_alternative_id {
                 ExplainOutcome::Selected
             } else {
                 ExplainOutcome::NotSelected
+            },
+            evidence: ExplainEvidence::Cost {
+                model_key: STRUCTURAL_COST_MODEL_KEY,
+                cost: alternative.structural_cost,
             },
         });
     }
 }
 
-fn select_structural_pareto(alternatives: &[ProgramAlternative]) -> usize {
-    let mut selected = 0;
-    for candidate in 1..alternatives.len() {
-        if structurally_dominates(
-            alternatives[candidate].structural_cost,
-            alternatives[selected].structural_cost,
-        ) {
+fn select_structural_pareto(
+    alternatives: &[ProgramAlternative],
+) -> Result<&'static str, CompileError> {
+    let Some(first) = alternatives.first() else {
+        return Err(CompileError::InvalidCompilerOutput(
+            CompilerOutputError::Program(ProgramError::Structure {
+                rule: "portfolio-empty",
+            }),
+        ));
+    };
+    let mut selected = first;
+    for candidate in alternatives.iter().skip(1) {
+        if structurally_dominates(candidate.structural_cost, selected.structural_cost) {
             selected = candidate;
         }
     }
-    selected
+    Ok(selected.stable_id)
+}
+
+fn verify_portfolio(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    request: &crate::request::VerifiedTargetRequest,
+    alternatives: &[ProgramAlternative],
+    selected_id: &str,
+) -> Result<(), CompileError> {
+    if alternatives.is_empty()
+        || alternatives
+            .iter()
+            .map(|alternative| alternative.stable_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != alternatives.len()
+    {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-identity",
+        }
+        .into());
+    }
+    for alternative in alternatives {
+        verify_alternative(semantic, request, alternative)?;
+    }
+    let recomputed = select_structural_pareto(alternatives)?;
+    if selected_id != recomputed
+        || !alternatives
+            .iter()
+            .any(|item| item.stable_id == selected_id)
+    {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-selection",
+        }
+        .into());
+    }
+    Ok(())
+}
+
+struct ExpectedAlternative {
+    stable_id: &'static str,
+    cost: StructuralCost,
+    scheduled: Vec<VerifiedScheduledRegion>,
+    kernels: Vec<VerifiedStructuredKernel>,
+    program: KernelProgram,
+    artifact: ArtifactConstructionPlan,
+}
+
+fn rederive_alternative(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    request: &crate::request::VerifiedTargetRequest,
+    kind: ProgramAlternativeKind,
+) -> Result<ExpectedAlternative, CompileError> {
+    let (stable_id, cost) = match kind {
+        ProgramAlternativeKind::Materialized => {
+            let materialized_bytes = request.serial_sum().input_elements.checked_mul(4).ok_or(
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                    ProgramError::Structure {
+                        rule: "portfolio-cost-overflow",
+                    },
+                )),
+            )?;
+            (
+                "alternative:materialized-serial-sum.v1",
+                StructuralCost {
+                    model_key: STRUCTURAL_COST_MODEL_KEY,
+                    dispatch_count: 2,
+                    temporary_allocation_count: 1,
+                    materialized_bytes,
+                    intermediate_global_reads: materialized_bytes,
+                    intermediate_global_writes: materialized_bytes,
+                },
+            )
+        }
+        ProgramAlternativeKind::Fused => (
+            "alternative:fused-serial-sum.v1",
+            StructuralCost {
+                model_key: STRUCTURAL_COST_MODEL_KEY,
+                dispatch_count: 1,
+                temporary_allocation_count: 0,
+                materialized_bytes: 0,
+                intermediate_global_reads: 0,
+                intermediate_global_writes: 0,
+            },
+        ),
+    };
+    let scheduled = match kind {
+        ProgramAlternativeKind::Materialized => build_scheduled_regions(request)?,
+        ProgramAlternativeKind::Fused => vec![build_fused_scheduled_region(request)?],
+    };
+    let kernels = scheduled
+        .iter()
+        .map(lower_structured_kernel)
+        .collect::<Result<Vec<_>, _>>()?;
+    let program = match kind {
+        ProgramAlternativeKind::Materialized => build_kernel_program(request, &scheduled)?,
+        ProgramAlternativeKind::Fused => build_fused_kernel_program(request, &scheduled[0])?,
+    };
+    let providers = match kind {
+        ProgramAlternativeKind::Materialized => {
+            vec![request.capabilities().materialized_serial_sum]
+        }
+        ProgramAlternativeKind::Fused => request
+            .capabilities()
+            .fused_serial_sum
+            .into_iter()
+            .collect(),
+    };
+    let artifact =
+        build_artifact_plan(semantic, request, &scheduled, &kernels, &program, providers)?;
+    Ok(ExpectedAlternative {
+        stable_id,
+        cost,
+        scheduled,
+        kernels,
+        program,
+        artifact,
+    })
+}
+
+fn verify_alternative(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    request: &crate::request::VerifiedTargetRequest,
+    alternative: &ProgramAlternative,
+) -> Result<(), CompileError> {
+    let expected = rederive_alternative(semantic, request, alternative.kind)?;
+    if alternative.stable_id != expected.stable_id || alternative.structural_cost != expected.cost {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-cost-or-identity",
+        }
+        .into());
+    }
+    if alternative.scheduled_regions != expected.scheduled {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-schedule-binding",
+        }
+        .into());
+    }
+    if alternative.kernels != expected.kernels {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-kernel-binding",
+        }
+        .into());
+    }
+    if alternative.program != expected.program {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-program-binding",
+        }
+        .into());
+    }
+    if alternative.artifact_plan != expected.artifact {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-artifact-receipt",
+        }
+        .into());
+    }
+    verify_artifact_plan(
+        &alternative.artifact_plan,
+        semantic,
+        request,
+        &expected.scheduled,
+        &expected.kernels,
+        &expected.program,
+        expected.artifact.lowering_providers().to_vec(),
+    )?;
+    verify_equivalence(request, alternative)
+}
+
+fn verify_equivalence(
+    request: &crate::request::VerifiedTargetRequest,
+    alternative: &ProgramAlternative,
+) -> Result<(), CompileError> {
+    match &alternative.equivalence {
+        EquivalenceEvidence::MaterializedReference
+            if alternative.kind == ProgramAlternativeKind::Materialized => {}
+        EquivalenceEvidence::Fused(proof) if alternative.kind == ProgramAlternativeKind::Fused => {
+            let candidates = enumerate_candidates(request).map_err(|error| {
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error))
+            })?;
+            let candidate = candidates
+                .iter()
+                .find(|candidate| candidate.kind == CandidateKind::FusedSerialSum)
+                .ok_or({
+                    CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                        ProgramError::Structure {
+                            rule: "portfolio-fused-candidate",
+                        },
+                    ))
+                })?;
+            verify_fused_numerics(request, candidate, proof).map_err(|error| {
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error))
+            })?;
+            if alternative.scheduled_regions.len() != 1
+                || alternative.scheduled_regions[0]
+                    .region()
+                    .index
+                    .semantic_members
+                    != candidate.members.as_slice()
+            {
+                return Err(ProgramError::Structure {
+                    rule: "portfolio-candidate-schedule-binding",
+                }
+                .into());
+            }
+        }
+        _ => {
+            return Err(ProgramError::Structure {
+                rule: "portfolio-equivalence",
+            }
+            .into());
+        }
+    }
+    Ok(())
 }
 
 const fn structurally_dominates(candidate: StructuralCost, incumbent: StructuralCost) -> bool {
@@ -479,21 +834,31 @@ const fn structurally_dominates(candidate: StructuralCost, incumbent: Structural
     no_worse && strictly_better
 }
 
-fn accepted(phase: ExplainPhase, rule: &'static str, subject: impl Into<String>) -> ExplainRecord {
+fn accepted(phase: ExplainPhase, rule: &'static str, subject: ExplainSubject) -> ExplainRecord {
     ExplainRecord {
         phase,
         rule,
-        subject: subject.into(),
+        subject,
         outcome: ExplainOutcome::Accepted,
+        evidence: ExplainEvidence::Predicate {
+            class: if phase == ExplainPhase::NumericalLegality {
+                EvidenceClass::SoundNumericalProof
+            } else {
+                EvidenceClass::ValidatedInvariant
+            },
+        },
     }
 }
 
-fn rejected(phase: ExplainPhase, rule: &'static str, subject: impl Into<String>) -> ExplainRecord {
+fn rejected(phase: ExplainPhase, rule: &'static str, subject: ExplainSubject) -> ExplainRecord {
     ExplainRecord {
         phase,
         rule,
-        subject: subject.into(),
+        subject,
         outcome: ExplainOutcome::Rejected,
+        evidence: ExplainEvidence::Predicate {
+            class: EvidenceClass::ValidatedInvariant,
+        },
     }
 }
 
@@ -527,6 +892,22 @@ mod tests {
         bias_bits: u32,
         reverse_constants: bool,
     ) -> SemanticProgram {
+        semantic_case_with_axis(
+            shape,
+            scale_bits,
+            bias_bits,
+            reverse_constants,
+            Axis::new(1),
+        )
+    }
+
+    fn semantic_case_with_axis(
+        shape: Shape,
+        scale_bits: u32,
+        bias_bits: u32,
+        reverse_constants: bool,
+        reduction_axis: Axis,
+    ) -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), shape)
@@ -542,7 +923,7 @@ mod tests {
         };
         let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
         let mapped = F32Add::apply(&mut builder, product, bias).unwrap();
-        let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [reduction_axis]).unwrap();
         builder
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
@@ -550,7 +931,7 @@ mod tests {
     }
 
     fn interpret_fused(kernel: &VerifiedStructuredKernel, input: &[f32]) -> Vec<f32> {
-        match &kernel.kernel.body {
+        match &kernel.kernel().body {
             StructuredBody::FusedEmptyReduction {
                 output_count,
                 identity_bits,
@@ -663,28 +1044,31 @@ mod tests {
         assert_eq!(first, second);
         let first = &first.targets[0];
         assert_eq!(first.portfolio.alternatives.len(), 2);
-        assert_eq!(first.portfolio.selection.selected_alternative, 1);
+        assert_eq!(
+            first.portfolio.selection.selected_alternative_id,
+            "alternative:fused-serial-sum.v1"
+        );
         let materialized = &first.portfolio.alternatives[0];
         let fused = &first.portfolio.alternatives[1];
-        assert_eq!(materialized.program.stages.len(), 2);
+        assert_eq!(materialized.program.stages().len(), 2);
         assert_eq!(
-            materialized.program.buffer_plan.values[1].role,
+            materialized.program.buffer_plan().values[1].role,
             ValueRole::Temporary
         );
         assert_eq!(
-            materialized.program.dependencies[0].reason,
+            materialized.program.dependencies()[0].reason,
             DependencyReason::Data(MaterializedValueId(1))
         );
         assert_eq!(
-            materialized.kernels[0].kernel.buffers[1].tensor,
+            materialized.kernels[0].kernel().buffers[1].tensor,
             TensorRole::Intermediate
         );
         assert_eq!(
-            materialized.kernels[1].kernel.buffers[0].tensor,
+            materialized.kernels[1].kernel().buffers[0].tensor,
             TensorRole::Intermediate
         );
         assert!(matches!(
-            materialized.kernels[1].kernel.body,
+            materialized.kernels[1].kernel().body,
             StructuredBody::NonEmptySerialReduction {
                 order: ContributorOrder::OriginalAxisLexicographic,
                 loop_start: 1,
@@ -692,11 +1076,12 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(fused.program.stages.len(), 1);
-        assert_eq!(fused.program.buffer_plan.values.len(), 2);
+        assert_eq!(fused.program.stages().len(), 1);
+        assert_eq!(fused.program.buffer_plan().values.len(), 2);
         assert_eq!(
             materialized.structural_cost,
             StructuralCost {
+                model_key: STRUCTURAL_COST_MODEL_KEY,
                 dispatch_count: 2,
                 temporary_allocation_count: 1,
                 materialized_bytes: 24,
@@ -707,6 +1092,7 @@ mod tests {
         assert_eq!(
             fused.structural_cost,
             StructuralCost {
+                model_key: STRUCTURAL_COST_MODEL_KEY,
                 dispatch_count: 1,
                 temporary_allocation_count: 0,
                 materialized_bytes: 0,
@@ -715,17 +1101,17 @@ mod tests {
             }
         );
         assert_eq!(
-            materialized.artifact_plan.lowering_providers,
+            materialized.artifact_plan.lowering_providers(),
             [crate::request::CompilerCapabilitySnapshot::governed().materialized_serial_sum]
         );
         assert_eq!(
-            fused.artifact_plan.lowering_providers,
+            fused.artifact_plan.lowering_providers(),
             [crate::request::CompilerCapabilitySnapshot::governed()
                 .fused_serial_sum
                 .unwrap()]
         );
         assert!(matches!(
-            fused.kernels[0].kernel.body,
+            fused.kernels[0].kernel().body,
             StructuredBody::FusedNonEmptySerialReduction {
                 contributor_count: 3,
                 loop_start: 1,
@@ -791,20 +1177,18 @@ mod tests {
     }
 
     #[test]
-    fn target_resource_failure_is_a_no_feasible_plan_outcome() {
+    fn forged_same_key_target_facts_are_rejected_at_the_request_boundary() {
         let semantic = semantic(false);
         let mut request = CompilationRequest::governed(&semantic);
         request.target_profiles[0].max_threads_per_grid_axis = 1;
         let error = compile(request).unwrap_err();
-        assert!(matches!(
+        assert_eq!(
             error,
-            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
-                rule: "grid-axis",
-                region: crate::physical::RegionId(0),
-                required: 6,
-                available: 1,
-            }))
-        ));
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "target",
+                rule: "prototype-target-neutral-baseline-v1",
+            })
+        );
     }
 
     #[test]
@@ -815,8 +1199,11 @@ mod tests {
         let product = compile(missing_provider).unwrap();
         assert_eq!(product.targets[0].portfolio.alternatives.len(), 1);
         assert_eq!(
-            product.targets[0].portfolio.selection.selected_alternative,
-            0
+            product.targets[0]
+                .portfolio
+                .selection
+                .selected_alternative_id,
+            "alternative:materialized-serial-sum.v1"
         );
         assert!(product.targets[0].explain.iter().any(|record| {
             record.rule == "fusion.provider-unavailable"
@@ -833,8 +1220,38 @@ mod tests {
     }
 
     #[test]
+    fn infeasible_baseline_does_not_suppress_a_feasible_fused_plan() {
+        let semantic = semantic_case_with_axis(
+            Shape::from_dims([70_000, 2]),
+            2.0_f32.to_bits(),
+            1.0_f32.to_bits(),
+            false,
+            Axis::new(0),
+        );
+
+        let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+        let target = &product.targets[0];
+        assert_eq!(target.portfolio.alternatives.len(), 1);
+        assert_eq!(
+            target.portfolio.alternatives[0].kind,
+            ProgramAlternativeKind::Fused
+        );
+        assert!(target.explain.iter().any(|record| {
+            record.rule == "grid-axis"
+                && record.subject == ExplainSubject::Region(RegionId(0))
+                && record.outcome == ExplainOutcome::Rejected
+                && record.evidence
+                    == ExplainEvidence::Feasibility {
+                        required: 140_000,
+                        available: 65_535,
+                    }
+        }));
+    }
+
+    #[test]
     fn structural_policy_requires_pareto_dominance_instead_of_guessing_latency() {
         let incumbent = StructuralCost {
+            model_key: STRUCTURAL_COST_MODEL_KEY,
             dispatch_count: 2,
             temporary_allocation_count: 0,
             materialized_bytes: 0,
@@ -842,6 +1259,7 @@ mod tests {
             intermediate_global_writes: 0,
         };
         let tradeoff = StructuralCost {
+            model_key: STRUCTURAL_COST_MODEL_KEY,
             dispatch_count: 1,
             temporary_allocation_count: 1,
             materialized_bytes: 4,
@@ -859,7 +1277,7 @@ mod tests {
     }
 
     #[test]
-    fn fused_kir_matches_the_authoritative_reference_on_adversarial_f32_cases() {
+    fn structured_fused_body_interpreter_matches_reference_evaluator() {
         assert_fused_matches_reference(
             Shape::from_dims([2, 3]),
             vec![1.0, -2.0, 3.5, f32::MIN_POSITIVE, -0.0, 0.0],
@@ -894,5 +1312,38 @@ mod tests {
             contraction_scale.to_bits(),
             contraction_bias.to_bits(),
         );
+    }
+
+    #[test]
+    fn portfolio_selection_and_evidence_are_recomputed_from_exact_contents() {
+        let semantic = semantic(false);
+        let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+        let request = request.for_target(request.target_profiles()[0]).unwrap();
+        let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+        let target = &product.targets[0];
+        let alternatives = &target.portfolio.alternatives;
+        let selected = target.portfolio.selection.selected_alternative_id;
+
+        assert!(verify_portfolio(&semantic, &request, alternatives, selected).is_ok());
+        assert!(verify_portfolio(&semantic, &request, &[], selected).is_err());
+        assert!(verify_portfolio(&semantic, &request, alternatives, "stale-selection").is_err());
+
+        let mut forged = alternatives.clone();
+        forged[0].structural_cost.dispatch_count = 0;
+        assert!(verify_portfolio(&semantic, &request, &forged, selected).is_err());
+    }
+
+    #[test]
+    fn intrinsic_physical_failures_are_invalid_output_not_empty_frontiers() {
+        let error = CompileError::from(PhysicalError::Intrinsic {
+            rule: "forged",
+            region: RegionId(0),
+        });
+        assert!(matches!(
+            error,
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+                PhysicalError::Intrinsic { .. }
+            ))
+        ));
     }
 }

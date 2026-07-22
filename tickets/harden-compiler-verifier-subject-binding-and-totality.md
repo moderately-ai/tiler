@@ -1,17 +1,14 @@
 ---
 id: harden-compiler-verifier-subject-binding-and-totality
 title: Harden compiler verifier subject binding and totality
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
 related: [prototype-target-neutral-fusion-slice]
-scopes: [implementation/compiler, implementation/ir, implementation/artifact]
+scopes: [implementation/compiler, implementation/ir, implementation/artifact, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, optimizer]
-claimed_from: todo
-assignee: gpt-sol-verifier
-lease_expires_at: 1784739571
 ---
 
 Turn the current target-neutral proof slice into a verifier boundary whose
@@ -75,3 +72,15 @@ schedule, target, KIR, buffer, portfolio, provider, proof, or artifact field and
 require rejection with the correct typed class. Add panic-free malformed-input
 tests and late-zero/duplicate-axis cases. The compiler must never accept a plan
 merely because two forged copies agree.
+
+## Outcome
+
+Completed in `1ae5fcc`: verified requests, schedules, structured kernels,
+programs, and artifact plans are opaque receipts bound to authoritative request
+subjects; exact reduction shapes, target facts, KIR, ABI/host-expression IDs,
+outputs, providers, and portfolio evidence are rederived or checked. Mutation
+and malformed-input coverage now includes target, provider, budget, semantic
+identity, key, normalized constant, schedule/proof, kernel, program, and
+artifact forgeries. Independent immutable reviews of `1ae5fcc` passed, as did
+the full Rust gate, documentation validation, Ruff, 143 pytest tests, ticket
+lint, strict scope guard, and diff checks.

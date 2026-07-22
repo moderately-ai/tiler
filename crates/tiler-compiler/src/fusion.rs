@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
-use crate::request::{NumericalPermission, VerifiedTargetRequest};
+use crate::request::{
+    LoweringProviderIdentity, NumericalPermission, VerifiedRequestSubject, VerifiedTargetRequest,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum SemanticOccurrence {
@@ -14,7 +16,7 @@ pub(crate) enum SemanticOccurrence {
 }
 
 impl SemanticOccurrence {
-    const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 5] = [
         Self::ScaleConstant,
         Self::Multiply,
         Self::BiasConstant,
@@ -54,18 +56,22 @@ pub(crate) enum CandidateKind {
 pub(crate) struct RegionCandidate {
     pub(crate) stable_id: String,
     pub(crate) kind: CandidateKind,
-    pub(crate) members: BTreeSet<SemanticOccurrence>,
+    pub(crate) members: Vec<SemanticOccurrence>,
     pub(crate) boundary_inputs: BTreeSet<BoundaryValue>,
     pub(crate) boundary_outputs: BTreeSet<BoundaryValue>,
+    request_subject: VerifiedRequestSubject,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FusionNumericalProof {
-    pub(crate) atomic_operations: AtomicOperationProof,
-    pub(crate) contributor_order: ContributorOrderProof,
-    pub(crate) nan_boundaries: NaNBoundaryProof,
-    pub(crate) materialization_boundaries: MaterializationBoundaryProof,
-    pub(crate) forbidden_transforms: ForbiddenTransformProof,
+    candidate: RegionCandidate,
+    request_subject: VerifiedRequestSubject,
+    materialized_reference_provider: LoweringProviderIdentity,
+    atomic_operations: AtomicOperationProof,
+    contributor_order: ContributorOrderProof,
+    nan_boundaries: NaNBoundaryProof,
+    materialization_boundaries: MaterializationBoundaryProof,
+    forbidden_transforms: ForbiddenTransformProof,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,9 +134,10 @@ pub(crate) fn enumerate_candidates(
 ) -> Result<Vec<RegionCandidate>, CandidateError> {
     let mut candidates: Vec<_> = SemanticOccurrence::ALL
         .into_iter()
-        .map(|occurrence| candidate(CandidateKind::Singleton, [occurrence]))
+        .map(|occurrence| candidate(request, CandidateKind::Singleton, [occurrence]))
         .collect();
     candidates.push(candidate(
+        request,
         CandidateKind::Pointwise,
         [
             SemanticOccurrence::ScaleConstant,
@@ -140,14 +147,14 @@ pub(crate) fn enumerate_candidates(
         ],
     ));
     candidates.push(candidate(
+        request,
         CandidateKind::FusedSerialSum,
         SemanticOccurrence::ALL,
     ));
-    if candidates.len()
-        > usize::try_from(request.budgets.fusion_candidates).expect("u32 fits every supported host")
+    if candidates.len() > usize::try_from(request.budgets().fusion_candidates).unwrap_or(usize::MAX)
     {
         return Err(CandidateError::Budget {
-            limit: request.budgets.fusion_candidates,
+            limit: request.budgets().fusion_candidates,
             actual: candidates.len(),
         });
     }
@@ -161,10 +168,16 @@ pub(crate) fn prove_fused_numerics(
     request: &VerifiedTargetRequest,
     candidate: &RegionCandidate,
 ) -> Result<FusionNumericalProof, CandidateError> {
-    if candidate.kind != CandidateKind::FusedSerialSum {
+    verify_candidate(candidate)?;
+    if candidate.kind != CandidateKind::FusedSerialSum
+        || candidate.request_subject != request.subject()
+    {
         return invalid(candidate, "numerical-proof-kind");
     }
     let proof = FusionNumericalProof {
+        candidate: candidate.clone(),
+        request_subject: request.subject(),
+        materialized_reference_provider: request.capabilities().materialized_serial_sum,
         atomic_operations: AtomicOperationProof::MultiplyThenAdd,
         contributor_order: ContributorOrderProof::OriginalAxisLexicographic,
         nan_boundaries: NaNBoundaryProof::CanonicalizeAfterEveryArithmeticOperation,
@@ -175,8 +188,8 @@ pub(crate) fn prove_fused_numerics(
             permutation: NumericalPermission::Forbidden,
         },
     };
-    if request.numerical_contract.contraction != NumericalPermission::Forbidden
-        || request.numerical_contract.reassociation != NumericalPermission::Forbidden
+    if request.numerical_contract().contraction != NumericalPermission::Forbidden
+        || request.numerical_contract().reassociation != NumericalPermission::Forbidden
         || proof.forbidden_transforms.contraction != NumericalPermission::Forbidden
         || proof.forbidden_transforms.reassociation != NumericalPermission::Forbidden
         || proof.forbidden_transforms.permutation != NumericalPermission::Forbidden
@@ -186,27 +199,34 @@ pub(crate) fn prove_fused_numerics(
     Ok(proof)
 }
 
+pub(crate) fn verify_fused_numerics(
+    request: &VerifiedTargetRequest,
+    candidate: &RegionCandidate,
+    proof: &FusionNumericalProof,
+) -> Result<(), CandidateError> {
+    let expected = prove_fused_numerics(request, candidate)?;
+    if proof != &expected {
+        return invalid(candidate, "numerical-proof-subject");
+    }
+    Ok(())
+}
+
 fn candidate(
+    request: &VerifiedTargetRequest,
     kind: CandidateKind,
     members: impl IntoIterator<Item = SemanticOccurrence>,
 ) -> RegionCandidate {
-    let members: BTreeSet<_> = members.into_iter().collect();
-    let stable_id = format!(
-        "candidate:{}",
-        SemanticOccurrence::ALL
-            .into_iter()
-            .filter(|occurrence| members.contains(occurrence))
-            .map(SemanticOccurrence::stable_name)
-            .collect::<Vec<_>>()
-            .join("+")
-    );
-    let (boundary_inputs, boundary_outputs) = boundaries(&members);
+    let members: Vec<_> = members.into_iter().collect();
+    let stable_id = stable_candidate_id(&members);
+    let membership = members.iter().copied().collect();
+    let (boundary_inputs, boundary_outputs) = boundaries(&membership);
     RegionCandidate {
         stable_id,
         kind,
         members,
         boundary_inputs,
         boundary_outputs,
+        request_subject: request.subject(),
     }
 }
 
@@ -277,7 +297,9 @@ fn boundaries(
 }
 
 fn verify_candidate(candidate: &RegionCandidate) -> Result<(), CandidateError> {
+    let membership: BTreeSet<_> = candidate.members.iter().copied().collect();
     if candidate.members.is_empty()
+        || membership.len() != candidate.members.len()
         || candidate
             .members
             .iter()
@@ -285,7 +307,28 @@ fn verify_candidate(candidate: &RegionCandidate) -> Result<(), CandidateError> {
     {
         return invalid(candidate, "membership");
     }
-    if boundaries(&candidate.members)
+    let expected_kind = if candidate.members.len() == 1 {
+        CandidateKind::Singleton
+    } else if candidate.members
+        == [
+            SemanticOccurrence::ScaleConstant,
+            SemanticOccurrence::Multiply,
+            SemanticOccurrence::BiasConstant,
+            SemanticOccurrence::Add,
+        ]
+    {
+        CandidateKind::Pointwise
+    } else if candidate.members == SemanticOccurrence::ALL {
+        CandidateKind::FusedSerialSum
+    } else {
+        return invalid(candidate, "bounded-recognizer-membership");
+    };
+    if candidate.kind != expected_kind
+        || candidate.stable_id != stable_candidate_id(&candidate.members)
+    {
+        return invalid(candidate, "identity");
+    }
+    if boundaries(&membership)
         != (
             candidate.boundary_inputs.clone(),
             candidate.boundary_outputs.clone(),
@@ -293,27 +336,39 @@ fn verify_candidate(candidate: &RegionCandidate) -> Result<(), CandidateError> {
     {
         return invalid(candidate, "boundaries");
     }
-    if !is_connected(&candidate.members) {
+    if !is_connected(&membership) {
         return invalid(candidate, "connectivity");
     }
-    if !is_convex(&candidate.members) {
+    if !is_convex(&membership) {
         return invalid(candidate, "convexity");
     }
     Ok(())
 }
 
+fn stable_candidate_id(members: &[SemanticOccurrence]) -> String {
+    format!(
+        "candidate:{}",
+        members
+            .iter()
+            .copied()
+            .map(SemanticOccurrence::stable_name)
+            .collect::<Vec<_>>()
+            .join("+")
+    )
+}
+
 fn is_connected(members: &BTreeSet<SemanticOccurrence>) -> bool {
     let graph = dependencies();
-    let start = *members
-        .first()
-        .expect("membership checked before connectivity");
+    let Some(start) = members.first().copied() else {
+        return false;
+    };
     let mut queue = VecDeque::from([start]);
     let mut reached = BTreeSet::new();
     while let Some(node) = queue.pop_front() {
         if !reached.insert(node) {
             continue;
         }
-        let neighbors = graph[&node].iter().copied().chain(
+        let neighbors = graph.get(&node).into_iter().flatten().copied().chain(
             graph
                 .iter()
                 .filter_map(|(consumer, inputs)| inputs.contains(&node).then_some(*consumer)),
@@ -379,11 +434,11 @@ mod tests {
             .unwrap();
         let semantic = builder.build().unwrap();
         let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
-        verified.for_target(verified.target_profiles[0])
+        verified.for_target(verified.target_profiles()[0]).unwrap()
     }
 
     #[test]
-    fn governed_enumeration_is_stable_complete_and_boundary_checked() {
+    fn bounded_recognizer_is_stable_and_boundary_checked() {
         let request = request();
         let candidates = enumerate_candidates(&request).unwrap();
         assert_eq!(candidates.len(), 7);
@@ -424,7 +479,9 @@ mod tests {
 
     #[test]
     fn disconnected_and_nonconvex_candidates_fail_closed() {
+        let request = request();
         let disconnected = candidate(
+            &request,
             CandidateKind::Pointwise,
             [
                 SemanticOccurrence::ScaleConstant,
@@ -434,19 +491,68 @@ mod tests {
         assert!(matches!(
             verify_candidate(&disconnected),
             Err(CandidateError::Invalid {
-                rule: "connectivity",
+                rule: "bounded-recognizer-membership",
                 ..
             })
         ));
 
         let nonconvex = candidate(
+            &request,
             CandidateKind::FusedSerialSum,
             [SemanticOccurrence::Multiply, SemanticOccurrence::StrictSum],
         );
         assert!(matches!(
             verify_candidate(&nonconvex),
             Err(CandidateError::Invalid {
-                rule: "connectivity" | "convexity",
+                rule: "bounded-recognizer-membership",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn candidate_and_numerical_evidence_are_bound_to_the_exact_subject() {
+        let request = request();
+        let candidates = enumerate_candidates(&request).unwrap();
+        let fused = candidates.last().unwrap();
+
+        let mut stale_id = fused.clone();
+        stale_id.stable_id.push_str("-forged");
+        assert!(matches!(
+            verify_candidate(&stale_id),
+            Err(CandidateError::Invalid {
+                rule: "identity",
+                ..
+            })
+        ));
+
+        let mut wrong_kind = fused.clone();
+        wrong_kind.kind = CandidateKind::Pointwise;
+        assert!(matches!(
+            verify_candidate(&wrong_kind),
+            Err(CandidateError::Invalid {
+                rule: "identity",
+                ..
+            })
+        ));
+
+        let mut reordered = fused.clone();
+        reordered.members.swap(0, 1);
+        assert!(matches!(
+            verify_candidate(&reordered),
+            Err(CandidateError::Invalid {
+                rule: "bounded-recognizer-membership",
+                ..
+            })
+        ));
+
+        let proof = prove_fused_numerics(&request, fused).unwrap();
+        let mut wrong_proof = proof.clone();
+        wrong_proof.candidate.stable_id.push_str("-forged");
+        assert!(matches!(
+            verify_fused_numerics(&request, fused, &wrong_proof),
+            Err(CandidateError::Invalid {
+                rule: "numerical-proof-subject",
                 ..
             })
         ));

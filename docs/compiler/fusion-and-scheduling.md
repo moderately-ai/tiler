@@ -14,12 +14,20 @@ evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.resea
 **Status:** accepted research contract; bounded prototype implementation
 
 The private strict-`f32` serial-`Sum` slice now enumerates five singleton
-candidates, the four-operation pointwise candidate, and the complete fused
-candidate from canonical semantic occurrence roles. It checks membership,
+candidates, the four-operation pointwise candidate, and one full-region fused
+candidate from canonical semantic occurrence roles. This is a bounded
+recognizer, not evidence that hand-enumeration is complete. It checks membership,
 boundaries, connectivity, convexity, numerical permissions, deterministic
 candidate budget, schedule feasibility, and structured-kernel refinement. This
 is evidence for the architecture, not a general region enumerator or public
 fusion API.
+
+Every prototype candidate recomputes its stable identity from its exact member
+occurrences and boundaries. Numerical evidence is bound to that candidate, the
+canonical request subject, full numerical contract, and exact materialized
+reference provider. A candidate kind or copied stable string is not evidence.
+Schedules retain the canonical request subject—including full target facts and
+provider provenance—and revalidate that subject before KIR refinement.
 
 ## Ownership boundary
 
@@ -112,6 +120,9 @@ A proposed fusion region is legal only when all of the following hold.
 - Rank-changing view operations remain metadata unless a physical reorder is
   deliberately chosen.
 - Zero-sized domains cause no memory access or illegal dispatch.
+- Reduction axes are unique, in range, and canonically ordered before any
+  contributor calculation; a zero extent is detected before multiplication so
+  a late zero cannot be hidden by an earlier overflow.
 
 ### Dependencies and effects
 
