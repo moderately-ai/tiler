@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: [operation-extension-surface]
 related: []
-scopes: [research/extensions, contracts/core, contracts/integrations]
+scopes: [research/extensions, contracts/integrations, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, spike, macro, extensions]

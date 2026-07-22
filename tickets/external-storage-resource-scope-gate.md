@@ -6,7 +6,7 @@ priority: p2
 dependencies: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract]
 related: []
 scopes: [research/external-storage]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, decision, storage, deferred]
 ---

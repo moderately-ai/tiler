@@ -3,10 +3,10 @@ id: prototype-structured-kir-slice
 title: Implement the structured kernel IR slice
 status: todo
 priority: p0
-dependencies: [prototype-physical-implementation-frontier]
+dependencies: [prototype-complete-program-selection]
 related: []
 scopes: [implementation/ir, implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, kernel-ir, compiler-foundation]
 ---

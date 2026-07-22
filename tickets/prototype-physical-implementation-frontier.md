@@ -3,10 +3,10 @@ id: prototype-physical-implementation-frontier
 title: Implement the physical implementation frontier
 status: todo
 priority: p0
-dependencies: [prototype-region-partition-and-complete-plan]
+dependencies: [prototype-region-cover-enumeration, prototype-scheduled-region-ir, prototype-target-feasibility-authority]
 related: []
 scopes: [implementation/compiler, implementation/ir]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, scheduling]
 ---

@@ -5,8 +5,8 @@ status: in-progress
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
 related: []
-scopes: [project/tickets, contracts/navigation, contracts/optimizer, implementation/workspace]
-shared_scopes: []
+scopes: [contracts/navigation, contracts/optimizer, implementation/workspace, contracts/foundation, contracts/numerics]
+shared_scopes: [project/tickets]
 paths: []
 tags: [maintenance, architecture, implementation]
 claimed_from: todo
@@ -142,3 +142,16 @@ Run `tkt lint`, `tkt reconcile`, `tkt ready`, `tkt tracks`, critical-path
 queries for the optimizer and inline milestones, the full documentation gate,
 and `git diff --check`. The resulting immediate frontier must expose only work
 whose prerequisites and public verifier authorities actually exist.
+
+## Reconciliation evidence boundary
+
+The implementation audit was performed from integrated base
+`92b9b37b92fb3c2e6c13fde48c9ed499edb6ced6`. All registered worktrees were
+inspected individually and were clean. No required content was found stranded
+on the three non-patch-equivalent historical heads; completed worktree and
+branch cleanup remains a separate coordinated maintenance action. The named
+stale `tkt/prototype-operation-compilation-capabilities` branch was already
+absent locally and remotely and had no unique commit, so this ticket performs
+no destructive branch or worktree operation. Local `main` was ahead of
+`origin/main`; new dispatch must use the exact integrated base until remote
+coordination catches up rather than pretending stale remote state is current.

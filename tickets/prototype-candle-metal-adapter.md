@@ -6,7 +6,7 @@ priority: p1
 dependencies: [prototype-inline-aot-integration-proof]
 related: []
 scopes: [implementation/candle, implementation/runtime]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, integration, candle]
 ---

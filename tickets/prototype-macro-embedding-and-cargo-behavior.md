@@ -6,7 +6,7 @@ priority: p1
 dependencies: [prototype-inline-proc-macro-frontend, prototype-expansion-content-cache, prototype-artifact-family-delivery, prototype-metal-aot-slice, repair-macro-and-embedding-harness-integrity]
 related: []
 scopes: [implementation/frontend, implementation/cache, implementation/metal-aot, research/embedding, research/macro-environment]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, measurement, proc-macro, inline-dx]
 ---

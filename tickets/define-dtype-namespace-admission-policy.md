@@ -5,7 +5,7 @@ status: done
 priority: p0
 dependencies: []
 related: [enumerate-the-mature-tensor-dtype-taxonomy, numerical-policy-contract]
-scopes: [research/numerics, contracts/core]
+scopes: [research/numerics, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, numerics, governance]

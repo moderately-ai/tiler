@@ -7,7 +7,7 @@ dependencies: [prototype-shared-compiler-ir-ownership, correct-semantic-identity
 related: [harden-compiler-verifier-subject-binding-and-totality]
 scopes: [implementation/ir, implementation/compiler, implementation/workspace, project/tickets, contracts/foundation, contracts/navigation, contracts/decisions, contracts/numerics, implementation/reference, research/indexing, contracts/optimizer, contracts/artifacts, research/artifacts, research/extensions]
 shared_scopes: []
-paths: [.gitignore]
+paths: []
 tags: [implementation, compiler-foundation, indexing]
 ---
 Implement the public checked static-extent index-region profile needed by the

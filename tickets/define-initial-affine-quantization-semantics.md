@@ -5,7 +5,7 @@ status: done
 priority: p0
 dependencies: []
 related: [numerical-policy-contract, define-quantized-value-binding-contract]
-scopes: [research/numerics, contracts/core, contracts/compiler]
+scopes: [research/numerics, contracts/foundation, contracts/optimizer]
 shared_scopes: []
 paths: []
 tags: [tiler-research, numerics, foundation]

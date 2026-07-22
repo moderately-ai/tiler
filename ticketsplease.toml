@@ -10,7 +10,7 @@ default_base = "main"
 
 [language]
 # "none" = path-glob scopes only; "rust" = also expand via the cargo crate graph.
-backend = "none"
+backend = "rust"
 
 [workflow.states.todo]
 category = "dispatchable"
@@ -69,8 +69,6 @@ satisfies_dependents = false
 "research/external-storage" = ["docs/research/external-storage/**", "spikes/external-storage/**"]
 "research/metal-transfers" = ["docs/research/metal-transfers/**", "spikes/metal-transfers/**"]
 "research/cuda-transfers" = ["docs/research/cuda-transfers/**", "spikes/cuda-transfers/**"]
-"contracts/core" = []
-"contracts/compiler" = []
 "contracts/foundation" = [
   "docs/vision.md",
   "docs/architecture.md",
@@ -104,7 +102,8 @@ satisfies_dependents = false
 "contracts/artifacts" = ["docs/artifact-abi.md", "docs/backends/**"]
 "contracts/integrations" = ["docs/integration/**"]
 "project/tickets" = ["tickets/**", "ticketsplease.toml"]
-"implementation/workspace" = ["AGENTS.md", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml", "pyproject.toml", "uv.lock", ".python-version", ".shellcheckrc", "tool-versions.toml", "deps.sh", ".github/workflows/rust.yml", "scripts/check_workspace.py", "scripts/check_rust.py", "scripts/check_repository.py", "scripts/check_ci.py"]
+"implementation/workspace" = ["AGENTS.md", ".gitignore", "Cargo.toml", "rust-toolchain.toml", "rustfmt.toml", "pyproject.toml", "uv.lock", ".python-version", ".shellcheckrc", "tool-versions.toml", "deps.sh", ".github/workflows/rust.yml", "scripts/check_workspace.py", "scripts/check_rust.py", "scripts/check_repository.py", "scripts/check_ci.py"]
+"implementation/cargo-lock" = ["Cargo.lock"]
 "implementation/ir" = ["crates/tiler-ir/**"]
 "implementation/reference" = ["crates/tiler-reference/**"]
 "implementation/artifact" = ["crates/tiler-artifact/**"]
@@ -119,7 +118,13 @@ satisfies_dependents = false
 # Optionally map a scope to its owning crate so the Rust backend can expand
 # reverse-dependents (requires `cargo` at runtime).
 [scope_crates]
-# "core" = "my-core-crate"
+"implementation/ir" = "tiler-ir"
+"implementation/reference" = "tiler-reference"
+"implementation/artifact" = "tiler-artifact"
+"implementation/compiler" = "tiler-compiler"
+"implementation/metal" = "tiler-metal"
+"implementation/metal-aot" = "tiler-prototype-compile"
+"implementation/runtime" = "tiler-prototype-run"
 
 # Name a forked/external dependency (pinned via `git = … rev = …`) as a scope.
 # The guard flags a branch that bumps the pin (matched by `repo`) or edits an

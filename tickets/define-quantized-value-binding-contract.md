@@ -5,7 +5,7 @@ status: done
 priority: p0
 dependencies: []
 related: [numerical-policy-contract]
-scopes: [research/numerics, contracts/core, contracts/artifacts]
+scopes: [research/numerics, contracts/artifacts, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, numerics, foundation]

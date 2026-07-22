@@ -4,7 +4,7 @@ title: Correct capability and index ticket order
 status: done
 priority: p0
 dependencies: [prototype-shared-compiler-ir-ownership]
-related: [prototype-operation-compilation-capabilities, prototype-canonical-index-region-slice, prototype-physical-implementation-frontier]
+related: [prototype-canonical-index-region-slice, prototype-physical-implementation-frontier, prototype-operation-capability-registry]
 scopes: [project/tickets]
 shared_scopes: []
 paths: []

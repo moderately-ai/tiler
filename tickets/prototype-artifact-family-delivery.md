@@ -6,7 +6,7 @@ priority: p1
 dependencies: [prototype-neutral-artifact-codec, prototype-apple-aot-driver]
 related: []
 scopes: [implementation/frontend, implementation/metal-aot, implementation/artifact]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, apple-targets, inline-dx]
 ---

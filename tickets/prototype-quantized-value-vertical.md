@@ -3,10 +3,10 @@ id: prototype-quantized-value-vertical
 title: Prove a quantized compound-value vertical
 status: todo
 priority: p2
-dependencies: [implement-first-profile-numerical-policies, implement-general-dag-partitioning]
+dependencies: [implement-first-profile-numerical-policies]
 related: []
 scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/artifact]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, quantization, dtype, vertical-slice]
 ---

@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: []
 related: [numerical-policy-contract, define-initial-affine-quantization-semantics]
-scopes: [research/runtime, contracts/artifacts, contracts/core]
+scopes: [research/runtime, contracts/artifacts, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, runtime, spike]

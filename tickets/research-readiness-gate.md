@@ -5,8 +5,8 @@ status: done
 priority: p1
 dependencies: [synthesize-core-contracts, synthesize-optimizer-contracts, synthesize-artifact-contracts]
 related: []
-scopes: [contracts/core, research/macro-environment]
-shared_scopes: [contracts/compiler, contracts/artifacts, contracts/integrations, contracts/decisions, contracts/navigation, project/tickets]
+scopes: [research/macro-environment, contracts/foundation]
+shared_scopes: [contracts/artifacts, contracts/integrations, contracts/decisions, contracts/navigation, project/tickets, contracts/optimizer]
 paths: []
 tags: [tiler-research, gate, decision]
 ---

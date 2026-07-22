@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: [target-profile-feasibility-model, kernel-program-buffer-plan]
 related: []
-scopes: [research/placement, contracts/core]
+scopes: [research/placement, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, foundation, placement, memory]

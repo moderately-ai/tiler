@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: [cache-crash-race-harness, apple-artifact-compatibility, macro-build-environment, embedded-artifact-costs, runtime-execution-contract]
 related: [synthesize-core-contracts, synthesize-optimizer-contracts]
-scopes: [contracts/artifacts, contracts/integrations, contracts/core, research/embedding]
+scopes: [contracts/artifacts, contracts/integrations, research/embedding, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [tiler-research, synthesis, decision]

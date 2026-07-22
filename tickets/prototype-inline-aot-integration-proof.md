@@ -6,7 +6,7 @@ priority: p1
 dependencies: [prototype-macro-embedding-and-cargo-behavior, prototype-metal-runtime-proof]
 related: []
 scopes: [implementation/frontend, implementation/cache, implementation/compiler, implementation/artifact, implementation/metal-aot, implementation/runtime]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, integration, inline-dx, milestone-0b]
 ---

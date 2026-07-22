@@ -3,10 +3,10 @@ id: prototype-metal-numerical-realization
 title: Realize the strict numerical profile in Metal
 status: todo
 priority: p0
-dependencies: [prototype-fusion-legality-and-numerical-proof, prototype-structured-kir-slice]
+dependencies: [prototype-fusion-legality-and-numerical-proof, prototype-metal-kir-lowering]
 related: []
 scopes: [implementation/metal, implementation/metal-aot]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, numerics]
 ---

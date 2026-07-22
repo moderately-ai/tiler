@@ -6,8 +6,8 @@ priority: p0
 dependencies: [prototype-target-neutral-baseline-slice]
 related: [prototype-shared-compiler-ir-ownership, harden-compiler-verifier-subject-binding-and-totality]
 scopes: [implementation/compiler, implementation/artifact, implementation/ir, implementation/workspace]
-shared_scopes: [project/tickets, contracts/optimizer, contracts/artifacts, contracts/foundation, contracts/numerics, contracts/navigation]
-paths: [Cargo.lock]
+shared_scopes: [project/tickets, contracts/optimizer, contracts/artifacts, contracts/foundation, contracts/numerics, contracts/navigation, implementation/cargo-lock]
+paths: []
 tags: [implementation, prototype, compiler, vertical-slice]
 ---
 Starting from the proven materialized compiler path, add exactly the optimizer

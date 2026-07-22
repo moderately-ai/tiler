@@ -6,7 +6,7 @@ priority: p0
 dependencies: [prototype-neutral-artifact-codec]
 related: []
 scopes: [implementation/runtime, implementation/artifact]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, artifact]
 ---

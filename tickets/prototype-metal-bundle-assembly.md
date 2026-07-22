@@ -6,7 +6,7 @@ priority: p0
 dependencies: [prototype-neutral-artifact-codec, prototype-metal-kir-lowering, prototype-metal-numerical-realization, prototype-apple-aot-driver]
 related: []
 scopes: [implementation/artifact, implementation/metal, implementation/metal-aot]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, artifact, aot]
 ---

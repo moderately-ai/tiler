@@ -3,10 +3,10 @@ id: implement-parallel-reduction-strategies
 title: Implement parallel reduction strategies
 status: todo
 priority: p1
-dependencies: [implement-first-profile-numerical-policies, implement-boundary-properties-and-enforcers]
+dependencies: [implement-first-profile-numerical-policies, implement-boundary-property-enforcers, implement-analytical-component-cost-model]
 related: []
 scopes: [implementation/compiler, implementation/ir, implementation/reference]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reduction, scheduling, numerics]
 ---

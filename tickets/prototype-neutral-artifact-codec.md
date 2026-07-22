@@ -3,10 +3,10 @@ id: prototype-neutral-artifact-codec
 title: Implement the neutral artifact codec
 status: todo
 priority: p0
-dependencies: [prototype-neutral-program-and-artifact-types]
+dependencies: [prototype-artifact-program-model]
 related: [prototype-artifact-slice]
 scopes: [implementation/artifact]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, serialization]
 ---

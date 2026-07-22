@@ -6,7 +6,7 @@ priority: p1
 dependencies: [prototype-neutral-artifact-codec, prototype-apple-aot-driver, repair-cache-experiment-harness-integrity]
 related: []
 scopes: [implementation/cache, implementation/metal-aot]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, cache, proc-macro, inline-dx]
 ---

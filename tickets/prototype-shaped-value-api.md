@@ -6,8 +6,8 @@ priority: p0
 dependencies: [prototype-shape-evidence-spike, research-the-public-static-shape-evidence-spelling, spike-nightly-arbitrary-rank-shape-evidence]
 related: [prototype-semantic-reference-slice]
 scopes: [implementation/ir, research/shapes, contracts/navigation]
-shared_scopes: [project/tickets, contracts/foundation, contracts/decisions]
-paths: [Cargo.lock]
+shared_scopes: [project/tickets, contracts/foundation, contracts/decisions, implementation/cargo-lock]
+paths: []
 tags: [implementation, prototype, semantics, shapes, rust-api]
 ---
 ADR 0067 accepts the pinned-nightly dependent-array spelling. Its retained

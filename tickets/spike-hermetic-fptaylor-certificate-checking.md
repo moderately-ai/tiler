@@ -6,7 +6,7 @@ priority: p2
 dependencies: [spike-sound-region-accuracy-analyzer-integration]
 related: [research-region-accuracy-contracts-and-analyzable-error-budgets]
 scopes: [research/numerics]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [tiler-research, numerics, accuracy, proof, spike]
 ---

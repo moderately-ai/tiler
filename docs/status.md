@@ -49,14 +49,15 @@ compiler requests and artifact-construction plans retain it atomically. Region o
 checked refinement,
 structural schedule/KIR, complete-plan, and artifact identities remain explicit
 obligations of their owning tickets rather than implemented support. The first
-public static-extent `tiler_ir::index` builder/verifier draft now exists. Its
-corrective pass uses generic typed scalar SSA, shared canonical attributes with
-width/format-preserving values and schema-default normalization, optional
-static fact views, and a separate region-bound scalar authority receipt. The
-public boundary remains under Tom's required review and now also requires
-complete semantic type-authority evidence for all scalar boundary and
-intermediate types before integration. Semantic lowering equivalence remains a
-separate capability/refinement obligation.
+public static-extent `tiler_ir::index` builder/verifier is implemented, audited,
+and accepted. Its scalar-provider and authority boundary was explicitly
+reviewed at implementation commit `32e190f`; it uses generic typed scalar SSA,
+canonical attributes, optional static fact views, complete semantic
+type-authority evidence, and a separate region-bound scalar-authority receipt.
+Semantic lowering equivalence remains a separate checked
+capability/refinement obligation. The private compiler proof still has
+graph-specific occurrence, normalization, fusion, scheduling, KIR, explain,
+and program structures; those are evidence fixtures, not the public compiler.
 
 ## Authorized prototype
 
@@ -82,17 +83,19 @@ are complete for their bounded claims. The
 [`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md)
 slice establishes the accepted module, verifier, builder, and dependency
 direction without publishing the graph-specific proof structs. The semantic
-identity prerequisite and canonical index-region slice are both back in
-corrective implementation after adversarial authority-closure review. Once
-corrected and accepted, the next dependency-ordered slice is
-[`operation compilation capabilities`](../tickets/prototype-operation-compilation-capabilities.md),
-so typed lowering callbacks emit checked shared IR rather than placeholders.
-Generic region formation, derived legality, complete partition planning, physical
-implementations, structured KIR, neutral program/artifact types, and an
-[`optimizer conformance gate`](../tickets/prototype-optimizer-conformance-gate.md)
-remain downstream.
-Only after that gate do the Metal lowering/AOT and runtime proof chains become
-eligible.
+identity and canonical index-region corrections are integrated. The immediate
+compiler frontier is the
+[`verifier subject-binding correction`](../tickets/harden-compiler-verifier-subject-binding-and-totality.md)
+and work-graph reconciliation. Downstream work is split into typed explain,
+bounded normalization, capability registration, checked semantic/index
+refinement, a generic index reference oracle, legal region covers, target
+feasibility, scheduled-region verification, physical frontiers,
+complete-program selection, structured KIR, target-neutral kernel programs,
+artifact-facing programs, and conformance. A reviewed
+[`public compiler boundary`](../tickets/prototype-public-compiler-api.md)
+follows conformance and is consumed by the inline frontend. Backend feasibility
+spikes may proceed when their actual verifier and IR prerequisites exist; they
+do not depend on that ergonomic facade merely for ordering.
 
 This chain is an architectural value proof. Separate tickets now track the
 neutral artifact codec, Metal lowering and offline driver, runtime validation

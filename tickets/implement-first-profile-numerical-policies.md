@@ -6,7 +6,7 @@ priority: p1
 dependencies: [prototype-optimizer-conformance-gate, repair-numerical-witness-integrity]
 related: []
 scopes: [implementation/ir, implementation/reference, implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, mature-product]
 ---

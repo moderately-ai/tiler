@@ -6,7 +6,7 @@ priority: p0
 dependencies: [prototype-runtime-artifact-validation, prototype-metal-aot-slice]
 related: []
 scopes: [implementation/runtime]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, metal, correctness]
 ---

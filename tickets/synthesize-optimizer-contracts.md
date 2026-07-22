@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: [reduction-semantics-contract, region-search-oracle, scheduled-region-model, kernel-program-buffer-plan, cost-model-bootstrap, reference-evaluator-slice, index-access-model, structured-kernel-ir-verifier]
 related: [synthesize-core-contracts]
-scopes: [contracts/compiler]
+scopes: [contracts/optimizer]
 shared_scopes: []
 paths: []
 tags: [tiler-research, synthesis, decision]
