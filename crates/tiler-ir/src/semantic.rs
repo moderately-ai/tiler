@@ -22,7 +22,7 @@ pub use error::{
     ValidationDiagnostic, ValidationDiagnostics, ValueRole,
 };
 pub use handles::{OperationId, Value, ValueId};
-pub use identity::SemanticGraphIdentity;
+pub use identity::{SemanticGraphIdentity, SemanticIdentity};
 pub use interface::{
     InputIndex, InputKey, InterfaceKind, Output, OutputKey, OutputSelector, ProgramInputRef,
     ProgramOutputRef, TypedProgramOutputRef,

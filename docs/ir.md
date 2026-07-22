@@ -265,10 +265,25 @@ value and the canonical operation/value graph and interface, but no provider
 revision or unrelated registry entry. Reached provider-independent definitions
 have a separate `SemanticDefinitionProjectionIdentity`; the providers whose
 mandatory capabilities admitted those definitions have a separate
-`SemanticAdmissionProvenanceIdentity`. The compilation-request layer retains
-the complete frozen snapshot and both reached projections independently, then
-adds selected optional capability provenance as planning proceeds. ADR 0072
-owns this separation.
+`SemanticAdmissionProvenanceIdentity`. `SemanticRegistrySnapshotIdentity`
+identifies the complete frozen authority environment.
+
+`SemanticProgram::semantic_identity()` returns one borrowed, non-forgeable
+`SemanticIdentity` owner for all four subjects:
+
+```rust,ignore
+let identity = program.semantic_identity();
+let graph = identity.graph();
+let definitions = identity.reached_definitions();
+let admission = identity.admission_provenance();
+let snapshot = identity.registry_snapshot();
+```
+
+The bundle has private fields and no public constructor. Individual subject
+newtypes remain public so consumers can inspect or compare the exact equality
+they need, but compiler requests, target requests, and artifact-construction
+plans retain the bundle atomically. This prevents component-wise assembly from
+different programs while preserving the distinctions owned by ADR 0072.
 
 The immutable `SemanticProgram` computes and owns both reached subjects during
 checked build. Their authority closure starts from every retained value type,
@@ -280,8 +295,8 @@ and governed by separate bounds for roots consumed and unique authority
 subjects discovered. Both are enforced while ingesting or enqueuing, before an
 unbounded worklist can form. A caller cannot manufacture
 program-complete evidence by supplying an incomplete root list to a registry
-projection API; consumers obtain the authoritative no-argument subjects from
-the completed program.
+projection API; consumers obtain the authoritative bundle from the completed
+program.
 
 ADR 0061 adds optional, checked Rust-side shape evidence without making it
 canonical graph authority. Conceptually, `ShapedValue<T, E>` refines a

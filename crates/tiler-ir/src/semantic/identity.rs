@@ -1,6 +1,9 @@
-use super::SemanticProgram;
 use super::operation::{OperationData, ValueDefinition};
 use super::program::ProgramData;
+use super::registry::{
+    SemanticAdmissionProvenanceIdentity, SemanticDefinitionProjectionIdentity,
+    SemanticRegistrySnapshotIdentity,
+};
 use crate::shape::Shape;
 
 /// Collision-free canonical semantic-graph identity bytes.
@@ -18,21 +21,60 @@ impl SemanticGraphIdentity {
     }
 }
 
-impl SemanticProgram {
-    /// Produces a deterministic semantic identity encoding.
-    ///
-    /// Reachable sharing, ordered interfaces, shapes, exact float bits, operand
-    /// order, and reduction axes participate. Runtime graph IDs, arena numbering,
-    /// and dead operations do not.
+/// Complete, non-forgeable semantic identity of one checked program.
+///
+/// The four subjects remain separately typed because they answer different
+/// equality questions, but this owner prevents downstream code from assembling
+/// components from different programs.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SemanticIdentity {
+    graph: SemanticGraphIdentity,
+    reached_definitions: SemanticDefinitionProjectionIdentity,
+    admission_provenance: SemanticAdmissionProvenanceIdentity,
+    registry_snapshot: SemanticRegistrySnapshotIdentity,
+}
+
+impl SemanticIdentity {
+    pub(super) fn new(
+        graph: SemanticGraphIdentity,
+        reached_definitions: SemanticDefinitionProjectionIdentity,
+        admission_provenance: SemanticAdmissionProvenanceIdentity,
+        registry_snapshot: SemanticRegistrySnapshotIdentity,
+    ) -> Self {
+        Self {
+            graph,
+            reached_definitions,
+            admission_provenance,
+            registry_snapshot,
+        }
+    }
+
+    /// Returns canonical graph meaning and ordered-interface identity.
     #[must_use]
-    pub fn semantic_graph_identity(&self) -> &SemanticGraphIdentity {
-        self.data
-            .identity
-            .get_or_init(|| compute_identity(&self.data))
+    pub const fn graph(&self) -> &SemanticGraphIdentity {
+        &self.graph
+    }
+
+    /// Returns all provider-independent semantic definitions reached by the program.
+    #[must_use]
+    pub const fn reached_definitions(&self) -> &SemanticDefinitionProjectionIdentity {
+        &self.reached_definitions
+    }
+
+    /// Returns provider-attributed provenance for all reached semantic authority.
+    #[must_use]
+    pub const fn admission_provenance(&self) -> &SemanticAdmissionProvenanceIdentity {
+        &self.admission_provenance
+    }
+
+    /// Returns provenance for the complete registry snapshot used for validation.
+    #[must_use]
+    pub const fn registry_snapshot(&self) -> &SemanticRegistrySnapshotIdentity {
+        &self.registry_snapshot
     }
 }
 
-fn compute_identity(program: &ProgramData) -> SemanticGraphIdentity {
+pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIdentity {
     let mut records = Vec::new();
     let mut canonical_ids = vec![None; program.values.len()];
     let mut encoded_operations = vec![false; program.operations.len()];

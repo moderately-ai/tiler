@@ -43,9 +43,9 @@ types, operations, occurrence attributes, definition facts, defaults, and
 conformance requirements. Root ingestion and unique discovered authority have
 separate governed bounds. Borrowed validation runs the same reachable closure
 as commitment and preserves authority failures as typed diagnostics. Completed
-programs own the authoritative definition
-and admission projections; compiler requests and artifact-construction plans
-retain all four typed semantic subjects independently. Region occurrence,
+programs own one non-forgeable `SemanticIdentity` bundle with named accessors
+for graph meaning, definitions, admission provenance, and the registry snapshot;
+compiler requests and artifact-construction plans retain it atomically. Region occurrence,
 checked refinement,
 structural schedule/KIR, complete-plan, and artifact identities remain explicit
 obligations of their owning tickets rather than implemented support. The first

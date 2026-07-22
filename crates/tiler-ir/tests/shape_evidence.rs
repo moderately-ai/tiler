@@ -78,8 +78,8 @@ fn shaped_and_plain_facades_produce_identical_semantics() {
     }
 
     assert_eq!(
-        plain().semantic_graph_identity(),
-        shaped().semantic_graph_identity()
+        plain().semantic_identity().graph(),
+        shaped().semantic_identity().graph()
     );
 }
 

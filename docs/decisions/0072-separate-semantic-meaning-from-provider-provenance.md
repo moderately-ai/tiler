@@ -43,7 +43,11 @@ Tiler assigns distinct, domain-separated identities to distinct subjects:
 - `SemanticRegistrySnapshotIdentity` covers the complete frozen registry
   environment. It is compilation-request provenance, not graph meaning.
 
-The compiler retains these components independently. A provider-only revision
+`SemanticProgram` owns these four typed subjects in one non-forgeable
+`SemanticIdentity` bundle with named borrowed accessors and no public
+constructor. Private compiler request, target, and artifact-construction types
+retain that bundle atomically; they inspect an individual subject only when a
+verification rule needs its particular equality. A provider-only revision
 therefore preserves `SemanticGraphIdentity` and the reached-definition
 projection while changing admission provenance and the registry snapshot. A
 change to graph meaning requires changed canonical graph bytes, normally
@@ -110,8 +114,8 @@ artifact + live device/context/specialization -> runtime cache
   iterative, cycle-safe transitive authority closure with incremental root and
   unique-subject bounds. Borrowed program validation runs the same closure and
   preserves a typed registry-error source;
-  compiler requests and artifact-construction plans retain all four typed
-  semantic subjects. Region occurrence, semantic checked refinement,
+  compiler requests and artifact-construction plans retain their non-forgeable
+  four-subject bundle atomically. Region occurrence, semantic checked refinement,
   schedule/KIR, complete-plan, and artifact identities remain obligations of
   their owning implementation tickets.
 

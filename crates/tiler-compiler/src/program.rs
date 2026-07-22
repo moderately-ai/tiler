@@ -1,10 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use tiler_ir::semantic::{
-    F32, SemanticAdmissionProvenanceIdentity, SemanticDefinitionProjectionIdentity,
-    SemanticGraphIdentity, SemanticProgram, SemanticRegistrySnapshotIdentity,
-};
+use tiler_ir::semantic::{F32, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
 
 use crate::physical::{
@@ -194,10 +191,7 @@ pub(crate) struct KernelProgram {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ArtifactConstructionPlan {
-    pub(crate) semantic_graph_identity: SemanticGraphIdentity,
-    pub(crate) reached_semantic_definitions: SemanticDefinitionProjectionIdentity,
-    pub(crate) semantic_admission_provenance: SemanticAdmissionProvenanceIdentity,
-    pub(crate) semantic_registry_snapshot: SemanticRegistrySnapshotIdentity,
+    pub(crate) semantic_identity: SemanticIdentity,
     pub(crate) numerical_contract_key: &'static str,
     pub(crate) numerical_realizations: Vec<NumericalRealization>,
     pub(crate) target_profile_key: &'static str,
@@ -694,11 +688,7 @@ pub(crate) fn build_artifact_plan(
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
-    if semantic.semantic_graph_identity() != &request.semantic_graph
-        || semantic.reached_semantic_definitions() != &request.semantic_definitions
-        || semantic.semantic_admission_provenance() != &request.semantic_admission
-        || semantic.semantic_registry_snapshot_identity() != &request.semantic_registry_snapshot
-    {
+    if semantic.semantic_identity() != &request.semantic_identity {
         return Err(ProgramError::Structure {
             rule: "semantic-request-binding",
         });
@@ -724,10 +714,7 @@ pub(crate) fn build_artifact_plan(
         });
     }
     Ok(ArtifactConstructionPlan {
-        semantic_graph_identity: request.semantic_graph.clone(),
-        reached_semantic_definitions: request.semantic_definitions.clone(),
-        semantic_admission_provenance: request.semantic_admission.clone(),
-        semantic_registry_snapshot: request.semantic_registry_snapshot.clone(),
+        semantic_identity: request.semantic_identity.clone(),
         numerical_contract_key: request.numerical_contract.key,
         numerical_realizations: program
             .entries
@@ -1325,10 +1312,28 @@ mod tests {
                 scheduled[1].region.index.numerical,
             ]
         );
-        assert!(!artifact.semantic_graph_identity.as_bytes().is_empty());
-        assert!(!artifact.reached_semantic_definitions.as_bytes().is_empty());
-        assert!(!artifact.semantic_admission_provenance.as_bytes().is_empty());
-        assert!(!artifact.semantic_registry_snapshot.as_bytes().is_empty());
+        assert!(!artifact.semantic_identity.graph().as_bytes().is_empty());
+        assert!(
+            !artifact
+                .semantic_identity
+                .reached_definitions()
+                .as_bytes()
+                .is_empty()
+        );
+        assert!(
+            !artifact
+                .semantic_identity
+                .admission_provenance()
+                .as_bytes()
+                .is_empty()
+        );
+        assert!(
+            !artifact
+                .semantic_identity
+                .registry_snapshot()
+                .as_bytes()
+                .is_empty()
+        );
     }
 
     #[test]

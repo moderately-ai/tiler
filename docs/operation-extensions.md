@@ -115,6 +115,10 @@ attributes, definition facts, operation defaults, operation facts, and
 conformance values. Registry freeze runs the same iterative, cycle-safe,
 bounded closure over all registered authority and rejects missing referenced
 definitions before any program can use the snapshot.
+The program exposes graph meaning, reached definitions, admission provenance,
+and the complete snapshot only through its non-forgeable `SemanticIdentity`
+bundle, preventing extensions or compiler layers from assembling evidence from
+different programs.
 
 Value types follow the same durable identity principle. A conceptual
 `TypeKey { namespace, name, semantic_version }` identifies a canonical nominal

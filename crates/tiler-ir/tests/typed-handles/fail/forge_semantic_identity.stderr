@@ -1,0 +1,15 @@
+error[E0624]: associated function `new` is private
+  --> tests/typed-handles/fail/forge_semantic_identity.rs:12:31
+   |
+12 |       let _ = SemanticIdentity::new(graph(), definitions(), admission(), snapshot());
+   |                                 ^^^ private associated function
+   |
+  ::: src/semantic/identity.rs
+   |
+   | /     pub(super) fn new(
+   | |         graph: SemanticGraphIdentity,
+   | |         reached_definitions: SemanticDefinitionProjectionIdentity,
+   | |         admission_provenance: SemanticAdmissionProvenanceIdentity,
+   | |         registry_snapshot: SemanticRegistrySnapshotIdentity,
+   | |     ) -> Self {
+   | |_____________- private associated function defined here

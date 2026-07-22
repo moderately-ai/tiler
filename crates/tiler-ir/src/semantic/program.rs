@@ -11,7 +11,7 @@ use super::error::{
 use super::handles::{
     GraphId, OperationId, OperationIndex, Value, ValueId, ValueIndex, next_graph_id,
 };
-use super::identity::SemanticGraphIdentity;
+use super::identity::{SemanticIdentity, compute_graph_identity};
 use super::interface::{
     InputIndex, InputKey, Output, OutputKey, OutputSelector, ProgramInput, ProgramInputRef,
     ProgramOutput, ProgramOutputRef, TypedProgramOutputRef,
@@ -41,7 +41,7 @@ pub(super) struct ProgramData {
     pub(super) operations: Vec<OperationData>,
     pub(super) values: Vec<ValueData>,
     pub(super) outputs: Vec<ProgramOutput>,
-    pub(super) identity: OnceLock<SemanticGraphIdentity>,
+    pub(super) semantic_identity: OnceLock<SemanticIdentity>,
     pub(super) reached_definitions: SemanticDefinitionProjectionIdentity,
     pub(super) admission_provenance: SemanticAdmissionProvenanceIdentity,
     pub(super) registry_snapshot: SemanticRegistrySnapshotIdentity,
@@ -281,22 +281,21 @@ impl SemanticProgram {
         &self.data.semantic_registry
     }
 
-    /// Returns the complete provider-independent definitions reached by this program.
+    /// Returns the complete, internally consistent semantic identity bundle.
+    ///
+    /// Graph meaning, reached definitions, admission provenance, and the full
+    /// registry snapshot remain available through named borrowed accessors on
+    /// [`SemanticIdentity`].
     #[must_use]
-    pub fn reached_semantic_definitions(&self) -> &SemanticDefinitionProjectionIdentity {
-        &self.data.reached_definitions
-    }
-
-    /// Returns provider-attributed provenance for every authority reached by this program.
-    #[must_use]
-    pub fn semantic_admission_provenance(&self) -> &SemanticAdmissionProvenanceIdentity {
-        &self.data.admission_provenance
-    }
-
-    /// Returns provenance for the complete registry snapshot used to build this program.
-    #[must_use]
-    pub fn semantic_registry_snapshot_identity(&self) -> &SemanticRegistrySnapshotIdentity {
-        &self.data.registry_snapshot
+    pub fn semantic_identity(&self) -> &SemanticIdentity {
+        self.data.semantic_identity.get_or_init(|| {
+            SemanticIdentity::new(
+                compute_graph_identity(&self.data),
+                self.data.reached_definitions.clone(),
+                self.data.admission_provenance.clone(),
+                self.data.registry_snapshot.clone(),
+            )
+        })
     }
 
     /// Recovers exact marker-backed type evidence for one graph-owned value.
@@ -703,7 +702,7 @@ impl SemanticProgramBuilder {
                 operations: self.operations,
                 values: self.values,
                 outputs: self.outputs,
-                identity: OnceLock::new(),
+                semantic_identity: OnceLock::new(),
                 reached_definitions,
                 admission_provenance,
                 registry_snapshot,
@@ -1213,9 +1212,10 @@ mod tests {
         F32Constant, F32Multiply, NormativeDefinitionRef, OpKey, OperationArity,
         OperationAttributeSchema, OperationConformance, OperationDefinition,
         OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
-        OperationSchema, ProviderIdentity, QuantSchemeKey, SemanticRegistryBuilder,
-        SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum, TypeArguments,
-        TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op,
+        OperationSchema, ProviderIdentity, QuantSchemeKey, SemanticGraphIdentity,
+        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
+        StrictSerialF32Sum, TypeArguments, TypeDefinitionFacts, TypeKey, ValueTypeDefinition,
+        ValueTypeDefinitionKey, add_f32_op,
     };
     use super::*;
     use crate::shape::{Axis, Shape, StaticShape};
@@ -1914,8 +1914,8 @@ mod tests {
         let second = first.clone();
         assert!(Arc::ptr_eq(&first.data, &second.data));
         assert!(std::ptr::eq(
-            first.semantic_graph_identity(),
-            second.semantic_graph_identity()
+            first.semantic_identity(),
+            second.semantic_identity()
         ));
     }
 
@@ -1928,12 +1928,12 @@ mod tests {
     #[test]
     fn identity_ignores_dead_insertion_order_but_preserves_sharing() {
         assert_eq!(
-            program(true, true).semantic_graph_identity(),
-            program(false, true).semantic_graph_identity()
+            program(true, true).semantic_identity().graph(),
+            program(false, true).semantic_identity().graph()
         );
         assert_ne!(
-            program(false, true).semantic_graph_identity(),
-            program(false, false).semantic_graph_identity()
+            program(false, true).semantic_identity().graph(),
+            program(false, false).semantic_identity().graph()
         );
     }
 
@@ -1963,20 +1963,20 @@ mod tests {
         let second = build(2);
 
         assert_eq!(
-            first.semantic_graph_identity(),
-            second.semantic_graph_identity()
+            first.semantic_identity().graph(),
+            second.semantic_identity().graph()
         );
         assert_eq!(
-            first.reached_semantic_definitions(),
-            second.reached_semantic_definitions()
+            first.semantic_identity().reached_definitions(),
+            second.semantic_identity().reached_definitions()
         );
         assert_ne!(
-            first.semantic_admission_provenance(),
-            second.semantic_admission_provenance()
+            first.semantic_identity().admission_provenance(),
+            second.semantic_identity().admission_provenance()
         );
         assert_ne!(
-            first.semantic_registry_snapshot_identity(),
-            second.semantic_registry_snapshot_identity()
+            first.semantic_identity().registry_snapshot(),
+            second.semantic_identity().registry_snapshot()
         );
     }
 
@@ -2019,16 +2019,16 @@ mod tests {
         let first = build(1);
         let second = build(2);
         assert_eq!(
-            first.semantic_graph_identity(),
-            second.semantic_graph_identity()
+            first.semantic_identity().graph(),
+            second.semantic_identity().graph()
         );
         assert_eq!(
-            first.reached_semantic_definitions(),
-            second.reached_semantic_definitions()
+            first.semantic_identity().reached_definitions(),
+            second.semantic_identity().reached_definitions()
         );
         assert_ne!(
-            first.semantic_admission_provenance(),
-            second.semantic_admission_provenance()
+            first.semantic_identity().admission_provenance(),
+            second.semantic_identity().admission_provenance()
         );
     }
 
@@ -2088,16 +2088,16 @@ mod tests {
         let float_changed = build(1, 2);
         for changed in [&type_changed, &float_changed] {
             assert_eq!(
-                baseline.semantic_graph_identity(),
-                changed.semantic_graph_identity()
+                baseline.semantic_identity().graph(),
+                changed.semantic_identity().graph()
             );
             assert_eq!(
-                baseline.reached_semantic_definitions(),
-                changed.reached_semantic_definitions()
+                baseline.semantic_identity().reached_definitions(),
+                changed.semantic_identity().reached_definitions()
             );
             assert_ne!(
-                baseline.semantic_admission_provenance(),
-                changed.semantic_admission_provenance()
+                baseline.semantic_identity().admission_provenance(),
+                changed.semantic_identity().admission_provenance()
             );
         }
     }
@@ -2120,20 +2120,20 @@ mod tests {
         let first = build(1);
         let second = build(2);
         assert_eq!(
-            first.semantic_graph_identity(),
-            second.semantic_graph_identity()
+            first.semantic_identity().graph(),
+            second.semantic_identity().graph()
         );
         assert_eq!(
-            first.reached_semantic_definitions(),
-            second.reached_semantic_definitions()
+            first.semantic_identity().reached_definitions(),
+            second.semantic_identity().reached_definitions()
         );
         assert_eq!(
-            first.semantic_admission_provenance(),
-            second.semantic_admission_provenance()
+            first.semantic_identity().admission_provenance(),
+            second.semantic_identity().admission_provenance()
         );
         assert_ne!(
-            first.semantic_registry_snapshot_identity(),
-            second.semantic_registry_snapshot_identity()
+            first.semantic_identity().registry_snapshot(),
+            second.semantic_identity().registry_snapshot()
         );
     }
 
@@ -2153,7 +2153,7 @@ mod tests {
                 builder.output(output_key("result"), value).unwrap();
                 builder.output(output_key("copy"), value).unwrap();
             }
-            builder.build().unwrap().semantic_graph_identity().clone()
+            builder.build().unwrap().semantic_identity().graph().clone()
         }
 
         assert_ne!(
@@ -2179,7 +2179,7 @@ mod tests {
         builder.output(output_key("result"), value).unwrap();
         let program = builder.build().unwrap();
 
-        assert!(!program.semantic_graph_identity().as_bytes().is_empty());
+        assert!(!program.semantic_identity().graph().as_bytes().is_empty());
     }
 
     #[test]
@@ -2369,8 +2369,8 @@ mod tests {
         let separate = separate.build().unwrap();
 
         assert_ne!(
-            shared.semantic_graph_identity(),
-            separate.semantic_graph_identity()
+            shared.semantic_identity().graph(),
+            separate.semantic_identity().graph()
         );
     }
 
@@ -2411,8 +2411,8 @@ mod tests {
         );
 
         assert_eq!(
-            omitted.semantic_graph_identity(),
-            explicit.semantic_graph_identity()
+            omitted.semantic_identity().graph(),
+            explicit.semantic_identity().graph()
         );
         assert!(
             explicit

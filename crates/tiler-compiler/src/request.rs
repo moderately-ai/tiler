@@ -3,10 +3,8 @@ use std::fmt;
 
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-    OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticAdmissionProvenanceIdentity,
-    SemanticDefinitionProjectionIdentity, SemanticGraphIdentity, SemanticProgram,
-    SemanticRegistrySnapshotIdentity, TypeKey, ValueId, add_f32_op, constant_f32_op,
-    multiply_f32_op, strict_serial_sum_f32_op,
+    OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticIdentity, SemanticProgram, TypeKey, ValueId,
+    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -197,10 +195,7 @@ impl NormalizedProgram {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedCompilationRequest {
     pub(crate) normalized: NormalizedProgram,
-    pub(crate) semantic_graph: SemanticGraphIdentity,
-    pub(crate) semantic_definitions: SemanticDefinitionProjectionIdentity,
-    pub(crate) semantic_admission: SemanticAdmissionProvenanceIdentity,
-    pub(crate) semantic_registry_snapshot: SemanticRegistrySnapshotIdentity,
+    pub(crate) semantic_identity: SemanticIdentity,
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
@@ -210,10 +205,7 @@ pub(crate) struct VerifiedCompilationRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedTargetRequest {
     pub(crate) normalized: NormalizedProgram,
-    pub(crate) semantic_graph: SemanticGraphIdentity,
-    pub(crate) semantic_definitions: SemanticDefinitionProjectionIdentity,
-    pub(crate) semantic_admission: SemanticAdmissionProvenanceIdentity,
-    pub(crate) semantic_registry_snapshot: SemanticRegistrySnapshotIdentity,
+    pub(crate) semantic_identity: SemanticIdentity,
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profile: PrototypeTargetProfile,
@@ -233,10 +225,7 @@ impl VerifiedCompilationRequest {
     ) -> VerifiedTargetRequest {
         VerifiedTargetRequest {
             normalized: self.normalized.clone(),
-            semantic_graph: self.semantic_graph.clone(),
-            semantic_definitions: self.semantic_definitions.clone(),
-            semantic_admission: self.semantic_admission.clone(),
-            semantic_registry_snapshot: self.semantic_registry_snapshot.clone(),
+            semantic_identity: self.semantic_identity.clone(),
             numerical_contract: self.numerical_contract,
             budgets: self.budgets,
             target_profile,
@@ -358,13 +347,7 @@ pub(crate) fn verify_request(
     let normalized = select_supported_strategy(request.program)?;
     Ok(VerifiedCompilationRequest {
         normalized,
-        semantic_graph: request.program.semantic_graph_identity().clone(),
-        semantic_definitions: request.program.reached_semantic_definitions().clone(),
-        semantic_admission: request.program.semantic_admission_provenance().clone(),
-        semantic_registry_snapshot: request
-            .program
-            .semantic_registry_snapshot_identity()
-            .clone(),
+        semantic_identity: request.program.semantic_identity().clone(),
         numerical_contract: request.numerical_contract,
         budgets: request.budgets,
         target_profiles: request.target_profiles,
@@ -847,12 +830,21 @@ mod tests {
         let first = verify_request(CompilationRequest::governed(&first)).unwrap();
         let second = verify_request(CompilationRequest::governed(&second)).unwrap();
 
-        assert_eq!(first.semantic_graph, second.semantic_graph);
-        assert_eq!(first.semantic_definitions, second.semantic_definitions);
-        assert_ne!(first.semantic_admission, second.semantic_admission);
+        assert_eq!(
+            first.semantic_identity.graph(),
+            second.semantic_identity.graph()
+        );
+        assert_eq!(
+            first.semantic_identity.reached_definitions(),
+            second.semantic_identity.reached_definitions()
+        );
         assert_ne!(
-            first.semantic_registry_snapshot,
-            second.semantic_registry_snapshot
+            first.semantic_identity.admission_provenance(),
+            second.semantic_identity.admission_provenance()
+        );
+        assert_ne!(
+            first.semantic_identity.registry_snapshot(),
+            second.semantic_identity.registry_snapshot()
         );
     }
 
@@ -863,12 +855,21 @@ mod tests {
         let first = verify_request(CompilationRequest::governed(&first)).unwrap();
         let second = verify_request(CompilationRequest::governed(&second)).unwrap();
 
-        assert_eq!(first.semantic_graph, second.semantic_graph);
-        assert_eq!(first.semantic_definitions, second.semantic_definitions);
-        assert_eq!(first.semantic_admission, second.semantic_admission);
+        assert_eq!(
+            first.semantic_identity.graph(),
+            second.semantic_identity.graph()
+        );
+        assert_eq!(
+            first.semantic_identity.reached_definitions(),
+            second.semantic_identity.reached_definitions()
+        );
+        assert_eq!(
+            first.semantic_identity.admission_provenance(),
+            second.semantic_identity.admission_provenance()
+        );
         assert_ne!(
-            first.semantic_registry_snapshot,
-            second.semantic_registry_snapshot
+            first.semantic_identity.registry_snapshot(),
+            second.semantic_identity.registry_snapshot()
         );
     }
 }

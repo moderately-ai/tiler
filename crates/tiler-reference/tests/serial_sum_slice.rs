@@ -38,8 +38,8 @@ fn public_semantic_program_evaluates_independently_of_construction_history() {
     let first = build_program(false);
     let second = build_program(true);
     assert_eq!(
-        first.semantic_graph_identity(),
-        second.semantic_graph_identity()
+        first.semantic_identity().graph(),
+        second.semantic_identity().graph()
     );
 
     let key = InputKey::new("input").unwrap();

@@ -633,8 +633,8 @@ mod tests {
         let first = semantic(false);
         let second = semantic(true);
         assert_eq!(
-            first.semantic_graph_identity(),
-            second.semantic_graph_identity()
+            first.semantic_identity().graph(),
+            second.semantic_identity().graph()
         );
         let first = compile(CompilationRequest::governed(&first)).unwrap();
         let second = compile(CompilationRequest::governed(&second)).unwrap();
