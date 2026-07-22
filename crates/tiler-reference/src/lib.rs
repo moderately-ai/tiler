@@ -79,11 +79,18 @@ impl ReferenceElement {
         if bits.is_empty() {
             return Err(EvaluationError::EmptyFloatBits);
         }
+        if bits.len() > MAX_REFERENCE_ELEMENT_BYTES {
+            return Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::ElementBytes,
+                limit: MAX_REFERENCE_ELEMENT_BYTES,
+                actual: bits.len(),
+            });
+        }
         let mut canonical = bits.to_vec();
         if order == FloatBitOrder::LeastSignificantByteFirst {
             canonical.reverse();
         }
-        Self::new(canonical)
+        Ok(Self(canonical))
     }
 
     /// Returns exact canonical element bytes.
@@ -228,7 +235,18 @@ impl Tensor {
         shape: Shape,
         components: Vec<ReferenceComponent>,
     ) -> Result<Self, EvaluationError> {
-        validate_compound_resources(&components, 1)?;
+        let logical_elements = shape
+            .element_count()
+            .ok_or(EvaluationError::ShapeTooLarge)?;
+        if logical_elements > MAX_REFERENCE_TENSOR_ELEMENTS {
+            return Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::TensorElements,
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual: logical_elements,
+            });
+        }
+        let mut resources = ReferenceWork::default();
+        validate_compound_resources(&components, 1, &mut resources)?;
         Ok(Self {
             resolved_type,
             shape,
@@ -424,7 +442,7 @@ impl<'a> ReferenceEvaluationRequest<'a> {
 pub struct ReferenceOutputs {
     expected: usize,
     values: Vec<Tensor>,
-    retained_bytes: usize,
+    retained_work: ReferenceWork,
     failure: Option<ReferenceOperationError>,
 }
 
@@ -434,18 +452,18 @@ impl fmt::Debug for ReferenceOutputs {
             .debug_struct("ReferenceOutputs")
             .field("expected", &self.expected)
             .field("written", &self.values.len())
-            .field("retained_bytes", &self.retained_bytes)
+            .field("retained_work", &self.retained_work)
             .field("failed", &self.failure.is_some())
             .finish()
     }
 }
 
 impl ReferenceOutputs {
-    fn new(expected: usize) -> Self {
+    fn new(expected: usize, retained_work: ReferenceWork) -> Self {
         Self {
             expected,
             values: Vec::with_capacity(expected),
-            retained_bytes: 0,
+            retained_work,
             failure: None,
         }
     }
@@ -467,15 +485,10 @@ impl ReferenceOutputs {
                 actual,
             }));
         }
-        let retained = tensor_retained_bytes(&value);
-        let total = self.retained_bytes.saturating_add(retained);
-        if total > MAX_REFERENCE_TENSOR_BYTES {
-            return Err(self.fail(ReferenceOperationError::OutputResourceExceeded {
-                limit: MAX_REFERENCE_TENSOR_BYTES,
-                actual: total,
-            }));
-        }
-        self.retained_bytes = total;
+        let added = tensor_work(&value).map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+        let next =
+            checked_output_work(self.retained_work, added).map_err(|error| self.fail(error))?;
+        self.retained_work = next;
         self.values.push(value);
         Ok(())
     }
@@ -584,6 +597,7 @@ struct ReferenceRegistrationBatch {
 pub struct ReferenceRegistryRegistrar<'a> {
     batch: &'a mut ReferenceRegistrationBatch,
     semantic_registry: &'a FrozenSemanticRegistry,
+    provider: &'a ProviderIdentity,
     existing_capabilities: usize,
     existing_canonical_bytes: usize,
 }
@@ -632,11 +646,12 @@ impl ReferenceRegistryRegistrar<'_> {
                     source: Arc::new(source),
                 })
             })?;
-        let added = resolved_type
-            .canonical_encoding()
-            .as_bytes()
-            .len()
-            .saturating_add(authority_retained_bytes(&semantic_authority));
+        let added = reference_value_identity_len(
+            &resolved_type,
+            &semantic_authority,
+            self.provider,
+            revision,
+        );
         self.reserve_canonical_bytes(added)?;
         self.batch.value_validators.insert(
             resolved_type,
@@ -727,8 +742,8 @@ impl ReferenceRegistryRegistrar<'_> {
                     source: Arc::new(source),
                 })
             })?;
-        let added = reference_capability_key_bytes(&key)
-            .saturating_add(authority_retained_bytes(&semantic_authority));
+        let added =
+            reference_capability_identity_len(&key, &semantic_authority, self.provider, revision);
         self.reserve_canonical_bytes(added)?;
         self.batch.capabilities.insert(
             key,
@@ -754,11 +769,12 @@ impl ReferenceRegistryBuilder {
     /// Creates an empty reference registry builder bound to one exact semantic snapshot.
     #[must_use]
     pub fn new(semantic_registry: FrozenSemanticRegistry) -> Self {
+        let canonical_bytes = reference_identity_base_len(&semantic_registry);
         Self {
             semantic_registry,
             capabilities: BTreeMap::new(),
             value_validators: BTreeMap::new(),
-            canonical_bytes: 0,
+            canonical_bytes,
         }
     }
 
@@ -789,6 +805,7 @@ impl ReferenceRegistryBuilder {
         let callback_result = provider.register(&mut ReferenceRegistryRegistrar {
             batch: &mut batch,
             semantic_registry: &self.semantic_registry,
+            provider: &identity,
             existing_capabilities: self
                 .capabilities
                 .len()
@@ -864,7 +881,8 @@ impl ReferenceRegistryBuilder {
             &self.semantic_registry,
             &self.capabilities,
             &self.value_validators,
-        )?;
+            self.canonical_bytes,
+        );
         Ok(FrozenReferenceRegistry(Arc::new(
             FrozenReferenceRegistryData {
                 semantic_registry: self.semantic_registry,
@@ -928,6 +946,7 @@ impl FrozenReferenceRegistry {
         &self,
         operation: &OpKey,
         signature: &ReferenceSignature,
+        attributes: &OperationAttributes,
         semantic_registry: &FrozenSemanticRegistry,
     ) -> Result<&RegisteredReferenceCapability, EvaluationError> {
         let capability = self
@@ -941,16 +960,35 @@ impl FrozenReferenceRegistry {
                 operation: operation.clone(),
                 signature: Arc::new(signature.clone()),
             })?;
-        let actual = semantic_registry
-            .project_operation_authority(operation, signature.operands(), signature.results())
+        let expected = self
+            .0
+            .semantic_registry
+            .project_operation_occurrence_authority(
+                operation,
+                signature.operands(),
+                signature.results(),
+                attributes,
+            )
             .map_err(|source| EvaluationError::SemanticAuthority {
                 operation: operation.clone(),
                 source: Arc::new(source),
             })?;
-        if !compatible_authority(&capability.semantic_authority, &actual) {
+        let actual = semantic_registry
+            .project_operation_occurrence_authority(
+                operation,
+                signature.operands(),
+                signature.results(),
+                attributes,
+            )
+            .map_err(|source| EvaluationError::SemanticAuthority {
+                operation: operation.clone(),
+                source: Arc::new(source),
+            })?;
+        if !compatible_authority(&expected, &actual) {
             return Err(EvaluationError::CapabilityAuthorityMismatch {
                 operation: operation.clone(),
                 provider: Arc::new(capability.provider.clone()),
+                capability_revision: capability.revision,
             });
         }
         Ok(capability)
@@ -978,6 +1016,7 @@ impl FrozenReferenceRegistry {
             return Err(EvaluationError::ValueCapabilityAuthorityMismatch {
                 resolved_type: Arc::new(tensor.resolved_type().clone()),
                 provider: Arc::new(validator.provider.clone()),
+                capability_revision: validator.revision,
             });
         }
         validator
@@ -986,6 +1025,7 @@ impl FrozenReferenceRegistry {
             .map_err(|source| EvaluationError::Value {
                 resolved_type: Arc::new(tensor.resolved_type().clone()),
                 provider: Arc::new(validator.provider.clone()),
+                capability_revision: validator.revision,
                 source,
             })
     }
@@ -1168,6 +1208,20 @@ pub enum ReferenceOperationError {
         /// Produced result count.
         actual: usize,
     },
+    /// One callback output exceeded the governed logical element bound.
+    OutputElementsExceeded {
+        /// Active logical element limit.
+        limit: usize,
+        /// First rejected element count.
+        actual: usize,
+    },
+    /// Callback outputs exceeded the governed aggregate component bound.
+    OutputComponentsExceeded {
+        /// Active recursive component limit.
+        limit: usize,
+        /// First rejected aggregate component count.
+        actual: usize,
+    },
     /// Aggregate callback output exceeded the host-owned writer budget.
     OutputResourceExceeded {
         /// Active byte limit.
@@ -1192,6 +1246,14 @@ impl fmt::Display for ReferenceOperationError {
                     "reference operation produced {actual} results, expected {expected}"
                 )
             }
+            Self::OutputElementsExceeded { limit, actual } => write!(
+                formatter,
+                "reference operation output has {actual} elements, exceeding {limit}"
+            ),
+            Self::OutputComponentsExceeded { limit, actual } => write!(
+                formatter,
+                "reference operation output has {actual} components, exceeding {limit}"
+            ),
             Self::OutputResourceExceeded { limit, actual } => write!(
                 formatter,
                 "reference operation output retained {actual} bytes, exceeding {limit}"
@@ -1246,7 +1308,7 @@ impl ReferenceEvaluator {
         program: &SemanticProgram,
         inputs: &[InputBinding<'_>],
     ) -> Result<Vec<Tensor>, EvaluationError> {
-        let mut values = self.bind_inputs(program, inputs)?;
+        let (mut values, mut retained_work) = self.bind_inputs(program, inputs)?;
 
         let reachable_operations = reachable_operations(program)?;
         for operation in program
@@ -1266,14 +1328,17 @@ impl ReferenceEvaluator {
                     .collect::<Result<Vec<_>, _>>()?,
             )
             .map_err(|source| EvaluationError::ReferenceRegistry(Arc::new(source)))?;
-            let capability =
-                self.registry
-                    .resolve(operation.key(), &signature, program.semantic_registry())?;
+            let capability = self.registry.resolve(
+                operation.key(),
+                &signature,
+                operation.attributes(),
+                program.semantic_registry(),
+            )?;
             let operand_values = operands
                 .iter()
                 .map(|value| get_value(&values, *value))
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut output_writer = ReferenceOutputs::new(results.len());
+            let mut output_writer = ReferenceOutputs::new(results.len(), retained_work);
             let callback = capability.implementation.evaluate(
                 ReferenceEvaluationRequest {
                     operands: &operand_values,
@@ -1287,6 +1352,7 @@ impl ReferenceEvaluator {
                     .map_err(|source| EvaluationError::Operation {
                         operation: operation.key().clone(),
                         provider: Arc::new(capability.provider.clone()),
+                        capability_revision: capability.revision,
                         source,
                     })?;
             for (result_index, (result, evaluated)) in
@@ -1299,6 +1365,7 @@ impl ReferenceEvaluator {
                     return Err(EvaluationError::ResultShape {
                         operation: operation.key().clone(),
                         provider: Arc::new(capability.provider.clone()),
+                        capability_revision: capability.revision,
                         result_index,
                         expected: Arc::new(expected_shape.clone()),
                         actual: Arc::new(evaluated.shape().clone()),
@@ -1309,6 +1376,7 @@ impl ReferenceEvaluator {
                     return Err(EvaluationError::ResultType {
                         operation: operation.key().clone(),
                         provider: Arc::new(capability.provider.clone()),
+                        capability_revision: capability.revision,
                         result_index,
                         expected: Arc::new(expected_type),
                         actual: Arc::new(evaluated.resolved_type().clone()),
@@ -1316,6 +1384,7 @@ impl ReferenceEvaluator {
                 }
                 self.registry
                     .validate_value(&evaluated, program.semantic_registry())?;
+                reserve_evaluation_work(&mut retained_work, &evaluated)?;
                 values.insert(result, evaluated);
             }
         }
@@ -1330,7 +1399,7 @@ impl ReferenceEvaluator {
         &self,
         program: &SemanticProgram,
         inputs: &[InputBinding<'_>],
-    ) -> Result<HashMap<ValueId, Tensor>, EvaluationError> {
+    ) -> Result<(HashMap<ValueId, Tensor>, ReferenceWork), EvaluationError> {
         if inputs.len() != program.input_count() {
             return Err(EvaluationError::InputCount {
                 expected: program.input_count(),
@@ -1339,6 +1408,7 @@ impl ReferenceEvaluator {
         }
 
         let mut values = HashMap::with_capacity(program.value_count());
+        let mut retained_work = ReferenceWork::default();
         for (index, (declaration, binding)) in program.inputs().zip(inputs).enumerate() {
             if declaration.key() != binding.key {
                 return Err(EvaluationError::InputKey {
@@ -1367,9 +1437,10 @@ impl ReferenceEvaluator {
             }
             self.registry
                 .validate_value(binding.tensor, program.semantic_registry())?;
+            reserve_evaluation_work(&mut retained_work, binding.tensor)?;
             values.insert(declaration.value(), binding.tensor.clone());
         }
-        Ok(values)
+        Ok((values, retained_work))
     }
 }
 
@@ -1455,14 +1526,24 @@ fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, ReferenceOperatio
     let output_count = output_shape
         .element_count()
         .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+    preflight_f32_output(output_count)?;
+    if output_count == 0 {
+        return Tensor::dense(F32::resolved_type(), output_shape, Vec::new())
+            .map_err(|_| ReferenceOperationError::ShapeTooLarge);
+    }
     let input_elements = f32_elements(input)?;
-    let input_strides = row_major_strides(input.shape())?;
-    let output_strides = row_major_strides(&output_shape)?;
     let reduced_shape = Shape::try_new(reduced.iter().map(|axis| input.shape().extents()[*axis]))
         .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
     let reduced_count = reduced_shape
         .element_count()
         .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+    if reduced_count == 0 {
+        let zero = f32_element(0.0_f32)?;
+        return Tensor::dense(F32::resolved_type(), output_shape, vec![zero; output_count])
+            .map_err(|_| ReferenceOperationError::ShapeTooLarge);
+    }
+    let input_strides = row_major_strides(input.shape())?;
+    let output_strides = row_major_strides(&output_shape)?;
     let reduced_strides = row_major_strides(&reduced_shape)?;
     let mut elements = Vec::with_capacity(output_count);
     let mut output_coordinate = vec![0_usize; output_shape.rank()];
@@ -1508,6 +1589,28 @@ fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, ReferenceOperatio
     }
     Tensor::dense(F32::resolved_type(), output_shape, elements)
         .map_err(|_| ReferenceOperationError::ShapeTooLarge)
+}
+
+fn preflight_f32_output(output_count: usize) -> Result<(), ReferenceOperationError> {
+    if output_count > MAX_REFERENCE_TENSOR_ELEMENTS {
+        return Err(ReferenceOperationError::OutputElementsExceeded {
+            limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+            actual: output_count,
+        });
+    }
+    let bytes = output_count.checked_mul(std::mem::size_of::<u32>()).ok_or(
+        ReferenceOperationError::OutputResourceExceeded {
+            limit: MAX_REFERENCE_TENSOR_BYTES,
+            actual: usize::MAX,
+        },
+    )?;
+    if bytes > MAX_REFERENCE_TENSOR_BYTES {
+        return Err(ReferenceOperationError::OutputResourceExceeded {
+            limit: MAX_REFERENCE_TENSOR_BYTES,
+            actual: bytes,
+        });
+    }
+    Ok(())
 }
 
 fn decode_coordinate(
@@ -1570,6 +1673,7 @@ fn decode_f32(element: &ReferenceElement) -> Result<f32, ReferenceOperationError
 fn validate_compound_resources(
     components: &[ReferenceComponent],
     depth: usize,
+    resources: &mut ReferenceWork,
 ) -> Result<(), EvaluationError> {
     if depth > MAX_REFERENCE_COMPONENT_DEPTH {
         return Err(EvaluationError::ResourceExceeded {
@@ -1578,47 +1682,161 @@ fn validate_compound_resources(
             actual: depth,
         });
     }
-    if components.len() > MAX_REFERENCE_COMPONENTS {
+    let aggregate_components = resources.components.saturating_add(components.len());
+    if aggregate_components > MAX_REFERENCE_COMPONENTS {
         return Err(EvaluationError::ResourceExceeded {
             resource: ReferenceResource::Components,
             limit: MAX_REFERENCE_COMPONENTS,
-            actual: components.len(),
+            actual: aggregate_components,
         });
     }
+    resources.components = aggregate_components;
     let mut roles = HashSet::with_capacity(components.len());
-    let mut retained = 0_usize;
     for component in components {
         if !roles.insert(component.role()) {
             return Err(EvaluationError::DuplicateComponentRole {
                 role: component.role(),
             });
         }
-        if let TensorPayloadView::Compound(children) = component.tensor().payload() {
-            validate_compound_resources(children, depth.saturating_add(1))?;
+        let component_elements = component
+            .tensor()
+            .shape()
+            .element_count()
+            .ok_or(EvaluationError::ShapeTooLarge)?;
+        resources.elements = resources.elements.saturating_add(component_elements);
+        if resources.elements > MAX_REFERENCE_TENSOR_ELEMENTS {
+            return Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::TensorElements,
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual: resources.elements,
+            });
         }
-        retained = retained.saturating_add(tensor_retained_bytes(component.tensor()));
-        if retained > MAX_REFERENCE_TENSOR_BYTES {
+        match component.tensor().payload() {
+            TensorPayloadView::Dense(elements) => {
+                resources.bytes = resources.bytes.saturating_add(
+                    elements
+                        .iter()
+                        .map(|element| element.as_bytes().len())
+                        .fold(0_usize, usize::saturating_add),
+                );
+            }
+            TensorPayloadView::Compound(children) => {
+                validate_compound_resources(children, depth.saturating_add(1), resources)?;
+            }
+        }
+        if resources.bytes > MAX_REFERENCE_TENSOR_BYTES {
             return Err(EvaluationError::ResourceExceeded {
                 resource: ReferenceResource::TensorBytes,
                 limit: MAX_REFERENCE_TENSOR_BYTES,
-                actual: retained,
+                actual: resources.bytes,
             });
         }
     }
     Ok(())
 }
 
-fn tensor_retained_bytes(tensor: &Tensor) -> usize {
+#[derive(Clone, Copy, Debug, Default)]
+struct ReferenceWork {
+    bytes: usize,
+    elements: usize,
+    components: usize,
+}
+
+fn tensor_work(tensor: &Tensor) -> Result<ReferenceWork, EvaluationError> {
+    let mut work = ReferenceWork {
+        elements: tensor
+            .shape()
+            .element_count()
+            .ok_or(EvaluationError::ShapeTooLarge)?,
+        ..ReferenceWork::default()
+    };
     match tensor.payload() {
-        TensorPayloadView::Dense(elements) => elements
-            .iter()
-            .map(|element| element.as_bytes().len())
-            .fold(0_usize, usize::saturating_add),
-        TensorPayloadView::Compound(components) => components
-            .iter()
-            .map(|component| tensor_retained_bytes(component.tensor()))
-            .fold(0_usize, usize::saturating_add),
+        TensorPayloadView::Dense(elements) => {
+            work.bytes = elements
+                .iter()
+                .map(|element| element.as_bytes().len())
+                .fold(0_usize, usize::saturating_add);
+        }
+        TensorPayloadView::Compound(components) => {
+            work.components = components.len();
+            for component in components {
+                let child = tensor_work(component.tensor())?;
+                work.bytes = work.bytes.saturating_add(child.bytes);
+                work.elements = work.elements.saturating_add(child.elements);
+                work.components = work.components.saturating_add(child.components);
+            }
+        }
     }
+    Ok(work)
+}
+
+fn reserve_evaluation_work(
+    retained: &mut ReferenceWork,
+    tensor: &Tensor,
+) -> Result<(), EvaluationError> {
+    let added = tensor_work(tensor)?;
+    let next = ReferenceWork {
+        bytes: retained.bytes.saturating_add(added.bytes),
+        elements: retained.elements.saturating_add(added.elements),
+        components: retained.components.saturating_add(added.components),
+    };
+    for (resource, limit, actual) in [
+        (
+            ReferenceResource::EvaluationBytes,
+            MAX_REFERENCE_TENSOR_BYTES,
+            next.bytes,
+        ),
+        (
+            ReferenceResource::EvaluationElements,
+            MAX_REFERENCE_TENSOR_ELEMENTS,
+            next.elements,
+        ),
+        (
+            ReferenceResource::EvaluationComponents,
+            MAX_REFERENCE_COMPONENTS,
+            next.components,
+        ),
+    ] {
+        if actual > limit {
+            return Err(EvaluationError::ResourceExceeded {
+                resource,
+                limit,
+                actual,
+            });
+        }
+    }
+    *retained = next;
+    Ok(())
+}
+
+fn checked_output_work(
+    retained: ReferenceWork,
+    added: ReferenceWork,
+) -> Result<ReferenceWork, ReferenceOperationError> {
+    let next = ReferenceWork {
+        bytes: retained.bytes.saturating_add(added.bytes),
+        elements: retained.elements.saturating_add(added.elements),
+        components: retained.components.saturating_add(added.components),
+    };
+    if next.bytes > MAX_REFERENCE_TENSOR_BYTES {
+        return Err(ReferenceOperationError::OutputResourceExceeded {
+            limit: MAX_REFERENCE_TENSOR_BYTES,
+            actual: next.bytes,
+        });
+    }
+    if next.elements > MAX_REFERENCE_TENSOR_ELEMENTS {
+        return Err(ReferenceOperationError::OutputElementsExceeded {
+            limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+            actual: next.elements,
+        });
+    }
+    if next.components > MAX_REFERENCE_COMPONENTS {
+        return Err(ReferenceOperationError::OutputComponentsExceeded {
+            limit: MAX_REFERENCE_COMPONENTS,
+            actual: next.components,
+        });
+    }
+    Ok(next)
 }
 
 fn get_value(
@@ -1797,8 +2015,10 @@ fn compute_reference_identity(
     semantic_registry: &FrozenSemanticRegistry,
     capabilities: &BTreeMap<ReferenceCapabilityKey, RegisteredReferenceCapability>,
     value_validators: &BTreeMap<ResolvedValueType, RegisteredReferenceValueValidator>,
-) -> Result<CanonicalReferenceRegistryIdentity, ReferenceRegistryError> {
-    let mut bytes = b"tiler.reference-registry.v2\0".to_vec();
+    exact_len: usize,
+) -> CanonicalReferenceRegistryIdentity {
+    let mut bytes = Vec::with_capacity(exact_len);
+    bytes.extend_from_slice(b"tiler.reference-registry.v2\0");
     encode_bytes(&mut bytes, semantic_registry.snapshot_identity().as_bytes());
     encode_len(&mut bytes, value_validators.len());
     for (resolved_type, validator) in value_validators {
@@ -1813,14 +2033,8 @@ fn compute_reference_identity(
         encode_reference_authority(&mut bytes, &capability.semantic_authority);
         encode_provider_capability(&mut bytes, &capability.provider, capability.revision);
     }
-    if bytes.len() > MAX_REFERENCE_REGISTRY_IDENTITY_BYTES {
-        return Err(ReferenceRegistryError::ResourceExceeded {
-            resource: ReferenceRegistryResource::CanonicalIdentityBytes,
-            limit: MAX_REFERENCE_REGISTRY_IDENTITY_BYTES,
-            actual: bytes.len(),
-        });
-    }
-    Ok(CanonicalReferenceRegistryIdentity(bytes))
+    debug_assert_eq!(bytes.len(), exact_len);
+    CanonicalReferenceRegistryIdentity(bytes)
 }
 
 fn encode_reference_authority(output: &mut Vec<u8>, authority: &SemanticCapabilityAuthority) {
@@ -1856,28 +2070,71 @@ fn encode_signature(output: &mut Vec<u8>, signature: &ReferenceSignature) {
     }
 }
 
-fn authority_retained_bytes(authority: &SemanticCapabilityAuthority) -> usize {
-    authority
-        .reached_definitions()
-        .as_bytes()
-        .len()
-        .saturating_add(authority.admission_provenance().as_bytes().len())
-        .saturating_add(authority.registry_snapshot().as_bytes().len())
+const fn encoded_bytes_len(payload_len: usize) -> usize {
+    std::mem::size_of::<u64>().saturating_add(payload_len)
 }
 
-fn reference_capability_key_bytes(key: &ReferenceCapabilityKey) -> usize {
-    key.operation
-        .namespace()
+fn reference_identity_base_len(semantic_registry: &FrozenSemanticRegistry) -> usize {
+    b"tiler.reference-registry.v2\0"
         .len()
-        .saturating_add(key.operation.name().len())
-        .saturating_add(
-            key.signature
-                .operands()
+        .saturating_add(encoded_bytes_len(
+            semantic_registry.snapshot_identity().as_bytes().len(),
+        ))
+        .saturating_add(2 * std::mem::size_of::<u64>())
+}
+
+fn reference_authority_identity_len(authority: &SemanticCapabilityAuthority) -> usize {
+    [
+        authority.reached_definitions().as_bytes().len(),
+        authority.admission_provenance().as_bytes().len(),
+        authority.registry_snapshot().as_bytes().len(),
+    ]
+    .into_iter()
+    .map(encoded_bytes_len)
+    .fold(0_usize, usize::saturating_add)
+}
+
+fn reference_provider_identity_len(provider: &ProviderIdentity) -> usize {
+    encoded_bytes_len(provider.namespace().len())
+        .saturating_add(encoded_bytes_len(provider.name().len()))
+        .saturating_add(2 * std::mem::size_of::<u32>())
+}
+
+fn reference_value_identity_len(
+    resolved_type: &ResolvedValueType,
+    authority: &SemanticCapabilityAuthority,
+    provider: &ProviderIdentity,
+    _revision: ReferenceCapabilityRevision,
+) -> usize {
+    encoded_bytes_len(resolved_type.canonical_encoding().as_bytes().len())
+        .saturating_add(reference_authority_identity_len(authority))
+        .saturating_add(reference_provider_identity_len(provider))
+}
+
+fn reference_signature_identity_len(signature: &ReferenceSignature) -> usize {
+    [signature.operands(), signature.results()]
+        .into_iter()
+        .map(|values| {
+            values
                 .iter()
-                .chain(key.signature.results())
-                .map(|value| value.canonical_encoding().as_bytes().len())
-                .fold(0_usize, usize::saturating_add),
-        )
+                .map(|value| encoded_bytes_len(value.canonical_encoding().as_bytes().len()))
+                .fold(std::mem::size_of::<u64>(), usize::saturating_add)
+        })
+        .fold(0_usize, usize::saturating_add)
+}
+
+fn reference_capability_identity_len(
+    key: &ReferenceCapabilityKey,
+    authority: &SemanticCapabilityAuthority,
+    provider: &ProviderIdentity,
+    _revision: ReferenceCapabilityRevision,
+) -> usize {
+    encoded_bytes_len(key.operation.namespace().len())
+        .saturating_add(encoded_bytes_len(key.operation.name().len()))
+        .saturating_add(std::mem::size_of::<u32>())
+        .saturating_add(reference_signature_identity_len(&key.signature))
+        .saturating_add(reference_authority_identity_len(authority))
+        .saturating_add(reference_provider_identity_len(provider))
 }
 
 fn collect_signature_types(
@@ -1943,6 +2200,12 @@ pub enum ReferenceResource {
     Components,
     /// Recursive compound-tensor depth.
     ComponentDepth,
+    /// Aggregate retained payload bytes across one evaluation.
+    EvaluationBytes,
+    /// Aggregate logical and component tensor elements across one evaluation.
+    EvaluationElements,
+    /// Aggregate recursive compound components across one evaluation.
+    EvaluationComponents,
 }
 
 /// A typed reference-evaluation failure.
@@ -2042,6 +2305,8 @@ pub enum EvaluationError {
         operation: OpKey,
         /// Reference provider whose claim did not match.
         provider: Arc<ProviderIdentity>,
+        /// Exact output-affecting reference implementation revision.
+        capability_revision: ReferenceCapabilityRevision,
     },
     /// A value validator was built for different reached semantic authority.
     ValueCapabilityAuthorityMismatch {
@@ -2049,6 +2314,8 @@ pub enum EvaluationError {
         resolved_type: Arc<ResolvedValueType>,
         /// Reference provider whose claim did not match.
         provider: Arc<ProviderIdentity>,
+        /// Exact output-affecting validator revision.
+        capability_revision: ReferenceCapabilityRevision,
     },
     /// A selected value validator rejected a tensor representation.
     Value {
@@ -2056,6 +2323,8 @@ pub enum EvaluationError {
         resolved_type: Arc<ResolvedValueType>,
         /// Selected reference provider.
         provider: Arc<ProviderIdentity>,
+        /// Exact output-affecting validator revision.
+        capability_revision: ReferenceCapabilityRevision,
         /// Typed validation cause.
         source: ReferenceValueError,
     },
@@ -2065,6 +2334,8 @@ pub enum EvaluationError {
         operation: OpKey,
         /// Selected reference provider.
         provider: Arc<ProviderIdentity>,
+        /// Exact output-affecting implementation revision.
+        capability_revision: ReferenceCapabilityRevision,
         /// Typed implementation failure.
         source: ReferenceOperationError,
     },
@@ -2074,6 +2345,8 @@ pub enum EvaluationError {
         operation: OpKey,
         /// Selected reference provider.
         provider: Arc<ProviderIdentity>,
+        /// Exact output-affecting implementation revision.
+        capability_revision: ReferenceCapabilityRevision,
         /// Ordered result index.
         result_index: usize,
         /// Declared shape.
@@ -2087,6 +2360,8 @@ pub enum EvaluationError {
         operation: OpKey,
         /// Selected reference provider.
         provider: Arc<ProviderIdentity>,
+        /// Exact output-affecting implementation revision.
+        capability_revision: ReferenceCapabilityRevision,
         /// Ordered result index.
         result_index: usize,
         /// Declared type.
@@ -2183,27 +2458,40 @@ impl EvaluationError {
             Self::CapabilityAuthorityMismatch {
                 operation,
                 provider,
+                capability_revision,
             } => write!(
                 formatter,
-                "reference provider {provider} does not implement reached authority for {operation}"
+                "reference provider {provider} capability revision {} does not implement reached authority for {operation}",
+                capability_revision.get()
             ),
-            Self::ValueCapabilityAuthorityMismatch { provider, .. } => write!(
+            Self::ValueCapabilityAuthorityMismatch {
+                provider,
+                capability_revision,
+                ..
+            } => write!(
                 formatter,
-                "reference provider {provider} does not implement reached value authority"
+                "reference provider {provider} validator revision {} does not implement reached value authority",
+                capability_revision.get()
             ),
             Self::Value {
-                provider, source, ..
+                provider,
+                capability_revision,
+                source,
+                ..
             } => write!(
                 formatter,
-                "reference value validator from {provider} failed: {source}"
+                "reference value validator revision {} from {provider} failed: {source}",
+                capability_revision.get()
             ),
             Self::Operation {
                 operation,
                 provider,
+                capability_revision,
                 source,
             } => write!(
                 formatter,
-                "reference capability from {provider} for {operation} failed: {source}"
+                "reference capability revision {} from {provider} for {operation} failed: {source}",
+                capability_revision.get()
             ),
             Self::ResultShape {
                 operation,
@@ -2245,12 +2533,13 @@ impl Error for EvaluationError {
 mod tests {
     use super::*;
     use tiler_ir::semantic::{
-        CanonicalValue, F32, F32Add, F32Constant, F32Multiply, InputKey, NormativeDefinitionRef,
-        OperationArity, OperationConformance, OperationDefinition, OperationDefinitionFacts,
-        OperationEffect, OperationInferenceError, OperationInferencer, OperationSchema, OutputKey,
-        SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
-        SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, Value,
-        ValueTypeDefinition, ValueTypeDefinitionKey,
+        AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, F32, F32Add,
+        F32Constant, F32Multiply, InputKey, NormativeDefinitionRef, OperationArity,
+        OperationAttributeSchema, OperationConformance, OperationDefinition,
+        OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
+        OperationSchema, OutputKey, SemanticProgramBuilder, SemanticRegistryBuilder,
+        SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum,
+        TypeDefinitionFacts, Value, ValueTypeDefinition, ValueTypeDefinitionKey,
     };
 
     fn constant_bits(graph: &mut SemanticProgramBuilder, bits: u32) -> Value<F32> {
@@ -2460,6 +2749,126 @@ mod tests {
         }
     }
 
+    fn attributed_identity_op() -> OpKey {
+        OpKey::new("test", "attributed-reference-identity", 1).unwrap()
+    }
+
+    struct AttributeTypeProvider {
+        provider_revision: u32,
+        definition_revision: u32,
+    }
+    impl SemanticRegistryProvider for AttributeTypeProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "attribute-type-semantics", self.provider_revision)
+                .unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), tiler_ir::semantic::RegistryError> {
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(TypeKey::new("test", "attribute-type", 1).unwrap()),
+                NormativeDefinitionRef::new(format!(
+                    "test attribute type v{}",
+                    self.definition_revision
+                ))?,
+                TypeDefinitionFacts::new(CanonicalValue::unsigned_u32(self.definition_revision)),
+            ))
+        }
+    }
+
+    fn attribute_type() -> ResolvedValueType {
+        ResolvedValueType::nominal(TypeKey::new("test", "attribute-type", 1).unwrap())
+    }
+
+    struct AttributedIdentitySemanticProvider;
+    impl SemanticRegistryProvider for AttributedIdentitySemanticProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "attributed-identity-semantics", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), tiler_ir::semantic::RegistryError> {
+            registrar.register_operation(OperationDefinition::new(
+                attributed_identity_op(),
+                OperationSchema::new(
+                    OperationArity::exact(1),
+                    OperationArity::exact(1),
+                    [OperationAttributeSchema::required(
+                        AttributeFieldId::new(1),
+                        CanonicalValueKind::Type,
+                    )],
+                )
+                .unwrap(),
+                NormativeDefinitionRef::new("test attributed reference identity v1")?,
+                OperationDefinitionFacts::new(CanonicalValue::record([]).unwrap()),
+                OperationConformance::new(
+                    CanonicalValue::utf8("test.attributed-reference-identity.v1").unwrap(),
+                ),
+                OperationEffect::Pure,
+                Arc::new(IdentitySemantic),
+            ))
+        }
+    }
+
+    struct AttributedIdentityReferenceProvider;
+    impl ReferenceRegistryProvider for AttributedIdentityReferenceProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "attributed-reference-capability", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut ReferenceRegistryRegistrar<'_>,
+        ) -> Result<(), ReferenceRegistryError> {
+            registrar.register(
+                attributed_identity_op(),
+                ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()])?,
+                ReferenceCapabilityRevision::new(7)?,
+                Arc::new(IdentityReference),
+            )
+        }
+    }
+
+    fn attributed_semantics(
+        attribute_provider_revision: u32,
+        attribute_definition_revision: u32,
+    ) -> FrozenSemanticRegistry {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder
+            .register_provider(&AttributeTypeProvider {
+                provider_revision: attribute_provider_revision,
+                definition_revision: attribute_definition_revision,
+            })
+            .unwrap();
+        builder
+            .register_provider(&AttributedIdentitySemanticProvider)
+            .unwrap();
+        builder.freeze().unwrap()
+    }
+
+    fn attributed_program(semantics: FrozenSemanticRegistry) -> SemanticProgram {
+        let mut graph = SemanticProgramBuilder::try_new(semantics).unwrap();
+        let input = graph
+            .input::<F32>(InputKey::new("x").unwrap(), Shape::from_dims([2]))
+            .unwrap();
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            AttributeFieldId::new(1),
+            CanonicalValue::value_type(attribute_type()),
+        )])
+        .unwrap();
+        let result = graph
+            .apply(attributed_identity_op(), attributes, &[input.erase()])
+            .unwrap();
+        graph
+            .output_resolved(OutputKey::new("result").unwrap(), result[0])
+            .unwrap();
+        graph.build().unwrap()
+    }
+
     struct IdentityReference;
     impl ReferenceOperation for IdentityReference {
         fn evaluate(
@@ -2473,8 +2882,10 @@ mod tests {
 
     #[derive(Clone, Copy)]
     enum MalformedReferenceResult {
+        CallbackFailure,
         WrongArity,
         WrongShape,
+        WrongType,
     }
 
     struct MalformedReference {
@@ -2488,10 +2899,24 @@ mod tests {
             outputs: &mut ReferenceOutputs,
         ) -> Result<(), ReferenceOperationError> {
             match self.result {
+                MalformedReferenceResult::CallbackFailure => {
+                    Err(ReferenceOperationError::InvalidApplication)
+                }
                 MalformedReferenceResult::WrongArity => Ok(()),
                 MalformedReferenceResult::WrongShape => {
                     outputs.push(f32_tensor(Shape::new([]), vec![0.0]))
                 }
+                MalformedReferenceResult::WrongType => outputs.push(
+                    Tensor::dense(
+                        external_u8_type(),
+                        Shape::from_dims([2]),
+                        vec![
+                            ReferenceElement::new([1]).unwrap(),
+                            ReferenceElement::new([2]).unwrap(),
+                        ],
+                    )
+                    .unwrap(),
+                ),
             }
         }
     }
@@ -2903,8 +3328,10 @@ mod tests {
         let bindings = [InputBinding::new(&key, &tensor)];
 
         for result in [
+            MalformedReferenceResult::CallbackFailure,
             MalformedReferenceResult::WrongArity,
             MalformedReferenceResult::WrongShape,
+            MalformedReferenceResult::WrongType,
         ] {
             let mut references = reference_builder_for(program.semantic_registry().clone());
             references
@@ -2913,18 +3340,43 @@ mod tests {
             let evaluator = ReferenceEvaluator::new(references.freeze().unwrap());
             let error = evaluator.evaluate(&program, &bindings).unwrap_err();
             match result {
+                MalformedReferenceResult::CallbackFailure => assert!(matches!(
+                    error,
+                    EvaluationError::Operation {
+                        provider,
+                        capability_revision,
+                        source: ReferenceOperationError::InvalidApplication,
+                        ..
+                    } if provider.name() == "malformed-reference-capability"
+                        && capability_revision.get() == 1
+                )),
                 MalformedReferenceResult::WrongArity => assert!(matches!(
                     error,
                     EvaluationError::Operation {
                         provider,
+                        capability_revision,
                         source: ReferenceOperationError::ResultCount { .. },
                         ..
                     } if provider.name() == "malformed-reference-capability"
+                        && capability_revision.get() == 1
                 )),
                 MalformedReferenceResult::WrongShape => assert!(matches!(
                     error,
-                    EvaluationError::ResultShape { provider, .. }
-                        if provider.name() == "malformed-reference-capability"
+                    EvaluationError::ResultShape {
+                        provider,
+                        capability_revision,
+                        ..
+                    } if provider.name() == "malformed-reference-capability"
+                        && capability_revision.get() == 1
+                )),
+                MalformedReferenceResult::WrongType => assert!(matches!(
+                    error,
+                    EvaluationError::ResultType {
+                        provider,
+                        capability_revision,
+                        ..
+                    } if provider.name() == "malformed-reference-capability"
+                        && capability_revision.get() == 1
                 )),
             }
         }
@@ -3036,6 +3488,48 @@ mod tests {
     }
 
     #[test]
+    fn value_validator_failure_retains_exact_implementation_attribution() {
+        let mut semantics = SemanticRegistryBuilder::standard().unwrap();
+        semantics
+            .register_provider(&ExternalU8SemanticProvider)
+            .unwrap();
+        let semantics = semantics.freeze().unwrap();
+        let mut graph = SemanticProgramBuilder::try_new(semantics.clone()).unwrap();
+        let input = graph
+            .input_resolved(
+                InputKey::new("bytes").unwrap(),
+                Shape::from_dims([1]),
+                external_u8_type(),
+            )
+            .unwrap();
+        graph
+            .output_resolved(OutputKey::new("bytes").unwrap(), input)
+            .unwrap();
+        let program = graph.build().unwrap();
+        let invalid = Tensor::dense(
+            external_u8_type(),
+            Shape::from_dims([1]),
+            vec![ReferenceElement::new([1, 2]).unwrap()],
+        )
+        .unwrap();
+        let mut references = reference_builder_for(semantics);
+        references
+            .register_provider(&ExternalU8ReferenceProvider)
+            .unwrap();
+        let evaluator = ReferenceEvaluator::new(references.freeze().unwrap());
+        let key = InputKey::new("bytes").unwrap();
+        assert!(matches!(
+            evaluator.evaluate(&program, &[InputBinding::new(&key, &invalid)]),
+            Err(EvaluationError::Value {
+                provider,
+                capability_revision,
+                source: ReferenceValueError::InvalidRepresentation,
+                ..
+            }) if provider.name() == "u8-reference" && capability_revision.get() == 1
+        ));
+    }
+
+    #[test]
     fn capability_authority_rejects_changed_meaning_but_not_unrelated_snapshot_entries() {
         let baseline_semantics = external_semantics();
         let mut references = reference_builder_for(baseline_semantics.clone());
@@ -3070,6 +3564,53 @@ mod tests {
         assert_eq!(
             evaluator
                 .evaluate(&extended_program, &[InputBinding::new(&key, &input)])
+                .unwrap(),
+            [input]
+        );
+    }
+
+    #[test]
+    fn occurrence_authority_follows_attribute_types_and_admission_providers() {
+        let baseline_semantics = attributed_semantics(1, 1);
+        let mut references = reference_builder_for(baseline_semantics.clone());
+        references
+            .register_provider(&AttributedIdentityReferenceProvider)
+            .unwrap();
+        let evaluator = ReferenceEvaluator::new(references.freeze().unwrap());
+        let input = f32_tensor(Shape::from_dims([2]), vec![1.0, 2.0]);
+        let key = InputKey::new("x").unwrap();
+
+        for changed in [attributed_semantics(1, 2), attributed_semantics(2, 1)] {
+            let changed = attributed_program(changed);
+            assert!(matches!(
+                evaluator.evaluate(&changed, &[InputBinding::new(&key, &input)]),
+                Err(EvaluationError::CapabilityAuthorityMismatch {
+                    operation,
+                    provider,
+                    capability_revision,
+                }) if operation == attributed_identity_op()
+                    && provider.name() == "attributed-reference-capability"
+                    && capability_revision.get() == 7
+            ));
+        }
+
+        let mut extended = SemanticRegistryBuilder::standard().unwrap();
+        extended
+            .register_provider(&AttributeTypeProvider {
+                provider_revision: 1,
+                definition_revision: 1,
+            })
+            .unwrap();
+        extended
+            .register_provider(&AttributedIdentitySemanticProvider)
+            .unwrap();
+        extended
+            .register_provider(&ExternalU8SemanticProvider)
+            .unwrap();
+        let extended = attributed_program(extended.freeze().unwrap());
+        assert_eq!(
+            evaluator
+                .evaluate(&extended, &[InputBinding::new(&key, &input)])
                 .unwrap(),
             [input]
         );
@@ -3129,6 +3670,18 @@ mod tests {
             ReferenceElement::from_float_bits([], FloatBitOrder::MostSignificantByteFirst),
             Err(EvaluationError::EmptyFloatBits)
         );
+        let oversized = vec![0_u8; MAX_REFERENCE_ELEMENT_BYTES + 1];
+        assert!(matches!(
+            ReferenceElement::from_float_bits(
+                &oversized,
+                FloatBitOrder::MostSignificantByteFirst,
+            ),
+            Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::ElementBytes,
+                limit: MAX_REFERENCE_ELEMENT_BYTES,
+                actual,
+            }) if actual == MAX_REFERENCE_ELEMENT_BYTES + 1
+        ));
     }
 
     #[test]
@@ -3178,6 +3731,119 @@ mod tests {
     }
 
     #[test]
+    fn compound_and_evaluation_resources_are_bounded_in_aggregate() {
+        let compound_type =
+            ResolvedValueType::nominal(TypeKey::new("test", "compound-limit", 1).unwrap());
+        let components = |start: u32| {
+            (0..(MAX_REFERENCE_COMPONENTS / 2))
+                .map(|offset| {
+                    ReferenceComponent::new(
+                        ReferenceComponentRole::new(start + u32::try_from(offset).unwrap()),
+                        Tensor::dense(external_u8_type(), Shape::from_dims([0]), Vec::new())
+                            .unwrap(),
+                    )
+                })
+                .collect()
+        };
+        let left = Tensor::compound(compound_type.clone(), Shape::new([]), components(0)).unwrap();
+        let right = Tensor::compound(
+            compound_type.clone(),
+            Shape::new([]),
+            components(u32::try_from(MAX_REFERENCE_COMPONENTS / 2).unwrap()),
+        )
+        .unwrap();
+        assert!(matches!(
+            Tensor::compound(
+                compound_type.clone(),
+                Shape::new([]),
+                vec![
+                    ReferenceComponent::new(ReferenceComponentRole::new(1), left),
+                    ReferenceComponent::new(ReferenceComponentRole::new(2), right),
+                ],
+            ),
+            Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::Components,
+                limit: MAX_REFERENCE_COMPONENTS,
+                actual,
+            }) if actual == MAX_REFERENCE_COMPONENTS + 2
+        ));
+
+        assert!(matches!(
+            Tensor::compound(
+                compound_type.clone(),
+                Shape::from_dims([
+                    u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS).unwrap() + 1
+                ]),
+                Vec::new(),
+            ),
+            Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::TensorElements,
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual,
+            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
+        ));
+
+        let at_limit = Tensor::compound(
+            compound_type.clone(),
+            Shape::from_dims([u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS).unwrap()]),
+            Vec::new(),
+        )
+        .unwrap();
+        let one_more = Tensor::compound(compound_type, Shape::from_dims([1]), Vec::new()).unwrap();
+        let mut retained = ReferenceWork::default();
+        reserve_evaluation_work(&mut retained, &at_limit).unwrap();
+        assert!(matches!(
+            reserve_evaluation_work(&mut retained, &one_more),
+            Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::EvaluationElements,
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual,
+            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
+        ));
+
+        let mut outputs = ReferenceOutputs::new(
+            1,
+            ReferenceWork {
+                elements: MAX_REFERENCE_TENSOR_ELEMENTS,
+                ..ReferenceWork::default()
+            },
+        );
+        assert!(matches!(
+            outputs.push(one_more),
+            Err(ReferenceOperationError::OutputElementsExceeded {
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual,
+            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
+        ));
+        assert!(outputs.values.is_empty());
+    }
+
+    #[test]
+    fn registry_identity_budget_is_exact_at_boundary() {
+        let builder = ReferenceRegistryBuilder::standard().unwrap();
+        let exact_len = builder.canonical_bytes;
+        let frozen = builder.freeze().unwrap();
+        assert_eq!(frozen.canonical_identity().as_bytes().len(), exact_len);
+
+        let semantics = FrozenSemanticRegistry::standard().unwrap();
+        let provider = ProviderIdentity::new("test", "budget-boundary", 1).unwrap();
+        for (existing, added, succeeds) in [
+            (MAX_REFERENCE_REGISTRY_IDENTITY_BYTES, 0, true),
+            (MAX_REFERENCE_REGISTRY_IDENTITY_BYTES, 1, false),
+        ] {
+            let mut batch = ReferenceRegistrationBatch::default();
+            let mut registrar = ReferenceRegistryRegistrar {
+                batch: &mut batch,
+                semantic_registry: &semantics,
+                provider: &provider,
+                existing_capabilities: 0,
+                existing_canonical_bytes: existing,
+            };
+            assert_eq!(registrar.reserve_canonical_bytes(added).is_ok(), succeeds);
+        }
+    }
+
+    #[test]
     fn late_zero_shapes_are_accepted_before_overflow_prone_work() {
         let tensor = Tensor::dense(
             F32::resolved_type(),
@@ -3187,6 +3853,27 @@ mod tests {
         .unwrap();
         assert!(matches!(tensor.payload(), TensorPayloadView::Dense([])));
         assert_eq!(row_major_strides(tensor.shape()).unwrap(), [0, 0, 0]);
+
+        let output = strict_sum(&tensor, &[Axis::new(1), Axis::new(2)]).unwrap();
+        assert_eq!(output.shape(), &Shape::from_dims([0]));
+        assert!(matches!(output.payload(), TensorPayloadView::Dense([])));
+    }
+
+    #[test]
+    fn empty_contributor_reduction_preflights_oversized_survivor() {
+        let input = Tensor::dense(
+            F32::resolved_type(),
+            Shape::from_dims([u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS).unwrap() + 1, 0]),
+            Vec::new(),
+        )
+        .unwrap();
+        assert!(matches!(
+            strict_sum(&input, &[Axis::new(1)]),
+            Err(ReferenceOperationError::OutputElementsExceeded {
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual,
+            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
+        ));
     }
 
     #[test]

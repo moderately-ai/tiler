@@ -149,7 +149,9 @@ payloads and positive/negative zero remain distinct.
 **Fact:** each resolved type requires an explicitly registered representation
 validator before it can enter or leave evaluation. Each operation capability
 is bound to the provider-independent definitions and provider-attributed
-admission provenance reached by its exact operation/signature. The originating
+admission provenance reached by its exact operation occurrence: signature plus
+canonical attributes. Attribute-only type references therefore participate in
+the same fail-closed comparison. The originating
 semantic-registry snapshot remains provenance and reference-registry identity,
 but an unrelated registry addition alone does not invalidate a compatible
 capability. Changed reached definitions or providers fail closed.
@@ -160,6 +162,15 @@ publish a partial success. Recoverable callback and result-validation failures
 retain provider identity and typed cause. Native provider callbacks remain a
 trusted deterministic, non-panicking boundary; panics are not converted into
 recoverable evaluation errors.
+
+**Fact:** tensor construction and evaluation enforce separate per-value and
+aggregate bounds over dense bytes, logical elements, recursive component
+structure, and all retained inputs/intermediates/outputs. Host-owned output
+writers receive the already-retained evaluation work so over-limit callback
+results are rejected before the writer retains them. Registry identity uses an
+exact precomputed encoded length—including framing, semantic snapshot,
+operation version, signatures, provider identity/revision, and capability
+revision—before allocating its final byte buffer.
 
 **Proposal:** the concrete Rust names and call-site shape are a tested public
 draft pending interface review. The invariants above, rather than those names,

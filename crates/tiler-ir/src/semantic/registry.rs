@@ -987,6 +987,34 @@ impl FrozenSemanticRegistry {
         Ok(self.capability_authority(&closure))
     }
 
+    /// Projects complete semantic authority for one exact operation
+    /// occurrence, including types referenced only by its canonical
+    /// attributes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] when the operation, a signature type, an
+    /// attribute-referenced type, or any transitive authority is absent,
+    /// rejected, or exceeds governed closure bounds.
+    pub fn project_operation_occurrence_authority<'a>(
+        &self,
+        operation: &'a OpKey,
+        operand_types: impl IntoIterator<Item = &'a ResolvedValueType>,
+        result_types: impl IntoIterator<Item = &'a ResolvedValueType>,
+        attributes: &'a OperationAttributes,
+    ) -> Result<SemanticCapabilityAuthority, RegistryError> {
+        let closure = self.close_authority(
+            operand_types.into_iter().chain(result_types),
+            std::iter::empty(),
+            [operation],
+            attributes
+                .fields()
+                .iter()
+                .map(super::types::CanonicalField::value),
+        )?;
+        Ok(self.capability_authority(&closure))
+    }
+
     fn capability_authority(
         &self,
         closure: &SemanticAuthorityClosure,
