@@ -581,6 +581,7 @@ pub struct IndexExprRef<'a> {
 }
 /// One index expression view.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum IndexExprView<'a> {
     /// Exact integer constant.
     Constant(&'a IndexInteger),
@@ -751,6 +752,7 @@ impl<'a> TensorAccessRef<'a> {
 
 /// Public view of one sound bounds proof.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BoundsProofView {
     /// The iteration domain is empty, so bounds hold vacuously.
     VacuousEmptyDomain,
@@ -764,6 +766,7 @@ pub enum BoundsProofView {
 }
 /// Public view of one sound complete-write proof.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum WriteOwnershipProofView {
     /// Coordinates are a dimension permutation matching output shape.
     CoordinatePermutation,
@@ -776,6 +779,7 @@ pub enum WriteOwnershipProofView {
 
 /// One scalar value definition.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum ScalarValueDefinitionView {
     /// Value loaded by a logical read access.
     AccessRead(VerifiedTensorAccessId),
@@ -834,6 +838,7 @@ impl<'a> ScalarValueRef<'a> {
 
 /// One scalar operation kind.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum ScalarOperationKindRef<'a> {
     /// One registered pointwise scalar application.
     Apply {
@@ -953,6 +958,7 @@ impl<'a> ScalarReducerBodyRef<'a> {
 }
 /// Definition of one reducer-body SSA value.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum ReducerBodyValueDefinitionView {
     /// Ordered accumulator state parameter.
     StateParameter(u32),

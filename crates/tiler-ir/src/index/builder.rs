@@ -17,18 +17,22 @@ use super::model::{
     ScalarOperationKindData, ScalarReducerBodyData, ScalarValueData, ScalarValueDefinition,
     TensorData, VerifiedAccessData, VerifiedIndexRegionData, WriteOwnershipProof,
 };
-use super::scalar::{encode_bytes, encode_canonical, encode_key, encode_len};
+use super::scalar::{
+    ScalarApplyError, ScalarInferenceCapacity, ScalarInferenceHostFailure, encode_bytes,
+    encode_canonical, encode_key, encode_len,
+};
 use super::{
     AccessMode, CanonicalIndexRegionIdentity, DimensionId, DomainRole, FrozenScalarRegistry,
     IndexBuildError, IndexEntityKind, IndexExprClass, IndexExprId, IndexInteger, IndexLimitKind,
     IndexRegionBuildError, IndexRegionDiagnostic, MAX_ACCESS_CANONICAL_BYTES,
     MAX_BOUNDARY_CANONICAL_BYTES, MAX_BOUNDARY_TENSORS, MAX_DOMAIN_DIMENSIONS,
     MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS, MAX_INDEX_CANONICAL_BYTES,
-    MAX_INDEX_EXPRESSION_OPERANDS, MAX_INDEX_EXPRESSIONS, MAX_INDEX_REGION_IDENTITY_BYTES,
-    MAX_OUTPUT_ROOTS, MAX_SCALAR_CANONICAL_BYTES, MAX_SCALAR_EXPRESSION_DEPTH,
-    MAX_SCALAR_EXPRESSIONS, MAX_SCALAR_OPERANDS, MAX_TENSOR_ACCESSES, MAX_TENSOR_RANK,
-    ProofResource, ReductionTraversal, ScalarAttributes, ScalarOpKey, ScalarOperationId,
-    ScalarResultIndex, ScalarValueId, TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
+    MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_EXPRESSION_OPERANDS, MAX_INDEX_EXPRESSIONS,
+    MAX_INDEX_INTEGER_BYTES, MAX_INDEX_REGION_IDENTITY_BYTES, MAX_OUTPUT_ROOTS,
+    MAX_SCALAR_CANONICAL_BYTES, MAX_SCALAR_EXPRESSION_DEPTH, MAX_SCALAR_EXPRESSIONS,
+    MAX_SCALAR_OPERANDS, MAX_TENSOR_ACCESSES, MAX_TENSOR_RANK, ProofResource, ReductionTraversal,
+    ScalarAttributes, ScalarOpKey, ScalarOperationId, ScalarResultIndex, ScalarValueId,
+    TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
 };
 
 #[derive(Clone, Debug)]
@@ -56,7 +60,6 @@ impl Deref for DraftScalarValue {
 #[derive(Clone, Debug)]
 struct DraftScalarOperation {
     data: ScalarOperationData,
-    structural_key: Arc<Vec<u8>>,
 }
 
 struct StagedReducerResults {
@@ -67,6 +70,8 @@ struct StagedReducerResults {
 }
 
 struct CompactionOrder {
+    dimensions: Vec<u32>,
+    dimension_map: BTreeMap<u32, u32>,
     tensors: Vec<u32>,
     tensor_map: BTreeMap<u32, u32>,
     expressions: Vec<u32>,
@@ -77,6 +82,58 @@ struct CompactionOrder {
     operation_map: BTreeMap<u32, u32>,
     values: Vec<u32>,
     value_map: BTreeMap<u32, u32>,
+}
+
+struct CompactedRegion {
+    dimensions: Vec<DimensionData>,
+    tensors: Vec<TensorData>,
+    expressions: Vec<IndexExprData>,
+    accesses: Vec<VerifiedAccessData>,
+    operations: Vec<ScalarOperationData>,
+    values: Vec<ScalarValueData>,
+    outputs: Vec<OutputData>,
+}
+
+struct ReductionInputs {
+    bound: BTreeSet<u32>,
+    init: Vec<ScalarValueData>,
+    contributors: Vec<ScalarValueData>,
+    free: BTreeSet<u32>,
+    body_budget: ReducerBodyBudget,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ReducerBodyBudget {
+    parent_bytes_without_body: usize,
+    body_multiplier: usize,
+    maximum_encoded_bytes: usize,
+}
+
+impl ReducerBodyBudget {
+    fn parent_bytes(self, encoded_body_bytes: usize) -> usize {
+        self.parent_bytes_without_body
+            .saturating_add(encoded_body_bytes.saturating_mul(self.body_multiplier))
+    }
+
+    fn admit(self, encoded_body_bytes: usize) -> Result<(), IndexBuildError> {
+        if encoded_body_bytes > self.maximum_encoded_bytes {
+            return Err(IndexBuildError::StructuralLimit {
+                resource: IndexLimitKind::ScalarCanonicalBytes,
+                actual: self.parent_bytes(encoded_body_bytes) as u128,
+                limit: MAX_SCALAR_CANONICAL_BYTES as u128,
+            });
+        }
+        Ok(())
+    }
+}
+
+fn admit_reducer_body_append<T>(
+    budget: ReducerBodyBudget,
+    encoded_body_bytes: usize,
+    commit: impl FnOnce() -> T,
+) -> Result<T, IndexBuildError> {
+    budget.admit(encoded_body_bytes)?;
+    Ok(commit())
 }
 impl Deref for DraftScalarOperation {
     type Target = ScalarOperationData;
@@ -123,6 +180,8 @@ pub struct ScalarReducerBodyBuilder<'a> {
     operation_depths: Vec<u32>,
     operation_intern: BTreeMap<Arc<Vec<u8>>, u32>,
     canonical_bytes: usize,
+    encoded_body_bytes: usize,
+    parent_budget: ReducerBodyBudget,
     state_count: usize,
     contributor_count: usize,
     yields: Option<Vec<u32>>,
@@ -151,13 +210,26 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
         registry: &'a FrozenScalarRegistry,
         state: &[ResolvedValueType],
         contributors: &[ResolvedValueType],
+        parent_budget: ReducerBodyBudget,
     ) -> Result<Self, IndexBuildError> {
-        let owner = next_builder_id().ok_or(IndexBuildError::BuilderIdentityExhausted)?;
         limit(
             state.len().saturating_add(contributors.len()),
             MAX_SCALAR_OPERANDS,
             IndexLimitKind::ScalarValues,
         )?;
+        let parameter_bytes = state
+            .iter()
+            .chain(contributors)
+            .try_fold(0_usize, |bytes, value_type| {
+                bytes.checked_add(encoded_reducer_parameter_len(value_type))
+            })
+            .unwrap_or(usize::MAX);
+        limit(
+            parameter_bytes,
+            MAX_SCALAR_CANONICAL_BYTES,
+            IndexLimitKind::ScalarCanonicalBytes,
+        )?;
+        let owner = next_builder_id().ok_or(IndexBuildError::BuilderIdentityExhausted)?;
         let mut values = Vec::with_capacity(state.len() + contributors.len());
         let mut value_keys = Vec::with_capacity(state.len() + contributors.len());
         for (i, value_type) in state.iter().cloned().enumerate() {
@@ -193,6 +265,8 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
             MAX_SCALAR_CANONICAL_BYTES,
             IndexLimitKind::ScalarCanonicalBytes,
         )?;
+        let encoded_body_bytes = 24_usize.saturating_add(parameter_bytes);
+        parent_budget.admit(encoded_body_bytes)?;
         Ok(Self {
             registry,
             owner,
@@ -204,6 +278,8 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
             operation_depths: Vec::new(),
             operation_intern: BTreeMap::new(),
             canonical_bytes,
+            encoded_body_bytes,
+            parent_budget,
             state_count: state.len(),
             contributor_count: contributors.len(),
             yields: None,
@@ -244,6 +320,11 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
         attributes: ScalarAttributes,
         operands: &[ReducerScalarValueId],
     ) -> Result<ReducerScalarResults, IndexBuildError> {
+        limit(
+            operands.len(),
+            MAX_SCALAR_OPERANDS,
+            IndexLimitKind::ScalarOperands,
+        )?;
         let operand_indices: Vec<_> = operands
             .iter()
             .map(|id| {
@@ -274,34 +355,25 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
                     .collect(),
             ));
         }
-        let result_types = self.registry.infer(&key, &operand_types, &attributes)?;
         let depth = operands
             .iter()
             .map(|operand| self.value_depths[operand.index as usize].saturating_add(1))
             .max()
             .unwrap_or(0);
-        limit(
-            operands.len(),
-            MAX_SCALAR_OPERANDS,
-            IndexLimitKind::ScalarOperands,
-        )?;
-        limit(
-            self.operations.len().saturating_add(1),
-            MAX_SCALAR_EXPRESSIONS,
-            IndexLimitKind::ScalarOperations,
-        )?;
-        limit(
-            self.values.len().saturating_add(result_types.len()),
-            MAX_SCALAR_EXPRESSIONS,
-            IndexLimitKind::ScalarValues,
-        )?;
-        limit(
-            depth as usize,
-            MAX_SCALAR_EXPRESSION_DEPTH as usize,
-            IndexLimitKind::ScalarValues,
-        )?;
+        let minimum_results = self.registry.minimum_results(&key)?;
+        self.preflight_operation(depth, minimum_results, structural_key.len(), operands.len())?;
+        let (encoded_before_results, capacity) =
+            self.inference_capacity(&key, &attributes, operands.len(), minimum_results)?;
+        let result_types = self
+            .registry
+            .infer(&key, &operand_types, &attributes, capacity)
+            .map_err(map_scalar_apply_error)?;
         let added_bytes =
             retained_operation_bytes(structural_key.len(), operands.len(), &result_types, 0);
+        let encoded_result_bytes = result_types.iter().fold(0_usize, |bytes, value_type| {
+            bytes.saturating_add(encoded_reducer_operation_result_increment(value_type))
+        });
+        let encoded_after_results = encoded_before_results.saturating_add(encoded_result_bytes);
         limit(
             self.canonical_bytes.saturating_add(added_bytes),
             MAX_SCALAR_CANONICAL_BYTES,
@@ -318,21 +390,91 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
             result_types,
             &structural_key,
         )?;
-        self.values.extend(staged.values);
-        self.value_keys.extend(staged.keys);
-        self.value_depths
-            .extend(std::iter::repeat_n(depth, staged.indices.len()));
-        self.operations.push(ReducerBodyOperationData {
-            key,
-            attributes,
-            operands: operand_indices,
-            results: staged.indices,
-        });
-        self.operation_keys.push(structural_key.clone());
-        self.operation_depths.push(depth);
-        self.operation_intern.insert(structural_key, operation);
-        self.canonical_bytes += added_bytes;
-        Ok(ReducerScalarResults(staged.ids))
+        admit_reducer_body_append(self.parent_budget, encoded_after_results, || {
+            self.values.extend(staged.values);
+            self.value_keys.extend(staged.keys);
+            self.value_depths
+                .extend(std::iter::repeat_n(depth, staged.indices.len()));
+            self.operations.push(ReducerBodyOperationData {
+                key,
+                attributes,
+                operands: operand_indices,
+                results: staged.indices,
+            });
+            self.operation_keys.push(structural_key.clone());
+            self.operation_depths.push(depth);
+            self.operation_intern.insert(structural_key, operation);
+            self.canonical_bytes += added_bytes;
+            self.encoded_body_bytes = encoded_after_results;
+            ReducerScalarResults(staged.ids)
+        })
+    }
+
+    fn preflight_operation(
+        &self,
+        depth: u32,
+        minimum_results: usize,
+        key_bytes: usize,
+        operand_count: usize,
+    ) -> Result<(), IndexBuildError> {
+        limit(
+            self.operations.len().saturating_add(1),
+            MAX_SCALAR_EXPRESSIONS,
+            IndexLimitKind::ScalarOperations,
+        )?;
+        limit(
+            self.values.len().saturating_add(minimum_results),
+            MAX_SCALAR_EXPRESSIONS,
+            IndexLimitKind::ScalarValues,
+        )?;
+        limit(
+            depth as usize,
+            MAX_SCALAR_EXPRESSION_DEPTH as usize,
+            IndexLimitKind::ScalarExpressionDepth,
+        )?;
+        limit(
+            self.canonical_bytes
+                .saturating_add(minimum_retained_operation_bytes(
+                    key_bytes,
+                    operand_count,
+                    minimum_results,
+                    0,
+                )),
+            MAX_SCALAR_CANONICAL_BYTES,
+            IndexLimitKind::ScalarCanonicalBytes,
+        )
+    }
+
+    fn inference_capacity(
+        &self,
+        key: &ScalarOpKey,
+        attributes: &ScalarAttributes,
+        operand_count: usize,
+        minimum_results: usize,
+    ) -> Result<(usize, ScalarInferenceCapacity), IndexBuildError> {
+        let fixed_encoded_bytes =
+            encoded_reducer_operation_base_len(key, attributes, operand_count);
+        let encoded_before_results = self.encoded_body_bytes.saturating_add(fixed_encoded_bytes);
+        let minimum_fixed_result_bytes = minimum_results
+            .checked_mul(encoded_reducer_operation_result_overhead())
+            .and_then(|bytes| encoded_before_results.checked_add(bytes))
+            .unwrap_or(usize::MAX);
+        self.parent_budget.admit(minimum_fixed_result_bytes)?;
+        let parent_bytes_before_results = self.parent_budget.parent_bytes(encoded_before_results);
+        Ok((
+            encoded_before_results,
+            ScalarInferenceCapacity {
+                result_slots: MAX_SCALAR_EXPRESSIONS.saturating_sub(self.values.len()),
+                result_count_before: self.values.len(),
+                result_limit: MAX_SCALAR_EXPRESSIONS,
+                retained_bytes: MAX_SCALAR_CANONICAL_BYTES
+                    .saturating_sub(parent_bytes_before_results),
+                retained_bytes_before: parent_bytes_before_results,
+                retained_byte_limit: MAX_SCALAR_CANONICAL_BYTES,
+                per_result_overhead: encoded_reducer_operation_result_overhead(),
+                byte_multiplier: self.parent_budget.body_multiplier,
+            },
+        ))
     }
     /// Sets the exact ordered state yielded by one reducer step.
     ///
@@ -343,6 +485,11 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
         if self.yields.is_some() {
             return Err(IndexBuildError::ReducerYieldAlreadySet);
         }
+        limit(
+            values.len(),
+            MAX_SCALAR_OPERANDS,
+            IndexLimitKind::ScalarValues,
+        )?;
         let indices: Vec<_> = values
             .iter()
             .map(|id| {
@@ -350,8 +497,13 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
                 Ok(id.index)
             })
             .collect::<Result<_, IndexBuildError>>()?;
-        self.yields = Some(indices);
-        Ok(())
+        let encoded_body_bytes = self
+            .encoded_body_bytes
+            .saturating_add(indices.len().saturating_mul(4));
+        admit_reducer_body_append(self.parent_budget, encoded_body_bytes, || {
+            self.yields = Some(indices);
+            self.encoded_body_bytes = encoded_body_bytes;
+        })
     }
 }
 
@@ -482,6 +634,7 @@ impl IndexRegionBuilder {
     ///
     /// Returns an error when an index-expression limit is exceeded.
     pub fn constant(&mut self, value: IndexInteger) -> Result<IndexExprId, IndexBuildError> {
+        check_integer(&value.0)?;
         let integer = value.0.clone();
         self.intern_index(
             IndexNode::Constant(value),
@@ -526,6 +679,10 @@ impl IndexRegionBuilder {
             MAX_INDEX_EXPRESSION_OPERANDS,
             IndexLimitKind::IndexExpressionOperands,
         )?;
+        check_integer(&constant.0)?;
+        for (coefficient, _) in terms {
+            check_integer(&coefficient.0)?;
+        }
         let mut normalized_constant = constant.0;
         let mut coefficients: BTreeMap<Arc<Vec<u8>>, (u32, BigInt)> = BTreeMap::new();
         for (coefficient, id) in terms {
@@ -536,7 +693,7 @@ impl IndexRegionBuilder {
                 &coefficient.0,
                 id.index,
                 &self.expressions,
-            );
+            )?;
         }
         let mut terms: Vec<_> = coefficients
             .into_iter()
@@ -568,6 +725,7 @@ impl IndexRegionBuilder {
         let mut class = IndexExprClass::Affine;
         let mut depth = 0;
         for term in &terms {
+            check_integer(&term.coefficient.0)?;
             let expression = &self.expressions[term.value as usize];
             dimensions.extend(&expression.dimensions);
             if expression.class == IndexExprClass::QuasiAffine {
@@ -575,7 +733,8 @@ impl IndexRegionBuilder {
             }
             depth = depth.max(expression.depth.saturating_add(1));
         }
-        let interval = interval_linear(&normalized_constant, &terms, &self.expressions);
+        check_integer(&normalized_constant)?;
+        let interval = interval_linear(&normalized_constant, &terms, &self.expressions)?;
         self.intern_index(
             IndexNode::LinearCombination {
                 constant: IndexInteger(normalized_constant),
@@ -844,6 +1003,16 @@ impl IndexRegionBuilder {
         attributes: ScalarAttributes,
         operands: &[ScalarValueId],
     ) -> Result<ScalarResults, IndexBuildError> {
+        limit(
+            operands.len(),
+            MAX_SCALAR_OPERANDS,
+            IndexLimitKind::ScalarOperands,
+        )?;
+        limit(
+            dimensions.len(),
+            MAX_DOMAIN_DIMENSIONS,
+            IndexLimitKind::DomainDimensions,
+        )?;
         let operand_data: Vec<_> = operands
             .iter()
             .map(|id| self.resolve_value(*id).cloned())
@@ -871,8 +1040,52 @@ impl IndexRegionBuilder {
         if let Some(operation) = self.operation_intern.get(&structural_key) {
             return Ok(self.operation_results(*operation));
         }
+        let depth = operands
+            .iter()
+            .map(|id| self.values[id.as_usize()].depth.saturating_add(1))
+            .max()
+            .unwrap_or(0);
+        let minimum_results = self.registry.minimum_results(&key)?;
+        limit(
+            self.operations.len().saturating_add(1),
+            MAX_SCALAR_EXPRESSIONS,
+            IndexLimitKind::ScalarOperations,
+        )?;
+        limit(
+            self.values.len().saturating_add(minimum_results),
+            MAX_SCALAR_EXPRESSIONS,
+            IndexLimitKind::ScalarValues,
+        )?;
+        limit(
+            depth as usize,
+            MAX_SCALAR_EXPRESSION_DEPTH as usize,
+            IndexLimitKind::ScalarExpressionDepth,
+        )?;
+        limit(
+            self.scalar_bytes
+                .saturating_add(minimum_retained_operation_bytes(
+                    structural_key.len(),
+                    operands.len(),
+                    minimum_results,
+                    free.len(),
+                )),
+            MAX_SCALAR_CANONICAL_BYTES,
+            IndexLimitKind::ScalarCanonicalBytes,
+        )?;
         let types: Vec<_> = operand_data.iter().map(|v| v.value_type.clone()).collect();
-        let result_types = self.registry.infer(&key, &types, &attributes)?;
+        let capacity = inference_capacity(
+            self.values.len(),
+            MAX_SCALAR_EXPRESSIONS,
+            self.scalar_bytes,
+            MAX_SCALAR_CANONICAL_BYTES,
+            structural_key.len(),
+            operands.len(),
+            free.len(),
+        );
+        let result_types = self
+            .registry
+            .infer(&key, &types, &attributes, capacity)
+            .map_err(map_scalar_apply_error)?;
         self.push_operation(
             ScalarOperationKindData::Apply { key, attributes },
             operands,
@@ -896,12 +1109,115 @@ impl IndexRegionBuilder {
     where
         F: FnOnce(&mut ScalarReducerBodyBuilder<'_>) -> Result<(), IndexBuildError>,
     {
+        let ReductionInputs {
+            bound,
+            init: init_data,
+            contributors: contributor_data,
+            mut free,
+            body_budget,
+        } = self.prepare_reduction_inputs(dimensions, init, contributors)?;
+        let state_types: Vec<_> = init_data.iter().map(|v| v.value_type.clone()).collect();
+        let contributor_types: Vec<_> = contributor_data
+            .iter()
+            .map(|v| v.value_type.clone())
+            .collect();
+        let mut body = ScalarReducerBodyBuilder::new(
+            &self.registry,
+            &state_types,
+            &contributor_types,
+            body_budget,
+        )?;
+        build(&mut body)?;
+        let yields = body
+            .yields
+            .take()
+            .ok_or(IndexBuildError::MissingReducerYield)?;
+        if yields.len() != state_types.len() {
+            return Err(IndexBuildError::ReducerYieldArity {
+                expected: state_types.len(),
+                actual: yields.len(),
+            });
+        }
+        for (position, (yielded, expected)) in yields.iter().zip(&state_types).enumerate() {
+            let actual = &body.values[*yielded as usize].value_type;
+            if actual != expected {
+                return Err(IndexBuildError::ReducerYieldTypeMismatch {
+                    position,
+                    expected: Arc::new(expected.clone()),
+                    actual: Arc::new(actual.clone()),
+                });
+            }
+        }
+        for dimension in &bound {
+            free.remove(dimension);
+        }
+        let mut operands = init.to_vec();
+        operands.extend_from_slice(contributors);
+        let nested = compact_reducer_body(
+            &ScalarReducerBodyData {
+                values: body.values,
+                operations: body.operations,
+                yields,
+            },
+            &body.operation_keys,
+            &body.operation_depths,
+        );
+        self.push_operation(
+            ScalarOperationKindData::Reduce {
+                dimensions: dimensions.iter().map(|dimension| dimension.index).collect(),
+                traversal: ReductionTraversal::ExactLexicographicLeftFold,
+                init: init.iter().map(|value| value.index).collect(),
+                contributors: contributors.iter().map(|value| value.index).collect(),
+                body: nested,
+            },
+            &operands,
+            state_types,
+            &free,
+        )
+    }
+
+    fn prepare_reduction_inputs(
+        &self,
+        dimensions: &[DimensionId],
+        init: &[ScalarValueId],
+        contributors: &[ScalarValueId],
+    ) -> Result<ReductionInputs, IndexBuildError> {
         if dimensions.is_empty() {
             return Err(IndexBuildError::EmptyReductionDimensions);
         }
         if init.is_empty() {
             return Err(IndexBuildError::EmptyReductionState);
         }
+        limit(
+            dimensions.len(),
+            MAX_DOMAIN_DIMENSIONS,
+            IndexLimitKind::DomainDimensions,
+        )?;
+        limit(
+            init.len(),
+            MAX_SCALAR_OPERANDS,
+            IndexLimitKind::ScalarValues,
+        )?;
+        limit(
+            contributors.len(),
+            MAX_SCALAR_OPERANDS,
+            IndexLimitKind::ScalarOperands,
+        )?;
+        limit(
+            init.len().saturating_add(contributors.len()),
+            MAX_SCALAR_OPERANDS,
+            IndexLimitKind::ScalarOperands,
+        )?;
+        limit(
+            self.operations.len().saturating_add(1),
+            MAX_SCALAR_EXPRESSIONS,
+            IndexLimitKind::ScalarOperations,
+        )?;
+        limit(
+            self.values.len().saturating_add(init.len()),
+            MAX_SCALAR_EXPRESSIONS,
+            IndexLimitKind::ScalarValues,
+        )?;
         let mut bound = BTreeSet::new();
         for dimension in dimensions {
             let data = self.resolve_dimension(*dimension)?;
@@ -934,64 +1250,89 @@ impl IndexRegionBuilder {
             .iter()
             .map(|id| self.resolve_value(*id).cloned())
             .collect::<Result<_, _>>()?;
-        let state_types: Vec<_> = init_data.iter().map(|v| v.value_type.clone()).collect();
-        let contributor_types: Vec<_> = contributor_data
-            .iter()
-            .map(|v| v.value_type.clone())
-            .collect();
-        let mut body =
-            ScalarReducerBodyBuilder::new(&self.registry, &state_types, &contributor_types)?;
-        build(&mut body)?;
-        let yields = body
-            .yields
-            .take()
-            .ok_or(IndexBuildError::MissingReducerYield)?;
-        if yields.len() != state_types.len() {
-            return Err(IndexBuildError::ReducerYieldArity {
-                expected: state_types.len(),
-                actual: yields.len(),
-            });
-        }
-        for (position, (yielded, expected)) in yields.iter().zip(&state_types).enumerate() {
-            let actual = &body.values[*yielded as usize].value_type;
-            if actual != expected {
-                return Err(IndexBuildError::ReducerYieldTypeMismatch {
-                    position,
-                    expected: Arc::new(expected.clone()),
-                    actual: Arc::new(actual.clone()),
-                });
-            }
-        }
+        let (free, body_budget) = self.preflight_reduction_occurrence(
+            dimensions,
+            init,
+            contributors,
+            &bound,
+            &init_data,
+            &contributor_data,
+        )?;
+        Ok(ReductionInputs {
+            bound,
+            init: init_data,
+            contributors: contributor_data,
+            free,
+            body_budget,
+        })
+    }
+
+    fn preflight_reduction_occurrence(
+        &self,
+        dimensions: &[DimensionId],
+        init: &[ScalarValueId],
+        contributors: &[ScalarValueId],
+        bound: &BTreeSet<u32>,
+        init_data: &[ScalarValueData],
+        contributor_data: &[ScalarValueData],
+    ) -> Result<(BTreeSet<u32>, ReducerBodyBudget), IndexBuildError> {
         let mut free: BTreeSet<_> = init_data
             .iter()
-            .chain(&contributor_data)
-            .flat_map(|v| v.free_dimensions.iter().copied())
+            .chain(contributor_data)
+            .flat_map(|value| value.free_dimensions.iter().copied())
             .collect();
-        for d in &bound {
-            free.remove(d);
+        for dimension in bound {
+            free.remove(dimension);
         }
-        let mut operands = init.to_vec();
-        operands.extend_from_slice(contributors);
-        let operation_keys = body.operation_keys;
-        let operation_depths = body.operation_depths;
-        let uncompact_body = ScalarReducerBodyData {
-            values: body.values,
-            operations: body.operations,
-            yields,
+        let operands = init.iter().chain(contributors).copied().collect::<Vec<_>>();
+        let minimum_body = minimum_reducer_body(init_data, contributor_data);
+        let minimum_body_bytes = encoded_reducer_body_len(&minimum_body);
+        let minimum_kind = ScalarOperationKindData::Reduce {
+            dimensions: dimensions.iter().map(|dimension| dimension.index).collect(),
+            traversal: ReductionTraversal::ExactLexicographicLeftFold,
+            init: init.iter().map(|value| value.index).collect(),
+            contributors: contributors.iter().map(|value| value.index).collect(),
+            body: minimum_body,
         };
-        let nested = compact_reducer_body(&uncompact_body, &operation_keys, &operation_depths);
-        self.push_operation(
-            ScalarOperationKindData::Reduce {
-                dimensions: dimensions.iter().map(|d| d.index).collect(),
-                traversal: ReductionTraversal::ExactLexicographicLeftFold,
-                init: init.iter().map(|v| v.index).collect(),
-                contributors: contributors.iter().map(|v| v.index).collect(),
-                body: nested,
+        let key = operation_structural_key(&minimum_kind, &operands, &self.values, &free);
+        let depth = operands
+            .iter()
+            .map(|value| self.values[value.as_usize()].depth.saturating_add(1))
+            .max()
+            .unwrap_or(0);
+        limit(
+            depth as usize,
+            MAX_SCALAR_EXPRESSION_DEPTH as usize,
+            IndexLimitKind::ScalarExpressionDepth,
+        )?;
+        let result_types = init_data
+            .iter()
+            .map(|value| value.value_type.clone())
+            .collect::<Vec<_>>();
+        let minimum_parent_bytes = self.scalar_bytes.saturating_add(retained_operation_bytes(
+            key.len(),
+            operands.len(),
+            &result_types,
+            free.len(),
+        ));
+        limit(
+            minimum_parent_bytes,
+            MAX_SCALAR_CANONICAL_BYTES,
+            IndexLimitKind::ScalarCanonicalBytes,
+        )?;
+        let body_multiplier = init.len().saturating_add(1);
+        let body_contribution = minimum_body_bytes.saturating_mul(body_multiplier);
+        let parent_bytes_without_body = minimum_parent_bytes.saturating_sub(body_contribution);
+        let maximum_encoded_bytes =
+            MAX_SCALAR_CANONICAL_BYTES.saturating_sub(parent_bytes_without_body) / body_multiplier;
+        Ok((
+            free,
+            ReducerBodyBudget {
+                parent_bytes_without_body,
+                body_multiplier,
+                maximum_encoded_bytes,
             },
-            &operands,
-            state_types,
-            &free,
-        )
+        ))
     }
 
     fn push_operation(
@@ -1051,7 +1392,7 @@ impl IndexRegionBuilder {
         limit(
             depth as usize,
             MAX_SCALAR_EXPRESSION_DEPTH as usize,
-            IndexLimitKind::ScalarValues,
+            IndexLimitKind::ScalarExpressionDepth,
         )?;
         let mut results = Vec::with_capacity(result_types.len());
         let mut result_indices = Vec::with_capacity(result_types.len());
@@ -1095,7 +1436,6 @@ impl IndexRegionBuilder {
                 results: result_indices,
                 depth,
             },
-            structural_key: structural_key.clone(),
         });
         self.operation_intern
             .insert(structural_key, operation.index);
@@ -1312,7 +1652,8 @@ impl IndexRegionBuilder {
         accesses: &BTreeSet<u32>,
         diagnostics: &mut Vec<IndexRegionDiagnostic>,
     ) {
-        let mut exhaustive = Vec::new();
+        let mut cells = 0_u128;
+        let mut integer_bytes = 0_u128;
         for access_index in accesses {
             let access = &self.accesses[*access_index as usize];
             let shape = &self.tensors[access.tensor as usize].shape;
@@ -1355,69 +1696,99 @@ impl IndexRegionBuilder {
             if !interval_proved
                 || (access.mode == AccessMode::Write && !self.write_is_permutation(access, shape))
             {
-                let mut reached = BTreeSet::new();
-                for coordinate in &access.coordinates {
-                    self.mark_expr(*coordinate, &mut reached);
-                }
-                exhaustive.push((
-                    *access_index,
-                    points,
-                    reached.into_iter().collect::<Vec<_>>(),
-                ));
+                let (plan_len, bytes_per_point) = self.proof_plan_size(&access.coordinates);
+                cells = cells.saturating_add(u128::from(points).saturating_mul(plan_len as u128));
+                let coordinate_bytes = u128::from(points).saturating_mul(bytes_per_point.max(1));
+                let dense_bytes = if access.mode == AccessMode::Write {
+                    shape.element_count().map_or(u128::MAX, |elements| {
+                        elements.div_ceil(64).saturating_mul(8) as u128
+                    })
+                } else {
+                    0
+                };
+                integer_bytes =
+                    integer_bytes.saturating_add(coordinate_bytes.saturating_add(dense_bytes));
             }
         }
-        let cells: u128 = exhaustive.iter().fold(0_u128, |total, (_, points, plan)| {
-            total.saturating_add(u128::from(*points).saturating_mul(plan.len() as u128))
-        });
-        let integer_bytes: u128 =
-            exhaustive
-                .iter()
-                .fold(0_u128, |total, (access, points, plan)| {
-                    let bytes_per_point = plan.iter().fold(0_u128, |bytes, expression| {
-                        bytes.saturating_add(self.expression_integer_bytes(*expression))
-                    });
-                    let coordinate_bytes =
-                        u128::from(*points).saturating_mul(bytes_per_point.max(1));
-                    let dense_bytes = if self.accesses[*access as usize].mode == AccessMode::Write {
-                        self.tensors[self.accesses[*access as usize].tensor as usize]
-                            .shape
-                            .element_count()
-                            .map_or(u128::MAX, |elements| {
-                                elements.div_ceil(64).saturating_mul(8) as u128
-                            })
-                    } else {
-                        0
-                    };
-                    total.saturating_add(coordinate_bytes.saturating_add(dense_bytes))
-                });
-        if cells > u128::from(MAX_EXHAUSTIVE_PROOF_CELLS) {
-            diagnostics.push(IndexRegionDiagnostic::ProofResourceLimit {
-                resource: ProofResource::Cells,
-                required: cells,
-                limit: MAX_EXHAUSTIVE_PROOF_CELLS,
-            });
-            return;
-        }
-        if integer_bytes > u128::from(MAX_EXHAUSTIVE_PROOF_BYTES) {
-            diagnostics.push(IndexRegionDiagnostic::ProofResourceLimit {
-                resource: ProofResource::IntegerBytes,
-                required: integer_bytes,
-                limit: MAX_EXHAUSTIVE_PROOF_BYTES,
-            });
-            return;
-        }
-        for (access, _, plan) in exhaustive {
-            self.verify_access_exhaustively(access, &plan, diagnostics);
+        let admitted = with_admitted_proof_budget(
+            cells,
+            integer_bytes,
+            MAX_EXHAUSTIVE_PROOF_CELLS,
+            MAX_EXHAUSTIVE_PROOF_BYTES,
+            || {
+                for access_index in accesses {
+                    let access = &self.accesses[*access_index as usize];
+                    let shape = &self.tensors[access.tensor as usize].shape;
+                    let points = self.domain_points(&access.domain);
+                    if points == 0 || !self.access_needs_exhaustive_proof(access, shape) {
+                        continue;
+                    }
+                    let mut reached = BTreeSet::new();
+                    for coordinate in &access.coordinates {
+                        self.mark_expr(*coordinate, &mut reached);
+                    }
+                    let plan = reached.into_iter().collect::<Vec<_>>();
+                    self.verify_access_exhaustively(*access_index, &plan, diagnostics);
+                }
+            },
+        );
+        if let Err(excess) = admitted {
+            diagnostics.push(excess.diagnostic());
         }
     }
 
+    fn access_needs_exhaustive_proof(&self, access: &AccessData, shape: &Shape) -> bool {
+        let interval_proved =
+            access
+                .coordinates
+                .iter()
+                .zip(shape.extents())
+                .all(|(coordinate, extent)| {
+                    self.expressions[*coordinate as usize]
+                        .interval
+                        .as_ref()
+                        .is_some_and(|(minimum, maximum)| {
+                            minimum >= &BigInt::zero() && maximum < &BigInt::from(extent.get())
+                        })
+                });
+        !interval_proved
+            || (access.mode == AccessMode::Write && !self.write_is_permutation(access, shape))
+    }
+
+    fn proof_plan_size(&self, coordinates: &[u32]) -> (usize, u128) {
+        let mut visited = vec![false; self.expressions.len()];
+        let mut pending = coordinates.to_vec();
+        let mut count = 0_usize;
+        let mut integer_bytes = 0_u128;
+        while let Some(expression) = pending.pop() {
+            if std::mem::replace(&mut visited[expression as usize], true) {
+                continue;
+            }
+            count = count.saturating_add(1);
+            integer_bytes = integer_bytes.saturating_add(self.expression_integer_bytes(expression));
+            match &*self.expressions[expression as usize].node {
+                IndexNode::LinearCombination { terms, .. } => {
+                    pending.extend(terms.iter().map(|term| term.value));
+                }
+                IndexNode::FloorDiv { dividend, .. } | IndexNode::Modulo { dividend, .. } => {
+                    pending.push(*dividend);
+                }
+                IndexNode::Constant(_) | IndexNode::Dimension(_) => {}
+            }
+        }
+        (count, integer_bytes)
+    }
+
     fn domain_points(&self, domain: &[u32]) -> u64 {
-        domain
+        if domain
             .iter()
-            .try_fold(1_u64, |points, dimension| {
-                points.checked_mul(self.dimensions[*dimension as usize].extent)
-            })
-            .unwrap_or(u64::MAX)
+            .any(|dimension| self.dimensions[*dimension as usize].extent == 0)
+        {
+            return 0;
+        }
+        domain.iter().fold(1_u64, |points, dimension| {
+            points.saturating_mul(self.dimensions[*dimension as usize].extent)
+        })
     }
 
     fn expression_integer_bytes(&self, expression: u32) -> u128 {
@@ -1427,14 +1798,22 @@ impl IndexRegionBuilder {
         }
         let magnitude_bound = if let IndexNode::LinearCombination { constant, terms } = &*data.node
         {
-            terms.iter().fold(constant.0.abs(), |bound, term| {
+            let mut bound = constant.0.abs();
+            for term in terms {
                 let (minimum, maximum) = self.expressions[term.value as usize]
                     .interval
                     .as_ref()
                     .expect("a linear interval requires every child interval");
                 let child_bound = minimum.abs().max(maximum.abs());
-                bound + term.coefficient.0.abs() * child_bound
-            })
+                let Ok(product) = checked_index_product(&term.coefficient.0.abs(), &child_bound)
+                else {
+                    return u128::MAX;
+                };
+                if checked_index_add_assign(&mut bound, &product).is_err() {
+                    return u128::MAX;
+                }
+            }
+            bound
         } else {
             let Some((minimum, maximum)) = &data.interval else {
                 return u128::MAX;
@@ -1600,6 +1979,8 @@ impl IndexRegionBuilder {
     ) -> Result<VerifiedIndexRegion, IndexRegionDiagnostic> {
         let order = self.compaction_order(reachable_values, reachable_accesses);
         let CompactionOrder {
+            dimensions: dimension_order,
+            dimension_map,
             tensors: tensor_order,
             tensor_map,
             expressions: expr_order,
@@ -1616,18 +1997,24 @@ impl IndexRegionBuilder {
             .map(|old| {
                 let data = &self.expressions[*old as usize];
                 IndexExprData {
-                    node: remap_node(&data.node, &expr_map),
+                    node: remap_node(&data.node, &expr_map, &dimension_map),
                     class: data.class,
                 }
             })
             .collect();
         let accesses: Vec<_> = access_order
             .iter()
-            .map(|old| self.remap_access(*old, &tensor_map, &expr_map))
+            .map(|old| self.remap_access(*old, &tensor_map, &expr_map, &dimension_map))
             .collect();
         let operations: Vec<_> = op_order
             .iter()
-            .map(|old| remap_operation(&self.operations[*old as usize].data, &value_map, &op_map))
+            .map(|old| {
+                remap_operation(
+                    &self.operations[*old as usize].data,
+                    &value_map,
+                    &dimension_map,
+                )
+            })
             .collect();
         let values: Vec<_> = value_order
             .iter()
@@ -1648,7 +2035,11 @@ impl IndexRegionBuilder {
                         }
                     },
                     value_type: value.value_type.clone(),
-                    free_dimensions: value.free_dimensions.clone(),
+                    free_dimensions: value
+                        .free_dimensions
+                        .iter()
+                        .map(|dimension| dimension_map[dimension])
+                        .collect(),
                     depth: value.depth,
                 }
             })
@@ -1665,7 +2056,19 @@ impl IndexRegionBuilder {
             .iter()
             .map(|index| self.tensors[*index as usize].clone())
             .collect::<Vec<_>>();
-        self.finish_compaction(tensors, expressions, accesses, operations, values, outputs)
+        let dimensions = dimension_order
+            .iter()
+            .map(|index| self.dimensions[*index as usize].clone())
+            .collect();
+        self.finish_compaction(CompactedRegion {
+            dimensions,
+            tensors,
+            expressions,
+            accesses,
+            operations,
+            values,
+            outputs,
+        })
     }
 
     fn compaction_order(
@@ -1673,6 +2076,8 @@ impl IndexRegionBuilder {
         reachable_values: BTreeSet<u32>,
         reachable_accesses: BTreeSet<u32>,
     ) -> CompactionOrder {
+        let dimension_order = self.alpha_dimension_order();
+        let dimension_map = map_order(&dimension_order);
         let mut tensor_order: Vec<_> = (0..bounded_index(self.tensors.len())).collect();
         tensor_order.sort_by_key(|i| (self.tensors[*i as usize].role, *i));
         let tensor_map = map_order(&tensor_order);
@@ -1683,7 +2088,12 @@ impl IndexRegionBuilder {
             }
         }
         let mut expr_order: Vec<_> = expr_reached.into_iter().collect();
-        expr_order.sort_by_key(|i| (self.expressions[*i as usize].depth, self.expr_key(*i)));
+        expr_order.sort_by_key(|i| {
+            (
+                self.expressions[*i as usize].depth,
+                self.alpha_expr_key(*i, &dimension_map),
+            )
+        });
         let expr_map = map_order(&expr_order);
         let mut access_order: Vec<_> = reachable_accesses.into_iter().collect();
         access_order.sort_by_key(|i| {
@@ -1691,7 +2101,15 @@ impl IndexRegionBuilder {
             (
                 tensor_map[&a.tensor],
                 a.mode,
-                a.domain.clone(),
+                {
+                    let mut domain = a
+                        .domain
+                        .iter()
+                        .map(|dimension| dimension_map[dimension])
+                        .collect::<Vec<_>>();
+                    domain.sort_unstable();
+                    domain
+                },
                 a.coordinates
                     .iter()
                     .map(|e| expr_map[e])
@@ -1706,11 +2124,12 @@ impl IndexRegionBuilder {
                 ScalarValueDefinition::AccessRead { .. } => None,
             })
             .collect();
+        let alpha_operation_keys = self.alpha_operation_keys(&dimension_map);
         let mut op_order: Vec<_> = reachable_ops.into_iter().collect();
         op_order.sort_by_key(|i| {
             (
                 self.operations[*i as usize].depth,
-                self.operations[*i as usize].structural_key.clone(),
+                alpha_operation_keys[*i as usize].clone(),
             )
         });
         let op_map = map_order(&op_order);
@@ -1729,6 +2148,8 @@ impl IndexRegionBuilder {
         });
         let value_map = map_order(&value_order);
         CompactionOrder {
+            dimensions: dimension_order,
+            dimension_map,
             tensors: tensor_order,
             tensor_map,
             expressions: expr_order,
@@ -1744,29 +2165,33 @@ impl IndexRegionBuilder {
 
     fn finish_compaction(
         &self,
-        tensors: Vec<TensorData>,
-        expressions: Vec<IndexExprData>,
-        accesses: Vec<VerifiedAccessData>,
-        operations: Vec<ScalarOperationData>,
-        values: Vec<ScalarValueData>,
-        outputs: Vec<OutputData>,
+        compacted: CompactedRegion,
     ) -> Result<VerifiedIndexRegion, IndexRegionDiagnostic> {
-        let dimensions = self.dimensions.clone();
-        let identity = encode_region(
-            &dimensions,
-            &tensors,
-            &expressions,
-            &accesses,
-            &operations,
-            &values,
-            &outputs,
+        let identity_bytes = encoded_region_len(
+            &compacted.dimensions,
+            &compacted.tensors,
+            &compacted.expressions,
+            &compacted.accesses,
+            &compacted.operations,
+            &compacted.values,
+            &compacted.outputs,
         );
-        if identity.as_bytes().len() > MAX_INDEX_REGION_IDENTITY_BYTES {
+        if identity_bytes > MAX_INDEX_REGION_IDENTITY_BYTES {
             return Err(IndexRegionDiagnostic::CanonicalIdentityLimit {
-                bytes: identity.as_bytes().len(),
+                bytes: identity_bytes,
                 limit: MAX_INDEX_REGION_IDENTITY_BYTES,
             });
         }
+        let identity = encode_region(&compacted, identity_bytes);
+        let CompactedRegion {
+            dimensions,
+            tensors,
+            expressions,
+            accesses,
+            operations,
+            values,
+            outputs,
+        } = compacted;
         Ok(VerifiedIndexRegion {
             data: Arc::new(VerifiedIndexRegionData {
                 owner: self.owner.verified_owner(),
@@ -1787,6 +2212,7 @@ impl IndexRegionBuilder {
         old: u32,
         tensor_map: &BTreeMap<u32, u32>,
         expression_map: &BTreeMap<u32, u32>,
+        dimension_map: &BTreeMap<u32, u32>,
     ) -> VerifiedAccessData {
         let access = &self.accesses[old as usize];
         let points = self.domain_points(&access.domain);
@@ -1806,7 +2232,15 @@ impl IndexRegionBuilder {
         VerifiedAccessData {
             tensor: tensor_map[&access.tensor],
             mode: access.mode,
-            domain: access.domain.clone(),
+            domain: {
+                let mut domain = access
+                    .domain
+                    .iter()
+                    .map(|dimension| dimension_map[dimension])
+                    .collect::<Vec<_>>();
+                domain.sort_unstable();
+                domain
+            },
             coordinates: access
                 .coordinates
                 .iter()
@@ -1847,23 +2281,285 @@ impl IndexRegionBuilder {
         reached
     }
     fn mark_expr(&self, i: u32, reached: &mut BTreeSet<u32>) {
-        if !reached.insert(i) {
+        let mut pending = vec![i];
+        while let Some(index) = pending.pop() {
+            if !reached.insert(index) {
+                continue;
+            }
+            match &*self.expressions[index as usize].node {
+                IndexNode::LinearCombination { terms, .. } => {
+                    pending.extend(terms.iter().map(|term| term.value));
+                }
+                IndexNode::FloorDiv { dividend, .. } | IndexNode::Modulo { dividend, .. } => {
+                    pending.push(*dividend);
+                }
+                IndexNode::Constant(_) | IndexNode::Dimension(_) => {}
+            }
+        }
+    }
+    fn alpha_dimension_order(&self) -> Vec<u32> {
+        let mut order = Vec::new();
+        let mut assigned = BTreeSet::new();
+        let mut visited_values = BTreeSet::new();
+        let mut visited_operations = BTreeSet::new();
+        let mut visited_accesses = BTreeSet::new();
+        let mut visited_expressions = BTreeSet::new();
+        for output in &self.outputs {
+            self.visit_access_dimensions(
+                output.access,
+                &mut order,
+                &mut assigned,
+                &mut visited_accesses,
+                &mut visited_expressions,
+            );
+            self.visit_value_dimensions(
+                output.value,
+                &mut order,
+                &mut assigned,
+                &mut visited_values,
+                &mut visited_operations,
+                &mut visited_accesses,
+                &mut visited_expressions,
+            );
+        }
+        let mut remaining: Vec<_> = (0..bounded_index(self.dimensions.len()))
+            .filter(|dimension| !assigned.contains(dimension))
+            .collect();
+        remaining.sort_by_key(|dimension| {
+            let data = &self.dimensions[*dimension as usize];
+            (data.role, data.extent)
+        });
+        order.extend(remaining);
+        order
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn visit_value_dimensions(
+        &self,
+        value: u32,
+        order: &mut Vec<u32>,
+        assigned: &mut BTreeSet<u32>,
+        visited_values: &mut BTreeSet<u32>,
+        visited_operations: &mut BTreeSet<u32>,
+        visited_accesses: &mut BTreeSet<u32>,
+        visited_expressions: &mut BTreeSet<u32>,
+    ) {
+        if !visited_values.insert(value) {
             return;
         }
-        match &*self.expressions[i as usize].node {
+        let data = &self.values[value as usize];
+        match data.definition {
+            ScalarValueDefinition::AccessRead { access } => self.visit_access_dimensions(
+                access,
+                order,
+                assigned,
+                visited_accesses,
+                visited_expressions,
+            ),
+            ScalarValueDefinition::OperationResult { operation, .. } => {
+                if visited_operations.insert(operation) {
+                    let occurrence = &self.operations[operation as usize];
+                    if let ScalarOperationKindData::Reduce { dimensions, .. } = &occurrence.kind {
+                        for dimension in dimensions {
+                            assign_dimension(*dimension, order, assigned);
+                        }
+                    }
+                    for operand in &occurrence.operands {
+                        self.visit_value_dimensions(
+                            *operand,
+                            order,
+                            assigned,
+                            visited_values,
+                            visited_operations,
+                            visited_accesses,
+                            visited_expressions,
+                        );
+                    }
+                }
+            }
+        }
+        let mut free: Vec<_> = data.free_dimensions.iter().copied().collect();
+        free.sort_by_key(|dimension| {
+            let data = &self.dimensions[*dimension as usize];
+            (data.role, data.extent)
+        });
+        for dimension in free {
+            assign_dimension(dimension, order, assigned);
+        }
+    }
+
+    fn visit_access_dimensions(
+        &self,
+        access: u32,
+        order: &mut Vec<u32>,
+        assigned: &mut BTreeSet<u32>,
+        visited_accesses: &mut BTreeSet<u32>,
+        visited_expressions: &mut BTreeSet<u32>,
+    ) {
+        if !visited_accesses.insert(access) {
+            return;
+        }
+        let access = &self.accesses[access as usize];
+        for coordinate in &access.coordinates {
+            self.visit_expression_dimensions(*coordinate, order, assigned, visited_expressions);
+        }
+        let mut domain = access.domain.clone();
+        domain.sort_by_key(|dimension| {
+            let data = &self.dimensions[*dimension as usize];
+            (data.role, data.extent)
+        });
+        for dimension in domain {
+            assign_dimension(dimension, order, assigned);
+        }
+    }
+
+    fn visit_expression_dimensions(
+        &self,
+        expression: u32,
+        order: &mut Vec<u32>,
+        assigned: &mut BTreeSet<u32>,
+        visited: &mut BTreeSet<u32>,
+    ) {
+        if !visited.insert(expression) {
+            return;
+        }
+        match &*self.expressions[expression as usize].node {
+            IndexNode::Dimension(dimension) => assign_dimension(*dimension, order, assigned),
             IndexNode::LinearCombination { terms, .. } => {
-                for t in terms {
-                    self.mark_expr(t.value, reached);
+                let mut terms: Vec<_> = terms.iter().collect();
+                terms.sort_by_key(|term| {
+                    (
+                        term.coefficient.clone(),
+                        self.alpha_blind_expr_key(term.value),
+                    )
+                });
+                for term in terms {
+                    self.visit_expression_dimensions(term.value, order, assigned, visited);
                 }
             }
             IndexNode::FloorDiv { dividend, .. } | IndexNode::Modulo { dividend, .. } => {
-                self.mark_expr(*dividend, reached);
+                self.visit_expression_dimensions(*dividend, order, assigned, visited);
             }
-            _ => {}
+            IndexNode::Constant(_) => {}
         }
     }
-    fn expr_key(&self, i: u32) -> Vec<u8> {
-        self.expressions[i as usize].structural_key.as_ref().clone()
+
+    fn alpha_blind_expr_key(&self, expression: u32) -> Vec<u8> {
+        alpha_expr_key_impl(expression, &self.expressions, None, &self.dimensions)
+    }
+
+    fn alpha_expr_key(&self, expression: u32, dimensions: &BTreeMap<u32, u32>) -> Vec<u8> {
+        alpha_expr_key_impl(
+            expression,
+            &self.expressions,
+            Some(dimensions),
+            &self.dimensions,
+        )
+    }
+
+    fn alpha_operation_keys(&self, dimensions: &BTreeMap<u32, u32>) -> Vec<Vec<u8>> {
+        let mut value_keys = vec![Vec::new(); self.values.len()];
+        for (index, value) in self.values.iter().enumerate() {
+            if let ScalarValueDefinition::AccessRead { access } = value.definition {
+                value_keys[index] = self.alpha_access_key(access, dimensions);
+            }
+        }
+        let mut operation_keys = Vec::with_capacity(self.operations.len());
+        for operation in &self.operations {
+            let mut key = b"tiler.index.scalar-operation.alpha.v1\0".to_vec();
+            match &operation.kind {
+                ScalarOperationKindData::Apply {
+                    key: operation_key,
+                    attributes,
+                } => {
+                    key.push(1);
+                    encode_key(&mut key, operation_key);
+                    encode_canonical(&mut key, attributes.value());
+                }
+                ScalarOperationKindData::Reduce {
+                    dimensions: reduction_dimensions,
+                    traversal,
+                    init,
+                    contributors,
+                    body,
+                } => {
+                    key.push(2);
+                    encode_u32s(
+                        &mut key,
+                        &reduction_dimensions
+                            .iter()
+                            .map(|dimension| dimensions[dimension])
+                            .collect::<Vec<_>>(),
+                    );
+                    key.push(match traversal {
+                        ReductionTraversal::ExactLexicographicLeftFold => 1,
+                    });
+                    encode_len(&mut key, init.len());
+                    encode_len(&mut key, contributors.len());
+                    encode_reducer_body(&mut key, body);
+                }
+            }
+            encode_len(&mut key, operation.operands.len());
+            for operand in &operation.operands {
+                encode_bytes(&mut key, &value_keys[*operand as usize]);
+            }
+            let free_dimensions: BTreeSet<_> =
+                operation
+                    .results
+                    .first()
+                    .map_or_else(BTreeSet::new, |result| {
+                        self.values[*result as usize]
+                            .free_dimensions
+                            .iter()
+                            .map(|dimension| dimensions[dimension])
+                            .collect()
+                    });
+            encode_u32s(
+                &mut key,
+                &free_dimensions.iter().copied().collect::<Vec<_>>(),
+            );
+            for result in &operation.results {
+                let ScalarValueDefinition::OperationResult {
+                    result: result_index,
+                    ..
+                } = self.values[*result as usize].definition
+                else {
+                    unreachable!("operation results have operation definitions")
+                };
+                let mut value_key = key.clone();
+                value_key.extend_from_slice(&result_index.get().to_be_bytes());
+                value_keys[*result as usize] = value_key;
+            }
+            operation_keys.push(key);
+        }
+        operation_keys
+    }
+
+    fn alpha_access_key(&self, access: u32, dimensions: &BTreeMap<u32, u32>) -> Vec<u8> {
+        let data = &self.accesses[access as usize];
+        let tensor = &self.tensors[data.tensor as usize];
+        let role_ordinal = self.tensors[..data.tensor as usize]
+            .iter()
+            .filter(|candidate| candidate.role == tensor.role)
+            .count();
+        let mut key = b"tiler.index.access-read.alpha.v1\0".to_vec();
+        key.push(match tensor.role {
+            TensorRole::Input => 1,
+            TensorRole::Output => 2,
+        });
+        encode_len(&mut key, role_ordinal);
+        let mut domain: Vec<_> = data
+            .domain
+            .iter()
+            .map(|dimension| dimensions[dimension])
+            .collect();
+        domain.sort_unstable();
+        encode_u32s(&mut key, &domain);
+        encode_len(&mut key, data.coordinates.len());
+        for coordinate in &data.coordinates {
+            encode_bytes(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
+        }
+        key
     }
     fn intern_index(
         &mut self,
@@ -1873,6 +2569,12 @@ impl IndexRegionBuilder {
         interval: Option<(BigInt, BigInt)>,
         depth: u32,
     ) -> Result<IndexExprId, IndexBuildError> {
+        limit(
+            depth as usize,
+            MAX_INDEX_EXPRESSION_DEPTH as usize,
+            IndexLimitKind::IndexExpressionDepth,
+        )?;
+        check_index_node_integers(&node)?;
         let structural_key = Arc::new(structural_index_key(&node, &self.expressions));
         if let Some(index) = self.expression_intern.get(&structural_key) {
             return Ok(IndexExprId {
@@ -1991,6 +2693,111 @@ fn limit(actual: usize, max: usize, resource: IndexLimitKind) -> Result<(), Inde
         Ok(())
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProofBudgetExcess {
+    Cells { required: u128, limit: u64 },
+    IntegerBytes { required: u128, limit: u64 },
+}
+
+impl ProofBudgetExcess {
+    fn diagnostic(self) -> IndexRegionDiagnostic {
+        match self {
+            Self::Cells { required, limit } => IndexRegionDiagnostic::ProofResourceLimit {
+                resource: ProofResource::Cells,
+                required,
+                limit,
+            },
+            Self::IntegerBytes { required, limit } => IndexRegionDiagnostic::ProofResourceLimit {
+                resource: ProofResource::IntegerBytes,
+                required,
+                limit,
+            },
+        }
+    }
+}
+
+fn with_admitted_proof_budget<T>(
+    cells: u128,
+    integer_bytes: u128,
+    cell_limit: u64,
+    byte_limit: u64,
+    materialize: impl FnOnce() -> T,
+) -> Result<T, ProofBudgetExcess> {
+    if cells > u128::from(cell_limit) {
+        return Err(ProofBudgetExcess::Cells {
+            required: cells,
+            limit: cell_limit,
+        });
+    }
+    if integer_bytes > u128::from(byte_limit) {
+        return Err(ProofBudgetExcess::IntegerBytes {
+            required: integer_bytes,
+            limit: byte_limit,
+        });
+    }
+    Ok(materialize())
+}
+fn check_integer(value: &BigInt) -> Result<(), IndexBuildError> {
+    let magnitude_bytes = usize::try_from(value.bits().div_ceil(8)).unwrap_or(usize::MAX);
+    limit(
+        magnitude_bytes,
+        MAX_INDEX_INTEGER_BYTES,
+        IndexLimitKind::IndexIntegerBytes,
+    )
+}
+fn checked_index_product(left: &BigInt, right: &BigInt) -> Result<BigInt, IndexBuildError> {
+    if left.is_zero() || right.is_zero() {
+        return Ok(BigInt::zero());
+    }
+    let maximum_bits = (MAX_INDEX_INTEGER_BYTES as u64).saturating_mul(8);
+    let upper_bits = left.bits().saturating_add(right.bits());
+    if upper_bits > maximum_bits.saturating_add(1) {
+        return Err(IndexBuildError::StructuralLimit {
+            resource: IndexLimitKind::IndexIntegerBytes,
+            actual: u128::from(upper_bits.div_ceil(8)),
+            limit: MAX_INDEX_INTEGER_BYTES as u128,
+        });
+    }
+    let product = left * right;
+    check_integer(&product)?;
+    Ok(product)
+}
+
+fn checked_index_add_assign(
+    accumulator: &mut BigInt,
+    addend: &BigInt,
+) -> Result<(), IndexBuildError> {
+    if addend.is_zero() {
+        return Ok(());
+    }
+    let maximum_bits = (MAX_INDEX_INTEGER_BYTES as u64).saturating_mul(8);
+    let upper_bits = accumulator.bits().max(addend.bits()).saturating_add(1);
+    if accumulator.sign() == addend.sign() && upper_bits > maximum_bits.saturating_add(1) {
+        return Err(IndexBuildError::StructuralLimit {
+            resource: IndexLimitKind::IndexIntegerBytes,
+            actual: u128::from(upper_bits.div_ceil(8)),
+            limit: MAX_INDEX_INTEGER_BYTES as u128,
+        });
+    }
+    let sum = &*accumulator + addend;
+    check_integer(&sum)?;
+    *accumulator = sum;
+    Ok(())
+}
+fn check_index_node_integers(node: &IndexNode) -> Result<(), IndexBuildError> {
+    match node {
+        IndexNode::Constant(value) => check_integer(&value.0),
+        IndexNode::LinearCombination { constant, terms } => {
+            check_integer(&constant.0)?;
+            for term in terms {
+                check_integer(&term.coefficient.0)?;
+            }
+            Ok(())
+        }
+        IndexNode::Dimension(_) | IndexNode::FloorDiv { .. } | IndexNode::Modulo { .. } => Ok(()),
+    }
+}
 fn too_many(entity: IndexEntityKind) -> IndexBuildError {
     IndexBuildError::TooManyEntities { entity }
 }
@@ -2013,6 +2820,68 @@ fn retained_operation_bytes(
                 .saturating_add(value_type.canonical_encoding().as_bytes().len())
                 .saturating_add(free_dimension_bytes)
         }))
+}
+fn minimum_retained_operation_bytes(
+    key_bytes: usize,
+    operand_count: usize,
+    minimum_results: usize,
+    free_dimension_count: usize,
+) -> usize {
+    operand_count
+        .saturating_add(minimum_results)
+        .saturating_mul(4)
+        .saturating_add(key_bytes)
+        .saturating_add(
+            minimum_results.saturating_mul(
+                key_bytes
+                    .saturating_add(4)
+                    .saturating_add(free_dimension_count.saturating_mul(4)),
+            ),
+        )
+}
+fn inference_capacity(
+    value_count: usize,
+    value_limit: usize,
+    retained_bytes: usize,
+    retained_byte_limit: usize,
+    key_bytes: usize,
+    operand_count: usize,
+    free_dimension_count: usize,
+) -> ScalarInferenceCapacity {
+    let fixed_bytes = key_bytes.saturating_add(operand_count.saturating_mul(4));
+    ScalarInferenceCapacity {
+        result_slots: value_limit.saturating_sub(value_count),
+        result_count_before: value_count,
+        result_limit: value_limit,
+        retained_bytes: retained_byte_limit
+            .saturating_sub(retained_bytes)
+            .saturating_sub(fixed_bytes),
+        retained_bytes_before: retained_bytes.saturating_add(fixed_bytes),
+        retained_byte_limit,
+        per_result_overhead: key_bytes
+            .saturating_add(8)
+            .saturating_add(free_dimension_count.saturating_mul(4)),
+        byte_multiplier: 1,
+    }
+}
+fn map_scalar_apply_error(error: ScalarApplyError) -> IndexBuildError {
+    match error {
+        ScalarApplyError::Authority(error) => IndexBuildError::from(error),
+        ScalarApplyError::Host(ScalarInferenceHostFailure::ResultSlots { actual, limit }) => {
+            IndexBuildError::StructuralLimit {
+                resource: IndexLimitKind::ScalarValues,
+                actual: actual as u128,
+                limit: limit as u128,
+            }
+        }
+        ScalarApplyError::Host(ScalarInferenceHostFailure::CanonicalBytes { actual, limit }) => {
+            IndexBuildError::StructuralLimit {
+                resource: IndexLimitKind::ScalarCanonicalBytes,
+                actual: actual as u128,
+                limit: limit as u128,
+            }
+        }
+    }
 }
 fn map_order(order: &[u32]) -> BTreeMap<u32, u32> {
     order
@@ -2075,35 +2944,41 @@ fn accumulate_linear_term(
     coefficient: &BigInt,
     value: u32,
     expressions: &[DraftIndexExpr],
-) {
+) -> Result<(), IndexBuildError> {
     if coefficient.is_zero() {
-        return;
+        return Ok(());
     }
     let expression = &expressions[value as usize];
     match &*expression.node {
-        IndexNode::Constant(inner) => *constant += coefficient * &inner.0,
+        IndexNode::Constant(inner) => {
+            let product = checked_index_product(coefficient, &inner.0)?;
+            checked_index_add_assign(constant, &product)?;
+        }
         IndexNode::LinearCombination {
             constant: inner_constant,
             terms,
         } => {
-            *constant += coefficient * &inner_constant.0;
+            let product = checked_index_product(coefficient, &inner_constant.0)?;
+            checked_index_add_assign(constant, &product)?;
             for term in terms {
+                let nested_coefficient = checked_index_product(coefficient, &term.coefficient.0)?;
                 accumulate_linear_term(
                     constant,
                     coefficients,
-                    &(coefficient * &term.coefficient.0),
+                    &nested_coefficient,
                     term.value,
                     expressions,
-                );
+                )?;
             }
         }
         _ => {
             let entry = coefficients
                 .entry(Arc::clone(&expression.structural_key))
                 .or_insert_with(|| (value, BigInt::zero()));
-            entry.1 += coefficient;
+            checked_index_add_assign(&mut entry.1, coefficient)?;
         }
     }
+    Ok(())
 }
 fn compact_reducer_body(
     body: &ScalarReducerBodyData,
@@ -2202,29 +3077,66 @@ fn compact_reducer_body(
         yields: body.yields.iter().map(|value| value_map[value]).collect(),
     }
 }
+fn minimum_reducer_body(
+    state: &[ScalarValueData],
+    contributors: &[ScalarValueData],
+) -> ScalarReducerBodyData {
+    let mut values = Vec::with_capacity(state.len().saturating_add(contributors.len()));
+    values.extend(
+        state
+            .iter()
+            .enumerate()
+            .map(|(index, value)| ReducerBodyValueData {
+                source: ReducerBodyValueSource::StateParameter(
+                    u32::try_from(index).expect("governed state count fits u32"),
+                ),
+                value_type: value.value_type.clone(),
+            }),
+    );
+    values.extend(
+        contributors
+            .iter()
+            .enumerate()
+            .map(|(index, value)| ReducerBodyValueData {
+                source: ReducerBodyValueSource::ContributorParameter(
+                    u32::try_from(index).expect("governed contributor count fits u32"),
+                ),
+                value_type: value.value_type.clone(),
+            }),
+    );
+    ScalarReducerBodyData {
+        values,
+        operations: Vec::new(),
+        yields: (0..u32::try_from(state.len()).expect("governed state count fits u32")).collect(),
+    }
+}
 fn interval_linear(
     constant: &BigInt,
     terms: &[LinearTermData],
     expressions: &[DraftIndexExpr],
-) -> Option<(BigInt, BigInt)> {
+) -> Result<Option<(BigInt, BigInt)>, IndexBuildError> {
     let (mut minimum, mut maximum) = (constant.clone(), constant.clone());
     for term in terms {
-        let (child_minimum, child_maximum) = expressions[term.value as usize].interval.clone()?;
+        let Some((child_minimum, child_maximum)) =
+            expressions[term.value as usize].interval.clone()
+        else {
+            return Ok(None);
+        };
         let (term_minimum, term_maximum) = if term.coefficient.0.sign() == num_bigint::Sign::Minus {
             (
-                &term.coefficient.0 * &child_maximum,
-                &term.coefficient.0 * &child_minimum,
+                checked_index_product(&term.coefficient.0, &child_maximum)?,
+                checked_index_product(&term.coefficient.0, &child_minimum)?,
             )
         } else {
             (
-                &term.coefficient.0 * &child_minimum,
-                &term.coefficient.0 * &child_maximum,
+                checked_index_product(&term.coefficient.0, &child_minimum)?,
+                checked_index_product(&term.coefficient.0, &child_maximum)?,
             )
         };
-        minimum += term_minimum;
-        maximum += term_maximum;
+        checked_index_add_assign(&mut minimum, &term_minimum)?;
+        checked_index_add_assign(&mut maximum, &term_maximum)?;
     }
-    Some((minimum, maximum))
+    Ok(Some((minimum, maximum)))
 }
 fn structural_index_key(node: &IndexNode, expressions: &[DraftIndexExpr]) -> Vec<u8> {
     let mut output = Vec::new();
@@ -2393,26 +3305,106 @@ fn encode_reducer_body(output: &mut Vec<u8>, body: &ScalarReducerBodyData) {
     }
     encode_u32s(output, &body.yields);
 }
-fn remap_node(node: &IndexNode, map: &BTreeMap<u32, u32>) -> IndexNode {
+fn assign_dimension(dimension: u32, order: &mut Vec<u32>, assigned: &mut BTreeSet<u32>) {
+    if assigned.insert(dimension) {
+        order.push(dimension);
+    }
+}
+
+fn alpha_expr_key_impl(
+    expression: u32,
+    expressions: &[DraftIndexExpr],
+    dimension_map: Option<&BTreeMap<u32, u32>>,
+    dimensions: &[DimensionData],
+) -> Vec<u8> {
+    let mut output = Vec::new();
+    match &*expressions[expression as usize].node {
+        IndexNode::Constant(value) => {
+            output.push(1);
+            value.encode(&mut output);
+        }
+        IndexNode::Dimension(dimension) => {
+            output.push(2);
+            if let Some(dimension_map) = dimension_map {
+                output.extend_from_slice(&dimension_map[dimension].to_be_bytes());
+            } else {
+                let data = &dimensions[*dimension as usize];
+                output.push(match data.role {
+                    DomainRole::Parallel => 1,
+                    DomainRole::Reduction => 2,
+                });
+                output.extend_from_slice(&data.extent.to_be_bytes());
+            }
+        }
+        IndexNode::LinearCombination { constant, terms } => {
+            output.push(3);
+            constant.encode(&mut output);
+            let mut encoded_terms = terms
+                .iter()
+                .map(|term| {
+                    let mut encoded = Vec::new();
+                    term.coefficient.encode(&mut encoded);
+                    encode_bytes(
+                        &mut encoded,
+                        &alpha_expr_key_impl(term.value, expressions, dimension_map, dimensions),
+                    );
+                    encoded
+                })
+                .collect::<Vec<_>>();
+            encoded_terms.sort();
+            encode_len(&mut output, encoded_terms.len());
+            for term in encoded_terms {
+                encode_bytes(&mut output, &term);
+            }
+        }
+        IndexNode::FloorDiv { dividend, divisor } => {
+            output.push(4);
+            encode_bytes(
+                &mut output,
+                &alpha_expr_key_impl(*dividend, expressions, dimension_map, dimensions),
+            );
+            output.extend_from_slice(&divisor.to_be_bytes());
+        }
+        IndexNode::Modulo { dividend, divisor } => {
+            output.push(5);
+            encode_bytes(
+                &mut output,
+                &alpha_expr_key_impl(*dividend, expressions, dimension_map, dimensions),
+            );
+            output.extend_from_slice(&divisor.to_be_bytes());
+        }
+    }
+    output
+}
+
+fn remap_node(
+    node: &IndexNode,
+    expression_map: &BTreeMap<u32, u32>,
+    dimension_map: &BTreeMap<u32, u32>,
+) -> IndexNode {
     match node {
         IndexNode::Constant(v) => IndexNode::Constant(v.clone()),
-        IndexNode::Dimension(d) => IndexNode::Dimension(*d),
+        IndexNode::Dimension(d) => IndexNode::Dimension(dimension_map[d]),
         IndexNode::LinearCombination { constant, terms } => IndexNode::LinearCombination {
             constant: constant.clone(),
-            terms: terms
-                .iter()
-                .map(|t| LinearTermData {
-                    coefficient: t.coefficient.clone(),
-                    value: map[&t.value],
-                })
-                .collect(),
+            terms: {
+                let mut terms = terms
+                    .iter()
+                    .map(|t| LinearTermData {
+                        coefficient: t.coefficient.clone(),
+                        value: expression_map[&t.value],
+                    })
+                    .collect::<Vec<_>>();
+                terms.sort();
+                terms
+            },
         },
         IndexNode::FloorDiv { dividend, divisor } => IndexNode::FloorDiv {
-            dividend: map[dividend],
+            dividend: expression_map[dividend],
             divisor: *divisor,
         },
         IndexNode::Modulo { dividend, divisor } => IndexNode::Modulo {
-            dividend: map[dividend],
+            dividend: expression_map[dividend],
             divisor: *divisor,
         },
     }
@@ -2420,7 +3412,7 @@ fn remap_node(node: &IndexNode, map: &BTreeMap<u32, u32>) -> IndexNode {
 fn remap_operation(
     op: &ScalarOperationData,
     values: &BTreeMap<u32, u32>,
-    _ops: &BTreeMap<u32, u32>,
+    dimension_map: &BTreeMap<u32, u32>,
 ) -> ScalarOperationData {
     ScalarOperationData {
         kind: match &op.kind {
@@ -2435,7 +3427,10 @@ fn remap_operation(
                 contributors,
                 body,
             } => ScalarOperationKindData::Reduce {
-                dimensions: dimensions.clone(),
+                dimensions: dimensions
+                    .iter()
+                    .map(|dimension| dimension_map[dimension])
+                    .collect(),
                 traversal: *traversal,
                 init: init.iter().map(|v| values[v]).collect(),
                 contributors: contributors.iter().map(|v| values[v]).collect(),
@@ -2449,15 +3444,20 @@ fn remap_operation(
 }
 
 fn encode_region(
-    dimensions: &[DimensionData],
-    tensors: &[TensorData],
-    expressions: &[IndexExprData],
-    accesses: &[VerifiedAccessData],
-    operations: &[ScalarOperationData],
-    values: &[ScalarValueData],
-    outputs: &[OutputData],
+    compacted: &CompactedRegion,
+    exact_capacity: usize,
 ) -> CanonicalIndexRegionIdentity {
-    let mut out = b"tiler.index-region.v3\0".to_vec();
+    let CompactedRegion {
+        dimensions,
+        tensors,
+        expressions,
+        accesses,
+        operations,
+        values,
+        outputs,
+    } = compacted;
+    let mut out = Vec::with_capacity(exact_capacity);
+    out.extend_from_slice(b"tiler.index-region.v4\0");
     encode_len(&mut out, dimensions.len());
     for d in dimensions {
         out.push(match d.role {
@@ -2522,7 +3522,192 @@ fn encode_region(
         out.extend_from_slice(&o.access.to_be_bytes());
         out.extend_from_slice(&o.value.to_be_bytes());
     }
+    debug_assert_eq!(out.len(), exact_capacity);
     CanonicalIndexRegionIdentity(out)
+}
+
+fn encoded_region_len(
+    dimensions: &[DimensionData],
+    tensors: &[TensorData],
+    expressions: &[IndexExprData],
+    accesses: &[VerifiedAccessData],
+    operations: &[ScalarOperationData],
+    values: &[ScalarValueData],
+    outputs: &[OutputData],
+) -> usize {
+    let mut bytes = b"tiler.index-region.v4\0".len() + 8;
+    bytes = bytes.saturating_add(dimensions.len().saturating_mul(9));
+    bytes = bytes.saturating_add(8);
+    for tensor in tensors {
+        bytes = bytes
+            .saturating_add(1)
+            .saturating_add(encoded_bytes_len(
+                tensor.value_type.canonical_encoding().as_bytes().len(),
+            ))
+            .saturating_add(8)
+            .saturating_add(tensor.shape.rank().saturating_mul(8));
+    }
+    bytes = bytes.saturating_add(8);
+    for expression in expressions {
+        bytes = bytes.saturating_add(encoded_index_node_len(&expression.node));
+    }
+    bytes = bytes.saturating_add(8);
+    for access in accesses {
+        bytes = bytes
+            .saturating_add(5)
+            .saturating_add(encoded_u32s_len(access.domain.len()))
+            .saturating_add(encoded_u32s_len(access.coordinates.len()));
+    }
+    bytes = bytes.saturating_add(8);
+    for operation in operations {
+        bytes = bytes
+            .saturating_add(encoded_operation_kind_len(&operation.kind))
+            .saturating_add(encoded_u32s_len(operation.operands.len()))
+            .saturating_add(encoded_u32s_len(operation.results.len()));
+    }
+    bytes = bytes.saturating_add(8);
+    for value in values {
+        bytes = bytes
+            .saturating_add(match value.definition {
+                ScalarValueDefinition::AccessRead { .. } => 5,
+                ScalarValueDefinition::OperationResult { .. } => 9,
+            })
+            .saturating_add(encoded_bytes_len(
+                value.value_type.canonical_encoding().as_bytes().len(),
+            ))
+            .saturating_add(encoded_u32s_len(value.free_dimensions.len()));
+    }
+    bytes
+        .saturating_add(8)
+        .saturating_add(outputs.len().saturating_mul(8))
+}
+
+fn encoded_index_node_len(node: &IndexNode) -> usize {
+    match node {
+        IndexNode::Constant(value) => 1 + encoded_integer_len(value),
+        IndexNode::Dimension(_) => 5,
+        IndexNode::LinearCombination { constant, terms } => 1_usize
+            .saturating_add(encoded_integer_len(constant))
+            .saturating_add(8)
+            .saturating_add(
+                terms
+                    .iter()
+                    .map(|term| encoded_integer_len(&term.coefficient).saturating_add(4))
+                    .fold(0_usize, usize::saturating_add),
+            ),
+        IndexNode::FloorDiv { .. } | IndexNode::Modulo { .. } => 13,
+    }
+}
+
+fn encoded_integer_len(value: &IndexInteger) -> usize {
+    let magnitude = usize::try_from(value.0.bits().div_ceil(8)).unwrap_or(usize::MAX);
+    9_usize.saturating_add(magnitude)
+}
+
+fn encoded_operation_kind_len(kind: &ScalarOperationKindData) -> usize {
+    match kind {
+        ScalarOperationKindData::Apply { key, attributes } => 1_usize
+            .saturating_add(encoded_key_len(key))
+            .saturating_add(attributes.value().encoded_len()),
+        ScalarOperationKindData::Reduce {
+            dimensions,
+            init,
+            contributors,
+            body,
+            ..
+        } => 2_usize
+            .saturating_add(encoded_u32s_len(dimensions.len()))
+            .saturating_add(encoded_u32s_len(init.len()))
+            .saturating_add(encoded_u32s_len(contributors.len()))
+            .saturating_add(encoded_reducer_body_len(body)),
+    }
+}
+
+fn encoded_reducer_body_len(body: &ScalarReducerBodyData) -> usize {
+    let mut bytes = 8_usize;
+    for value in &body.values {
+        bytes = bytes.saturating_add(encoded_reducer_value_len(value));
+    }
+    bytes = bytes.saturating_add(8);
+    for operation in &body.operations {
+        bytes = bytes.saturating_add(encoded_reducer_operation_len(operation));
+    }
+    bytes.saturating_add(encoded_u32s_len(body.yields.len()))
+}
+
+fn encoded_reducer_parameter_len(value_type: &ResolvedValueType) -> usize {
+    encoded_reducer_parameter_source_len().saturating_add(encoded_bytes_len(
+        value_type.canonical_encoding().as_bytes().len(),
+    ))
+}
+
+fn encoded_reducer_value_len(value: &ReducerBodyValueData) -> usize {
+    let source_bytes: usize = match value.source {
+        ReducerBodyValueSource::StateParameter(_)
+        | ReducerBodyValueSource::ContributorParameter(_) => encoded_reducer_parameter_source_len(),
+        ReducerBodyValueSource::OperationResult { .. } => {
+            encoded_reducer_operation_result_source_len()
+        }
+    };
+    source_bytes.saturating_add(encoded_bytes_len(
+        value.value_type.canonical_encoding().as_bytes().len(),
+    ))
+}
+
+fn encoded_reducer_operation_base_len(
+    key: &ScalarOpKey,
+    attributes: &ScalarAttributes,
+    operand_count: usize,
+) -> usize {
+    encoded_key_len(key)
+        .saturating_add(attributes.value().encoded_len())
+        .saturating_add(encoded_u32s_len(operand_count))
+        .saturating_add(8)
+}
+
+fn encoded_reducer_operation_len(operation: &ReducerBodyOperationData) -> usize {
+    encoded_reducer_operation_base_len(
+        &operation.key,
+        &operation.attributes,
+        operation.operands.len(),
+    )
+    .saturating_add(operation.results.len().saturating_mul(4))
+}
+
+const fn encoded_reducer_operation_result_overhead() -> usize {
+    encoded_reducer_operation_result_source_len()
+        .saturating_add(8) // Encoded-byte length prefix.
+        .saturating_add(4) // Result-list index.
+}
+
+const fn encoded_reducer_parameter_source_len() -> usize {
+    5
+}
+
+const fn encoded_reducer_operation_result_source_len() -> usize {
+    9
+}
+
+fn encoded_reducer_operation_result_increment(value_type: &ResolvedValueType) -> usize {
+    value_type
+        .canonical_encoding()
+        .as_bytes()
+        .len()
+        .saturating_add(encoded_reducer_operation_result_overhead())
+}
+
+fn encoded_key_len(key: &ScalarOpKey) -> usize {
+    encoded_bytes_len(key.namespace().len())
+        .saturating_add(encoded_bytes_len(key.name().len()))
+        .saturating_add(4)
+}
+
+const fn encoded_bytes_len(bytes: usize) -> usize {
+    8_usize.saturating_add(bytes)
+}
+
+const fn encoded_u32s_len(values: usize) -> usize {
+    8_usize.saturating_add(values.saturating_mul(4))
 }
 
 fn encode_index_node(out: &mut Vec<u8>, node: &IndexNode) {
@@ -2607,9 +3792,300 @@ fn encode_operation_kind(out: &mut Vec<u8>, kind: &ScalarOperationKindData) {
         }
     }
 }
+
 fn encode_u32s(out: &mut Vec<u8>, values: &[u32]) {
     encode_len(out, values.len());
     for v in values {
         out.extend_from_slice(&v.to_be_bytes());
+    }
+}
+
+#[cfg(test)]
+mod resource_order_tests {
+    use std::cell::Cell;
+    use std::error::Error as _;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::{
+        ProofBudgetExcess, ReducerBodyBudget, admit_reducer_body_append, encode_reducer_body,
+        encoded_reducer_body_len, encoded_reducer_operation_base_len,
+        encoded_reducer_operation_result_increment, encoded_reducer_operation_result_overhead,
+        encoded_reducer_parameter_len, map_scalar_apply_error, minimum_reducer_body,
+        with_admitted_proof_budget,
+    };
+    use crate::index::model::{
+        ReducerBodyOperationData, ReducerBodyValueData, ReducerBodyValueSource,
+        ScalarReducerBodyData,
+    };
+    use crate::index::scalar::{ScalarApplyError, ScalarInferenceHostFailure};
+    use crate::index::{
+        DomainRole, FrozenScalarRegistry, IndexBuildError, IndexLimitKind, IndexRegionBuilder,
+        MAX_SCALAR_CANONICAL_BYTES, ScalarArity, ScalarAttributeSchema, ScalarAttributes,
+        ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest,
+        ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
+        ScalarRegistryBuilder, ScalarResultIndex, TensorRole,
+    };
+    use crate::semantic::{
+        CanonicalValue, NormativeDefinitionRef, ProviderIdentity, RegistryError, ResolvedValueType,
+        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
+        TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey,
+    };
+    use crate::shape::{Extent, Shape};
+
+    fn reducer_test_type() -> ResolvedValueType {
+        ResolvedValueType::nominal(TypeKey::new("test", "reducer-value", 1).unwrap())
+    }
+
+    struct ReducerTestTypes;
+    impl SemanticRegistryProvider for ReducerTestTypes {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "reducer-types", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(TypeKey::new("test", "reducer-value", 1).unwrap()),
+                NormativeDefinitionRef::new("urn:test:reducer-value:v1").unwrap(),
+                TypeDefinitionFacts::new(CanonicalValue::record([]).unwrap()),
+            ))
+        }
+    }
+
+    struct FirstOperand {
+        calls: Arc<AtomicUsize>,
+    }
+    impl ScalarOperationInferencer for FirstOperand {
+        fn infer(
+            &self,
+            request: ScalarInferenceRequest<'_>,
+            outputs: &mut ScalarInferenceOutputs,
+        ) -> Result<(), ScalarInferenceError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            outputs.try_push(request.operands()[0].clone())
+        }
+    }
+
+    fn reducer_test_registry(calls: Arc<AtomicUsize>) -> FrozenScalarRegistry {
+        let mut semantic = SemanticRegistryBuilder::new();
+        semantic.register_provider(&ReducerTestTypes).unwrap();
+        let mut scalar = ScalarRegistryBuilder::new(semantic.freeze().unwrap());
+        let key = ScalarOpKey::new("test", "step", 1).unwrap();
+        scalar
+            .register(
+                ProviderIdentity::new("test", "reducer-scalars", 1).unwrap(),
+                ScalarOperationDefinition::new(
+                    key,
+                    NormativeDefinitionRef::new("urn:test:step:v1").unwrap(),
+                    ScalarOperationContract::new(
+                        ScalarAttributeSchema::empty(),
+                        ScalarArity::exact(1).unwrap(),
+                        ScalarArity::exact(1).unwrap(),
+                        ScalarEffect::Pure,
+                        CanonicalValue::record([]).unwrap(),
+                        CanonicalValue::record([]).unwrap(),
+                    ),
+                    Arc::new(FirstOperand { calls }),
+                ),
+            )
+            .unwrap();
+        scalar.freeze()
+    }
+
+    #[test]
+    fn proof_materialization_runs_only_after_aggregate_admission() {
+        let materializations = Cell::new(0_u32);
+        let rejected = with_admitted_proof_budget(11, 8, 10, 10, || {
+            materializations.set(materializations.get() + 1);
+        });
+        assert_eq!(
+            rejected,
+            Err(ProofBudgetExcess::Cells {
+                required: 11,
+                limit: 10,
+            })
+        );
+        assert_eq!(materializations.get(), 0);
+
+        with_admitted_proof_budget(10, 10, 10, 10, || {
+            materializations.set(materializations.get() + 1);
+        })
+        .unwrap();
+        assert_eq!(materializations.get(), 1);
+    }
+
+    #[test]
+    fn parent_reducer_budget_rejects_before_retaining_the_append() {
+        let commits = Cell::new(0_u32);
+        let budget = ReducerBodyBudget {
+            parent_bytes_without_body: MAX_SCALAR_CANONICAL_BYTES - 20,
+            body_multiplier: 2,
+            maximum_encoded_bytes: 10,
+        };
+        let error =
+            admit_reducer_body_append(budget, 11, || commits.set(commits.get() + 1)).unwrap_err();
+        assert_eq!(commits.get(), 0);
+        assert_eq!(
+            error,
+            IndexBuildError::StructuralLimit {
+                resource: IndexLimitKind::ScalarCanonicalBytes,
+                actual: (MAX_SCALAR_CANONICAL_BYTES + 2) as u128,
+                limit: MAX_SCALAR_CANONICAL_BYTES as u128,
+            }
+        );
+
+        admit_reducer_body_append(budget, 10, || commits.set(commits.get() + 1)).unwrap();
+        assert_eq!(commits.get(), 1);
+    }
+
+    #[test]
+    fn enclosing_capacity_errors_have_no_provider_source() {
+        for error in [
+            ScalarApplyError::Host(ScalarInferenceHostFailure::ResultSlots {
+                actual: 65_537,
+                limit: 65_536,
+            }),
+            ScalarApplyError::Host(ScalarInferenceHostFailure::CanonicalBytes {
+                actual: MAX_SCALAR_CANONICAL_BYTES + 1,
+                limit: MAX_SCALAR_CANONICAL_BYTES,
+            }),
+        ] {
+            let mapped = map_scalar_apply_error(error);
+            assert!(matches!(mapped, IndexBuildError::StructuralLimit { .. }));
+            assert!(mapped.source().is_none());
+        }
+    }
+
+    #[test]
+    fn incremental_reducer_accounting_matches_the_final_encoder() {
+        let value_type = reducer_test_type();
+        let key = ScalarOpKey::new("test", "step", 1).unwrap();
+        let attributes = ScalarAttributes::empty();
+        let body = ScalarReducerBodyData {
+            values: vec![
+                ReducerBodyValueData {
+                    source: ReducerBodyValueSource::StateParameter(0),
+                    value_type: value_type.clone(),
+                },
+                ReducerBodyValueData {
+                    source: ReducerBodyValueSource::ContributorParameter(0),
+                    value_type: value_type.clone(),
+                },
+                ReducerBodyValueData {
+                    source: ReducerBodyValueSource::OperationResult {
+                        operation: 0,
+                        result: ScalarResultIndex::from_usize(0).unwrap(),
+                    },
+                    value_type: value_type.clone(),
+                },
+            ],
+            operations: vec![ReducerBodyOperationData {
+                key: key.clone(),
+                attributes: attributes.clone(),
+                operands: vec![0, 1],
+                results: vec![2],
+            }],
+            yields: vec![2],
+        };
+        let incrementally_accounted = 24_usize
+            .saturating_add(encoded_reducer_parameter_len(&value_type).saturating_mul(2))
+            .saturating_add(encoded_reducer_operation_base_len(&key, &attributes, 2))
+            .saturating_add(encoded_reducer_operation_result_increment(&value_type))
+            .saturating_add(4);
+        let mut encoded = Vec::new();
+        encode_reducer_body(&mut encoded, &body);
+        assert_eq!(incrementally_accounted, encoded_reducer_body_len(&body));
+        assert_eq!(incrementally_accounted, encoded.len());
+    }
+
+    #[test]
+    fn near_parent_limit_reducer_failure_leaves_the_outer_builder_unchanged() {
+        let inference_calls = Arc::new(AtomicUsize::new(0));
+        let mut builder =
+            IndexRegionBuilder::new(reducer_test_registry(Arc::clone(&inference_calls))).unwrap();
+        let reduction = builder
+            .dimension(DomainRole::Reduction, Extent::new(2))
+            .unwrap();
+        let coordinate = builder.dimension_expr(reduction).unwrap();
+        let input = builder
+            .tensor(
+                TensorRole::Input,
+                reducer_test_type(),
+                Shape::new([Extent::new(2)]),
+            )
+            .unwrap();
+        let contributor = builder.read(input, &[reduction], &[coordinate]).unwrap();
+        let init_input = builder
+            .tensor(TensorRole::Input, reducer_test_type(), Shape::new([]))
+            .unwrap();
+        let init = builder.read(init_input, &[], &[]).unwrap();
+        let inputs = builder
+            .prepare_reduction_inputs(&[reduction], &[init], &[contributor])
+            .unwrap();
+        let minimum_body_bytes =
+            encoded_reducer_body_len(&minimum_reducer_body(&inputs.init, &inputs.contributors));
+        let operation_base = encoded_reducer_operation_base_len(
+            &ScalarOpKey::new("test", "step", 1).unwrap(),
+            &ScalarAttributes::empty(),
+            1,
+        );
+        let encoded_before_results = minimum_body_bytes
+            .checked_sub(4)
+            .unwrap()
+            .checked_add(operation_base)
+            .unwrap();
+        let minimum_fixed_results = encoded_before_results
+            .checked_add(encoded_reducer_operation_result_overhead())
+            .unwrap();
+        let target_capacity = minimum_fixed_results - 1;
+        assert!(target_capacity >= minimum_body_bytes);
+        assert!(target_capacity > encoded_before_results);
+        assert!(inputs.body_budget.maximum_encoded_bytes >= target_capacity);
+        let removable_headroom = inputs
+            .body_budget
+            .maximum_encoded_bytes
+            .checked_sub(target_capacity)
+            .unwrap();
+        builder.scalar_bytes = builder
+            .scalar_bytes
+            .saturating_add(removable_headroom.saturating_mul(inputs.body_budget.body_multiplier));
+        let before = (
+            builder.operations.len(),
+            builder.values.len(),
+            builder.scalar_bytes,
+        );
+        let callback_calls = Cell::new(0_u32);
+        let error = builder
+            .reduce(&[reduction], &[init], &[contributor], |body| {
+                callback_calls.set(callback_calls.get() + 1);
+                let state = body.state(0).unwrap();
+                body.apply(
+                    ScalarOpKey::new("test", "step", 1).unwrap(),
+                    ScalarAttributes::empty(),
+                    &[state],
+                )?;
+                unreachable!("the parent budget must reject the nested append")
+            })
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            IndexBuildError::StructuralLimit {
+                resource: IndexLimitKind::ScalarCanonicalBytes,
+                ..
+            }
+        ));
+        assert_eq!(callback_calls.get(), 1);
+        assert_eq!(inference_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            before,
+            (
+                builder.operations.len(),
+                builder.values.len(),
+                builder.scalar_bytes,
+            )
+        );
     }
 }

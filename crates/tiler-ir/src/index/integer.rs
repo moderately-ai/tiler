@@ -79,21 +79,24 @@ impl IndexInteger {
     /// Returns the lossless canonical sign and big-endian magnitude.
     #[must_use]
     pub fn to_sign_magnitude(&self) -> (IndexIntegerSign, Vec<u8>) {
-        let (sign, magnitude) = self.0.to_bytes_be();
+        let (sign, mut magnitude) = self.0.to_bytes_be();
         let sign = match sign {
             Sign::Minus => IndexIntegerSign::Negative,
-            Sign::NoSign => IndexIntegerSign::Zero,
+            Sign::NoSign => {
+                magnitude.clear();
+                IndexIntegerSign::Zero
+            }
             Sign::Plus => IndexIntegerSign::Positive,
         };
         (sign, magnitude)
     }
 
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
-        let (sign, magnitude) = self.0.to_bytes_be();
+        let (sign, magnitude) = self.to_sign_magnitude();
         output.push(match sign {
-            Sign::Minus => 0,
-            Sign::NoSign => 1,
-            Sign::Plus => 2,
+            IndexIntegerSign::Negative => 0,
+            IndexIntegerSign::Zero => 1,
+            IndexIntegerSign::Positive => 2,
         });
         output.extend_from_slice(
             &u64::try_from(magnitude.len())

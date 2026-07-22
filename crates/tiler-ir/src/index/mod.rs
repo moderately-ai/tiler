@@ -32,11 +32,12 @@ pub use model::{
     TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
 };
 pub use scalar::{
-    CanonicalScalarDefinitionProjection, FrozenScalarRegistry, ScalarAdmissionProvenanceIdentity,
+    CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity,
+    FrozenScalarRegistry, ScalarAdmissionProvenanceIdentity, ScalarApplicationRejection,
     ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes,
-    ScalarAuthorityEvidence, ScalarEffect, ScalarInferenceError, ScalarInferenceRequest,
-    ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-    ScalarRegistryBuilder, ScalarRegistryError,
+    ScalarAuthorityEvidence, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
+    ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
+    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError,
 };
 
 /// Maximum dimensions admitted by one region.
@@ -51,6 +52,10 @@ pub const MAX_BOUNDARY_CANONICAL_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_INDEX_EXPRESSIONS: usize = 65_536;
 /// Maximum operands admitted by one normalized index expression.
 pub const MAX_INDEX_EXPRESSION_OPERANDS: usize = 4_096;
+/// Maximum dependency depth of one index expression.
+pub const MAX_INDEX_EXPRESSION_DEPTH: u32 = 256;
+/// Maximum canonical sign-magnitude bytes retained for one exact index integer.
+pub const MAX_INDEX_INTEGER_BYTES: usize = 1024 * 1024;
 /// Maximum canonical bytes retained for index expressions.
 pub const MAX_INDEX_CANONICAL_BYTES: usize = 16 * 1024 * 1024;
 /// Maximum logical tensor accesses admitted by one region.

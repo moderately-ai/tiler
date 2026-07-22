@@ -1,18 +1,21 @@
 //! Public generic scalar-SSA and verified index-region integration tests.
 
+use std::error::Error as _;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tiler_ir::index::{
-    BoundsProofView, DomainRole, IndexBuildError, IndexInteger, IndexRegionBuilder,
-    IndexRegionDiagnostic, MAX_TENSOR_RANK, ScalarArity, ScalarAttributeField,
-    ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
-    ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError, TensorRole,
-    WriteOwnershipProofView,
+    BoundsProofView, DomainRole, IndexBuildError, IndexInteger, IndexIntegerSign, IndexLimitKind,
+    IndexRegionBuilder, IndexRegionDiagnostic, MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_INTEGER_BYTES,
+    MAX_TENSOR_RANK, ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes,
+    ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest,
+    ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
+    ScalarRegistryBuilder, ScalarRegistryError, TensorRole, WriteOwnershipProofView,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, FrozenSemanticRegistry,
-    NormativeDefinitionRef, ProviderIdentity, RegistryError, ResolvedValueType,
+    MAX_PROVIDER_DIAGNOSTIC_MESSAGE_BYTES, NormativeDefinitionRef, ProviderDiagnosticCode,
+    ProviderDiagnosticError, ProviderIdentity, RegistryError, ResolvedValueType,
     SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
     TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey,
 };
@@ -28,10 +31,10 @@ fn alternate_type() -> ResolvedValueType {
     ResolvedValueType::nominal(TypeKey::new("example", "alternate", 1).unwrap())
 }
 
-struct Types;
+struct Types(u32);
 impl SemanticRegistryProvider for Types {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("example", "types", 1).unwrap()
+        ProviderIdentity::new("example", "types", self.0).unwrap()
     }
     fn register(&self, registrar: &mut SemanticRegistryRegistrar<'_>) -> Result<(), RegistryError> {
         registrar.register_value_type(ValueTypeDefinition::structurally_valid(
@@ -47,14 +50,33 @@ impl SemanticRegistryProvider for Types {
     }
 }
 
+struct UnrelatedTypes(u32);
+impl SemanticRegistryProvider for UnrelatedTypes {
+    fn identity(&self) -> ProviderIdentity {
+        ProviderIdentity::new("example", "unrelated-types", self.0).unwrap()
+    }
+
+    fn register(&self, registrar: &mut SemanticRegistryRegistrar<'_>) -> Result<(), RegistryError> {
+        registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+            ValueTypeDefinitionKey::Nominal(TypeKey::new("example", "unrelated", 1).unwrap()),
+            NormativeDefinitionRef::new("urn:example:unrelated:v1").unwrap(),
+            TypeDefinitionFacts::new(record()),
+        ))
+    }
+}
+
 #[derive(Clone)]
 struct Fixed(Vec<ResolvedValueType>);
 impl ScalarOperationInferencer for Fixed {
     fn infer(
         &self,
         _: ScalarInferenceRequest<'_>,
-    ) -> Result<Vec<ResolvedValueType>, ScalarInferenceError> {
-        Ok(self.0.clone())
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        for value_type in &self.0 {
+            outputs.try_push(value_type.clone())?;
+        }
+        Ok(())
     }
 }
 struct Same;
@@ -62,14 +84,15 @@ impl ScalarOperationInferencer for Same {
     fn infer(
         &self,
         request: ScalarInferenceRequest<'_>,
-    ) -> Result<Vec<ResolvedValueType>, ScalarInferenceError> {
-        let Some(first) = request.operands.first() else {
-            return Err(ScalarInferenceError::new("arity", "operand required"));
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        let Some(first) = request.operands().first() else {
+            return Err(inference_error("arity", "operand required"));
         };
-        if request.operands.iter().any(|value| value != first) {
-            return Err(ScalarInferenceError::new("type", "operands differ"));
+        if request.operands().iter().any(|value| value != first) {
+            return Err(inference_error("type", "operands differ"));
         }
-        Ok(vec![first.clone()])
+        outputs.try_push(first.clone())
     }
 }
 struct PairState;
@@ -77,18 +100,21 @@ impl ScalarOperationInferencer for PairState {
     fn infer(
         &self,
         request: ScalarInferenceRequest<'_>,
-    ) -> Result<Vec<ResolvedValueType>, ScalarInferenceError> {
-        if request.operands.len() != 4 {
-            return Err(ScalarInferenceError::new(
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        if request.operands().len() != 4 {
+            return Err(inference_error(
                 "arity",
                 "four state/contributor operands required",
             ));
         }
-        Ok(vec![
-            request.operands[0].clone(),
-            request.operands[1].clone(),
-        ])
+        outputs.try_push(request.operands()[0].clone())?;
+        outputs.try_push(request.operands()[1].clone())
     }
+}
+
+fn inference_error(code: &str, message: &str) -> ScalarInferenceError {
+    ScalarInferenceError::new(ProviderDiagnosticCode::new(code).unwrap(), message).unwrap()
 }
 
 fn scalar_definition(
@@ -100,14 +126,14 @@ fn scalar_definition(
     ScalarOperationDefinition::new(
         ScalarOpKey::new("example", name, 1).unwrap(),
         NormativeDefinitionRef::from_owned(format!("urn:example:{name}:v1")).unwrap(),
-        ScalarOperationContract {
-            attributes: ScalarAttributeSchema::empty(),
-            operands: ScalarArity::exact(operands).unwrap(),
-            results: ScalarArity::exact(results).unwrap(),
-            effect: ScalarEffect::Pure,
-            facts: record(),
-            conformance: record(),
-        },
+        ScalarOperationContract::new(
+            ScalarAttributeSchema::empty(),
+            ScalarArity::exact(operands).unwrap(),
+            ScalarArity::exact(results).unwrap(),
+            ScalarEffect::Pure,
+            record(),
+            record(),
+        ),
         inferencer,
     )
 }
@@ -125,11 +151,38 @@ fn registries_with_revision(
     FrozenSemanticRegistry,
     tiler_ir::index::FrozenScalarRegistry,
 ) {
+    registries_with_revisions(1, revision)
+}
+
+fn registries_with_revisions(
+    type_revision: u32,
+    scalar_revision: u32,
+) -> (
+    FrozenSemanticRegistry,
+    tiler_ir::index::FrozenScalarRegistry,
+) {
+    registries_with_extras(type_revision, scalar_revision, None, None)
+}
+
+fn registries_with_extras(
+    type_revision: u32,
+    scalar_revision: u32,
+    unrelated_type_revision: Option<u32>,
+    unrelated_scalar_revision: Option<u32>,
+) -> (
+    FrozenSemanticRegistry,
+    tiler_ir::index::FrozenScalarRegistry,
+) {
     let mut semantic = SemanticRegistryBuilder::new();
-    semantic.register_provider(&Types).unwrap();
+    semantic.register_provider(&Types(type_revision)).unwrap();
+    if let Some(revision) = unrelated_type_revision {
+        semantic
+            .register_provider(&UnrelatedTypes(revision))
+            .unwrap();
+    }
     let semantic = semantic.freeze().unwrap();
     let mut scalar = ScalarRegistryBuilder::new(semantic.clone());
-    let provider = ProviderIdentity::new("example", "scalar", revision).unwrap();
+    let provider = ProviderIdentity::new("example", "scalar", scalar_revision).unwrap();
     scalar
         .register(
             provider.clone(),
@@ -165,18 +218,18 @@ fn registries_with_revision(
             ScalarOperationDefinition::new(
                 ScalarOpKey::new("example", "attributed", 1).unwrap(),
                 NormativeDefinitionRef::new("urn:example:attributed:v1").unwrap(),
-                ScalarOperationContract {
-                    attributes: ScalarAttributeSchema::new([ScalarAttributeField::required(
+                ScalarOperationContract::new(
+                    ScalarAttributeSchema::new([ScalarAttributeField::required(
                         AttributeFieldId::new(7),
                         CanonicalValueKind::Unsigned,
                     )])
                     .unwrap(),
-                    operands: ScalarArity::exact(0).unwrap(),
-                    results: ScalarArity::exact(1).unwrap(),
-                    effect: ScalarEffect::Pure,
-                    facts: record(),
-                    conformance: record(),
-                },
+                    ScalarArity::exact(0).unwrap(),
+                    ScalarArity::exact(1).unwrap(),
+                    ScalarEffect::Pure,
+                    record(),
+                    record(),
+                ),
                 Arc::new(Fixed(vec![test_type()])),
             ),
         )
@@ -198,6 +251,14 @@ fn registries_with_revision(
             ),
         )
         .unwrap();
+    if let Some(revision) = unrelated_scalar_revision {
+        scalar
+            .register(
+                ProviderIdentity::new("example", "unrelated-scalar", revision).unwrap(),
+                scalar_definition("unrelated", 0, 1, Arc::new(Fixed(vec![test_type()]))),
+            )
+            .unwrap();
+    }
     (semantic, scalar.freeze())
 }
 
@@ -236,8 +297,11 @@ fn external_non_f32_constant_and_multi_result_apply_form_generic_ssa() {
 
 #[test]
 fn scalar_authority_revalidation_is_region_bound_and_provider_separate() {
-    let (_, first_registry) = registries_with_revision(1);
-    let (_, second_registry) = registries_with_revision(2);
+    let (_, first_registry) = registries_with_revisions(1, 1);
+    let (_, type_changed_registry) = registries_with_revisions(2, 1);
+    let (_, scalar_changed_registry) = registries_with_revisions(1, 2);
+    let (_, unrelated_type_registry) = registries_with_extras(1, 1, Some(1), None);
+    let (_, unrelated_scalar_registry) = registries_with_extras(1, 1, None, Some(1));
     let mut builder = IndexRegionBuilder::new(first_registry.clone()).unwrap();
     let value = builder
         .apply(
@@ -252,10 +316,35 @@ fn scalar_authority_revalidation_is_region_bound_and_provider_separate() {
     let region = builder.build().unwrap();
 
     let first = first_registry.revalidate_region(&region).unwrap();
-    let second = second_registry.revalidate_region(&region).unwrap();
+    let type_changed = type_changed_registry.revalidate_region(&region).unwrap();
+    let scalar_changed = scalar_changed_registry.revalidate_region(&region).unwrap();
     assert_eq!(first.region(), region.canonical_identity());
-    assert_eq!(first.definitions(), second.definitions());
-    assert_ne!(first.admission(), second.admission());
+    assert_eq!(first.definitions(), type_changed.definitions());
+    assert_eq!(first.admission(), type_changed.admission());
+    assert_eq!(first.type_definitions(), type_changed.type_definitions());
+    assert_ne!(first.type_admission(), type_changed.type_admission());
+    assert_ne!(first.semantic_snapshot(), type_changed.semantic_snapshot());
+    assert_eq!(first.scalar_snapshot(), type_changed.scalar_snapshot());
+
+    assert_eq!(first.definitions(), scalar_changed.definitions());
+    assert_ne!(first.admission(), scalar_changed.admission());
+    assert_eq!(first.type_admission(), scalar_changed.type_admission());
+    assert_ne!(first.scalar_snapshot(), scalar_changed.scalar_snapshot());
+
+    let unrelated_type = unrelated_type_registry.revalidate_region(&region).unwrap();
+    assert_eq!(first.type_definitions(), unrelated_type.type_definitions());
+    assert_eq!(first.type_admission(), unrelated_type.type_admission());
+    assert_ne!(
+        first.semantic_snapshot(),
+        unrelated_type.semantic_snapshot()
+    );
+
+    let unrelated_scalar = unrelated_scalar_registry
+        .revalidate_region(&region)
+        .unwrap();
+    assert_eq!(first.definitions(), unrelated_scalar.definitions());
+    assert_eq!(first.admission(), unrelated_scalar.admission());
+    assert_ne!(first.scalar_snapshot(), unrelated_scalar.scalar_snapshot());
 }
 
 #[test]
@@ -271,20 +360,20 @@ fn scalar_schema_defaults_normalize_before_structural_identity() {
                 ScalarOperationDefinition::new(
                     ScalarOpKey::new("example", "defaulted", 1).unwrap(),
                     NormativeDefinitionRef::new("urn:example:defaulted:v1").unwrap(),
-                    ScalarOperationContract {
-                        attributes: ScalarAttributeSchema::new([ScalarAttributeField::defaulted(
+                    ScalarOperationContract::new(
+                        ScalarAttributeSchema::new([ScalarAttributeField::defaulted(
                             field,
                             CanonicalValueKind::Unsigned,
                             default.clone(),
                         )
                         .unwrap()])
                         .unwrap(),
-                        operands: ScalarArity::exact(0).unwrap(),
-                        results: ScalarArity::exact(1).unwrap(),
-                        effect: ScalarEffect::Pure,
-                        facts: record(),
-                        conformance: record(),
-                    },
+                        ScalarArity::exact(0).unwrap(),
+                        ScalarArity::exact(1).unwrap(),
+                        ScalarEffect::Pure,
+                        record(),
+                        record(),
+                    ),
                     Arc::new(Fixed(vec![test_type()])),
                 ),
             )
@@ -414,15 +503,26 @@ fn unreachable_insertion_order_does_not_change_canonical_identity() {
 
 #[test]
 fn ordered_reduction_dimensions_change_identity() {
-    fn build(reverse: bool) -> Vec<u8> {
+    fn build(reverse_declaration: bool, reverse_traversal: bool) -> Vec<u8> {
         let (_, registry) = registries();
         let mut builder = IndexRegionBuilder::new(registry).unwrap();
-        let a = builder
-            .dimension(DomainRole::Reduction, Extent::new(2))
-            .unwrap();
-        let b = builder
-            .dimension(DomainRole::Reduction, Extent::new(3))
-            .unwrap();
+        let (a, b) = if reverse_declaration {
+            let b = builder
+                .dimension(DomainRole::Reduction, Extent::new(3))
+                .unwrap();
+            let a = builder
+                .dimension(DomainRole::Reduction, Extent::new(2))
+                .unwrap();
+            (a, b)
+        } else {
+            let a = builder
+                .dimension(DomainRole::Reduction, Extent::new(2))
+                .unwrap();
+            let b = builder
+                .dimension(DomainRole::Reduction, Extent::new(3))
+                .unwrap();
+            (a, b)
+        };
         let key = ScalarOpKey::new("example", "constant", 1).unwrap();
         let init = builder
             .apply(key.clone(), ScalarAttributes::empty(), &[])
@@ -435,7 +535,11 @@ fn ordered_reduction_dimensions_change_identity() {
             .get(0)
             .unwrap();
         let binary = ScalarOpKey::new("example", "binary", 1).unwrap();
-        let dims = if reverse { vec![b, a] } else { vec![a, b] };
+        let dims = if reverse_traversal {
+            vec![b, a]
+        } else {
+            vec![a, b]
+        };
         let value = builder
             .reduce(&dims, &[init], &[contributor], |body| {
                 let r = body.apply(
@@ -456,7 +560,8 @@ fn ordered_reduction_dimensions_change_identity() {
             .as_bytes()
             .to_vec()
     }
-    assert_ne!(build(false), build(true));
+    assert_eq!(build(false, false), build(true, false));
+    assert_ne!(build(false, false), build(false, true));
 }
 
 fn operation_identity(
@@ -711,6 +816,93 @@ fn reducer_yield_failures_are_specific_and_transactional() {
 }
 
 #[test]
+fn failed_reducer_rolls_back_graph_state_but_never_reuses_escaped_owner_nonce() {
+    fn build(with_failed_attempt: bool) -> Vec<u8> {
+        let (_, registry) = registries();
+        let mut builder = IndexRegionBuilder::new(registry).unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Reduction, Extent::new(2))
+            .unwrap();
+        let value = constant_value(&mut builder);
+        let mut escaped = None;
+        if with_failed_attempt {
+            let error = builder
+                .reduce(&[dimension], &[value], &[value], |body| {
+                    escaped = body.state(0);
+                    Err(IndexBuildError::MissingReducerYield)
+                })
+                .unwrap_err();
+            assert_eq!(error, IndexBuildError::MissingReducerYield);
+        }
+        let reduced = builder
+            .reduce(&[dimension], &[value], &[value], |body| {
+                if let Some(stale) = escaped {
+                    assert!(matches!(
+                        body.apply(
+                            ScalarOpKey::new("example", "binary", 1).unwrap(),
+                            ScalarAttributes::empty(),
+                            &[stale, body.contributor(0).unwrap()],
+                        ),
+                        Err(IndexBuildError::ForeignHandle { .. })
+                    ));
+                }
+                let result = body.apply(
+                    ScalarOpKey::new("example", "binary", 1).unwrap(),
+                    ScalarAttributes::empty(),
+                    &[body.state(0).unwrap(), body.contributor(0).unwrap()],
+                )?;
+                body.yield_values(&[result.get(0).unwrap()])
+            })
+            .unwrap()
+            .get(0)
+            .unwrap();
+        scalar_output(&mut builder, reduced);
+        builder
+            .build()
+            .unwrap()
+            .canonical_identity()
+            .as_bytes()
+            .to_vec()
+    }
+
+    assert_eq!(build(false), build(true));
+}
+
+#[test]
+fn reduction_depth_failure_precedes_user_closure_invocation() {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let dimension = builder
+        .dimension(DomainRole::Reduction, Extent::new(2))
+        .unwrap();
+    let constant = constant_value(&mut builder);
+    let mut value = constant;
+    for _ in 0..tiler_ir::index::MAX_SCALAR_EXPRESSION_DEPTH {
+        value = builder
+            .apply(
+                ScalarOpKey::new("example", "binary", 1).unwrap(),
+                ScalarAttributes::empty(),
+                &[value, constant],
+            )
+            .unwrap()
+            .get(0)
+            .unwrap();
+    }
+    let calls = AtomicUsize::new(0);
+    assert!(matches!(
+        builder.reduce(&[dimension], &[value], &[constant], |_| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }),
+        Err(IndexBuildError::StructuralLimit {
+            resource: IndexLimitKind::ScalarExpressionDepth,
+            ..
+        })
+    ));
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn multi_result_structural_key_storage_is_preflighted_transactionally() {
     let (semantic, _) = registries();
     let mut scalar = ScalarRegistryBuilder::new(semantic);
@@ -727,18 +919,18 @@ fn multi_result_structural_key_storage_is_preflighted_transactionally() {
             ScalarOperationDefinition::new(
                 ScalarOpKey::new("example", "wide", 1).unwrap(),
                 NormativeDefinitionRef::new("urn:example:wide:v1").unwrap(),
-                ScalarOperationContract {
-                    attributes: ScalarAttributeSchema::new([ScalarAttributeField::required(
+                ScalarOperationContract::new(
+                    ScalarAttributeSchema::new([ScalarAttributeField::required(
                         AttributeFieldId::new(1),
                         CanonicalValueKind::Bytes,
                     )])
                     .unwrap(),
-                    operands: ScalarArity::exact(0).unwrap(),
-                    results: ScalarArity::exact(4_096).unwrap(),
-                    effect: ScalarEffect::Pure,
-                    facts: record(),
-                    conformance: record(),
-                },
+                    ScalarArity::exact(0).unwrap(),
+                    ScalarArity::exact(4_096).unwrap(),
+                    ScalarEffect::Pure,
+                    record(),
+                    record(),
+                ),
                 Arc::new(Fixed(vec![test_type(); 4_096])),
             ),
         )
@@ -939,14 +1131,14 @@ fn scalar_registration_failures_are_atomic_and_validate_nested_types() {
     let invalid = ScalarOperationDefinition::new(
         ScalarOpKey::new("example", "invalid_nested_type", 1).unwrap(),
         NormativeDefinitionRef::new("urn:example:invalid-nested-type:v1").unwrap(),
-        ScalarOperationContract {
-            attributes: ScalarAttributeSchema::empty(),
-            operands: ScalarArity::exact(0).unwrap(),
-            results: ScalarArity::exact(1).unwrap(),
-            effect: ScalarEffect::Pure,
-            facts: nested_unknown,
-            conformance: record(),
-        },
+        ScalarOperationContract::new(
+            ScalarAttributeSchema::empty(),
+            ScalarArity::exact(0).unwrap(),
+            ScalarArity::exact(1).unwrap(),
+            ScalarEffect::Pure,
+            nested_unknown,
+            record(),
+        ),
         Arc::new(Fixed(vec![test_type()])),
     );
     assert!(matches!(
@@ -956,14 +1148,14 @@ fn scalar_registration_failures_are_atomic_and_validate_nested_types() {
     let zero_result = ScalarOperationDefinition::new(
         ScalarOpKey::new("example", "zero_result", 1).unwrap(),
         NormativeDefinitionRef::new("urn:example:zero-result:v1").unwrap(),
-        ScalarOperationContract {
-            attributes: ScalarAttributeSchema::empty(),
-            operands: ScalarArity::exact(0).unwrap(),
-            results: ScalarArity::exact(0).unwrap(),
-            effect: ScalarEffect::Pure,
-            facts: record(),
-            conformance: record(),
-        },
+        ScalarOperationContract::new(
+            ScalarAttributeSchema::empty(),
+            ScalarArity::exact(0).unwrap(),
+            ScalarArity::exact(0).unwrap(),
+            ScalarEffect::Pure,
+            record(),
+            record(),
+        ),
         Arc::new(Fixed(Vec::new())),
     );
     assert_eq!(
@@ -998,14 +1190,14 @@ fn reached_definition_projection_has_a_checked_byte_limit() {
             key.clone(),
             NormativeDefinitionRef::from_owned(format!("urn:example:projection:{index}:v1"))
                 .unwrap(),
-            ScalarOperationContract {
-                attributes: ScalarAttributeSchema::empty(),
-                operands: ScalarArity::exact(0).unwrap(),
-                results: ScalarArity::exact(1).unwrap(),
-                effect: ScalarEffect::Pure,
-                facts: CanonicalValue::bytes_owned(vec![0; 65_536]).unwrap(),
-                conformance: record(),
-            },
+            ScalarOperationContract::new(
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(0).unwrap(),
+                ScalarArity::exact(1).unwrap(),
+                ScalarEffect::Pure,
+                CanonicalValue::bytes_owned(vec![0; 65_536]).unwrap(),
+                record(),
+            ),
             Arc::new(Fixed(vec![test_type()])),
         );
         scalar.register(provider.clone(), definition).unwrap();
@@ -1030,14 +1222,14 @@ fn aggregate_registry_bytes_are_preflighted_transactionally() {
         let definition = ScalarOperationDefinition::new(
             key.clone(),
             NormativeDefinitionRef::from_owned(format!("urn:example:budget:{index}:v1")).unwrap(),
-            ScalarOperationContract {
-                attributes: ScalarAttributeSchema::empty(),
-                operands: ScalarArity::exact(0).unwrap(),
-                results: ScalarArity::exact(1).unwrap(),
-                effect: ScalarEffect::Pure,
-                facts: CanonicalValue::bytes_owned(vec![0; 65_536]).unwrap(),
-                conformance: record(),
-            },
+            ScalarOperationContract::new(
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(0).unwrap(),
+                ScalarArity::exact(1).unwrap(),
+                ScalarEffect::Pure,
+                CanonicalValue::bytes_owned(vec![0; 65_536]).unwrap(),
+                record(),
+            ),
             Arc::new(Fixed(vec![test_type()])),
         );
         match scalar.register(provider.clone(), definition) {
@@ -1403,6 +1595,65 @@ fn exhaustive_ownership_obeys_proof_cell_budget() {
 }
 
 #[test]
+fn individually_admissible_accesses_share_one_aggregate_proof_budget() {
+    let extent = 199_999;
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let left_tensor = builder
+        .tensor(TensorRole::Input, test_type(), Shape::from_dims([100_000]))
+        .unwrap();
+    let right_tensor = builder
+        .tensor(TensorRole::Input, test_type(), Shape::from_dims([100_000]))
+        .unwrap();
+    let output = builder
+        .tensor(TensorRole::Output, test_type(), Shape::from_dims([extent]))
+        .unwrap();
+    let dimension = builder
+        .dimension(DomainRole::Parallel, Extent::new(extent))
+        .unwrap();
+    let expression = builder.dimension_expr(dimension).unwrap();
+    let modulo = builder.modulo(expression, 2).unwrap();
+    let quotient = builder.floor_div(expression, 2).unwrap();
+    let conservative = builder
+        .linear_combination(
+            0_i128.into(),
+            &[(1_i128.into(), modulo), (1_i128.into(), quotient)],
+        )
+        .unwrap();
+    let left = builder
+        .read(left_tensor, &[dimension], &[conservative])
+        .unwrap();
+    let right = builder
+        .read(right_tensor, &[dimension], &[conservative])
+        .unwrap();
+    let combined = builder
+        .apply(
+            ScalarOpKey::new("example", "binary", 1).unwrap(),
+            ScalarAttributes::empty(),
+            &[left, right],
+        )
+        .unwrap()
+        .get(0)
+        .unwrap();
+    let write = builder.write(output, &[dimension], &[expression]).unwrap();
+    builder.output(write, combined).unwrap();
+    assert!(
+        builder
+            .build()
+            .unwrap_err()
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::ProofResourceLimit {
+                    resource: tiler_ir::index::ProofResource::Cells,
+                    ..
+                }
+            ))
+    );
+}
+
+#[test]
 fn failed_foreign_insertion_leaves_builder_usable() {
     let (_, registry) = registries();
     let mut first = IndexRegionBuilder::new(registry.clone()).unwrap();
@@ -1461,4 +1712,315 @@ fn interleaved_boundary_declarations_have_canonical_role_local_identity() {
             .to_vec()
     }
     assert_eq!(build(false), build(true));
+}
+
+#[test]
+fn late_zero_domain_is_vacuous_before_cardinality_overflow() {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let shape = Shape::from_dims([u64::MAX, 2, 0]);
+    let input = builder
+        .tensor(TensorRole::Input, test_type(), shape.clone())
+        .unwrap();
+    let output = builder
+        .tensor(TensorRole::Output, test_type(), shape)
+        .unwrap();
+    let dimensions = [u64::MAX, 2, 0].map(|extent| {
+        builder
+            .dimension(DomainRole::Parallel, Extent::new(extent))
+            .unwrap()
+    });
+    let coordinates = dimensions.map(|dimension| builder.dimension_expr(dimension).unwrap());
+    let value = builder.read(input, &dimensions, &coordinates).unwrap();
+    let write = builder.write(output, &dimensions, &coordinates).unwrap();
+    builder.output(write, value).unwrap();
+    let region = builder.build().unwrap();
+    assert!(
+        region
+            .accesses()
+            .all(|access| access.bounds_proof() == BoundsProofView::VacuousEmptyDomain)
+    );
+}
+
+#[test]
+fn dimension_declaration_order_is_alpha_canonical() {
+    fn build(swapped: bool) -> Vec<u8> {
+        let (_, registry) = registries();
+        let mut builder = IndexRegionBuilder::new(registry).unwrap();
+        let input = builder
+            .tensor(TensorRole::Input, test_type(), Shape::from_dims([3, 5]))
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, test_type(), Shape::from_dims([3, 5]))
+            .unwrap();
+        let (row, column) = if swapped {
+            let column = builder
+                .dimension(DomainRole::Parallel, Extent::new(5))
+                .unwrap();
+            let row = builder
+                .dimension(DomainRole::Parallel, Extent::new(3))
+                .unwrap();
+            (row, column)
+        } else {
+            let row = builder
+                .dimension(DomainRole::Parallel, Extent::new(3))
+                .unwrap();
+            let column = builder
+                .dimension(DomainRole::Parallel, Extent::new(5))
+                .unwrap();
+            (row, column)
+        };
+        let row_expr = builder.dimension_expr(row).unwrap();
+        let column_expr = builder.dimension_expr(column).unwrap();
+        let value = builder
+            .read(input, &[row, column], &[row_expr, column_expr])
+            .unwrap();
+        let write = builder
+            .write(output, &[row, column], &[row_expr, column_expr])
+            .unwrap();
+        builder.output(write, value).unwrap();
+        builder
+            .build()
+            .unwrap()
+            .canonical_identity()
+            .as_bytes()
+            .to_vec()
+    }
+    assert_eq!(build(false), build(true));
+}
+
+#[test]
+fn deep_index_expression_is_rejected_at_its_specific_budget() {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let dimension = builder
+        .dimension(DomainRole::Parallel, Extent::new(8))
+        .unwrap();
+    let mut expression = builder.dimension_expr(dimension).unwrap();
+    for _ in 0..MAX_INDEX_EXPRESSION_DEPTH {
+        expression = builder.floor_div(expression, 2).unwrap();
+    }
+    assert!(matches!(
+        builder.floor_div(expression, 2),
+        Err(IndexBuildError::StructuralLimit {
+            resource: IndexLimitKind::IndexExpressionDepth,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn index_integer_magnitude_is_bounded_and_zero_encoding_is_canonical() {
+    assert_eq!(
+        IndexInteger::from_i128(0).to_sign_magnitude(),
+        (IndexIntegerSign::Zero, Vec::new())
+    );
+    let oversized = IndexInteger::from_sign_magnitude(
+        IndexIntegerSign::Positive,
+        &vec![1_u8; MAX_INDEX_INTEGER_BYTES + 1],
+    )
+    .unwrap();
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    assert!(matches!(
+        builder.constant(oversized),
+        Err(IndexBuildError::StructuralLimit {
+            resource: IndexLimitKind::IndexIntegerBytes,
+            ..
+        })
+    ));
+    assert!(builder.constant(IndexInteger::from_i128(0)).is_ok());
+}
+
+#[test]
+fn derived_linear_product_is_rejected_before_oversized_bigint_construction() {
+    let magnitude_bytes = MAX_INDEX_INTEGER_BYTES / 2 + 1;
+    let mut magnitude = vec![0_u8; magnitude_bytes];
+    magnitude[0] = 0x80;
+    let coefficient =
+        IndexInteger::from_sign_magnitude(IndexIntegerSign::Positive, &magnitude).unwrap();
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let dimension = builder
+        .dimension(DomainRole::Parallel, Extent::new(2))
+        .unwrap();
+    let base = builder.dimension_expr(dimension).unwrap();
+    let inner = builder
+        .linear_combination(0_i128.into(), &[(coefficient.clone(), base)])
+        .unwrap();
+    assert!(matches!(
+        builder.linear_combination(0_i128.into(), &[(coefficient, inner)]),
+        Err(IndexBuildError::StructuralLimit {
+            resource: IndexLimitKind::IndexIntegerBytes,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn attribute_schema_stops_consuming_an_unbounded_source() {
+    let consumed = AtomicUsize::new(0);
+    let fields = std::iter::repeat_with(|| {
+        let index = consumed.fetch_add(1, Ordering::Relaxed);
+        ScalarAttributeField::optional(
+            AttributeFieldId::new(u32::try_from(index + 1).unwrap()),
+            CanonicalValueKind::Unsigned,
+        )
+    });
+    assert!(matches!(
+        ScalarAttributeSchema::new(fields),
+        Err(ScalarRegistryError::TooManyAttributeFields { .. })
+    ));
+    assert_eq!(consumed.load(Ordering::Relaxed), 257);
+}
+
+#[test]
+fn ignored_provider_writer_failure_is_sticky_and_preserves_error_sources() {
+    struct IgnoresOverflow;
+    impl ScalarOperationInferencer for IgnoresOverflow {
+        fn infer(
+            &self,
+            _: ScalarInferenceRequest<'_>,
+            outputs: &mut ScalarInferenceOutputs,
+        ) -> Result<(), ScalarInferenceError> {
+            outputs.try_push(test_type())?;
+            let _ = outputs.try_push(test_type());
+            Ok(())
+        }
+    }
+
+    let (semantic, _) = registries();
+    let mut registry = ScalarRegistryBuilder::new(semantic);
+    registry
+        .register(
+            ProviderIdentity::new("example", "overflow", 1).unwrap(),
+            scalar_definition("overflow", 0, 1, Arc::new(IgnoresOverflow)),
+        )
+        .unwrap();
+    let mut builder = IndexRegionBuilder::new(registry.freeze()).unwrap();
+    let error = builder
+        .apply(
+            ScalarOpKey::new("example", "overflow", 1).unwrap(),
+            ScalarAttributes::empty(),
+            &[],
+        )
+        .unwrap_err();
+    let registry_error = error.source().expect("index error retains registry source");
+    let rejection = registry_error
+        .source()
+        .expect("registry error retains attributed rejection");
+    assert!(rejection.to_string().contains("example::overflow"));
+    assert!(rejection.to_string().contains("result-limit"));
+    assert!(
+        rejection
+            .source()
+            .expect("attributed rejection retains provider diagnostic")
+            .to_string()
+            .contains("result-limit")
+    );
+}
+
+#[test]
+fn provider_diagnostics_are_bounded_before_they_enter_registry_errors() {
+    assert_eq!(
+        ScalarInferenceError::new(ProviderDiagnosticCode::new("empty").unwrap(), ""),
+        Err(ProviderDiagnosticError::EmptyMessage)
+    );
+    let oversized = "x".repeat(MAX_PROVIDER_DIAGNOSTIC_MESSAGE_BYTES + 1);
+    assert_eq!(
+        ScalarInferenceError::new(ProviderDiagnosticCode::new("oversized").unwrap(), oversized),
+        Err(ProviderDiagnosticError::MessageTooLong {
+            bytes: MAX_PROVIDER_DIAGNOSTIC_MESSAGE_BYTES + 1,
+        })
+    );
+}
+
+#[test]
+fn scalar_authority_closes_type_and_float_bits_dependencies_in_definition_values() {
+    let mut semantic_builder = SemanticRegistryBuilder::new();
+    semantic_builder.register_provider(&Types(1)).unwrap();
+    let semantic = semantic_builder.freeze().unwrap();
+    let facts = CanonicalValue::sequence([
+        CanonicalValue::value_type(alternate_type()),
+        CanonicalValue::float_bits(
+            TypeKey::new("example", "alternate", 1).unwrap(),
+            [0_u8, 0, 0, 0],
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    let default_type = CanonicalValue::value_type(alternate_type());
+    let conformance = CanonicalValue::value_type(alternate_type());
+    let occurrence_bits = CanonicalValue::float_bits(
+        TypeKey::new("example", "alternate", 1).unwrap(),
+        [1_u8, 2, 3, 4],
+    )
+    .unwrap();
+    let occurrence_attributes = ScalarAttributes::new(
+        CanonicalValue::record([CanonicalField::new(
+            AttributeFieldId::new(2),
+            occurrence_bits.clone(),
+        )])
+        .unwrap(),
+    )
+    .unwrap();
+    let mut scalar = ScalarRegistryBuilder::new(semantic.clone());
+    scalar
+        .register(
+            ProviderIdentity::new("example", "dependency-scalar", 1).unwrap(),
+            ScalarOperationDefinition::new(
+                ScalarOpKey::new("example", "dependency_constant", 1).unwrap(),
+                NormativeDefinitionRef::new("urn:example:dependency-constant:v1").unwrap(),
+                ScalarOperationContract::new(
+                    ScalarAttributeSchema::new([
+                        ScalarAttributeField::defaulted(
+                            AttributeFieldId::new(1),
+                            CanonicalValueKind::Type,
+                            default_type.clone(),
+                        )
+                        .unwrap(),
+                        ScalarAttributeField::required(
+                            AttributeFieldId::new(2),
+                            CanonicalValueKind::FloatBits,
+                        ),
+                    ])
+                    .unwrap(),
+                    ScalarArity::exact(0).unwrap(),
+                    ScalarArity::exact(1).unwrap(),
+                    ScalarEffect::Pure,
+                    facts.clone(),
+                    conformance.clone(),
+                ),
+                Arc::new(Fixed(vec![test_type()])),
+            ),
+        )
+        .unwrap();
+    let registry = scalar.freeze();
+    let mut builder = IndexRegionBuilder::new(registry.clone()).unwrap();
+    let value = builder
+        .apply(
+            ScalarOpKey::new("example", "dependency_constant", 1).unwrap(),
+            occurrence_attributes.clone(),
+            &[],
+        )
+        .unwrap()
+        .get(0)
+        .unwrap();
+    scalar_output(&mut builder, value);
+    let region = builder.build().unwrap();
+    let evidence = registry.revalidate_region(&region).unwrap();
+    let boundary_type = test_type();
+    let expected = semantic
+        .project_value_set_authority(
+            [&boundary_type],
+            [
+                &facts,
+                &default_type,
+                &conformance,
+                occurrence_attributes.value(),
+            ],
+        )
+        .unwrap();
+    assert_eq!(evidence.type_definitions(), expected.reached_definitions());
+    assert_eq!(evidence.type_admission(), expected.admission_provenance());
 }

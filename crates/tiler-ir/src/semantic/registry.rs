@@ -958,6 +958,32 @@ impl FrozenSemanticRegistry {
         Ok(self.capability_authority(&closure))
     }
 
+    /// Projects complete semantic type authority for an aggregate set of
+    /// resolved value types and canonical values that may reference types.
+    ///
+    /// This is the authority boundary used by target-independent scalar IR:
+    /// it admits type dependencies embedded in operation defaults, facts,
+    /// conformance values, and occurrence attributes without treating scalar
+    /// operations as semantic tensor operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] when any transitive type authority is absent,
+    /// rejected, or exceeds governed closure bounds.
+    pub fn project_value_set_authority<'a>(
+        &self,
+        value_types: impl IntoIterator<Item = &'a ResolvedValueType>,
+        canonical_values: impl IntoIterator<Item = &'a CanonicalValue>,
+    ) -> Result<SemanticCapabilityAuthority, RegistryError> {
+        let closure = self.close_authority(
+            value_types,
+            std::iter::empty(),
+            std::iter::empty(),
+            canonical_values,
+        )?;
+        Ok(self.capability_authority(&closure))
+    }
+
     /// Projects the complete semantic authority for one exact executable
     /// operation signature from this frozen snapshot.
     ///
