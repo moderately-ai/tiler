@@ -5,7 +5,40 @@ use tiler_ir::semantic::{
     SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape, StaticShape};
-use tiler_reference::{InputBinding, ReferenceEvaluator, Tensor};
+use tiler_reference::{
+    FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
+};
+
+fn f32_tensor(shape: Shape, values: impl IntoIterator<Item = f32>) -> Tensor {
+    Tensor::dense(
+        F32::resolved_type(),
+        shape,
+        values
+            .into_iter()
+            .map(|value| {
+                ReferenceElement::from_float_bits(
+                    value.to_bits().to_be_bytes(),
+                    FloatBitOrder::MostSignificantByteFirst,
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn f32_values(tensor: &Tensor) -> Vec<f32> {
+    let TensorPayloadView::Dense(elements) = tensor.payload() else {
+        panic!("expected dense f32 tensor")
+    };
+    elements
+        .iter()
+        .map(|element| {
+            let bits = <[u8; 4]>::try_from(element.as_bytes()).unwrap();
+            f32::from_bits(u32::from_be_bytes(bits))
+        })
+        .collect()
+}
 
 fn build_program(insert_dead_value_first: bool) -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -43,7 +76,7 @@ fn public_semantic_program_evaluates_independently_of_construction_history() {
     );
 
     let key = InputKey::new("input").unwrap();
-    let input = Tensor::new(Shape::from_dims([2, 3]), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
+    let input = f32_tensor(Shape::from_dims([2, 3]), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
     let binding = [InputBinding::new(&key, &input)];
     let evaluator = ReferenceEvaluator::standard().unwrap();
     let first_outputs = evaluator.evaluate(&first, &binding).unwrap();
@@ -52,9 +85,9 @@ fn public_semantic_program_evaluates_independently_of_construction_history() {
     assert_eq!(first_outputs, second_outputs);
     assert_eq!(first_outputs[0].shape(), &Shape::from_dims([2, 3]));
     assert_eq!(
-        first_outputs[0].elements(),
-        &[3.0, 5.0, 7.0, 9.0, 11.0, 13.0]
+        f32_values(&first_outputs[0]),
+        [3.0, 5.0, 7.0, 9.0, 11.0, 13.0]
     );
     assert_eq!(first_outputs[1].shape(), &Shape::from_dims([2]));
-    assert_eq!(first_outputs[1].elements(), &[15.0, 33.0]);
+    assert_eq!(f32_values(&first_outputs[1]), [15.0, 33.0]);
 }

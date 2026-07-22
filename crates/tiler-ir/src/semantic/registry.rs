@@ -939,6 +939,65 @@ struct SemanticAuthorityClosure {
 }
 
 impl FrozenSemanticRegistry {
+    /// Projects the complete semantic authority for one exact resolved value type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] when the type or any transitive authority it
+    /// references is absent, rejected, or exceeds governed closure bounds.
+    pub fn project_value_authority(
+        &self,
+        resolved_type: &ResolvedValueType,
+    ) -> Result<SemanticCapabilityAuthority, RegistryError> {
+        let closure = self.close_authority(
+            [resolved_type],
+            std::iter::empty(),
+            std::iter::empty(),
+            std::iter::empty(),
+        )?;
+        Ok(self.capability_authority(&closure))
+    }
+
+    /// Projects the complete semantic authority for one exact executable
+    /// operation signature from this frozen snapshot.
+    ///
+    /// The returned value keeps provider-independent definitions, the
+    /// providers which admitted those definitions, and the complete registry
+    /// snapshot as separate identity subjects. Downstream capability
+    /// registries can therefore bind an implementation without reconstructing
+    /// or conflating those subjects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] when the operation or any type in the exact
+    /// signature lacks authority in this snapshot, is rejected by its
+    /// provider, or exceeds the governed authority-closure bounds.
+    pub fn project_operation_authority<'a>(
+        &self,
+        operation: &'a OpKey,
+        operand_types: impl IntoIterator<Item = &'a ResolvedValueType>,
+        result_types: impl IntoIterator<Item = &'a ResolvedValueType>,
+    ) -> Result<SemanticCapabilityAuthority, RegistryError> {
+        let closure = self.close_authority(
+            operand_types.into_iter().chain(result_types),
+            std::iter::empty(),
+            [operation],
+            std::iter::empty(),
+        )?;
+        Ok(self.capability_authority(&closure))
+    }
+
+    fn capability_authority(
+        &self,
+        closure: &SemanticAuthorityClosure,
+    ) -> SemanticCapabilityAuthority {
+        SemanticCapabilityAuthority {
+            reached_definitions: self.encode_definition_projection(closure),
+            admission_provenance: self.encode_admission_provenance(closure),
+            registry_snapshot: self.snapshot_identity().clone(),
+        }
+    }
+
     fn close_authority<'a>(
         &self,
         concrete_type_roots: impl IntoIterator<Item = &'a ResolvedValueType>,
@@ -1380,6 +1439,37 @@ impl SemanticAdmissionProvenanceIdentity {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+/// Complete semantic authority to which one executable capability is bound.
+///
+/// This value is derived only by [`FrozenSemanticRegistry`] so its three
+/// identity subjects always originate from the same frozen snapshot.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SemanticCapabilityAuthority {
+    reached_definitions: SemanticDefinitionProjectionIdentity,
+    admission_provenance: SemanticAdmissionProvenanceIdentity,
+    registry_snapshot: SemanticRegistrySnapshotIdentity,
+}
+
+impl SemanticCapabilityAuthority {
+    /// Returns provider-independent definitions reached by the capability.
+    #[must_use]
+    pub const fn reached_definitions(&self) -> &SemanticDefinitionProjectionIdentity {
+        &self.reached_definitions
+    }
+
+    /// Returns providers which admitted the reached semantic authority.
+    #[must_use]
+    pub const fn admission_provenance(&self) -> &SemanticAdmissionProvenanceIdentity {
+        &self.admission_provenance
+    }
+
+    /// Returns the complete semantic-registry snapshot used for projection.
+    #[must_use]
+    pub const fn registry_snapshot(&self) -> &SemanticRegistrySnapshotIdentity {
+        &self.registry_snapshot
     }
 }
 

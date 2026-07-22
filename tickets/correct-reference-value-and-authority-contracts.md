@@ -5,7 +5,7 @@ status: in-progress
 priority: p0
 dependencies: [harden-semantic-registry-and-program-construction]
 related: []
-scopes: [implementation/reference, implementation/ir]
+scopes: [implementation/reference, implementation/ir, implementation/compiler, research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, reference]

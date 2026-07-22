@@ -134,3 +134,33 @@ signature. New operations add independent conformance implementations or exact
 decompositions. New dtypes add explicit bit/value conversion components.
 Neither requires teaching the evaluator about Metal, CUDA, threadgroups,
 buffers, or fusion regions.
+
+## Current public-boundary draft
+
+**Fact:** the corrective prototype now represents every host reference tensor
+with its complete `ResolvedValueType`, logical shape, and an exact payload.
+Dense payloads contain bounded canonical element bytes. Compound payloads
+contain ordered, stable-role reference tensors recursively, allowing code,
+scale, codebook, mask, or other component tensors to retain their own types and
+shapes without introducing an `Any`-style downcast escape hatch. Equality is
+structural and bytewise, so equal NaN payloads compare equal while distinct NaN
+payloads and positive/negative zero remain distinct.
+
+**Fact:** each resolved type requires an explicitly registered representation
+validator before it can enter or leave evaluation. Each operation capability
+is bound to the provider-independent definitions and provider-attributed
+admission provenance reached by its exact operation/signature. The originating
+semantic-registry snapshot remains provenance and reference-registry identity,
+but an unrelated registry addition alone does not invalidate a compatible
+capability. Changed reached definitions or providers fail closed.
+
+**Fact:** provider registration and host-owned output writing are sticky
+transactions: ignoring a returned duplicate, arity, or resource failure cannot
+publish a partial success. Recoverable callback and result-validation failures
+retain provider identity and typed cause. Native provider callbacks remain a
+trusted deterministic, non-panicking boundary; panics are not converted into
+recoverable evaluation errors.
+
+**Proposal:** the concrete Rust names and call-site shape are a tested public
+draft pending interface review. The invariants above, rather than those names,
+are the proposed durable contract.

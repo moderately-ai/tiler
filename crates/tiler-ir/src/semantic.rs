@@ -42,11 +42,11 @@ pub use program::{SemanticProgram, SemanticProgramBuilder};
 pub use registry::{
     F32, FrozenSemanticRegistry, NormativeDefinitionRef, OperationApplicationRejection,
     ProviderIdentity, RegistryError, RegistryLookupError, SemanticAdmissionProvenanceIdentity,
-    SemanticAuthorityResource, SemanticDefinitionProjectionIdentity, SemanticRegistryBuilder,
-    SemanticRegistryProvider, SemanticRegistryRegistrar, SemanticRegistryResource,
-    SemanticRegistrySnapshotIdentity, TypeDefinitionFacts, TypeInstanceError,
-    TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey, ValueTypeInstanceValidator,
-    ValueTypeMarker,
+    SemanticAuthorityResource, SemanticCapabilityAuthority, SemanticDefinitionProjectionIdentity,
+    SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
+    SemanticRegistryResource, SemanticRegistrySnapshotIdentity, TypeDefinitionFacts,
+    TypeInstanceError, TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey,
+    ValueTypeInstanceValidator, ValueTypeMarker,
 };
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use standard_operations::{F32Add, F32Constant, F32Multiply, StrictSerialF32Sum};

@@ -507,7 +507,10 @@ mod tests {
         SemanticProgramBuilder, StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
-    use tiler_reference::{InputBinding, ReferenceEvaluator, Tensor};
+    use tiler_reference::{
+        FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor,
+        TensorPayloadView,
+    };
 
     fn semantic(reverse_constants: bool) -> SemanticProgram {
         semantic_case(
@@ -610,7 +613,21 @@ mod tests {
         let fused = &product.targets[0].portfolio.alternatives[1];
         let actual = interpret_fused(&fused.kernels[0], &values);
         let key = InputKey::new("input").unwrap();
-        let tensor = Tensor::new(shape, values).unwrap();
+        let tensor = Tensor::dense(
+            F32::resolved_type(),
+            shape,
+            values
+                .into_iter()
+                .map(|value| {
+                    ReferenceElement::from_float_bits(
+                        value.to_bits().to_be_bytes(),
+                        FloatBitOrder::MostSignificantByteFirst,
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap();
         let expected = ReferenceEvaluator::standard()
             .unwrap()
             .evaluate(&semantic, &[InputBinding::new(&key, &tensor)])
@@ -620,11 +637,15 @@ mod tests {
                 .iter()
                 .map(|value| value.to_bits())
                 .collect::<Vec<_>>(),
-            expected[0]
-                .elements()
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>()
+            match expected[0].payload() {
+                TensorPayloadView::Dense(elements) => elements
+                    .iter()
+                    .map(|element| {
+                        u32::from_be_bytes(<[u8; 4]>::try_from(element.as_bytes()).unwrap())
+                    })
+                    .collect::<Vec<_>>(),
+                _ => panic!("expected dense f32 reference output"),
+            }
         );
     }
 
