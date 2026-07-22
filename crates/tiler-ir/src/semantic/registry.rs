@@ -1199,11 +1199,11 @@ pub enum RegistryError {
         /// Invalid operation authority.
         key: Arc<OpKey>,
     },
-    /// A transitive semantic-authority closure exceeded its governed bound.
+    /// Semantic-authority closure construction exceeded a governed resource bound.
     SemanticAuthorityResourceExceeded {
         /// Governed aggregate resource.
         resource: SemanticAuthorityResource,
-        /// Maximum admitted unique subjects.
+        /// Maximum admitted count for this resource.
         limit: usize,
         /// First rejected aggregate count.
         actual: usize,
