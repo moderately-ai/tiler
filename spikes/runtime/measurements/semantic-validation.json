@@ -1,0 +1,931 @@
+{
+  "compile_command": [
+    "rustc",
+    "+nightly-2026-07-19",
+    "-O",
+    "--edition",
+    "2021",
+    "spikes/runtime/semantic_validation_enforcement.rs",
+    "-o",
+    "<temporary-binary>"
+  ],
+  "derived_medians": [
+    {
+      "elements": 65536,
+      "median_elapsed_ns": 25708,
+      "strategy": "host"
+    },
+    {
+      "elements": 65536,
+      "median_elapsed_ns": 67416,
+      "strategy": "pre_scan"
+    },
+    {
+      "elements": 65536,
+      "median_elapsed_ns": 4125,
+      "strategy": "proof"
+    },
+    {
+      "elements": 65536,
+      "median_elapsed_ns": 65709,
+      "strategy": "transactional"
+    },
+    {
+      "elements": 1048576,
+      "median_elapsed_ns": 463541,
+      "strategy": "host"
+    },
+    {
+      "elements": 1048576,
+      "median_elapsed_ns": 169250,
+      "strategy": "pre_scan"
+    },
+    {
+      "elements": 1048576,
+      "median_elapsed_ns": 62250,
+      "strategy": "proof"
+    },
+    {
+      "elements": 1048576,
+      "median_elapsed_ns": 137125,
+      "strategy": "transactional"
+    },
+    {
+      "elements": 8388608,
+      "median_elapsed_ns": 3513541,
+      "strategy": "host"
+    },
+    {
+      "elements": 8388608,
+      "median_elapsed_ns": 912208,
+      "strategy": "pre_scan"
+    },
+    {
+      "elements": 8388608,
+      "median_elapsed_ns": 525625,
+      "strategy": "proof"
+    },
+    {
+      "elements": 8388608,
+      "median_elapsed_ns": 613667,
+      "strategy": "transactional"
+    }
+  ],
+  "host": {
+    "machine": "arm64",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "processor": "arm",
+    "python": "3.11.12"
+  },
+  "measured_at_utc": "2026-07-22T00:56:24+00:00",
+  "measurement_boundary": "optimized dependency-free CPU control/accounting model; not GPU performance",
+  "repository": {
+    "head": "de943b6add8b0c8f768390292cc7e66f4c36b562",
+    "source_dirty": true,
+    "source_sha256": "c1b7bb7b2c7727f65729c1b19bf2f5c725b3a62defa8c299d35250efe59915b0"
+  },
+  "samples": [
+    {
+      "dispatches": 1,
+      "elapsed_ns": 18375,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 7458,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 4125,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 4125,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 4084,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 4125,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 5,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 4083,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 6,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 4125,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 7,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 4125,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 8,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25708,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25708,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25666,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25792,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25708,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25708,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 5,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25667,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 6,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25709,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 7,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 25708,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 8,
+      "strategy": "host",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 74875,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 69750,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 65292,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 67167,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 69916,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 64958,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 5,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 68667,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 6,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 67416,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 7,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 64792,
+      "elements": 65536,
+      "input_bytes": 524288,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 8,
+      "strategy": "pre_scan",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 68542,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 0,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 64792,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 1,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 64833,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 2,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 67042,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 3,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 67375,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 4,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 69250,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 5,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 65709,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 6,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 61459,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 7,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 62333,
+      "elements": 65536,
+      "input_bytes": 262144,
+      "observations": 1,
+      "private_bytes": 262144,
+      "sample_index": 8,
+      "strategy": "transactional",
+      "validation_elements": 65536
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 258583,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 62709,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 62250,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 62084,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 62000,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 400833,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "host",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 455583,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "host",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 472125,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "host",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 474875,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "host",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 463541,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "host",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 163708,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "pre_scan",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 169250,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "pre_scan",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 164875,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "pre_scan",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 173167,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "pre_scan",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 173875,
+      "elements": 1048576,
+      "input_bytes": 8388608,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "pre_scan",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 137375,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 1,
+      "private_bytes": 4194304,
+      "sample_index": 0,
+      "strategy": "transactional",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 135167,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 1,
+      "private_bytes": 4194304,
+      "sample_index": 1,
+      "strategy": "transactional",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 137125,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 1,
+      "private_bytes": 4194304,
+      "sample_index": 2,
+      "strategy": "transactional",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 136208,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 1,
+      "private_bytes": 4194304,
+      "sample_index": 3,
+      "strategy": "transactional",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 137625,
+      "elements": 1048576,
+      "input_bytes": 4194304,
+      "observations": 1,
+      "private_bytes": 4194304,
+      "sample_index": 4,
+      "strategy": "transactional",
+      "validation_elements": 1048576
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 1966042,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 507459,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 525625,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 510334,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 550375,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "proof",
+      "validation_elements": 0
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 3338291,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "host",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 3496833,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "host",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 3513541,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "host",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 3537500,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "host",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 3522459,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 0,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "host",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 905167,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 0,
+      "strategy": "pre_scan",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 912208,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 1,
+      "strategy": "pre_scan",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 914500,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 2,
+      "strategy": "pre_scan",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 916250,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 3,
+      "strategy": "pre_scan",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 2,
+      "elapsed_ns": 903500,
+      "elements": 8388608,
+      "input_bytes": 67108864,
+      "observations": 1,
+      "private_bytes": 0,
+      "sample_index": 4,
+      "strategy": "pre_scan",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 578375,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 1,
+      "private_bytes": 33554432,
+      "sample_index": 0,
+      "strategy": "transactional",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 595875,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 1,
+      "private_bytes": 33554432,
+      "sample_index": 1,
+      "strategy": "transactional",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 624167,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 1,
+      "private_bytes": 33554432,
+      "sample_index": 2,
+      "strategy": "transactional",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 613667,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 1,
+      "private_bytes": 33554432,
+      "sample_index": 3,
+      "strategy": "transactional",
+      "validation_elements": 8388608
+    },
+    {
+      "dispatches": 1,
+      "elapsed_ns": 629375,
+      "elements": 8388608,
+      "input_bytes": 33554432,
+      "observations": 1,
+      "private_bytes": 33554432,
+      "sample_index": 4,
+      "strategy": "transactional",
+      "validation_elements": 8388608
+    }
+  ],
+  "schema": "tiler.runtime-semantic-validation-measurement/v1",
+  "timeout_seconds_per_subprocess_group": 300,
+  "toolchain": {
+    "rustc_verbose": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)\nbinary: rustc\ncommit-hash: eff8269f797067c30555e77f160ec84c0ed15cd9\ncommit-date: 2026-07-18\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8",
+    "selector": "nightly-2026-07-19"
+  }
+}

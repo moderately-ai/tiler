@@ -8,8 +8,8 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.shapes.stable-rust-shape-evidence", "tiler.research.shapes.public-static-shape-spelling"]
-entrypoints: ["spikes/shapes/shape-evidence/src/lib.rs", "spikes/shapes/shape-evidence/measure.sh", "spikes/shapes/shape-evidence/measure-spellings.sh"]
-last_verified: "2026-07-20"
+entrypoints: ["spikes/shapes/shape-evidence/src/lib.rs", "spikes/shapes/shape-evidence/measure.py", "spikes/shapes/shape-evidence/measure.sh", "spikes/shapes/shape-evidence/measure-spellings.sh"]
+last_verified: "2026-07-21"
 ticket: "prototype-shape-evidence-spike"
 ---
 
@@ -42,9 +42,11 @@ spikes/shapes/shape-evidence/measure.sh
 ```
 
 Raw run products are ignored. The compact checked-in result is
-[`measurements/summary.json`](measurements/summary.json). One sample per case
-is sufficient to reject catastrophic scaling, not to estimate a production
-compile-time cost distribution.
+[`measurements/summary.json`](measurements/summary.json). The command derives
+that file directly from its fresh subprocess results and retains each raw
+stdout/stderr stream under the ignored `measurements/raw/` directory. One
+sample per case is sufficient to reject catastrophic scaling, not to estimate
+a production compile-time cost distribution.
 
 Compare downstream descriptors, library-owned arity families, and dimension
 tuples with five isolated samples per case:
@@ -53,5 +55,10 @@ tuples with five isolated samples per case:
 spikes/shapes/shape-evidence/measure-spellings.sh
 ```
 
-The checked-in medians and exact host/toolchain description are in
+The checked-in summary retains all five samples, derives its medians, and
+records the exact host/toolchain in
 [`measurements/spelling-summary.json`](measurements/spelling-summary.json).
+Both entrypoints impose a 300-second overall process-group deadline on every
+subprocess. They support macOS with BSD `/usr/bin/time -lp` and Linux with GNU
+`/usr/bin/time -v`; other platforms fail closed. Binary sizes come from
+Python's portable `Path.stat()` rather than incompatible `stat` command flags.

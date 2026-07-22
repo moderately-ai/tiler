@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
 import json
+import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -25,33 +29,41 @@ def run(command: list[str], *, timed: bool = False) -> dict[str, object]:
     if timed:
         actual = ["/usr/bin/time", "-lp" if sys.platform == "darwin" else "-v", *command]
     started = time.monotonic()
-    result = subprocess.run(
+    process = subprocess.Popen(
         actual,
         cwd=SPIKE,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=TIMEOUT_SECONDS,
-        check=False,
+        start_new_session=True,
     )
-    elapsed = time.monotonic() - started
-    if result.returncode != 0:
+    try:
+        stdout, stderr = process.communicate(timeout=TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
         raise RuntimeError(
-            f"command failed ({result.returncode}): {' '.join(command)}\n{result.stderr}"
-        )
+            f"command exceeded {TIMEOUT_SECONDS}s deadline: {' '.join(command)}"
+        ) from error
+    elapsed = time.monotonic() - started
+    if process.returncode != 0:
+        raise RuntimeError(f"command failed ({process.returncode}): {' '.join(command)}\n{stderr}")
     rss_bytes = None
     if timed:
         if sys.platform == "darwin":
-            match = re.search(r"(\d+)\s+maximum resident set size", result.stderr)
+            match = re.search(r"(\d+)\s+maximum resident set size", stderr)
             rss_bytes = int(match.group(1)) if match else None
         else:
-            match = re.search(r"Maximum resident set size \(kbytes\):\s+(\d+)", result.stderr)
+            match = re.search(r"Maximum resident set size \(kbytes\):\s+(\d+)", stderr)
             rss_bytes = int(match.group(1)) * 1024 if match else None
+        if rss_bytes is None:
+            raise RuntimeError("could not parse peak RSS from /usr/bin/time output")
     return {
         "command": command,
         "elapsed_seconds": round(elapsed, 6),
         "peak_rss_bytes": rss_bytes,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
+        "stdout": stdout,
+        "stderr": stderr,
     }
 
 
@@ -135,17 +147,38 @@ def measure(toolchain: str, count: int) -> dict[str, object]:
 
 def main() -> int:
     """Run the bounded matrix and write its compact reproducibility record."""
+    if sys.platform not in {"darwin", "linux"}:
+        raise SystemExit("measurement supports only macOS and Linux")
+    if not Path("/usr/bin/time").is_file():
+        raise SystemExit(
+            "measurement requires /usr/bin/time (BSD time on macOS or GNU time on Linux)"
+        )
     RAW.mkdir(parents=True, exist_ok=True)
     records = [measure(toolchain, count) for toolchain in TOOLCHAINS for count in COUNTS]
+    measured_sources = [
+        SPIKE / "Cargo.lock",
+        SPIKE / "Cargo.toml",
+        SPIKE / "measure.py",
+        *(sorted((SPIKE / "api" / "src").rglob("*.rs"))),
+        *(sorted((SPIKE / "workload" / "src").rglob("*.rs"))),
+    ]
+    digest = hashlib.sha256()
+    for source in measured_sources:
+        digest.update(str(source.relative_to(SPIKE)).encode())
+        digest.update(b"\0")
+        digest.update(source.read_bytes())
+        digest.update(b"\0")
     summary = {
         "schema_version": 1,
-        "measurement_date": "2026-07-20",
+        "measurement_date": dt.datetime.now(dt.UTC).date().isoformat(),
         "host": {
             "platform": platform.platform(),
             "machine": platform.machine(),
             "processor": platform.processor(),
         },
-        "timeout_seconds_per_command": TIMEOUT_SECONDS,
+        "timeout_seconds_per_subprocess_group": TIMEOUT_SECONDS,
+        "measured_input_tree_sha256": digest.hexdigest(),
+        "repository_base_revision": run(["git", "rev-parse", "HEAD"])["stdout"].strip(),
         "toolchains": {toolchain: toolchain_version(toolchain) for toolchain in TOOLCHAINS},
         "measurements": records,
     }

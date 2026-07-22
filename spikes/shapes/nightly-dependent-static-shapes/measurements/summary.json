@@ -4,7 +4,8 @@
     "platform": "macOS-27.0-arm64-arm-64bit",
     "processor": "arm"
   },
-  "measurement_date": "2026-07-20",
+  "measured_input_tree_sha256": "cc2a089c7c35b31cab318e748bb802f0b3a6f9a6ec6655f71f6eba48ddad920a",
+  "measurement_date": "2026-07-22",
   "measurements": [
     {
       "clean_check": {
@@ -17,8 +18,8 @@
           "--bin",
           "generated_1"
         ],
-        "elapsed_seconds": 0.078992,
-        "peak_rss_bytes": 73203712
+        "elapsed_seconds": 0.147107,
+        "peak_rss_bytes": 78364672
       },
       "global_symbol_count": 331,
       "incremental_check": {
@@ -31,8 +32,8 @@
           "--bin",
           "generated_1"
         ],
-        "elapsed_seconds": 0.051539,
-        "peak_rss_bytes": 60899328
+        "elapsed_seconds": 0.06935,
+        "peak_rss_bytes": 60588032
       },
       "release_binary_bytes": 432528,
       "release_build": {
@@ -46,8 +47,8 @@
           "--bin",
           "generated_1"
         ],
-        "elapsed_seconds": 0.166097,
-        "peak_rss_bytes": 116244480
+        "elapsed_seconds": 0.234097,
+        "peak_rss_bytes": 115867648
       },
       "shape_count": 1,
       "toolchain": "nightly-2026-07-19",
@@ -61,8 +62,8 @@
           "--bin",
           "generated_1"
         ],
-        "elapsed_seconds": 0.025253,
-        "peak_rss_bytes": 35373056
+        "elapsed_seconds": 0.038376,
+        "peak_rss_bytes": 35176448
       }
     },
     {
@@ -76,8 +77,8 @@
           "--bin",
           "generated_10"
         ],
-        "elapsed_seconds": 0.078761,
-        "peak_rss_bytes": 73351168
+        "elapsed_seconds": 0.104108,
+        "peak_rss_bytes": 73039872
       },
       "global_symbol_count": 331,
       "incremental_check": {
@@ -90,8 +91,8 @@
           "--bin",
           "generated_10"
         ],
-        "elapsed_seconds": 0.051007,
-        "peak_rss_bytes": 61227008
+        "elapsed_seconds": 0.066657,
+        "peak_rss_bytes": 60964864
       },
       "release_binary_bytes": 432528,
       "release_build": {
@@ -105,8 +106,8 @@
           "--bin",
           "generated_10"
         ],
-        "elapsed_seconds": 0.107716,
-        "peak_rss_bytes": 87670784
+        "elapsed_seconds": 0.151573,
+        "peak_rss_bytes": 87539712
       },
       "shape_count": 10,
       "toolchain": "nightly-2026-07-19",
@@ -120,8 +121,8 @@
           "--bin",
           "generated_10"
         ],
-        "elapsed_seconds": 0.025798,
-        "peak_rss_bytes": 35258368
+        "elapsed_seconds": 0.034039,
+        "peak_rss_bytes": 34930688
       }
     },
     {
@@ -135,8 +136,8 @@
           "--bin",
           "generated_100"
         ],
-        "elapsed_seconds": 0.08358,
-        "peak_rss_bytes": 74874880
+        "elapsed_seconds": 0.114855,
+        "peak_rss_bytes": 74579968
       },
       "global_symbol_count": 331,
       "incremental_check": {
@@ -149,8 +150,8 @@
           "--bin",
           "generated_100"
         ],
-        "elapsed_seconds": 0.052007,
-        "peak_rss_bytes": 62914560
+        "elapsed_seconds": 0.074374,
+        "peak_rss_bytes": 62636032
       },
       "release_binary_bytes": 432528,
       "release_build": {
@@ -164,8 +165,8 @@
           "--bin",
           "generated_100"
         ],
-        "elapsed_seconds": 0.120103,
-        "peak_rss_bytes": 90177536
+        "elapsed_seconds": 0.157207,
+        "peak_rss_bytes": 90079232
       },
       "shape_count": 100,
       "toolchain": "nightly-2026-07-19",
@@ -179,8 +180,8 @@
           "--bin",
           "generated_100"
         ],
-        "elapsed_seconds": 0.026209,
-        "peak_rss_bytes": 35373056
+        "elapsed_seconds": 0.031943,
+        "peak_rss_bytes": 35274752
       }
     },
     {
@@ -194,8 +195,8 @@
           "--bin",
           "generated_1000"
         ],
-        "elapsed_seconds": 0.132194,
-        "peak_rss_bytes": 90374144
+        "elapsed_seconds": 0.166274,
+        "peak_rss_bytes": 90046464
       },
       "global_symbol_count": 331,
       "incremental_check": {
@@ -208,8 +209,8 @@
           "--bin",
           "generated_1000"
         ],
-        "elapsed_seconds": 0.082459,
-        "peak_rss_bytes": 94584832
+        "elapsed_seconds": 0.112355,
+        "peak_rss_bytes": 94486528
       },
       "release_binary_bytes": 432544,
       "release_build": {
@@ -223,8 +224,8 @@
           "--bin",
           "generated_1000"
         ],
-        "elapsed_seconds": 0.240253,
-        "peak_rss_bytes": 116867072
+        "elapsed_seconds": 0.322996,
+        "peak_rss_bytes": 116539392
       },
       "shape_count": 1000,
       "toolchain": "nightly-2026-07-19",
@@ -238,8 +239,8 @@
           "--bin",
           "generated_1000"
         ],
-        "elapsed_seconds": 0.026785,
-        "peak_rss_bytes": 35143680
+        "elapsed_seconds": 0.03455,
+        "peak_rss_bytes": 35651584
       }
     },
     {
@@ -253,8 +254,8 @@
           "--bin",
           "generated_1"
         ],
-        "elapsed_seconds": 0.109676,
-        "peak_rss_bytes": 78348288
+        "elapsed_seconds": 0.144709,
+        "peak_rss_bytes": 78069760
       },
       "global_symbol_count": 331,
       "incremental_check": {
@@ -267,8 +268,8 @@
           "--bin",
           "generated_1"
         ],
-        "elapsed_seconds": 0.049887,
-        "peak_rss_bytes": 60506112
+        "elapsed_seconds": 0.067265,
+        "peak_rss_bytes": 60276736
       },
       "release_binary_bytes": 432528,
       "release_build": {
@@ -282,8 +283,8 @@
           "--bin",
           "generated_1"
         ],
-        "elapsed_seconds": 0.167453,
-        "peak_rss_bytes": 115392512
+        "elapsed_seconds": 0.205376,
+        "peak_rss_bytes": 117112832
       },
       "shape_count": 1,
       "toolchain": "nightly-2026-07-20",
@@ -297,8 +298,8 @@
           "--bin",
           "generated_1"
         ],
-        "elapsed_seconds": 0.025751,
-        "peak_rss_bytes": 35471360
+        "elapsed_seconds": 0.03663,
+        "peak_rss_bytes": 35602432
       }
     },
     {
@@ -312,8 +313,8 @@
           "--bin",
           "generated_10"
         ],
-        "elapsed_seconds": 0.080572,
-        "peak_rss_bytes": 72810496
+        "elapsed_seconds": 0.08868,
+        "peak_rss_bytes": 72564736
       },
       "global_symbol_count": 331,
       "incremental_check": {
@@ -326,8 +327,8 @@
           "--bin",
           "generated_10"
         ],
-        "elapsed_seconds": 0.050786,
-        "peak_rss_bytes": 60833792
+        "elapsed_seconds": 0.060165,
+        "peak_rss_bytes": 60588032
       },
       "release_binary_bytes": 432528,
       "release_build": {
@@ -341,8 +342,8 @@
           "--bin",
           "generated_10"
         ],
-        "elapsed_seconds": 0.107412,
-        "peak_rss_bytes": 87654400
+        "elapsed_seconds": 0.127596,
+        "peak_rss_bytes": 87425024
       },
       "shape_count": 10,
       "toolchain": "nightly-2026-07-20",
@@ -356,8 +357,8 @@
           "--bin",
           "generated_10"
         ],
-        "elapsed_seconds": 0.025468,
-        "peak_rss_bytes": 35471360
+        "elapsed_seconds": 0.028645,
+        "peak_rss_bytes": 35569664
       }
     },
     {
@@ -371,8 +372,8 @@
           "--bin",
           "generated_100"
         ],
-        "elapsed_seconds": 0.085337,
-        "peak_rss_bytes": 74416128
+        "elapsed_seconds": 0.096356,
+        "peak_rss_bytes": 74186752
       },
       "global_symbol_count": 331,
       "incremental_check": {
@@ -385,8 +386,8 @@
           "--bin",
           "generated_100"
         ],
-        "elapsed_seconds": 0.051584,
-        "peak_rss_bytes": 62521344
+        "elapsed_seconds": 0.062473,
+        "peak_rss_bytes": 62275584
       },
       "release_binary_bytes": 432528,
       "release_build": {
@@ -400,8 +401,8 @@
           "--bin",
           "generated_100"
         ],
-        "elapsed_seconds": 0.121006,
-        "peak_rss_bytes": 90095616
+        "elapsed_seconds": 0.141007,
+        "peak_rss_bytes": 90030080
       },
       "shape_count": 100,
       "toolchain": "nightly-2026-07-20",
@@ -415,8 +416,8 @@
           "--bin",
           "generated_100"
         ],
-        "elapsed_seconds": 0.02665,
-        "peak_rss_bytes": 35307520
+        "elapsed_seconds": 0.029566,
+        "peak_rss_bytes": 35225600
       }
     },
     {
@@ -430,8 +431,8 @@
           "--bin",
           "generated_1000"
         ],
-        "elapsed_seconds": 0.130643,
-        "peak_rss_bytes": 89964544
+        "elapsed_seconds": 0.147174,
+        "peak_rss_bytes": 89653248
       },
       "global_symbol_count": 331,
       "incremental_check": {
@@ -444,8 +445,8 @@
           "--bin",
           "generated_1000"
         ],
-        "elapsed_seconds": 0.078573,
-        "peak_rss_bytes": 94306304
+        "elapsed_seconds": 0.089455,
+        "peak_rss_bytes": 94060544
       },
       "release_binary_bytes": 432544,
       "release_build": {
@@ -459,8 +460,8 @@
           "--bin",
           "generated_1000"
         ],
-        "elapsed_seconds": 0.240359,
-        "peak_rss_bytes": 116604928
+        "elapsed_seconds": 0.269398,
+        "peak_rss_bytes": 116588544
       },
       "shape_count": 1000,
       "toolchain": "nightly-2026-07-20",
@@ -474,13 +475,14 @@
           "--bin",
           "generated_1000"
         ],
-        "elapsed_seconds": 0.024925,
-        "peak_rss_bytes": 35487744
+        "elapsed_seconds": 0.028668,
+        "peak_rss_bytes": 35078144
       }
     }
   ],
+  "repository_base_revision": "de943b6add8b0c8f768390292cc7e66f4c36b562",
   "schema_version": 1,
-  "timeout_seconds_per_command": 300,
+  "timeout_seconds_per_subprocess_group": 300,
   "toolchains": {
     "nightly-2026-07-19": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)\nbinary: rustc\ncommit-hash: eff8269f797067c30555e77f160ec84c0ed15cd9\ncommit-date: 2026-07-18\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8",
     "nightly-2026-07-20": "rustc 1.99.0-nightly (9f36de775 2026-07-19)\nbinary: rustc\ncommit-hash: 9f36de775bc636c8e88c31a173c2bcb6995956a0\ncommit-date: 2026-07-19\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8"

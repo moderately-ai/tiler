@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.shapes.nightly-const-shape-parameters"]
 entrypoints: ["spikes/shapes/nightly-dependent-static-shapes/check.sh", "spikes/shapes/nightly-dependent-static-shapes/measure.py"]
-last_verified: "2026-07-20"
+last_verified: "2026-07-21"
 ticket: "spike-nightly-arbitrary-rank-shape-evidence"
 ---
 
@@ -52,8 +52,14 @@ uv run --locked python spikes/shapes/nightly-dependent-static-shapes/measure.py
 ```
 
 Raw compiler output and generated workloads are ignored. The retained summary
-records exact compiler commits, host provenance, wall time, peak RSS, release
-binary size, and global symbol counts. These measurements reject catastrophic
+is derived directly by that entrypoint and records its actual UTC run date,
+exact compiler commits, host provenance, wall time, peak RSS, release binary
+size, and global symbol counts. Every compiler/tool subprocess runs in its own
+process group with a 300-second overall deadline; a timeout kills the group and
+fails without publishing a replacement summary. The harness requires POSIX
+process groups, `nm`, and `/usr/bin/time`: BSD `time -lp` on macOS or GNU
+`time -v` on Linux. Binary size uses Python's portable `Path.stat()` rather
+than platform-specific `stat` flags. These measurements reject catastrophic
 behavior on the tested host; they are not portable performance guarantees.
 
 Both compilers pass the same correctness, diagnostics, Clippy, and rustdoc

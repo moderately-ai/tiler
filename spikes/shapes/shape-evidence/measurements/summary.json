@@ -1,67 +1,101 @@
 {
-  "schema": "tiler.shape-evidence-measurement/v1",
-  "measured_at": "2026-07-20",
+  "binary_size_source": "Python Path.stat().st_size",
   "host": {
-    "model": "MacBook Pro MX2K3LL/A",
-    "chip": "Apple M4 Max",
-    "cores": "14 (10 performance, 4 efficiency)",
-    "memory_gib": 36,
-    "os": "macOS 27.0.0",
-    "target": "aarch64-apple-darwin"
+    "machine": "arm64",
+    "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "python": "3.14.6"
   },
-  "toolchain": {
-    "rustc": "1.89.0 (29483883e 2025-08-04)",
-    "cargo": "1.89.0 (c24e10642 2025-06-23)",
-    "llvm": "20.1.7"
-  },
+  "measured_at_utc": "2026-07-22T01:00:22+00:00",
   "method": {
-    "cold_check": "cargo clean -p shape-evidence-spike, then cargo check --bin",
-    "incremental_check": "touch the selected generated bin after cold check, then cargo check --bin",
-    "optimized_build": "cargo build --release --bin after the incremental check",
+    "commands": {
+      "cold_and_incremental_check": "cargo +1.89.0 check --bin <binary> --manifest-path <spike>/Cargo.toml",
+      "optimized_build": "cargo +1.89.0 build --release --bin <binary> --manifest-path <spike>/Cargo.toml"
+    },
     "samples_per_case": 1,
-    "timer": "/usr/bin/time -lp"
+    "workload_counts": [
+      1,
+      10,
+      100,
+      1000
+    ]
   },
   "results": [
     {
+      "cold_check": {
+        "elapsed_seconds": 0.086322,
+        "peak_rss_bytes": 102973440
+      },
       "distinct_shapes": 1,
-      "cold_check_seconds": 0.07,
-      "incremental_check_seconds": 0.03,
-      "optimized_build_seconds": 0.07,
-      "cold_check_peak_rss_mib": 97.9,
-      "incremental_check_peak_rss_mib": 61.4,
-      "optimized_build_peak_rss_mib": 88.7,
-      "optimized_binary_bytes": 404016
+      "incremental_check": {
+        "elapsed_seconds": 0.044357,
+        "peak_rss_bytes": 64339968
+      },
+      "optimized_binary_bytes": 404016,
+      "optimized_build": {
+        "elapsed_seconds": 0.095427,
+        "peak_rss_bytes": 92815360
+      }
     },
     {
+      "cold_check": {
+        "elapsed_seconds": 0.08988,
+        "peak_rss_bytes": 103006208
+      },
       "distinct_shapes": 10,
-      "cold_check_seconds": 0.07,
-      "incremental_check_seconds": 0.03,
-      "optimized_build_seconds": 0.08,
-      "cold_check_peak_rss_mib": 98.0,
-      "incremental_check_peak_rss_mib": 61.7,
-      "optimized_build_peak_rss_mib": 89.2,
-      "optimized_binary_bytes": 404016
+      "incremental_check": {
+        "elapsed_seconds": 0.044202,
+        "peak_rss_bytes": 64684032
+      },
+      "optimized_binary_bytes": 404016,
+      "optimized_build": {
+        "elapsed_seconds": 0.091224,
+        "peak_rss_bytes": 93683712
+      }
     },
     {
+      "cold_check": {
+        "elapsed_seconds": 0.09985,
+        "peak_rss_bytes": 103038976
+      },
       "distinct_shapes": 100,
-      "cold_check_seconds": 0.08,
-      "incremental_check_seconds": 0.04,
-      "optimized_build_seconds": 0.09,
-      "cold_check_peak_rss_mib": 98.0,
-      "incremental_check_peak_rss_mib": 64.7,
-      "optimized_build_peak_rss_mib": 94.4,
-      "optimized_binary_bytes": 404016
+      "incremental_check": {
+        "elapsed_seconds": 0.046737,
+        "peak_rss_bytes": 67747840
+      },
+      "optimized_binary_bytes": 404016,
+      "optimized_build": {
+        "elapsed_seconds": 0.104422,
+        "peak_rss_bytes": 98861056
+      }
     },
     {
+      "cold_check": {
+        "elapsed_seconds": 0.211188,
+        "peak_rss_bytes": 129056768
+      },
       "distinct_shapes": 1000,
-      "cold_check_seconds": 0.17,
-      "incremental_check_seconds": 0.06,
-      "optimized_build_seconds": 0.19,
-      "cold_check_peak_rss_mib": 122.9,
-      "incremental_check_peak_rss_mib": 92.6,
-      "optimized_build_peak_rss_mib": 136.8,
-      "optimized_binary_bytes": 404016
+      "incremental_check": {
+        "elapsed_seconds": 0.083737,
+        "peak_rss_bytes": 97091584
+      },
+      "optimized_binary_bytes": 404016,
+      "optimized_build": {
+        "elapsed_seconds": 0.222212,
+        "peak_rss_bytes": 143425536
+      }
     }
-  ]
+  ],
+  "schema": "tiler.shape-evidence-measurement/v2",
+  "source": {
+    "measured_input_tree_sha256": "44bd4bce7663c3fa386e3eeeeef39df96442c6f64f8c0ff508bf676d55253bbe",
+    "repository_base_revision": "de943b6add8b0c8f768390292cc7e66f4c36b562"
+  },
+  "timeout_seconds_per_subprocess_group": 300,
+  "timer": "/usr/bin/time -lp",
+  "toolchain": {
+    "cargo_verbose": "cargo 1.89.0 (c24e10642 2025-06-23)\nrelease: 1.89.0\ncommit-hash: c24e1064277fe51ab72011e2612e556ac56addf7\ncommit-date: 2025-06-23\nhost: aarch64-apple-darwin\nlibgit2: 1.9.0 (sys:0.20.2 vendored)\nlibcurl: 8.7.1 (sys:0.4.80+curl-8.12.1 system ssl:(SecureTransport) LibreSSL/3.3.6)\nssl: OpenSSL 3.5.0 8 Apr 2025\nos: Mac OS 27.0.0 [64-bit]",
+    "rustc_verbose": "rustc 1.89.0 (29483883e 2025-08-04)\nbinary: rustc\ncommit-hash: 29483883eed69d5fb4db01964cdf2af4d86e9cb2\ncommit-date: 2025-08-04\nhost: aarch64-apple-darwin\nrelease: 1.89.0\nLLVM version: 20.1.7",
+    "selector": "1.89.0"
+  }
 }
-
