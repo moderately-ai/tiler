@@ -103,3 +103,12 @@ direct terminal causes. Physical-error stage attribution is centralized and
 used by both initial construction and portfolio rederivation: target errors map
 to target feasibility, intrinsic and shape-product errors to intrinsic
 scheduling, and refinement errors to kernel refinement.
+
+Failure descriptors admit causes only through a bounded canonical cause set.
+The set orders opaque tokens by their semantic identity and rejects duplicates
+before the writer appends truncation, materializes an omitted bridge, or emits
+the terminal failure. This matters for omitted tokens: cloning one token can no
+longer manufacture two distinct bridge record IDs for the same logical cause.
+Fixtures cover duplicate retained handles and duplicate cloned omitted tokens,
+then reuse each unchanged writer successfully to prove admission failure is
+transactional.

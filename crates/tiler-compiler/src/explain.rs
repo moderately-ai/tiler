@@ -90,7 +90,7 @@ pub(crate) enum ExplainStage {
     ArtifactPlanning,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum ExplainDisposition {
     Admitted,
     RejectedIntrinsic,
@@ -123,7 +123,7 @@ pub(crate) enum SubjectKind {
     Alternative,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ProviderRef {
     key: ProviderKey,
     revision: u32,
@@ -145,7 +145,7 @@ impl ProviderRef {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RuleRef {
     key: RuleKey,
     revision: u32,
@@ -772,12 +772,12 @@ struct PendingSelection {
     authoritative_infeasible: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct TerminalCause {
     kind: TerminalCauseKind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TerminalCauseKind {
     Record(ExplainRecordId),
     Omitted {
@@ -822,12 +822,34 @@ impl TerminalCause {
 }
 
 #[derive(Clone, Debug)]
+struct FailureCauseSet(Vec<TerminalCause>);
+
+impl FailureCauseSet {
+    fn new(mut causes: Vec<TerminalCause>) -> Result<Self, ExplainError> {
+        check_bound(BoundKind::Causes, MAX_CAUSES_PER_RECORD, causes.len())?;
+        causes.sort_unstable();
+        if causes.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(ExplainError::DuplicateCause);
+        }
+        Ok(Self(causes))
+    }
+
+    fn as_slice(&self) -> &[TerminalCause] {
+        &self.0
+    }
+
+    fn into_vec(self) -> Vec<TerminalCause> {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct FailureDescriptor {
     pub(crate) stage: ExplainStage,
     pub(crate) reason: ReasonCode,
     pub(crate) subject_kind: SubjectKind,
     pub(crate) subject_key: SubjectKey,
-    causes: Vec<TerminalCause>,
+    causes: FailureCauseSet,
 }
 
 impl FailureDescriptor {
@@ -838,12 +860,13 @@ impl FailureDescriptor {
         subject_key: impl AsRef<str>,
         cause: Option<TerminalCause>,
     ) -> Result<Self, ExplainError> {
+        let causes = FailureCauseSet::new(cause.into_iter().collect())?;
         Ok(Self {
             stage,
             reason: ReasonCode::new(reason)?,
             subject_kind,
             subject_key: SubjectKey::new(subject_key)?,
-            causes: cause.into_iter().collect(),
+            causes,
         })
     }
 
@@ -854,7 +877,7 @@ impl FailureDescriptor {
         subject_key: impl AsRef<str>,
         causes: Vec<TerminalCause>,
     ) -> Result<Self, ExplainError> {
-        check_bound(BoundKind::Causes, MAX_CAUSES_PER_RECORD, causes.len())?;
+        let causes = FailureCauseSet::new(causes)?;
         Ok(Self {
             stage,
             reason: ReasonCode::new(reason)?,
@@ -1145,11 +1168,12 @@ impl ExplainWriter {
         self.selection_ledger.clear();
         self.terminal_ledger_bytes = 0;
         self.append_truncation_summary()?;
-        for cause in &failure.causes {
+        for cause in failure.causes.as_slice() {
             self.validate_terminal_cause(Some(cause))?;
         }
-        let mut causes = Vec::with_capacity(failure.causes.len());
-        for cause in failure.causes {
+        let admitted_causes = failure.causes.into_vec();
+        let mut causes = Vec::with_capacity(admitted_causes.len());
+        for cause in admitted_causes {
             causes.push(self.materialize_terminal_cause(cause)?);
         }
         let subject = self.subject(failure.subject_kind, failure.subject_key.as_str())?;
@@ -2630,6 +2654,91 @@ mod tests {
                 if subject.kind == SubjectKind::Candidate
                     && subject.key.as_str() == "candidate:omitted"
         ));
+    }
+
+    #[test]
+    fn failure_cause_admission_rejects_retained_and_omitted_semantic_duplicates() {
+        let request = request(2.0);
+        let mut retained_writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let retained_parts = admitted(&retained_writer, "candidate:retained-duplicate");
+        let retained = retained_writer
+            .push_causal_detail(
+                retained_parts.rule,
+                retained_parts.subjects.into_iter().next().unwrap(),
+                &retained_parts.event,
+                retained_parts.causes,
+            )
+            .unwrap();
+        assert!(matches!(
+            FailureDescriptor::with_causes(
+                ExplainStage::KernelRefinement,
+                "duplicate-retained",
+                SubjectKind::Kernel,
+                "failed-kernel",
+                vec![retained.clone(), retained.clone()],
+            ),
+            Err(ExplainError::DuplicateCause)
+        ));
+        let retained_trace = retained_writer
+            .finish_failure(
+                FailureDescriptor::new(
+                    ExplainStage::KernelRefinement,
+                    "single-retained",
+                    SubjectKind::Kernel,
+                    "failed-kernel",
+                    Some(retained),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(
+            !retained_trace
+                .records()
+                .iter()
+                .any(|record| matches!(record.event(), ExplainEvent::CausalBridge { .. }))
+        );
+
+        let mut omitted_writer =
+            ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
+        let omitted_parts = admitted(&omitted_writer, "candidate:omitted-duplicate");
+        let omitted = omitted_writer
+            .push_causal_detail(
+                omitted_parts.rule,
+                omitted_parts.subjects.into_iter().next().unwrap(),
+                &omitted_parts.event,
+                omitted_parts.causes,
+            )
+            .unwrap();
+        assert!(matches!(
+            FailureDescriptor::with_causes(
+                ExplainStage::KernelRefinement,
+                "duplicate-omitted",
+                SubjectKind::Kernel,
+                "failed-kernel",
+                vec![omitted.clone(), omitted.clone()],
+            ),
+            Err(ExplainError::DuplicateCause)
+        ));
+        let omitted_trace = omitted_writer
+            .finish_failure(
+                FailureDescriptor::new(
+                    ExplainStage::KernelRefinement,
+                    "single-omitted",
+                    SubjectKind::Kernel,
+                    "failed-kernel",
+                    Some(omitted),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            omitted_trace
+                .records()
+                .iter()
+                .filter(|record| matches!(record.event(), ExplainEvent::CausalBridge { .. }))
+                .count(),
+            1
+        );
     }
 
     #[test]
