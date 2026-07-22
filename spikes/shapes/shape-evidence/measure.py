@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import signal
 import statistics
 import subprocess
@@ -143,6 +144,14 @@ def clean(target_dir: Path | None = None) -> None:
     run(command)
 
 
+def fresh_target(path: Path) -> Path:
+    """Create one empty target directory for a genuinely isolated sample."""
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True)
+    return path
+
+
 def measure_baseline() -> dict[str, object]:
     """Measure one clean, incremental, and optimized build per scale."""
     records = []
@@ -200,10 +209,9 @@ def measure_spellings() -> dict[str, object]:
             release_samples = []
             binary_sizes = []
             for sample in range(1, 6):
-                check_target = RAW / "spellings" / "target-check"
-                release_target = RAW / "spellings" / "target-release"
-                clean(check_target)
-                clean(release_target)
+                sample_root = RAW / "spellings" / "targets" / binary_name / f"sample-{sample}"
+                check_target = fresh_target(sample_root / "check")
+                release_target = fresh_target(sample_root / "release")
                 check_command = cargo("check", "--bin", binary_name)
                 check_command.extend(["--target-dir", str(check_target)])
                 check_samples.append(

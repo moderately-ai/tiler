@@ -29,7 +29,9 @@ spikes/apple-targets/compatibility_probe.sh \
 Success means the complete line-oriented `record.tsv` passed
 `validate_compatibility_record.py`; compile-matrix success without valid host,
 SDK, compiler, and linker provenance fails closed. Preserve `record.tsv`, SDK
-settings, and command logs for any published measurement. AIR and metallib
+settings, `input-manifest.tsv`, and command logs for any published measurement.
+Schema v2 binds the repository base and exact harness, validator, kernel,
+project, lockfile, and manifest digests. AIR and metallib
 files are regenerable and ignored in the checked-in result area; their digests
 remain in the record.
 

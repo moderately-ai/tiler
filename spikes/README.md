@@ -27,7 +27,7 @@ mean dependency-free, hermetic, portable to every host, or rerun by CI.
 
 - [Reduction contract probe](numerics/reduction_contract/README.md) — reproducible; executable-model, exhaustive-finite; supports: [Reduction semantics and legality](../docs/research/numerics/reduction-semantics-and-legality.md)
 - [Region accuracy observation probe](numerics/region_accuracy/README.md) — reproducible; bounded-measurement; supports: [Region accuracy contracts and analyzable error budgets](../docs/research/numerics/region-accuracy-contract.md)
-- [Sound accuracy probe](numerics/sound_accuracy/README.md) — reproducible; sound-proof, bounded-measurement; supports: [Sound region-accuracy analyzer integration spike](../docs/research/numerics/sound-region-analyzer-spike.md), [Region accuracy contracts and analyzable error budgets](../docs/research/numerics/region-accuracy-contract.md)
+- [Sound accuracy probe](numerics/sound_accuracy/README.md) — reproducible; executable-model, bounded-measurement; supports: [Sound region-accuracy analyzer integration spike](../docs/research/numerics/sound-region-analyzer-spike.md), [Region accuracy contracts and analyzable error budgets](../docs/research/numerics/region-accuracy-contract.md)
 
 ### Physical planning and lowering
 
@@ -53,7 +53,7 @@ mean dependency-free, hermetic, portable to every host, or rerun by CI.
 
 ### Documentation governance
 
-- [Documentation integrity gate](documentation/README.md) — reproducible; executable-model; supports: [Information architecture and provenance audit](../docs/research/documentation/information-architecture-audit.md), [Blank-agent documentation acceptance audit](../docs/research/documentation/blank-agent-acceptance-audit.md)
+- [Documentation integrity gate](documentation/README.md) — reproducible; executable-model; supports: [Information architecture and provenance audit](../docs/research/documentation/information-architecture-audit.md)
 <!-- END GENERATED EXPERIMENT CATALOG -->
 
 Each experiment entry identifies its supported research claim, exact entry

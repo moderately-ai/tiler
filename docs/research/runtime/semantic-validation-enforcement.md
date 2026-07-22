@@ -235,9 +235,11 @@ behavior. Eight tests cover equivalent valid results, worker-order-independent
 errors, failed private-result discard, post-completion status precedence,
 witness version/view mismatch, and structural accounting.
 
-The optimized CPU model was run on an Apple M4 Max with 14 logical CPUs,
-macOS 27.0, and `nightly-2026-07-19` (`eff8269f7`). Values are median
-microseconds over nine runs for 64 Ki elements and five runs for larger inputs:
+The retained record identifies an arm64 macOS 27.0 host and
+`nightly-2026-07-19` (`eff8269f7`). It does not retain hardware model or logical
+CPU count, so earlier M4 Max/14-CPU wording is not part of the evidence. Values
+are median microseconds over nine runs for 64 Ki elements and five runs for
+larger inputs:
 
 | Elements | Proof | Host scan | Parallel pre-scan | Transactional |
 | ---: | ---: | ---: | ---: | ---: |
@@ -247,8 +249,10 @@ microseconds over nine runs for 64 Ki elements and five runs for larger inputs:
 
 These timings validate the model and harness, not Metal/CUDA performance. The
 retained [measurement record](../../../spikes/runtime/measurements/semantic-validation.json)
-contains all 76 individual samples, derived medians, exact host/compiler/source
-identity, and deadline policy; the table is a view over that bounded run. The
+contains all 76 individual samples, derived medians, the host/compiler/source
+fields recorded by the harness, and deadline policy; the table is a view over
+that bounded run. Its host fields identify `arm64` macOS 27.0, not a hardware
+model or core count. The
 portable findings are the accounting ratios: proof performs one compute read;
 host and pre-scan perform two reads; pre-scan has two modeled dispatches and
 one completion observation; transactional performs one read/dispatch but writes

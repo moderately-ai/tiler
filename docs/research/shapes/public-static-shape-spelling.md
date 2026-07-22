@@ -136,13 +136,14 @@ selected by ADR 0061.
 
 **Measurement:** the retained Rust 1.89 harness generated 1, 10, 100, and 1,000
 distinct rank-three shapes for each viable spelling. Each result below is the
-median of five isolated clean builds on the documented Apple M4 Max host:
+median of five genuinely isolated target-directory builds on the retained
+arm64 macOS 27 host:
 
 | 1,000-shape spelling | Source bytes | Check | Check peak RSS | Release | Release peak RSS | Binary |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Downstream descriptors | 184,693 | 0.21 s | 122.9 MiB | 0.29 s | 137.3 MiB | 404,016 B |
-| Owned arity family | 88,011 | 0.21 s | 111.8 MiB | 0.28 s | 130.6 MiB | 404,016 B |
-| Dimension tuple | 113,005 | 0.22 s | 113.8 MiB | 0.29 s | 132.0 MiB | 404,016 B |
+| Downstream descriptors | 184,693 | 0.22 s | 122.8 MiB | 0.29 s | 137.0 MiB | 404,016 B |
+| Owned arity family | 88,011 | 0.23 s | 111.7 MiB | 0.29 s | 130.4 MiB | 404,016 B |
+| Dimension tuple | 113,005 | 0.24 s | 113.5 MiB | 0.30 s | 131.6 MiB | 404,016 B |
 
 The owned family used 52% less generated source than open descriptors and
 modestly less compiler memory at this bound. Timings and binaries were

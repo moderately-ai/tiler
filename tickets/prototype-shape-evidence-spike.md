@@ -43,3 +43,11 @@ recommended initial spelling and measured limits are recorded in
 `docs/research/shapes/stable-rust-shape-evidence.md`; general reduction result
 rank arithmetic remains deliberately weaker because stable Rust cannot express
 `Rank<{R - 1}>` without unstable generic const expressions.
+
+## Evidence correction (2026-07-21)
+
+The [shape experiment repair](repair-shape-and-runtime-experiment-integrity.md)
+regenerated the stable summary from isolated target directories. The
+[current report](../docs/research/shapes/stable-rust-shape-evidence.md)
+supersedes the historical timings above and narrows host provenance to the
+retained `arm64` macOS 27 record; the unretained M4 Max attribution is removed.

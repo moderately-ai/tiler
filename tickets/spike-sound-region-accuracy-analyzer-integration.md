@@ -34,3 +34,12 @@ demonstrate a bounded trusted-analyzer profile for fixed branch-free scalarized
 regions. The measured profile is practical with caching, but produces no
 independently checkable certificate; FPTaylor/HOL Light remains a
 [deferred follow-up](spike-hermetic-fptaylor-certificate-checking.md).
+
+## Evidence correction (2026-07-21)
+
+The [numerical witness repair](repair-numerical-witness-integrity.md) and
+[current report](../docs/research/numerics/sound-region-analyzer-spike.md)
+show that the historical Daisy bounds lack retained raw analyzer streams and
+cannot be freshly reproduced by the repaired adapter, which returns `Unknown`.
+They are historical analyzer-reported values, not current `SoundProof`
+evidence; current empirical maxima come from the retained observation record.

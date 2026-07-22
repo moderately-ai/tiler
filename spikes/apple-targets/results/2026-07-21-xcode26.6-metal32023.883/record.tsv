@@ -1,8 +1,15 @@
-schema	tiler.apple-target-compatibility/v1
+schema	tiler.apple-target-compatibility/v2
 probe.result_root	.
+probe.repository_base_revision	f3004a17e5fc291ff03bf6f5dfffada0d34943d5
 probe.source_sha256	fa7e29166a2f6aa8372681eb580f43592b5c8a5600ebf4f02c69682c6892b4e7
+probe.harness_sha256	b37ba89d5b0aaab5e0b0f6b1ecc1fc791b4885339c23ee42414794940b4ae745
+probe.validator_sha256	63f5793f24a264d9cbb52ec1a9c5176c2b03feb930bce7e8b465c6eae421165f
+probe.project_sha256	e35ae608cc3a54cad121a353e61873ae3f03ed3c526ad9df31397c7668b16a6e
+probe.lock_sha256	e8a38c0d668ed4db44d8a4c6b208ecdd39f9942a924ad738fa7d040b9c935bf3
+probe.input_manifest_file	input-manifest.tsv
+probe.input_manifest_sha256	fba6f4784e3aa21576472645a2bd9ee9ac743fd8b9e2691335410142649213f6
 probe.compiler_flags	-std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off
-host.date_utc	2026-07-22T01:03:31Z
+host.date_utc	2026-07-22T01:31:10Z
 host.developer_dir	/Applications/Xcode.app/Contents/Developer
 host.xcode	Xcode 26.6 Build version 17F113
 host.metal_toolchain_component	Asset Path: /System/Library/AssetsV2/com_apple_MobileAsset_MetalToolchain/5f4a441a6d0a11f2e9b28c67384263afe92320f7.asset/AssetData Build Version: 17F109 Status: installed Toolchain Identifier: com.apple.dt.toolchain.Metal.32023.883 Toolchain Search Path: /private/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.109.0.6Dib3q
@@ -35,49 +42,49 @@ matrix.macos13.a.sdk	macosx
 matrix.macos13.a.target	air64-apple-macos13.0
 matrix.macos13.a.command.metal	ZERO_AR_DATE=1 xcrun --sdk macosx metal -target air64-apple-macos13.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.macos13.a.command.metallib	ZERO_AR_DATE=1 xcrun --sdk macosx metallib <air> -o <metallib>
-matrix.macos13.a.air_sha256	ec4291d0b101630364845c06cc635a4e52afe6dedbe8f1ac0f2bb169129a0f98
+matrix.macos13.a.air_sha256	e2b63a512fb0153c9aca75aef6084bba7115755fc5feb4d57d30e8500c116e33
 matrix.macos13.a.metallib_sha256	12bc2bc6771922c6d41a00b077111d8bcb3632f7196f386c63ab9332bbf114b8
 matrix.macos13.a.log_sha256	639b4f3e7e5699a4dfb190addb97cbcb0c90007811423b64eb7f675f9c859506
 matrix.macos14.a.sdk	macosx
 matrix.macos14.a.target	air64-apple-macos14.0
 matrix.macos14.a.command.metal	ZERO_AR_DATE=1 xcrun --sdk macosx metal -target air64-apple-macos14.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.macos14.a.command.metallib	ZERO_AR_DATE=1 xcrun --sdk macosx metallib <air> -o <metallib>
-matrix.macos14.a.air_sha256	ec4291d0b101630364845c06cc635a4e52afe6dedbe8f1ac0f2bb169129a0f98
+matrix.macos14.a.air_sha256	e2b63a512fb0153c9aca75aef6084bba7115755fc5feb4d57d30e8500c116e33
 matrix.macos14.a.metallib_sha256	12bc2bc6771922c6d41a00b077111d8bcb3632f7196f386c63ab9332bbf114b8
 matrix.macos14.a.log_sha256	418872d6a9f111d67c4f73402407514ddd6e532211801eaaccbb342e730d14a2
 matrix.ios16.a.sdk	iphoneos
 matrix.ios16.a.target	air64-apple-ios16.0
 matrix.ios16.a.command.metal	ZERO_AR_DATE=1 xcrun --sdk iphoneos metal -target air64-apple-ios16.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.ios16.a.command.metallib	ZERO_AR_DATE=1 xcrun --sdk iphoneos metallib <air> -o <metallib>
-matrix.ios16.a.air_sha256	9ed62cfd2e26cecb96990c46fef95d0d10cd065df6e93e01dae70987b523a762
+matrix.ios16.a.air_sha256	74a80b98d59db694f9839220ec80fe00dced7a8e4ebea7cdf9e1f7d1509d6130
 matrix.ios16.a.metallib_sha256	5410e94de593a21ea3190feb94c89b58cdb8cd3132dc1c64ed3495f856579262
 matrix.ios16.a.log_sha256	b9badf409a26d602b8adae32aa4883365b5946dcd16e22ae949f9c67a887fda5
 matrix.ios17.a.sdk	iphoneos
 matrix.ios17.a.target	air64-apple-ios17.0
 matrix.ios17.a.command.metal	ZERO_AR_DATE=1 xcrun --sdk iphoneos metal -target air64-apple-ios17.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.ios17.a.command.metallib	ZERO_AR_DATE=1 xcrun --sdk iphoneos metallib <air> -o <metallib>
-matrix.ios17.a.air_sha256	9ed62cfd2e26cecb96990c46fef95d0d10cd065df6e93e01dae70987b523a762
+matrix.ios17.a.air_sha256	74a80b98d59db694f9839220ec80fe00dced7a8e4ebea7cdf9e1f7d1509d6130
 matrix.ios17.a.metallib_sha256	5410e94de593a21ea3190feb94c89b58cdb8cd3132dc1c64ed3495f856579262
 matrix.ios17.a.log_sha256	f304ddfc70987de3bb5a566d8d9825d4f77ad59f40067368ea9297db4665d252
 matrix.iossim16.a.sdk	iphonesimulator
 matrix.iossim16.a.target	air64-apple-ios16.0-simulator
 matrix.iossim16.a.command.metal	ZERO_AR_DATE=1 xcrun --sdk iphonesimulator metal -target air64-apple-ios16.0-simulator -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.iossim16.a.command.metallib	ZERO_AR_DATE=1 xcrun --sdk iphonesimulator metallib <air> -o <metallib>
-matrix.iossim16.a.air_sha256	ea7d1066c6535195b66036bb113409f99b4b2059d3262c74294e21e2ab9c58af
+matrix.iossim16.a.air_sha256	d6ff1d1eaf562a7e34bba6d3889d0a7b1713b56783aa80dbe649d97315e07ece
 matrix.iossim16.a.metallib_sha256	ede80a137044deed1d41efbd352fcf9fc8a136e332b8aebb3428ae5d63d0f9aa
 matrix.iossim16.a.log_sha256	ae64c5cc3bd60d8979d2847a7b84e3895b8cebfcab8892b204bd3f738fed057a
 matrix.iossim17.a.sdk	iphonesimulator
 matrix.iossim17.a.target	air64-apple-ios17.0-simulator
 matrix.iossim17.a.command.metal	ZERO_AR_DATE=1 xcrun --sdk iphonesimulator metal -target air64-apple-ios17.0-simulator -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.iossim17.a.command.metallib	ZERO_AR_DATE=1 xcrun --sdk iphonesimulator metallib <air> -o <metallib>
-matrix.iossim17.a.air_sha256	ea7d1066c6535195b66036bb113409f99b4b2059d3262c74294e21e2ab9c58af
+matrix.iossim17.a.air_sha256	d6ff1d1eaf562a7e34bba6d3889d0a7b1713b56783aa80dbe649d97315e07ece
 matrix.iossim17.a.metallib_sha256	ede80a137044deed1d41efbd352fcf9fc8a136e332b8aebb3428ae5d63d0f9aa
 matrix.iossim17.a.log_sha256	a4ffd6fc5bf4567e1b4674b6cb9e8b01d50a002216900bb48a8d13bbe0941b7b
 matrix.macos13.b.sdk	macosx
 matrix.macos13.b.target	air64-apple-macos13.0
 matrix.macos13.b.command.metal	ZERO_AR_DATE=1 xcrun --sdk macosx metal -target air64-apple-macos13.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.macos13.b.command.metallib	ZERO_AR_DATE=1 xcrun --sdk macosx metallib <air> -o <metallib>
-matrix.macos13.b.air_sha256	18572e8056dbc833b5d54e4996e1ae85b18c2e3e545fc441b0cda21a7e712fb2
+matrix.macos13.b.air_sha256	a10f1ebd7c079cac720e5f973661a4381f257101f1ea66f1074cba03795ca7fd
 matrix.macos13.b.metallib_sha256	12bc2bc6771922c6d41a00b077111d8bcb3632f7196f386c63ab9332bbf114b8
 matrix.macos13.b.log_sha256	d275193b4ed3932a85f5a480d8813fbb150c805f1bdf1a25333b9d3fe337a2ad
 repro.macos13.air.byte_identical	false
@@ -86,7 +93,7 @@ matrix.macos14.b.sdk	macosx
 matrix.macos14.b.target	air64-apple-macos14.0
 matrix.macos14.b.command.metal	ZERO_AR_DATE=1 xcrun --sdk macosx metal -target air64-apple-macos14.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.macos14.b.command.metallib	ZERO_AR_DATE=1 xcrun --sdk macosx metallib <air> -o <metallib>
-matrix.macos14.b.air_sha256	18572e8056dbc833b5d54e4996e1ae85b18c2e3e545fc441b0cda21a7e712fb2
+matrix.macos14.b.air_sha256	a10f1ebd7c079cac720e5f973661a4381f257101f1ea66f1074cba03795ca7fd
 matrix.macos14.b.metallib_sha256	12bc2bc6771922c6d41a00b077111d8bcb3632f7196f386c63ab9332bbf114b8
 matrix.macos14.b.log_sha256	b069b2453520055c6ba1f9ed21526c8aebaf3af79ca99cd09219225ba8f46a45
 repro.macos14.air.byte_identical	false
@@ -95,7 +102,7 @@ matrix.ios16.b.sdk	iphoneos
 matrix.ios16.b.target	air64-apple-ios16.0
 matrix.ios16.b.command.metal	ZERO_AR_DATE=1 xcrun --sdk iphoneos metal -target air64-apple-ios16.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.ios16.b.command.metallib	ZERO_AR_DATE=1 xcrun --sdk iphoneos metallib <air> -o <metallib>
-matrix.ios16.b.air_sha256	7165d613c0015f2d62d3d8675fcfbbe666d325404fad0de87fab20ae84cef321
+matrix.ios16.b.air_sha256	c48efaa75b237c7202c92efabfd268729c8d408fed34b7b41d024d5dfee9fb34
 matrix.ios16.b.metallib_sha256	5410e94de593a21ea3190feb94c89b58cdb8cd3132dc1c64ed3495f856579262
 matrix.ios16.b.log_sha256	ed411ce2cb5076754de993c9c603fd17f61f2d9ec254be261a6b7bbab523531a
 repro.ios16.air.byte_identical	false
@@ -104,7 +111,7 @@ matrix.ios17.b.sdk	iphoneos
 matrix.ios17.b.target	air64-apple-ios17.0
 matrix.ios17.b.command.metal	ZERO_AR_DATE=1 xcrun --sdk iphoneos metal -target air64-apple-ios17.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.ios17.b.command.metallib	ZERO_AR_DATE=1 xcrun --sdk iphoneos metallib <air> -o <metallib>
-matrix.ios17.b.air_sha256	7165d613c0015f2d62d3d8675fcfbbe666d325404fad0de87fab20ae84cef321
+matrix.ios17.b.air_sha256	c48efaa75b237c7202c92efabfd268729c8d408fed34b7b41d024d5dfee9fb34
 matrix.ios17.b.metallib_sha256	5410e94de593a21ea3190feb94c89b58cdb8cd3132dc1c64ed3495f856579262
 matrix.ios17.b.log_sha256	a3b62ce19df77981982f1619572930850b3651b339cf73a2f7de9545e7c36e28
 repro.ios17.air.byte_identical	false
@@ -113,7 +120,7 @@ matrix.iossim16.b.sdk	iphonesimulator
 matrix.iossim16.b.target	air64-apple-ios16.0-simulator
 matrix.iossim16.b.command.metal	ZERO_AR_DATE=1 xcrun --sdk iphonesimulator metal -target air64-apple-ios16.0-simulator -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.iossim16.b.command.metallib	ZERO_AR_DATE=1 xcrun --sdk iphonesimulator metallib <air> -o <metallib>
-matrix.iossim16.b.air_sha256	c5db70005edc3fd521bfa3a0e033810e524eab71df2ba6f1a1ed7d9081c3d945
+matrix.iossim16.b.air_sha256	0b65fe74409aa21069efda8a7c346ba626d28dea99453df23dd308ffb8b35eb7
 matrix.iossim16.b.metallib_sha256	ede80a137044deed1d41efbd352fcf9fc8a136e332b8aebb3428ae5d63d0f9aa
 matrix.iossim16.b.log_sha256	79be024b662f899a875bc01f95ecf0e534a6c1d775371550dcca6f3b75524a29
 repro.iossim16.air.byte_identical	false
@@ -122,7 +129,7 @@ matrix.iossim17.b.sdk	iphonesimulator
 matrix.iossim17.b.target	air64-apple-ios17.0-simulator
 matrix.iossim17.b.command.metal	ZERO_AR_DATE=1 xcrun --sdk iphonesimulator metal -target air64-apple-ios17.0-simulator -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c <source> -o <air>
 matrix.iossim17.b.command.metallib	ZERO_AR_DATE=1 xcrun --sdk iphonesimulator metallib <air> -o <metallib>
-matrix.iossim17.b.air_sha256	c5db70005edc3fd521bfa3a0e033810e524eab71df2ba6f1a1ed7d9081c3d945
+matrix.iossim17.b.air_sha256	0b65fe74409aa21069efda8a7c346ba626d28dea99453df23dd308ffb8b35eb7
 matrix.iossim17.b.metallib_sha256	ede80a137044deed1d41efbd352fcf9fc8a136e332b8aebb3428ae5d63d0f9aa
 matrix.iossim17.b.log_sha256	c0c90e1a57d6aeebdbca087fc23173479175bd579c209e5a6743fe717df27c00
 repro.iossim17.air.byte_identical	false

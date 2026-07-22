@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import platform
 import struct
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import mpmath
 
@@ -127,6 +131,24 @@ def main() -> None:
     )
 
     result = {
+        "schema": "tiler-region-accuracy-observation/v1",
+        "provenance": {
+            "algorithm": "tiler-region-accuracy-probe/v1",
+            "source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "python": {
+                "implementation": platform.python_implementation(),
+                "version": platform.python_version(),
+                "cache_tag": sys.implementation.cache_tag,
+            },
+            "host": {
+                "platform": platform.platform(),
+                "machine": platform.machine(),
+            },
+            "mpmath": {
+                "version": mpmath.__version__,
+                "decimal_precision_digits": mpmath.mp.dps,
+            },
+        },
         "evidence": {
             "class": "empirical-adversarial",
             "oracle": "mpmath-1.3.0-100-decimal-digits",

@@ -85,3 +85,12 @@ measurement are separated into the
 [sound analyzer spike](spike-sound-region-accuracy-analyzer-integration.md);
 delegated region budgets
 remain disabled until that feasibility gate passes.
+
+## Evidence correction (2026-07-21)
+
+The [numerical witness repair](repair-numerical-witness-integrity.md) and
+[current region report](../docs/research/numerics/region-accuracy-contract.md)
+retain a deterministic empirical result with producer provenance. The linked
+sound-analyzer spike no longer establishes a fresh sound certificate, so
+delegated budgets remain disabled and the historical Daisy result is not used
+as current proof evidence.

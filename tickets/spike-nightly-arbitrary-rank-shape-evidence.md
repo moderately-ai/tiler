@@ -99,3 +99,11 @@ accepted form requires an explicit superseding decision.
   symbols.
 - Migrated contributor bootstrap, CI, validation, and the workspace to the
   exact governed pin and removed the misleading stable `rust-version` claim.
+
+## Evidence correction (2026-07-21)
+
+The [shape experiment repair](repair-shape-and-runtime-experiment-integrity.md)
+regenerated the governed workload evidence. The
+[current report](../docs/research/shapes/nightly-const-shape-parameters.md)
+supersedes the historical 1,000-shape timings and RSS values above while
+preserving the bounded conformance result and recorded compiler revisions.

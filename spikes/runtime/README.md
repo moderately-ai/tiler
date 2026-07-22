@@ -34,8 +34,10 @@ uv run --locked python spikes/runtime/measure_semantic_validation.py
 ```
 
 [`measurements/semantic-validation.json`](measurements/semantic-validation.json)
-retains every individual sample, derived medians, exact compiler/host/source
-provenance, and the 300-second subprocess-group deadline. It measures only the
+retains every individual sample, derived medians, the compiler/host/source
+fields recorded by the harness, and the 300-second subprocess-group deadline.
+The host fields identify `arm64` macOS 27.0 but do not identify a hardware model
+or core count. It measures only the
 optimized dependency-free CPU model; Metal/CUDA coefficients remain unmeasured.
 
 The source audit additionally checks the exact Candle revision used by the

@@ -6,7 +6,7 @@ title: "Sound accuracy probe"
 topics: ["numerics", "accuracy", "proof"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
-evidence_classes: ["sound-proof", "bounded-measurement"]
+evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.numerics.sound-region-analyzer-spike", "tiler.research.numerics.region-accuracy-contract"]
 entrypoints: ["spikes/numerics/sound_accuracy/run_daisy.sh", "spikes/numerics/sound_accuracy/daisy_runner.py", "spikes/numerics/sound_accuracy/observe.py"]
 last_verified: "2026-07-21"
@@ -111,7 +111,7 @@ parser, provenance, resource-limit, and real process-group timeout tests passed
 in the locked environment.
 
 **Inference:** this verifies fail-closed adapter behavior, not a fresh Daisy
-proof run. The certified bounds in `measurements.json` remain the earlier dated
+proof run. The certified bounds in `measurements.json` remain historical
 measurements and were not regenerated. A fresh proof run must first rebuild the
 launcher with every classpath input present and dependency storage that remains
 available for execution.

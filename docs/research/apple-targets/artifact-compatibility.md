@@ -32,11 +32,13 @@ future support claims.
 **Repaired-probe verification:** a 2026-07-21 local / 2026-07-22 UTC rerun on
 macOS 27.0 build 26A5388g, Xcode 26.6 build 17F113, and Metal Toolchain 17F109
 passed the complete validator. It reproduced all six compile successes, AIR
-path differences, byte-identical final metallibs across the two source
+digest differences across the two source directories, byte-identical final metallibs across the two source
 directories, and the three family-specific final hashes reported below. The
 [retained record](../../../spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883/record.tsv),
-SDK extracts, and command logs are checked in. This new run repairs evidence
-integrity for that bounded compile/path-variation claim; it does not add an old
+input manifest, SDK extracts, and command logs are checked in. Its schema-v2
+producer identity binds the repository base plus exact harness, validator,
+source, project, and lockfile digests. This new run repairs evidence integrity
+for that bounded compile/directory-variation claim; it does not add an old
 OS, second machine, simulator-runtime, or physical-device observation.
 
 ## Result
@@ -54,11 +56,11 @@ declared lower runtime boundary; another source feature or compiler may encode
 it differently.
 
 Compiling identical source bytes from two absolute directories produced
-different AIR bytes containing the respective source paths, but byte-identical
-final metallibs. This supports using the final metallib as the embedded payload
-and keeping absolute paths out of portable identity when equivalent inputs are
-otherwise established. It does not establish reproducibility across machines
-or toolchain builds.
+different AIR digests but byte-identical final metallibs. The retained v2
+record does not keep AIR bytes or a format-aware metadata extract, so it does
+not establish that the absolute paths themselves caused or were embedded in
+the AIR. It supports using the final metallib as the embedded payload for this
+case; portable path-equivalence still needs to be established independently.
 
 No old macOS host, iOS device, or iOS simulator loaded these new artifacts.
 Compile success is not runtime compatibility evidence, and library load would
@@ -177,11 +179,11 @@ physical device.
 | Mac Catalyst | macOS SDK exposes `ios` + `macabi` | No command validated | Not exercised | **Deferred**, neither silently supported nor permanently rejected |
 
 The identical-minima observation is specific to `copy.metal`, Metal 32023.883,
-MSL 3.1, and the exact flags below. Internal AIR strings observed by the probe
-named macOS 14.0 and iOS 17.0 even for the lower-minimum commands. That may be
-toolchain normalization, an MSL/toolchain floor, or metadata unrelated to the
-requested deployment contract; the probe does not distinguish those causes.
-It is not evidence that Tiler may discard the requested minimum.
+MSL 3.1, and the exact flags below. The earlier unretained inspection reported
+internal AIR strings naming macOS 14.0 and iOS 17.0 even for lower-minimum
+commands, but no AIR bytes or extracts were preserved to validate that claim.
+It is historical context only and not evidence that Tiler may discard the
+requested minimum.
 
 ### Catalyst disposition
 
@@ -306,19 +308,21 @@ The probe compiled identical source bytes from `src-a/copy.metal` and
 Within a family, both tested minima also produced identical AIR and metallib
 bytes. Across families, the final metallibs differed.
 
-The AIR files contained their respective absolute `src-a` or `src-b` source
-paths. The path is therefore a measured AIR input leak correlated with the AIR
-digest change, although this probe does not prove it is the only differing
-field. The linker removed or canonicalized the difference in the final
-metallib for this case.
+The two source directories produced different AIR digests and byte-identical
+final metallibs. A historical unretained inspection reported the respective
+absolute paths inside AIR, but the retained record cannot validate AIR contents
+or attribute the digest difference to one field. The linker output eliminated
+the observed AIR-byte difference for this case; its mechanism is unknown.
 
 ### Inferred cache consequences
 
 - The final metallib, not AIR, is the initial product payload and payload
   digest. Persisting AIR is unnecessary for the proposed macro-local bundle.
-- Absolute temporary paths should not enter the portable content key merely
-  because the compiler records them in an intermediate. The key still includes
-  every semantic and compiler input, including requested deployment minimum.
+- Absolute temporary paths should enter portable identity only when they are
+  output-affecting inputs rather than locations of otherwise equivalent
+  content. This probe does not by itself prove that equivalence rule. The key
+  still includes every semantic and compiler input, including requested
+  deployment minimum.
 - Cache correctness must validate the stored final payload digest and never
   depend on a second compiler invocation reproducing the same bytes.
 

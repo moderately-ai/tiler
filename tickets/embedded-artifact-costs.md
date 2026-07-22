@@ -19,3 +19,12 @@ Capture wall time, peak memory, intermediate and final sizes, and section duplic
 Delivered the [measurement report](../docs/research/embedding/embedded-artifact-costs.md)
 and [reproducible harness](../spikes/embedding/README.md). The initial gates are
 bounded host measurements; linker deduplication is explicitly not guaranteed.
+
+## Evidence correction (2026-07-21)
+
+The later [harness-integrity repair](repair-macro-and-embedding-harness-integrity.md)
+and [current report](../docs/research/embedding/embedded-artifact-costs.md)
+clarify that the retained summary does not include raw Cargo streams, binaries,
+or `size -m` output. It supports the recorded quantitative observations, but
+not the historical causal attribution of debug duplication to embedded paths
+or the claimed Cargo-work classification of freshness rows.

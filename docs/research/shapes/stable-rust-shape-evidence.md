@@ -48,14 +48,15 @@ identity, and ordered subject handles. A foreign witness or a witness presented
 for different subjects rejects without treating an open Rust trait as solver
 authority.
 
-**Measurement:** on an Apple M4 Max host, the generated 1/10/100/1,000 exact-
-shape workloads took 0.07/0.07/0.08/0.17 seconds for a package-clean check and
-0.03/0.03/0.04/0.06 seconds for a touched-source incremental check. Optimized
-builds took 0.07/0.08/0.09/0.19 seconds. Peak RSS at 1,000 shapes was 122.9 MiB
-for clean check, 92.6 MiB for incremental check, and 136.8 MiB for optimized
-build. Every optimized binary was 404,016 bytes, showing no binary growth in
-this zero-sized evidence workload. These are single-run feasibility bounds,
-not stable performance guarantees. Exact provenance and method are in the
+**Measurement:** on the retained arm64 macOS 27 host, the regenerated 1/10/100/1,000
+exact-shape workloads took 0.086/0.090/0.100/0.211 seconds for a package-clean
+check and 0.044/0.044/0.047/0.084 seconds for a touched-source incremental
+check. Optimized builds took 0.095/0.091/0.104/0.222 seconds. Peak RSS at 1,000
+shapes was 123.1 MiB for clean check, 92.6 MiB for incremental check, and
+136.8 MiB for optimized build. Every optimized binary was 404,016 bytes,
+showing no binary growth in this zero-sized evidence workload. These are
+single-run feasibility bounds, not stable performance guarantees. Exact
+provenance, individual values, and method are in the
 [measurement summary](../../../spikes/shapes/shape-evidence/measurements/summary.json).
 
 ## Feasibility recommendation

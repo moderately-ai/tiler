@@ -28,8 +28,15 @@ def valid_record() -> dict[str, str]:
     values = {
         "schema": VALIDATOR.SCHEMA,
         "probe.result_root": ".",
+        "probe.repository_base_revision": "b" * 40,
         "probe.source_sha256": digest,
-        "probe.compiler_flags": "-std=metal3.1 -O2",
+        "probe.harness_sha256": digest,
+        "probe.validator_sha256": digest,
+        "probe.project_sha256": digest,
+        "probe.lock_sha256": digest,
+        "probe.input_manifest_file": "input-manifest.tsv",
+        "probe.input_manifest_sha256": digest,
+        "probe.compiler_flags": VALIDATOR.COMPILER_FLAGS,
         "host.date_utc": "2026-07-21T00:00:00Z",
         "host.developer_dir": "/Applications/Xcode.app/Contents/Developer",
         "host.xcode": "Xcode 26.6 Build version 17F113",
@@ -60,19 +67,21 @@ def valid_record() -> dict[str, str]:
     for family, (sdk, target) in VALIDATOR.FAMILIES.items():
         for run in ("a", "b"):
             prefix = f"matrix.{family}.{run}"
+            air_digest = "a" * 64 if run == "a" else "b" * 64
             values.update(
                 {
                     f"{prefix}.sdk": sdk,
                     f"{prefix}.target": target,
-                    f"{prefix}.command.metal": "xcrun metal ...",
-                    f"{prefix}.command.metallib": "xcrun metallib ...",
-                    f"{prefix}.air_sha256": digest,
+                    f"{prefix}.command.metal": VALIDATOR.metal_command(sdk, target),
+                    f"{prefix}.command.metallib": VALIDATOR.metallib_command(sdk),
+                    f"{prefix}.air_sha256": air_digest,
                     f"{prefix}.metallib_sha256": digest,
                     f"{prefix}.log_sha256": digest,
                 }
             )
         values[f"repro.{family}.air.byte_identical"] = "false"
         values[f"repro.{family}.metallib.byte_identical"] = "true"
+    values["probe.status"] = "validated"
     return values
 
 
@@ -81,6 +90,23 @@ def assert_validator_mutations() -> None:
     with tempfile.TemporaryDirectory(prefix="tiler-compat-record-test.") as directory:
         root = Path(directory)
         empty_digest = hashlib.sha256(b"").hexdigest()
+        manifest = root / "input-manifest.tsv"
+        manifest.write_text(
+            "".join(
+                f"{path}\t{baseline[field]}\n"
+                for path, field in {
+                    "spikes/apple-targets/compatibility_probe.sh": "probe.harness_sha256",
+                    "spikes/apple-targets/copy.metal": "probe.source_sha256",
+                    "spikes/apple-targets/validate_compatibility_record.py": (
+                        "probe.validator_sha256"
+                    ),
+                    "pyproject.toml": "probe.project_sha256",
+                    "uv.lock": "probe.lock_sha256",
+                }.items()
+            ),
+            encoding="utf-8",
+        )
+        baseline["probe.input_manifest_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
         for sdk in VALIDATOR.SDKS:
             settings = root / "sdk" / f"{sdk}.settings.txt"
             settings.parent.mkdir(exist_ok=True)
@@ -126,7 +152,15 @@ def assert_validator_mutations() -> None:
             raise AssertionError("validator accepted mutated retained SDK settings")
         retained_settings.write_bytes(original_settings)
 
-        provenance = [key for key in baseline if key.startswith(("host.", "sdk.", "tool."))]
+        original_manifest = manifest.read_bytes()
+        manifest.write_text("mutated\n", encoding="utf-8")
+        if run(baseline).returncode == 0:
+            raise AssertionError("validator accepted mutated retained input manifest")
+        manifest.write_bytes(original_manifest)
+
+        provenance = [
+            key for key in baseline if key.startswith(("probe.", "host.", "sdk.", "tool."))
+        ]
         for key in provenance:
             mutation = dict(baseline)
             del mutation[key]
@@ -158,6 +192,33 @@ def assert_validator_mutations() -> None:
             mutation[key] = value
             if run(mutation).returncode == 0:
                 raise AssertionError(f"validator accepted malformed provenance field: {key}")
+
+        command_mutations = {
+            "probe.compiler_flags": "-std=metal3.1 -O2",
+            "matrix.macos13.a.command.metal": VALIDATOR.metal_command(
+                "iphoneos", "air64-apple-macos13.0"
+            ),
+            "matrix.macos13.a.command.metallib": VALIDATOR.metallib_command("iphoneos"),
+        }
+        for key, value in command_mutations.items():
+            mutation = dict(baseline)
+            mutation[key] = value
+            if run(mutation).returncode == 0:
+                raise AssertionError(f"validator accepted inconsistent command field: {key}")
+
+        for key, value in {
+            "repro.macos13.air.byte_identical": "true",
+            "repro.macos13.metallib.byte_identical": "false",
+        }.items():
+            mutation = dict(baseline)
+            mutation[key] = value
+            if run(mutation).returncode == 0:
+                raise AssertionError(f"validator accepted false reproducibility field: {key}")
+
+        trailing = dict(baseline)
+        trailing["unexpected.trailing"] = "value"
+        if run(trailing).returncode == 0:
+            raise AssertionError("validator accepted data after terminal validation status")
 
 
 def assert_runtime_injections() -> None:

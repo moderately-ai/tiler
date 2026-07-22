@@ -7,8 +7,8 @@ topics: ["targets", "feasibility", "gpu"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
-evidence_classes: ["primary-source-synthesis", "executable-model"]
+implementation_status: "partial"
+evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.architecture", "tiler.contract.fusion-and-scheduling", "tiler.contract.cost-model"]
 adopted_by: ["ADR-0043"]
 ticket: "target-profile-feasibility-model"
@@ -18,6 +18,12 @@ ticket: "target-profile-feasibility-model"
 
 **Status:** research basis for ADR 0043
 **Ticket:** `target-profile-feasibility-model`
+
+**Evidence boundary:** the phased model is primary-source synthesis. The
+private compiler slice exercises one conservative prototype profile, but this
+report has no retained executable spanning declared, compile-refined,
+pipeline-refined, and live-device feasibility. It therefore does not claim
+`executable-model` evidence for that full contract.
 
 ## Conclusion
 
@@ -277,7 +283,9 @@ runtime caches and routing records; they are not portable semantic identity.
 Calibration and measurements carry model/provenance identity but never become
 capability truth without a separately accepted proof/query contract.
 
-Tests cover every hard boundary at minus/equal/plus one, missing and dishonest
-providers, fixed/scalable vector legality matrices, barrier scope and
-convergence, deferred-query timing, specialization-specific facts, generic
-fallback retention, and the invariant that an estimate never proves legality.
+A conforming implementation requires tests for every hard boundary at
+minus/equal/plus one, missing and dishonest providers, fixed/scalable vector
+legality matrices, barrier scope and convergence, deferred-query timing,
+specialization-specific facts, generic fallback retention, and the invariant
+that an estimate never proves legality. The current private prototype does not
+establish this full test matrix.

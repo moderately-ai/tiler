@@ -30,3 +30,12 @@ Delivered the [environment/freshness report](../docs/research/macro-environment/
 [ADRs 0049](../docs/decisions/0049-explicit-artifact-family-selection.md) and
 [0053](../docs/decisions/0053-gate-artifact-delivery-by-consumer-family.md).
 rust-analyzer timing and a genuinely different installed Rust target remain unmeasured.
+
+## Evidence correction (2026-07-21)
+
+The [macro harness repair](repair-macro-and-embedding-harness-integrity.md) and
+[current report](../docs/research/macro-environment/proc-macro-build-environment.md)
+narrow the retained environment evidence to native expansion. The historical
+host-equal explicit-`--target` raw trace is absent, and a genuinely distinct
+installed Rust target remains unavailable; neither case is represented as a
+current measurement.

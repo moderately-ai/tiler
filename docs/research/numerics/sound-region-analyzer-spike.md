@@ -8,15 +8,16 @@ catalog_group: "numerical-operations"
 research_status: "complete"
 disposition: "informational"
 implementation_status: "spike-only"
-evidence_classes: ["primary-source-synthesis","sound-proof","bounded-measurement"]
+evidence_classes: ["primary-source-synthesis","executable-model","bounded-measurement"]
 informs: ["tiler.contract.correctness-and-testing"]
 ticket: "spike-sound-region-accuracy-analyzer-integration"
 ---
 
 # Sound region-accuracy analyzer integration spike
 
-**Status:** bounded feasibility gate passed for a trusted-analyzer profile;
-independent certificate checking remains unavailable
+**Status:** historical bounded feasibility result plus a current fail-closed
+adapter model; a fresh governed proof and independent certificate checking are
+unavailable
 
 ## Traceability
 
@@ -24,6 +25,18 @@ independent certificate checking remains unavailable
 - **Normative destination:** [Numerical semantics](../../numerical-semantics.md) and [Correctness and testing](../../correctness-and-testing.md).
 - **Adoption:** No ADR directly adopts this bounded evidence.
 - **Work record:** [spike-sound-region-accuracy-analyzer-integration](../../../tickets/spike-sound-region-accuracy-analyzer-integration.md).
+
+## Evidence correction
+
+The historical Daisy bounds are retained as summarized measurements, but the
+original analyzer streams and a complete immutable executable closure were not
+retained. The repaired runner could not reproduce them because its generated
+launcher referenced removed resources and dependency-cache entries; it
+correctly returned `Unknown`. This report therefore no longer labels the
+retained corpus itself `sound-proof`. Its executable evidence is the bounded,
+fail-closed adapter and parser model; a new `SoundProof` record requires a fresh
+successful run with the governed analyzer identity and complete retained
+inputs/results described below.
 
 
 ## Outcome
@@ -135,11 +148,11 @@ Host: arm64 macOS 27.0 build 26A5378n, Daisy
 observations and not performance distributions. The exact recorded values are
 in [`measurements.json`](../../../spikes/numerics/sound_accuracy/measurements.json).
 
-| Region/profile | Certified absolute bound | Adversarial observed max | Analysis / total time |
+| Region/profile | Historical analyzer-reported absolute bound | Adversarial observed max | Analysis / total time |
 | --- | ---: | ---: | ---: |
 | f32 multiply then add | 1.1324882649432766e-6 | 5.9604644775390625e-8 | included in 16 / 1012 ms batch |
 | cancellation | 1.0000000596046448 | 1 | included in batch |
-| `sqrt(x) / y` | 5.960465330190516e-7 | 4.457063018918261e-8 | included in batch |
+| `sqrt(x) / y` | 5.960465330190516e-7 | 7.136228923328628e-8 | included in batch |
 | explicit f32 FMA | 8.940696858417141e-7 | 1.1920928955078125e-7 | included in batch |
 | explicit f16 materialization | 4.88817720906809e-4 | 4.8828125e-4 | 8 / 1033 ms |
 | four-term left reduction | 12.000001072883606 | 1 | included in batch |
@@ -155,6 +168,11 @@ unchanged. The relational SMT profile tightened the ratio's real range from
 `[0.5, 2]` to `[0.998046875, 1.00390625]`; it did not prove the exact singleton
 range despite the equality assumption.
 
+The historical analyzer bounds and timings come from
+[`measurements.json`](../../../spikes/numerics/sound_accuracy/measurements.json);
+that file does not contain empirical maxima. The maxima column comes from the
+separately regenerated, provenance-bearing
+[`observations.json`](../../../spikes/numerics/sound_accuracy/observations.json).
 The empirical maxima are lower-bound witnesses over small adversarial sets,
 not estimates of worst-case error. In particular, the Daisy profile includes
 rounding arbitrary real inputs into f32, while the sampled inputs are already

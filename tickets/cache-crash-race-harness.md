@@ -20,3 +20,11 @@ Delivered the [cache protocol report](../docs/research/cache/crash-and-race-prot
 [process harness](../spikes/cache/README.md), and accepted [ADR 0050](../docs/decisions/0050-use-immutable-self-validating-expansion-cache-entries.md).
 The measured APFS/process-crash profile does not establish power-loss or
 network-filesystem durability.
+
+## Evidence correction (2026-07-21)
+
+The [cache harness repair](repair-cache-experiment-harness-integrity.md) and
+[current report](../docs/research/cache/crash-and-race-protocol.md) bind the
+concurrency claim to the retained 10-run, 32-process evidence record and its
+producer inputs. Broader APFS, power-loss, and network-filesystem guarantees
+remain outside that bounded observation.

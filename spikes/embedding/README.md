@@ -63,7 +63,10 @@ SHA-256 digest; values are not published, so output-affecting inputs remain
 identifiable without leaking ambient credentials.
 
 The checked-in 2026-07-20 result predates those controls. It contains complete
-derived JSON and CSV rows but no raw logs or generated source workspaces. Verify
+derived JSON and CSV rows but no raw logs or generated source workspaces. Its
+freshness labels therefore do not independently prove package rebuilds or
+proc-macro expansion counts, and its differing debug hashes do not retain the
+binary evidence needed to attribute the cause. Verify
 its retained structure and exact file digests without rerunning Cargo:
 
 ```sh
