@@ -1,7 +1,7 @@
 ---
 id: correct-reference-value-and-authority-contracts
 title: Correct reference value and authority contracts
-status: todo
+status: in-progress
 priority: p0
 dependencies: [harden-semantic-registry-and-program-construction]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/reference, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, reference]
+claimed_from: todo
+assignee: codex-root
+lease_expires_at: 1784728370
 ---
 
 Correct the reference capability boundary exposed by the fixed-point code
