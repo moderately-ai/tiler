@@ -159,3 +159,24 @@ absent locally and remotely and had no unique commit, so this ticket performs
 no destructive branch or worktree operation. Local `main` was ahead of
 `origin/main`; new dispatch must use the exact integrated base until remote
 coordination catches up rather than pretending stale remote state is current.
+
+## Outcome
+
+Accepted and completed after implementation commits `b4168a9`, `39baa73`,
+`4154be2`, `96b58b4`, and `5d8d3f1`. The reconciliation split the missing
+compiler, physical-planning, program, artifact, cost, ShapeEnv, quantization,
+and opaque-call authorities into bounded reviewed tickets; corrected their
+dependency direction and removed every redundant direct edge from the
+nonterminal graph; enabled Rust crate-aware scheduling and explicit workspace/
+lockfile coordination; and aligned the normative status, roadmap, extension,
+optimizer, architecture, and correctness documents with the resulting work
+graph. Historical tickets, branches, worktrees, and measured evidence were
+preserved.
+
+The exhaustive nonterminal-edge audit reported no redundant dependency. The
+full repository gate passed, including documentation rendering/validation,
+Ruff, 143 Python tests, workspace Rust checks, strict Clippy, tests, doctests,
+rustdoc, and dependent-shape conformance. Ticket lint, doctor, reconciliation,
+ready/tracks, optimizer and inline critical paths, diff checks, and the strict
+scope guard against base `92b9b37b92fb3c2e6c13fde48c9ed499edb6ced6` also
+passed before acceptance.
