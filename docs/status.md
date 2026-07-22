@@ -90,7 +90,7 @@ Downstream work is split into typed explain,
 bounded normalization, capability registration, checked semantic/index
 refinement, a generic index reference oracle, legal region covers, target
 feasibility, scheduled-region verification, physical frontiers,
-complete-program selection, structured KIR, target-neutral kernel programs,
+complete physical-plan selection, structured KIR, target-neutral kernel programs,
 artifact-facing programs, and conformance. A reviewed
 [`public compiler boundary`](../tickets/prototype-public-compiler-api.md)
 follows conformance and is consumed by the inline frontend. Backend feasibility

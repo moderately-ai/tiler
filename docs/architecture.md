@@ -178,8 +178,7 @@ winner. Every retained `RegionImplementation` contains boundary
 requirements/guarantees, applicability predicates, target requirements,
 consumed compile guarantees, deferred target predicates with evaluation phases,
 exact/proven resource requirements, estimates, calibration identity, and a cost
-estimate. Its implementation
-body is one of:
+estimate. The mature implementation body is one of:
 
 ```text
 ScheduledKernel(ScheduledRegion)
@@ -187,6 +186,11 @@ KernelSubprogram(stages, internal temporaries, dependencies)
 OpaqueCall(call contract)
 View(alias/metadata result)
 ```
+
+The bounded P0 physical frontier admits only checked `ScheduledKernel` values
+and rejects the other variants explicitly while retaining this additive
+sum-type seam. Opaque physical calls are a later reviewed extension, not part of
+the first frontier proof.
 
 Every executable body also carries the selected numerical realization,
 machine-checkable guarantee, and scoped evidence identity. These must refine
@@ -413,10 +417,12 @@ artifact. The initial custom-op path produces one newly allocated output; view
 return plans are deferred until the runtime integration can return aliased
 storage and layout explicitly.
 
-## Core opaque implementations
+## Future opaque implementations
 
-Not every semantic operation should be implemented as primitive scalar work.
-The physical planner and `KernelProgram` admit `OpaqueCall` implementations
+Not every semantic operation should eventually be implemented as primitive
+scalar work. After optimizer conformance and mature boundary-property
+authority, the physical planner and `KernelProgram` may admit reviewed
+`OpaqueCall` implementations
 with explicit boundary contracts, target requirements, resource/hazard
 metadata, exact function/accuracy/special-value behavior, and costs, for
 example an optimized matrix multiplication or a
@@ -424,6 +430,9 @@ handwritten reduction. These form deliberate fusion boundaries unless a
 backend-specific implementation rule can legally absorb adjacent operations.
 Opaque execution effects order physical stages; they do not introduce hidden
 effects into the initial pure semantic graph.
+
+The implementation owner is
+[`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md).
 
 ## Architectural constraints
 

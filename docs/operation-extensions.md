@@ -247,6 +247,12 @@ must expose typed ABI, effect, alias, placement, target, numerical, resource,
 and failure-stage boundary contracts; it is not an unrestricted callback in
 semantic IR.
 
+The bounded P0 physical frontier implements scheduled-kernel providers only.
+The reviewed
+[`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md)
+ticket owns the later opaque-call capability after optimizer conformance and
+mature boundary-property authority.
+
 ## Capability coherence
 
 Capability callbacks are immutable and deterministic functions of explicit

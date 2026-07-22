@@ -82,13 +82,16 @@ verification boundaries:
    bounded local physical frontiers. This local authority does not require a
    previously selected global cover.
 8. `SelectCompletePhysicalPlans` joins complete covers with compatible local
-   implementations, materializations, dependencies, buffers, and guards. A
-   whole-plan verifier emits a checked selected-plan or portfolio receipt for
-   coverage, lifetimes, aliasing, and typed storage handoffs.
+   implementations, boundary contracts, proposed materializations,
+   dependencies, and guards. It emits a checked selected-plan or portfolio
+   receipt for cover/implementation compatibility, not final executable-program
+   authority. Buffer requirements remain provisional at this stage.
 9. `RefineStructuredKernels` lowers each selected scheduled kernel and proves typed,
    effect-safe refinement of exactly that schedule before backend emission.
 10. `AssembleKernelPrograms` constructs verified executable programs from the
-    checked physical-plan receipt and verified KIR.
+    checked physical-plan receipt and verified KIR. Only this post-KIR verifier
+    authoritatively checks executable stage coverage, buffers, initialization,
+    lifetimes, aliasing, storage handoffs, ABI/launch references, and routing.
 
 Semantic, index, schedule, program/buffer, and structured-kernel verifiers have
 separate authority. Target feasibility cannot repair intrinsic invalidity;
@@ -193,6 +196,13 @@ Implementation rules produce schedules such as:
 - direct or tiled rearrangement;
 - serial, subgroup, threadgroup, or multi-pass reduction;
 - direct or GEMM-backed contraction.
+
+The bounded P0 frontier admits only checked `ScheduledKernel` proposals and
+rejects opaque-call proposals explicitly. Its provider/body representation
+must retain an additive sum-type seam so the later reviewed
+[`implement-opaque-physical-call-providers`](../../tickets/implement-opaque-physical-call-providers.md)
+ticket can add opaque implementations without weakening scheduled-kernel
+verification.
 
 Each implementation candidate advertises a machine-checkable numerical
 guarantee, realization/provider identity, and scoped evidence. It is admitted

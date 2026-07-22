@@ -3,7 +3,7 @@ id: prototype-semantic-index-refinement
 title: Verify semantic-to-index refinement
 status: todo
 priority: p0
-dependencies: [prototype-operation-capability-registry, harden-compiler-verifier-subject-binding-and-totality, prototype-generic-region-formation]
+dependencies: [prototype-operation-capability-registry, prototype-generic-region-formation]
 related: [prototype-canonical-index-region-slice]
 scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]

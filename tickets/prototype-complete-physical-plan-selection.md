@@ -12,10 +12,14 @@ tags: [implementation, optimizer, program-selection]
 ---
 Join independently verified legal covers with compatible per-region physical
 frontiers. Verify complete occurrence/output coverage, boundary agreement,
-materializations, dependencies, deliberate duplication, guards, and
+proposed materializations and dependencies, deliberate duplication, guards, and
 deterministic portfolio retention. Emit a non-forgeable checked selected-plan
 or selected-portfolio receipt distinct from structured KIR and `KernelProgram`.
 The P0 selector may use proved structural dominance; it must not invent
 uncalibrated latency authority.
+
+This receipt is not final executable-program authority. Only post-KIR
+`KernelProgram` assembly verifies buffers, initialization, lifetimes, aliasing,
+storage handoffs, ABI/launch references, executable stage coverage, and routing.
 
 Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

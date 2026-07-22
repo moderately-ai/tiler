@@ -75,12 +75,14 @@ feasible implementations. Boundary contracts and actual materializations
 belong to region implementations and complete kernel programs.
 
 For each candidate and target profile, iteration/access lowering plus local
-scheduling returns a bounded `ImplementationFrontier`. Each implementation
-contains a sum-typed body (`ScheduledKernel`, `KernelSubprogram`, `OpaqueCall`,
-or `View`), boundary requirements/guarantees, applicability predicates, target
+scheduling returns a bounded `ImplementationFrontier`. The mature model has an
+additive sum-typed body (`ScheduledKernel`, `KernelSubprogram`, `OpaqueCall`, or
+`View`), boundary requirements/guarantees, applicability predicates, target
 requirements, exact/proven resource requirements, resource estimates, and a
-cost estimate. Program selection chooses a compatible covering set only after
-these frontiers are available.
+cost estimate. The bounded P0 frontier admits only checked `ScheduledKernel`
+proposals and explicitly rejects other variants while preserving that additive
+seam. Program selection chooses a compatible covering set only after these
+frontiers are available.
 
 Complete-cover enumeration is an independent legality authority over region
 candidates. It neither waits for nor proves a local schedule. Conversely,

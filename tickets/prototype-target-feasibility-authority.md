@@ -3,7 +3,7 @@ id: prototype-target-feasibility-authority
 title: Implement checked target-profile feasibility authority
 status: todo
 priority: p0
-dependencies: [prototype-typed-explain-infrastructure, harden-compiler-verifier-subject-binding-and-totality]
+dependencies: [prototype-typed-explain-infrastructure]
 related: [target-profile-feasibility-model]
 scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]

@@ -106,13 +106,14 @@ target-neutral compiler path. Its dependency direction is:
 1. [compiler verifier hardening](../tickets/harden-compiler-verifier-subject-binding-and-totality.md),
    [typed explain](../tickets/prototype-typed-explain-infrastructure.md), and
    [bounded normalization](../tickets/prototype-semantic-normalization.md);
-2. [operation capability registration](../tickets/prototype-operation-capability-registry.md),
-   [checked semantic/index refinement](../tickets/prototype-semantic-index-refinement.md),
-   and the [generic index oracle](../tickets/prototype-index-region-reference-oracle.md);
+2. parallel [operation capability registration](../tickets/prototype-operation-capability-registry.md)
+   and [generic index oracle](../tickets/prototype-index-region-reference-oracle.md)
+   authorities;
 3. [generic region formation](../tickets/prototype-generic-region-formation.md),
-   [fusion legality](../tickets/prototype-fusion-legality-and-numerical-proof.md),
-   and [legal complete-region covers](../tickets/prototype-region-cover-enumeration.md);
-4. [target feasibility](../tickets/prototype-target-feasibility-authority.md),
+   then [checked semantic/index refinement](../tickets/prototype-semantic-index-refinement.md),
+   then [fusion legality](../tickets/prototype-fusion-legality-and-numerical-proof.md),
+   then [legal complete-region covers](../tickets/prototype-region-cover-enumeration.md);
+4. independently developed [target feasibility](../tickets/prototype-target-feasibility-authority.md),
    [checked scheduled regions](../tickets/prototype-scheduled-region-ir.md), and
    [physical implementation frontiers](../tickets/prototype-physical-implementation-frontier.md);
 5. [complete physical-plan selection](../tickets/prototype-complete-physical-plan-selection.md),
@@ -121,6 +122,10 @@ target-neutral compiler path. Its dependency direction is:
    the [artifact-facing program model](../tickets/prototype-artifact-program-model.md);
 6. the [optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md)
    followed by the reviewed [public compiler API](../tickets/prototype-public-compiler-api.md).
+
+Opaque physical calls are not part of this bounded frontier. Their reviewed
+[provider ticket](../tickets/implement-opaque-physical-call-providers.md) follows
+optimizer conformance and the mature boundary-property authority.
 
 Metal is then split into independently verifiable KIR lowering, strict
 numerical realization, Apple offline compilation, artifact codec/bundle

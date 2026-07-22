@@ -87,12 +87,12 @@ semi-affine symbolic coefficients/divisors, and typed index-domain predicates
 are split into `implement-shapeenv-index-bindings` and
 `implement-index-domain-predicates`. This profile leaves additive public seams
 for those authorities and rejects unsupported dynamic construction rather than
-introducing an index-local duplicate.
+introducing a duplicate index authority.
 
 ## Fixed-point audit corrections
 
 The codebase audit at `ad6e9f463de6eabad44af47eaddad9317e0935fd`
-identified additional obligations owned by this still-open ticket:
+identified additional obligations that this ticket resolved before completion:
 
 - Make domain cardinality zero-absorbing before overflow checks. A domain such
   as `[u64::MAX, 2, 0]` is empty, and empty accesses must reach the vacuous
