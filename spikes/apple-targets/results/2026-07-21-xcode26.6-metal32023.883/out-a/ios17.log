@@ -1,0 +1,2 @@
+command=ZERO_AR_DATE=1 xcrun --sdk iphoneos metal -target air64-apple-ios17.0 -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off -c spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883/src-a/copy.metal -o spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883/out-a/ios17.air
+command=ZERO_AR_DATE=1 xcrun --sdk iphoneos metallib spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883/out-a/ios17.air -o spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883/out-a/ios17.metallib

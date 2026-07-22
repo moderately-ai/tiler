@@ -1,4 +1,6 @@
-//! Pure Metal source emission and host-side offline compilation for Tiler.
+//! Pure structured-kernel-to-Metal-source lowering for Tiler.
 //!
-//! Live device/runtime APIs do not belong in this crate. Emission and AOT
-//! invocation remain separate internal modules as the prototype develops.
+//! This crate owns deterministic source emission and target metadata, not live
+//! device/runtime APIs, Apple tool discovery, offline compiler invocation,
+//! artifact caching, or publication. Host-side AOT orchestration belongs in
+//! `tiler-metal-aot`.

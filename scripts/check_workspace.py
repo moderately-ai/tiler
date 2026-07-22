@@ -56,7 +56,7 @@ PACKAGE_DESCRIPTIONS = {
     "tiler-artifact": "Target-neutral artifact and execution contracts for Tiler",
     "tiler-compiler": "Target-independent optimization and scheduling for Tiler",
     "tiler-ir": "Target-independent tensor compiler representations for Tiler",
-    "tiler-metal": "Metal source emission and offline compilation for Tiler",
+    "tiler-metal": "Pure structured-kernel-to-Metal-source lowering for Tiler",
     "tiler-reference": "Target-independent executable reference semantics for Tiler",
     "tiler-prototype-compile": "Non-published producer for Tiler's serial-Sum value proof",
     "tiler-prototype-run": "Non-published runner for Tiler's serial-Sum value proof",

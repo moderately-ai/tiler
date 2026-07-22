@@ -21,10 +21,28 @@ measured, runtime compatibility matrix still open
 
 **Probe date:** 2026-07-20
 
+**Evidence-retention qualification:** the original run retained the summarized
+values and hashes below, but not a complete machine-validated raw record or its
+per-command logs. Those historical observations therefore remain bounded
+reported measurements, not independently revalidatable qualification evidence.
+The repaired probe fails closed on missing provenance and preserves the compact
+record, SDK settings, logs, exact commands, and artifact digests required for
+future support claims.
+
+**Repaired-probe verification:** a 2026-07-21 local / 2026-07-22 UTC rerun on
+macOS 27.0 build 26A5388g, Xcode 26.6 build 17F113, and Metal Toolchain 17F109
+passed the complete validator. It reproduced all six compile successes, AIR
+path differences, byte-identical final metallibs across the two source
+directories, and the three family-specific final hashes reported below. The
+[retained record](../../../spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883/record.tsv),
+SDK extracts, and command logs are checked in. This new run repairs evidence
+integrity for that bounded compile/path-variation claim; it does not add an old
+OS, second machine, simulator-runtime, or physical-device observation.
+
 ## Result
 
-The authorized Metal Toolchain 17F109 follow-up compiled all six tested
-tuples. The trivial kernel produced three different final metallibs: one each
+The reported authorized Metal Toolchain 17F109 follow-up compiled all six tested
+tuples. The trivial kernel reportedly produced three different final metallibs: one each
 for macOS, iOS device, and iOS simulator. This directly supports treating those
 as distinct artifact families. Mac Catalyst remains a fourth, deferred family.
 
@@ -58,7 +76,7 @@ This memo uses four labels:
 
 ## Host and installed tools
 
-### Measured
+### Reported measurement (historical record incomplete)
 
 ```text
 host: MacBook Pro Mac16,6, Apple M4 Max, arm64, 36 GB
@@ -194,7 +212,7 @@ not a statement that artifacts from older rows are runtime-incompatible.
 
 ## Runtime failure stages
 
-### Measured control experiment
+### Reported control experiment (historical record incomplete)
 
 `runtime_failure_probe.swift` ran on the Apple M4 Max using the macOS 27 Metal
 runtime:
@@ -345,11 +363,13 @@ ZERO_AR_DATE=1 xcrun --sdk <sdk> metal \
 ZERO_AR_DATE=1 xcrun --sdk <same-sdk> metallib copy.air -o copy.metallib
 ```
 
-The script records SDK/tool versions and hashes, compiles identical source bytes
-from two different absolute directories, extracts target-like strings, hashes
-both artifacts, and performs byte comparisons. It exits 4 when the Metal
-Toolchain is unavailable and does not download anything. The follow-up run
-completed successfully with all six tuples.
+The script records SDK/tool versions and hashes, exact normalized commands,
+selected SDK settings, compile logs, both artifact digests, and byte
+comparisons. It compiles identical source bytes from two different absolute
+directories. It fails closed when any required host, SDK, compiler, or linker
+provenance is unavailable or malformed, and validates the completed record
+before returning success. The original follow-up reportedly completed all six
+tuples, but predates this validated record format.
 
 Run the API-stage control on a macOS Metal host:
 
@@ -359,6 +379,12 @@ xcrun --sdk macosx swiftc \
   -framework Metal -o /tmp/tiler-apple-runtime-probe
 /tmp/tiler-apple-runtime-probe
 ```
+
+The control returns nonzero for every unexpected library/function/pipeline
+outcome. `uv run --locked python spikes/apple-targets/test_probes.py` removes
+or corrupts each required provenance field and, on macOS, compiles the Swift
+control and injects every declared unexpected runtime stage; every mutation
+must fail.
 
 ## Required follow-up matrix
 

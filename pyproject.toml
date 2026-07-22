@@ -22,6 +22,7 @@ required-version = "==0.11.28"
 addopts = ["--noconftest", "--strict-config", "--strict-markers", "-ra"]
 testpaths = [
     "scripts/tests",
+    "spikes/apple-targets",
     "spikes/embedding",
     "spikes/macro-environment",
     "spikes/numerics/sound_accuracy",
