@@ -9,6 +9,9 @@ import re
 from pathlib import Path
 
 SCHEMA = "tiler.apple-target-compatibility/v2"
+COMPILER_FLAGS = (
+    "-std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off"
+)
 SDKS = ("macosx", "iphoneos", "iphonesimulator")
 FAMILIES = {
     "macos13": ("macosx", "air64-apple-macos13.0"),
@@ -50,6 +53,26 @@ def require(values: dict[str, str], key: str, pattern: re.Pattern[str] | None = 
     return value
 
 
+def metal_command(sdk: str, target: str) -> str:
+    """Return the canonical recorded Metal compile command."""
+    return (
+        f"ZERO_AR_DATE=1 xcrun --sdk {sdk} metal -target {target} "
+        f"{COMPILER_FLAGS} -c <source> -o <air>"
+    )
+
+
+def metallib_command(sdk: str) -> str:
+    """Return the canonical recorded metallib link command."""
+    return f"ZERO_AR_DATE=1 xcrun --sdk {sdk} metallib <air> -o <metallib>"
+
+
+def validate_terminal_status(record: Path) -> None:
+    """Require a successful record to terminate with its validation marker."""
+    lines = record.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[-1] != "probe.status\tvalidated":
+        raise RecordError("record does not end with probe.status=validated")
+
+
 def validate(values: dict[str, str]) -> None:
     """Validate producer provenance and the complete compile matrix."""
     if require(values, "schema") != SCHEMA:
@@ -63,7 +86,10 @@ def validate(values: dict[str, str]) -> None:
     require(values, "probe.lock_sha256", SHA256)
     require(values, "probe.input_manifest_file", re.compile(r"input-manifest[.]tsv"))
     require(values, "probe.input_manifest_sha256", SHA256)
-    require(values, "probe.compiler_flags")
+    if require(values, "probe.compiler_flags") != COMPILER_FLAGS:
+        raise RecordError("recorded compiler flags do not match the governed profile")
+    if require(values, "probe.status") != "validated":
+        raise RecordError("probe status is not validated")
     require(values, "host.date_utc", re.compile(r"\d{4}-\d{2}-\d{2}T.+Z"))
     require(values, "host.developer_dir", re.compile(r"/.+"))
     require(values, "host.xcode", re.compile(r"Xcode .+ Build version .+"))
@@ -98,17 +124,24 @@ def validate(values: dict[str, str]) -> None:
                 raise RecordError(f"wrong SDK for {prefix}")
             if require(values, f"{prefix}.target") != target:
                 raise RecordError(f"wrong target for {prefix}")
-            require(values, f"{prefix}.command.metal")
-            require(values, f"{prefix}.command.metallib")
+            if require(values, f"{prefix}.command.metal") != metal_command(sdk, target):
+                raise RecordError(f"noncanonical Metal command for {prefix}")
+            if require(values, f"{prefix}.command.metallib") != metallib_command(sdk):
+                raise RecordError(f"noncanonical metallib command for {prefix}")
             require(values, f"{prefix}.air_sha256", SHA256)
             require(values, f"{prefix}.metallib_sha256", SHA256)
             require(values, f"{prefix}.log_sha256", SHA256)
         for artifact in ("air", "metallib"):
-            require(
+            recorded = require(
                 values,
                 f"repro.{family}.{artifact}.byte_identical",
                 re.compile(r"true|false"),
             )
+            first = require(values, f"matrix.{family}.a.{artifact}_sha256", SHA256)
+            second = require(values, f"matrix.{family}.b.{artifact}_sha256", SHA256)
+            derived = "true" if first == second else "false"
+            if recorded != derived:
+                raise RecordError(f"incorrect reproducibility verdict for {family}/{artifact}")
 
 
 def file_digest(path: Path) -> str:
@@ -164,6 +197,7 @@ def main() -> int:
     parser.add_argument("record", type=Path)
     args = parser.parse_args()
     try:
+        validate_terminal_status(args.record)
         values = read_record(args.record)
         validate(values)
         validate_retained_files(values, args.record)

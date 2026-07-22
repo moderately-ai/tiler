@@ -283,7 +283,9 @@ runtime caches and routing records; they are not portable semantic identity.
 Calibration and measurements carry model/provenance identity but never become
 capability truth without a separately accepted proof/query contract.
 
-Tests cover every hard boundary at minus/equal/plus one, missing and dishonest
-providers, fixed/scalable vector legality matrices, barrier scope and
-convergence, deferred-query timing, specialization-specific facts, generic
-fallback retention, and the invariant that an estimate never proves legality.
+A conforming implementation requires tests for every hard boundary at
+minus/equal/plus one, missing and dishonest providers, fixed/scalable vector
+legality matrices, barrier scope and convergence, deferred-query timing,
+specialization-specific facts, generic fallback retention, and the invariant
+that an estimate never proves legality. The current private prototype does not
+establish this full test matrix.

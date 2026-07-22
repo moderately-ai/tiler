@@ -36,7 +36,9 @@ precision, or an expected adversarial result changes.
 
 [`results.json`](results.json) is the byte-for-byte output retained from both
 modes on the recorded host. It binds the exact probe source, algorithm,
-interpreter, host, `mpmath` version, and 100-digit precision. Another
+recorded Python implementation/version/cache tag, recorded host fields,
+`mpmath` version, and 100-digit precision. It does not identify the Python
+executable or complete interpreter build. Another
 environment may produce a new bounded record; it must not silently overwrite
 the provenance of this one.
 

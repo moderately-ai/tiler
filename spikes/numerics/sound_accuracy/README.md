@@ -111,7 +111,7 @@ parser, provenance, resource-limit, and real process-group timeout tests passed
 in the locked environment.
 
 **Inference:** this verifies fail-closed adapter behavior, not a fresh Daisy
-proof run. The certified bounds in `measurements.json` remain the earlier dated
+proof run. The certified bounds in `measurements.json` remain historical
 measurements and were not regenerated. A fresh proof run must first rebuild the
 launcher with every classpath input present and dependency storage that remains
 available for execution.

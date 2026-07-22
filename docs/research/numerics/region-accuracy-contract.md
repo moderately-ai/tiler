@@ -233,7 +233,9 @@ uv run --locked python -O spikes/numerics/region_accuracy_probe.py
 
 The checked-in [bounded result](../../../spikes/numerics/region_accuracy/results.json)
 is the byte-identical output of both modes and retains the exact source,
-interpreter, dependency, precision, and host boundary.
+algorithm, recorded Python implementation/version/cache tag, dependency,
+precision, and recorded host fields. It does not identify the Python executable
+or complete interpreter build.
 
 ## Feasibility gate
 

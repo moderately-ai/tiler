@@ -51,10 +51,11 @@ that every future reader will interpret every contract identically.
 
 ## Findings and repairs
 
-The unretained outputs were reported to identify that Tiler had no production
-compiler and that implementation remained unauthorized, along with the status,
-roadmap, authority model, layer owners, evidence catalogs, and live board. Those
-interpretation claims cannot now be independently checked.
+The unretained outputs were reported to identify that, at base `f6664fd`, Tiler
+had no production compiler and implementation was unauthorized, along with the
+then-current status, roadmap, authority model, layer owners, evidence catalogs,
+and live board. Those historical interpretation claims cannot now be
+independently checked and do not describe the present repository state.
 
 The associated ticket did retain the resulting documentation repairs:
 
@@ -75,10 +76,11 @@ outputs and are not evidence that the qualitative acceptance criteria passed.
 
 ## Remaining boundary
 
-The next work remains two product decisions, asked sequentially: Q-PLAN-017
-selects the first Metal proof workload and Q-PHASE-001 authorizes, narrows, or
-declines implementation. Crate layout and MSRV follow only if implementation is
-authorized.
+At base `f6664fd`, the report described the next work as two product decisions,
+asked sequentially: Q-PLAN-017 selected the first Metal proof workload and
+Q-PHASE-001 authorized, narrowed, or declined implementation. Its statement
+that crate layout and MSRV followed only after authorization is historical, not
+present-tense project guidance.
 
 ## Traceability
 

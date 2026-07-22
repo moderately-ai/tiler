@@ -36,7 +36,7 @@ def valid_record() -> dict[str, str]:
         "probe.lock_sha256": digest,
         "probe.input_manifest_file": "input-manifest.tsv",
         "probe.input_manifest_sha256": digest,
-        "probe.compiler_flags": "-std=metal3.1 -O2",
+        "probe.compiler_flags": VALIDATOR.COMPILER_FLAGS,
         "host.date_utc": "2026-07-21T00:00:00Z",
         "host.developer_dir": "/Applications/Xcode.app/Contents/Developer",
         "host.xcode": "Xcode 26.6 Build version 17F113",
@@ -67,19 +67,21 @@ def valid_record() -> dict[str, str]:
     for family, (sdk, target) in VALIDATOR.FAMILIES.items():
         for run in ("a", "b"):
             prefix = f"matrix.{family}.{run}"
+            air_digest = "a" * 64 if run == "a" else "b" * 64
             values.update(
                 {
                     f"{prefix}.sdk": sdk,
                     f"{prefix}.target": target,
-                    f"{prefix}.command.metal": "xcrun metal ...",
-                    f"{prefix}.command.metallib": "xcrun metallib ...",
-                    f"{prefix}.air_sha256": digest,
+                    f"{prefix}.command.metal": VALIDATOR.metal_command(sdk, target),
+                    f"{prefix}.command.metallib": VALIDATOR.metallib_command(sdk),
+                    f"{prefix}.air_sha256": air_digest,
                     f"{prefix}.metallib_sha256": digest,
                     f"{prefix}.log_sha256": digest,
                 }
             )
         values[f"repro.{family}.air.byte_identical"] = "false"
         values[f"repro.{family}.metallib.byte_identical"] = "true"
+    values["probe.status"] = "validated"
     return values
 
 
@@ -190,6 +192,33 @@ def assert_validator_mutations() -> None:
             mutation[key] = value
             if run(mutation).returncode == 0:
                 raise AssertionError(f"validator accepted malformed provenance field: {key}")
+
+        command_mutations = {
+            "probe.compiler_flags": "-std=metal3.1 -O2",
+            "matrix.macos13.a.command.metal": VALIDATOR.metal_command(
+                "iphoneos", "air64-apple-macos13.0"
+            ),
+            "matrix.macos13.a.command.metallib": VALIDATOR.metallib_command("iphoneos"),
+        }
+        for key, value in command_mutations.items():
+            mutation = dict(baseline)
+            mutation[key] = value
+            if run(mutation).returncode == 0:
+                raise AssertionError(f"validator accepted inconsistent command field: {key}")
+
+        for key, value in {
+            "repro.macos13.air.byte_identical": "true",
+            "repro.macos13.metallib.byte_identical": "false",
+        }.items():
+            mutation = dict(baseline)
+            mutation[key] = value
+            if run(mutation).returncode == 0:
+                raise AssertionError(f"validator accepted false reproducibility field: {key}")
+
+        trailing = dict(baseline)
+        trailing["unexpected.trailing"] = "value"
+        if run(trailing).returncode == 0:
+            raise AssertionError("validator accepted data after terminal validation status")
 
 
 def assert_runtime_injections() -> None:

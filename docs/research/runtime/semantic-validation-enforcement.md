@@ -249,8 +249,10 @@ larger inputs:
 
 These timings validate the model and harness, not Metal/CUDA performance. The
 retained [measurement record](../../../spikes/runtime/measurements/semantic-validation.json)
-contains all 76 individual samples, derived medians, exact host/compiler/source
-identity, and deadline policy; the table is a view over that bounded run. The
+contains all 76 individual samples, derived medians, the host/compiler/source
+fields recorded by the harness, and deadline policy; the table is a view over
+that bounded run. Its host fields identify `arm64` macOS 27.0, not a hardware
+model or core count. The
 portable findings are the accounting ratios: proof performs one compute read;
 host and pre-scan perform two reads; pre-scan has two modeled dispatches and
 one completion observation; transactional performs one read/dispatch but writes

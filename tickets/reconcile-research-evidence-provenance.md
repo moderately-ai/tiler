@@ -57,6 +57,11 @@ stale versions of these specific evidence claims.
   evidence and removed it from the documentation experiment's support claims.
 - Added explicit corrective links to the completed tickets whose historical
   acceptance language was superseded or narrowed by the integrity audits.
+- Closure review further narrowed runtime/ABI/blank-agent wording, governed the
+  retained region-accuracy result with schema and mutation checks, converted
+  the target-feasibility test list into a future conformance requirement, and
+  made Apple command, terminal-status, and reproducibility claims derived
+  validator facts rather than trusted record fields.
 - Regenerated both catalogs and passed the complete repository validation gate,
   including documentation validation, Ruff, 142 Python tests, the full Rust
   gate, shell validation, and ticketsplease lint.

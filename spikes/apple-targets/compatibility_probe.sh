@@ -195,8 +195,8 @@ for spec in $families; do
   done
 done
 
+record "probe.status" "validated"
 uv run --project "$repo_root" --locked python \
   "$script_dir/validate_compatibility_record.py" "$record_path" \
   || fail "completed record failed validation"
-record "probe.status" "validated"
 print -r -- "validated_result=$result_root"
