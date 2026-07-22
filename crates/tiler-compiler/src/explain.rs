@@ -24,7 +24,8 @@ const MAX_TRACE_CANONICAL_BYTES: u32 = MAX_CANONICAL_BYTES * 2
     + MAX_TERMINAL_LEDGER_RECORDS * 2 * MAX_TERMINAL_RECORD_BYTES
     + MAX_TERMINAL_RECORD_BYTES;
 const MAX_SUBJECTS_PER_RECORD: u32 = 16;
-const MAX_CAUSES_PER_RECORD: u32 = 16;
+pub(crate) const MAX_TERMINAL_CAUSES: u32 = 16;
+const MAX_CAUSES_PER_RECORD: u32 = MAX_TERMINAL_CAUSES;
 const MAX_FACTS_PER_ASSESSMENT: u32 = 32;
 const MAX_COST_TERMS: u32 = 32;
 static NEXT_WRITER_AUTHORITY: AtomicU64 = AtomicU64::new(1);
@@ -772,7 +773,12 @@ struct PendingSelection {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum TerminalCause {
+pub(crate) struct TerminalCause {
+    kind: TerminalCauseKind,
+}
+
+#[derive(Clone, Debug)]
+enum TerminalCauseKind {
     Record(ExplainRecordId),
     Omitted {
         rule: RuleRef,
@@ -780,21 +786,36 @@ pub(crate) enum TerminalCause {
         subject_key: SubjectKey,
         stage: ExplainStage,
         disposition: ExplainDisposition,
+        causes: Vec<ExplainRecordId>,
     },
 }
 
 impl TerminalCause {
+    pub(crate) const fn from_record(record: ExplainRecordId) -> Self {
+        Self {
+            kind: TerminalCauseKind::Record(record),
+        }
+    }
+
     fn retained_bytes(&self) -> usize {
-        match self {
-            Self::Record(_) => std::mem::size_of::<ExplainRecordId>(),
-            Self::Omitted {
-                rule, subject_key, ..
+        match &self.kind {
+            TerminalCauseKind::Record(_) => std::mem::size_of::<ExplainRecordId>(),
+            TerminalCauseKind::Omitted {
+                rule,
+                subject_key,
+                causes,
+                ..
             } => rule
                 .key
                 .as_str()
                 .len()
                 .saturating_add(rule.provider.key.as_str().len())
                 .saturating_add(subject_key.as_str().len())
+                .saturating_add(
+                    causes
+                        .len()
+                        .saturating_mul(std::mem::size_of::<ExplainRecordId>()),
+                )
                 .saturating_add(16),
         }
     }
@@ -806,7 +827,7 @@ pub(crate) struct FailureDescriptor {
     pub(crate) reason: ReasonCode,
     pub(crate) subject_kind: SubjectKind,
     pub(crate) subject_key: SubjectKey,
-    pub(crate) cause: Option<TerminalCause>,
+    causes: Vec<TerminalCause>,
 }
 
 impl FailureDescriptor {
@@ -822,7 +843,24 @@ impl FailureDescriptor {
             reason: ReasonCode::new(reason)?,
             subject_kind,
             subject_key: SubjectKey::new(subject_key)?,
-            cause,
+            causes: cause.into_iter().collect(),
+        })
+    }
+
+    pub(crate) fn with_causes(
+        stage: ExplainStage,
+        reason: impl AsRef<str>,
+        subject_kind: SubjectKind,
+        subject_key: impl AsRef<str>,
+        causes: Vec<TerminalCause>,
+    ) -> Result<Self, ExplainError> {
+        check_bound(BoundKind::Causes, MAX_CAUSES_PER_RECORD, causes.len())?;
+        Ok(Self {
+            stage,
+            reason: ReasonCode::new(reason)?,
+            subject_kind,
+            subject_key: SubjectKey::new(subject_key)?,
+            causes,
         })
     }
 }
@@ -895,19 +933,29 @@ impl ExplainWriter {
         &mut self,
         rule: RuleRef,
         subject: SubjectRef,
-        event: ExplainEvent,
-        causes: Vec<ExplainRecordId>,
+        event: &ExplainEvent,
+        mut causes: Vec<ExplainRecordId>,
     ) -> Result<TerminalCause, ExplainError> {
-        let omitted = TerminalCause::Omitted {
-            rule: rule.clone(),
-            subject_kind: subject.kind,
-            subject_key: subject.key.clone(),
-            stage: event.stage(),
-            disposition: event.disposition(),
-        };
-        Ok(self
-            .push_detail(rule, vec![subject], event, causes)?
-            .map_or(omitted, TerminalCause::Record))
+        causes.sort_unstable();
+        let retained = self.push_detail(
+            rule.clone(),
+            vec![subject.clone()],
+            event.clone(),
+            causes.clone(),
+        )?;
+        Ok(match retained {
+            Some(record) => TerminalCause::from_record(record),
+            None => TerminalCause {
+                kind: TerminalCauseKind::Omitted {
+                    rule,
+                    subject_kind: subject.kind,
+                    subject_key: subject.key,
+                    stage: event.stage(),
+                    disposition: event.disposition(),
+                    causes,
+                },
+            },
+        })
     }
 
     fn push_terminal(
@@ -1097,10 +1145,13 @@ impl ExplainWriter {
         self.selection_ledger.clear();
         self.terminal_ledger_bytes = 0;
         self.append_truncation_summary()?;
-        let cause = failure
-            .cause
-            .map(|cause| self.materialize_terminal_cause(cause))
-            .transpose()?;
+        for cause in &failure.causes {
+            self.validate_terminal_cause(Some(cause))?;
+        }
+        let mut causes = Vec::with_capacity(failure.causes.len());
+        for cause in failure.causes {
+            causes.push(self.materialize_terminal_cause(cause)?);
+        }
         let subject = self.subject(failure.subject_kind, failure.subject_key.as_str())?;
         self.push_terminal(
             RuleRef::builtin("compile.failure")?,
@@ -1109,7 +1160,7 @@ impl ExplainWriter {
                 stage: failure.stage,
                 reason: failure.reason,
             },
-            cause.into_iter().collect(),
+            causes,
         )?;
         let failures = self
             .records
@@ -1188,18 +1239,26 @@ impl ExplainWriter {
     }
 
     fn validate_terminal_cause(&self, cause: Option<&TerminalCause>) -> Result<(), ExplainError> {
-        match cause {
-            Some(TerminalCause::Record(cause))
+        match cause.map(|cause| &cause.kind) {
+            Some(TerminalCauseKind::Record(cause))
                 if cause.writer_authority != self.authority
                     || cause.request_qualifier != self.request_qualifier =>
             {
                 Err(ExplainError::CrossWriterCause)
             }
-            Some(TerminalCause::Omitted { rule, .. })
+            Some(TerminalCauseKind::Omitted { rule, .. })
                 if rule.provider != ProviderRef::builtin()
                     && !self.allowed_providers.contains(&rule.provider) =>
             {
                 Err(ExplainError::ProviderAuthorityMismatch)
+            }
+            Some(TerminalCauseKind::Omitted { causes, .. })
+                if causes.iter().any(|cause| {
+                    cause.writer_authority != self.authority
+                        || cause.request_qualifier != self.request_qualifier
+                }) =>
+            {
+                Err(ExplainError::CrossWriterCause)
             }
             _ => Ok(()),
         }
@@ -1209,24 +1268,23 @@ impl ExplainWriter {
         &mut self,
         cause: TerminalCause,
     ) -> Result<ExplainRecordId, ExplainError> {
-        match cause {
-            TerminalCause::Record(record) => {
-                self.validate_terminal_cause(Some(&TerminalCause::Record(record)))?;
-                Ok(record)
-            }
-            TerminalCause::Omitted {
+        self.validate_terminal_cause(Some(&cause))?;
+        match cause.kind {
+            TerminalCauseKind::Record(record) => Ok(record),
+            TerminalCauseKind::Omitted {
                 rule,
                 subject_kind,
                 subject_key,
                 stage,
                 disposition,
+                causes,
             } => {
                 let subject = self.subject(subject_kind, subject_key.as_str())?;
                 self.push_terminal(
                     rule,
                     vec![subject],
                     ExplainEvent::CausalBridge { stage, disposition },
-                    Vec::new(),
+                    causes,
                 )
             }
         }
@@ -2446,7 +2504,21 @@ mod tests {
     #[test]
     fn truncation_is_a_sibling_and_omitted_terminal_causes_keep_exact_authority() {
         let request = request(2.0);
-        let mut writer = ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
+        let mut writer = ExplainWriter::new(
+            &request,
+            ExplainLimits::new(1, MAX_CANONICAL_BYTES).unwrap(),
+        )
+        .unwrap();
+        let predecessor_parts = admitted(&writer, "candidate:predecessor");
+        let predecessor = writer
+            .push_detail(
+                predecessor_parts.rule,
+                predecessor_parts.subjects,
+                predecessor_parts.event,
+                predecessor_parts.causes,
+            )
+            .unwrap()
+            .unwrap();
         let subject = writer
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();
@@ -2454,16 +2526,16 @@ mod tests {
             .push_causal_detail(
                 RuleRef::builtin("cost.exact-cause").unwrap(),
                 subject.clone(),
-                ExplainEvent::CostAssessment {
+                &ExplainEvent::CostAssessment {
                     model: CostModelKey::new("cost.exact-cause").unwrap(),
                     basis: EvidenceBasis::CheckedInvariant,
                     terms: vec![CostTerm::new("dispatches", Quantity::Count(1)).unwrap()],
                     disposition: CostDisposition::Retained,
                 },
-                Vec::new(),
+                vec![predecessor],
             )
             .unwrap();
-        assert!(matches!(cause, TerminalCause::Omitted { .. }));
+        assert!(matches!(cause.kind, TerminalCauseKind::Omitted { .. }));
         writer
             .note_selection(subject, SelectionOutcome::Selected, Some(cause))
             .unwrap();
@@ -2490,6 +2562,7 @@ mod tests {
             .unwrap();
         assert_eq!(selection.causes(), &[bridge.id()]);
         assert_ne!(selection.causes(), &[truncation.id()]);
+        assert_eq!(bridge.causes(), &[predecessor]);
     }
 
     #[test]
@@ -2501,7 +2574,7 @@ mod tests {
             .push_causal_detail(
                 parts.rule,
                 parts.subjects.into_iter().next().unwrap(),
-                parts.event,
+                &parts.event,
                 parts.causes,
             )
             .unwrap();
@@ -2735,7 +2808,7 @@ mod tests {
                 .push_causal_detail(
                     RuleRef::builtin("cost.maximum-ledger").unwrap(),
                     subject.clone(),
-                    ExplainEvent::CostAssessment {
+                    &ExplainEvent::CostAssessment {
                         model: CostModelKey::new("cost.maximum-ledger").unwrap(),
                         basis: EvidenceBasis::CheckedInvariant,
                         terms: vec![CostTerm::new("dispatches", Quantity::Count(1)).unwrap()],

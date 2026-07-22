@@ -4,9 +4,9 @@ use std::fmt;
 use crate::explain::{
     CostDisposition, CostModelKey, CostTerm, EvidenceBasis, ExplainError, ExplainEvent,
     ExplainFact, ExplainLimits, ExplainRecordId, ExplainStage, ExplainWriter, FactValue,
-    FailureDescriptor, PredicateAssessment, PredicateKey, ProviderRef, Quantity, ReasonCode,
-    RejectionClass, ResourceKey, RuleRef, SelectionOutcome, SubjectKind, TerminalCause,
-    VerifiedEvidenceRef, VerifiedExplainTrace,
+    FailureDescriptor, MAX_TERMINAL_CAUSES, PredicateAssessment, PredicateKey, ProviderRef,
+    Quantity, ReasonCode, RejectionClass, ResourceKey, RuleRef, SelectionOutcome, SubjectKind,
+    TerminalCause, VerifiedEvidenceRef, VerifiedExplainTrace,
 };
 use crate::fusion::{
     CandidateError, CandidateKind, FusionNumericalProof, enumerate_candidates,
@@ -38,7 +38,7 @@ pub(crate) struct TargetCompilationProduct {
     pub(crate) explain: VerifiedExplainTrace,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum ProgramAlternativeKind {
     Materialized,
     Fused,
@@ -281,8 +281,32 @@ fn target_failure(
     }
 }
 
+fn target_failure_with_causes(
+    source: CompileError,
+    stage: ExplainStage,
+    reason: impl AsRef<str>,
+    subject_kind: SubjectKind,
+    subject_key: impl AsRef<str>,
+    causes: Vec<TerminalCause>,
+) -> TargetFailure {
+    match FailureDescriptor::with_causes(stage, reason, subject_kind, subject_key, causes) {
+        Ok(context) => TargetFailure {
+            source: Box::new(source),
+            context: Box::new(context),
+        },
+        Err(error) => target_failure(
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Explain(error)),
+            ExplainStage::ProgramVerification,
+            "failure-context-invalid",
+            SubjectKind::KernelProgram,
+            "compiler-explain",
+            None,
+        ),
+    }
+}
+
 fn record_cause(record: Option<ExplainRecordId>) -> Option<TerminalCause> {
-    record.map(TerminalCause::Record)
+    record.map(TerminalCause::from_record)
 }
 
 fn explain_step<T>(
@@ -312,10 +336,92 @@ fn failure_at_source(
     target_failure(source, stage, reason, subject_kind, subject_key, cause)
 }
 
+fn failure_at_source_with_causes(
+    source: CompileError,
+    stage: ExplainStage,
+    causes: Vec<TerminalCause>,
+) -> TargetFailure {
+    let (reason, subject_kind, subject_key) = failure_source_details(&source);
+    target_failure_with_causes(source, stage, reason, subject_kind, subject_key, causes)
+}
+
+const fn physical_error_stage(error: &PhysicalError) -> ExplainStage {
+    match error {
+        PhysicalError::Target { .. } => ExplainStage::TargetFeasibility,
+        PhysicalError::Intrinsic { .. } | PhysicalError::ShapeProductOverflow { .. } => {
+            ExplainStage::IntrinsicScheduling
+        }
+        PhysicalError::Refinement { .. } => ExplainStage::KernelRefinement,
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TargetRejection {
+    kind: ProgramAlternativeKind,
     error: PhysicalError,
     cause: TerminalCause,
+}
+
+#[derive(Default)]
+struct TargetRejections {
+    values: Vec<TargetRejection>,
+}
+
+impl TargetRejections {
+    fn push(&mut self, rejection: TargetRejection) -> Result<(), TargetFailure> {
+        if u32::try_from(self.values.len()).unwrap_or(u32::MAX) >= MAX_TERMINAL_CAUSES {
+            return Err(target_failure(
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                    ProgramError::Structure {
+                        rule: "target-rejection-cause-capacity",
+                    },
+                )),
+                ExplainStage::Selection,
+                "target-rejection-cause-capacity",
+                SubjectKind::KernelProgram,
+                "portfolio",
+                None,
+            ));
+        }
+        let insertion = self
+            .values
+            .binary_search_by_key(&rejection.kind, |existing| existing.kind)
+            .unwrap_or_else(|insertion| insertion);
+        if self
+            .values
+            .get(insertion)
+            .is_some_and(|existing| existing.kind == rejection.kind)
+        {
+            return Err(target_failure(
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                    ProgramError::Structure {
+                        rule: "duplicate-target-rejection",
+                    },
+                )),
+                ExplainStage::Selection,
+                "duplicate-target-rejection",
+                SubjectKind::KernelProgram,
+                "portfolio",
+                None,
+            ));
+        }
+        self.values.insert(insertion, rejection);
+        Ok(())
+    }
+
+    fn into_failure(self) -> Option<TargetFailure> {
+        let representative = self.values.first()?.error.clone();
+        let causes = self
+            .values
+            .into_iter()
+            .map(|rejection| rejection.cause)
+            .collect();
+        Some(failure_at_source_with_causes(
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(representative)),
+            ExplainStage::TargetFeasibility,
+            causes,
+        ))
+    }
 }
 
 #[allow(
@@ -375,7 +481,7 @@ fn compile_target_with_explain(
     })?;
     let mut alternatives = Vec::new();
     let mut alternative_causes = Vec::new();
-    let mut target_rejection: Option<TargetRejection> = None;
+    let mut target_rejections = TargetRejections::default();
     match build_baseline_alternative(semantic, verified, record_cause(normalization_record)) {
         Ok(baseline) => {
             let cause =
@@ -393,7 +499,11 @@ fn compile_target_with_explain(
                     "alternative:materialized-serial-sum.v1",
                     normalization_record,
                 )?;
-                target_rejection = Some(TargetRejection { error, cause });
+                target_rejections.push(TargetRejection {
+                    kind: ProgramAlternativeKind::Materialized,
+                    error,
+                    cause,
+                })?;
             }
             source => {
                 return Err(TargetFailure {
@@ -410,10 +520,10 @@ fn compile_target_with_explain(
         explain,
         normalization_record,
         &mut alternative_causes,
-        &mut target_rejection,
+        &mut target_rejections,
     )?;
     if alternatives.is_empty() {
-        let Some(rejection) = target_rejection else {
+        if target_rejections.values.is_empty() {
             return Err(target_failure(
                 CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
                     ProgramError::Structure {
@@ -426,13 +536,10 @@ fn compile_target_with_explain(
                 "portfolio",
                 record_cause(normalization_record),
             ));
-        };
-        let source = CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(rejection.error));
-        return Err(failure_at_source(
-            source,
-            ExplainStage::TargetFeasibility,
-            Some(rejection.cause),
-        ));
+        }
+        return Err(target_rejections
+            .into_failure()
+            .expect("nonempty target rejection set yields one failure"));
     }
     let selected_alternative_id = select_structural_pareto(&alternatives).map_err(|source| {
         target_failure(
@@ -620,13 +727,7 @@ fn build_baseline_alternative(
     cause: Option<TerminalCause>,
 ) -> Result<ProgramAlternative, TargetFailure> {
     let baseline_regions = build_scheduled_regions(verified).map_err(|error| {
-        let stage = match error {
-            PhysicalError::Target { .. } => ExplainStage::TargetFeasibility,
-            PhysicalError::Intrinsic { .. } | PhysicalError::ShapeProductOverflow { .. } => {
-                ExplainStage::IntrinsicScheduling
-            }
-            PhysicalError::Refinement { .. } => ExplainStage::KernelRefinement,
-        };
+        let stage = physical_error_stage(&error);
         failure_at_source(error.into(), stage, cause.clone())
     })?;
     let baseline_kernels = baseline_regions
@@ -634,7 +735,8 @@ fn build_baseline_alternative(
         .map(lower_structured_kernel)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
-            failure_at_source(error.into(), ExplainStage::KernelRefinement, cause.clone())
+            let stage = physical_error_stage(&error);
+            failure_at_source(error.into(), stage, cause.clone())
         })?;
     let baseline_program = build_kernel_program(verified, &baseline_regions).map_err(|error| {
         failure_at_source(
@@ -897,7 +999,7 @@ fn consider_fused_alternative(
     explain: &mut ExplainWriter,
     root: Option<ExplainRecordId>,
     alternative_causes: &mut Vec<(&'static str, Option<ExplainRecordId>)>,
-    target_rejection: &mut Option<TargetRejection>,
+    target_rejections: &mut TargetRejections,
 ) -> Result<(), TargetFailure> {
     match enumerate_candidates(verified) {
         Err(CandidateError::Budget { limit, actual }) => {
@@ -1019,21 +1121,27 @@ fn consider_fused_alternative(
                             "alternative:fused-serial-sum.v1",
                             proof_record.or(root),
                         )?;
-                        target_rejection.get_or_insert(TargetRejection { error, cause });
+                        target_rejections.push(TargetRejection {
+                            kind: ProgramAlternativeKind::Fused,
+                            error,
+                            cause,
+                        })?;
                     }
                     Err(error) => {
+                        let stage = physical_error_stage(&error);
                         return Err(failure_at_source(
                             error.into(),
-                            ExplainStage::IntrinsicScheduling,
+                            stage,
                             record_cause(proof_record.or(root)),
                         ));
                     }
                     Ok(fused_region) => {
                         let fused_kernel =
                             lower_structured_kernel(&fused_region).map_err(|error| {
+                                let stage = physical_error_stage(&error);
                                 failure_at_source(
                                     error.into(),
-                                    ExplainStage::KernelRefinement,
+                                    stage,
                                     record_cause(proof_record.or(root)),
                                 )
                             })?;
@@ -1142,7 +1250,7 @@ fn record_target_rejection(
             Ok(explain.push_causal_detail(
                 RuleRef::builtin(format!("target.{rule}"))?,
                 subject,
-                ExplainEvent::Feasibility {
+                &ExplainEvent::Feasibility {
                     predicate: PredicateKey::new(*rule)?,
                     outcome: crate::explain::FeasibilityOutcome::Rejected(ReasonCode::new(
                         "target-infeasible",
@@ -1384,7 +1492,7 @@ fn record_cost_and_selection(
                 let record = explain.push_causal_detail(
                     RuleRef::builtin(STRUCTURAL_COST_MODEL_KEY)?,
                     subject.clone(),
-                    ExplainEvent::CostAssessment {
+                    &ExplainEvent::CostAssessment {
                         model: CostModelKey::new(STRUCTURAL_COST_MODEL_KEY)?,
                         basis: EvidenceBasis::CheckedInvariant,
                         terms,
@@ -1553,20 +1661,14 @@ fn rederive_alternative(
     let scheduled = match kind {
         ProgramAlternativeKind::Materialized => {
             build_scheduled_regions(request).map_err(|error| {
-                failure_at_source(
-                    error.into(),
-                    ExplainStage::IntrinsicScheduling,
-                    cause.clone(),
-                )
+                let stage = physical_error_stage(&error);
+                failure_at_source(error.into(), stage, cause.clone())
             })?
         }
         ProgramAlternativeKind::Fused => {
             vec![build_fused_scheduled_region(request).map_err(|error| {
-                failure_at_source(
-                    error.into(),
-                    ExplainStage::IntrinsicScheduling,
-                    cause.clone(),
-                )
+                let stage = physical_error_stage(&error);
+                failure_at_source(error.into(), stage, cause.clone())
             })?]
         }
     };
@@ -1575,7 +1677,8 @@ fn rederive_alternative(
         .map(lower_structured_kernel)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
-            failure_at_source(error.into(), ExplainStage::KernelRefinement, cause.clone())
+            let stage = physical_error_stage(&error);
+            failure_at_source(error.into(), stage, cause.clone())
         })?;
     let program = match kind {
         ProgramAlternativeKind::Materialized => build_kernel_program(request, &scheduled),
@@ -2338,25 +2441,158 @@ mod tests {
                 reason,
             } if reason.as_str() == "target-grid-axis"
         ));
-        assert!(!failure.causes().is_empty());
-        let causal_rejection = explain
+        assert_eq!(failure.causes().len(), 2);
+        let causal_rejections = failure
+            .causes()
+            .iter()
+            .map(|cause| {
+                explain
+                    .records()
+                    .iter()
+                    .find(|record| record.id() == *cause)
+                    .expect("every failure cause is a retained exact target rejection")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            causal_rejections.iter().all(|record| {
+                record.event().disposition() == ExplainDisposition::RejectedTarget
+            })
+        );
+        assert_eq!(
+            causal_rejections
+                .iter()
+                .map(|record| record.subjects()[0].key().as_str())
+                .collect::<Vec<_>>(),
+            [
+                format!("alternative:materialized-serial-sum.v1/region:{}", region.0),
+                format!("alternative:fused-serial-sum.v1/region:{}", region.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_feasible_failure_aggregates_distinct_alternative_rejection_predicates() {
+        let semantic = semantic(false);
+        let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+        let request = request.for_target(request.target_profiles()[0]).unwrap();
+        let mut explain = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let materialized = PhysicalError::Target {
+            rule: "grid-axis",
+            region: RegionId(0),
+            required: 65_536,
+            available: 65_535,
+        };
+        let fused = PhysicalError::Target {
+            rule: "threads-per-workgroup",
+            region: RegionId(1),
+            required: 2,
+            available: 1,
+        };
+        let materialized_cause = record_target_rejection(
+            &mut explain,
+            &materialized,
+            "alternative:materialized-serial-sum.v1",
+            None,
+        )
+        .unwrap();
+        let fused_cause = record_target_rejection(
+            &mut explain,
+            &fused,
+            "alternative:fused-serial-sum.v1",
+            None,
+        )
+        .unwrap();
+        let mut rejections = TargetRejections::default();
+        rejections
+            .push(TargetRejection {
+                kind: ProgramAlternativeKind::Fused,
+                error: fused,
+                cause: fused_cause,
+            })
+            .unwrap();
+        rejections
+            .push(TargetRejection {
+                kind: ProgramAlternativeKind::Materialized,
+                error: materialized,
+                cause: materialized_cause,
+            })
+            .unwrap();
+        let failure = rejections.into_failure().unwrap();
+        let trace = explain.finish_failure(*failure.context).unwrap();
+        let terminal = trace
             .records()
             .iter()
-            .find(|record| failure.causes().first().copied() == Some(record.id()))
-            .expect("failure cause is a retained exact target rejection");
+            .find(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+            .unwrap();
+        assert_eq!(terminal.causes().len(), 2);
+        let predicates = terminal
+            .causes()
+            .iter()
+            .map(|cause| {
+                trace
+                    .records()
+                    .iter()
+                    .find(|record| record.id() == *cause)
+                    .and_then(|record| match record.event() {
+                        ExplainEvent::Feasibility { predicate, .. } => Some(predicate.as_str()),
+                        _ => None,
+                    })
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(predicates, ["grid-axis", "threads-per-workgroup"]);
+    }
+
+    #[test]
+    fn rederivation_uses_the_physical_error_stage_for_both_alternative_kinds() {
+        let semantic = semantic_case_with_axis(
+            Shape::from_dims([70_000, 70_000]),
+            2.0_f32.to_bits(),
+            1.0_f32.to_bits(),
+            false,
+            Axis::new(1),
+        );
+        let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+        let request = request.for_target(request.target_profiles()[0]).unwrap();
+        for kind in [
+            ProgramAlternativeKind::Materialized,
+            ProgramAlternativeKind::Fused,
+        ] {
+            let Err(failure) = rederive_alternative(&semantic, &request, kind, None) else {
+                panic!("oversized alternative must fail target feasibility");
+            };
+            assert_eq!(failure.context.stage, ExplainStage::TargetFeasibility);
+            assert_eq!(failure.context.reason.as_str(), "target-grid-axis");
+            assert!(matches!(
+                *failure.source,
+                CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+                    PhysicalError::Target {
+                        rule: "grid-axis",
+                        ..
+                    }
+                ))
+            ));
+        }
         assert_eq!(
-            causal_rejection.subjects()[0].key().as_str(),
-            format!("alternative:materialized-serial-sum.v1/region:{}", region.0)
+            physical_error_stage(&PhysicalError::Intrinsic {
+                rule: "fixture",
+                region: RegionId(0),
+            }),
+            ExplainStage::IntrinsicScheduling
         );
         assert_eq!(
-            causal_rejection.event().disposition(),
-            ExplainDisposition::RejectedTarget
+            physical_error_stage(&PhysicalError::ShapeProductOverflow {
+                region: RegionId(0),
+            }),
+            ExplainStage::IntrinsicScheduling
         );
-        assert!(explain.records().iter().any(|record| {
-            record.event().disposition() == ExplainDisposition::RejectedTarget
-                && record.subjects()[0].key().as_str()
-                    != causal_rejection.subjects()[0].key().as_str()
-        }));
+        assert_eq!(
+            physical_error_stage(&PhysicalError::Refinement {
+                rule: "fixture",
+                region: RegionId(0),
+            }),
+            ExplainStage::KernelRefinement
+        );
     }
 
     #[test]

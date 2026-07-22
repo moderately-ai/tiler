@@ -85,3 +85,21 @@ The private conformance suite checks all current typed count emitters, all eight
 target predicates and units, dominated versus Pareto-tradeoff selection,
 zero/maximum retention, omitted-cause routing, and paired multi-alternative
 target rejection context.
+
+The final causal-integrity correction makes `TerminalCause` an opaque,
+writer-minted token. Sibling compiler modules can wrap only an
+`ExplainRecordId` returned by a writer; only `push_causal_detail` can mint the
+omitted-detail form. That form now retains its validated, bounded predecessor
+handles, and its mandatory bridge restores those exact edges instead of
+severing the trace DAG at the retention boundary.
+
+Target infeasibility is accumulated canonically for every considered
+alternative under the same 16-cause bound enforced by terminal records. A
+`NoFeasiblePlan` terminal depends on every materialized and fused rejection;
+the existing typed source remains the deterministic first representative
+because the error enum does not yet aggregate physical errors. Fixtures cover
+two alternatives with distinct rejection predicates and assert that both are
+direct terminal causes. Physical-error stage attribution is centralized and
+used by both initial construction and portfolio rederivation: target errors map
+to target feasibility, intrinsic and shape-product errors to intrinsic
+scheduling, and refinement errors to kernel refinement.
