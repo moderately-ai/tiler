@@ -1,7 +1,7 @@
 ---
 id: correct-reference-value-and-authority-contracts
 title: Correct reference value and authority contracts
-status: in-progress
+status: done
 priority: p0
 dependencies: [harden-semantic-registry-and-program-construction]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/reference, implementation/ir, implementation/compiler, r
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, reference]
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1784728370
 ---
 
 Correct the reference capability boundary exposed by the fixed-point code
@@ -53,3 +50,9 @@ unchanged operation key, ignored duplicate registration, NaN and signed-zero
 equality, late-zero shapes such as `[0, u64::MAX, 2]`, empty contributors,
 large lazy iteration, provider-specific failures, and canonical float byte
 order. Unsupported types must fail closed with typed explanations.
+
+## Verified outcome
+
+Implemented and validated the exact resolved-type-bearing reference tensor seam, occurrence-specific semantic authority, sticky transactional registration, exact provider/capability attribution, bitwise value semantics, bounded lazy reduction evaluation, exact registry identity budgeting, recursive compound/evaluation resource bounds, and shared immutable output aliasing. The canonical repository gate passed at branch head `fe73030`.
+
+Tom explicitly approved the public reference tensor seam after closure review.
