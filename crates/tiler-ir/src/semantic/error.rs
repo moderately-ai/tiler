@@ -439,6 +439,8 @@ impl Error for ValidationDiagnostics {}
 pub enum ProgramBuildFailure {
     /// Whole-program validation rejected the draft.
     Validation(ValidationDiagnostics),
+    /// Recomputing complete reached semantic authority failed closed.
+    SemanticAuthority(super::registry::RegistryError),
     /// A distinct completed-program owner could not be allocated.
     GraphIdentityExhausted,
 }
@@ -447,6 +449,9 @@ impl fmt::Display for ProgramBuildFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Validation(diagnostics) => diagnostics.fmt(formatter),
+            Self::SemanticAuthority(error) => {
+                write!(formatter, "semantic authority closure failed: {error}")
+            }
             Self::GraphIdentityExhausted => {
                 formatter.write_str("semantic graph identity space is exhausted")
             }
@@ -458,6 +463,7 @@ impl Error for ProgramBuildFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Validation(diagnostics) => Some(diagnostics),
+            Self::SemanticAuthority(error) => Some(error),
             Self::GraphIdentityExhausted => None,
         }
     }
@@ -482,7 +488,8 @@ impl ProgramBuildError {
     pub const fn diagnostics(&self) -> Option<&ValidationDiagnostics> {
         match &self.failure {
             ProgramBuildFailure::Validation(diagnostics) => Some(diagnostics),
-            ProgramBuildFailure::GraphIdentityExhausted => None,
+            ProgramBuildFailure::SemanticAuthority(_)
+            | ProgramBuildFailure::GraphIdentityExhausted => None,
         }
     }
 

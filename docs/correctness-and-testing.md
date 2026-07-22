@@ -187,6 +187,12 @@ Benchmarks are not substitutes for these correctness cases.
   definition projections but unequal admission provenance and registry
   snapshots. No `TypeId`, pointer, vtable, or registration order leaks into
   durable content.
+- Reached semantic-authority closure tests cover nested parameterized and
+  encoded components, occurrence `Type` and `FloatBits` references, operation
+  defaults/facts/conformance, missing definition references, finite cycles,
+  and aggregate resource exhaustion at the first item beyond the governed
+  limit. Used provider revisions change admission and snapshot subjects;
+  unused revisions change only the full snapshot subject.
 - Region identity tests distinguish equal semantic content at different graph
   occurrences; index/schedule/KIR structure remains reusable while checked
   refinements and complete-program coverage retain exact occurrence bindings.

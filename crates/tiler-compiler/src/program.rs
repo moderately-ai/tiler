@@ -1,7 +1,10 @@
 use std::error::Error;
 use std::fmt;
 
-use tiler_ir::semantic::{F32, SemanticProgram};
+use tiler_ir::semantic::{
+    F32, SemanticAdmissionProvenanceIdentity, SemanticDefinitionProjectionIdentity,
+    SemanticGraphIdentity, SemanticProgram, SemanticRegistrySnapshotIdentity,
+};
 use tiler_ir::shape::Shape;
 
 use crate::physical::{
@@ -191,9 +194,10 @@ pub(crate) struct KernelProgram {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ArtifactConstructionPlan {
-    pub(crate) semantic_graph_identity: Vec<u8>,
-    pub(crate) reached_semantic_definitions: Vec<u8>,
-    pub(crate) semantic_admission_provenance: Vec<u8>,
+    pub(crate) semantic_graph_identity: SemanticGraphIdentity,
+    pub(crate) reached_semantic_definitions: SemanticDefinitionProjectionIdentity,
+    pub(crate) semantic_admission_provenance: SemanticAdmissionProvenanceIdentity,
+    pub(crate) semantic_registry_snapshot: SemanticRegistrySnapshotIdentity,
     pub(crate) numerical_contract_key: &'static str,
     pub(crate) numerical_realizations: Vec<NumericalRealization>,
     pub(crate) target_profile_key: &'static str,
@@ -690,6 +694,15 @@ pub(crate) fn build_artifact_plan(
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
+    if semantic.semantic_graph_identity() != &request.semantic_graph
+        || semantic.reached_semantic_definitions() != &request.semantic_definitions
+        || semantic.semantic_admission_provenance() != &request.semantic_admission
+        || semantic.semantic_registry_snapshot_identity() != &request.semantic_registry_snapshot
+    {
+        return Err(ProgramError::Structure {
+            rule: "semantic-request-binding",
+        });
+    }
     let semantic_output = semantic.outputs().next().ok_or(ProgramError::Structure {
         rule: "semantic-output-coverage",
     })?;
@@ -711,9 +724,10 @@ pub(crate) fn build_artifact_plan(
         });
     }
     Ok(ArtifactConstructionPlan {
-        semantic_graph_identity: semantic.semantic_graph_identity().as_bytes().to_vec(),
-        reached_semantic_definitions: request.semantic_definitions.as_bytes().to_vec(),
-        semantic_admission_provenance: request.semantic_admission.as_bytes().to_vec(),
+        semantic_graph_identity: request.semantic_graph.clone(),
+        reached_semantic_definitions: request.semantic_definitions.clone(),
+        semantic_admission_provenance: request.semantic_admission.clone(),
+        semantic_registry_snapshot: request.semantic_registry_snapshot.clone(),
         numerical_contract_key: request.numerical_contract.key,
         numerical_realizations: program
             .entries
@@ -1214,11 +1228,21 @@ mod tests {
         VerifiedTargetRequest,
         Vec<VerifiedScheduledRegion>,
     ) {
+        fixture_with_scale(2.0_f32.to_bits())
+    }
+
+    fn fixture_with_scale(
+        scale_bits: u32,
+    ) -> (
+        SemanticProgram,
+        VerifiedTargetRequest,
+        Vec<VerifiedScheduledRegion>,
+    ) {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
             .unwrap();
-        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let scale = F32Constant::apply(&mut builder, scale_bits).unwrap();
         let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
         let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
         let mapped = F32Add::apply(&mut builder, product, bias).unwrap();
@@ -1231,6 +1255,25 @@ mod tests {
         let request = request.for_target(request.target_profiles[0]);
         let scheduled = build_scheduled_regions(&request).unwrap();
         (semantic, request, scheduled)
+    }
+
+    #[test]
+    fn artifact_construction_rejects_a_cross_program_semantic_request_mix() {
+        let (_, request, scheduled) = fixture_with_scale(2.0_f32.to_bits());
+        let (different_semantic, _, _) = fixture_with_scale(3.0_f32.to_bits());
+        let program = build_kernel_program(&request, &scheduled).unwrap();
+
+        assert_eq!(
+            build_artifact_plan(
+                &different_semantic,
+                &request,
+                &program,
+                vec![request.capabilities.materialized_serial_sum],
+            ),
+            Err(ProgramError::Structure {
+                rule: "semantic-request-binding",
+            })
+        );
     }
 
     #[test]
@@ -1282,9 +1325,10 @@ mod tests {
                 scheduled[1].region.index.numerical,
             ]
         );
-        assert!(!artifact.semantic_graph_identity.is_empty());
-        assert!(!artifact.reached_semantic_definitions.is_empty());
-        assert!(!artifact.semantic_admission_provenance.is_empty());
+        assert!(!artifact.semantic_graph_identity.as_bytes().is_empty());
+        assert!(!artifact.reached_semantic_definitions.as_bytes().is_empty());
+        assert!(!artifact.semantic_admission_provenance.as_bytes().is_empty());
+        assert!(!artifact.semantic_registry_snapshot.as_bytes().is_empty());
     }
 
     #[test]

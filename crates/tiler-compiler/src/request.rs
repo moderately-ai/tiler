@@ -4,8 +4,9 @@ use std::fmt;
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
     OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticAdmissionProvenanceIdentity,
-    SemanticDefinitionProjectionIdentity, SemanticProgram, TypeKey, ValueId, add_f32_op,
-    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    SemanticDefinitionProjectionIdentity, SemanticGraphIdentity, SemanticProgram,
+    SemanticRegistrySnapshotIdentity, TypeKey, ValueId, add_f32_op, constant_f32_op,
+    multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -196,8 +197,10 @@ impl NormalizedProgram {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedCompilationRequest {
     pub(crate) normalized: NormalizedProgram,
+    pub(crate) semantic_graph: SemanticGraphIdentity,
     pub(crate) semantic_definitions: SemanticDefinitionProjectionIdentity,
     pub(crate) semantic_admission: SemanticAdmissionProvenanceIdentity,
+    pub(crate) semantic_registry_snapshot: SemanticRegistrySnapshotIdentity,
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
@@ -207,8 +210,10 @@ pub(crate) struct VerifiedCompilationRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedTargetRequest {
     pub(crate) normalized: NormalizedProgram,
+    pub(crate) semantic_graph: SemanticGraphIdentity,
     pub(crate) semantic_definitions: SemanticDefinitionProjectionIdentity,
     pub(crate) semantic_admission: SemanticAdmissionProvenanceIdentity,
+    pub(crate) semantic_registry_snapshot: SemanticRegistrySnapshotIdentity,
     pub(crate) numerical_contract: StrictF32NumericalContract,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profile: PrototypeTargetProfile,
@@ -228,8 +233,10 @@ impl VerifiedCompilationRequest {
     ) -> VerifiedTargetRequest {
         VerifiedTargetRequest {
             normalized: self.normalized.clone(),
+            semantic_graph: self.semantic_graph.clone(),
             semantic_definitions: self.semantic_definitions.clone(),
             semantic_admission: self.semantic_admission.clone(),
+            semantic_registry_snapshot: self.semantic_registry_snapshot.clone(),
             numerical_contract: self.numerical_contract,
             budgets: self.budgets,
             target_profile,
@@ -255,7 +262,6 @@ pub(crate) enum RequestError {
     ShapeProductOverflow {
         role: &'static str,
     },
-    SemanticIdentityProjection,
 }
 
 impl fmt::Display for RequestError {
@@ -285,9 +291,6 @@ impl fmt::Display for RequestError {
             Self::ShapeProductOverflow { role } => write!(
                 formatter,
                 "compile.shape.{role}.element-count: static element count exceeds u64"
-            ),
-            Self::SemanticIdentityProjection => formatter.write_str(
-                "compile.request.semantic-identity: frozen definition and admission projections failed",
             ),
         }
     }
@@ -353,12 +356,15 @@ pub(crate) fn verify_request(
     check_budget("buffers", request.budgets.buffers, 3)?;
 
     let normalized = select_supported_strategy(request.program)?;
-    let (semantic_definitions, semantic_admission) =
-        project_semantic_identity_layers(request.program)?;
     Ok(VerifiedCompilationRequest {
         normalized,
-        semantic_definitions,
-        semantic_admission,
+        semantic_graph: request.program.semantic_graph_identity().clone(),
+        semantic_definitions: request.program.reached_semantic_definitions().clone(),
+        semantic_admission: request.program.semantic_admission_provenance().clone(),
+        semantic_registry_snapshot: request
+            .program
+            .semantic_registry_snapshot_identity()
+            .clone(),
         numerical_contract: request.numerical_contract,
         budgets: request.budgets,
         target_profiles: request.target_profiles,
@@ -368,34 +374,6 @@ pub(crate) fn verify_request(
 
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
     normalize_serial_sum(program).map(NormalizedProgram::SerialSum)
-}
-
-fn project_semantic_identity_layers(
-    program: &SemanticProgram,
-) -> Result<
-    (
-        SemanticDefinitionProjectionIdentity,
-        SemanticAdmissionProvenanceIdentity,
-    ),
-    RequestError,
-> {
-    let value_types: Vec<_> = program
-        .values()
-        .map(|value| value.resolved_type().clone())
-        .collect();
-    let operations: Vec<_> = program
-        .operations()
-        .map(|operation| operation.key().clone())
-        .collect();
-    let definitions = program
-        .semantic_registry()
-        .project_reached_definitions(value_types.iter(), operations.iter())
-        .map_err(|_| RequestError::SemanticIdentityProjection)?;
-    let admission = program
-        .semantic_registry()
-        .project_reached_admission_provenance(value_types.iter(), operations.iter())
-        .map_err(|_| RequestError::SemanticIdentityProjection)?;
-    Ok((definitions, admission))
 }
 
 fn check_budget(resource: &'static str, limit: u32, actual: usize) -> Result<(), RequestError> {
@@ -587,13 +565,24 @@ fn unsupported<T>(phase: &'static str, rule: &'static str) -> Result<T, RequestE
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use tiler_ir::semantic::{
-        F32Add, F32Constant, F32Multiply, SemanticProgramBuilder, StrictSerialF32Sum,
+        CanonicalValue, CanonicalValueKind, F32Add, F32Constant, F32Multiply,
+        NormativeDefinitionRef, OperationArity, OperationAttributeSchema, OperationAttributes,
+        OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
+        OperationInferenceError, OperationInferencer, OperationSchema, ProviderIdentity,
+        RegistryError, SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
+        SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, ValueFact,
+        ValueTypeDefinition, ValueTypeDefinitionKey,
     };
 
     fn program() -> SemanticProgram {
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        program_with_builder(SemanticProgramBuilder::try_standard().unwrap())
+    }
+
+    fn program_with_builder(mut builder: SemanticProgramBuilder) -> SemanticProgram {
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
             .unwrap();
@@ -606,6 +595,183 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         builder.build().unwrap()
+    }
+
+    #[derive(Clone, Copy)]
+    enum TestOperation {
+        Constant,
+        Binary,
+        Sum,
+    }
+
+    impl OperationInferencer for TestOperation {
+        fn infer(
+            &self,
+            operands: &[ValueFact],
+            attributes: &OperationAttributes,
+        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            match self {
+                Self::Constant => Ok(vec![ValueFact::new(F32::resolved_type(), Shape::new([]))]),
+                Self::Binary => {
+                    let left = operands[0].shape();
+                    let right = operands[1].shape();
+                    let shape = if left.rank() == 0 {
+                        right.clone()
+                    } else if right.rank() == 0 || left == right {
+                        left.clone()
+                    } else {
+                        return Err(OperationInferenceError::new(
+                            "test.binary.shape",
+                            "operands must have equal shapes or include one scalar",
+                        ));
+                    };
+                    Ok(vec![ValueFact::new(F32::resolved_type(), shape)])
+                }
+                Self::Sum => {
+                    let Some(CanonicalValueView::Sequence(values)) = attributes
+                        .get(REDUCTION_AXES_ATTRIBUTE)
+                        .map(CanonicalValue::view)
+                    else {
+                        return Err(OperationInferenceError::new(
+                            "test.sum.axes",
+                            "sum axes must be a sequence",
+                        ));
+                    };
+                    let axes = values
+                        .iter()
+                        .map(|value| match value.view() {
+                            CanonicalValueView::Unsigned {
+                                width: CanonicalIntegerWidth::Bits32,
+                                bits,
+                            } => u32::try_from(bits).map(Axis::new).map_err(|_| {
+                                OperationInferenceError::new(
+                                    "test.sum.axis-width",
+                                    "sum axis exceeds u32",
+                                )
+                            }),
+                            _ => Err(OperationInferenceError::new(
+                                "test.sum.axis-kind",
+                                "sum axes must be u32 values",
+                            )),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(vec![ValueFact::new(
+                        F32::resolved_type(),
+                        operands[0].shape().without_axes(&axes),
+                    )])
+                }
+            }
+        }
+    }
+
+    struct GovernedTestSemantics {
+        revision: u32,
+    }
+
+    impl SemanticRegistryProvider for GovernedTestSemantics {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("tiler-test", "governed-semantics", self.revision).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_marked_value_type::<F32>(
+                ValueTypeDefinition::structurally_valid(
+                    ValueTypeDefinitionKey::Nominal(
+                        TypeKey::new("tiler", "f32", 1).expect("the test F32 key is valid"),
+                    ),
+                    NormativeDefinitionRef::new("test binary32 semantics")?,
+                    TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+                ),
+                F32::resolved_type(),
+            )?;
+            register_test_operation(
+                registrar,
+                constant_f32_op(),
+                0,
+                [OperationAttributeSchema::required(
+                    F32_CONSTANT_BITS_ATTRIBUTE,
+                    CanonicalValueKind::FloatBits,
+                )],
+                TestOperation::Constant,
+            )?;
+            register_test_operation(registrar, multiply_f32_op(), 2, [], TestOperation::Binary)?;
+            register_test_operation(registrar, add_f32_op(), 2, [], TestOperation::Binary)?;
+            register_test_operation(
+                registrar,
+                strict_serial_sum_f32_op(),
+                1,
+                [OperationAttributeSchema::required(
+                    REDUCTION_AXES_ATTRIBUTE,
+                    CanonicalValueKind::Sequence,
+                )],
+                TestOperation::Sum,
+            )
+        }
+    }
+
+    fn register_test_operation<const N: usize>(
+        registrar: &mut SemanticRegistryRegistrar<'_>,
+        key: OpKey,
+        operands: u32,
+        attributes: [OperationAttributeSchema; N],
+        inferencer: TestOperation,
+    ) -> Result<(), RegistryError> {
+        registrar.register_operation(OperationDefinition::new(
+            key,
+            OperationSchema::new(
+                OperationArity::exact(operands),
+                OperationArity::exact(1),
+                attributes,
+            )
+            .expect("the test operation schema is valid"),
+            NormativeDefinitionRef::new("test governed operation semantics")?,
+            OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+            OperationConformance::new(CanonicalValue::boolean(true)),
+            OperationEffect::Pure,
+            Arc::new(inferencer),
+        ))
+    }
+
+    fn governed_test_program(revision: u32) -> SemanticProgram {
+        let mut registry = SemanticRegistryBuilder::new();
+        registry
+            .register_provider(&GovernedTestSemantics { revision })
+            .unwrap();
+        program_with_builder(SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap())
+    }
+
+    struct UnusedSemantics {
+        revision: u32,
+    }
+
+    impl SemanticRegistryProvider for UnusedSemantics {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("tiler-test", "unused-semantics", self.revision).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(
+                    TypeKey::new("tiler-test", "unused", 1).expect("the test key is valid"),
+                ),
+                NormativeDefinitionRef::new("unused test semantics")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))
+        }
+    }
+
+    fn program_with_unused_provider(revision: u32) -> SemanticProgram {
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry
+            .register_provider(&UnusedSemantics { revision })
+            .unwrap();
+        program_with_builder(SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap())
     }
 
     #[test]
@@ -671,6 +837,38 @@ mod tests {
         assert_eq!(
             verify_request(duplicate),
             Err(RequestError::DuplicateTargetProfile)
+        );
+    }
+
+    #[test]
+    fn used_provider_revision_changes_admission_and_snapshot_subjects() {
+        let first = governed_test_program(1);
+        let second = governed_test_program(2);
+        let first = verify_request(CompilationRequest::governed(&first)).unwrap();
+        let second = verify_request(CompilationRequest::governed(&second)).unwrap();
+
+        assert_eq!(first.semantic_graph, second.semantic_graph);
+        assert_eq!(first.semantic_definitions, second.semantic_definitions);
+        assert_ne!(first.semantic_admission, second.semantic_admission);
+        assert_ne!(
+            first.semantic_registry_snapshot,
+            second.semantic_registry_snapshot
+        );
+    }
+
+    #[test]
+    fn unused_provider_revision_changes_only_the_snapshot_subject() {
+        let first = program_with_unused_provider(1);
+        let second = program_with_unused_provider(2);
+        let first = verify_request(CompilationRequest::governed(&first)).unwrap();
+        let second = verify_request(CompilationRequest::governed(&second)).unwrap();
+
+        assert_eq!(first.semantic_graph, second.semantic_graph);
+        assert_eq!(first.semantic_definitions, second.semantic_definitions);
+        assert_eq!(first.semantic_admission, second.semantic_admission);
+        assert_ne!(
+            first.semantic_registry_snapshot,
+            second.semantic_registry_snapshot
         );
     }
 }

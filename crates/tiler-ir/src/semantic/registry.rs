@@ -19,6 +19,24 @@ use super::types::{
 };
 
 const MAX_DEFINITION_REFERENCE_BYTES: usize = 4 * 1024;
+/// Maximum aggregate subjects in one frozen or reached semantic-authority closure.
+pub const MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS: usize = 4_096;
+
+/// Bounded resource counted while closing semantic authority transitively.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum SemanticAuthorityResource {
+    /// Aggregate unique type definitions, concrete instances, and operations.
+    ClosureItems,
+}
+
+impl fmt::Display for SemanticAuthorityResource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClosureItems => formatter.write_str("semantic authority closure items"),
+        }
+    }
+}
 
 /// Open local marker implemented by Rust types used for exact typed handles.
 ///
@@ -508,19 +526,16 @@ impl SemanticRegistryBuilder {
             operations: self.operations,
             marker_bindings: self.marker_bindings,
         }));
-        for binding in registry.0.marker_bindings.values() {
-            registry.validate_type(&binding.resolved_type)?;
-        }
-        for registered in registry.0.operations.values() {
-            for field in registered.definition.schema().attributes() {
-                if let Some(default) = field.default() {
-                    registry.validate_canonical_value_types(default)?;
-                }
-            }
+        registry.close_authority(
             registry
-                .validate_canonical_value_types(registered.definition.canonical_facts().value())?;
-            registry.validate_canonical_value_types(registered.definition.conformance().value())?;
-        }
+                .0
+                .marker_bindings
+                .values()
+                .map(|binding| &binding.resolved_type),
+            registry.0.definitions.keys(),
+            registry.0.operations.keys(),
+            std::iter::empty(),
+        )?;
         let _ = registry.snapshot_identity();
         Ok(registry)
     }
@@ -648,17 +663,116 @@ struct FrozenRegistryData {
     identity: OnceLock<SemanticRegistrySnapshotIdentity>,
 }
 
+#[derive(Default)]
+struct SemanticAuthorityClosure {
+    type_keys: BTreeSet<ValueTypeDefinitionKey>,
+    type_instances: BTreeSet<ResolvedValueType>,
+    operation_keys: BTreeSet<OpKey>,
+}
+
 impl FrozenSemanticRegistry {
-    fn validate_canonical_value_types(&self, value: &CanonicalValue) -> Result<(), RegistryError> {
-        let mut failure = None;
-        value.visit_referenced_types(&mut |component| {
-            if failure.is_none()
-                && let Err(error) = self.validate_type(component)
-            {
-                failure = Some(error);
+    fn close_authority<'a>(
+        &self,
+        concrete_type_roots: impl IntoIterator<Item = &'a ResolvedValueType>,
+        definition_roots: impl IntoIterator<Item = &'a ValueTypeDefinitionKey>,
+        operation_roots: impl IntoIterator<Item = &'a OpKey>,
+        canonical_roots: impl IntoIterator<Item = &'a CanonicalValue>,
+    ) -> Result<SemanticAuthorityClosure, RegistryError> {
+        let mut closure = SemanticAuthorityClosure::default();
+        let mut pending_instances: BTreeSet<_> = concrete_type_roots.into_iter().cloned().collect();
+        let mut pending_definitions: BTreeSet<_> = definition_roots.into_iter().cloned().collect();
+        let mut pending_operations: BTreeSet<_> = operation_roots.into_iter().cloned().collect();
+        for value in canonical_roots {
+            enqueue_canonical_types(value, &mut pending_instances);
+        }
+
+        while !(pending_instances.is_empty()
+            && pending_definitions.is_empty()
+            && pending_operations.is_empty())
+        {
+            if let Some(value) = pending_instances.pop_first() {
+                if !closure.type_instances.insert(value.clone()) {
+                    continue;
+                }
+                check_closure_budget(&closure)?;
+                let key = ValueTypeDefinitionKey::for_value(&value);
+                let registered = self.0.definitions.get(&key).ok_or_else(|| {
+                    RegistryError::UnregisteredTypeAuthority {
+                        key: Arc::new(key.clone()),
+                    }
+                })?;
+                pending_definitions.insert(key.clone());
+                value.visit_referenced_types(&mut |component| {
+                    pending_instances.insert(component.clone());
+                });
+                registered
+                    .definition
+                    .validator
+                    .validate(&value)
+                    .map_err(|source| {
+                        RegistryError::RejectedTypeInstance(Arc::new(TypeInstanceRejection {
+                            key,
+                            provider: registered.provider.clone(),
+                            source,
+                        }))
+                    })?;
+                continue;
             }
-        });
-        failure.map_or(Ok(()), Err)
+
+            if let Some(key) = pending_definitions.pop_first() {
+                if !closure.type_keys.insert(key.clone()) {
+                    continue;
+                }
+                check_closure_budget(&closure)?;
+                let registered = self.0.definitions.get(&key).ok_or_else(|| {
+                    RegistryError::UnregisteredTypeAuthority {
+                        key: Arc::new(key.clone()),
+                    }
+                })?;
+                enqueue_canonical_types(
+                    registered.definition.canonical_facts().value(),
+                    &mut pending_instances,
+                );
+                continue;
+            }
+
+            let key = pending_operations
+                .pop_first()
+                .expect("nonempty closure worklist has an operation");
+            if !closure.operation_keys.insert(key.clone()) {
+                continue;
+            }
+            check_closure_budget(&closure)?;
+            let registered = self.0.operations.get(&key).ok_or_else(|| {
+                RegistryError::UnregisteredOperationAuthority {
+                    key: Arc::new(key.clone()),
+                }
+            })?;
+            for field in registered.definition.schema().attributes() {
+                if let Some(default) = field.default() {
+                    enqueue_canonical_types(default, &mut pending_instances);
+                }
+            }
+            enqueue_canonical_types(
+                registered.definition.canonical_facts().value(),
+                &mut pending_instances,
+            );
+            enqueue_canonical_types(
+                registered.definition.conformance().value(),
+                &mut pending_instances,
+            );
+        }
+        Ok(closure)
+    }
+
+    fn validate_canonical_value_types(&self, value: &CanonicalValue) -> Result<(), RegistryError> {
+        self.close_authority(
+            std::iter::empty(),
+            std::iter::empty(),
+            std::iter::empty(),
+            [value],
+        )
+        .map(|_| ())
     }
 
     /// Builds the governed standard registry profile.
@@ -699,45 +813,13 @@ impl FrozenSemanticRegistry {
     /// Returns [`RegistryError`] for missing authority, an unregistered nested
     /// component, or provider semantic rejection.
     pub fn validate_type(&self, value: &ResolvedValueType) -> Result<(), RegistryError> {
-        let key = ValueTypeDefinitionKey::for_value(value);
-        let registered = self.0.definitions.get(&key).ok_or_else(|| {
-            RegistryError::UnregisteredTypeAuthority {
-                key: Arc::new(key.clone()),
-            }
-        })?;
-        let mut failure = None;
-        value.visit_referenced_types(&mut |component| {
-            if failure.is_none()
-                && let Err(error) = self.validate_type(component)
-            {
-                failure = Some(error);
-            }
-        });
-        registered
-            .definition
-            .canonical_facts
-            .0
-            .visit_referenced_types(&mut |component| {
-                if failure.is_none()
-                    && let Err(error) = self.validate_type(component)
-                {
-                    failure = Some(error);
-                }
-            });
-        if let Some(error) = failure {
-            return Err(error);
-        }
-        registered
-            .definition
-            .validator
-            .validate(value)
-            .map_err(|source| {
-                RegistryError::RejectedTypeInstance(Arc::new(TypeInstanceRejection {
-                    key,
-                    provider: registered.provider.clone(),
-                    source,
-                }))
-            })
+        self.close_authority(
+            [value],
+            std::iter::empty(),
+            std::iter::empty(),
+            std::iter::empty(),
+        )
+        .map(|_| ())
     }
 
     /// Returns whether this snapshot admits a complete resolved value type.
@@ -867,82 +949,97 @@ impl FrozenSemanticRegistry {
             .get_or_init(|| compute_identity(&self.0.definitions, &self.0.operations))
     }
 
-    /// Projects provider-independent semantic definitions reached by a program.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RegistryError`] if a supplied type family or operation key is
-    /// absent from this exact frozen snapshot.
-    pub fn project_reached_definitions<'a>(
+    #[cfg(test)]
+    fn project_caller_rooted_definitions<'a>(
         &self,
         value_types: impl IntoIterator<Item = &'a ResolvedValueType>,
         operations: impl IntoIterator<Item = &'a OpKey>,
     ) -> Result<SemanticDefinitionProjectionIdentity, RegistryError> {
-        let type_keys: BTreeSet<_> = value_types
-            .into_iter()
-            .map(ValueTypeDefinitionKey::for_value)
-            .collect();
-        let operation_keys: BTreeSet<_> = operations.into_iter().cloned().collect();
-        let mut bytes = b"tiler.semantic-definition-projection.v2\0".to_vec();
-        encode_len(&mut bytes, type_keys.len());
-        for key in type_keys {
-            let registered = self.0.definitions.get(&key).ok_or_else(|| {
-                RegistryError::UnregisteredTypeAuthority {
-                    key: Arc::new(key.clone()),
-                }
-            })?;
-            encode_type_definition(&mut bytes, &key, &registered.definition);
-        }
-        encode_len(&mut bytes, operation_keys.len());
-        for key in operation_keys {
-            let registered = self.0.operations.get(&key).ok_or_else(|| {
-                RegistryError::UnregisteredOperationAuthority {
-                    key: Arc::new(key.clone()),
-                }
-            })?;
-            encode_operation_definition(&mut bytes, &key, &registered.definition);
-        }
-        Ok(SemanticDefinitionProjectionIdentity(bytes))
+        let closure = self.close_authority(
+            value_types,
+            std::iter::empty(),
+            operations,
+            std::iter::empty(),
+        )?;
+        Ok(self.encode_definition_projection(&closure))
     }
 
-    /// Projects provider-attributed admission provenance reached by a program.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RegistryError`] if a supplied type family or operation key is
-    /// absent from this exact frozen snapshot.
-    pub fn project_reached_admission_provenance<'a>(
+    pub(super) fn project_program_authority<'a>(
         &self,
         value_types: impl IntoIterator<Item = &'a ResolvedValueType>,
         operations: impl IntoIterator<Item = &'a OpKey>,
-    ) -> Result<SemanticAdmissionProvenanceIdentity, RegistryError> {
-        let type_keys: BTreeSet<_> = value_types
-            .into_iter()
-            .map(ValueTypeDefinitionKey::for_value)
-            .collect();
-        let operation_keys: BTreeSet<_> = operations.into_iter().cloned().collect();
+        occurrence_attributes: impl IntoIterator<Item = &'a CanonicalValue>,
+    ) -> Result<
+        (
+            SemanticDefinitionProjectionIdentity,
+            SemanticAdmissionProvenanceIdentity,
+        ),
+        RegistryError,
+    > {
+        let closure = self.close_authority(
+            value_types,
+            std::iter::empty(),
+            operations,
+            occurrence_attributes,
+        )?;
+        Ok((
+            self.encode_definition_projection(&closure),
+            self.encode_admission_provenance(&closure),
+        ))
+    }
+
+    fn encode_definition_projection(
+        &self,
+        closure: &SemanticAuthorityClosure,
+    ) -> SemanticDefinitionProjectionIdentity {
+        let mut bytes = b"tiler.semantic-definition-projection.v3\0".to_vec();
+        encode_len(&mut bytes, closure.type_keys.len());
+        for key in &closure.type_keys {
+            let registered = self
+                .0
+                .definitions
+                .get(key)
+                .expect("a frozen authority closure contains only registered types");
+            encode_type_definition(&mut bytes, key, &registered.definition);
+        }
+        encode_len(&mut bytes, closure.operation_keys.len());
+        for key in &closure.operation_keys {
+            let registered = self
+                .0
+                .operations
+                .get(key)
+                .expect("a frozen authority closure contains only registered operations");
+            encode_operation_definition(&mut bytes, key, &registered.definition);
+        }
+        SemanticDefinitionProjectionIdentity(bytes)
+    }
+
+    fn encode_admission_provenance(
+        &self,
+        closure: &SemanticAuthorityClosure,
+    ) -> SemanticAdmissionProvenanceIdentity {
         let mut bytes = b"tiler.semantic-admission-provenance.v1\0".to_vec();
-        encode_len(&mut bytes, type_keys.len());
-        for key in type_keys {
-            let registered = self.0.definitions.get(&key).ok_or_else(|| {
-                RegistryError::UnregisteredTypeAuthority {
-                    key: Arc::new(key.clone()),
-                }
-            })?;
+        encode_len(&mut bytes, closure.type_keys.len());
+        for key in &closure.type_keys {
+            let registered = self
+                .0
+                .definitions
+                .get(key)
+                .expect("a frozen authority closure contains only registered types");
             key.encode(&mut bytes);
             registered.provider.encode(&mut bytes);
         }
-        encode_len(&mut bytes, operation_keys.len());
-        for key in operation_keys {
-            let registered = self.0.operations.get(&key).ok_or_else(|| {
-                RegistryError::UnregisteredOperationAuthority {
-                    key: Arc::new(key.clone()),
-                }
-            })?;
+        encode_len(&mut bytes, closure.operation_keys.len());
+        for key in &closure.operation_keys {
+            let registered = self
+                .0
+                .operations
+                .get(key)
+                .expect("a frozen authority closure contains only registered operations");
             key.encode(&mut bytes);
             registered.provider.encode(&mut bytes);
         }
-        Ok(SemanticAdmissionProvenanceIdentity(bytes))
+        SemanticAdmissionProvenanceIdentity(bytes)
     }
 }
 
@@ -1090,6 +1187,15 @@ pub enum RegistryError {
         /// Invalid operation authority.
         key: Arc<OpKey>,
     },
+    /// A transitive semantic-authority closure exceeded its governed bound.
+    SemanticAuthorityResourceExceeded {
+        /// Governed aggregate resource.
+        resource: SemanticAuthorityResource,
+        /// Maximum admitted unique subjects.
+        limit: usize,
+        /// First rejected aggregate count.
+        actual: usize,
+    },
     /// A normative definition reference was empty.
     EmptyNormativeDefinition,
     /// A normative definition reference exceeded its byte bound.
@@ -1144,6 +1250,14 @@ impl fmt::Display for RegistryError {
             Self::OperationProducedNoResults { key } => {
                 write!(formatter, "operation authority {key} produced no results")
             }
+            Self::SemanticAuthorityResourceExceeded {
+                resource,
+                limit,
+                actual,
+            } => write!(
+                formatter,
+                "{resource} count {actual} exceeds governed limit {limit}"
+            ),
             Self::EmptyNormativeDefinition => {
                 formatter.write_str("normative definition reference is empty")
             }
@@ -1516,6 +1630,29 @@ fn compute_identity(
     SemanticRegistrySnapshotIdentity(bytes)
 }
 
+fn enqueue_canonical_types(value: &CanonicalValue, pending: &mut BTreeSet<ResolvedValueType>) {
+    value.visit_referenced_types(&mut |component| {
+        pending.insert(component.clone());
+    });
+}
+
+fn check_closure_budget(closure: &SemanticAuthorityClosure) -> Result<(), RegistryError> {
+    let actual = closure
+        .type_keys
+        .len()
+        .checked_add(closure.type_instances.len())
+        .and_then(|count| count.checked_add(closure.operation_keys.len()))
+        .unwrap_or(usize::MAX);
+    if actual > MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS {
+        return Err(RegistryError::SemanticAuthorityResourceExceeded {
+            resource: SemanticAuthorityResource::ClosureItems,
+            limit: MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS,
+            actual,
+        });
+    }
+    Ok(())
+}
+
 fn encode_registered_type(
     output: &mut Vec<u8>,
     key: &ValueTypeDefinitionKey,
@@ -1585,6 +1722,40 @@ fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
 mod tests {
     use super::*;
     use crate::semantic::{EncodedNumericContract, TypeArguments};
+
+    struct TestProvider {
+        name: &'static str,
+        revision: u32,
+        definitions: Vec<ValueTypeDefinition>,
+        operations: Vec<OperationDefinition>,
+    }
+
+    impl SemanticRegistryProvider for TestProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", self.name, self.revision).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            for definition in &self.definitions {
+                registrar.register_value_type(definition.clone())?;
+            }
+            for operation in &self.operations {
+                registrar.register_operation(operation.clone())?;
+            }
+            Ok(())
+        }
+    }
+
+    fn nominal_definition(key: TypeKey, facts: CanonicalValue) -> ValueTypeDefinition {
+        ValueTypeDefinition::structurally_valid(
+            ValueTypeDefinitionKey::Nominal(key),
+            NormativeDefinitionRef::new("test nominal definition").unwrap(),
+            TypeDefinitionFacts::new(facts),
+        )
+    }
 
     enum ExternalF8 {}
     impl ValueTypeMarker for ExternalF8 {}
@@ -1793,10 +1964,10 @@ mod tests {
         let extended = extended.freeze().unwrap();
 
         let standard_projection = standard
-            .project_reached_definitions([&F32::resolved_type()], [&multiply_f32_op()])
+            .project_caller_rooted_definitions([&F32::resolved_type()], [&multiply_f32_op()])
             .unwrap();
         let extended_projection = extended
-            .project_reached_definitions([&F32::resolved_type()], [&multiply_f32_op()])
+            .project_caller_rooted_definitions([&F32::resolved_type()], [&multiply_f32_op()])
             .unwrap();
 
         assert_eq!(standard_projection, extended_projection);
@@ -1912,5 +2083,230 @@ mod tests {
         assert!(!registry.contains(&ResolvedValueType::nominal(
             TypeKey::new("acme", "temporary", 1).unwrap()
         )));
+    }
+
+    #[test]
+    fn authority_closure_follows_nested_parameterized_and_encoded_components() {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&ExternalProvider).unwrap();
+        builder.register_provider(&Families).unwrap();
+        let registry = builder.freeze().unwrap();
+        let encoded = ResolvedValueType::encoded_numeric(
+            QuantSchemeKey::new("tiler", "affine", 1).unwrap(),
+            EncodedNumericContract::new([CanonicalField::new(
+                AttributeFieldId::new(1),
+                CanonicalValue::value_type(external_f8()),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+        let nested = ResolvedValueType::parameterized(
+            TypeKey::new("tiler", "complex", 1).unwrap(),
+            TypeArguments::new([CanonicalValue::value_type(encoded)]).unwrap(),
+        )
+        .unwrap();
+
+        let closure = registry
+            .close_authority(
+                [&nested],
+                std::iter::empty(),
+                std::iter::empty(),
+                std::iter::empty(),
+            )
+            .unwrap();
+
+        assert!(
+            closure
+                .type_keys
+                .contains(&ValueTypeDefinitionKey::Parameterized(
+                    TypeKey::new("tiler", "complex", 1).unwrap()
+                ))
+        );
+        assert!(
+            closure
+                .type_keys
+                .contains(&ValueTypeDefinitionKey::EncodedNumeric(
+                    QuantSchemeKey::new("tiler", "affine", 1).unwrap()
+                ))
+        );
+        assert!(closure.type_keys.contains(&ValueTypeDefinitionKey::Nominal(
+            TypeKey::new("acme", "f8-special", 1).unwrap()
+        )));
+    }
+
+    #[test]
+    fn authority_closure_follows_type_and_float_bits_occurrence_attributes() {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&ExternalProvider).unwrap();
+        let registry = builder.freeze().unwrap();
+        let type_only = CanonicalValue::value_type(external_f8());
+        let float_only =
+            CanonicalValue::float_bits(TypeKey::new("acme", "f8-special", 1).unwrap(), [0_u8])
+                .unwrap();
+
+        for attribute in [&type_only, &float_only] {
+            let closure = registry
+                .close_authority(
+                    std::iter::empty(),
+                    std::iter::empty(),
+                    std::iter::empty(),
+                    [attribute],
+                )
+                .unwrap();
+            assert!(closure.type_keys.contains(&ValueTypeDefinitionKey::Nominal(
+                TypeKey::new("acme", "f8-special", 1).unwrap()
+            )));
+        }
+    }
+
+    #[test]
+    fn operation_authority_closure_follows_defaults_facts_and_conformance() {
+        let default_key = TypeKey::new("test", "default-type", 1).unwrap();
+        let facts_key = TypeKey::new("test", "facts-type", 1).unwrap();
+        let conformance_key = TypeKey::new("test", "conformance-float", 1).unwrap();
+        let operation_key = OpKey::new("test", "metadata-closure", 1).unwrap();
+        let provider = TestProvider {
+            name: "operation-metadata",
+            revision: 1,
+            definitions: vec![
+                nominal_definition(default_key.clone(), CanonicalValue::boolean(true)),
+                nominal_definition(facts_key.clone(), CanonicalValue::boolean(true)),
+                nominal_definition(conformance_key.clone(), CanonicalValue::boolean(true)),
+            ],
+            operations: vec![OperationDefinition::new(
+                operation_key.clone(),
+                exact_schema(
+                    1,
+                    1,
+                    [OperationAttributeSchema::defaulted(
+                        AttributeFieldId::new(1),
+                        CanonicalValueKind::Type,
+                        CanonicalValue::value_type(ResolvedValueType::nominal(default_key.clone())),
+                    )
+                    .unwrap()],
+                ),
+                NormativeDefinitionRef::new("test metadata closure").unwrap(),
+                OperationDefinitionFacts::new(CanonicalValue::value_type(
+                    ResolvedValueType::nominal(facts_key.clone()),
+                )),
+                OperationConformance::new(
+                    CanonicalValue::float_bits(conformance_key.clone(), [0_u8; 4]).unwrap(),
+                ),
+                OperationEffect::Pure,
+                Arc::new(IdentityInferencer),
+            )],
+        };
+        let mut builder = SemanticRegistryBuilder::new();
+        builder.register_provider(&provider).unwrap();
+        let registry = builder.freeze().unwrap();
+
+        let closure = registry
+            .close_authority(
+                std::iter::empty(),
+                std::iter::empty(),
+                [&operation_key],
+                std::iter::empty(),
+            )
+            .unwrap();
+        for key in [default_key, facts_key, conformance_key] {
+            assert!(
+                closure
+                    .type_keys
+                    .contains(&ValueTypeDefinitionKey::Nominal(key))
+            );
+        }
+    }
+
+    #[test]
+    fn freeze_rejects_type_definition_fact_without_authority() {
+        let missing = ResolvedValueType::nominal(TypeKey::new("test", "missing", 1).unwrap());
+        let provider = TestProvider {
+            name: "missing-fact",
+            revision: 1,
+            definitions: vec![nominal_definition(
+                TypeKey::new("test", "root", 1).unwrap(),
+                CanonicalValue::value_type(missing),
+            )],
+            operations: Vec::new(),
+        };
+        let mut builder = SemanticRegistryBuilder::new();
+        builder.register_provider(&provider).unwrap();
+        assert!(matches!(
+            builder.freeze(),
+            Err(RegistryError::UnregisteredTypeAuthority { .. })
+        ));
+    }
+
+    #[test]
+    fn finite_type_definition_cycles_are_deterministic_and_cycle_safe() {
+        let left_key = TypeKey::new("test", "cycle-left", 1).unwrap();
+        let right_key = TypeKey::new("test", "cycle-right", 1).unwrap();
+        let left = nominal_definition(
+            left_key.clone(),
+            CanonicalValue::value_type(ResolvedValueType::nominal(right_key.clone())),
+        );
+        let right = nominal_definition(
+            right_key.clone(),
+            CanonicalValue::value_type(ResolvedValueType::nominal(left_key.clone())),
+        );
+        let build = |definitions| {
+            let provider = TestProvider {
+                name: "finite-cycle",
+                revision: 1,
+                definitions,
+                operations: Vec::new(),
+            };
+            let mut builder = SemanticRegistryBuilder::new();
+            builder.register_provider(&provider).unwrap();
+            builder.freeze().unwrap()
+        };
+        let first = build(vec![left.clone(), right.clone()]);
+        let second = build(vec![right, left]);
+        let root = ResolvedValueType::nominal(left_key);
+
+        assert_eq!(
+            first
+                .project_caller_rooted_definitions([&root], std::iter::empty())
+                .unwrap(),
+            second
+                .project_caller_rooted_definitions([&root], std::iter::empty())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn aggregate_authority_closure_rejects_the_first_item_over_limit() {
+        let definition_count = MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS / 2 + 1;
+        let keys: Vec<_> = (0..definition_count)
+            .map(|index| TypeKey::new("limit", format!("type-{index:04}"), 1).unwrap())
+            .collect();
+        let definitions = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                let facts = keys.get(index + 1).map_or_else(
+                    || CanonicalValue::boolean(true),
+                    |next| CanonicalValue::value_type(ResolvedValueType::nominal(next.clone())),
+                );
+                nominal_definition(key.clone(), facts)
+            })
+            .collect();
+        let provider = TestProvider {
+            name: "closure-limit",
+            revision: 1,
+            definitions,
+            operations: Vec::new(),
+        };
+        let mut builder = SemanticRegistryBuilder::new();
+        builder.register_provider(&provider).unwrap();
+
+        assert!(matches!(
+            builder.freeze(),
+            Err(RegistryError::SemanticAuthorityResourceExceeded {
+                resource: SemanticAuthorityResource::ClosureItems,
+                limit: MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS,
+                actual,
+            }) if actual == MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS + 1
+        ));
     }
 }

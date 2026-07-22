@@ -1,7 +1,7 @@
 ---
 id: correct-semantic-identity-layering
 title: Correct semantic identity layering
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: [harden-semantic-registry-and-program-construction]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, project/tickets, contracts/
 shared_scopes: []
 paths: []
 tags: []
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1784655074
 ---
 Separate graph meaning, reached semantic-definition requirements, and
 provider-attributed admission provenance. Remove reached provider authority
@@ -60,3 +57,13 @@ progress until all of the following hold:
 ADR 0072 remains the accepted contract. Later region, refinement, schedule,
 KIR, program, artifact, and runtime identities remain work for their owning
 tickets; this correction must not add placeholder forms for them.
+
+The correction now uses one iterative ordered-worklist closure with an
+aggregate governed bound. Completed programs own the no-argument authoritative
+definition, admission, and snapshot subjects; compiler requests, target
+requests, and artifact-construction plans retain them as typed values alongside
+graph meaning. Registry caller-root projections are not public program-evidence
+APIs. Tests cover every dependency class above, finite cycles, the first item
+beyond the bound, used and unused provider revisions, and rejection of a
+cross-program semantic/request mix. Later identity layers remain deferred to
+their owning tickets without placeholder types.

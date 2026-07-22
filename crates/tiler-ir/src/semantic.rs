@@ -37,8 +37,9 @@ pub use operation::{
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
 pub use registry::{
-    F32, FrozenSemanticRegistry, NormativeDefinitionRef, OperationApplicationRejection,
-    ProviderIdentity, RegistryError, RegistryLookupError, SemanticAdmissionProvenanceIdentity,
+    F32, FrozenSemanticRegistry, MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS, NormativeDefinitionRef,
+    OperationApplicationRejection, ProviderIdentity, RegistryError, RegistryLookupError,
+    SemanticAdmissionProvenanceIdentity, SemanticAuthorityResource,
     SemanticDefinitionProjectionIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
     SemanticRegistryRegistrar, SemanticRegistrySnapshotIdentity, TypeDefinitionFacts,
     TypeInstanceError, TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey,

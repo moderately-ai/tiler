@@ -37,10 +37,13 @@ compiler-to-artifact dependency has been removed. The proof-specific structs
 remain private until their dedicated generic IR/verifier tickets replace them.
 ADR 0072 defines separate graph meaning, reached provider-independent
 definitions, admission-provider provenance, and complete registry snapshot
-subjects. Adversarial review found that the initial implementation does not
-yet compute a transitively complete reached-authority closure for nested type
-and attribute dependencies, so that correction is again active rather than
-complete. Region occurrence, checked refinement,
+subjects. The corrected semantic implementation computes one deterministic,
+iterative, cycle-safe, aggregate-bounded authority closure across retained
+types, operations, occurrence attributes, definition facts, defaults, and
+conformance requirements. Completed programs own the authoritative definition
+and admission projections; compiler requests and artifact-construction plans
+retain all four typed semantic subjects independently. Region occurrence,
+checked refinement,
 structural schedule/KIR, complete-plan, and artifact identities remain explicit
 obligations of their owning tickets rather than implemented support. The first
 public static-extent `tiler_ir::index` builder/verifier draft now exists. Its

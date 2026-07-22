@@ -20,7 +20,10 @@ use super::operation::{
     OperationAttributes, OperationData, OperationRef, ResultIndex, ValueData, ValueDefinition,
     ValueFact, ValueRef,
 };
-use super::registry::FrozenSemanticRegistry;
+use super::registry::{
+    FrozenSemanticRegistry, SemanticAdmissionProvenanceIdentity,
+    SemanticDefinitionProjectionIdentity, SemanticRegistrySnapshotIdentity,
+};
 use super::shape_evidence::{SameShape, ShapeWitness, ShapedValue};
 use super::types::ResolvedValueType;
 
@@ -39,6 +42,9 @@ pub(super) struct ProgramData {
     pub(super) values: Vec<ValueData>,
     pub(super) outputs: Vec<ProgramOutput>,
     pub(super) identity: OnceLock<SemanticGraphIdentity>,
+    pub(super) reached_definitions: SemanticDefinitionProjectionIdentity,
+    pub(super) admission_provenance: SemanticAdmissionProvenanceIdentity,
+    pub(super) registry_snapshot: SemanticRegistrySnapshotIdentity,
     pub(super) semantic_registry: FrozenSemanticRegistry,
 }
 
@@ -273,6 +279,24 @@ impl SemanticProgram {
     #[must_use]
     pub fn semantic_registry(&self) -> &FrozenSemanticRegistry {
         &self.data.semantic_registry
+    }
+
+    /// Returns the complete provider-independent definitions reached by this program.
+    #[must_use]
+    pub fn reached_semantic_definitions(&self) -> &SemanticDefinitionProjectionIdentity {
+        &self.data.reached_definitions
+    }
+
+    /// Returns provider-attributed provenance for every authority reached by this program.
+    #[must_use]
+    pub fn semantic_admission_provenance(&self) -> &SemanticAdmissionProvenanceIdentity {
+        &self.data.admission_provenance
+    }
+
+    /// Returns provenance for the complete registry snapshot used to build this program.
+    #[must_use]
+    pub fn semantic_registry_snapshot_identity(&self) -> &SemanticRegistrySnapshotIdentity {
+        &self.data.registry_snapshot
     }
 
     /// Recovers exact marker-backed type evidence for one graph-owned value.
@@ -648,6 +672,17 @@ impl SemanticProgramBuilder {
                 failure: ProgramBuildFailure::GraphIdentityExhausted,
             });
         };
+        let (reached_definitions, admission_provenance) =
+            match self.project_reachable_semantic_authority() {
+                Ok(projections) => projections,
+                Err(error) => {
+                    return Err(ProgramBuildError {
+                        builder: Box::new(self),
+                        failure: ProgramBuildFailure::SemanticAuthority(error),
+                    });
+                }
+            };
+        let registry_snapshot = self.semantic_registry.snapshot_identity().clone();
         let origin = self.owner;
         self.compact_to_outputs();
         Ok(SemanticProgram {
@@ -659,6 +694,9 @@ impl SemanticProgramBuilder {
                 values: self.values,
                 outputs: self.outputs,
                 identity: OnceLock::new(),
+                reached_definitions,
+                admission_provenance,
+                registry_snapshot,
                 semantic_registry: self.semantic_registry,
             }),
         })
@@ -967,6 +1005,57 @@ impl SemanticProgramBuilder {
             output.value = value_map[output.value.as_usize()]
                 .expect("every declared output is a reachable value");
         }
+    }
+
+    fn project_reachable_semantic_authority(
+        &self,
+    ) -> Result<
+        (
+            SemanticDefinitionProjectionIdentity,
+            SemanticAdmissionProvenanceIdentity,
+        ),
+        super::registry::RegistryError,
+    > {
+        let mut reachable_values = vec![false; self.values.len()];
+        let mut reachable_operations = vec![false; self.operations.len()];
+        let mut pending: Vec<_> = self.outputs.iter().map(|output| output.value).collect();
+        while let Some(value_index) = pending.pop() {
+            if std::mem::replace(&mut reachable_values[value_index.as_usize()], true) {
+                continue;
+            }
+            let ValueDefinition::OperationResult { operation, .. } =
+                self.values[value_index.as_usize()].definition
+            else {
+                continue;
+            };
+            if std::mem::replace(&mut reachable_operations[operation.as_usize()], true) {
+                continue;
+            }
+            let operation = &self.operations[operation.as_usize()];
+            pending.extend(operation.operands.iter().copied());
+            pending.extend(operation.results.iter().copied());
+        }
+        let value_types = self
+            .values
+            .iter()
+            .zip(&reachable_values)
+            .filter_map(|(value, reached)| reached.then_some(value.resolved_type.as_ref()));
+        let operations: Vec<_> = self
+            .operations
+            .iter()
+            .zip(&reachable_operations)
+            .filter_map(|(operation, reached)| reached.then_some(operation))
+            .collect();
+        let operation_keys = operations.iter().map(|operation| &operation.key);
+        let occurrence_attributes = operations
+            .iter()
+            .flat_map(|operation| operation.attributes.fields())
+            .map(super::types::CanonicalField::value);
+        self.semantic_registry.project_program_authority(
+            value_types,
+            operation_keys,
+            occurrence_attributes,
+        )
     }
 
     fn validate_internal(&self, diagnostics: &mut Vec<ValidationDiagnostic>) {
@@ -1713,34 +1802,57 @@ mod tests {
 
         let first = build(1);
         let second = build(2);
-        let value_types = [F32::resolved_type()];
-        let operations = [OpKey::new("test", "identity", 1).unwrap()];
-        let first_definitions = first
-            .semantic_registry()
-            .project_reached_definitions(value_types.iter(), operations.iter())
-            .unwrap();
-        let second_definitions = second
-            .semantic_registry()
-            .project_reached_definitions(value_types.iter(), operations.iter())
-            .unwrap();
-        let first_admission = first
-            .semantic_registry()
-            .project_reached_admission_provenance(value_types.iter(), operations.iter())
-            .unwrap();
-        let second_admission = second
-            .semantic_registry()
-            .project_reached_admission_provenance(value_types.iter(), operations.iter())
-            .unwrap();
 
         assert_eq!(
             first.semantic_graph_identity(),
             second.semantic_graph_identity()
         );
-        assert_eq!(first_definitions, second_definitions);
-        assert_ne!(first_admission, second_admission);
+        assert_eq!(
+            first.reached_semantic_definitions(),
+            second.reached_semantic_definitions()
+        );
         assert_ne!(
-            first.semantic_registry().snapshot_identity(),
-            second.semantic_registry().snapshot_identity()
+            first.semantic_admission_provenance(),
+            second.semantic_admission_provenance()
+        );
+        assert_ne!(
+            first.semantic_registry_snapshot_identity(),
+            second.semantic_registry_snapshot_identity()
+        );
+    }
+
+    #[test]
+    fn unused_provider_revision_changes_only_registry_snapshot_provenance() {
+        fn build(revision: u32) -> SemanticProgram {
+            let mut registry = SemanticRegistryBuilder::standard().unwrap();
+            registry
+                .register_provider(&OperationProvider(revision))
+                .unwrap();
+            let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+            let input = builder
+                .input::<F32>(input_key("x"), Shape::from_dims([2]))
+                .unwrap();
+            builder.output(output_key("result"), input).unwrap();
+            builder.build().unwrap()
+        }
+
+        let first = build(1);
+        let second = build(2);
+        assert_eq!(
+            first.semantic_graph_identity(),
+            second.semantic_graph_identity()
+        );
+        assert_eq!(
+            first.reached_semantic_definitions(),
+            second.reached_semantic_definitions()
+        );
+        assert_eq!(
+            first.semantic_admission_provenance(),
+            second.semantic_admission_provenance()
+        );
+        assert_ne!(
+            first.semantic_registry_snapshot_identity(),
+            second.semantic_registry_snapshot_identity()
         );
     }
 

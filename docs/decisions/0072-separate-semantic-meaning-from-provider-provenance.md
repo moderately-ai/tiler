@@ -105,9 +105,13 @@ artifact + live device/context/specialization -> runtime cache
   by its own contract; no lower-layer digest is a substitute for complete plan
   coverage or selected-provider evidence.
 - The semantic identity split and the index region's separate scalar-authority
-  receipt are implemented for their bounded profiles. Region occurrence,
-  semantic checked refinement, schedule/KIR, complete-plan, and artifact
-  identities remain obligations of their owning implementation tickets.
+  receipt are implemented for their bounded profiles. The completed semantic
+  program owns definition and admission subjects computed by one deterministic,
+  iterative, cycle-safe, aggregate-bounded transitive authority closure;
+  compiler requests and artifact-construction plans retain all four typed
+  semantic subjects. Region occurrence, semantic checked refinement,
+  schedule/KIR, complete-plan, and artifact identities remain obligations of
+  their owning implementation tickets.
 
 ## Alternatives considered
 

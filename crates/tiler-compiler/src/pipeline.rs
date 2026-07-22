@@ -172,8 +172,7 @@ impl From<RequestError> for CompileError {
             RequestError::BudgetExceeded { .. } => Self::BudgetExhausted(value),
             RequestError::UnsupportedRequestVersion
             | RequestError::EmptyTargetSet
-            | RequestError::DuplicateTargetProfile
-            | RequestError::SemanticIdentityProjection => Self::InvalidRequest(value),
+            | RequestError::DuplicateTargetProfile => Self::InvalidRequest(value),
         }
     }
 }

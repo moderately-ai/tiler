@@ -108,6 +108,14 @@ registry snapshot, and every selected refinement, plan, or artifact whose
 correctness depends on that provider. Unused providers remain request-
 environment provenance and do not enter selected artifact identity.
 
+Definition and admission subjects are program-owned results of the complete
+transitive authority closure, not caller-selected registry subsets. The closure
+includes type references in concrete nested/encoded types, occurrence
+attributes, definition facts, operation defaults, operation facts, and
+conformance values. Registry freeze runs the same iterative, cycle-safe,
+bounded closure over all registered authority and rejects missing referenced
+definitions before any program can use the snapshot.
+
 Value types follow the same durable identity principle. A conceptual
 `TypeKey { namespace, name, semantic_version }` identifies a canonical nominal
 dtype or parameterized constructor for both built-ins and extensions. ADR 0062

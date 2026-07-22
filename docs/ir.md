@@ -266,6 +266,17 @@ the complete frozen snapshot and both reached projections independently, then
 adds selected optional capability provenance as planning proceeds. ADR 0072
 owns this separation.
 
+The immutable `SemanticProgram` computes and owns both reached subjects during
+checked build. Their authority closure starts from every retained value type,
+operation key, and occurrence attribute value, then transitively follows
+parameterized and encoded type components, canonical `Type` and `FloatBits`
+references, type-definition facts, and operation defaults, facts, and
+conformance requirements. Closure is deterministic, iterative, cycle-safe,
+and governed by one aggregate resource bound. A caller cannot manufacture
+program-complete evidence by supplying an incomplete root list to a registry
+projection API; consumers obtain the authoritative no-argument subjects from
+the completed program.
+
 ADR 0061 adds optional, checked Rust-side shape evidence without making it
 canonical graph authority. Conceptually, `ShapedValue<T, E>` refines a
 `Value<T>` with evidence such as fixed rank or an exact static shape. Only the
