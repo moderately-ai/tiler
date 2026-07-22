@@ -1,7 +1,7 @@
 ---
 id: reconcile-research-evidence-provenance
 title: Reconcile research evidence provenance
-status: todo
+status: done
 priority: p1
 dependencies: [repair-numerical-witness-integrity, repair-macro-and-embedding-harness-integrity, repair-cache-experiment-harness-integrity, repair-apple-target-experiment-integrity, repair-shape-and-runtime-experiment-integrity, enforce-repository-validation-gate-integrity]
 related: []
@@ -44,3 +44,19 @@ supporting edge, exact bounded domain or procedure, tracked entrypoint, and
 retained result sufficient for the stated claim. Run the complete documentation
 renderer/validator, Ruff, pytest, `tkt lint`, and a repository-wide search for
 stale versions of these specific evidence claims.
+
+## Outcome
+
+- Removed unsupported executable-evidence labels from five architectural
+  reports and stated the exact partial-implementation boundary in each.
+- Reconciled Apple, embedding, macro-environment, runtime, stable/nightly
+  shape, reduction, and accuracy claims against retained artifacts. Added a
+  producer-bound Apple schema-v2 record, isolated shape measurements, and a
+  deterministic region-accuracy result with tool and source provenance.
+- Reclassified the unretained blank-agent review as informational narrative
+  evidence and removed it from the documentation experiment's support claims.
+- Added explicit corrective links to the completed tickets whose historical
+  acceptance language was superseded or narrowed by the integrity audits.
+- Regenerated both catalogs and passed the complete repository validation gate,
+  including documentation validation, Ruff, 142 Python tests, the full Rust
+  gate, shell validation, and ticketsplease lint.

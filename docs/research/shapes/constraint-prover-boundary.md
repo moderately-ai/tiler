@@ -7,8 +7,8 @@ topics: ["shapes", "constraints", "proof"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
-evidence_classes: ["primary-source-synthesis", "executable-model"]
+implementation_status: "not-started"
+evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.ir"]
 adopted_by: ["ADR-0008"]
 ticket: "shape-environment-contract"
@@ -20,6 +20,11 @@ ticket: "shape-environment-contract"
 **Ticket:** `shape-environment-contract`  
 **Question:** is shape-constraint reasoning realistically bounded, and what
 would an intentionally incomplete initial prover omit?
+
+**Evidence boundary:** this report synthesizes mathematical and compiler
+precedents. No retained executable implements the accepted initial native
+prover, so the prior `executable-model` label was removed rather than treating
+static-shape validation as evidence for symbolic proof capability.
 
 ## Executive finding
 

@@ -63,7 +63,7 @@ record_digest() {
   record "$key" "$output"
 }
 
-for command_name in xcode-select xcodebuild xcrun sw_vers uname plutil shasum cmp uv; do
+for command_name in xcode-select xcodebuild xcrun sw_vers uname plutil shasum cmp uv git; do
   command -v "$command_name" >/dev/null 2>&1 || fail "required command unavailable: $command_name"
 done
 
@@ -72,9 +72,32 @@ kernel_b="$result_root/src-b/copy.metal"
 cp "$script_dir/copy.metal" "$kernel_a" || fail "could not copy source A"
 cp "$script_dir/copy.metal" "$kernel_b" || fail "could not copy source B"
 
-record "schema" "tiler.apple-target-compatibility/v1"
+record "schema" "tiler.apple-target-compatibility/v2"
 record "probe.result_root" "."
+capture "probe.repository_base_revision" '^[0-9a-f]{40}$' git -C "$repo_root" rev-parse HEAD
 record_digest "probe.source_sha256" "$script_dir/copy.metal"
+record_digest "probe.harness_sha256" "$script_dir/compatibility_probe.sh"
+record_digest "probe.validator_sha256" "$script_dir/validate_compatibility_record.py"
+record_digest "probe.project_sha256" "$repo_root/pyproject.toml"
+record_digest "probe.lock_sha256" "$repo_root/uv.lock"
+input_manifest="$result_root/input-manifest.tsv"
+: >"$input_manifest"
+for input_path in \
+  "$script_dir/compatibility_probe.sh" \
+  "$script_dir/copy.metal" \
+  "$script_dir/validate_compatibility_record.py" \
+  "$repo_root/pyproject.toml" \
+  "$repo_root/uv.lock"; do
+  relative_path=${input_path#"$repo_root/"}
+  digest=$(shasum -a 256 "$input_path" 2>/dev/null) \
+    || fail "could not hash input manifest member: $input_path"
+  digest=${digest%% *}
+  [[ "$digest" =~ '^[0-9a-f]{64}$' ]] \
+    || fail "malformed input manifest digest: $input_path"
+  print -r -- "$relative_path"$'\t'"$digest" >>"$input_manifest"
+done
+record "probe.input_manifest_file" "input-manifest.tsv"
+record_digest "probe.input_manifest_sha256" "$input_manifest"
 record "probe.compiler_flags" "-std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off"
 capture "host.date_utc" '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' date -u +%Y-%m-%dT%H:%M:%SZ
 capture "host.developer_dir" '^/' xcode-select -p

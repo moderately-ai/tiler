@@ -27,3 +27,11 @@ checks the host-side model. ADRs
 [0025](../docs/decisions/0025-reduction-empty-results-and-padding.md) record the
 accepted invariants. Parallel topology verification and backend execution are
 still unimplemented.
+
+## Evidence correction (2026-07-21)
+
+The [numerical witness repair](repair-numerical-witness-integrity.md) and
+[current probe description](../spikes/numerics/reduction_contract/README.md)
+bound the exhaustive ordering claim to all 24 permutations of one four-value
+fixture. Genuine unseeded empty contributors and seeded empty signed-zero cases
+are separate tests; no broader finite universe is claimed.

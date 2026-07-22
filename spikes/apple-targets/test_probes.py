@@ -28,7 +28,14 @@ def valid_record() -> dict[str, str]:
     values = {
         "schema": VALIDATOR.SCHEMA,
         "probe.result_root": ".",
+        "probe.repository_base_revision": "b" * 40,
         "probe.source_sha256": digest,
+        "probe.harness_sha256": digest,
+        "probe.validator_sha256": digest,
+        "probe.project_sha256": digest,
+        "probe.lock_sha256": digest,
+        "probe.input_manifest_file": "input-manifest.tsv",
+        "probe.input_manifest_sha256": digest,
         "probe.compiler_flags": "-std=metal3.1 -O2",
         "host.date_utc": "2026-07-21T00:00:00Z",
         "host.developer_dir": "/Applications/Xcode.app/Contents/Developer",
@@ -81,6 +88,23 @@ def assert_validator_mutations() -> None:
     with tempfile.TemporaryDirectory(prefix="tiler-compat-record-test.") as directory:
         root = Path(directory)
         empty_digest = hashlib.sha256(b"").hexdigest()
+        manifest = root / "input-manifest.tsv"
+        manifest.write_text(
+            "".join(
+                f"{path}\t{baseline[field]}\n"
+                for path, field in {
+                    "spikes/apple-targets/compatibility_probe.sh": "probe.harness_sha256",
+                    "spikes/apple-targets/copy.metal": "probe.source_sha256",
+                    "spikes/apple-targets/validate_compatibility_record.py": (
+                        "probe.validator_sha256"
+                    ),
+                    "pyproject.toml": "probe.project_sha256",
+                    "uv.lock": "probe.lock_sha256",
+                }.items()
+            ),
+            encoding="utf-8",
+        )
+        baseline["probe.input_manifest_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
         for sdk in VALIDATOR.SDKS:
             settings = root / "sdk" / f"{sdk}.settings.txt"
             settings.parent.mkdir(exist_ok=True)
@@ -126,7 +150,15 @@ def assert_validator_mutations() -> None:
             raise AssertionError("validator accepted mutated retained SDK settings")
         retained_settings.write_bytes(original_settings)
 
-        provenance = [key for key in baseline if key.startswith(("host.", "sdk.", "tool."))]
+        original_manifest = manifest.read_bytes()
+        manifest.write_text("mutated\n", encoding="utf-8")
+        if run(baseline).returncode == 0:
+            raise AssertionError("validator accepted mutated retained input manifest")
+        manifest.write_bytes(original_manifest)
+
+        provenance = [
+            key for key in baseline if key.startswith(("probe.", "host.", "sdk.", "tool."))
+        ]
         for key in provenance:
             mutation = dict(baseline)
             del mutation[key]

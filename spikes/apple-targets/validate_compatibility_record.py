@@ -8,7 +8,7 @@ import hashlib
 import re
 from pathlib import Path
 
-SCHEMA = "tiler.apple-target-compatibility/v1"
+SCHEMA = "tiler.apple-target-compatibility/v2"
 SDKS = ("macosx", "iphoneos", "iphonesimulator")
 FAMILIES = {
     "macos13": ("macosx", "air64-apple-macos13.0"),
@@ -55,7 +55,14 @@ def validate(values: dict[str, str]) -> None:
     if require(values, "schema") != SCHEMA:
         raise RecordError("unsupported record schema")
     require(values, "probe.result_root")
+    require(values, "probe.repository_base_revision", re.compile(r"[0-9a-f]{40}"))
     require(values, "probe.source_sha256", SHA256)
+    require(values, "probe.harness_sha256", SHA256)
+    require(values, "probe.validator_sha256", SHA256)
+    require(values, "probe.project_sha256", SHA256)
+    require(values, "probe.lock_sha256", SHA256)
+    require(values, "probe.input_manifest_file", re.compile(r"input-manifest[.]tsv"))
+    require(values, "probe.input_manifest_sha256", SHA256)
     require(values, "probe.compiler_flags")
     require(values, "host.date_utc", re.compile(r"\d{4}-\d{2}-\d{2}T.+Z"))
     require(values, "host.developer_dir", re.compile(r"/.+"))
@@ -116,6 +123,25 @@ def validate_retained_files(values: dict[str, str], record: Path) -> None:
         result_root = (record.parent / result_root).resolve()
     if result_root != record.parent.resolve():
         raise RecordError("probe.result_root does not identify the record directory")
+
+    manifest = result_root / require(values, "probe.input_manifest_file")
+    expected_manifest = require(values, "probe.input_manifest_sha256", SHA256)
+    if file_digest(manifest) != expected_manifest:
+        raise RecordError("retained input manifest digest mismatch")
+    expected_inputs = {
+        "spikes/apple-targets/compatibility_probe.sh": require(
+            values, "probe.harness_sha256", SHA256
+        ),
+        "spikes/apple-targets/copy.metal": require(values, "probe.source_sha256", SHA256),
+        "spikes/apple-targets/validate_compatibility_record.py": require(
+            values, "probe.validator_sha256", SHA256
+        ),
+        "pyproject.toml": require(values, "probe.project_sha256", SHA256),
+        "uv.lock": require(values, "probe.lock_sha256", SHA256),
+    }
+    manifest_values = read_record(manifest)
+    if manifest_values != expected_inputs:
+        raise RecordError("retained input manifest does not match producer fields")
 
     for sdk in SDKS:
         settings = Path(require(values, f"sdk.{sdk}.settings_file"))

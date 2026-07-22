@@ -63,8 +63,9 @@ than platform-specific `stat` flags. These measurements reject catastrophic
 behavior on the tested host; they are not portable performance guarantees.
 
 Both compilers pass the same correctness, diagnostics, Clippy, and rustdoc
-suite. On the governed compiler, the 1,000-shape case completed a clean check in
-0.132 seconds at 86.2 MiB peak RSS and a release build in 0.240 seconds. Its
+suite. On the retained arm64 macOS 27 host and governed compiler, the
+1,000-shape case completed a clean check in
+0.166 seconds at 85.9 MiB peak RSS and a release build in 0.323 seconds. Its
 binary was 16 bytes larger than the one-shape case and retained the same global
 symbol count. See [`measurements/summary.json`](measurements/summary.json) for
 the complete matrix and exact host boundary.

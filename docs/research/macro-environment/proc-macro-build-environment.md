@@ -88,8 +88,7 @@ simulated.
 
 ### Environment
 
-During native and explicit `--target aarch64-apple-darwin` expansion, these
-were absent:
+The retained 2026-07-21 native trace shows these fields absent:
 
 - `HOST`, `TARGET`, and `CARGO_BUILD_TARGET`;
 - all probed `CARGO_CFG_TARGET_*` variables;
@@ -99,9 +98,13 @@ were absent:
 
 `CARGO_MANIFEST_DIR` and `CARGO_PKG_NAME` described the consumer package.
 Invocation tokens remained observable and contained the explicit family list.
-These are host measurements, not a claim that Cargo can never expose another
-variable. Correctness therefore relies only on documented macro inputs and
-Tiler-owned configuration.
+The original report also described the same absence under an explicit
+host-equal `--target aarch64-apple-darwin`, but that raw trace was not retained
+and the repaired cross-target entrypoint intentionally rejects host-equal
+targets. That portion remains historical rather than current evidence. The
+native findings are host measurements, not a claim that Cargo can never expose
+another variable. Correctness therefore relies only on documented macro inputs
+and Tiler-owned configuration.
 
 ### Freshness
 

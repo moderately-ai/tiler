@@ -51,6 +51,8 @@ verify the retained evidence on a supported Apple host.
   the incomplete historical raw record from the new checked-in evidence.
 - `tiler-metal` now claims only pure structured-kernel-to-MSL lowering; the
   canonical workspace manifest checker enforces the corrected ownership text.
-- Validation passed with the probe mutation suite, the live runtime control,
-  the retained full compatibility matrix, documentation gates, 142 Python
-  tests, and `uv run --locked python scripts/check_repository.py`.
+- Validation passed with the probe mutation suite, compiled injected-stage
+  controls, the retained full compatibility matrix, documentation gates, 142
+  Python tests, and `uv run --locked python scripts/check_repository.py`. No
+  output from an uninjected live runtime control was retained, so that narrower
+  claim supersedes the earlier wording.

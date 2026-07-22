@@ -6,19 +6,29 @@ title: "Blank-agent documentation acceptance audit"
 topics: ["documentation", "navigation", "acceptance"]
 catalog_group: "documentation-governance"
 research_status: "complete"
-disposition: "adopted"
-implementation_status: "implemented"
-evidence_classes: ["bounded-measurement"]
+disposition: "informational"
+implementation_status: "not-started"
+evidence_classes: ["unknown"]
 informs: ["tiler.contract.document-metadata"]
 ticket: "docs-blank-agent-audit"
 ---
 
 # Blank-agent documentation acceptance audit
 
+## Evidence correction
+
+The exact prompts, complete agent outputs, and immutable agent/runtime identity
+for this historical review were not retained. The conclusions below are a
+narrative account of the review, not a reproducible bounded measurement. The
+documentation integrity checker validates structure only and cannot support a
+claim about reader interpretation. This record is therefore informational with
+`unknown` evidence rather than adopted qualitative acceptance evidence.
+
 ## Scope and method
 
-Three independent read-only agents started only from the repository root at
-base commit `f6664fd`. They separately attempted to:
+The historical report states that three independent read-only agents started
+only from the repository root at base commit `f6664fd`. It describes their
+attempts as:
 
 1. identify project maturity, authority, evidence, and the next decision;
 2. determine what an implementer may do, layer ownership, blockers, workflow,
@@ -41,11 +51,12 @@ that every future reader will interpret every contract identically.
 
 ## Findings and repairs
 
-All readers correctly identified that Tiler has no production compiler and that
-implementation remains unauthorized. They found the status, roadmap, authority
-model, layer owners, evidence catalogs, and live board without external context.
+The unretained outputs were reported to identify that Tiler had no production
+compiler and that implementation remained unauthorized, along with the status,
+roadmap, authority model, layer owners, evidence catalogs, and live board. Those
+interpretation claims cannot now be independently checked.
 
-The pass still exposed actionable ambiguity, which this ticket repaired:
+The associated ticket did retain the resulting documentation repairs:
 
 - mixed contracts now default unmarked field-level detail to proposed;
 - workload selection and phase authorization are separate atomic questions;
@@ -58,10 +69,9 @@ The pass still exposed actionable ambiguity, which this ticket repaired:
 - representative ADRs now contain direct human traceability links in addition
   to generated graph views.
 
-The machine checks passed for 143 governed records and six isolated fixtures
-before this report was added; final ticket validation reruns them over the
-updated count. Selected reduction, kernel-IR, program-planning, reference, and
-runtime models also passed during the independent audits.
+Machine-check results establish structural validity of the corresponding
+repository state only. They do not reconstruct the missing reader prompts or
+outputs and are not evidence that the qualitative acceptance criteria passed.
 
 ## Remaining boundary
 
@@ -73,5 +83,7 @@ authorized.
 ## Traceability
 
 This report informs the [documentation metadata contract](../../document-metadata.md).
-The live audit and repair history is the
-[`docs-blank-agent-audit`](../../../tickets/docs-blank-agent-audit.md) ticket.
+The historical work record is
+[`docs-blank-agent-audit`](../../../tickets/docs-blank-agent-audit.md); the
+[evidence-provenance reconciliation](../../../tickets/reconcile-research-evidence-provenance.md)
+records why its interpretation claims were downgraded.

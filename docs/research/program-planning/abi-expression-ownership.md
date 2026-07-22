@@ -7,8 +7,8 @@ topics: ["program-planning", "abi", "expressions", "rust"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
-evidence_classes: ["primary-source-synthesis", "executable-model"]
+implementation_status: "partial"
+evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.artifact-abi"]
 adopted_by: ["ADR-0068"]
 ticket: "prototype-target-neutral-baseline-slice"
@@ -17,6 +17,11 @@ ticket: "prototype-target-neutral-baseline-slice"
 # Ownership of target-neutral ABI expressions
 
 **Status:** research complete; accepted by ADR 0068
+
+**Evidence boundary:** the dependency analysis below is primary-source
+synthesis. The current private compiler slice implements part of the accepted
+ownership boundary, but this report has no dedicated retained experiment and
+does not claim `executable-model` evidence for the full design.
 
 ## Question
 

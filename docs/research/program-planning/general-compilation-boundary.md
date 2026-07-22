@@ -7,8 +7,8 @@ topics: ["program-planning", "compiler-api", "capabilities", "extensions"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
-evidence_classes: ["primary-source-synthesis", "executable-model"]
+implementation_status: "partial"
+evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.architecture", "tiler.contract.optimizer"]
 adopted_by: ["ADR-0069"]
 ticket: "prototype-target-neutral-baseline-slice"
@@ -17,6 +17,11 @@ ticket: "prototype-target-neutral-baseline-slice"
 # General compilation boundary with bounded capability support
 
 **Status:** research complete; accepted by ADR 0069
+
+**Evidence boundary:** the precedents and dependency argument below are
+primary-source synthesis. A private bounded compiler slice exercises part of
+the accepted boundary, but no retained experiment supports this report as an
+`executable-model` of the general mature contract.
 
 ## Question
 

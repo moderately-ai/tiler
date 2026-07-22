@@ -235,9 +235,11 @@ behavior. Eight tests cover equivalent valid results, worker-order-independent
 errors, failed private-result discard, post-completion status precedence,
 witness version/view mismatch, and structural accounting.
 
-The optimized CPU model was run on an Apple M4 Max with 14 logical CPUs,
-macOS 27.0, and `nightly-2026-07-19` (`eff8269f7`). Values are median
-microseconds over nine runs for 64 Ki elements and five runs for larger inputs:
+The retained record identifies an arm64 macOS 27.0 host and
+`nightly-2026-07-19` (`eff8269f7`). It does not retain hardware model or logical
+CPU count, so earlier M4 Max/14-CPU wording is not part of the evidence. Values
+are median microseconds over nine runs for 64 Ki elements and five runs for
+larger inputs:
 
 | Elements | Proof | Host scan | Parallel pre-scan | Transactional |
 | ---: | ---: | ---: | ---: | ---: |

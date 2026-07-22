@@ -6,7 +6,7 @@ title: "Sound accuracy probe"
 topics: ["numerics", "accuracy", "proof"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
-evidence_classes: ["sound-proof", "bounded-measurement"]
+evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.numerics.sound-region-analyzer-spike", "tiler.research.numerics.region-accuracy-contract"]
 entrypoints: ["spikes/numerics/sound_accuracy/run_daisy.sh", "spikes/numerics/sound_accuracy/daisy_runner.py", "spikes/numerics/sound_accuracy/observe.py"]
 last_verified: "2026-07-21"

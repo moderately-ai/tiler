@@ -7,9 +7,9 @@ topics: ["documentation", "validation", "provenance"]
 experiment_status: "reproducible"
 implementation_status: "implemented"
 evidence_classes: ["executable-model"]
-supports: ["tiler.research.documentation.information-architecture-audit", "tiler.research.documentation.blank-agent-acceptance-audit"]
+supports: ["tiler.research.documentation.information-architecture-audit"]
 entrypoints: ["scripts/docs.py", "scripts/tests/test_docs.py"]
-last_verified: "2026-07-20"
+last_verified: "2026-07-21"
 ticket: "docs-integrity-gate"
 ---
 
@@ -33,6 +33,7 @@ mixed contract correctly; independent acceptance reading remains necessary.
 
 ## Traceability
 
-- **Supported audits:** [information architecture](../../docs/research/documentation/information-architecture-audit.md) and [blank-agent acceptance](../../docs/research/documentation/blank-agent-acceptance-audit.md).
+- **Supported audit:** [information architecture](../../docs/research/documentation/information-architecture-audit.md).
+- **Explicit non-support:** the [blank-agent narrative](../../docs/research/documentation/blank-agent-acceptance-audit.md) lacks retained prompts and outputs; this checker cannot establish reader interpretation.
 - **Normative owner:** [documentation metadata](../../docs/document-metadata.md).
 - **Work record:** [docs-integrity-gate](../../tickets/docs-integrity-gate.md).

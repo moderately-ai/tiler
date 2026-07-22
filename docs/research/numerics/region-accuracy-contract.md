@@ -227,8 +227,13 @@ interval proofs and do not establish worst-case bounds.
 Run:
 
 ```sh
-python3 spikes/numerics/region_accuracy_probe.py
+uv run --locked python spikes/numerics/region_accuracy_probe.py
+uv run --locked python -O spikes/numerics/region_accuracy_probe.py
 ```
+
+The checked-in [bounded result](../../../spikes/numerics/region_accuracy/results.json)
+is the byte-identical output of both modes and retains the exact source,
+interpreter, dependency, precision, and host boundary.
 
 ## Feasibility gate
 
@@ -250,10 +255,12 @@ non-vacuous certificates for common modest regions justify enabling the layer;
 conservative `Unknown` for unsupported regions preserves correctness.
 
 The follow-up [sound analyzer integration spike](sound-region-analyzer-spike.md)
-found this profile feasible with a pinned Daisy trusted-analyzer boundary. It
-does not yet authorize delegated numerical freedoms: the production adapter,
-evidence envelope, timeout isolation, and negative corpus remain implementation
-gates, and independently checked certificates remain a separate research item.
+historically found this profile feasible with a pinned Daisy trusted-analyzer
+boundary. Its repaired adapter now fails closed, but the historical proof
+streams and complete executable closure were not retained and a fresh governed
+proof run was unavailable. It does not authorize delegated numerical freedoms:
+a fresh evidence envelope, immutable analyzer execution, and independently
+checked certificates remain separate gates.
 
 ## Primary sources
 

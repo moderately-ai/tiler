@@ -7,14 +7,19 @@ topics: ["shapes", "constraints", "bindings"]
 catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
-evidence_classes: ["primary-source-synthesis", "executable-model"]
+implementation_status: "partial"
+evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.ir"]
 adopted_by: ["ADR-0008", "ADR-0058"]
 ticket: "shape-environment-contract"
 ---
 
 # Shape environment contract research memo
+
+**Evidence boundary:** the report is primary-source synthesis. The current
+private compiler slice has a bounded static-shape request environment, but no
+retained executable covers this report's symbolic bindings, proof evidence,
+runtime requirements, and domain-specific expression contract end to end.
 
 **Status:** completed research adopted by ADR 0008
 **Ticket:** `shape-environment-contract`  

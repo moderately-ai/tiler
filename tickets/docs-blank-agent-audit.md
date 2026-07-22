@@ -24,3 +24,12 @@ Independently traverse the published corpus from a blank-agent perspective, repa
   acceptance report plus documentation-integrity experiment record.
 - Final validation covers the complete governed corpus, generated catalogs,
   local links, tickets, entrypoints, questions, and isolated script fixtures.
+
+## Evidence correction (2026-07-21)
+
+The exact reader prompts and outputs were not retained. The
+[current audit report](../docs/research/documentation/blank-agent-acceptance-audit.md)
+therefore classifies the three-reader account as a nonreproducible historical
+narrative. The structural validator supports corpus integrity, not claims about
+reader interpretation. This correction is tracked by
+[the provenance reconciliation](reconcile-research-evidence-provenance.md).

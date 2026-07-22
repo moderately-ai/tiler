@@ -249,9 +249,9 @@ downstream evidence implementation, and shaped-handle forgery produced retained
 compile failures.
 
 **Measurement:** ranks 0, 1, 2, 4, 8, and 64 compiled through the same zero-sized
-family. On the tested Apple M4 Max host, 1,000 distinct governed-pin shapes took
-0.132 seconds and 86.2 MiB peak RSS for a package-clean check, 0.082 seconds for
-an incremental check, and 0.240 seconds for a release build. The 1,000-shape
+family. On the retained arm64 macOS 27 host, 1,000 distinct governed-pin shapes took
+0.166 seconds and 85.9 MiB peak RSS for a package-clean check, 0.112 seconds for
+an incremental check, and 0.323 seconds for a release build. The 1,000-shape
 binary was 16 bytes larger than the one-shape binary and exposed the same 331
 global symbols. The adjacent compiler produced materially equivalent bounded
 results. Exact provenance and all cases are in the [measurement

@@ -137,9 +137,10 @@ per-byte representation.
 
 A 1 MiB byte string in the dev profile measured 0.31 s, 131 MiB peak RSS, a
 1,500 KiB binary, and a 13.6 MiB target tree. The corresponding release target
-tree was 4.2 MiB. Debug output hashes differed across repetitions because their
-different absolute generated-workspace paths were retained in debug metadata;
-release hashes were stable.
+tree was 4.2 MiB. The derived fixture reports differing debug output hashes and
+stable release hashes. Because neither the binaries, raw inspection output, nor
+generated workspaces were retained, attributing that difference to absolute
+paths in debug metadata is an unverified historical explanation, not evidence.
 
 ## Counts, identity, and observed folding
 
@@ -199,7 +200,7 @@ choice with intermediate-storage cost, not a free deduplication mechanism.
 
 The dev fixture embedded eight identical 100 KiB payloads.
 
-| Boundary / phase | Cargo work observed | Wall s | Peak RSS MiB | Target MiB |
+| Boundary / phase | Historically reported Cargo work | Wall s | Peak RSS MiB | Target MiB |
 |---|---|---:|---:|---:|
 | same / fresh | macro + app | 0.27 | 134 | 11.1 |
 | same / no-op | none | 0.01 | 21 | 11.1 |
@@ -210,12 +211,13 @@ The dev fixture embedded eight identical 100 KiB payloads.
 | cross / unrelated app edit | app only; no literal expansion | 0.09 | 83 | 15.1 |
 | cross / one artifact edit | one blob + app | 0.12 | 91 | 15.5 |
 
-Cargo no-op freshness avoids expansion. In one crate, any app recompilation
-revisits all invocations. Across crates, an unrelated app edit leaves artifact
-crates fresh, and changing one artifact rebuilds one blob plus the app. The
-cross-crate fixture starts with more packages and stores more intermediates.
-Target trees also grew after incremental rebuilds, so clean-tree size and
-accumulated incremental disk use must be reported separately.
+The retained freshness rows contain timings, RSS, target sizes, and a derived
+work label, but no Cargo stdout/stderr, package freshness stream, proc-macro
+trace, or generated workspace. They support the quantitative rows only; they
+do not independently establish which packages rebuilt or how many macro
+expansions occurred. Those work descriptions are historical reports awaiting a
+fresh schema-v2 decision run. The observed target-size growth likewise remains
+a bounded derived measurement, not a causal attribution.
 
 This does not change the separate proc-macro environment result: deleting an
 external artifact cache or changing an untracked external toolchain does not by
