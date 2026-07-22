@@ -72,3 +72,15 @@ schedule, target, KIR, buffer, portfolio, provider, proof, or artifact field and
 require rejection with the correct typed class. Add panic-free malformed-input
 tests and late-zero/duplicate-axis cases. The compiler must never accept a plan
 merely because two forged copies agree.
+
+## Outcome
+
+Completed in `1ae5fcc`: verified requests, schedules, structured kernels,
+programs, and artifact plans are opaque receipts bound to authoritative request
+subjects; exact reduction shapes, target facts, KIR, ABI/host-expression IDs,
+outputs, providers, and portfolio evidence are rederived or checked. Mutation
+and malformed-input coverage now includes target, provider, budget, semantic
+identity, key, normalized constant, schedule/proof, kernel, program, and
+artifact forgeries. Independent immutable reviews of `1ae5fcc` passed, as did
+the full Rust gate, documentation validation, Ruff, 143 pytest tests, ticket
+lint, strict scope guard, and diff checks.
