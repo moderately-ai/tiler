@@ -99,7 +99,7 @@ fn scalar_definition(
 ) -> ScalarOperationDefinition {
     ScalarOperationDefinition::new(
         ScalarOpKey::new("example", name, 1).unwrap(),
-        NormativeDefinitionRef::new(format!("urn:example:{name}:v1")).unwrap(),
+        NormativeDefinitionRef::from_owned(format!("urn:example:{name}:v1")).unwrap(),
         ScalarOperationContract {
             attributes: ScalarAttributeSchema::empty(),
             operands: ScalarArity::exact(operands).unwrap(),
@@ -747,7 +747,7 @@ fn multi_result_structural_key_storage_is_preflighted_transactionally() {
     let attributes = ScalarAttributes::new(
         CanonicalValue::record([CanonicalField::new(
             AttributeFieldId::new(1),
-            CanonicalValue::bytes(vec![0; 5_000]).unwrap(),
+            CanonicalValue::bytes_owned(vec![0; 5_000]).unwrap(),
         )])
         .unwrap(),
     )
@@ -991,16 +991,19 @@ fn reached_definition_projection_has_a_checked_byte_limit() {
     let provider = ProviderIdentity::new("example", "projection", 1).unwrap();
     let mut keys = Vec::new();
     for index in 0..129 {
-        let key = ScalarOpKey::new("example", format!("projection_{index}"), 1).unwrap();
+        let key =
+            ScalarOpKey::from_owned(String::from("example"), format!("projection_{index}"), 1)
+                .unwrap();
         let definition = ScalarOperationDefinition::new(
             key.clone(),
-            NormativeDefinitionRef::new(format!("urn:example:projection:{index}:v1")).unwrap(),
+            NormativeDefinitionRef::from_owned(format!("urn:example:projection:{index}:v1"))
+                .unwrap(),
             ScalarOperationContract {
                 attributes: ScalarAttributeSchema::empty(),
                 operands: ScalarArity::exact(0).unwrap(),
                 results: ScalarArity::exact(1).unwrap(),
                 effect: ScalarEffect::Pure,
-                facts: CanonicalValue::bytes(vec![0; 65_536]).unwrap(),
+                facts: CanonicalValue::bytes_owned(vec![0; 65_536]).unwrap(),
                 conformance: record(),
             },
             Arc::new(Fixed(vec![test_type()])),
@@ -1022,16 +1025,17 @@ fn aggregate_registry_bytes_are_preflighted_transactionally() {
     let provider = ProviderIdentity::new("example", "registry-budget", 1).unwrap();
     let mut rejected = None;
     for index in 0..257 {
-        let key = ScalarOpKey::new("example", format!("budget_{index}"), 1).unwrap();
+        let key =
+            ScalarOpKey::from_owned(String::from("example"), format!("budget_{index}"), 1).unwrap();
         let definition = ScalarOperationDefinition::new(
             key.clone(),
-            NormativeDefinitionRef::new(format!("urn:example:budget:{index}:v1")).unwrap(),
+            NormativeDefinitionRef::from_owned(format!("urn:example:budget:{index}:v1")).unwrap(),
             ScalarOperationContract {
                 attributes: ScalarAttributeSchema::empty(),
                 operands: ScalarArity::exact(0).unwrap(),
                 results: ScalarArity::exact(1).unwrap(),
                 effect: ScalarEffect::Pure,
-                facts: CanonicalValue::bytes(vec![0; 65_536]).unwrap(),
+                facts: CanonicalValue::bytes_owned(vec![0; 65_536]).unwrap(),
                 conformance: record(),
             },
             Arc::new(Fixed(vec![test_type()])),

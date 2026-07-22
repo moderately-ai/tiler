@@ -276,6 +276,16 @@ mandatory capabilities admitted those definitions have a separate
 `SemanticAdmissionProvenanceIdentity`. `SemanticRegistrySnapshotIdentity`
 identifies the complete frozen authority environment.
 
+Incremental program construction has one private aggregate canonical-work byte
+budget. Each input, operation and inferred result set, and named output is
+charged before any arena mutation; rejection reports the first aggregate value
+and active limit without poisoning the builder. This is a conservative work
+budget over the staged draft, so dead values remain charged until commitment.
+It is not exact heap accounting. Commitment compacts the reachable graph,
+computes its exact canonical encoded length without constructing per-operation
+byte buffers, and records that proven length. Lazy identity construction checks
+the proof before making one exactly sized final allocation.
+
 `SemanticProgram::semantic_identity()` returns one borrowed, non-forgeable
 `SemanticIdentity` owner for all four subjects:
 
@@ -571,6 +581,12 @@ facts, and minimum arity plus complete registry admission are rechecked before
 graph mutation. These canonical-byte limits govern accepted identity work, not
 exact allocator memory. Trusted provider code can still allocate, loop, panic,
 or use unsafe code outside the host-owned data boundary.
+
+Frozen-registry application first checks host-owned schema arity and attribute
+field/kind rules. Only a structurally admissible application may invoke type
+family validators, attribute authority validation, or the operation inferencer.
+The complete schema checks are deliberately repeated at inference rather than
+replaced by this ordering preflight.
 
 Provider diagnostic codes are validated bounded newtypes and clone shared
 storage cheaply. Operation-inference and type-instance errors remain distinct;

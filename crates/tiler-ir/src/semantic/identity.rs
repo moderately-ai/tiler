@@ -6,6 +6,13 @@ use super::registry::{
 };
 use crate::shape::Shape;
 
+pub(super) const MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES: usize = 16 * 1024 * 1024;
+const LENGTH_BYTES: usize = std::mem::size_of::<u64>();
+const VALUE_ID_BYTES: usize = std::mem::size_of::<u64>();
+const RESULT_INDEX_BYTES: usize = std::mem::size_of::<u32>();
+const EXTENT_BYTES: usize = std::mem::size_of::<u64>();
+const GRAPH_DOMAIN: &[u8] = b"tiler.semantic-graph.v2\0";
+
 /// Collision-free canonical semantic-graph identity bytes.
 ///
 /// This identifies graph meaning. Provider implementations, registry snapshots,
@@ -75,7 +82,62 @@ impl SemanticIdentity {
 }
 
 pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIdentity {
-    let mut records = Vec::new();
+    let traversal = canonical_traversal(program);
+    let encoded_len = graph_identity_encoded_len(program, &traversal);
+    debug_assert_eq!(encoded_len, program.graph_identity_encoded_len);
+    assert!(
+        encoded_len <= program.canonical_work_bytes
+            && encoded_len <= MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES,
+        "verified graph identity exceeds its admitted canonical-work budget"
+    );
+    let mut bytes = Vec::with_capacity(encoded_len);
+    bytes.extend_from_slice(GRAPH_DOMAIN);
+    encode_len(&mut bytes, program.inputs.len());
+    for input in &program.inputs {
+        encode_string(&mut bytes, input.key.as_str());
+        let value = &program.values[input.value.as_usize()];
+        value.resolved_type.encode(&mut bytes);
+        encode_shape(&mut bytes, &value.shape);
+    }
+    encode_len(&mut bytes, traversal.operation_order.len());
+    for operation_index in traversal.operation_order {
+        let operation = &program.operations[operation_index.as_usize()];
+        encode_len(&mut bytes, operation_record_encoded_len(program, operation));
+        encode_operation(&mut bytes, operation);
+        encode_len(&mut bytes, operation.operands.len());
+        for operand in &operation.operands {
+            let operand_id = traversal.canonical_ids[operand.as_usize()]
+                .expect("canonical traversal assigns every reached operand");
+            bytes.extend_from_slice(&operand_id.to_be_bytes());
+        }
+        encode_len(&mut bytes, operation.results.len());
+        for result in &operation.results {
+            let value_data = &program.values[result.as_usize()];
+            let ValueDefinition::OperationResult { result_index, .. } = value_data.definition
+            else {
+                unreachable!("verified operation result has an operation definition")
+            };
+            bytes.extend_from_slice(&result_index.get().to_be_bytes());
+            value_data.resolved_type.encode(&mut bytes);
+            encode_shape(&mut bytes, &value_data.shape);
+        }
+    }
+    encode_len(&mut bytes, program.outputs.len());
+    for (output, canonical_id) in program.outputs.iter().zip(traversal.output_ids) {
+        encode_string(&mut bytes, output.key.as_str());
+        bytes.extend_from_slice(&canonical_id.to_be_bytes());
+    }
+    debug_assert_eq!(bytes.len(), encoded_len);
+    SemanticGraphIdentity(bytes)
+}
+
+struct CanonicalTraversal {
+    canonical_ids: Vec<Option<u64>>,
+    operation_order: Vec<super::handles::OperationIndex>,
+    output_ids: Vec<u64>,
+}
+
+fn canonical_traversal(program: &ProgramData) -> CanonicalTraversal {
     let mut canonical_ids = vec![None; program.values.len()];
     let mut encoded_operations = vec![false; program.operations.len()];
     let mut next_value_id = u64::try_from(program.inputs.len()).expect("entity count fits u64");
@@ -85,6 +147,7 @@ pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIden
             Some(u64::try_from(position).expect("usize fits u64"));
     }
 
+    let mut operation_order = Vec::with_capacity(program.operations.len());
     let mut output_ids = Vec::with_capacity(program.outputs.len());
     for output in &program.outputs {
         output_ids.push(visit_value(
@@ -93,30 +156,14 @@ pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIden
             &mut canonical_ids,
             &mut encoded_operations,
             &mut next_value_id,
-            &mut records,
+            &mut operation_order,
         ));
     }
-
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.semantic-graph.v2\0");
-    encode_len(&mut bytes, program.inputs.len());
-    for input in &program.inputs {
-        encode_string(&mut bytes, input.key.as_str());
-        let value = &program.values[input.value.as_usize()];
-        value.resolved_type.encode(&mut bytes);
-        encode_shape(&mut bytes, &value.shape);
+    CanonicalTraversal {
+        canonical_ids,
+        operation_order,
+        output_ids,
     }
-    encode_len(&mut bytes, records.len());
-    for record in records {
-        encode_len(&mut bytes, record.len());
-        bytes.extend_from_slice(&record);
-    }
-    encode_len(&mut bytes, program.outputs.len());
-    for (output, canonical_id) in program.outputs.iter().zip(output_ids) {
-        encode_string(&mut bytes, output.key.as_str());
-        bytes.extend_from_slice(&canonical_id.to_be_bytes());
-    }
-    SemanticGraphIdentity(bytes)
 }
 
 fn visit_value(
@@ -125,7 +172,7 @@ fn visit_value(
     canonical_ids: &mut [Option<u64>],
     encoded_operations: &mut [bool],
     next_value_id: &mut u64,
-    records: &mut Vec<Vec<u8>>,
+    operation_order: &mut Vec<super::handles::OperationIndex>,
 ) -> u64 {
     enum Work {
         Enter(super::handles::ValueIndex),
@@ -162,27 +209,7 @@ fn visit_value(
                     continue;
                 }
                 let operation = &program.operations[operation_index.as_usize()];
-                let mut record = Vec::new();
-                encode_operation(&mut record, operation);
-                encode_len(&mut record, operation.operands.len());
-                for operand in &operation.operands {
-                    let operand_id = canonical_ids[operand.as_usize()]
-                        .expect("postorder visits operands before their consumer");
-                    record.extend_from_slice(&operand_id.to_be_bytes());
-                }
-                encode_len(&mut record, operation.results.len());
-                for result in &operation.results {
-                    let value_data = &program.values[result.as_usize()];
-                    let ValueDefinition::OperationResult { result_index, .. } =
-                        value_data.definition
-                    else {
-                        unreachable!("verified operation result has an operation definition")
-                    };
-                    record.extend_from_slice(&result_index.get().to_be_bytes());
-                    value_data.resolved_type.encode(&mut record);
-                    encode_shape(&mut record, &value_data.shape);
-                }
-                records.push(record);
+                operation_order.push(operation_index);
                 for result in &operation.results {
                     canonical_ids[result.as_usize()] = Some(*next_value_id);
                     *next_value_id = next_value_id
@@ -194,6 +221,121 @@ fn visit_value(
         }
     }
     canonical_ids[value.as_usize()].expect("worklist assigns the requested value")
+}
+
+pub(super) fn empty_graph_canonical_work_bytes() -> usize {
+    GRAPH_DOMAIN.len().saturating_add(3 * LENGTH_BYTES)
+}
+
+pub(super) fn input_canonical_work_bytes(
+    key: &super::interface::InputKey,
+    resolved_type: &super::types::ResolvedValueType,
+    shape: &Shape,
+) -> usize {
+    string_encoded_len(key.as_str())
+        .saturating_add(resolved_type.encoded_len())
+        .saturating_add(shape_encoded_len(shape))
+}
+
+pub(super) fn operation_canonical_work_bytes(
+    key: &super::operation::OpKey,
+    attributes: &super::operation::OperationAttributes,
+    operand_count: usize,
+    results: &[super::operation::ValueFact],
+) -> usize {
+    LENGTH_BYTES.saturating_add(
+        key.encoded_len()
+            .saturating_add(attributes.encoded_len())
+            .saturating_add(LENGTH_BYTES)
+            .saturating_add(operand_count.saturating_mul(VALUE_ID_BYTES))
+            .saturating_add(LENGTH_BYTES)
+            .saturating_add(
+                results
+                    .iter()
+                    .map(|fact| {
+                        RESULT_INDEX_BYTES
+                            .saturating_add(fact.resolved_type().encoded_len())
+                            .saturating_add(shape_encoded_len(fact.shape()))
+                    })
+                    .fold(0_usize, usize::saturating_add),
+            ),
+    )
+}
+
+pub(super) fn output_canonical_work_bytes(key: &super::interface::OutputKey) -> usize {
+    string_encoded_len(key.as_str()).saturating_add(VALUE_ID_BYTES)
+}
+
+pub(super) fn graph_identity_encoded_len_for_verified(program: &ProgramData) -> usize {
+    let traversal = canonical_traversal(program);
+    graph_identity_encoded_len(program, &traversal)
+}
+
+fn graph_identity_encoded_len(program: &ProgramData, traversal: &CanonicalTraversal) -> usize {
+    GRAPH_DOMAIN
+        .len()
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(
+            program
+                .inputs
+                .iter()
+                .map(|input| {
+                    let value = &program.values[input.value.as_usize()];
+                    input_canonical_work_bytes(&input.key, &value.resolved_type, &value.shape)
+                })
+                .fold(0_usize, usize::saturating_add),
+        )
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(
+            traversal
+                .operation_order
+                .iter()
+                .map(|index| {
+                    LENGTH_BYTES.saturating_add(operation_record_encoded_len(
+                        program,
+                        &program.operations[index.as_usize()],
+                    ))
+                })
+                .fold(0_usize, usize::saturating_add),
+        )
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(
+            program
+                .outputs
+                .iter()
+                .map(|output| output_canonical_work_bytes(&output.key))
+                .fold(0_usize, usize::saturating_add),
+        )
+}
+
+fn operation_record_encoded_len(program: &ProgramData, operation: &OperationData) -> usize {
+    operation
+        .key
+        .encoded_len()
+        .saturating_add(operation.attributes.encoded_len())
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(operation.operands.len().saturating_mul(VALUE_ID_BYTES))
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(
+            operation
+                .results
+                .iter()
+                .map(|result| {
+                    let value = &program.values[result.as_usize()];
+                    RESULT_INDEX_BYTES
+                        .saturating_add(value.resolved_type.encoded_len())
+                        .saturating_add(shape_encoded_len(&value.shape))
+                })
+                .fold(0_usize, usize::saturating_add),
+        )
+}
+
+fn string_encoded_len(value: &str) -> usize {
+    LENGTH_BYTES.saturating_add(value.len())
+}
+
+fn shape_encoded_len(shape: &Shape) -> usize {
+    LENGTH_BYTES.saturating_add(shape.rank().saturating_mul(EXTENT_BYTES))
 }
 
 fn encode_operation(output: &mut Vec<u8>, operation: &OperationData) {

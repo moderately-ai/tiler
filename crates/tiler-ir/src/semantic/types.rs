@@ -23,11 +23,24 @@ impl TypeKey {
     ///
     /// Returns [`TypeIdentityError`] for an invalid namespace, name, or version.
     pub fn new(
-        namespace: impl Into<String>,
-        name: impl Into<String>,
+        namespace: impl AsRef<str>,
+        name: impl AsRef<str>,
         semantic_version: u32,
     ) -> Result<Self, TypeIdentityError> {
-        Key::new(namespace.into(), name.into(), semantic_version).map(Self)
+        Key::new(namespace.as_ref(), name.as_ref(), semantic_version).map(Self)
+    }
+
+    /// Validates and retains already-owned type-key components without copying them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] before retaining invalid components.
+    pub fn from_owned(
+        namespace: String,
+        name: String,
+        semantic_version: u32,
+    ) -> Result<Self, TypeIdentityError> {
+        Key::from_owned(namespace, name, semantic_version).map(Self)
     }
 
     /// Returns the canonical namespace.
@@ -51,6 +64,10 @@ impl TypeKey {
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
         self.0.encode(output);
     }
+
+    pub(super) fn encoded_len(&self) -> usize {
+        self.0.encoded_len()
+    }
 }
 
 impl fmt::Display for TypeKey {
@@ -70,11 +87,24 @@ impl QuantSchemeKey {
     ///
     /// Returns [`TypeIdentityError`] for an invalid namespace, name, or version.
     pub fn new(
-        namespace: impl Into<String>,
-        name: impl Into<String>,
+        namespace: impl AsRef<str>,
+        name: impl AsRef<str>,
         semantic_version: u32,
     ) -> Result<Self, TypeIdentityError> {
-        Key::new(namespace.into(), name.into(), semantic_version).map(Self)
+        Key::new(namespace.as_ref(), name.as_ref(), semantic_version).map(Self)
+    }
+
+    /// Validates and retains already-owned scheme-key components without copying them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] before retaining invalid components.
+    pub fn from_owned(
+        namespace: String,
+        name: String,
+        semantic_version: u32,
+    ) -> Result<Self, TypeIdentityError> {
+        Key::from_owned(namespace, name, semantic_version).map(Self)
     }
 
     /// Returns the canonical namespace.
@@ -110,23 +140,43 @@ struct Key {
 }
 
 impl Key {
-    fn new(
+    fn new(namespace: &str, name: &str, semantic_version: u32) -> Result<Self, TypeIdentityError> {
+        validate_key(namespace, name, semantic_version)?;
+        Ok(Self {
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+            semantic_version,
+        })
+    }
+
+    fn from_owned(
         namespace: String,
         name: String,
         semantic_version: u32,
     ) -> Result<Self, TypeIdentityError> {
-        validate_component(IdentityComponent::Namespace, &namespace)?;
-        validate_component(IdentityComponent::Name, &name)?;
-        if semantic_version == 0 {
-            return Err(TypeIdentityError::ZeroSemanticVersion);
-        }
+        validate_key(&namespace, &name, semantic_version)?;
         Ok(Self {
             namespace,
             name,
             semantic_version,
         })
     }
+}
 
+pub(super) fn validate_key(
+    namespace: &str,
+    name: &str,
+    semantic_version: u32,
+) -> Result<(), TypeIdentityError> {
+    validate_component(IdentityComponent::Namespace, namespace)?;
+    validate_component(IdentityComponent::Name, name)?;
+    if semantic_version == 0 {
+        return Err(TypeIdentityError::ZeroSemanticVersion);
+    }
+    Ok(())
+}
+
+impl Key {
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
         encode_bytes(output, self.namespace.as_bytes());
         encode_bytes(output, self.name.as_bytes());
@@ -384,7 +434,7 @@ impl ResolvedValueType {
             .saturating_add(self.encoded_len())
     }
 
-    fn encoded_len(&self) -> usize {
+    pub(super) fn encoded_len(&self) -> usize {
         match &self.0 {
             ResolvedValueTypeData::Nominal(key) => 1_usize.saturating_add(key.0.encoded_len()),
             ResolvedValueTypeData::Parameterized {
@@ -728,11 +778,24 @@ impl CanonicalValue {
     /// # Errors
     ///
     /// Returns [`TypeIdentityError`] when the payload is empty or exceeds canonical bounds.
-    pub fn float_bits(
-        format: TypeKey,
-        bits: impl Into<Vec<u8>>,
-    ) -> Result<Self, TypeIdentityError> {
-        let bits = bits.into();
+    pub fn float_bits(format: TypeKey, bits: impl AsRef<[u8]>) -> Result<Self, TypeIdentityError> {
+        let bits = bits.as_ref();
+        if bits.is_empty() {
+            return Err(TypeIdentityError::EmptyFloatBits);
+        }
+        validate_payload_len(bits.len())?;
+        Ok(Self(CanonicalValueData::FloatBits {
+            format,
+            bits: bits.to_vec(),
+        }))
+    }
+
+    /// Validates and retains already-owned floating-point bits without copying them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] before retaining an empty or oversized payload.
+    pub fn float_bits_owned(format: TypeKey, bits: Vec<u8>) -> Result<Self, TypeIdentityError> {
         if bits.is_empty() {
             return Err(TypeIdentityError::EmptyFloatBits);
         }
@@ -745,8 +808,18 @@ impl CanonicalValue {
     /// # Errors
     ///
     /// Returns [`TypeIdentityError::PayloadTooLarge`] when over the byte bound.
-    pub fn bytes(value: impl Into<Vec<u8>>) -> Result<Self, TypeIdentityError> {
-        let value = value.into();
+    pub fn bytes(value: impl AsRef<[u8]>) -> Result<Self, TypeIdentityError> {
+        let value = value.as_ref();
+        validate_payload_len(value.len())?;
+        Ok(Self(CanonicalValueData::Bytes(value.to_vec())))
+    }
+
+    /// Validates and retains an already-owned byte payload without copying it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] before retaining an oversized payload.
+    pub fn bytes_owned(value: Vec<u8>) -> Result<Self, TypeIdentityError> {
         validate_payload_len(value.len())?;
         Ok(Self(CanonicalValueData::Bytes(value)))
     }
@@ -756,8 +829,18 @@ impl CanonicalValue {
     /// # Errors
     ///
     /// Returns [`TypeIdentityError::PayloadTooLarge`] when over the byte bound.
-    pub fn utf8(value: impl Into<String>) -> Result<Self, TypeIdentityError> {
-        let value = value.into();
+    pub fn utf8(value: impl AsRef<str>) -> Result<Self, TypeIdentityError> {
+        let value = value.as_ref();
+        validate_payload_len(value.len())?;
+        Ok(Self(CanonicalValueData::Utf8(value.to_owned())))
+    }
+
+    /// Validates and retains an already-owned UTF-8 payload without copying it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] before retaining an oversized payload.
+    pub fn utf8_owned(value: String) -> Result<Self, TypeIdentityError> {
         validate_payload_len(value.len())?;
         Ok(Self(CanonicalValueData::Utf8(value)))
     }
@@ -1258,6 +1341,86 @@ mod tests {
     }
 
     #[test]
+    fn bounded_borrowed_values_validate_before_owned_retention() {
+        struct BorrowedText<'a>(&'a str);
+        impl AsRef<str> for BorrowedText<'_> {
+            fn as_ref(&self) -> &str {
+                self.0
+            }
+        }
+        struct BorrowedBytes<'a>(&'a [u8]);
+        impl AsRef<[u8]> for BorrowedBytes<'_> {
+            fn as_ref(&self) -> &[u8] {
+                self.0
+            }
+        }
+
+        let oversized_component = "x".repeat(MAX_IDENTITY_COMPONENT_BYTES + 1);
+        assert!(matches!(
+            TypeKey::new(BorrowedText(&oversized_component), "name", 1),
+            Err(TypeIdentityError::ComponentTooLong { .. })
+        ));
+        assert!(matches!(
+            QuantSchemeKey::new("namespace", BorrowedText(&oversized_component), 1),
+            Err(TypeIdentityError::ComponentTooLong { .. })
+        ));
+
+        let namespace = String::from("owned-namespace");
+        let name = String::from("owned-name");
+        let namespace_pointer = namespace.as_ptr();
+        let name_pointer = name.as_ptr();
+        let retained = TypeKey::from_owned(namespace, name, 1).unwrap();
+        assert_eq!(retained.namespace().as_ptr(), namespace_pointer);
+        assert_eq!(retained.name().as_ptr(), name_pointer);
+
+        let oversized_payload = vec![0_u8; MAX_RESOLVED_TYPE_BYTES + 1];
+        assert_eq!(
+            CanonicalValue::bytes(BorrowedBytes(&oversized_payload)),
+            Err(TypeIdentityError::PayloadTooLarge {
+                bytes: MAX_RESOLVED_TYPE_BYTES + 1,
+            })
+        );
+        assert_eq!(
+            CanonicalValue::utf8(BorrowedText(
+                std::str::from_utf8(&vec![b'x'; MAX_RESOLVED_TYPE_BYTES + 1]).unwrap()
+            )),
+            Err(TypeIdentityError::PayloadTooLarge {
+                bytes: MAX_RESOLVED_TYPE_BYTES + 1,
+            })
+        );
+        assert_eq!(
+            CanonicalValue::float_bits(key("f32"), BorrowedBytes(&oversized_payload)),
+            Err(TypeIdentityError::PayloadTooLarge {
+                bytes: MAX_RESOLVED_TYPE_BYTES + 1,
+            })
+        );
+
+        let owned_bytes = vec![1_u8, 2, 3];
+        let byte_pointer = owned_bytes.as_ptr();
+        let retained = CanonicalValue::bytes_owned(owned_bytes).unwrap();
+        let CanonicalValueView::Bytes(retained) = retained.view() else {
+            panic!("byte constructor must preserve its canonical kind")
+        };
+        assert_eq!(retained.as_ptr(), byte_pointer);
+
+        let owned_bits = vec![0x3f_u8, 0x80, 0, 0];
+        let bits_pointer = owned_bits.as_ptr();
+        let retained = CanonicalValue::float_bits_owned(key("f32"), owned_bits).unwrap();
+        let CanonicalValueView::FloatBits(retained) = retained.view() else {
+            panic!("float-bits constructor must preserve its canonical kind")
+        };
+        assert_eq!(retained.bits().as_ptr(), bits_pointer);
+
+        let owned_text = String::from("owned-text");
+        let text_pointer = owned_text.as_ptr();
+        let retained = CanonicalValue::utf8_owned(owned_text).unwrap();
+        let CanonicalValueView::Utf8(retained) = retained.view() else {
+            panic!("UTF-8 constructor must preserve its canonical kind")
+        };
+        assert_eq!(retained.as_ptr(), text_pointer);
+    }
+
+    #[test]
     fn records_sort_fields_and_reject_duplicates() {
         let record = CanonicalValue::record([
             CanonicalField::new(AttributeFieldId::new(9), CanonicalValue::unsigned_u32(1)),
@@ -1386,7 +1549,7 @@ mod tests {
     #[test]
     fn canonical_collections_enforce_aggregate_payload_before_item_count() {
         fn payload() -> CanonicalValue {
-            CanonicalValue::bytes(vec![0_u8; MAX_RESOLVED_TYPE_BYTES / 2 + 1]).unwrap()
+            CanonicalValue::bytes_owned(vec![0_u8; MAX_RESOLVED_TYPE_BYTES / 2 + 1]).unwrap()
         }
 
         assert_eq!(

@@ -11,7 +11,11 @@ use super::error::{
 use super::handles::{
     GraphId, OperationId, OperationIndex, Value, ValueId, ValueIndex, next_graph_id,
 };
-use super::identity::{SemanticIdentity, compute_graph_identity};
+use super::identity::{
+    MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES, SemanticIdentity, compute_graph_identity,
+    empty_graph_canonical_work_bytes, graph_identity_encoded_len_for_verified,
+    input_canonical_work_bytes, operation_canonical_work_bytes, output_canonical_work_bytes,
+};
 use super::interface::{
     InputIndex, InputKey, Output, OutputKey, OutputSelector, ProgramInput, ProgramInputRef,
     ProgramOutput, ProgramOutputRef, TypedProgramOutputRef,
@@ -42,6 +46,8 @@ pub(super) struct ProgramData {
     pub(super) values: Vec<ValueData>,
     pub(super) outputs: Vec<ProgramOutput>,
     pub(super) semantic_identity: OnceLock<SemanticIdentity>,
+    pub(super) graph_identity_encoded_len: usize,
+    pub(super) canonical_work_bytes: usize,
     pub(super) reached_definitions: SemanticDefinitionProjectionIdentity,
     pub(super) admission_provenance: SemanticAdmissionProvenanceIdentity,
     pub(super) registry_snapshot: SemanticRegistrySnapshotIdentity,
@@ -402,6 +408,7 @@ pub struct SemanticProgramBuilder {
     input_keys: HashSet<InputKey>,
     output_keys: HashSet<OutputKey>,
     semantic_registry: FrozenSemanticRegistry,
+    canonical_work_bytes: usize,
 }
 
 impl SemanticProgramBuilder {
@@ -421,6 +428,7 @@ impl SemanticProgramBuilder {
             input_keys: HashSet::new(),
             output_keys: HashSet::new(),
             semantic_registry,
+            canonical_work_bytes: empty_graph_canonical_work_bytes(),
         })
     }
 
@@ -482,6 +490,8 @@ impl SemanticProgramBuilder {
                 entity: EntityKind::Input,
             })?;
         let value_index = checked_index(self.values.len(), EntityKind::Value)?;
+        let added_canonical_work = input_canonical_work_bytes(&key, &resolved_type, &shape);
+        let canonical_work_bytes = self.reserve_canonical_work(added_canonical_work)?;
         self.values.push(ValueData {
             definition: ValueDefinition::Input { input_index },
             shape,
@@ -493,6 +503,7 @@ impl SemanticProgramBuilder {
         });
         let inserted = self.input_keys.insert(key);
         debug_assert!(inserted);
+        self.canonical_work_bytes = canonical_work_bytes;
         Ok(ValueId {
             owner: self.owner,
             index: value_index,
@@ -615,6 +626,8 @@ impl SemanticProgramBuilder {
         if self.output_keys.contains(&key) {
             return Err(BuildError::DuplicateOutputKey(key));
         }
+        let canonical_work_bytes =
+            self.reserve_canonical_work(output_canonical_work_bytes(&key))?;
         let selector = OutputSelector {
             origin: self.owner,
             key: key.clone(),
@@ -625,6 +638,7 @@ impl SemanticProgramBuilder {
         });
         let inserted = self.output_keys.insert(key);
         debug_assert!(inserted);
+        self.canonical_work_bytes = canonical_work_bytes;
         Ok(selector)
     }
 
@@ -694,20 +708,29 @@ impl SemanticProgramBuilder {
         let registry_snapshot = self.semantic_registry.snapshot_identity().clone();
         let origin = self.owner;
         self.compact_to_outputs();
+        let mut data = ProgramData {
+            owner: completed_owner,
+            origin,
+            inputs: self.inputs,
+            operations: self.operations,
+            values: self.values,
+            outputs: self.outputs,
+            semantic_identity: OnceLock::new(),
+            graph_identity_encoded_len: 0,
+            canonical_work_bytes: self.canonical_work_bytes,
+            reached_definitions,
+            admission_provenance,
+            registry_snapshot,
+            semantic_registry: self.semantic_registry,
+        };
+        data.graph_identity_encoded_len = graph_identity_encoded_len_for_verified(&data);
+        assert!(
+            data.graph_identity_encoded_len <= data.canonical_work_bytes
+                && data.graph_identity_encoded_len <= MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES,
+            "verified graph identity exceeds its admitted canonical-work budget"
+        );
         Ok(SemanticProgram {
-            data: Arc::new(ProgramData {
-                owner: completed_owner,
-                origin,
-                inputs: self.inputs,
-                operations: self.operations,
-                values: self.values,
-                outputs: self.outputs,
-                semantic_identity: OnceLock::new(),
-                reached_definitions,
-                admission_provenance,
-                registry_snapshot,
-                semantic_registry: self.semantic_registry,
-            }),
+            data: Arc::new(data),
         })
     }
 
@@ -780,6 +803,9 @@ impl SemanticProgramBuilder {
                 entity: EntityKind::Value,
             })?;
         }
+        let added_canonical_work =
+            operation_canonical_work_bytes(&key, &attributes, operand_indices.len(), &inferred);
+        let canonical_work_bytes = self.reserve_canonical_work(added_canonical_work)?;
         let mut result_indices = Vec::with_capacity(inferred.len());
         let mut result_ids = Vec::with_capacity(inferred.len());
         for (offset, fact) in inferred.into_iter().enumerate() {
@@ -805,7 +831,19 @@ impl SemanticProgramBuilder {
             operands: operand_indices,
             results: result_indices,
         });
+        self.canonical_work_bytes = canonical_work_bytes;
         Ok(result_ids)
+    }
+
+    fn reserve_canonical_work(&self, added: usize) -> Result<usize, BuildError> {
+        let actual = self.canonical_work_bytes.saturating_add(added);
+        if actual > MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES {
+            return Err(BuildError::CanonicalWorkExceeded {
+                actual,
+                limit: MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES,
+            });
+        }
+        Ok(actual)
     }
 
     fn value_index(&self, id: ValueId, role: ValueRole) -> Result<ValueIndex, BuildError> {
@@ -1415,7 +1453,7 @@ mod tests {
         ) -> Result<(), super::super::RegistryError> {
             registrar.register_value_type(ValueTypeDefinition::structurally_valid(
                 ValueTypeDefinitionKey::Nominal(TypeKey::new("test", self.name, 1).unwrap()),
-                NormativeDefinitionRef::new(format!("test {} v1", self.name))?,
+                NormativeDefinitionRef::from_owned(format!("test {} v1", self.name))?,
                 TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
             ))
         }
@@ -1479,9 +1517,11 @@ mod tests {
             OpKey::new("test", name, 1).unwrap(),
             OperationSchema::new(OperationArity::exact(1), OperationArity::exact(results), [])
                 .unwrap(),
-            NormativeDefinitionRef::new(format!("test {name} v1")).unwrap(),
+            NormativeDefinitionRef::from_owned(format!("test {name} v1")).unwrap(),
             OperationDefinitionFacts::new(CanonicalValue::record([]).unwrap()),
-            OperationConformance::new(CanonicalValue::utf8(format!("test.{name}.v1")).unwrap()),
+            OperationConformance::new(
+                CanonicalValue::utf8_owned(format!("test.{name}.v1")).unwrap(),
+            ),
             OperationEffect::Pure,
             inferencer,
         )
@@ -1796,6 +1836,108 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_canonical_work_is_transactional_and_bounds_final_identity() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let large_shape = Shape::try_new(vec![crate::shape::Extent::new(1); 4_096]).unwrap();
+        let first = builder
+            .input::<F32>(input_key("reachable"), large_shape.clone())
+            .unwrap();
+        builder.output(output_key("result"), first).unwrap();
+
+        let rejected = loop {
+            let before = (
+                builder.inputs.len(),
+                builder.values.len(),
+                builder.operations.len(),
+                builder.outputs.len(),
+                builder.canonical_work_bytes,
+            );
+            let index = builder.inputs.len();
+            match builder.input::<F32>(
+                InputKey::from_owned(format!("dead-{index}")).unwrap(),
+                large_shape.clone(),
+            ) {
+                Ok(_) => {}
+                Err(error) => {
+                    assert_eq!(
+                        before,
+                        (
+                            builder.inputs.len(),
+                            builder.values.len(),
+                            builder.operations.len(),
+                            builder.outputs.len(),
+                            builder.canonical_work_bytes,
+                        )
+                    );
+                    break error;
+                }
+            }
+        };
+        assert!(matches!(
+            rejected,
+            BuildError::CanonicalWorkExceeded { actual, limit }
+                if actual > limit && limit == MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES
+        ));
+        builder.validate().unwrap();
+
+        let program = builder.build().unwrap();
+        let identity = program.semantic_identity().graph().as_bytes();
+        assert_eq!(identity.len(), program.data.graph_identity_encoded_len);
+        assert!(identity.len() <= program.data.canonical_work_bytes);
+        assert!(identity.len() <= MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES);
+        assert_eq!(program.input_count(), 1);
+    }
+
+    #[test]
+    fn operation_and_output_budget_failures_precede_arena_mutation() {
+        let mut operation_builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = operation_builder
+            .input::<F32>(input_key("input"), Shape::new([]))
+            .unwrap();
+        operation_builder.canonical_work_bytes = MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES;
+        let before = (
+            operation_builder.operations.len(),
+            operation_builder.values.len(),
+            operation_builder.canonical_work_bytes,
+        );
+        assert!(matches!(
+            multiply(&mut operation_builder, input, input),
+            Err(BuildError::CanonicalWorkExceeded { .. })
+        ));
+        assert_eq!(
+            before,
+            (
+                operation_builder.operations.len(),
+                operation_builder.values.len(),
+                operation_builder.canonical_work_bytes,
+            )
+        );
+
+        let mut output_builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = output_builder
+            .input::<F32>(input_key("input"), Shape::new([]))
+            .unwrap();
+        output_builder.canonical_work_bytes = MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES;
+        let before = (
+            output_builder.outputs.len(),
+            output_builder.output_keys.len(),
+            output_builder.canonical_work_bytes,
+        );
+        assert!(matches!(
+            output_builder.output(output_key("result"), input),
+            Err(BuildError::CanonicalWorkExceeded { .. })
+        ));
+        assert_eq!(
+            before,
+            (
+                output_builder.outputs.len(),
+                output_builder.output_keys.len(),
+                output_builder.canonical_work_bytes,
+            )
+        );
+    }
+
+    #[test]
     fn handle_admission_distinguishes_owner_locality_and_argument_role() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let local = constant(&mut builder, 1.0).unwrap();
@@ -1972,6 +2114,10 @@ mod tests {
             first.semantic_identity(),
             second.semantic_identity()
         ));
+        assert_eq!(
+            first.data.graph_identity_encoded_len,
+            first.semantic_identity().graph().as_bytes().len()
+        );
     }
 
     #[test]

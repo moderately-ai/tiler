@@ -16,7 +16,7 @@ use super::operation::{
 };
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
-    ResolvedValueType, TypeIdentityError, TypeKey,
+    ResolvedValueType, TypeIdentityError, TypeKey, validate_key,
 };
 
 const MAX_DEFINITION_REFERENCE_BYTES: usize = 4 * 1024;
@@ -118,13 +118,31 @@ impl ProviderIdentity {
     /// Returns [`RegistryError`] when a component is invalid or revision zero
     /// is supplied.
     pub fn new(
-        namespace: impl Into<String>,
-        name: impl Into<String>,
+        namespace: impl AsRef<str>,
+        name: impl AsRef<str>,
         revision: u32,
     ) -> Result<Self, RegistryError> {
-        let namespace = namespace.into();
-        let name = name.into();
-        TypeKey::new(namespace.clone(), name.clone(), revision)
+        let namespace = namespace.as_ref();
+        let name = name.as_ref();
+        validate_key(namespace, name, revision).map_err(RegistryError::InvalidProviderIdentity)?;
+        Ok(Self {
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+            revision,
+        })
+    }
+
+    /// Validates and retains already-owned provider components without copying them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] before retaining invalid components.
+    pub fn from_owned(
+        namespace: String,
+        name: String,
+        revision: u32,
+    ) -> Result<Self, RegistryError> {
+        validate_key(&namespace, &name, revision)
             .map_err(RegistryError::InvalidProviderIdentity)?;
         Ok(Self {
             namespace,
@@ -179,14 +197,19 @@ impl NormativeDefinitionRef {
     ///
     /// Returns [`RegistryError`] when the reference is empty or over the
     /// canonical byte bound.
-    pub fn new(value: impl Into<String>) -> Result<Self, RegistryError> {
-        let value = value.into();
-        if value.is_empty() {
-            return Err(RegistryError::EmptyNormativeDefinition);
-        }
-        if value.len() > MAX_DEFINITION_REFERENCE_BYTES {
-            return Err(RegistryError::NormativeDefinitionTooLong { bytes: value.len() });
-        }
+    pub fn new(value: impl AsRef<str>) -> Result<Self, RegistryError> {
+        let value = value.as_ref();
+        validate_normative_definition(value)?;
+        Ok(Self(value.to_owned()))
+    }
+
+    /// Validates and retains an already-owned normative reference without copying it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] before retaining an empty or oversized reference.
+    pub fn from_owned(value: String) -> Result<Self, RegistryError> {
+        validate_normative_definition(&value)?;
         Ok(Self(value))
     }
 
@@ -195,6 +218,16 @@ impl NormativeDefinitionRef {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+fn validate_normative_definition(value: &str) -> Result<(), RegistryError> {
+    if value.is_empty() {
+        return Err(RegistryError::EmptyNormativeDefinition);
+    }
+    if value.len() > MAX_DEFINITION_REFERENCE_BYTES {
+        return Err(RegistryError::NormativeDefinitionTooLong { bytes: value.len() });
+    }
+    Ok(())
 }
 
 /// Bounded canonical descriptive facts owned by one type definition.
@@ -1138,6 +1171,10 @@ impl FrozenSemanticRegistry {
                 key: Arc::new(key.clone()),
             }
         })?;
+        registered
+            .definition
+            .preflight(operands, attributes)
+            .map_err(|source| operation_rejection(key, registered, source))?;
         for operand in operands {
             self.validate_type(operand.resolved_type())?;
         }
@@ -1147,15 +1184,7 @@ impl FrozenSemanticRegistry {
         let results = registered
             .definition
             .infer(operands, attributes)
-            .map_err(|source| {
-                RegistryError::RejectedOperationApplication(Arc::new(
-                    OperationApplicationRejection {
-                        key: key.clone(),
-                        provider: registered.provider.clone(),
-                        source,
-                    },
-                ))
-            })?;
+            .map_err(|source| operation_rejection(key, registered, source))?;
         if results.is_empty() {
             return Err(RegistryError::OperationProducedNoResults {
                 key: Arc::new(key.clone()),
@@ -1304,6 +1333,18 @@ impl FrozenSemanticRegistry {
         }
         SemanticAdmissionProvenanceIdentity(bytes)
     }
+}
+
+fn operation_rejection(
+    key: &OpKey,
+    registered: &RegisteredOperation,
+    source: OperationInferenceError,
+) -> RegistryError {
+    RegistryError::RejectedOperationApplication(Arc::new(OperationApplicationRejection {
+        key: key.clone(),
+        provider: registered.provider.clone(),
+        source,
+    }))
 }
 
 /// Collision-free canonical provenance for a complete frozen registry snapshot.
@@ -1710,7 +1751,7 @@ fn standard_conformance(name: &str) -> OperationConformance {
         CanonicalValue::record([
             CanonicalField::new(
                 AttributeFieldId::new(1),
-                CanonicalValue::utf8(format!("tiler.conformance.{name}"))
+                CanonicalValue::utf8_owned(format!("tiler.conformance.{name}"))
                     .expect("governed conformance identity is bounded"),
             ),
             CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::unsigned_u32(1)),
@@ -2103,6 +2144,7 @@ fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
 mod tests {
     use super::*;
     use crate::semantic::{EncodedNumericContract, TypeArguments};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct TestProvider {
         name: &'static str,
@@ -2130,6 +2172,100 @@ mod tests {
         }
     }
 
+    struct RejectType(Arc<AtomicBool>);
+
+    impl ValueTypeInstanceValidator for RejectType {
+        fn validate(&self, _: &ResolvedValueType) -> Result<(), TypeInstanceError> {
+            self.0.store(true, Ordering::Relaxed);
+            Err(TypeInstanceError::new(
+                ProviderDiagnosticCode::new("test.type-rejected").unwrap(),
+                "type rejected",
+            )
+            .unwrap())
+        }
+    }
+
+    struct ObserveInference(Arc<AtomicBool>);
+
+    impl OperationInferencer for ObserveInference {
+        fn infer(
+            &self,
+            _: OperationInferenceRequest<'_>,
+            _: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            self.0.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    struct PreflightFixture {
+        registry: FrozenSemanticRegistry,
+        operation: OpKey,
+        kind_operation: OpKey,
+        rejected_type: ResolvedValueType,
+        validator_called: Arc<AtomicBool>,
+        inferencer_called: Arc<AtomicBool>,
+    }
+
+    fn preflight_fixture() -> PreflightFixture {
+        let validator_called = Arc::new(AtomicBool::new(false));
+        let inferencer_called = Arc::new(AtomicBool::new(false));
+        let rejected_key = TypeKey::new("test", "reject-before-preflight", 1).unwrap();
+        let operation = OpKey::new("test", "preflight-first", 1).unwrap();
+        let kind_operation = OpKey::new("test", "preflight-kind-first", 1).unwrap();
+        let inferencer = || Arc::new(ObserveInference(Arc::clone(&inferencer_called)));
+        let provider = TestProvider {
+            name: "preflight-first",
+            revision: 1,
+            definitions: vec![ValueTypeDefinition::new(
+                ValueTypeDefinitionKey::Nominal(rejected_key.clone()),
+                NormativeDefinitionRef::new("test rejected type").unwrap(),
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+                Arc::new(RejectType(Arc::clone(&validator_called))),
+            )],
+            operations: vec![
+                OperationDefinition::new(
+                    operation.clone(),
+                    exact_schema(1, 1, []),
+                    NormativeDefinitionRef::new("test preflight first").unwrap(),
+                    OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                    OperationConformance::new(CanonicalValue::boolean(true)),
+                    OperationEffect::Pure,
+                    inferencer(),
+                ),
+                OperationDefinition::new(
+                    kind_operation.clone(),
+                    exact_schema(
+                        1,
+                        1,
+                        [OperationAttributeSchema::optional(
+                            AttributeFieldId::new(1),
+                            CanonicalValueKind::Bool,
+                        )],
+                    ),
+                    NormativeDefinitionRef::new("test preflight kind first").unwrap(),
+                    OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                    OperationConformance::new(CanonicalValue::boolean(true)),
+                    OperationEffect::Pure,
+                    inferencer(),
+                ),
+            ],
+        };
+        let mut builder = SemanticRegistryBuilder::new();
+        builder.register_provider(&provider).unwrap();
+        let registry = builder.freeze().unwrap();
+        validator_called.store(false, Ordering::Relaxed);
+        inferencer_called.store(false, Ordering::Relaxed);
+        PreflightFixture {
+            registry,
+            operation,
+            kind_operation,
+            rejected_type: ResolvedValueType::nominal(rejected_key),
+            validator_called,
+            inferencer_called,
+        }
+    }
+
     fn nominal_definition(key: TypeKey, facts: CanonicalValue) -> ValueTypeDefinition {
         ValueTypeDefinition::structurally_valid(
             ValueTypeDefinitionKey::Nominal(key),
@@ -2143,6 +2279,46 @@ mod tests {
 
     fn external_f8() -> ResolvedValueType {
         ResolvedValueType::nominal(TypeKey::new("acme", "f8-special", 1).unwrap())
+    }
+
+    #[test]
+    fn provider_and_definition_keys_validate_borrowed_bytes_before_retention() {
+        struct BorrowedOnly<'a>(&'a str);
+        impl AsRef<str> for BorrowedOnly<'_> {
+            fn as_ref(&self) -> &str {
+                self.0
+            }
+        }
+
+        let oversized_component = "x".repeat(super::super::types::MAX_IDENTITY_COMPONENT_BYTES + 1);
+        assert!(matches!(
+            ProviderIdentity::new(BorrowedOnly(&oversized_component), "provider", 1),
+            Err(RegistryError::InvalidProviderIdentity(
+                TypeIdentityError::ComponentTooLong { .. }
+            ))
+        ));
+        let oversized_reference = "x".repeat(MAX_DEFINITION_REFERENCE_BYTES + 1);
+        assert_eq!(
+            NormativeDefinitionRef::new(BorrowedOnly(&oversized_reference)),
+            Err(RegistryError::NormativeDefinitionTooLong {
+                bytes: MAX_DEFINITION_REFERENCE_BYTES + 1,
+            })
+        );
+
+        let namespace = String::from("owned");
+        let namespace_pointer = namespace.as_ptr();
+        let provider =
+            ProviderIdentity::from_owned(namespace, String::from("provider"), 1).unwrap();
+        assert_eq!(provider.namespace.as_ptr(), namespace_pointer);
+        let reference = String::from("owned-reference");
+        let reference_pointer = reference.as_ptr();
+        assert_eq!(
+            NormativeDefinitionRef::from_owned(reference)
+                .unwrap()
+                .as_str()
+                .as_ptr(),
+            reference_pointer
+        );
     }
 
     struct ExternalProvider;
@@ -2361,6 +2537,72 @@ mod tests {
     }
 
     #[test]
+    fn schema_preflight_precedes_type_authority_and_provider_callbacks() {
+        let fixture = preflight_fixture();
+        let rejected = ValueFact::new(fixture.rejected_type.clone(), crate::shape::Shape::new([]));
+        let unregistered = ValueFact::new(
+            ResolvedValueType::nominal(TypeKey::new("test", "unregistered", 1).unwrap()),
+            crate::shape::Shape::new([]),
+        );
+
+        for first in [rejected, unregistered] {
+            let error = fixture
+                .registry
+                .infer_operation(
+                    &fixture.operation,
+                    &[
+                        first,
+                        ValueFact::new(F32::resolved_type(), crate::shape::Shape::new([])),
+                    ],
+                    &OperationAttributes::empty(),
+                )
+                .unwrap_err();
+            let RegistryError::RejectedOperationApplication(rejection) = error else {
+                panic!("schema preflight must be reported as an application rejection")
+            };
+            assert_eq!(
+                rejection.source_error().code().as_str(),
+                "tiler.schema.operand-arity"
+            );
+        }
+        let rejected = ValueFact::new(fixture.rejected_type, crate::shape::Shape::new([]));
+        let unregistered_type = ResolvedValueType::nominal(
+            TypeKey::new("test", "unregistered-attribute-type", 1).unwrap(),
+        );
+        for (key, attributes, expected_code) in [
+            (
+                &fixture.operation,
+                OperationAttributes::new([CanonicalField::new(
+                    AttributeFieldId::new(999),
+                    CanonicalValue::value_type(unregistered_type.clone()),
+                )])
+                .unwrap(),
+                "tiler.schema.unknown-attribute",
+            ),
+            (
+                &fixture.kind_operation,
+                OperationAttributes::new([CanonicalField::new(
+                    AttributeFieldId::new(1),
+                    CanonicalValue::value_type(unregistered_type),
+                )])
+                .unwrap(),
+                "tiler.schema.attribute-kind",
+            ),
+        ] {
+            let error = fixture
+                .registry
+                .infer_operation(key, std::slice::from_ref(&rejected), &attributes)
+                .unwrap_err();
+            let RegistryError::RejectedOperationApplication(rejection) = error else {
+                panic!("attribute preflight must be reported as an application rejection")
+            };
+            assert_eq!(rejection.source_error().code().as_str(), expected_code);
+        }
+        assert!(!fixture.validator_called.load(Ordering::Relaxed));
+        assert!(!fixture.inferencer_called.load(Ordering::Relaxed));
+    }
+
+    #[test]
     fn frozen_definition_inspection_is_canonical_and_read_only() {
         let registry = FrozenSemanticRegistry::standard().unwrap();
         let operation_keys: Vec<_> = registry
@@ -2492,8 +2734,8 @@ mod tests {
         let definitions = (0..17)
             .map(|index| {
                 nominal_definition(
-                    TypeKey::new("test", format!("large-{index}"), 1).unwrap(),
-                    CanonicalValue::bytes(vec![0_u8; 1_000_000]).unwrap(),
+                    TypeKey::from_owned(String::from("test"), format!("large-{index}"), 1).unwrap(),
+                    CanonicalValue::bytes_owned(vec![0_u8; 1_000_000]).unwrap(),
                 )
             })
             .collect();
@@ -2531,8 +2773,9 @@ mod tests {
             ) -> Result<(), RegistryError> {
                 for index in 0..=MAX_REGISTRY_DEFINITIONS {
                     let result = registrar.register_value_type(nominal_definition(
-                        TypeKey::new("test", format!("large-{index}"), 1).unwrap(),
-                        CanonicalValue::bytes(vec![0_u8; 1_000_000]).unwrap(),
+                        TypeKey::from_owned(String::from("test"), format!("large-{index}"), 1)
+                            .unwrap(),
+                        CanonicalValue::bytes_owned(vec![0_u8; 1_000_000]).unwrap(),
                     ));
                     if let Err(first) = result {
                         assert!(matches!(
@@ -2588,7 +2831,8 @@ mod tests {
             ) -> Result<(), RegistryError> {
                 for index in 0..=MAX_REGISTRY_DEFINITIONS {
                     let result = registrar.register_value_type(nominal_definition(
-                        TypeKey::new("count", format!("type-{index}"), 1).unwrap(),
+                        TypeKey::from_owned(String::from("count"), format!("type-{index}"), 1)
+                            .unwrap(),
                         CanonicalValue::boolean(true),
                     ));
                     if index < MAX_REGISTRY_DEFINITIONS {
@@ -3049,7 +3293,9 @@ mod tests {
     fn aggregate_authority_closure_rejects_the_first_item_over_limit() {
         let definition_count = MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS / 2 + 1;
         let keys: Vec<_> = (0..definition_count)
-            .map(|index| TypeKey::new("limit", format!("type-{index:04}"), 1).unwrap())
+            .map(|index| {
+                TypeKey::from_owned(String::from("limit"), format!("type-{index:04}"), 1).unwrap()
+            })
             .collect();
         let definitions = keys
             .iter()

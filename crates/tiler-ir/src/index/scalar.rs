@@ -31,11 +31,24 @@ impl ScalarOpKey {
     ///
     /// Returns [`TypeIdentityError`] when any identity component is invalid.
     pub fn new(
-        namespace: impl Into<String>,
-        name: impl Into<String>,
+        namespace: impl AsRef<str>,
+        name: impl AsRef<str>,
         version: u32,
     ) -> Result<Self, TypeIdentityError> {
         TypeKey::new(namespace, name, version).map(Self)
+    }
+
+    /// Validates and retains already-owned operation-key components without copying them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] before retaining invalid components.
+    pub fn from_owned(
+        namespace: String,
+        name: String,
+        version: u32,
+    ) -> Result<Self, TypeIdentityError> {
+        TypeKey::from_owned(namespace, name, version).map(Self)
     }
     /// Returns the namespace.
     #[must_use]

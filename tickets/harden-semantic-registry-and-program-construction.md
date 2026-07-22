@@ -65,9 +65,15 @@ Rust gate must pass without weakening the public generic dtype contract.
   have typed finite bounds. Arbitrary iterators stop at the first over-limit
   item; aggregate canonical budgets are checked incrementally rather than
   after large temporary collection.
+- Bounded public text and byte constructors validate borrowed data before
+  copying it and provide explicit checked owned paths. Program construction
+  charges one private aggregate canonical-work budget before every arena
+  mutation, and final graph identity allocation is tied to an exact encoded
+  length proven beneath that budget.
 - Operation inference uses an immutable request and host-owned sticky result
   writer. It commits only callback-successful, arity-valid, registry-admitted
-  facts. Provider panics propagate without graph mutation.
+  facts. Host schema preflight precedes type or attribute validators and the
+  inferencer itself. Provider panics propagate without graph mutation.
 - Stable diagnostic codes use the validated cheaply cloned
   `ProviderDiagnosticCode` newtype. Dynamic-message contract failures remain
   typed causal sources; independent later inference failures remain explicit

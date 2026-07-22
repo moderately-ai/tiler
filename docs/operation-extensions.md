@@ -81,6 +81,12 @@ iteration use canonical key order rather than callback or hash-map order.
 Registry definition, operation, marker, and aggregate canonical-byte budgets
 are checked before the batch is retained.
 
+Semantic keys, normative references, and canonical text/byte payload
+constructors inspect borrowed input before making the host-owned copy.
+Separately named owned constructors validate first and then move already-owned
+storage without copying it. Rejected oversized input is never retained merely
+so its length can be checked.
+
 The implementation separates the semantic portion required by `tiler-ir` from
 later executable capabilities. Under ADR 0066, `FrozenSemanticRegistry` is a
 cheap-clone owned snapshot of nominal definitions, parameterized constructors,
@@ -303,6 +309,12 @@ the callback returns success, the writer remains valid, minimum arity is met,
 and every result fact passes semantic-registry validation. A provider error
 after writer failure is retained as independent secondary evidence, not
 misrepresented as its causal `Error::source`.
+
+Before any type-family validator, attribute-authority callback, or operation
+inferencer runs, the host preflights operand arity and attribute field/kind
+structure against the immutable schema. Full validation remains in the later
+inference path; preflight defines callback ordering and fail-fast behavior, not
+a weaker alternate verifier.
 
 Stable diagnostic classes use a validated, cheaply cloned
 `ProviderDiagnosticCode`. Dynamic messages are bounded before host copying or

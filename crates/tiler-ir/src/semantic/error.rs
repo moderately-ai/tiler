@@ -183,6 +183,13 @@ pub enum BuildError {
         /// Governed maximum.
         limit: u32,
     },
+    /// Aggregate canonical semantic and identity work exceeded its governed budget.
+    CanonicalWorkExceeded {
+        /// First rejected aggregate canonical byte count.
+        actual: usize,
+        /// Governed maximum canonical byte count.
+        limit: usize,
+    },
     /// An arena exhausted its fixed-width local identifier space.
     TooManyEntities {
         /// Arena entity kind that exhausted its identifier space.
@@ -234,6 +241,10 @@ impl fmt::Display for BuildError {
             Self::TooManyOperationOperands { actual, limit } => write!(
                 formatter,
                 "operation has {actual} operands, exceeding governed limit {limit}"
+            ),
+            Self::CanonicalWorkExceeded { actual, limit } => write!(
+                formatter,
+                "semantic program canonical work is {actual} bytes, exceeding governed limit {limit}"
             ),
             Self::TooManyEntities { entity } => write!(formatter, "too many {entity} entities"),
         }

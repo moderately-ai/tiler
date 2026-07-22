@@ -71,11 +71,24 @@ impl OpKey {
     ///
     /// Returns [`TypeIdentityError`] for an invalid component or version.
     pub fn new(
-        namespace: impl Into<String>,
-        name: impl Into<String>,
+        namespace: impl AsRef<str>,
+        name: impl AsRef<str>,
         semantic_version: u32,
     ) -> Result<Self, TypeIdentityError> {
         TypeKey::new(namespace, name, semantic_version).map(Self)
+    }
+
+    /// Validates and retains already-owned operation-key components without copying them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] before retaining invalid components.
+    pub fn from_owned(
+        namespace: String,
+        name: String,
+        semantic_version: u32,
+    ) -> Result<Self, TypeIdentityError> {
+        TypeKey::from_owned(namespace, name, semantic_version).map(Self)
     }
 
     /// Returns the canonical namespace.
@@ -98,6 +111,10 @@ impl OpKey {
 
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
         self.0.encode(output);
+    }
+
+    pub(super) fn encoded_len(&self) -> usize {
+        self.0.encoded_len()
     }
 }
 
@@ -161,6 +178,15 @@ impl OperationAttributes {
             output.extend_from_slice(&field.id().get().to_be_bytes());
             field.value().encode(output);
         }
+    }
+
+    pub(super) fn encoded_len(&self) -> usize {
+        std::mem::size_of::<u64>().saturating_add(
+            self.0
+                .iter()
+                .map(|field| std::mem::size_of::<u32>().saturating_add(field.value().encoded_len()))
+                .fold(0_usize, usize::saturating_add),
+        )
     }
 }
 
@@ -1206,6 +1232,14 @@ impl OperationDefinition {
         self.effect
     }
 
+    pub(super) fn preflight(
+        &self,
+        operands: &[ValueFact],
+        attributes: &OperationAttributes,
+    ) -> Result<(), OperationInferenceError> {
+        self.schema.validate_inputs(operands, attributes)
+    }
+
     pub(super) fn infer(
         &self,
         operands: &[ValueFact],
@@ -1657,9 +1691,11 @@ mod tests {
     fn inference_outputs_check_aggregate_bytes_before_schema_count() {
         let large_type = ResolvedValueType::parameterized(
             TypeKey::new("test", "large", 1).unwrap(),
-            crate::semantic::TypeArguments::new([
-                CanonicalValue::bytes(vec![0_u8; 1_000_000]).unwrap()
+            crate::semantic::TypeArguments::new([CanonicalValue::bytes_owned(vec![
+                0_u8;
+                1_000_000
             ])
+            .unwrap()])
             .unwrap(),
         )
         .unwrap();

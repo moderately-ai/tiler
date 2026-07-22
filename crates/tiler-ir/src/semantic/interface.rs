@@ -51,20 +51,19 @@ impl InputKey {
     /// # Errors
     ///
     /// Returns [`BuildError::EmptyInterfaceKey`] for an empty key.
-    pub fn new(value: impl Into<String>) -> Result<Self, BuildError> {
-        let value = value.into();
-        if value.is_empty() {
-            return Err(BuildError::EmptyInterfaceKey {
-                interface: InterfaceKind::Input,
-            });
-        }
-        if value.len() > MAX_INTERFACE_KEY_BYTES {
-            return Err(BuildError::InterfaceKeyTooLong {
-                interface: InterfaceKind::Input,
-                bytes: value.len(),
-                limit: MAX_INTERFACE_KEY_BYTES,
-            });
-        }
+    pub fn new(value: impl AsRef<str>) -> Result<Self, BuildError> {
+        let value = value.as_ref();
+        validate_interface_key(value, InterfaceKind::Input)?;
+        Ok(Self(value.to_owned()))
+    }
+
+    /// Validates and retains an already-owned stable input key without copying it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error before retaining the string when it is empty or oversized.
+    pub fn from_owned(value: String) -> Result<Self, BuildError> {
+        validate_interface_key(&value, InterfaceKind::Input)?;
         Ok(Self(value))
     }
 
@@ -85,20 +84,19 @@ impl OutputKey {
     /// # Errors
     ///
     /// Returns [`BuildError::EmptyInterfaceKey`] for an empty key.
-    pub fn new(value: impl Into<String>) -> Result<Self, BuildError> {
-        let value = value.into();
-        if value.is_empty() {
-            return Err(BuildError::EmptyInterfaceKey {
-                interface: InterfaceKind::Output,
-            });
-        }
-        if value.len() > MAX_INTERFACE_KEY_BYTES {
-            return Err(BuildError::InterfaceKeyTooLong {
-                interface: InterfaceKind::Output,
-                bytes: value.len(),
-                limit: MAX_INTERFACE_KEY_BYTES,
-            });
-        }
+    pub fn new(value: impl AsRef<str>) -> Result<Self, BuildError> {
+        let value = value.as_ref();
+        validate_interface_key(value, InterfaceKind::Output)?;
+        Ok(Self(value.to_owned()))
+    }
+
+    /// Validates and retains an already-owned stable output key without copying it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error before retaining the string when it is empty or oversized.
+    pub fn from_owned(value: String) -> Result<Self, BuildError> {
+        validate_interface_key(&value, InterfaceKind::Output)?;
         Ok(Self(value))
     }
 
@@ -107,6 +105,20 @@ impl OutputKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+fn validate_interface_key(value: &str, interface: InterfaceKind) -> Result<(), BuildError> {
+    if value.is_empty() {
+        return Err(BuildError::EmptyInterfaceKey { interface });
+    }
+    if value.len() > MAX_INTERFACE_KEY_BYTES {
+        return Err(BuildError::InterfaceKeyTooLong {
+            interface,
+            bytes: value.len(),
+            limit: MAX_INTERFACE_KEY_BYTES,
+        });
+    }
+    Ok(())
 }
 
 /// A transient selector for one output declared on a specific semantic draft.
@@ -293,8 +305,16 @@ mod tests {
 
     #[test]
     fn interface_keys_are_bounded_before_retention() {
+        struct BorrowedOnly<'a>(&'a str);
+        impl AsRef<str> for BorrowedOnly<'_> {
+            fn as_ref(&self) -> &str {
+                self.0
+            }
+        }
+
+        let oversized = "x".repeat(MAX_INTERFACE_KEY_BYTES + 1);
         assert_eq!(
-            InputKey::new("x".repeat(MAX_INTERFACE_KEY_BYTES + 1)),
+            InputKey::new(BorrowedOnly(&oversized)),
             Err(BuildError::InterfaceKeyTooLong {
                 interface: InterfaceKind::Input,
                 bytes: MAX_INTERFACE_KEY_BYTES + 1,
@@ -302,12 +322,25 @@ mod tests {
             })
         );
         assert_eq!(
-            OutputKey::new("x".repeat(MAX_INTERFACE_KEY_BYTES + 1)),
+            OutputKey::new(BorrowedOnly(&oversized)),
             Err(BuildError::InterfaceKeyTooLong {
                 interface: InterfaceKind::Output,
                 bytes: MAX_INTERFACE_KEY_BYTES + 1,
                 limit: MAX_INTERFACE_KEY_BYTES,
             })
+        );
+
+        let owned = String::from("owned-input");
+        let pointer = owned.as_ptr();
+        assert_eq!(
+            InputKey::from_owned(owned).unwrap().as_str().as_ptr(),
+            pointer
+        );
+        let owned = String::from("owned-output");
+        let pointer = owned.as_ptr();
+        assert_eq!(
+            OutputKey::from_owned(owned).unwrap().as_str().as_ptr(),
+            pointer
         );
     }
 }
