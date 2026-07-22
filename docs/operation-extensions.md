@@ -73,6 +73,14 @@ verification or optimization it freezes into an immutable snapshot:
 
 The frozen registry is immutable and safe for concurrent read-only use.
 
+The current semantic prototype makes registration batches sticky-failing and
+transactional. The first rejected type, operation, or marker registration
+poisons the batch even if provider code ignores the returned error; no part of
+that batch can enter the registry. Freeze validation and public definition
+iteration use canonical key order rather than callback or hash-map order.
+Registry definition, operation, marker, and aggregate canonical-byte budgets
+are checked before the batch is retained.
+
 The implementation separates the semantic portion required by `tiler-ir` from
 later executable capabilities. Under ADR 0066, `FrozenSemanticRegistry` is a
 cheap-clone owned snapshot of nominal definitions, parameterized constructors,
@@ -275,12 +283,42 @@ not treated as a general proof of semantic equivalence.
 
 ## Failure and panic boundaries
 
-Each extension callback has a diagnostic boundary. Where unwinding is enabled,
-a panic may be caught to discard the in-progress transaction and report the
-provider/rule identity. This is containment rather than sandboxing: aborting
+Each extension callback requires a diagnostic boundary. A future higher
+compiler-session boundary may catch unwinding panics, discard the in-progress
+transaction, and report provider/rule identity. This is containment rather
+than sandboxing: aborting
 panics, hangs, native memory unsafety, and malicious code cannot be recovered
-reliably. Provider state is immutable; partially mutated provider state is not
-reused.
+reliably. The host passes only shared provider references and requires
+`Send + Sync`, but Rust interior mutability can still change provider-owned
+state. Determinism forbids output-affecting hidden mutation; trusted provider
+implementations, not the type system, uphold that obligation.
+
+The current semantic inference boundary is synchronous and treats providers as
+trusted in-process Rust code. The host supplies an immutable request and a
+non-constructible result writer. Every ordered result must pass through
+`try_push`; result-count and aggregate canonical result-fact byte budgets are
+checked before the host retains the fact, and the first writer failure remains
+sticky even when provider code ignores it. The host commits results only after
+the callback returns success, the writer remains valid, minimum arity is met,
+and every result fact passes semantic-registry validation. A provider error
+after writer failure is retained as independent secondary evidence, not
+misrepresented as its causal `Error::source`.
+
+Stable diagnostic classes use a validated, cheaply cloned
+`ProviderDiagnosticCode`. Dynamic messages are bounded before host copying or
+retention. Malformed messages become a typed provider-contract failure wrapped
+causally by the operation- or type-validation error; Tiler neither truncates
+them nor silently substitutes a semantic rejection. The two rejection roles
+remain distinct, and no diagnostic template/argument schema is committed yet.
+
+These budgets constrain host-accepted semantic structure and canonical
+identity work. They are deliberately not claims about exact heap consumption:
+allocator overhead, trait-object state, and shared `Arc` storage make such a
+claim false. Providers can still allocate or loop before calling the writer.
+The current semantic prototype also does not catch provider panics itself. With
+unwinding enabled, a panic propagates before graph mutation and callers may
+catch it; aborting panics remain unrecoverable. Provider attribution at a
+higher compiler-session panic boundary remains future work.
 
 ## Unknown operations and serialization
 
@@ -324,7 +362,8 @@ visibility.
 - inference/verification and decomposition/lowering contracts cannot disagree
   silently;
 - rewrites are transactional, reverified, cycle-bounded, and budgeted;
-- callback panics produce provider-attributed diagnostics where recoverable;
+- callback panics cannot commit partial graph state; a future recovery boundary
+  must attribute any caught panic to its provider;
 - unknown operations never enter `VerifiedSemanticGraph`;
 - malformed serialized input cannot trigger extension code before structural
   and resource validation.

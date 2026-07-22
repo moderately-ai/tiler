@@ -132,6 +132,14 @@ impl Key {
         encode_bytes(output, self.name.as_bytes());
         output.extend_from_slice(&self.semantic_version.to_be_bytes());
     }
+
+    fn encoded_len(&self) -> usize {
+        std::mem::size_of::<u64>()
+            .saturating_add(self.namespace.len())
+            .saturating_add(std::mem::size_of::<u64>())
+            .saturating_add(self.name.len())
+            .saturating_add(std::mem::size_of::<u32>())
+    }
 }
 
 impl fmt::Display for Key {
@@ -370,6 +378,34 @@ impl ResolvedValueType {
         CanonicalResolvedValueType(bytes)
     }
 
+    pub(super) fn canonical_encoded_len(&self) -> usize {
+        b"tiler.resolved-value-type.v2\0"
+            .len()
+            .saturating_add(self.encoded_len())
+    }
+
+    fn encoded_len(&self) -> usize {
+        match &self.0 {
+            ResolvedValueTypeData::Nominal(key) => 1_usize.saturating_add(key.0.encoded_len()),
+            ResolvedValueTypeData::Parameterized {
+                constructor,
+                arguments,
+            } => 1_usize
+                .saturating_add(constructor.0.encoded_len())
+                .saturating_add(std::mem::size_of::<u64>())
+                .saturating_add(
+                    arguments
+                        .values
+                        .iter()
+                        .map(CanonicalValue::encoded_len)
+                        .fold(0_usize, usize::saturating_add),
+                ),
+            ResolvedValueTypeData::EncodedNumeric { scheme, contract } => 1_usize
+                .saturating_add(scheme.0.encoded_len())
+                .saturating_add(contract.encoded_len()),
+        }
+    }
+
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
         match &self.0 {
             ResolvedValueTypeData::Nominal(key) => {
@@ -440,16 +476,13 @@ impl TypeArguments {
     pub fn new(
         values: impl IntoIterator<Item = CanonicalValue>,
     ) -> Result<Self, TypeIdentityError> {
-        let values: Vec<_> = values.into_iter().collect();
+        let mut budget = ValidationBudget::default();
+        budget.node(1)?;
+        let values = collect_bounded_canonical_values(values, 2, &mut budget)?;
         if values.is_empty() {
             return Err(TypeIdentityError::EmptyTypeArguments);
         }
-        validate_items(values.len())?;
-        let result = Self { values };
-        for value in &result.values {
-            validate_argument_root(value)?;
-        }
-        Ok(result)
+        Ok(Self { values })
     }
 
     /// Returns arguments in semantic order.
@@ -735,11 +768,10 @@ impl CanonicalValue {
     ///
     /// Returns [`TypeIdentityError`] when a canonical bound is exceeded.
     pub fn sequence(values: impl IntoIterator<Item = Self>) -> Result<Self, TypeIdentityError> {
-        let values: Vec<_> = values.into_iter().collect();
-        validate_items(values.len())?;
-        let value = Self(CanonicalValueData::Sequence(values));
-        validate_argument_root(&value)?;
-        Ok(value)
+        let mut budget = ValidationBudget::default();
+        budget.node(1)?;
+        let values = collect_bounded_canonical_values(values, 2, &mut budget)?;
+        Ok(Self(CanonicalValueData::Sequence(values)))
     }
 
     /// Creates a field-ID-sorted bounded record argument.
@@ -751,9 +783,14 @@ impl CanonicalValue {
         fields: impl IntoIterator<Item = CanonicalField>,
     ) -> Result<Self, TypeIdentityError> {
         let fields = canonical_fields(fields)?;
-        let value = Self(CanonicalValueData::Record(fields));
-        validate_argument_root(&value)?;
-        Ok(value)
+        Ok(Self(CanonicalValueData::Record(fields)))
+    }
+
+    pub(super) fn into_record(self) -> Option<Vec<CanonicalField>> {
+        match self.0 {
+            CanonicalValueData::Record(fields) => Some(fields),
+            _ => None,
+        }
     }
 
     pub(crate) fn encode(&self, output: &mut Vec<u8>) {
@@ -806,6 +843,45 @@ impl CanonicalValue {
                     field.value.encode(output);
                 }
             }
+        }
+    }
+
+    pub(super) fn encoded_len(&self) -> usize {
+        match &self.0 {
+            CanonicalValueData::Type(value) => 1_usize.saturating_add(value.encoded_len()),
+            CanonicalValueData::Bool(_) => 2,
+            CanonicalValueData::Signed { width, .. }
+            | CanonicalValueData::Unsigned { width, .. } => {
+                2_usize.saturating_add(width.byte_count())
+            }
+            CanonicalValueData::FloatBits { format, bits } => 1_usize
+                .saturating_add(format.0.encoded_len())
+                .saturating_add(std::mem::size_of::<u64>())
+                .saturating_add(bits.len()),
+            CanonicalValueData::Bytes(value) => 1_usize
+                .saturating_add(std::mem::size_of::<u64>())
+                .saturating_add(value.len()),
+            CanonicalValueData::Utf8(value) => 1_usize
+                .saturating_add(std::mem::size_of::<u64>())
+                .saturating_add(value.len()),
+            CanonicalValueData::Sequence(values) => 1_usize
+                .saturating_add(std::mem::size_of::<u64>())
+                .saturating_add(
+                    values
+                        .iter()
+                        .map(Self::encoded_len)
+                        .fold(0_usize, usize::saturating_add),
+                ),
+            CanonicalValueData::Record(fields) => 1_usize
+                .saturating_add(std::mem::size_of::<u64>())
+                .saturating_add(
+                    fields
+                        .iter()
+                        .map(|field| {
+                            std::mem::size_of::<u32>().saturating_add(field.value.encoded_len())
+                        })
+                        .fold(0_usize, usize::saturating_add),
+                ),
         }
     }
 
@@ -883,10 +959,7 @@ impl EncodedNumericContract {
         if fields.is_empty() {
             return Err(TypeIdentityError::EmptyEncodedNumericContract);
         }
-        let value = Self { fields };
-        let argument = CanonicalValue(CanonicalValueData::Record(value.fields.clone()));
-        validate_argument_root(&argument)?;
-        Ok(value)
+        Ok(Self { fields })
     }
 
     /// Returns fields in canonical ascending ID order.
@@ -901,6 +974,15 @@ impl EncodedNumericContract {
             output.extend_from_slice(&field.id.get().to_be_bytes());
             field.value.encode(output);
         }
+    }
+
+    fn encoded_len(&self) -> usize {
+        std::mem::size_of::<u64>().saturating_add(
+            self.fields
+                .iter()
+                .map(|field| std::mem::size_of::<u32>().saturating_add(field.value.encoded_len()))
+                .fold(0_usize, usize::saturating_add),
+        )
     }
 }
 
@@ -930,8 +1012,23 @@ fn validate_component(component: IdentityComponent, value: &str) -> Result<(), T
 fn canonical_fields(
     fields: impl IntoIterator<Item = CanonicalField>,
 ) -> Result<Vec<CanonicalField>, TypeIdentityError> {
-    let mut fields: Vec<_> = fields.into_iter().collect();
-    validate_items(fields.len())?;
+    let mut fields = fields.into_iter();
+    let mut collected = Vec::new();
+    let mut budget = ValidationBudget::default();
+    budget.node(1)?;
+    for field in fields
+        .by_ref()
+        .take(MAX_RESOLVED_TYPE_ITEMS.saturating_add(1))
+    {
+        if collected.len() == MAX_RESOLVED_TYPE_ITEMS {
+            return Err(TypeIdentityError::TooManyItems {
+                items: MAX_RESOLVED_TYPE_ITEMS.saturating_add(1),
+            });
+        }
+        validate_argument_at(&field.value, 2, &mut budget)?;
+        collected.push(field);
+    }
+    let mut fields = collected;
     fields.sort_unstable_by_key(|field| field.id);
     if let Some(field_id) = fields
         .windows(2)
@@ -941,6 +1038,28 @@ fn canonical_fields(
         return Err(TypeIdentityError::DuplicateFieldId { field_id });
     }
     Ok(fields)
+}
+
+fn collect_bounded_canonical_values(
+    values: impl IntoIterator<Item = CanonicalValue>,
+    depth: usize,
+    budget: &mut ValidationBudget,
+) -> Result<Vec<CanonicalValue>, TypeIdentityError> {
+    let mut values = values.into_iter();
+    let mut collected = Vec::new();
+    for item in values
+        .by_ref()
+        .take(MAX_RESOLVED_TYPE_ITEMS.saturating_add(1))
+    {
+        if collected.len() == MAX_RESOLVED_TYPE_ITEMS {
+            return Err(TypeIdentityError::TooManyItems {
+                items: MAX_RESOLVED_TYPE_ITEMS.saturating_add(1),
+            });
+        }
+        validate_argument_at(&item, depth, budget)?;
+        collected.push(item);
+    }
+    Ok(collected)
 }
 
 fn validate_items(items: usize) -> Result<(), TypeIdentityError> {
@@ -993,11 +1112,6 @@ impl ValidationBudget {
 fn validate_resolved_type(value: &ResolvedValueType) -> Result<(), TypeIdentityError> {
     let mut budget = ValidationBudget::default();
     validate_type_at(value, 1, &mut budget)
-}
-
-fn validate_argument_root(value: &CanonicalValue) -> Result<(), TypeIdentityError> {
-    let mut budget = ValidationBudget::default();
-    validate_argument_at(value, 1, &mut budget)
 }
 
 fn validate_type_at(
@@ -1076,6 +1190,58 @@ mod tests {
 
     fn key(name: &str) -> TypeKey {
         TypeKey::new("tiler", name, 1).unwrap()
+    }
+
+    #[test]
+    fn structural_encoded_lengths_match_canonical_encoding() {
+        let nominal = ResolvedValueType::nominal(key("scalar"));
+        let values = [
+            CanonicalValue::value_type(nominal.clone()),
+            CanonicalValue::boolean(true),
+            CanonicalValue::signed_i8(-1),
+            CanonicalValue::signed_i16(-2),
+            CanonicalValue::signed_i32(-3),
+            CanonicalValue::signed_i64(-4),
+            CanonicalValue::unsigned_u8(1),
+            CanonicalValue::unsigned_u16(2),
+            CanonicalValue::unsigned_u32(3),
+            CanonicalValue::unsigned_u64(4),
+            CanonicalValue::float_bits(key("float"), [0x3f, 0x80, 0, 0]).unwrap(),
+            CanonicalValue::bytes([1, 2, 3]).unwrap(),
+            CanonicalValue::utf8("value").unwrap(),
+            CanonicalValue::sequence([CanonicalValue::boolean(false)]).unwrap(),
+            CanonicalValue::record([CanonicalField::new(
+                AttributeFieldId::new(7),
+                CanonicalValue::unsigned_u32(9),
+            )])
+            .unwrap(),
+        ];
+        for value in &values {
+            let mut encoded = Vec::new();
+            value.encode(&mut encoded);
+            assert_eq!(value.encoded_len(), encoded.len());
+        }
+
+        let parameterized = ResolvedValueType::parameterized(
+            key("container"),
+            TypeArguments::new(values.clone()).unwrap(),
+        )
+        .unwrap();
+        let encoded_numeric = ResolvedValueType::encoded_numeric(
+            QuantSchemeKey::new("tiler", "quant", 1).unwrap(),
+            EncodedNumericContract::new([CanonicalField::new(
+                AttributeFieldId::new(1),
+                CanonicalValue::value_type(nominal.clone()),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+        for value_type in [nominal, parameterized, encoded_numeric] {
+            assert_eq!(
+                value_type.canonical_encoded_len(),
+                value_type.canonical_encoding().as_bytes().len()
+            );
+        }
     }
 
     #[test]
@@ -1190,5 +1356,53 @@ mod tests {
             CanonicalValue::sequence([argument]),
             Err(TypeIdentityError::NestingTooDeep)
         ));
+    }
+
+    #[test]
+    fn arbitrary_iterators_stop_at_the_first_over_limit_item() {
+        assert_eq!(
+            TypeArguments::new(std::iter::repeat(CanonicalValue::boolean(true))),
+            Err(TypeIdentityError::TooManyItems {
+                items: MAX_RESOLVED_TYPE_ITEMS + 1,
+            })
+        );
+        assert_eq!(
+            CanonicalValue::sequence(std::iter::repeat(CanonicalValue::boolean(true))),
+            Err(TypeIdentityError::TooManyItems {
+                items: MAX_RESOLVED_TYPE_ITEMS + 1,
+            })
+        );
+        assert_eq!(
+            CanonicalValue::record(std::iter::repeat_with(|| CanonicalField::new(
+                AttributeFieldId::new(1),
+                CanonicalValue::boolean(true),
+            ))),
+            Err(TypeIdentityError::TooManyItems {
+                items: MAX_RESOLVED_TYPE_ITEMS + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn canonical_collections_enforce_aggregate_payload_before_item_count() {
+        fn payload() -> CanonicalValue {
+            CanonicalValue::bytes(vec![0_u8; MAX_RESOLVED_TYPE_BYTES / 2 + 1]).unwrap()
+        }
+
+        assert_eq!(
+            CanonicalValue::sequence([payload(), payload()]),
+            Err(TypeIdentityError::TooManyPayloadBytes)
+        );
+        assert_eq!(
+            TypeArguments::new([payload(), payload()]),
+            Err(TypeIdentityError::TooManyPayloadBytes)
+        );
+        assert_eq!(
+            CanonicalValue::record([
+                CanonicalField::new(AttributeFieldId::new(1), payload()),
+                CanonicalField::new(AttributeFieldId::new(2), payload()),
+            ]),
+            Err(TypeIdentityError::TooManyPayloadBytes)
+        );
     }
 }

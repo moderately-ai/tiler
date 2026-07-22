@@ -1,14 +1,16 @@
 ---
 id: harden-semantic-registry-and-program-construction
 title: Harden semantic registry and program construction
-status: todo
+status: in-progress
 priority: p0
 dependencies: [correct-semantic-identity-layering]
 related: []
-scopes: [implementation/ir]
+scopes: [implementation/ir, contracts/foundation, implementation/compiler, implementation/reference, research/extensions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, semantic-ir]
+assignee: codex
+lease_expires_at: 1784720644
 ---
 
 Correct the semantic registry and program builder defects found by the
@@ -28,7 +30,7 @@ work in `correct-semantic-identity-layering`.
   effect/token model.
 - Bound and validate all public keys, diagnostic codes/messages, canonical
   values, attribute collections, type arguments, schemas, provider-produced
-  result vectors, nesting, and total retained bytes before unbounded
+  result vectors, nesting, and aggregate canonical bytes before unbounded
   collection or callback work. Infinite iterators and oversized inputs must
   fail without allocation blow-up or panic.
 - Make failed semantic builds transactional with respect to graph identifiers
@@ -51,3 +53,32 @@ nondeterministic collision order, zero-result schemas, infinite and oversized
 iterators, oversized provider results, failed-build identifier reuse,
 `u32::MAX` boundary handling, and noncanonical explicit defaults. The full
 Rust gate must pass without weakening the public generic dtype contract.
+
+## Outcome
+
+- Provider registration is an isolated, sticky-failing transaction. Canonical
+  count and byte reservations occur before staged insertion, and deterministic
+  tests cover ignored errors, replacement attempts, marker collisions, and
+  canonical freeze order.
+- Public keys, shapes, canonical values and collections, operation schemas,
+  diagnostics, registry batches, operand lists, and inferred result streams
+  have typed finite bounds. Arbitrary iterators stop at the first over-limit
+  item; aggregate canonical budgets are checked incrementally rather than
+  after large temporary collection.
+- Operation inference uses an immutable request and host-owned sticky result
+  writer. It commits only callback-successful, arity-valid, registry-admitted
+  facts. Provider panics propagate without graph mutation.
+- Stable diagnostic codes use the validated cheaply cloned
+  `ProviderDiagnosticCode` newtype. Dynamic-message contract failures remain
+  typed causal sources; independent later inference failures remain explicit
+  secondary evidence.
+- Failed graph edits and failed consuming validation do not spend observable
+  local or completed graph identifiers. Stored attributes canonicalize explicit
+  defaults before graph identity.
+- Frozen registries expose borrowed canonical-order definition inspection;
+  schemas expose read-only attributes and bounded arity inspection, including
+  exactness. The generic semantic-program documentation no longer implies an
+  intrinsically `f32` graph.
+- The provider threat model and the distinction between canonical-byte work
+  budgets and exact heap accounting are recorded in `docs/ir.md` and
+  `docs/operation-extensions.md`.

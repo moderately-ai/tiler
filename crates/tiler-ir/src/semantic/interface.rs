@@ -3,6 +3,9 @@ use std::marker::PhantomData;
 
 use super::handles::{GraphId, Value, ValueId, ValueIndex};
 
+/// Maximum UTF-8 byte length of one stable semantic interface key.
+pub const MAX_INTERFACE_KEY_BYTES: usize = 1_024;
+
 /// One of the semantic program's ordered interfaces.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
@@ -55,6 +58,13 @@ impl InputKey {
                 interface: InterfaceKind::Input,
             });
         }
+        if value.len() > MAX_INTERFACE_KEY_BYTES {
+            return Err(BuildError::InterfaceKeyTooLong {
+                interface: InterfaceKind::Input,
+                bytes: value.len(),
+                limit: MAX_INTERFACE_KEY_BYTES,
+            });
+        }
         Ok(Self(value))
     }
 
@@ -80,6 +90,13 @@ impl OutputKey {
         if value.is_empty() {
             return Err(BuildError::EmptyInterfaceKey {
                 interface: InterfaceKind::Output,
+            });
+        }
+        if value.len() > MAX_INTERFACE_KEY_BYTES {
+            return Err(BuildError::InterfaceKeyTooLong {
+                interface: InterfaceKind::Output,
+                bytes: value.len(),
+                limit: MAX_INTERFACE_KEY_BYTES,
             });
         }
         Ok(Self(value))
@@ -267,5 +284,30 @@ impl ProgramOutputRef<'_> {
             owner: self.owner,
             index: self.output.value,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interface_keys_are_bounded_before_retention() {
+        assert_eq!(
+            InputKey::new("x".repeat(MAX_INTERFACE_KEY_BYTES + 1)),
+            Err(BuildError::InterfaceKeyTooLong {
+                interface: InterfaceKind::Input,
+                bytes: MAX_INTERFACE_KEY_BYTES + 1,
+                limit: MAX_INTERFACE_KEY_BYTES,
+            })
+        );
+        assert_eq!(
+            OutputKey::new("x".repeat(MAX_INTERFACE_KEY_BYTES + 1)),
+            Err(BuildError::InterfaceKeyTooLong {
+                interface: InterfaceKind::Output,
+                bytes: MAX_INTERFACE_KEY_BYTES + 1,
+                limit: MAX_INTERFACE_KEY_BYTES,
+            })
+        );
     }
 }

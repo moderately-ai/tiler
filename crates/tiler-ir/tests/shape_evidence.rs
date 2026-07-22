@@ -18,7 +18,10 @@ fn input(
     dims: impl IntoIterator<Item = u64>,
 ) -> Value<F32> {
     builder
-        .input(InputKey::new(name).unwrap(), Shape::from_dims(dims))
+        .input(
+            InputKey::new(name).unwrap(),
+            Shape::try_from_dims(dims).unwrap(),
+        )
         .unwrap()
 }
 

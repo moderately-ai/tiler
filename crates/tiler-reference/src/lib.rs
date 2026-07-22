@@ -654,13 +654,15 @@ fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, ReferenceOperatio
     let survivor: Vec<usize> = (0..input.shape().rank())
         .filter(|axis| !reduced.contains(axis))
         .collect();
-    let output_shape = Shape::new(survivor.iter().map(|axis| input.shape().extents()[*axis]));
+    let output_shape = Shape::try_new(survivor.iter().map(|axis| input.shape().extents()[*axis]))
+        .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
     let output_count = output_shape
         .element_count()
         .ok_or(ReferenceOperationError::ShapeTooLarge)?;
     let input_strides = row_major_strides(input.shape())?;
     let output_coordinates = coordinates(&output_shape)?;
-    let reduced_shape = Shape::new(reduced.iter().map(|axis| input.shape().extents()[*axis]));
+    let reduced_shape = Shape::try_new(reduced.iter().map(|axis| input.shape().extents()[*axis]))
+        .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
     let reduced_coordinates = coordinates(&reduced_shape)?;
     let mut elements = Vec::with_capacity(output_count);
 
@@ -1044,7 +1046,7 @@ mod tests {
         OperationArity, OperationConformance, OperationDefinition, OperationDefinitionFacts,
         OperationEffect, OperationInferenceError, OperationInferencer, OperationSchema, OutputKey,
         SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
-        SemanticRegistryRegistrar, StrictSerialF32Sum, Value, ValueFact,
+        SemanticRegistryRegistrar, StrictSerialF32Sum, Value,
     };
 
     fn constant_bits(graph: &mut SemanticProgramBuilder, bits: u32) -> Value<F32> {
@@ -1109,10 +1111,10 @@ mod tests {
     impl OperationInferencer for IdentitySemantic {
         fn infer(
             &self,
-            operands: &[ValueFact],
-            _: &OperationAttributes,
-        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
-            Ok(vec![operands[0].clone()])
+            request: tiler_ir::semantic::OperationInferenceRequest<'_>,
+            outputs: &mut tiler_ir::semantic::OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            outputs.try_push(request.operands()[0].clone())
         }
     }
 

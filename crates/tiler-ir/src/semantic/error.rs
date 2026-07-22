@@ -130,6 +130,15 @@ pub enum BuildError {
         /// The interface whose key was empty.
         interface: InterfaceKind,
     },
+    /// A stable interface key exceeded its canonical UTF-8 byte bound.
+    InterfaceKeyTooLong {
+        /// The interface whose key was rejected.
+        interface: InterfaceKind,
+        /// Actual UTF-8 bytes.
+        bytes: usize,
+        /// Governed maximum.
+        limit: usize,
+    },
     /// Two inputs used the same stable key.
     DuplicateInputKey(InputKey),
     /// Two outputs used the same stable key.
@@ -167,6 +176,13 @@ pub enum BuildError {
         /// Rejected logical rank.
         rank: usize,
     },
+    /// One operation application supplied more operands than the bounded profile admits.
+    TooManyOperationOperands {
+        /// Actual supplied operands.
+        actual: usize,
+        /// Governed maximum.
+        limit: u32,
+    },
     /// An arena exhausted its fixed-width local identifier space.
     TooManyEntities {
         /// Arena entity kind that exhausted its identifier space.
@@ -178,6 +194,14 @@ impl fmt::Display for BuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyInterfaceKey { interface } => write!(formatter, "{interface} key is empty"),
+            Self::InterfaceKeyTooLong {
+                interface,
+                bytes,
+                limit,
+            } => write!(
+                formatter,
+                "{interface} key has {bytes} bytes, exceeding governed limit {limit}"
+            ),
             Self::DuplicateInputKey(key) => {
                 write!(formatter, "duplicate input key {:?}", key.as_str())
             }
@@ -207,6 +231,10 @@ impl fmt::Display for BuildError {
                     "tensor rank {rank} exceeds the u32 logical axis space"
                 )
             }
+            Self::TooManyOperationOperands { actual, limit } => write!(
+                formatter,
+                "operation has {actual} operands, exceeding governed limit {limit}"
+            ),
             Self::TooManyEntities { entity } => write!(formatter, "too many {entity} entities"),
         }
     }

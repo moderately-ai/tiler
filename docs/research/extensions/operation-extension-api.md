@@ -8,7 +8,7 @@ catalog_group: "foundation-semantics-extensions"
 research_status: "complete"
 disposition: "partially-adopted"
 implementation_status: "partial"
-evidence_classes: ["executable-model"]
+evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.operation-extensions"]
 adopted_by: ["ADR-0044"]
 ticket: "operation-extension-surface"
@@ -58,6 +58,47 @@ revalidates every returned result before admitting the operation.
 `SemanticContract` identifies normative meaning and required conformance data.
 It is not the provider revision and does not claim the callback is its own
 formal specification.
+
+## Bounded result inference refinement
+
+The initial sketch returned an owned `InferredResults`. The implemented
+prototype instead gives an inferencer a host-owned, fallible result writer.
+This keeps arbitrary multi-result operations while making result-count and
+canonical-byte limits enforceable before the host retains an unbounded result
+collection.
+
+**Fact:** At Burn revision
+[`e5467f02`](https://github.com/tracel-ai/burn/blob/e5467f02c3cf88eb5d709f190c170005ce26038d/crates/burn-ir/src/operation.rs),
+`CustomOpIr` declares a `Vec<TensorIr>` of outputs. This establishes a useful
+multi-result precedent, but the provider constructs the collection and the API
+does not impose Tiler's host-owned admission budget.
+
+**Fact:** At Candle revision
+[`31f35b14`](https://github.com/huggingface/candle/blob/31f35b147389700ed2a178ee66a91c3cc25cc80d/candle-core/src/custom_op.rs),
+`CustomOp1`, `CustomOp2`, and `CustomOp3` each return one `(Storage, Shape)`.
+At ug revision
+[`8c6dd50d`](https://github.com/LaurentMazare/ug/blob/8c6dd50d6e96a22db70e1462c0e49d0cda8294f7/ug-core/src/lazy_buffer.rs),
+a custom operation likewise produces one `LazyBuffer`. Those interfaces are
+too narrow for Tiler's accepted multi-result semantic graph.
+
+**Fact:** MLIR's `InferTypeOpInterface` at revision
+[`98fe06cb`](https://github.com/llvm/llvm-project/blob/98fe06cb6487cf23d5a56bd5ff0c6b4e378d1be3/mlir/include/mlir/Interfaces/InferTypeOpInterface.td)
+uses a caller-owned `SmallVectorImpl<Type>&` for inferred return types and then
+checks compatibility with declared return types. It demonstrates caller-owned
+result collection and host validation, though it does not provide Tiler's
+fallible per-result quota boundary.
+
+**Inference:** An unrestricted owned vector makes multi-result inference easy
+but gives extension code control over collection growth. A single-result API
+avoids that issue only by rejecting required semantics. A host-owned fallible
+writer preserves both requirements and leaves policy with the compiler host.
+
+**Proposal implemented by the current prototype:** `OperationInferencer`
+receives a borrowed `OperationInferenceRequest` and an
+`OperationInferenceOutputs`. Every `try_push` validates and charges count and
+canonical bytes before retention. The writer is sticky after its first error,
+and only the host can finalize it. Callback success does not commit anything:
+the host still verifies arity and every inferred fact before graph mutation.
 
 ## Separate capabilities
 

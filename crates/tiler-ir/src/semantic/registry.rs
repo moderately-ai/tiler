@@ -9,9 +9,10 @@ use crate::shape::Axis;
 use super::operation::{
     CanonicalValueKind, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationArity,
     OperationAttributeSchema, OperationAttributes, OperationConformance, OperationDefinition,
-    OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
-    OperationSchema, REDUCTION_AXES_ATTRIBUTE, ValueFact, add_f32_op, constant_f32_op,
-    multiply_f32_op, strict_serial_sum_f32_op,
+    OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferenceOutputs,
+    OperationInferenceRequest, OperationInferencer, OperationSchema, ProviderDiagnosticCode,
+    ProviderDiagnosticError, REDUCTION_AXES_ATTRIBUTE, ValueFact, add_f32_op, constant_f32_op,
+    multiply_f32_op, strict_serial_sum_f32_op, validate_provider_diagnostic_message,
 };
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
@@ -26,6 +27,10 @@ pub(super) const TEST_MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS: usize =
     MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS;
 /// Maximum roots consumed from caller-owned semantic-authority iterators.
 const MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS: usize = 1_000_000;
+const MAX_REGISTRY_DEFINITIONS: usize = 4_096;
+const MAX_REGISTRY_OPERATIONS: usize = 4_096;
+const MAX_REGISTRY_MARKERS: usize = 4_096;
+const MAX_REGISTRY_CANONICAL_BYTES: usize = 16 * 1024 * 1024;
 
 /// Bounded resource counted while closing semantic authority transitively.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,6 +40,31 @@ pub enum SemanticAuthorityResource {
     RootItems,
     /// Aggregate unique type definitions, concrete instances, and operations.
     ClosureItems,
+}
+
+/// Governed resource retained by one semantic registry snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum SemanticRegistryResource {
+    /// Registered value-type definitions.
+    TypeDefinitions,
+    /// Registered operation definitions.
+    Operations,
+    /// Process-local marker bindings.
+    MarkerBindings,
+    /// Aggregate canonical definition and local-binding bytes.
+    CanonicalBytes,
+}
+
+impl fmt::Display for SemanticRegistryResource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TypeDefinitions => formatter.write_str("type definitions"),
+            Self::Operations => formatter.write_str("operations"),
+            Self::MarkerBindings => formatter.write_str("marker bindings"),
+            Self::CanonicalBytes => formatter.write_str("canonical bytes"),
+        }
+    }
 }
 
 impl fmt::Display for SemanticAuthorityResource {
@@ -187,6 +217,7 @@ impl TypeDefinitionFacts {
 
 /// Which family of resolved types one semantic definition governs.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
 pub enum ValueTypeDefinitionKey {
     /// One exact nominal type.
     Nominal(TypeKey),
@@ -233,23 +264,36 @@ impl ValueTypeDefinitionKey {
 /// Typed rejection produced by a semantic type-family validator.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypeInstanceError {
-    code: String,
+    code: ProviderDiagnosticCode,
     message: String,
+    contract_failure: Option<Arc<ProviderDiagnosticError>>,
 }
 
 impl TypeInstanceError {
     /// Creates a provider-attributed, stable-code instance rejection.
-    #[must_use]
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            code: code.into(),
-            message: message.into(),
-        }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderDiagnosticError`] when the dynamic message is empty or
+    /// oversized. Within a [`ValueTypeInstanceValidator`] callback, `?` converts
+    /// that provider-contract failure into this role-specific error while
+    /// preserving it as the causal [`Error::source`].
+    pub fn new<'a>(
+        code: ProviderDiagnosticCode,
+        message: impl Into<std::borrow::Cow<'a, str>>,
+    ) -> Result<Self, ProviderDiagnosticError> {
+        let message = message.into();
+        validate_provider_diagnostic_message(message.as_ref())?;
+        Ok(Self {
+            code,
+            message: message.into_owned(),
+            contract_failure: None,
+        })
     }
 
     /// Returns the stable diagnostic code.
     #[must_use]
-    pub fn code(&self) -> &str {
+    pub const fn code(&self) -> &ProviderDiagnosticCode {
         &self.code
     }
 
@@ -257,6 +301,12 @@ impl TypeInstanceError {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Returns a malformed provider diagnostic that causally produced this error.
+    #[must_use]
+    pub fn provider_contract_failure(&self) -> Option<&ProviderDiagnosticError> {
+        self.contract_failure.as_deref()
     }
 }
 
@@ -266,7 +316,24 @@ impl fmt::Display for TypeInstanceError {
     }
 }
 
-impl Error for TypeInstanceError {}
+impl From<ProviderDiagnosticError> for TypeInstanceError {
+    fn from(source: ProviderDiagnosticError) -> Self {
+        Self {
+            code: ProviderDiagnosticCode::new("tiler.provider.invalid-diagnostic")
+                .expect("host diagnostic code is canonical"),
+            message: format!("provider produced an invalid diagnostic: {source}"),
+            contract_failure: Some(Arc::new(source)),
+        }
+    }
+}
+
+impl Error for TypeInstanceError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.contract_failure
+            .as_deref()
+            .map(|source| source as &(dyn Error + 'static))
+    }
+}
 
 /// Additional immutable validation for instances of one registered type family.
 ///
@@ -397,6 +464,7 @@ pub struct SemanticRegistryBuilder {
     definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: BTreeMap<OpKey, RegisteredOperation>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
+    canonical_bytes: usize,
 }
 
 impl fmt::Debug for SemanticRegistryBuilder {
@@ -406,6 +474,7 @@ impl fmt::Debug for SemanticRegistryBuilder {
             .field("definition_count", &self.definitions.len())
             .field("operation_count", &self.operations.len())
             .field("marker_count", &self.marker_bindings.len())
+            .field("canonical_bytes", &self.canonical_bytes)
             .finish()
     }
 }
@@ -421,6 +490,8 @@ struct RegistrationBatch {
     definitions: BTreeMap<ValueTypeDefinitionKey, ValueTypeDefinition>,
     operations: BTreeMap<OpKey, OperationDefinition>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
+    canonical_bytes: usize,
+    failure: Option<RegistryError>,
 }
 
 impl SemanticRegistryBuilder {
@@ -454,45 +525,64 @@ impl SemanticRegistryBuilder {
     ) -> Result<(), RegistryError> {
         let identity = provider.identity();
         let mut batch = RegistrationBatch::default();
-        provider.register(&mut SemanticRegistryRegistrar { batch: &mut batch })?;
+        let callback_result = provider.register(&mut SemanticRegistryRegistrar {
+            batch: &mut batch,
+            provider: &identity,
+            existing_definitions: self.definitions.len(),
+            existing_operations: self.operations.len(),
+            existing_markers: self.marker_bindings.len(),
+        });
+        if let Some(error) = batch.failure.clone() {
+            return Err(error);
+        }
+        callback_result?;
         if batch.definitions.is_empty()
             && batch.operations.is_empty()
             && batch.marker_bindings.is_empty()
         {
             return Err(RegistryError::ProviderRegisteredNothing { provider: identity });
         }
-        for key in batch.definitions.keys() {
-            if self.definitions.contains_key(key) {
-                return Err(RegistryError::DuplicateTypeAuthority {
-                    key: Arc::new(key.clone()),
-                });
-            }
-        }
-        for key in batch.operations.keys() {
-            if self.operations.contains_key(key) {
-                return Err(RegistryError::DuplicateOperationAuthority {
-                    key: Arc::new(key.clone()),
-                });
-            }
-        }
-        for (marker, binding) in &batch.marker_bindings {
-            if let Some(existing) = self.marker_bindings.get(marker) {
-                return Err(RegistryError::DuplicateMarker {
-                    marker_name: existing.marker_name,
-                });
-            }
-            if self
-                .marker_bindings
-                .values()
-                .any(|existing| existing.resolved_type == binding.resolved_type)
-                || batch.marker_bindings.iter().any(|(other, existing)| {
-                    other != marker && existing.resolved_type == binding.resolved_type
-                })
-            {
-                return Err(RegistryError::DuplicateResolvedTypeMarker {
-                    resolved_type: Arc::new(binding.resolved_type.clone()),
-                });
-            }
+        self.commit_batch(batch, &identity)
+    }
+
+    fn commit_batch(
+        &mut self,
+        batch: RegistrationBatch,
+        identity: &ProviderIdentity,
+    ) -> Result<(), RegistryError> {
+        self.validate_batch_collisions(&batch)?;
+        check_registry_count(
+            SemanticRegistryResource::TypeDefinitions,
+            self.definitions.len(),
+            batch.definitions.len(),
+            MAX_REGISTRY_DEFINITIONS,
+        )?;
+        check_registry_count(
+            SemanticRegistryResource::Operations,
+            self.operations.len(),
+            batch.operations.len(),
+            MAX_REGISTRY_OPERATIONS,
+        )?;
+        check_registry_count(
+            SemanticRegistryResource::MarkerBindings,
+            self.marker_bindings.len(),
+            batch.marker_bindings.len(),
+            MAX_REGISTRY_MARKERS,
+        )?;
+        let total_bytes = self
+            .canonical_bytes
+            .checked_add(batch.canonical_bytes)
+            .ok_or(RegistryError::RegistryResourceExceeded {
+                resource: SemanticRegistryResource::CanonicalBytes,
+                limit: MAX_REGISTRY_CANONICAL_BYTES,
+                actual: usize::MAX,
+            })?;
+        if total_bytes > MAX_REGISTRY_CANONICAL_BYTES {
+            return Err(RegistryError::RegistryResourceExceeded {
+                resource: SemanticRegistryResource::CanonicalBytes,
+                limit: MAX_REGISTRY_CANONICAL_BYTES,
+                actual: total_bytes,
+            });
         }
         self.definitions
             .extend(batch.definitions.into_iter().map(|(key, definition)| {
@@ -515,6 +605,50 @@ impl SemanticRegistryBuilder {
                 )
             }));
         self.marker_bindings.extend(batch.marker_bindings);
+        self.canonical_bytes = total_bytes;
+        Ok(())
+    }
+
+    fn validate_batch_collisions(&self, batch: &RegistrationBatch) -> Result<(), RegistryError> {
+        for key in batch.definitions.keys() {
+            if self.definitions.contains_key(key) {
+                return Err(RegistryError::DuplicateTypeAuthority {
+                    key: Arc::new(key.clone()),
+                });
+            }
+        }
+        for key in batch.operations.keys() {
+            if self.operations.contains_key(key) {
+                return Err(RegistryError::DuplicateOperationAuthority {
+                    key: Arc::new(key.clone()),
+                });
+            }
+        }
+        let mut marker_bindings: Vec<_> = batch.marker_bindings.iter().collect();
+        marker_bindings.sort_unstable_by(|(_, left), (_, right)| {
+            left.resolved_type
+                .cmp(&right.resolved_type)
+                .then_with(|| left.marker_name.cmp(right.marker_name))
+        });
+        for (marker, binding) in marker_bindings {
+            if let Some(existing) = self.marker_bindings.get(marker) {
+                return Err(RegistryError::DuplicateMarker {
+                    marker_name: existing.marker_name,
+                });
+            }
+            if self
+                .marker_bindings
+                .values()
+                .any(|existing| existing.resolved_type == binding.resolved_type)
+                || batch.marker_bindings.iter().any(|(other, existing)| {
+                    other != marker && existing.resolved_type == binding.resolved_type
+                })
+            {
+                return Err(RegistryError::DuplicateResolvedTypeMarker {
+                    resolved_type: Arc::new(binding.resolved_type.clone()),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -538,12 +672,15 @@ impl SemanticRegistryBuilder {
             operations: self.operations,
             marker_bindings: self.marker_bindings,
         }));
+        let mut marker_roots: Vec<_> = registry
+            .0
+            .marker_bindings
+            .values()
+            .map(|binding| &binding.resolved_type)
+            .collect();
+        marker_roots.sort_unstable();
         registry.close_authority(
-            registry
-                .0
-                .marker_bindings
-                .values()
-                .map(|binding| &binding.resolved_type),
+            marker_roots,
             registry.0.definitions.keys(),
             registry.0.operations.keys(),
             std::iter::empty(),
@@ -556,9 +693,60 @@ impl SemanticRegistryBuilder {
 /// Host-owned registration surface supplied to one semantic provider.
 pub struct SemanticRegistryRegistrar<'a> {
     batch: &'a mut RegistrationBatch,
+    provider: &'a ProviderIdentity,
+    existing_definitions: usize,
+    existing_operations: usize,
+    existing_markers: usize,
 }
 
 impl SemanticRegistryRegistrar<'_> {
+    fn prior_failure(&self) -> Option<RegistryError> {
+        self.batch.failure.clone()
+    }
+
+    fn fail(&mut self, error: &RegistryError) -> RegistryError {
+        if self.batch.failure.is_none() {
+            self.batch.failure = Some(error.clone());
+        }
+        self.batch
+            .failure
+            .clone()
+            .expect("registration failure was just recorded")
+    }
+
+    fn reserve_canonical_bytes(&mut self, added: usize) -> Result<(), RegistryError> {
+        let actual = self.batch.canonical_bytes.saturating_add(added);
+        if actual > MAX_REGISTRY_CANONICAL_BYTES {
+            let error = RegistryError::RegistryResourceExceeded {
+                resource: SemanticRegistryResource::CanonicalBytes,
+                limit: MAX_REGISTRY_CANONICAL_BYTES,
+                actual,
+            };
+            return Err(self.fail(&error));
+        }
+        self.batch.canonical_bytes = actual;
+        Ok(())
+    }
+
+    fn reserve_count(
+        &mut self,
+        resource: SemanticRegistryResource,
+        existing: usize,
+        staged: usize,
+        limit: usize,
+    ) -> Result<(), RegistryError> {
+        let actual = existing.saturating_add(staged).saturating_add(1);
+        if actual > limit {
+            let error = RegistryError::RegistryResourceExceeded {
+                resource,
+                limit,
+                actual,
+            };
+            return Err(self.fail(&error));
+        }
+        Ok(())
+    }
+
     /// Registers one semantic nominal, constructor, or scheme definition.
     ///
     /// # Errors
@@ -568,15 +756,25 @@ impl SemanticRegistryRegistrar<'_> {
         &mut self,
         definition: ValueTypeDefinition,
     ) -> Result<(), RegistryError> {
-        let key = definition.key().clone();
-        if self
-            .batch
-            .definitions
-            .insert(key.clone(), definition)
-            .is_some()
-        {
-            return Err(RegistryError::DuplicateTypeAuthority { key: Arc::new(key) });
+        if let Some(error) = self.prior_failure() {
+            return Err(error);
         }
+        let key = definition.key().clone();
+        if self.batch.definitions.contains_key(&key) {
+            let error = RegistryError::DuplicateTypeAuthority { key: Arc::new(key) };
+            return Err(self.fail(&error));
+        }
+        self.reserve_count(
+            SemanticRegistryResource::TypeDefinitions,
+            self.existing_definitions,
+            self.batch.definitions.len(),
+            MAX_REGISTRY_DEFINITIONS,
+        )?;
+        let mut canonical = Vec::new();
+        encode_type_definition(&mut canonical, &key, &definition);
+        self.provider.encode(&mut canonical);
+        self.reserve_canonical_bytes(canonical.len())?;
+        self.batch.definitions.insert(key, definition);
         Ok(())
     }
 
@@ -589,15 +787,25 @@ impl SemanticRegistryRegistrar<'_> {
         &mut self,
         definition: OperationDefinition,
     ) -> Result<(), RegistryError> {
-        let key = definition.key().clone();
-        if self
-            .batch
-            .operations
-            .insert(key.clone(), definition)
-            .is_some()
-        {
-            return Err(RegistryError::DuplicateOperationAuthority { key: Arc::new(key) });
+        if let Some(error) = self.prior_failure() {
+            return Err(error);
         }
+        let key = definition.key().clone();
+        if self.batch.operations.contains_key(&key) {
+            let error = RegistryError::DuplicateOperationAuthority { key: Arc::new(key) };
+            return Err(self.fail(&error));
+        }
+        self.reserve_count(
+            SemanticRegistryResource::Operations,
+            self.existing_operations,
+            self.batch.operations.len(),
+            MAX_REGISTRY_OPERATIONS,
+        )?;
+        let mut canonical = Vec::new();
+        encode_operation_definition(&mut canonical, &key, &definition);
+        self.provider.encode(&mut canonical);
+        self.reserve_canonical_bytes(canonical.len())?;
+        self.batch.operations.insert(key, definition);
         Ok(())
     }
 
@@ -611,11 +819,15 @@ impl SemanticRegistryRegistrar<'_> {
         &mut self,
         resolved_type: ResolvedValueType,
     ) -> Result<(), RegistryError> {
+        if let Some(error) = self.prior_failure() {
+            return Err(error);
+        }
         let marker = TypeId::of::<T>();
         if self.batch.marker_bindings.contains_key(&marker) {
-            return Err(RegistryError::DuplicateMarker {
+            let error = RegistryError::DuplicateMarker {
                 marker_name: type_name::<T>(),
-            });
+            };
+            return Err(self.fail(&error));
         }
         if self
             .batch
@@ -623,10 +835,21 @@ impl SemanticRegistryRegistrar<'_> {
             .values()
             .any(|binding| binding.resolved_type == resolved_type)
         {
-            return Err(RegistryError::DuplicateResolvedTypeMarker {
+            let error = RegistryError::DuplicateResolvedTypeMarker {
                 resolved_type: Arc::new(resolved_type),
-            });
+            };
+            return Err(self.fail(&error));
         }
+        self.reserve_count(
+            SemanticRegistryResource::MarkerBindings,
+            self.existing_markers,
+            self.batch.marker_bindings.len(),
+            MAX_REGISTRY_MARKERS,
+        )?;
+        let binding_bytes = type_name::<T>()
+            .len()
+            .saturating_add(resolved_type.canonical_encoded_len());
+        self.reserve_canonical_bytes(binding_bytes)?;
         self.batch.marker_bindings.insert(
             marker,
             MarkerBinding {
@@ -852,6 +1075,23 @@ impl FrozenSemanticRegistry {
             .map(|registered| &registered.definition)
     }
 
+    /// Returns one definition by its stable family key.
+    #[must_use]
+    pub fn value_type_definition(
+        &self,
+        key: &ValueTypeDefinitionKey,
+    ) -> Option<&ValueTypeDefinition> {
+        self.0.definitions.get(key).map(|entry| &entry.definition)
+    }
+
+    /// Iterates all registered value-type definitions in canonical key order.
+    #[must_use]
+    pub fn value_type_definitions(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &ValueTypeDefinition> + DoubleEndedIterator {
+        self.0.definitions.values().map(|entry| &entry.definition)
+    }
+
     /// Returns the provider governing one resolved type family.
     #[must_use]
     pub fn provider(&self, resolved_type: &ResolvedValueType) -> Option<&ProviderIdentity> {
@@ -865,6 +1105,14 @@ impl FrozenSemanticRegistry {
     #[must_use]
     pub fn operation_definition(&self, key: &OpKey) -> Option<&OperationDefinition> {
         self.0.operations.get(key).map(|entry| &entry.definition)
+    }
+
+    /// Iterates all registered operation definitions in canonical key order.
+    #[must_use]
+    pub fn operation_definitions(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &OperationDefinition> + DoubleEndedIterator {
+        self.0.operations.values().map(|entry| &entry.definition)
     }
 
     /// Returns the provider governing one operation family.
@@ -1211,6 +1459,15 @@ pub enum RegistryError {
         /// First rejected aggregate count.
         actual: usize,
     },
+    /// A frozen-registry governed resource exceeded its bound.
+    RegistryResourceExceeded {
+        /// Governed retained resource.
+        resource: SemanticRegistryResource,
+        /// Maximum admitted count or byte size.
+        limit: usize,
+        /// First rejected aggregate value.
+        actual: usize,
+    },
     /// A normative definition reference was empty.
     EmptyNormativeDefinition,
     /// A normative definition reference exceeded its byte bound.
@@ -1272,6 +1529,14 @@ impl fmt::Display for RegistryError {
             } => write!(
                 formatter,
                 "{resource} count {actual} exceeds governed limit {limit}"
+            ),
+            Self::RegistryResourceExceeded {
+                resource,
+                limit,
+                actual,
+            } => write!(
+                formatter,
+                "semantic registry {resource} {actual} exceeds governed limit {limit}"
             ),
             Self::EmptyNormativeDefinition => {
                 formatter.write_str("normative definition reference is empty")
@@ -1483,9 +1748,11 @@ fn canonical_f32_bits(bits: u32) -> CanonicalValue {
 impl OperationInferencer for ConstantF32 {
     fn infer(
         &self,
-        operands: &[ValueFact],
-        attributes: &OperationAttributes,
-    ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+        request: OperationInferenceRequest<'_>,
+        outputs: &mut OperationInferenceOutputs<'_>,
+    ) -> Result<(), OperationInferenceError> {
+        let operands = request.operands();
+        let attributes = request.attributes();
         if !operands.is_empty() {
             return Err(op_error("constant.arity", "constant requires no operands"));
         }
@@ -1512,10 +1779,10 @@ impl OperationInferencer for ConstantF32 {
                 "constant bits must use the binary32 format and width",
             ));
         }
-        Ok(vec![ValueFact::new(
+        outputs.try_push(ValueFact::new(
             F32::resolved_type(),
             crate::shape::Shape::new([]),
-        )])
+        ))
     }
 }
 
@@ -1524,9 +1791,11 @@ struct BinaryF32;
 impl OperationInferencer for BinaryF32 {
     fn infer(
         &self,
-        operands: &[ValueFact],
-        attributes: &OperationAttributes,
-    ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+        request: OperationInferenceRequest<'_>,
+        outputs: &mut OperationInferenceOutputs<'_>,
+    ) -> Result<(), OperationInferenceError> {
+        let operands = request.operands();
+        let attributes = request.attributes();
         if operands.len() != 2 {
             return Err(op_error(
                 "binary.arity",
@@ -1557,7 +1826,7 @@ impl OperationInferencer for BinaryF32 {
                 "operand shapes must match or one operand must be scalar",
             ));
         };
-        Ok(vec![ValueFact::new(F32::resolved_type(), shape)])
+        outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
     }
 }
 
@@ -1566,9 +1835,11 @@ struct StrictSerialSumF32;
 impl OperationInferencer for StrictSerialSumF32 {
     fn infer(
         &self,
-        operands: &[ValueFact],
-        attributes: &OperationAttributes,
-    ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+        request: OperationInferenceRequest<'_>,
+        outputs: &mut OperationInferenceOutputs<'_>,
+    ) -> Result<(), OperationInferenceError> {
+        let operands = request.operands();
+        let attributes = request.attributes();
         if operands.len() != 1 {
             return Err(op_error("sum.arity", "Sum requires one operand"));
         }
@@ -1618,15 +1889,19 @@ impl OperationInferencer for StrictSerialSumF32 {
             }
             reduced_axes.push(logical_axis);
         }
-        Ok(vec![ValueFact::new(
+        outputs.try_push(ValueFact::new(
             F32::resolved_type(),
             operands[0].shape().without_axes(&reduced_axes),
-        )])
+        ))
     }
 }
 
 fn op_error(code: &str, message: &str) -> OperationInferenceError {
-    OperationInferenceError::new(code, message)
+    OperationInferenceError::new(
+        ProviderDiagnosticCode::new(code).expect("governed diagnostic code is canonical"),
+        message,
+    )
+    .expect("governed diagnostic message is canonical")
 }
 
 fn compute_identity(
@@ -1736,6 +2011,23 @@ fn check_closure_budget(closure: &SemanticAuthorityClosure) -> Result<(), Regist
         return Err(RegistryError::SemanticAuthorityResourceExceeded {
             resource: SemanticAuthorityResource::ClosureItems,
             limit: MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS,
+            actual,
+        });
+    }
+    Ok(())
+}
+
+fn check_registry_count(
+    resource: SemanticRegistryResource,
+    existing: usize,
+    staged: usize,
+    limit: usize,
+) -> Result<(), RegistryError> {
+    let actual = existing.saturating_add(staged);
+    if actual > limit {
+        return Err(RegistryError::RegistryResourceExceeded {
+            resource,
+            limit,
             actual,
         });
     }
@@ -1905,16 +2197,19 @@ mod tests {
     impl OperationInferencer for IdentityInferencer {
         fn infer(
             &self,
-            operands: &[ValueFact],
-            attributes: &OperationAttributes,
-        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            let operands = request.operands();
+            let attributes = request.attributes();
             if operands.len() != 1 || !attributes.fields().is_empty() {
                 return Err(OperationInferenceError::new(
-                    "acme.identity.signature",
+                    ProviderDiagnosticCode::new("acme.identity.signature").unwrap(),
                     "identity requires one operand and no attributes",
-                ));
+                )
+                .unwrap());
             }
-            Ok(vec![operands[0].clone()])
+            outputs.try_push(operands[0].clone())
         }
     }
 
@@ -2019,6 +2314,68 @@ mod tests {
     }
 
     #[test]
+    fn ignored_result_overflow_poison_rejects_provider_output() {
+        struct Overflow;
+        impl OperationInferencer for Overflow {
+            fn infer(
+                &self,
+                request: OperationInferenceRequest<'_>,
+                outputs: &mut OperationInferenceOutputs<'_>,
+            ) -> Result<(), OperationInferenceError> {
+                let operands = request.operands();
+                outputs.try_push(operands[0].clone())?;
+                let _ = outputs.try_push(operands[0].clone());
+                Ok(())
+            }
+        }
+
+        let operation = OpKey::new("test", "overflow", 1).unwrap();
+        let provider = TestProvider {
+            name: "overflow",
+            revision: 1,
+            definitions: Vec::new(),
+            operations: vec![OperationDefinition::new(
+                operation.clone(),
+                exact_schema(1, 1, []),
+                NormativeDefinitionRef::new("test overflow v1").unwrap(),
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(Overflow),
+            )],
+        };
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&provider).unwrap();
+        let registry = builder.freeze().unwrap();
+        let operand = ValueFact::new(F32::resolved_type(), crate::shape::Shape::new([]));
+        let error = registry
+            .infer_operation(&operation, &[operand], &OperationAttributes::empty())
+            .unwrap_err();
+        let RegistryError::RejectedOperationApplication(rejection) = error else {
+            panic!("expected provider-attributed operation rejection")
+        };
+        assert_eq!(
+            rejection.source_error().code().as_str(),
+            "tiler.schema.result-limit"
+        );
+    }
+
+    #[test]
+    fn frozen_definition_inspection_is_canonical_and_read_only() {
+        let registry = FrozenSemanticRegistry::standard().unwrap();
+        let operation_keys: Vec<_> = registry
+            .operation_definitions()
+            .map(OperationDefinition::key)
+            .collect();
+        assert!(operation_keys.windows(2).all(|pair| pair[0] < pair[1]));
+        let f32_key = ValueTypeDefinitionKey::Nominal(TypeKey::new("tiler", "f32", 1).unwrap());
+        assert_eq!(
+            registry.value_type_definition(&f32_key).unwrap().key(),
+            &f32_key
+        );
+    }
+
+    #[test]
     fn operation_attributes_require_registered_embedded_type_authority() {
         let registry = SemanticRegistryBuilder::standard()
             .unwrap()
@@ -2099,14 +2456,295 @@ mod tests {
     }
 
     #[test]
+    fn ignored_registration_errors_poison_the_entire_batch_without_replacement() {
+        struct IgnoredDuplicate;
+        impl SemanticRegistryProvider for IgnoredDuplicate {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "ignored-duplicate", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                let key = TypeKey::new("acme", "f8-special", 1).unwrap();
+                registrar.register_value_type(nominal_definition(
+                    key.clone(),
+                    CanonicalValue::unsigned_u32(1),
+                ))?;
+                let _ = registrar
+                    .register_value_type(nominal_definition(key, CanonicalValue::unsigned_u32(2)));
+                Ok(())
+            }
+        }
+
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        assert!(matches!(
+            builder.register_provider(&IgnoredDuplicate),
+            Err(RegistryError::DuplicateTypeAuthority { .. })
+        ));
+        builder.register_provider(&ExternalProvider).unwrap();
+        assert!(builder.freeze().unwrap().contains(&external_f8()));
+    }
+
+    #[test]
+    fn provider_batch_has_one_aggregate_canonical_byte_budget() {
+        let definitions = (0..17)
+            .map(|index| {
+                nominal_definition(
+                    TypeKey::new("test", format!("large-{index}"), 1).unwrap(),
+                    CanonicalValue::bytes(vec![0_u8; 1_000_000]).unwrap(),
+                )
+            })
+            .collect();
+        let provider = TestProvider {
+            name: "large",
+            revision: 1,
+            definitions,
+            operations: Vec::new(),
+        };
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        assert!(matches!(
+            builder.register_provider(&provider),
+            Err(RegistryError::RegistryResourceExceeded {
+                resource: SemanticRegistryResource::CanonicalBytes,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn canonical_byte_exhaustion_is_sticky_during_registration() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct Probe {
+            observed: Arc<AtomicBool>,
+        }
+        impl SemanticRegistryProvider for Probe {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "canonical-byte-probe", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                for index in 0..=MAX_REGISTRY_DEFINITIONS {
+                    let result = registrar.register_value_type(nominal_definition(
+                        TypeKey::new("test", format!("large-{index}"), 1).unwrap(),
+                        CanonicalValue::bytes(vec![0_u8; 1_000_000]).unwrap(),
+                    ));
+                    if let Err(first) = result {
+                        assert!(matches!(
+                            &first,
+                            RegistryError::RegistryResourceExceeded {
+                                resource: SemanticRegistryResource::CanonicalBytes,
+                                ..
+                            }
+                        ));
+                        self.observed.store(true, Ordering::Relaxed);
+                        let later = registrar
+                            .register_value_type(nominal_definition(
+                                TypeKey::new("test", "after-limit", 1).unwrap(),
+                                CanonicalValue::boolean(true),
+                            ))
+                            .unwrap_err();
+                        assert_eq!(later, first);
+                        return Ok(());
+                    }
+                }
+                panic!("canonical byte budget should fail before count exhaustion")
+            }
+        }
+
+        let observed = Arc::new(AtomicBool::new(false));
+        let mut builder = SemanticRegistryBuilder::new();
+        let error = builder
+            .register_provider(&Probe {
+                observed: Arc::clone(&observed),
+            })
+            .unwrap_err();
+        assert!(observed.load(Ordering::Relaxed));
+        assert!(matches!(
+            error,
+            RegistryError::RegistryResourceExceeded {
+                resource: SemanticRegistryResource::CanonicalBytes,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn registry_count_exhaustion_is_sticky_before_staging_the_excess_item() {
+        struct CountOverflow;
+        impl SemanticRegistryProvider for CountOverflow {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "count-overflow", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                for index in 0..=MAX_REGISTRY_DEFINITIONS {
+                    let result = registrar.register_value_type(nominal_definition(
+                        TypeKey::new("count", format!("type-{index}"), 1).unwrap(),
+                        CanonicalValue::boolean(true),
+                    ));
+                    if index < MAX_REGISTRY_DEFINITIONS {
+                        result.unwrap();
+                    } else {
+                        let first = result.unwrap_err();
+                        assert_eq!(
+                            first,
+                            RegistryError::RegistryResourceExceeded {
+                                resource: SemanticRegistryResource::TypeDefinitions,
+                                limit: MAX_REGISTRY_DEFINITIONS,
+                                actual: MAX_REGISTRY_DEFINITIONS + 1,
+                            }
+                        );
+                        let later = registrar
+                            .register_value_type(nominal_definition(
+                                TypeKey::new("count", "after-limit", 1).unwrap(),
+                                CanonicalValue::boolean(true),
+                            ))
+                            .unwrap_err();
+                        assert_eq!(later, first);
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        let mut builder = SemanticRegistryBuilder::new();
+        assert_eq!(
+            builder.register_provider(&CountOverflow),
+            Err(RegistryError::RegistryResourceExceeded {
+                resource: SemanticRegistryResource::TypeDefinitions,
+                limit: MAX_REGISTRY_DEFINITIONS,
+                actual: MAX_REGISTRY_DEFINITIONS + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn ignored_partial_marked_registration_poison_is_transactional() {
+        struct PartialMarked;
+        impl SemanticRegistryProvider for PartialMarked {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "partial-marked", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                registrar.bind_marker::<ExternalF8>(F32::resolved_type())?;
+                let _ = registrar.register_marked_value_type::<ExternalF8>(
+                    nominal_definition(
+                        TypeKey::new("acme", "f8-special", 1).unwrap(),
+                        CanonicalValue::boolean(false),
+                    ),
+                    external_f8(),
+                );
+                Ok(())
+            }
+        }
+
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        assert!(matches!(
+            builder.register_provider(&PartialMarked),
+            Err(RegistryError::DuplicateMarker { .. })
+        ));
+        builder.register_provider(&ExternalProvider).unwrap();
+        assert!(builder.freeze().unwrap().contains(&external_f8()));
+    }
+
+    #[test]
+    fn marker_root_failure_order_is_independent_of_hash_iteration() {
+        enum MarkerA {}
+        impl ValueTypeMarker for MarkerA {}
+        enum MarkerZ {}
+        impl ValueTypeMarker for MarkerZ {}
+
+        struct MissingMarkers;
+        impl SemanticRegistryProvider for MissingMarkers {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "missing-markers", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                registrar.bind_marker::<MarkerZ>(ResolvedValueType::nominal(
+                    TypeKey::new("test", "z-missing", 1).unwrap(),
+                ))?;
+                registrar.bind_marker::<MarkerA>(ResolvedValueType::nominal(
+                    TypeKey::new("test", "a-missing", 1).unwrap(),
+                ))
+            }
+        }
+
+        for _ in 0..32 {
+            let mut builder = SemanticRegistryBuilder::standard().unwrap();
+            builder.register_provider(&MissingMarkers).unwrap();
+            let error = builder.freeze().unwrap_err();
+            assert_eq!(
+                error,
+                RegistryError::UnregisteredTypeAuthority {
+                    key: Arc::new(ValueTypeDefinitionKey::Nominal(
+                        TypeKey::new("test", "a-missing", 1).unwrap(),
+                    )),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn existing_marker_collision_order_is_canonical() {
+        enum MarkerA {}
+        impl ValueTypeMarker for MarkerA {}
+        enum MarkerZ {}
+        impl ValueTypeMarker for MarkerZ {}
+
+        struct Collisions;
+        impl SemanticRegistryProvider for Collisions {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "collisions", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), RegistryError> {
+                registrar.bind_marker::<MarkerZ>(F32::resolved_type())?;
+                registrar.bind_marker::<MarkerA>(external_f8())
+            }
+        }
+
+        for _ in 0..32 {
+            let mut builder = SemanticRegistryBuilder::standard().unwrap();
+            builder.register_provider(&ExternalProvider).unwrap();
+            assert_eq!(
+                builder.register_provider(&Collisions),
+                Err(RegistryError::DuplicateResolvedTypeMarker {
+                    resolved_type: Arc::new(external_f8()),
+                })
+            );
+        }
+    }
+
+    #[test]
     fn family_validator_can_reject_a_structurally_valid_instance() {
         struct Reject;
         impl ValueTypeInstanceValidator for Reject {
             fn validate(&self, _: &ResolvedValueType) -> Result<(), TypeInstanceError> {
                 Err(TypeInstanceError::new(
-                    "unsupported-component",
+                    ProviderDiagnosticCode::new("unsupported-component").unwrap(),
                     "the component is not a real scalar",
-                ))
+                )
+                .unwrap())
             }
         }
 
@@ -2143,6 +2781,34 @@ mod tests {
             registry.validate_type(&value),
             Err(RegistryError::RejectedTypeInstance(_))
         ));
+    }
+
+    #[test]
+    fn invalid_type_instance_diagnostic_is_a_typed_causal_contract_failure() {
+        let cause = ProviderDiagnosticError::MessageTooLong {
+            bytes: super::super::operation::MAX_PROVIDER_DIAGNOSTIC_MESSAGE_BYTES + 1,
+        };
+        let error = TypeInstanceError::from(cause.clone());
+        assert_eq!(error.code().as_str(), "tiler.provider.invalid-diagnostic");
+        assert_eq!(error.provider_contract_failure(), Some(&cause));
+        let source = std::error::Error::source(&error).unwrap();
+        assert_eq!(
+            source.downcast_ref::<ProviderDiagnosticError>(),
+            Some(&cause)
+        );
+
+        let provider_validator = || -> Result<(), TypeInstanceError> {
+            Err(TypeInstanceError::new(
+                ProviderDiagnosticCode::new("test.validator").unwrap(),
+                "",
+            )?)
+        };
+        assert_eq!(
+            provider_validator()
+                .unwrap_err()
+                .provider_contract_failure(),
+            Some(&ProviderDiagnosticError::EmptyMessage)
+        );
     }
 
     #[test]

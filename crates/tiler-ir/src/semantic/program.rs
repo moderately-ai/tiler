@@ -17,8 +17,8 @@ use super::interface::{
     ProgramOutput, ProgramOutputRef, TypedProgramOutputRef,
 };
 use super::operation::{
-    OperationAttributes, OperationData, OperationRef, ResultIndex, ValueData, ValueDefinition,
-    ValueFact, ValueRef,
+    MAX_OPERATION_OPERANDS, OperationAttributes, OperationData, OperationRef, ResultIndex,
+    ValueData, ValueDefinition, ValueFact, ValueRef,
 };
 use super::registry::{
     FrozenSemanticRegistry, SemanticAdmissionProvenanceIdentity,
@@ -27,7 +27,7 @@ use super::registry::{
 use super::shape_evidence::{SameShape, ShapeWitness, ShapedValue};
 use super::types::ResolvedValueType;
 
-/// A verified, immutable semantic program for the bounded f32 prototype.
+/// A verified, immutable semantic tensor program.
 #[derive(Clone, Debug)]
 pub struct SemanticProgram {
     pub(super) data: Arc<ProgramData>,
@@ -668,12 +668,12 @@ impl SemanticProgramBuilder {
     /// Returns the exact failure together with the intact builder when
     /// validation or completed-owner allocation fails.
     pub fn build(self) -> Result<SemanticProgram, ProgramBuildError> {
-        self.build_with_completed_owner(next_graph_id())
+        self.build_with_owner_allocator(next_graph_id)
     }
 
-    fn build_with_completed_owner(
+    fn build_with_owner_allocator(
         mut self,
-        completed_owner: Option<GraphId>,
+        allocate_owner: impl FnOnce() -> Option<GraphId>,
     ) -> Result<SemanticProgram, ProgramBuildError> {
         let (reached_definitions, admission_provenance) =
             match self.validate_and_project_authority() {
@@ -685,7 +685,7 @@ impl SemanticProgramBuilder {
                     });
                 }
             };
-        let Some(completed_owner) = completed_owner else {
+        let Some(completed_owner) = allocate_owner() else {
             return Err(ProgramBuildError {
                 builder: Box::new(self),
                 failure: ProgramBuildFailure::GraphIdentityExhausted,
@@ -721,6 +721,12 @@ impl SemanticProgramBuilder {
     where
         F: FnOnce(&FrozenSemanticRegistry, &[ValueFact]) -> Result<(), BuildError>,
     {
+        if operands.len() > MAX_OPERATION_OPERANDS as usize {
+            return Err(BuildError::TooManyOperationOperands {
+                actual: operands.len(),
+                limit: MAX_OPERATION_OPERANDS,
+            });
+        }
         let operand_indices: Vec<_> = operands
             .iter()
             .enumerate()
@@ -728,7 +734,12 @@ impl SemanticProgramBuilder {
                 self.value_index(
                     *operand,
                     ValueRole::OperationOperand {
-                        index: u32::try_from(index).expect("operation arity was admitted"),
+                        index: u32::try_from(index).map_err(|_| {
+                            BuildError::TooManyOperationOperands {
+                                actual: operands.len(),
+                                limit: MAX_OPERATION_OPERANDS,
+                            }
+                        })?,
                     },
                 )
             })
@@ -1211,8 +1222,9 @@ mod tests {
         AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, F32, F32Add,
         F32Constant, F32Multiply, NormativeDefinitionRef, OpKey, OperationArity,
         OperationAttributeSchema, OperationConformance, OperationDefinition,
-        OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
-        OperationSchema, ProviderIdentity, QuantSchemeKey, SemanticGraphIdentity,
+        OperationDefinitionFacts, OperationEffect, OperationInferenceError,
+        OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
+        ProviderDiagnosticCode, ProviderIdentity, QuantSchemeKey, SemanticGraphIdentity,
         SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
         StrictSerialF32Sum, TypeArguments, TypeDefinitionFacts, TypeKey, ValueTypeDefinition,
         ValueTypeDefinitionKey, add_f32_op,
@@ -1269,16 +1281,19 @@ mod tests {
     impl OperationInferencer for Identity {
         fn infer(
             &self,
-            operands: &[ValueFact],
-            attributes: &OperationAttributes,
-        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            let operands = request.operands();
+            let attributes = request.attributes();
             if operands.len() == 1 && attributes.fields().is_empty() {
-                Ok(vec![operands[0].clone()])
+                outputs.try_push(operands[0].clone())
             } else {
                 Err(OperationInferenceError::new(
-                    "test.identity.signature",
+                    ProviderDiagnosticCode::new("test.identity.signature").unwrap(),
                     "identity requires one operand and no attributes",
-                ))
+                )
+                .unwrap())
             }
         }
     }
@@ -1287,10 +1302,12 @@ mod tests {
     impl OperationInferencer for Pair {
         fn infer(
             &self,
-            operands: &[ValueFact],
-            _: &OperationAttributes,
-        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
-            Ok(vec![operands[0].clone(), operands[0].clone()])
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            let operands = request.operands();
+            outputs.try_push(operands[0].clone())?;
+            outputs.try_push(operands[0].clone())
         }
     }
 
@@ -1298,19 +1315,22 @@ mod tests {
     impl OperationInferencer for DefaultedIdentity {
         fn infer(
             &self,
-            operands: &[ValueFact],
-            attributes: &OperationAttributes,
-        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            let operands = request.operands();
+            let attributes = request.attributes();
             let field = AttributeFieldId::new(7);
             if operands.len() == 1
                 && attributes.get(field) == Some(&CanonicalValue::unsigned_u32(4))
             {
-                Ok(vec![operands[0].clone()])
+                outputs.try_push(operands[0].clone())
             } else {
                 Err(OperationInferenceError::new(
-                    "test.defaulted-identity.signature",
+                    ProviderDiagnosticCode::new("test.defaulted-identity.signature").unwrap(),
                     "defaulted identity requires one operand and the resolved default",
-                ))
+                )
+                .unwrap())
             }
         }
     }
@@ -1406,10 +1426,10 @@ mod tests {
     impl OperationInferencer for AttributedIdentity {
         fn infer(
             &self,
-            operands: &[ValueFact],
-            _: &OperationAttributes,
-        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
-            Ok(vec![operands[0].clone()])
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            outputs.try_push(request.operands()[0].clone())
         }
     }
 
@@ -1726,7 +1746,7 @@ mod tests {
         let value = constant(&mut builder, 1.0).unwrap();
         builder.output(output_key("result"), value).unwrap();
 
-        let error = builder.build_with_completed_owner(None).unwrap_err();
+        let error = builder.build_with_owner_allocator(|| None).unwrap_err();
         assert!(matches!(
             error.failure(),
             ProgramBuildFailure::GraphIdentityExhausted
@@ -1738,6 +1758,41 @@ mod tests {
         let sum = add(&mut builder, value, increment).unwrap();
         builder.output(output_key("sum"), sum).unwrap();
         assert_eq!(builder.build().unwrap().output_count(), 2);
+    }
+
+    #[test]
+    fn failed_validation_does_not_advance_completed_owner_allocator() {
+        let builder = SemanticProgramBuilder::try_standard().unwrap();
+        let calls = std::cell::Cell::new(0_usize);
+        let error = builder
+            .build_with_owner_allocator(|| {
+                calls.set(calls.get() + 1);
+                None
+            })
+            .unwrap_err();
+        assert_eq!(calls.get(), 0);
+        assert!(matches!(
+            error.failure(),
+            ProgramBuildFailure::Validation(_)
+        ));
+    }
+
+    #[test]
+    fn oversized_operand_lists_fail_before_handle_conversion_or_mutation() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let value = constant(&mut builder, 1.0).unwrap().erase();
+        let operations = builder.operations.len();
+        let values = builder.values.len();
+        let operands = vec![value; MAX_OPERATION_OPERANDS as usize + 1];
+        assert_eq!(
+            builder.apply(add_f32_op(), OperationAttributes::empty(), &operands),
+            Err(BuildError::TooManyOperationOperands {
+                actual: MAX_OPERATION_OPERANDS as usize + 1,
+                limit: MAX_OPERATION_OPERANDS,
+            })
+        );
+        assert_eq!(builder.operations.len(), operations);
+        assert_eq!(builder.values.len(), values);
     }
 
     #[test]
@@ -2212,7 +2267,7 @@ mod tests {
                     super::super::registry::RegistryError::RejectedOperationApplication(
                         rejection
                     )
-                )) if rejection.source_error().code() == code
+                )) if rejection.source_error().code().as_str() == code
             )
         }
 
@@ -2466,5 +2521,58 @@ mod tests {
         ));
         assert_eq!(builder.operations.len(), operation_count);
         assert_eq!(builder.values.len(), value_count);
+    }
+
+    #[test]
+    fn panicking_inferencer_cannot_commit_graph_state() {
+        struct PanicInferencer;
+        impl OperationInferencer for PanicInferencer {
+            fn infer(
+                &self,
+                _request: OperationInferenceRequest<'_>,
+                _outputs: &mut OperationInferenceOutputs<'_>,
+            ) -> Result<(), OperationInferenceError> {
+                panic!("provider panic")
+            }
+        }
+
+        struct PanicProvider;
+        impl SemanticRegistryProvider for PanicProvider {
+            fn identity(&self) -> ProviderIdentity {
+                ProviderIdentity::new("test", "panic", 1).unwrap()
+            }
+
+            fn register(
+                &self,
+                registrar: &mut SemanticRegistryRegistrar<'_>,
+            ) -> Result<(), super::super::RegistryError> {
+                registrar.register_operation(test_operation("panic", 1, Arc::new(PanicInferencer)))
+            }
+        }
+
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(&PanicProvider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input::<F32>(input_key("x"), Shape::from_dims([2]))
+            .unwrap();
+        let operation_count = builder.operations.len();
+        let value_count = builder.values.len();
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = builder.apply(
+                OpKey::new("test", "panic", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            );
+        }));
+        assert!(panic.is_err());
+        assert_eq!(builder.operations.len(), operation_count);
+        assert_eq!(builder.values.len(), value_count);
+
+        let result = add(&mut builder, input, input).unwrap();
+        assert_eq!(result.erase().index.as_usize(), value_count);
+        assert_eq!(builder.operations.len(), operation_count + 1);
+        assert_eq!(builder.values.len(), value_count + 1);
     }
 }

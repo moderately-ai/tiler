@@ -774,7 +774,7 @@ fn read_structural_keys_are_governed_before_access_commit() {
             .tensor(
                 TensorRole::Input,
                 test_type(),
-                Shape::from_dims(std::iter::repeat_n(1, MAX_TENSOR_RANK)),
+                Shape::try_from_dims(std::iter::repeat_n(1, MAX_TENSOR_RANK)).unwrap(),
             )
             .unwrap();
         let zero = builder.constant(0_i128.into()).unwrap();
@@ -796,7 +796,7 @@ fn read_structural_keys_are_governed_before_access_commit() {
         .tensor(
             TensorRole::Input,
             test_type(),
-            Shape::from_dims(std::iter::repeat_n(1, MAX_TENSOR_RANK)),
+            Shape::try_from_dims(std::iter::repeat_n(1, MAX_TENSOR_RANK)).unwrap(),
         )
         .unwrap();
     let zero = builder.constant(0_i128.into()).unwrap();
@@ -1219,7 +1219,7 @@ fn duplicate_output_roots_are_rejected_transactionally() {
 fn boundary_rank_budget_failure_leaves_builder_usable() {
     let (_, registry) = registries();
     let mut builder = IndexRegionBuilder::new(registry).unwrap();
-    let oversized = Shape::from_dims(std::iter::repeat_n(1, MAX_TENSOR_RANK + 1));
+    let oversized = Shape::try_from_dims(std::iter::repeat_n(1, MAX_TENSOR_RANK + 1)).unwrap();
     assert!(matches!(
         builder.tensor(TensorRole::Input, test_type(), oversized),
         Err(IndexBuildError::StructuralLimit { .. })

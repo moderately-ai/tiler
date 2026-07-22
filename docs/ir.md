@@ -258,6 +258,14 @@ retained. Optimizer, evaluator, scheduler, and backend capabilities belong to
 later layer-specific registries; a higher-level compilation session may compose
 them without making `SemanticProgram` own executable provider machinery.
 
+Registration is fail-sticky within each provider batch: an ignored duplicate or
+partial marked-registration error still prevents the entire batch from
+committing. Registry counts and aggregate canonical bytes are checked before
+retention, and freeze diagnostics are deterministic. The frozen snapshot offers
+only borrowed definition lookup and canonical-key-order iteration. Definitions,
+schemas, and bounded arities are read-only; executable validators and
+inferencers do not become mutable public authority.
+
 Frozen-registry snapshot identity includes the sorted semantic definitions and
 stable provider revisions but excludes marker `TypeId`s and Rust names.
 `SemanticGraphIdentity` includes the complete resolved type of every retained
@@ -553,6 +561,23 @@ dynamic plugin loading, sandboxing, or automatic discovery of consumer-local
 registrations by a separately compiled proc macro. Registry, canonical-data,
 provider-identity, threading, panic, and rewrite-transaction invariants are
 specified in [Operation extensions](operation-extensions.md).
+
+The implemented semantic callback receives host-validated operands and resolved
+canonical attributes through an immutable request. It writes ordered result
+facts through a host-owned bounded writer rather than returning an unrestricted
+`Vec`. Maximum arity and aggregate canonical fact-byte limits are checked before
+retention; a failed push poisons finalization, callback failure discards staged
+facts, and minimum arity plus complete registry admission are rechecked before
+graph mutation. These canonical-byte limits govern accepted identity work, not
+exact allocator memory. Trusted provider code can still allocate, loop, panic,
+or use unsafe code outside the host-owned data boundary.
+
+Provider diagnostic codes are validated bounded newtypes and clone shared
+storage cheaply. Operation-inference and type-instance errors remain distinct;
+each accepts a bounded dynamic message. Invalid message construction is exposed
+as a typed provider-contract cause under a reserved host diagnostic, without
+truncation. Independent later failures remain explicit secondary evidence and
+are not reported through Rust's causal `Error::source` chain.
 
 ### Graph and semantic verifier
 

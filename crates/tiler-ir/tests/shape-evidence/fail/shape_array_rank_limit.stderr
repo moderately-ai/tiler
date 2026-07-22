@@ -1,0 +1,21 @@
+error[E0080]: evaluation panicked: shape array exceeds MAX_SHAPE_RANK
+ --> $RUST/core/src/panic.rs
+  |
+  = note: evaluation of `tiler_ir::shape::Shape::from_dims::<4097>::{constant#1}` failed here
+  |
+ ::: src/shape.rs
+  |
+  |         const { assert!(N <= MAX_SHAPE_RANK, "shape array exceeds MAX_SHAPE_RANK") };
+  |                 ------------------------------------------------------------------ in this macro invocation
+
+note: erroneous constant encountered
+ --> src/shape.rs
+  |
+  |         const { assert!(N <= MAX_SHAPE_RANK, "shape array exceeds MAX_SHAPE_RANK") };
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn Shape::from_dims::<4097>`
+ --> tests/shape-evidence/fail/shape_array_rank_limit.rs:4:13
+  |
+4 |     let _ = Shape::from_dims([1; 4_097]);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

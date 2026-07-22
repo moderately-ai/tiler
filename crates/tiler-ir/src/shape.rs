@@ -1,11 +1,44 @@
 //! Target-independent fixed shape vocabulary.
 
 use std::collections::BTreeSet;
+use std::error::Error;
 use std::fmt;
 
 mod evidence;
 
 pub use evidence::{Rank, ShapeEvidence, ShapeExpectation, StaticShape};
+
+// Governed implementation limit. Keep numeric limits private; typed dynamic
+// failures expose both the rejected rank and the active limit.
+const MAX_SHAPE_RANK: usize = 4_096;
+
+/// Failure to construct a bounded target-independent shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ShapeError {
+    /// The supplied rank exceeded the governed bound.
+    RankTooLarge {
+        /// First rejected rank.
+        rank: usize,
+        /// Governed maximum.
+        limit: usize,
+    },
+}
+
+impl fmt::Display for ShapeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RankTooLarge { rank, limit } => {
+                write!(
+                    formatter,
+                    "tensor rank {rank} exceeds governed limit {limit}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for ShapeError {}
 
 /// The size of one logical tensor axis.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -61,16 +94,55 @@ impl fmt::Display for Shape {
 }
 
 impl Shape {
-    /// Creates a shape from outermost to innermost extents.
+    /// Creates a statically bounded shape from outermost to innermost extents.
+    ///
+    /// A fixed array beyond the governed rank profile is rejected during
+    /// compilation. Use [`Self::try_new`] for dynamically produced extents.
     #[must_use]
-    pub fn new(extents: impl IntoIterator<Item = Extent>) -> Self {
-        Self(extents.into_iter().collect())
+    pub fn new<const N: usize>(extents: [Extent; N]) -> Self {
+        const { assert!(N <= MAX_SHAPE_RANK, "shape array exceeds MAX_SHAPE_RANK") };
+        Self(Vec::from(extents))
     }
 
-    /// Creates a shape from ordinary dimension values.
+    /// Creates a statically bounded shape from ordinary dimension values.
+    ///
+    /// A fixed array beyond the governed rank profile is rejected during
+    /// compilation. Use [`Self::try_from_dims`] for dynamically produced dimensions.
     #[must_use]
-    pub fn from_dims(extents: impl IntoIterator<Item = u64>) -> Self {
-        Self::new(extents.into_iter().map(Extent::new))
+    pub fn from_dims<const N: usize>(extents: [u64; N]) -> Self {
+        const { assert!(N <= MAX_SHAPE_RANK, "shape array exceeds MAX_SHAPE_RANK") };
+        Self(Vec::from(extents).into_iter().map(Extent::new).collect())
+    }
+
+    /// Tries to collect arbitrary extents into a bounded shape.
+    ///
+    /// The iterator is stopped after the first over-limit item; even an
+    /// infinite iterator therefore returns a typed error after bounded work.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShapeError::RankTooLarge`] when the rank exceeds the governed bound.
+    pub fn try_new(extents: impl IntoIterator<Item = Extent>) -> Result<Self, ShapeError> {
+        let mut retained = Vec::new();
+        for extent in extents.into_iter().take(MAX_SHAPE_RANK.saturating_add(1)) {
+            if retained.len() == MAX_SHAPE_RANK {
+                return Err(ShapeError::RankTooLarge {
+                    rank: MAX_SHAPE_RANK.saturating_add(1),
+                    limit: MAX_SHAPE_RANK,
+                });
+            }
+            retained.push(extent);
+        }
+        Ok(Self(retained))
+    }
+
+    /// Tries to collect arbitrary dimension values into a bounded shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShapeError::RankTooLarge`] when the rank exceeds the governed bound.
+    pub fn try_from_dims(extents: impl IntoIterator<Item = u64>) -> Result<Self, ShapeError> {
+        Self::try_new(extents.into_iter().map(Extent::new))
     }
 
     /// Returns the logical rank.
@@ -123,7 +195,7 @@ impl Shape {
 
 #[cfg(test)]
 mod tests {
-    use super::Shape;
+    use super::{Extent, MAX_SHAPE_RANK, Shape, ShapeError};
 
     #[test]
     fn zero_extent_makes_element_count_zero_regardless_of_order() {
@@ -134,5 +206,16 @@ mod tests {
     #[test]
     fn unrepresentable_nonempty_element_count_is_a_reference_boundary() {
         assert_eq!(Shape::from_dims([u64::MAX, 2]).element_count(), None);
+    }
+
+    #[test]
+    fn fallible_iterator_construction_stops_infinite_rank() {
+        assert_eq!(
+            Shape::try_new(std::iter::repeat(Extent::new(1))),
+            Err(ShapeError::RankTooLarge {
+                rank: MAX_SHAPE_RANK + 1,
+                limit: MAX_SHAPE_RANK,
+            })
+        );
     }
 }

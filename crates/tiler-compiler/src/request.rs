@@ -553,13 +553,17 @@ mod tests {
     use super::*;
     use tiler_ir::semantic::{
         CanonicalValue, CanonicalValueKind, F32Add, F32Constant, F32Multiply,
-        NormativeDefinitionRef, OperationArity, OperationAttributeSchema, OperationAttributes,
-        OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
-        OperationInferenceError, OperationInferencer, OperationSchema, ProviderIdentity,
+        NormativeDefinitionRef, OperationArity, OperationAttributeSchema, OperationConformance,
+        OperationDefinition, OperationDefinitionFacts, OperationEffect, OperationInferenceError,
+        OperationInferencer, OperationSchema, ProviderDiagnosticCode, ProviderIdentity,
         RegistryError, SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
         SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, ValueFact,
         ValueTypeDefinition, ValueTypeDefinitionKey,
     };
+
+    fn diagnostic_code(value: &str) -> ProviderDiagnosticCode {
+        ProviderDiagnosticCode::new(value).unwrap()
+    }
 
     fn program() -> SemanticProgram {
         program_with_builder(SemanticProgramBuilder::try_standard().unwrap())
@@ -590,11 +594,15 @@ mod tests {
     impl OperationInferencer for TestOperation {
         fn infer(
             &self,
-            operands: &[ValueFact],
-            attributes: &OperationAttributes,
-        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            request: tiler_ir::semantic::OperationInferenceRequest<'_>,
+            outputs: &mut tiler_ir::semantic::OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            let operands = request.operands();
+            let attributes = request.attributes();
             match self {
-                Self::Constant => Ok(vec![ValueFact::new(F32::resolved_type(), Shape::new([]))]),
+                Self::Constant => {
+                    outputs.try_push(ValueFact::new(F32::resolved_type(), Shape::new([])))
+                }
                 Self::Binary => {
                     let left = operands[0].shape();
                     let right = operands[1].shape();
@@ -604,11 +612,12 @@ mod tests {
                         left.clone()
                     } else {
                         return Err(OperationInferenceError::new(
-                            "test.binary.shape",
+                            diagnostic_code("test.binary.shape"),
                             "operands must have equal shapes or include one scalar",
-                        ));
+                        )
+                        .unwrap());
                     };
-                    Ok(vec![ValueFact::new(F32::resolved_type(), shape)])
+                    outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
                 }
                 Self::Sum => {
                     let Some(CanonicalValueView::Sequence(values)) = attributes
@@ -616,9 +625,10 @@ mod tests {
                         .map(CanonicalValue::view)
                     else {
                         return Err(OperationInferenceError::new(
-                            "test.sum.axes",
+                            diagnostic_code("test.sum.axes"),
                             "sum axes must be a sequence",
-                        ));
+                        )
+                        .unwrap());
                     };
                     let axes = values
                         .iter()
@@ -628,20 +638,22 @@ mod tests {
                                 bits,
                             } => u32::try_from(bits).map(Axis::new).map_err(|_| {
                                 OperationInferenceError::new(
-                                    "test.sum.axis-width",
+                                    diagnostic_code("test.sum.axis-width"),
                                     "sum axis exceeds u32",
                                 )
+                                .unwrap()
                             }),
                             _ => Err(OperationInferenceError::new(
-                                "test.sum.axis-kind",
+                                diagnostic_code("test.sum.axis-kind"),
                                 "sum axes must be u32 values",
-                            )),
+                            )
+                            .unwrap()),
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    Ok(vec![ValueFact::new(
+                    outputs.try_push(ValueFact::new(
                         F32::resolved_type(),
                         operands[0].shape().without_axes(&axes),
-                    )])
+                    ))
                 }
             }
         }
