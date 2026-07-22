@@ -1,7 +1,7 @@
 ---
 id: reconcile-implementation-work-graph-after-authority-audit
 title: Reconcile the implementation work graph after the authority audit
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
 related: []
@@ -9,6 +9,9 @@ scopes: [project/tickets, contracts/navigation, contracts/optimizer, implementat
 shared_scopes: []
 paths: []
 tags: [maintenance, architecture, implementation]
+claimed_from: todo
+assignee: gpt-sol-reconcile
+lease_expires_at: 1784735955
 ---
 
 Apply the adversarial ticket-DAG, implementation-coverage, and ticket-quality
