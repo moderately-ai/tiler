@@ -163,7 +163,10 @@ enum TensorPayload {
 
 /// An owned, exact, dense row-major tensor used by the reference evaluator.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Tensor {
+pub struct Tensor(Arc<TensorData>);
+
+#[derive(Debug, Eq, PartialEq)]
+struct TensorData {
     resolved_type: ResolvedValueType,
     shape: Shape,
     payload: TensorPayload,
@@ -215,11 +218,11 @@ impl Tensor {
                 actual: bytes,
             });
         }
-        Ok(Self {
+        Ok(Self(Arc::new(TensorData {
             resolved_type,
             shape,
             payload: TensorPayload::Dense(elements),
-        })
+        })))
     }
 
     /// Creates a compound tensor from ordered stable-role component tensors.
@@ -245,13 +248,16 @@ impl Tensor {
                 actual: logical_elements,
             });
         }
-        let mut resources = ReferenceWork::default();
+        let mut resources = ReferenceWork {
+            elements: logical_elements,
+            ..ReferenceWork::default()
+        };
         validate_compound_resources(&components, 1, &mut resources)?;
-        Ok(Self {
+        Ok(Self(Arc::new(TensorData {
             resolved_type,
             shape,
             payload: TensorPayload::Compound(components),
-        })
+        })))
     }
 
     /// Creates a rank-zero dense tensor with one exact element.
@@ -268,23 +274,27 @@ impl Tensor {
 
     /// Returns the exact shape-independent semantic value type.
     #[must_use]
-    pub const fn resolved_type(&self) -> &ResolvedValueType {
-        &self.resolved_type
+    pub fn resolved_type(&self) -> &ResolvedValueType {
+        &self.0.resolved_type
     }
 
     /// Returns the logical shape.
     #[must_use]
-    pub const fn shape(&self) -> &Shape {
-        &self.shape
+    pub fn shape(&self) -> &Shape {
+        &self.0.shape
     }
 
     /// Returns the exact payload representation.
     #[must_use]
     pub fn payload(&self) -> TensorPayloadView<'_> {
-        match &self.payload {
+        match &self.0.payload {
             TensorPayload::Dense(elements) => TensorPayloadView::Dense(elements),
             TensorPayload::Compound(components) => TensorPayloadView::Compound(components),
         }
+    }
+
+    fn storage_id(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
     }
 }
 
@@ -442,7 +452,7 @@ impl<'a> ReferenceEvaluationRequest<'a> {
 pub struct ReferenceOutputs {
     expected: usize,
     values: Vec<Tensor>,
-    retained_work: ReferenceWork,
+    retention: EvaluationRetention,
     failure: Option<ReferenceOperationError>,
 }
 
@@ -452,18 +462,18 @@ impl fmt::Debug for ReferenceOutputs {
             .debug_struct("ReferenceOutputs")
             .field("expected", &self.expected)
             .field("written", &self.values.len())
-            .field("retained_work", &self.retained_work)
+            .field("retained_work", &self.retention.work)
             .field("failed", &self.failure.is_some())
             .finish()
     }
 }
 
 impl ReferenceOutputs {
-    fn new(expected: usize, retained_work: ReferenceWork) -> Self {
+    fn new(expected: usize, retention: EvaluationRetention) -> Self {
         Self {
             expected,
             values: Vec::with_capacity(expected),
-            retained_work,
+            retention,
             failure: None,
         }
     }
@@ -485,10 +495,9 @@ impl ReferenceOutputs {
                 actual,
             }));
         }
-        let added = tensor_work(&value).map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
-        let next =
-            checked_output_work(self.retained_work, added).map_err(|error| self.fail(error))?;
-        self.retained_work = next;
+        if let Err(error) = reserve_output_work(&mut self.retention, &value) {
+            return Err(self.fail(error));
+        }
         self.values.push(value);
         Ok(())
     }
@@ -1338,7 +1347,7 @@ impl ReferenceEvaluator {
                 .iter()
                 .map(|value| get_value(&values, *value))
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut output_writer = ReferenceOutputs::new(results.len(), retained_work);
+            let mut output_writer = ReferenceOutputs::new(results.len(), retained_work.clone());
             let callback = capability.implementation.evaluate(
                 ReferenceEvaluationRequest {
                     operands: &operand_values,
@@ -1399,7 +1408,7 @@ impl ReferenceEvaluator {
         &self,
         program: &SemanticProgram,
         inputs: &[InputBinding<'_>],
-    ) -> Result<(HashMap<ValueId, Tensor>, ReferenceWork), EvaluationError> {
+    ) -> Result<(HashMap<ValueId, Tensor>, EvaluationRetention), EvaluationError> {
         if inputs.len() != program.input_count() {
             return Err(EvaluationError::InputCount {
                 expected: program.input_count(),
@@ -1408,7 +1417,7 @@ impl ReferenceEvaluator {
         }
 
         let mut values = HashMap::with_capacity(program.value_count());
-        let mut retained_work = ReferenceWork::default();
+        let mut retained_work = EvaluationRetention::default();
         for (index, (declaration, binding)) in program.inputs().zip(inputs).enumerate() {
             if declaration.key() != binding.key {
                 return Err(EvaluationError::InputKey {
@@ -1514,12 +1523,21 @@ fn binary(
 }
 
 fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, ReferenceOperationError> {
-    let reduced: Vec<usize> = axes
-        .iter()
-        .map(|axis| usize::try_from(axis.get()).expect("verified axis fits usize"))
-        .collect();
+    let mut reduced_mask = vec![false; input.shape().rank()];
+    let mut reduced = Vec::with_capacity(axes.len());
+    for requested_axis in axes {
+        let dimension = usize::try_from(requested_axis.get())
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let Some(is_reduced) = reduced_mask.get_mut(dimension) else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        if std::mem::replace(is_reduced, true) {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        reduced.push(dimension);
+    }
     let survivor: Vec<usize> = (0..input.shape().rank())
-        .filter(|axis| !reduced.contains(axis))
+        .filter(|axis| !reduced_mask[*axis])
         .collect();
     let output_shape = Shape::try_new(survivor.iter().map(|axis| input.shape().extents()[*axis]))
         .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
@@ -1742,43 +1760,58 @@ struct ReferenceWork {
     components: usize,
 }
 
-fn tensor_work(tensor: &Tensor) -> Result<ReferenceWork, EvaluationError> {
-    let mut work = ReferenceWork {
-        elements: tensor
+#[derive(Clone, Debug, Default)]
+struct EvaluationRetention {
+    work: ReferenceWork,
+    storage_ids: HashSet<usize>,
+}
+
+fn collect_unseen_tensor_work(
+    tensor: &Tensor,
+    retained: &HashSet<usize>,
+    pending: &mut HashSet<usize>,
+    work: &mut ReferenceWork,
+) -> Result<(), EvaluationError> {
+    let storage_id = tensor.storage_id();
+    if retained.contains(&storage_id) || !pending.insert(storage_id) {
+        return Ok(());
+    }
+    work.elements = work.elements.saturating_add(
+        tensor
             .shape()
             .element_count()
             .ok_or(EvaluationError::ShapeTooLarge)?,
-        ..ReferenceWork::default()
-    };
+    );
     match tensor.payload() {
         TensorPayloadView::Dense(elements) => {
-            work.bytes = elements
-                .iter()
-                .map(|element| element.as_bytes().len())
-                .fold(0_usize, usize::saturating_add);
+            work.bytes = work.bytes.saturating_add(
+                elements
+                    .iter()
+                    .map(|element| element.as_bytes().len())
+                    .fold(0_usize, usize::saturating_add),
+            );
         }
         TensorPayloadView::Compound(components) => {
-            work.components = components.len();
+            work.components = work.components.saturating_add(components.len());
             for component in components {
-                let child = tensor_work(component.tensor())?;
-                work.bytes = work.bytes.saturating_add(child.bytes);
-                work.elements = work.elements.saturating_add(child.elements);
-                work.components = work.components.saturating_add(child.components);
+                collect_unseen_tensor_work(component.tensor(), retained, pending, work)?;
             }
         }
     }
-    Ok(work)
+    Ok(())
 }
 
 fn reserve_evaluation_work(
-    retained: &mut ReferenceWork,
+    retention: &mut EvaluationRetention,
     tensor: &Tensor,
 ) -> Result<(), EvaluationError> {
-    let added = tensor_work(tensor)?;
+    let mut added = ReferenceWork::default();
+    let mut pending = HashSet::new();
+    collect_unseen_tensor_work(tensor, &retention.storage_ids, &mut pending, &mut added)?;
     let next = ReferenceWork {
-        bytes: retained.bytes.saturating_add(added.bytes),
-        elements: retained.elements.saturating_add(added.elements),
-        components: retained.components.saturating_add(added.components),
+        bytes: retention.work.bytes.saturating_add(added.bytes),
+        elements: retention.work.elements.saturating_add(added.elements),
+        components: retention.work.components.saturating_add(added.components),
     };
     for (resource, limit, actual) in [
         (
@@ -1805,18 +1838,23 @@ fn reserve_evaluation_work(
             });
         }
     }
-    *retained = next;
+    retention.work = next;
+    retention.storage_ids.extend(pending);
     Ok(())
 }
 
-fn checked_output_work(
-    retained: ReferenceWork,
-    added: ReferenceWork,
-) -> Result<ReferenceWork, ReferenceOperationError> {
+fn reserve_output_work(
+    retention: &mut EvaluationRetention,
+    tensor: &Tensor,
+) -> Result<(), ReferenceOperationError> {
+    let mut added = ReferenceWork::default();
+    let mut pending = HashSet::new();
+    collect_unseen_tensor_work(tensor, &retention.storage_ids, &mut pending, &mut added)
+        .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
     let next = ReferenceWork {
-        bytes: retained.bytes.saturating_add(added.bytes),
-        elements: retained.elements.saturating_add(added.elements),
-        components: retained.components.saturating_add(added.components),
+        bytes: retention.work.bytes.saturating_add(added.bytes),
+        elements: retention.work.elements.saturating_add(added.elements),
+        components: retention.work.components.saturating_add(added.components),
     };
     if next.bytes > MAX_REFERENCE_TENSOR_BYTES {
         return Err(ReferenceOperationError::OutputResourceExceeded {
@@ -1836,7 +1874,9 @@ fn checked_output_work(
             actual: next.components,
         });
     }
-    Ok(next)
+    retention.work = next;
+    retention.storage_ids.extend(pending);
+    Ok(())
 }
 
 fn get_value(
@@ -2749,6 +2789,28 @@ mod tests {
         }
     }
 
+    fn compound_limit_type() -> ResolvedValueType {
+        ResolvedValueType::nominal(TypeKey::new("test", "compound-limit", 1).unwrap())
+    }
+
+    struct CompoundLimitSemanticProvider;
+    impl SemanticRegistryProvider for CompoundLimitSemanticProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "compound-limit-semantics", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), tiler_ir::semantic::RegistryError> {
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(TypeKey::new("test", "compound-limit", 1).unwrap()),
+                NormativeDefinitionRef::new("test compound limit v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::record([]).unwrap()),
+            ))
+        }
+    }
+
     fn attributed_identity_op() -> OpKey {
         OpKey::new("test", "attributed-reference-identity", 1).unwrap()
     }
@@ -2972,6 +3034,37 @@ mod tests {
                 external_u8_type(),
                 ReferenceCapabilityRevision::new(1)?,
                 Arc::new(ExternalU8Validator),
+            )
+        }
+    }
+
+    struct CompoundLimitValidator;
+    impl ReferenceValueValidator for CompoundLimitValidator {
+        fn validate(&self, tensor: &Tensor) -> Result<(), ReferenceValueError> {
+            if tensor.resolved_type() == &compound_limit_type()
+                && matches!(tensor.payload(), TensorPayloadView::Compound([]))
+            {
+                Ok(())
+            } else {
+                Err(ReferenceValueError::InvalidRepresentation)
+            }
+        }
+    }
+
+    struct CompoundLimitReferenceProvider;
+    impl ReferenceRegistryProvider for CompoundLimitReferenceProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "compound-limit-reference", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut ReferenceRegistryRegistrar<'_>,
+        ) -> Result<(), ReferenceRegistryError> {
+            registrar.register_value_type(
+                compound_limit_type(),
+                ReferenceCapabilityRevision::new(1)?,
+                Arc::new(CompoundLimitValidator),
             )
         }
     }
@@ -3732,8 +3825,7 @@ mod tests {
 
     #[test]
     fn compound_and_evaluation_resources_are_bounded_in_aggregate() {
-        let compound_type =
-            ResolvedValueType::nominal(TypeKey::new("test", "compound-limit", 1).unwrap());
+        let compound_type = compound_limit_type();
         let components = |start: u32| {
             (0..(MAX_REFERENCE_COMPONENTS / 2))
                 .map(|offset| {
@@ -3768,6 +3860,47 @@ mod tests {
             }) if actual == MAX_REFERENCE_COMPONENTS + 2
         ));
 
+        let at_limit = Tensor::compound(
+            compound_type.clone(),
+            Shape::from_dims([u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS).unwrap()]),
+            Vec::new(),
+        )
+        .unwrap();
+        let one_more = Tensor::compound(compound_type, Shape::from_dims([1]), Vec::new()).unwrap();
+        let mut retained = EvaluationRetention::default();
+        reserve_evaluation_work(&mut retained, &at_limit).unwrap();
+        assert!(matches!(
+            reserve_evaluation_work(&mut retained, &one_more),
+            Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::EvaluationElements,
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual,
+            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
+        ));
+
+        let mut outputs = ReferenceOutputs::new(
+            1,
+            EvaluationRetention {
+                work: ReferenceWork {
+                    elements: MAX_REFERENCE_TENSOR_ELEMENTS,
+                    ..ReferenceWork::default()
+                },
+                ..EvaluationRetention::default()
+            },
+        );
+        assert!(matches!(
+            outputs.push(one_more),
+            Err(ReferenceOperationError::OutputElementsExceeded {
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual,
+            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
+        ));
+        assert!(outputs.values.is_empty());
+    }
+
+    #[test]
+    fn compound_root_elements_participate_in_the_aggregate_bound() {
+        let compound_type = compound_limit_type();
         assert!(matches!(
             Tensor::compound(
                 compound_type.clone(),
@@ -3782,40 +3915,78 @@ mod tests {
                 actual,
             }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
         ));
+        let scalar_child = Tensor::dense(
+            external_u8_type(),
+            Shape::new([]),
+            vec![ReferenceElement::new([1]).unwrap()],
+        )
+        .unwrap();
+        assert!(matches!(
+            Tensor::compound(
+                compound_type.clone(),
+                Shape::from_dims([u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS).unwrap()]),
+                vec![ReferenceComponent::new(
+                    ReferenceComponentRole::new(1),
+                    scalar_child.clone(),
+                )],
+            ),
+            Err(EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::TensorElements,
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual,
+            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
+        ));
+        Tensor::compound(
+            compound_type,
+            Shape::from_dims([u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS - 1).unwrap()]),
+            vec![ReferenceComponent::new(
+                ReferenceComponentRole::new(1),
+                scalar_child,
+            )],
+        )
+        .unwrap();
+    }
 
-        let at_limit = Tensor::compound(
-            compound_type.clone(),
+    #[test]
+    fn repeated_outputs_share_one_governed_tensor_allocation() {
+        let mut semantics = SemanticRegistryBuilder::standard().unwrap();
+        semantics
+            .register_provider(&CompoundLimitSemanticProvider)
+            .unwrap();
+        let semantics = semantics.freeze().unwrap();
+        let mut graph = SemanticProgramBuilder::try_new(semantics.clone()).unwrap();
+        let input = graph
+            .input_resolved(
+                InputKey::new("value").unwrap(),
+                Shape::from_dims([u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS).unwrap()]),
+                compound_limit_type(),
+            )
+            .unwrap();
+        graph
+            .output_resolved(OutputKey::new("first").unwrap(), input)
+            .unwrap();
+        graph
+            .output_resolved(OutputKey::new("second").unwrap(), input)
+            .unwrap();
+        let program = graph.build().unwrap();
+        let input = Tensor::compound(
+            compound_limit_type(),
             Shape::from_dims([u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS).unwrap()]),
             Vec::new(),
         )
         .unwrap();
-        let one_more = Tensor::compound(compound_type, Shape::from_dims([1]), Vec::new()).unwrap();
-        let mut retained = ReferenceWork::default();
-        reserve_evaluation_work(&mut retained, &at_limit).unwrap();
-        assert!(matches!(
-            reserve_evaluation_work(&mut retained, &one_more),
-            Err(EvaluationError::ResourceExceeded {
-                resource: ReferenceResource::EvaluationElements,
-                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
-                actual,
-            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
-        ));
-
-        let mut outputs = ReferenceOutputs::new(
-            1,
-            ReferenceWork {
-                elements: MAX_REFERENCE_TENSOR_ELEMENTS,
-                ..ReferenceWork::default()
-            },
-        );
-        assert!(matches!(
-            outputs.push(one_more),
-            Err(ReferenceOperationError::OutputElementsExceeded {
-                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
-                actual,
-            }) if actual == MAX_REFERENCE_TENSOR_ELEMENTS + 1
-        ));
-        assert!(outputs.values.is_empty());
+        let mut references = reference_builder_for(semantics);
+        references
+            .register_provider(&CompoundLimitReferenceProvider)
+            .unwrap();
+        let evaluator = ReferenceEvaluator::new(references.freeze().unwrap());
+        let key = InputKey::new("value").unwrap();
+        let outputs = evaluator
+            .evaluate(&program, &[InputBinding::new(&key, &input)])
+            .unwrap();
+        assert_eq!(outputs, [input.clone(), input.clone()]);
+        assert_eq!(outputs[0].storage_id(), outputs[1].storage_id());
+        assert_eq!(outputs[0].storage_id(), input.storage_id());
     }
 
     #[test]
@@ -3885,6 +4056,30 @@ mod tests {
             f32_bits(&output)
                 .into_iter()
                 .all(|bits| bits == 0.0_f32.to_bits())
+        );
+    }
+
+    #[test]
+    fn maximum_rank_reduction_classifies_many_axes_linearly() {
+        let rank = 4_096_usize;
+        let input = f32_tensor(
+            Shape::try_from_dims(std::iter::repeat_n(1, rank)).unwrap(),
+            vec![1.0],
+        );
+        let axes: Vec<_> = (0..rank)
+            .step_by(2)
+            .map(|axis| Axis::new(u32::try_from(axis).unwrap()))
+            .collect();
+        let output = strict_sum(&input, &axes).unwrap();
+        assert_eq!(output.shape().rank(), rank / 2);
+        assert_eq!(f32_values(&output), [1.0]);
+        assert_eq!(
+            strict_sum(&input, &[Axis::new(0), Axis::new(0)]),
+            Err(ReferenceOperationError::InvalidApplication)
+        );
+        assert_eq!(
+            strict_sum(&input, &[Axis::new(u32::try_from(rank).unwrap())]),
+            Err(ReferenceOperationError::InvalidApplication)
         );
     }
 }

@@ -167,7 +167,10 @@ recoverable evaluation errors.
 aggregate bounds over dense bytes, logical elements, recursive component
 structure, and all retained inputs/intermediates/outputs. Host-owned output
 writers receive the already-retained evaluation work so over-limit callback
-results are rejected before the writer retains them. Registry identity uses an
+results are rejected before the writer retains them. Tensor clones share
+immutable exact-value storage, and evaluation accounting charges each live
+storage allocation once; repeated output keys may therefore alias one value
+without either deep-copying it or consuming the bound twice. Registry identity uses an
 exact precomputed encoded length—including framing, semantic snapshot,
 operation version, signatures, provider identity/revision, and capability
 revision—before allocating its final byte buffer.
