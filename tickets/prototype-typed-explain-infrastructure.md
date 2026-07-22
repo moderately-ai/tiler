@@ -64,3 +64,24 @@ failed target compilations retain their original typed source plus one terminal
 failure record. Configured limits govern optional detail only. Mandatory
 decisions and the typed truncation summary are retained independently under the
 compiler's hard aggregate bound, so detail retention cannot change planning.
+
+The second correction pass makes omission and failure authority explicit.
+Truncation is a non-causal sibling summary; a terminal whose direct detail was
+omitted instead points to a mandatory typed bridge carrying that detail's exact
+rule, subject, stage, and disposition. Pending terminal entries retain compact
+keys rather than cloned compilation subjects and are transactionally bounded by
+count and aggregate variable bytes. A maximum-ledger fixture demonstrates that
+the hard trace record and byte formulas cover one bridge plus one terminal per
+entry and the truncation summary.
+
+Target compilation failures now carry an internal phase-local context beside
+the original typed source. Numerical proof failures, scheduling and target
+failures, kernel/program/artifact verification failures, and selection failures
+are tagged at their failing call sites rather than reconstructed from the last
+retained explain record. Feasibility records also enforce admitted
+`required <= available`, rejected `required > available`, and budget-stop
+`actual > limit`; equality is explicitly an admission rather than exhaustion.
+The private conformance suite checks all current typed count emitters, all eight
+target predicates and units, dominated versus Pareto-tradeoff selection,
+zero/maximum retention, omitted-cause routing, and paired multi-alternative
+target rejection context.

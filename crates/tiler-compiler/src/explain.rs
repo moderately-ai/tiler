@@ -11,13 +11,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 1;
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 2;
 pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 2;
 const MAX_KEY_BYTES: usize = 255;
 const MAX_RECORDS: u32 = 4_096;
 const MAX_CANONICAL_BYTES: u32 = 1024 * 1024;
-const MAX_TRACE_RECORDS: u32 = MAX_RECORDS * 2 + 1;
-const MAX_TRACE_CANONICAL_BYTES: u32 = MAX_CANONICAL_BYTES * 3;
+const MAX_TERMINAL_LEDGER_RECORDS: u32 = MAX_RECORDS;
+const MAX_TERMINAL_LEDGER_BYTES: u32 = MAX_CANONICAL_BYTES;
+const MAX_TERMINAL_RECORD_BYTES: u32 = 1_024;
+const MAX_TRACE_RECORDS: u32 = MAX_RECORDS + MAX_TERMINAL_LEDGER_RECORDS * 2 + 1;
+const MAX_TRACE_CANONICAL_BYTES: u32 = MAX_CANONICAL_BYTES * 2
+    + MAX_TERMINAL_LEDGER_RECORDS * 2 * MAX_TERMINAL_RECORD_BYTES
+    + MAX_TERMINAL_RECORD_BYTES;
 const MAX_SUBJECTS_PER_RECORD: u32 = 16;
 const MAX_CAUSES_PER_RECORD: u32 = 16;
 const MAX_FACTS_PER_ASSESSMENT: u32 = 32;
@@ -281,6 +286,14 @@ impl ExplainFact {
             value,
         })
     }
+
+    pub(crate) const fn key(&self) -> &FactKey {
+        &self.key
+    }
+
+    pub(crate) const fn value(&self) -> &FactValue {
+        &self.value
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -343,6 +356,14 @@ impl PredicateAssessment {
         )?;
         self.facts.push(fact);
         Ok(self)
+    }
+
+    pub(crate) fn facts(&self) -> &[ExplainFact] {
+        &self.facts
+    }
+
+    pub(crate) const fn predicate(&self) -> &PredicateKey {
+        &self.predicate
     }
 }
 
@@ -453,6 +474,10 @@ pub(crate) enum ExplainEvent {
         stage: ExplainStage,
         reason: ReasonCode,
     },
+    CausalBridge {
+        stage: ExplainStage,
+        disposition: ExplainDisposition,
+    },
     Truncated {
         omitted_records: u64,
         omitted_bytes: u64,
@@ -464,7 +489,8 @@ impl ExplainEvent {
         match self {
             Self::Check { stage, .. }
             | Self::BudgetStop { stage, .. }
-            | Self::CompilerFailure { stage, .. } => *stage,
+            | Self::CompilerFailure { stage, .. }
+            | Self::CausalBridge { stage, .. } => *stage,
             Self::Feasibility { .. } => ExplainStage::TargetFeasibility,
             Self::DeferredCapability { .. } => ExplainStage::CapabilityResolution,
             Self::CostAssessment { .. } => ExplainStage::Costing,
@@ -547,6 +573,7 @@ impl ExplainEvent {
                 ..
             } => ExplainDisposition::Selected,
             Self::CompilerFailure { .. } => ExplainDisposition::CompilerFailure,
+            Self::CausalBridge { disposition, .. } => *disposition,
             Self::Truncated { .. } => ExplainDisposition::Truncated,
         }
     }
@@ -596,11 +623,18 @@ impl ExplainEvent {
                 )?;
             }
             Self::Feasibility {
+                outcome,
                 required,
                 available,
                 ..
-            } if required.kind() != available.kind() => {
-                return Err(ExplainError::QuantityKindMismatch);
+            } => {
+                if required.kind() != available.kind() {
+                    return Err(ExplainError::QuantityKindMismatch);
+                }
+                let exceeds = required.value() > available.value();
+                if matches!(outcome, FeasibilityOutcome::Admitted) == exceeds {
+                    return Err(ExplainError::InvalidQuantityRelation);
+                }
             }
             Self::CostAssessment { basis, terms, .. } => {
                 if matches!(basis, EvidenceBasis::SoundProof(_) | EvidenceBasis::Unknown) {
@@ -611,11 +645,14 @@ impl ExplainEvent {
                 }
                 check_bound(BoundKind::CostTerms, MAX_COST_TERMS, terms.len())?;
             }
+            Self::BudgetStop { limit, actual, .. } if actual <= limit => {
+                return Err(ExplainError::InvalidQuantityRelation);
+            }
             Self::BudgetStop { .. }
-            | Self::Feasibility { .. }
             | Self::DeferredCapability { .. }
             | Self::Selection { .. }
             | Self::CompilerFailure { .. }
+            | Self::CausalBridge { .. }
             | Self::Truncated { .. } => {}
         }
         Ok(())
@@ -723,16 +760,44 @@ pub(crate) struct ExplainWriter {
     retained_detail_bytes: usize,
     omitted_records: u64,
     omitted_bytes: u64,
-    last_detail: Option<ExplainRecordId>,
     selection_ledger: BTreeMap<SubjectKey, PendingSelection>,
-    infeasible_authority: BTreeSet<SubjectKey>,
+    terminal_ledger_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
 struct PendingSelection {
-    subject: SubjectRef,
     outcome: SelectionOutcome,
-    cause: Option<ExplainRecordId>,
+    cause: Option<TerminalCause>,
+    authoritative_infeasible: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum TerminalCause {
+    Record(ExplainRecordId),
+    Omitted {
+        rule: RuleRef,
+        subject_kind: SubjectKind,
+        subject_key: SubjectKey,
+        stage: ExplainStage,
+        disposition: ExplainDisposition,
+    },
+}
+
+impl TerminalCause {
+    fn retained_bytes(&self) -> usize {
+        match self {
+            Self::Record(_) => std::mem::size_of::<ExplainRecordId>(),
+            Self::Omitted {
+                rule, subject_key, ..
+            } => rule
+                .key
+                .as_str()
+                .len()
+                .saturating_add(rule.provider.key.as_str().len())
+                .saturating_add(subject_key.as_str().len())
+                .saturating_add(16),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -741,7 +806,7 @@ pub(crate) struct FailureDescriptor {
     pub(crate) reason: ReasonCode,
     pub(crate) subject_kind: SubjectKind,
     pub(crate) subject_key: SubjectKey,
-    pub(crate) cause: Option<ExplainRecordId>,
+    pub(crate) cause: Option<TerminalCause>,
 }
 
 impl FailureDescriptor {
@@ -750,7 +815,7 @@ impl FailureDescriptor {
         reason: impl AsRef<str>,
         subject_kind: SubjectKind,
         subject_key: impl AsRef<str>,
-        cause: Option<ExplainRecordId>,
+        cause: Option<TerminalCause>,
     ) -> Result<Self, ExplainError> {
         Ok(Self {
             stage,
@@ -790,9 +855,8 @@ impl ExplainWriter {
             retained_detail_bytes: 0,
             omitted_records: 0,
             omitted_bytes: 0,
-            last_detail: None,
             selection_ledger: BTreeMap::new(),
-            infeasible_authority: BTreeSet::new(),
+            terminal_ledger_bytes: 0,
         })
     }
 
@@ -819,11 +883,31 @@ impl ExplainWriter {
             event,
             ExplainEvent::Selection { .. }
                 | ExplainEvent::CompilerFailure { .. }
+                | ExplainEvent::CausalBridge { .. }
                 | ExplainEvent::Truncated { .. }
         ) {
             return Err(ExplainError::InvalidEventClass);
         }
         self.push(rule, subjects, event, causes, false)
+    }
+
+    pub(crate) fn push_causal_detail(
+        &mut self,
+        rule: RuleRef,
+        subject: SubjectRef,
+        event: ExplainEvent,
+        causes: Vec<ExplainRecordId>,
+    ) -> Result<TerminalCause, ExplainError> {
+        let omitted = TerminalCause::Omitted {
+            rule: rule.clone(),
+            subject_kind: subject.kind,
+            subject_key: subject.key.clone(),
+            stage: event.stage(),
+            disposition: event.disposition(),
+        };
+        Ok(self
+            .push_detail(rule, vec![subject], event, causes)?
+            .map_or(omitted, TerminalCause::Record))
     }
 
     fn push_terminal(
@@ -837,6 +921,7 @@ impl ExplainWriter {
             event,
             ExplainEvent::Selection { .. }
                 | ExplainEvent::CompilerFailure { .. }
+                | ExplainEvent::CausalBridge { .. }
                 | ExplainEvent::Truncated { .. }
         ) {
             return Err(ExplainError::InvalidEventClass);
@@ -918,6 +1003,9 @@ impl ExplainWriter {
             causes,
         };
         let bytes = encode_record(&record).len();
+        if terminal && bytes > usize::try_from(MAX_TERMINAL_RECORD_BYTES).unwrap_or(usize::MAX) {
+            return Err(ExplainError::TerminalCapacity);
+        }
         let exceeds = if terminal {
             self.records.len().saturating_add(1)
                 > usize::try_from(MAX_TRACE_RECORDS).unwrap_or(usize::MAX)
@@ -945,9 +1033,6 @@ impl ExplainWriter {
             self.retained_detail_bytes += bytes;
         }
         self.records.push(record);
-        if !terminal {
-            self.last_detail = Some(next);
-        }
         Ok(Some(next))
     }
 
@@ -956,6 +1041,7 @@ impl ExplainWriter {
         alternatives: &[&str],
         selected: &str,
     ) -> Result<VerifiedExplainTrace, ExplainError> {
+        check_terminal_ledger_bound(alternatives.len(), alternatives.iter().map(|key| key.len()))?;
         let mut expected = BTreeSet::new();
         for alternative in alternatives {
             let key = SubjectKey::new(alternative)?;
@@ -963,8 +1049,8 @@ impl ExplainWriter {
                 return Err(ExplainError::InvalidTerminalLedger);
             }
         }
-        for key in &self.infeasible_authority {
-            if !expected.insert(key.clone()) {
+        for (key, pending) in &self.selection_ledger {
+            if pending.authoritative_infeasible && !expected.insert(key.clone()) {
                 return Err(ExplainError::InvalidTerminalLedger);
             }
         }
@@ -977,19 +1063,23 @@ impl ExplainWriter {
         }
         for (key, pending) in &self.selection_ledger {
             let should_select = key == &selected;
-            let is_infeasible = self.infeasible_authority.contains(key);
+            let is_infeasible = pending.authoritative_infeasible;
             if (pending.outcome == SelectionOutcome::Selected) != should_select
                 || (pending.outcome == SelectionOutcome::Infeasible) != is_infeasible
             {
                 return Err(ExplainError::InvalidTerminalLedger);
             }
         }
-        let truncation = self.append_truncation_summary()?;
-        for (_, pending) in std::mem::take(&mut self.selection_ledger) {
-            let cause = truncation.or(pending.cause);
+        self.append_truncation_summary()?;
+        for (key, pending) in std::mem::take(&mut self.selection_ledger) {
+            let cause = pending
+                .cause
+                .map(|cause| self.materialize_terminal_cause(cause))
+                .transpose()?;
+            let subject = self.subject(SubjectKind::Alternative, key.as_str())?;
             self.push_terminal(
                 RuleRef::builtin("tiler.selection.structural-pareto.v1")?,
-                vec![pending.subject],
+                vec![subject],
                 ExplainEvent::Selection {
                     policy: SelectionPolicyKey::new("tiler.selection.structural-pareto.v1")?,
                     outcome: pending.outcome,
@@ -1005,8 +1095,12 @@ impl ExplainWriter {
         failure: FailureDescriptor,
     ) -> Result<VerifiedExplainTrace, ExplainError> {
         self.selection_ledger.clear();
-        self.infeasible_authority.clear();
-        let truncation = self.append_truncation_summary()?;
+        self.terminal_ledger_bytes = 0;
+        self.append_truncation_summary()?;
+        let cause = failure
+            .cause
+            .map(|cause| self.materialize_terminal_cause(cause))
+            .transpose()?;
         let subject = self.subject(failure.subject_kind, failure.subject_key.as_str())?;
         self.push_terminal(
             RuleRef::builtin("compile.failure")?,
@@ -1015,7 +1109,7 @@ impl ExplainWriter {
                 stage: failure.stage,
                 reason: failure.reason,
             },
-            truncation.or(failure.cause).into_iter().collect(),
+            cause.into_iter().collect(),
         )?;
         let failures = self
             .records
@@ -1036,58 +1130,111 @@ impl ExplainWriter {
     pub(crate) fn note_infeasible_alternative(
         &mut self,
         subject: SubjectRef,
-        cause: Option<ExplainRecordId>,
+        cause: Option<TerminalCause>,
     ) -> Result<(), ExplainError> {
         if subject.compilation != self.subject || subject.kind != SubjectKind::Alternative {
             return Err(ExplainError::CrossCompilationSubject);
         }
-        let key = subject.key.clone();
-        if self.infeasible_authority.contains(&key) || self.selection_ledger.contains_key(&key) {
-            return Err(ExplainError::InvalidTerminalLedger);
-        }
-        self.selection_ledger.insert(
-            key.clone(),
-            PendingSelection {
-                subject,
-                outcome: SelectionOutcome::Infeasible,
-                cause,
-            },
-        );
-        self.infeasible_authority.insert(key);
-        Ok(())
-    }
-
-    pub(crate) const fn last_detail(&self) -> Option<ExplainRecordId> {
-        self.last_detail
+        let key = subject.key;
+        self.admit_selection(key, SelectionOutcome::Infeasible, cause, true)
     }
 
     pub(crate) fn note_selection(
         &mut self,
         subject: SubjectRef,
         outcome: SelectionOutcome,
-        cause: Option<ExplainRecordId>,
+        cause: Option<TerminalCause>,
     ) -> Result<(), ExplainError> {
         if subject.compilation != self.subject || subject.kind != SubjectKind::Alternative {
             return Err(ExplainError::CrossCompilationSubject);
         }
-        let key = subject.key.clone();
+        let key = subject.key;
         if outcome == SelectionOutcome::Infeasible || self.selection_ledger.contains_key(&key) {
             return Err(ExplainError::InvalidTerminalLedger);
         }
-        self.selection_ledger.insert(
-            key,
-            PendingSelection {
-                subject,
-                outcome,
-                cause,
-            },
-        );
+        self.admit_selection(key, outcome, cause, false)?;
         Ok(())
     }
 
-    fn append_truncation_summary(&mut self) -> Result<Option<ExplainRecordId>, ExplainError> {
+    fn admit_selection(
+        &mut self,
+        key: SubjectKey,
+        outcome: SelectionOutcome,
+        cause: Option<TerminalCause>,
+        authoritative_infeasible: bool,
+    ) -> Result<(), ExplainError> {
+        if self.selection_ledger.contains_key(&key) {
+            return Err(ExplainError::InvalidTerminalLedger);
+        }
+        self.validate_terminal_cause(cause.as_ref())?;
+        let entry_bytes = key
+            .as_str()
+            .len()
+            .saturating_add(cause.as_ref().map_or(0, TerminalCause::retained_bytes))
+            .saturating_add(16);
+        let next_count = self.selection_ledger.len().saturating_add(1);
+        let next_bytes = self.terminal_ledger_bytes.saturating_add(entry_bytes);
+        check_terminal_ledger_bound(next_count, [next_bytes])?;
+        self.selection_ledger.insert(
+            key,
+            PendingSelection {
+                outcome,
+                cause,
+                authoritative_infeasible,
+            },
+        );
+        self.terminal_ledger_bytes = next_bytes;
+        Ok(())
+    }
+
+    fn validate_terminal_cause(&self, cause: Option<&TerminalCause>) -> Result<(), ExplainError> {
+        match cause {
+            Some(TerminalCause::Record(cause))
+                if cause.writer_authority != self.authority
+                    || cause.request_qualifier != self.request_qualifier =>
+            {
+                Err(ExplainError::CrossWriterCause)
+            }
+            Some(TerminalCause::Omitted { rule, .. })
+                if rule.provider != ProviderRef::builtin()
+                    && !self.allowed_providers.contains(&rule.provider) =>
+            {
+                Err(ExplainError::ProviderAuthorityMismatch)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn materialize_terminal_cause(
+        &mut self,
+        cause: TerminalCause,
+    ) -> Result<ExplainRecordId, ExplainError> {
+        match cause {
+            TerminalCause::Record(record) => {
+                self.validate_terminal_cause(Some(&TerminalCause::Record(record)))?;
+                Ok(record)
+            }
+            TerminalCause::Omitted {
+                rule,
+                subject_kind,
+                subject_key,
+                stage,
+                disposition,
+            } => {
+                let subject = self.subject(subject_kind, subject_key.as_str())?;
+                self.push_terminal(
+                    rule,
+                    vec![subject],
+                    ExplainEvent::CausalBridge { stage, disposition },
+                    Vec::new(),
+                )
+            }
+        }
+    }
+
+    fn append_truncation_summary(&mut self) -> Result<(), ExplainError> {
         if self.omitted_records == 0 {
-            return Ok(None);
+            return Ok(());
         }
         let subject = self.subject(SubjectKind::KernelProgram, "explain-report")?;
         self.push_terminal(
@@ -1098,8 +1245,8 @@ impl ExplainWriter {
                 omitted_bytes: self.omitted_bytes,
             },
             Vec::new(),
-        )
-        .map(Some)
+        )?;
+        Ok(())
     }
 
     fn seal(self) -> Result<VerifiedExplainTrace, ExplainError> {
@@ -1364,6 +1511,9 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
         ExplainEvent::CompilerFailure { reason, .. } => {
             let _ = write!(output, "compiler-failure:{}", reason.as_str());
         }
+        ExplainEvent::CausalBridge { disposition, .. } => {
+            let _ = write!(output, "omitted-cause:{}", disposition_name(*disposition));
+        }
         ExplainEvent::Truncated {
             omitted_records,
             omitted_bytes,
@@ -1512,6 +1662,7 @@ pub(crate) enum ExplainError {
     },
     InvalidLimits,
     InvalidTerminalLedger,
+    TerminalLedgerCapacity,
     InvalidEventClass,
     BoundExceeded {
         bound: BoundKind,
@@ -1534,6 +1685,7 @@ pub(crate) enum ExplainError {
     EvidenceSubjectMismatch,
     ProviderAuthorityMismatch,
     QuantityKindMismatch,
+    InvalidQuantityRelation,
     UnknownQuantityUnit,
     EmptyCostEvidence,
     TerminalCapacity,
@@ -1580,6 +1732,22 @@ fn check_bound(bound: BoundKind, limit: u32, actual: usize) -> Result<(), Explai
             limit,
             actual,
         });
+    }
+    Ok(())
+}
+
+fn check_terminal_ledger_bound(
+    count: usize,
+    byte_components: impl IntoIterator<Item = usize>,
+) -> Result<(), ExplainError> {
+    let bytes = byte_components
+        .into_iter()
+        .try_fold(0_usize, usize::checked_add)
+        .ok_or(ExplainError::TerminalLedgerCapacity)?;
+    if count > usize::try_from(MAX_TERMINAL_LEDGER_RECORDS).unwrap_or(usize::MAX)
+        || bytes > usize::try_from(MAX_TERMINAL_LEDGER_BYTES).unwrap_or(usize::MAX)
+    {
+        return Err(ExplainError::TerminalLedgerCapacity);
     }
     Ok(())
 }
@@ -1713,11 +1881,15 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             bytes.extend_from_slice(&[7, stage_tag(*stage)]);
             encode_bytes(bytes, reason.as_str().as_bytes());
         }
+        ExplainEvent::CausalBridge { stage, disposition } => {
+            bytes.extend_from_slice(&[8, stage_tag(*stage)]);
+            bytes.push(disposition_tag(*disposition));
+        }
         ExplainEvent::Truncated {
             omitted_records,
             omitted_bytes,
         } => {
-            bytes.push(8);
+            bytes.push(9);
             bytes.extend_from_slice(&omitted_records.to_be_bytes());
             bytes.extend_from_slice(&omitted_bytes.to_be_bytes());
         }
@@ -1848,6 +2020,24 @@ const fn stage_tag(stage: ExplainStage) -> u8 {
         ExplainStage::KernelRefinement => 11,
         ExplainStage::ProgramVerification => 12,
         ExplainStage::ArtifactPlanning => 13,
+    }
+}
+
+const fn disposition_tag(disposition: ExplainDisposition) -> u8 {
+    match disposition {
+        ExplainDisposition::Admitted => 1,
+        ExplainDisposition::RejectedIntrinsic => 2,
+        ExplainDisposition::RejectedNumerical => 3,
+        ExplainDisposition::RejectedTarget => 4,
+        ExplainDisposition::DeferredUnsupported => 5,
+        ExplainDisposition::BudgetStopped => 6,
+        ExplainDisposition::Retained => 7,
+        ExplainDisposition::DominancePruned => 8,
+        ExplainDisposition::HigherCost => 9,
+        ExplainDisposition::NotSelectedTradeoff => 10,
+        ExplainDisposition::Selected => 11,
+        ExplainDisposition::CompilerFailure => 12,
+        ExplainDisposition::Truncated => 13,
     }
 }
 
@@ -2254,16 +2444,67 @@ mod tests {
     }
 
     #[test]
+    fn truncation_is_a_sibling_and_omitted_terminal_causes_keep_exact_authority() {
+        let request = request(2.0);
+        let mut writer = ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
+        let subject = writer
+            .subject(SubjectKind::Alternative, "alternative:test")
+            .unwrap();
+        let cause = writer
+            .push_causal_detail(
+                RuleRef::builtin("cost.exact-cause").unwrap(),
+                subject.clone(),
+                ExplainEvent::CostAssessment {
+                    model: CostModelKey::new("cost.exact-cause").unwrap(),
+                    basis: EvidenceBasis::CheckedInvariant,
+                    terms: vec![CostTerm::new("dispatches", Quantity::Count(1)).unwrap()],
+                    disposition: CostDisposition::Retained,
+                },
+                Vec::new(),
+            )
+            .unwrap();
+        assert!(matches!(cause, TerminalCause::Omitted { .. }));
+        writer
+            .note_selection(subject, SelectionOutcome::Selected, Some(cause))
+            .unwrap();
+        let trace = writer
+            .finish_success(&["alternative:test"], "alternative:test")
+            .unwrap();
+        let truncation = trace
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::Truncated { .. }))
+            .unwrap();
+        assert!(truncation.causes().is_empty());
+        let bridge = trace
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::CausalBridge { .. }))
+            .unwrap();
+        assert_eq!(bridge.rule().key().as_str(), "cost.exact-cause");
+        assert_eq!(bridge.subjects()[0].key().as_str(), "alternative:test");
+        let selection = trace
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::Selection { .. }))
+            .unwrap();
+        assert_eq!(selection.causes(), &[bridge.id()]);
+        assert_ne!(selection.causes(), &[truncation.id()]);
+    }
+
+    #[test]
     fn failure_trace_has_one_terminal_failure_and_survives_zero_detail_limits() {
         let request = request(2.0);
         let mut writer = ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
         let parts = admitted(&writer, "candidate:omitted");
-        assert_eq!(
-            writer
-                .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
-                .unwrap(),
-            None
-        );
+        let cause = writer
+            .push_causal_detail(
+                parts.rule,
+                parts.subjects.into_iter().next().unwrap(),
+                parts.event,
+                parts.causes,
+            )
+            .unwrap();
         let trace = writer
             .finish_failure(
                 FailureDescriptor::new(
@@ -2271,7 +2512,7 @@ mod tests {
                     "invalid-compiler-output",
                     SubjectKind::Kernel,
                     "failed-kernel",
-                    None,
+                    Some(cause),
                 )
                 .unwrap(),
             )
@@ -2291,6 +2532,31 @@ mod tests {
                 ..
             }
         )));
+        let bridge = trace
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::CausalBridge { .. }))
+            .unwrap();
+        let failure = trace
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+            .unwrap();
+        assert_eq!(failure.causes(), &[bridge.id()]);
+        assert!(matches!(
+            bridge.event(),
+            ExplainEvent::CausalBridge {
+                stage: ExplainStage::CandidateEnumeration,
+                disposition: ExplainDisposition::Admitted,
+            }
+        ));
+        assert_eq!(bridge.rule().key.as_str(), "test.rule");
+        assert!(matches!(
+            bridge.subjects(),
+            [subject]
+                if subject.kind == SubjectKind::Candidate
+                    && subject.key.as_str() == "candidate:omitted"
+        ));
     }
 
     #[test]
@@ -2362,6 +2628,145 @@ mod tests {
                 ..
             }
         )));
+
+        let mut bounded = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        for index in 0..MAX_TERMINAL_LEDGER_RECORDS {
+            let subject = bounded
+                .subject(SubjectKind::Alternative, format!("alternative:{index}"))
+                .unwrap();
+            bounded
+                .note_selection(subject, SelectionOutcome::Dominated, None)
+                .unwrap();
+        }
+        let excess = bounded
+            .subject(SubjectKind::Alternative, "alternative:excess")
+            .unwrap();
+        assert_eq!(
+            bounded.note_selection(excess, SelectionOutcome::Dominated, None),
+            Err(ExplainError::TerminalLedgerCapacity)
+        );
+
+        let mut alternatives = vec!["alternative:test"; MAX_TERMINAL_LEDGER_RECORDS as usize + 1];
+        alternatives[0] = "alternative:selected";
+        let mut slice_bounded = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let selected = slice_bounded
+            .subject(SubjectKind::Alternative, "alternative:selected")
+            .unwrap();
+        slice_bounded
+            .note_selection(selected, SelectionOutcome::Selected, None)
+            .unwrap();
+        assert_eq!(
+            slice_bounded.finish_success(&alternatives, "alternative:selected"),
+            Err(ExplainError::TerminalLedgerCapacity)
+        );
+    }
+
+    #[test]
+    fn feasibility_and_budget_events_enforce_numeric_truth() {
+        let request = request(2.0);
+        let mut writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let subject = writer.subject(SubjectKind::Region, "region:0").unwrap();
+        for (outcome, required, available) in [
+            (FeasibilityOutcome::Admitted, 2, 1),
+            (
+                FeasibilityOutcome::Rejected(ReasonCode::new("too-large").unwrap()),
+                1,
+                1,
+            ),
+        ] {
+            assert_eq!(
+                writer.push_detail(
+                    RuleRef::builtin("target.grid-axis").unwrap(),
+                    vec![subject.clone()],
+                    ExplainEvent::Feasibility {
+                        predicate: PredicateKey::new("grid-axis").unwrap(),
+                        outcome,
+                        required: Quantity::Threads(required),
+                        available: Quantity::Threads(available),
+                    },
+                    Vec::new(),
+                ),
+                Err(ExplainError::InvalidQuantityRelation)
+            );
+        }
+        assert!(
+            writer
+                .push_detail(
+                    RuleRef::builtin("target.grid-axis").unwrap(),
+                    vec![subject.clone()],
+                    ExplainEvent::Feasibility {
+                        predicate: PredicateKey::new("grid-axis").unwrap(),
+                        outcome: FeasibilityOutcome::Admitted,
+                        required: Quantity::Threads(1),
+                        available: Quantity::Threads(1),
+                    },
+                    Vec::new(),
+                )
+                .is_ok()
+        );
+        for (limit, actual) in [(1, 1), (2, 1)] {
+            assert_eq!(
+                writer.push_detail(
+                    RuleRef::builtin("budget.test").unwrap(),
+                    vec![subject.clone()],
+                    ExplainEvent::BudgetStop {
+                        stage: ExplainStage::CandidateEnumeration,
+                        resource: ResourceKey::new("candidates").unwrap(),
+                        limit,
+                        actual,
+                    },
+                    Vec::new(),
+                ),
+                Err(ExplainError::InvalidQuantityRelation)
+            );
+        }
+    }
+
+    #[test]
+    fn maximum_terminal_ledger_with_omitted_causes_seals_within_hard_trace_bounds() {
+        let request = request(2.0);
+        let mut writer = ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
+        let keys = (0..MAX_TERMINAL_LEDGER_RECORDS)
+            .map(|index| format!("alternative:{index}"))
+            .collect::<Vec<_>>();
+        for (index, key) in keys.iter().enumerate() {
+            let subject = writer.subject(SubjectKind::Alternative, key).unwrap();
+            let cause = writer
+                .push_causal_detail(
+                    RuleRef::builtin("cost.maximum-ledger").unwrap(),
+                    subject.clone(),
+                    ExplainEvent::CostAssessment {
+                        model: CostModelKey::new("cost.maximum-ledger").unwrap(),
+                        basis: EvidenceBasis::CheckedInvariant,
+                        terms: vec![CostTerm::new("dispatches", Quantity::Count(1)).unwrap()],
+                        disposition: CostDisposition::Retained,
+                    },
+                    Vec::new(),
+                )
+                .unwrap();
+            writer
+                .note_selection(
+                    subject,
+                    if index == 0 {
+                        SelectionOutcome::Selected
+                    } else {
+                        SelectionOutcome::Dominated
+                    },
+                    Some(cause),
+                )
+                .unwrap();
+        }
+        let alternatives = keys.iter().map(String::as_str).collect::<Vec<_>>();
+        let trace = writer.finish_success(&alternatives, &keys[0]).unwrap();
+        assert_eq!(
+            trace.records().len(),
+            usize::try_from(MAX_TERMINAL_LEDGER_RECORDS * 2 + 1).unwrap()
+        );
+        assert!(
+            trace.identity().as_bytes().len()
+                <= usize::try_from(MAX_TRACE_CANONICAL_BYTES).unwrap()
+        );
+        assert!(trace.verify().is_ok());
     }
 
     #[test]
