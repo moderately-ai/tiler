@@ -122,3 +122,10 @@ Acceptance tests must include late-zero domains, alpha-equivalent regions built
 in different orders, oversized and infinite inputs, deep expression trees,
 failed nested-builder reuse, public downstream compile tests for additive API
 evolution, and complete nested error chains.
+
+Transactional rollback covers graph-visible handles, arenas, retained work,
+and canonical semantic state. A failed reducer closure deliberately consumes
+its private anti-forgery owner nonce: body-local handles can escape the closure,
+so rewinding or reusing that nonce could make a stale failed-attempt handle
+valid in a later reduction. These private nonces are not structural identity or
+otherwise observable semantic state.

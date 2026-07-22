@@ -24,6 +24,10 @@ pub enum IndexLimitKind {
     IndexExpressions,
     /// Operand count of one index expression.
     IndexExpressionOperands,
+    /// Dependency depth of one index expression.
+    IndexExpressionDepth,
+    /// Canonical magnitude bytes of one exact index integer.
+    IndexIntegerBytes,
     /// Canonical index-expression bytes.
     IndexCanonicalBytes,
     /// Logical tensor-access count.
@@ -34,6 +38,8 @@ pub enum IndexLimitKind {
     ScalarOperations,
     /// Scalar-value count.
     ScalarValues,
+    /// Dependency depth of one scalar expression.
+    ScalarExpressionDepth,
     /// Operand count of one scalar operation.
     ScalarOperands,
     /// Canonical scalar-SSA bytes.
@@ -208,7 +214,14 @@ impl fmt::Display for IndexBuildError {
         write!(f, "{self:?}")
     }
 }
-impl Error for IndexBuildError {}
+impl Error for IndexBuildError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ScalarAuthority(source) => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 impl From<ScalarRegistryError> for IndexBuildError {
     fn from(value: ScalarRegistryError) -> Self {
@@ -323,7 +336,11 @@ impl fmt::Display for IndexRegionBuildError {
         )
     }
 }
-impl Error for IndexRegionBuildError {}
+impl Error for IndexRegionBuildError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.diagnostics.first().map(|diagnostic| diagnostic as _)
+    }
+}
 
 pub(super) fn invalid_handle(entity: IndexEntityKind, foreign: bool) -> IndexBuildError {
     if foreign {

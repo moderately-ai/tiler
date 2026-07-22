@@ -929,7 +929,7 @@ impl CanonicalValue {
         }
     }
 
-    pub(super) fn encoded_len(&self) -> usize {
+    pub(crate) fn encoded_len(&self) -> usize {
         match &self.0 {
             CanonicalValueData::Type(value) => 1_usize.saturating_add(value.encoded_len()),
             CanonicalValueData::Bool(_) => 2,
