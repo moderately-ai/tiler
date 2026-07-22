@@ -21,11 +21,15 @@ use super::types::{
 const MAX_DEFINITION_REFERENCE_BYTES: usize = 4 * 1024;
 /// Maximum aggregate subjects in one frozen or reached semantic-authority closure.
 pub const MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS: usize = 4_096;
+/// Maximum roots consumed from caller-owned semantic-authority iterators.
+pub const MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS: usize = 1_000_000;
 
 /// Bounded resource counted while closing semantic authority transitively.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum SemanticAuthorityResource {
+    /// Aggregate roots yielded by caller-owned iterators.
+    RootItems,
     /// Aggregate unique type definitions, concrete instances, and operations.
     ClosureItems,
 }
@@ -33,6 +37,7 @@ pub enum SemanticAuthorityResource {
 impl fmt::Display for SemanticAuthorityResource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RootItems => formatter.write_str("semantic authority root items"),
             Self::ClosureItems => formatter.write_str("semantic authority closure items"),
         }
     }
@@ -514,8 +519,12 @@ impl SemanticRegistryBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] when empty or when a marker target is not
-    /// admitted by the completed semantic authority set.
+    /// Returns [`RegistryError`] when the registry is empty; when any marker,
+    /// type definition, operation schema default, operation fact, or
+    /// conformance value transitively references missing or rejected type
+    /// authority; or when root ingestion or the unique authority closure
+    /// exceeds its governed resource bound. Finite definition cycles are
+    /// admitted and traversed without recursion.
     pub fn freeze(self) -> Result<FrozenSemanticRegistry, RegistryError> {
         if self.definitions.is_empty() && self.operations.is_empty() {
             return Err(RegistryError::EmptyRegistry);
@@ -679,11 +688,25 @@ impl FrozenSemanticRegistry {
         canonical_roots: impl IntoIterator<Item = &'a CanonicalValue>,
     ) -> Result<SemanticAuthorityClosure, RegistryError> {
         let mut closure = SemanticAuthorityClosure::default();
-        let mut pending_instances: BTreeSet<_> = concrete_type_roots.into_iter().cloned().collect();
-        let mut pending_definitions: BTreeSet<_> = definition_roots.into_iter().cloned().collect();
-        let mut pending_operations: BTreeSet<_> = operation_roots.into_iter().cloned().collect();
+        let mut pending_instances = BTreeSet::new();
+        let mut pending_definitions = BTreeSet::new();
+        let mut pending_operations = BTreeSet::new();
+        let mut observed_roots = 0_usize;
+        for value in concrete_type_roots {
+            observe_authority_root(&mut observed_roots)?;
+            enqueue_type_instance(value.clone(), &mut closure, &mut pending_instances)?;
+        }
+        for key in definition_roots {
+            observe_authority_root(&mut observed_roots)?;
+            enqueue_type_definition(key.clone(), &mut closure, &mut pending_definitions)?;
+        }
+        for key in operation_roots {
+            observe_authority_root(&mut observed_roots)?;
+            enqueue_operation(key.clone(), &mut closure, &mut pending_operations)?;
+        }
         for value in canonical_roots {
-            enqueue_canonical_types(value, &mut pending_instances);
+            observe_authority_root(&mut observed_roots)?;
+            enqueue_canonical_types(value, &mut closure, &mut pending_instances)?;
         }
 
         while !(pending_instances.is_empty()
@@ -691,20 +714,14 @@ impl FrozenSemanticRegistry {
             && pending_operations.is_empty())
         {
             if let Some(value) = pending_instances.pop_first() {
-                if !closure.type_instances.insert(value.clone()) {
-                    continue;
-                }
-                check_closure_budget(&closure)?;
                 let key = ValueTypeDefinitionKey::for_value(&value);
                 let registered = self.0.definitions.get(&key).ok_or_else(|| {
                     RegistryError::UnregisteredTypeAuthority {
                         key: Arc::new(key.clone()),
                     }
                 })?;
-                pending_definitions.insert(key.clone());
-                value.visit_referenced_types(&mut |component| {
-                    pending_instances.insert(component.clone());
-                });
+                enqueue_type_definition(key.clone(), &mut closure, &mut pending_definitions)?;
+                enqueue_referenced_types(&value, &mut closure, &mut pending_instances)?;
                 registered
                     .definition
                     .validator
@@ -720,10 +737,6 @@ impl FrozenSemanticRegistry {
             }
 
             if let Some(key) = pending_definitions.pop_first() {
-                if !closure.type_keys.insert(key.clone()) {
-                    continue;
-                }
-                check_closure_budget(&closure)?;
                 let registered = self.0.definitions.get(&key).ok_or_else(|| {
                     RegistryError::UnregisteredTypeAuthority {
                         key: Arc::new(key.clone()),
@@ -731,18 +744,15 @@ impl FrozenSemanticRegistry {
                 })?;
                 enqueue_canonical_types(
                     registered.definition.canonical_facts().value(),
+                    &mut closure,
                     &mut pending_instances,
-                );
+                )?;
                 continue;
             }
 
             let key = pending_operations
                 .pop_first()
                 .expect("nonempty closure worklist has an operation");
-            if !closure.operation_keys.insert(key.clone()) {
-                continue;
-            }
-            check_closure_budget(&closure)?;
             let registered = self.0.operations.get(&key).ok_or_else(|| {
                 RegistryError::UnregisteredOperationAuthority {
                     key: Arc::new(key.clone()),
@@ -750,17 +760,19 @@ impl FrozenSemanticRegistry {
             })?;
             for field in registered.definition.schema().attributes() {
                 if let Some(default) = field.default() {
-                    enqueue_canonical_types(default, &mut pending_instances);
+                    enqueue_canonical_types(default, &mut closure, &mut pending_instances)?;
                 }
             }
             enqueue_canonical_types(
                 registered.definition.canonical_facts().value(),
+                &mut closure,
                 &mut pending_instances,
-            );
+            )?;
             enqueue_canonical_types(
                 registered.definition.conformance().value(),
+                &mut closure,
                 &mut pending_instances,
-            );
+            )?;
         }
         Ok(closure)
     }
@@ -1630,10 +1642,84 @@ fn compute_identity(
     SemanticRegistrySnapshotIdentity(bytes)
 }
 
-fn enqueue_canonical_types(value: &CanonicalValue, pending: &mut BTreeSet<ResolvedValueType>) {
+fn observe_authority_root(observed: &mut usize) -> Result<(), RegistryError> {
+    *observed = observed.checked_add(1).unwrap_or(usize::MAX);
+    if *observed > MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS {
+        return Err(RegistryError::SemanticAuthorityResourceExceeded {
+            resource: SemanticAuthorityResource::RootItems,
+            limit: MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS,
+            actual: *observed,
+        });
+    }
+    Ok(())
+}
+
+fn enqueue_type_instance(
+    value: ResolvedValueType,
+    closure: &mut SemanticAuthorityClosure,
+    pending: &mut BTreeSet<ResolvedValueType>,
+) -> Result<(), RegistryError> {
+    if closure.type_instances.insert(value.clone()) {
+        check_closure_budget(closure)?;
+        pending.insert(value);
+    }
+    Ok(())
+}
+
+fn enqueue_type_definition(
+    key: ValueTypeDefinitionKey,
+    closure: &mut SemanticAuthorityClosure,
+    pending: &mut BTreeSet<ValueTypeDefinitionKey>,
+) -> Result<(), RegistryError> {
+    if closure.type_keys.insert(key.clone()) {
+        check_closure_budget(closure)?;
+        pending.insert(key);
+    }
+    Ok(())
+}
+
+fn enqueue_operation(
+    key: OpKey,
+    closure: &mut SemanticAuthorityClosure,
+    pending: &mut BTreeSet<OpKey>,
+) -> Result<(), RegistryError> {
+    if closure.operation_keys.insert(key.clone()) {
+        check_closure_budget(closure)?;
+        pending.insert(key);
+    }
+    Ok(())
+}
+
+fn enqueue_referenced_types(
+    value: &ResolvedValueType,
+    closure: &mut SemanticAuthorityClosure,
+    pending: &mut BTreeSet<ResolvedValueType>,
+) -> Result<(), RegistryError> {
+    let mut failure = None;
     value.visit_referenced_types(&mut |component| {
-        pending.insert(component.clone());
+        if failure.is_none()
+            && let Err(error) = enqueue_type_instance(component.clone(), closure, pending)
+        {
+            failure = Some(error);
+        }
     });
+    failure.map_or(Ok(()), Err)
+}
+
+fn enqueue_canonical_types(
+    value: &CanonicalValue,
+    closure: &mut SemanticAuthorityClosure,
+    pending: &mut BTreeSet<ResolvedValueType>,
+) -> Result<(), RegistryError> {
+    let mut failure = None;
+    value.visit_referenced_types(&mut |component| {
+        if failure.is_none()
+            && let Err(error) = enqueue_type_instance(component.clone(), closure, pending)
+        {
+            failure = Some(error);
+        }
+    });
+    failure.map_or(Ok(()), Err)
 }
 
 fn check_closure_budget(closure: &SemanticAuthorityClosure) -> Result<(), RegistryError> {
@@ -2262,7 +2348,23 @@ mod tests {
         };
         let first = build(vec![left.clone(), right.clone()]);
         let second = build(vec![right, left]);
-        let root = ResolvedValueType::nominal(left_key);
+        let root = ResolvedValueType::nominal(left_key.clone());
+        let closure = first
+            .close_authority(
+                [&root],
+                std::iter::empty(),
+                std::iter::empty(),
+                std::iter::empty(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            closure.type_keys,
+            BTreeSet::from([
+                ValueTypeDefinitionKey::Nominal(left_key),
+                ValueTypeDefinitionKey::Nominal(right_key),
+            ])
+        );
 
         assert_eq!(
             first
@@ -2308,5 +2410,29 @@ mod tests {
                 actual,
             }) if actual == MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS + 1
         ));
+    }
+
+    #[test]
+    fn authority_root_ingestion_stops_at_the_first_item_over_limit() {
+        let registry = FrozenSemanticRegistry::standard().unwrap();
+        let root = F32::resolved_type();
+        let polls = std::cell::Cell::new(0_usize);
+        let roots = std::iter::repeat_n(&root, MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS + 2)
+            .inspect(|_| polls.set(polls.get() + 1));
+
+        assert!(matches!(
+            registry.close_authority(
+                roots,
+                std::iter::empty(),
+                std::iter::empty(),
+                std::iter::empty(),
+            ),
+            Err(RegistryError::SemanticAuthorityResourceExceeded {
+                resource: SemanticAuthorityResource::RootItems,
+                limit: MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS,
+                actual,
+            }) if actual == MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS + 1
+        ));
+        assert_eq!(polls.get(), MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS + 1);
     }
 }

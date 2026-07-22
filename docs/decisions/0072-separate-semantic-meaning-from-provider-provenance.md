@@ -107,7 +107,9 @@ artifact + live device/context/specialization -> runtime cache
 - The semantic identity split and the index region's separate scalar-authority
   receipt are implemented for their bounded profiles. The completed semantic
   program owns definition and admission subjects computed by one deterministic,
-  iterative, cycle-safe, aggregate-bounded transitive authority closure;
+  iterative, cycle-safe transitive authority closure with incremental root and
+  unique-subject bounds. Borrowed program validation runs the same closure and
+  preserves a typed registry-error source;
   compiler requests and artifact-construction plans retain all four typed
   semantic subjects. Region occurrence, semantic checked refinement,
   schedule/KIR, complete-plan, and artifact identities remain obligations of

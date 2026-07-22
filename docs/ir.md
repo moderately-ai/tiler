@@ -178,15 +178,19 @@ must define different handles even if they use the same integer representation.
 `SemanticProgramBuilder` is append-only and non-`Clone`. Fallible insertions
 are transactional: validation and capacity checks occur before mutation, and
 an error leaves the draft unchanged. Borrowed `validate(&self)` supports
-diagnostics and tooling but does not turn a draft into compiler input. The
-commitment boundary is:
+diagnostics and tooling but does not turn a draft into compiler input. It runs
+the same structural checks and reachable semantic-authority projection used by
+commitment, reporting authority failures as typed diagnostics with the
+underlying registry error preserved as an error source. The commitment boundary
+is:
 
 ```text
 build(self) -> Result<SemanticProgram, ProgramBuildError>
 ```
 
-`build` defensively rechecks whole-program invariants and consumes the arenas
-without cloning the draft. Under ADR 0064 it compacts the output-reachable
+`build` runs that combined validation/projection pass once, retains its checked
+identity subjects, and consumes the arenas without cloning the draft. Under
+ADR 0064 it compacts the output-reachable
 closure into dense completed-program storage and assigns a new graph-owner
 identity; draft handles do not survive successful commitment. A failed build
 returns structured diagnostics together with ownership of the original builder. The caller may
@@ -272,7 +276,9 @@ operation key, and occurrence attribute value, then transitively follows
 parameterized and encoded type components, canonical `Type` and `FloatBits`
 references, type-definition facts, and operation defaults, facts, and
 conformance requirements. Closure is deterministic, iterative, cycle-safe,
-and governed by one aggregate resource bound. A caller cannot manufacture
+and governed by separate bounds for roots consumed and unique authority
+subjects discovered. Both are enforced while ingesting or enqueuing, before an
+unbounded worklist can form. A caller cannot manufacture
 program-complete evidence by supplying an incomplete root list to a registry
 projection API; consumers obtain the authoritative no-argument subjects from
 the completed program.

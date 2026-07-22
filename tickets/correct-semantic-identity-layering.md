@@ -58,12 +58,16 @@ ADR 0072 remains the accepted contract. Later region, refinement, schedule,
 KIR, program, artifact, and runtime identities remain work for their owning
 tickets; this correction must not add placeholder forms for them.
 
-The correction now uses one iterative ordered-worklist closure with an
-aggregate governed bound. Completed programs own the no-argument authoritative
+The correction now uses one iterative ordered-worklist closure with separately
+governed, incrementally enforced root-ingestion and unique-subject bounds.
+Borrowed builder validation runs the same reachable authority projection as
+commitment and preserves typed registry failures. Completed programs own the
+no-argument authoritative
 definition, admission, and snapshot subjects; compiler requests, target
 requests, and artifact-construction plans retain them as typed values alongside
 graph meaning. Registry caller-root projections are not public program-evidence
-APIs. Tests cover every dependency class above, finite cycles, the first item
-beyond the bound, used and unused provider revisions, and rejection of a
+APIs. Tests cover every dependency class above at registry and completed-program
+boundaries, both sides of finite cycles, the first item beyond each bound
+without polling the root tail, used and unused provider revisions, and rejection of a
 cross-program semantic/request mix. Later identity layers remain deferred to
 their owning tickets without placeholder types.

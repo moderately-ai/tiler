@@ -635,15 +635,31 @@ impl SemanticProgramBuilder {
     ///
     /// Returns all diagnostics found in deterministic validation order.
     pub fn validate(&self) -> Result<(), ValidationDiagnostics> {
+        self.validate_and_project_authority().map(|_| ())
+    }
+
+    fn validate_and_project_authority(
+        &self,
+    ) -> Result<
+        (
+            SemanticDefinitionProjectionIdentity,
+            SemanticAdmissionProvenanceIdentity,
+        ),
+        ValidationDiagnostics,
+    > {
         let mut diagnostics = Vec::new();
         if self.outputs.is_empty() {
             diagnostics.push(ValidationDiagnostic::NoProgramOutputs);
         }
         self.validate_internal(&mut diagnostics);
-        match ValidationDiagnostics::new(diagnostics) {
-            Some(errors) => Err(errors),
-            None => Ok(()),
+        if let Some(errors) = ValidationDiagnostics::new(diagnostics) {
+            return Err(errors);
         }
+        self.project_reachable_semantic_authority()
+            .map_err(|error| {
+                ValidationDiagnostics::new(vec![ValidationDiagnostic::SemanticAuthority(error)])
+                    .expect("semantic authority failure creates one diagnostic")
+            })
     }
 
     /// Validates and compacts this draft into an immutable shared program.
@@ -660,28 +676,22 @@ impl SemanticProgramBuilder {
         mut self,
         completed_owner: Option<GraphId>,
     ) -> Result<SemanticProgram, ProgramBuildError> {
-        if let Err(diagnostics) = self.validate() {
-            return Err(ProgramBuildError {
-                builder: Box::new(self),
-                failure: ProgramBuildFailure::Validation(diagnostics),
-            });
-        }
+        let (reached_definitions, admission_provenance) =
+            match self.validate_and_project_authority() {
+                Ok(projections) => projections,
+                Err(diagnostics) => {
+                    return Err(ProgramBuildError {
+                        builder: Box::new(self),
+                        failure: ProgramBuildFailure::Validation(diagnostics),
+                    });
+                }
+            };
         let Some(completed_owner) = completed_owner else {
             return Err(ProgramBuildError {
                 builder: Box::new(self),
                 failure: ProgramBuildFailure::GraphIdentityExhausted,
             });
         };
-        let (reached_definitions, admission_provenance) =
-            match self.project_reachable_semantic_authority() {
-                Ok(projections) => projections,
-                Err(error) => {
-                    return Err(ProgramBuildError {
-                        builder: Box::new(self),
-                        failure: ProgramBuildFailure::SemanticAuthority(error),
-                    });
-                }
-            };
         let registry_snapshot = self.semantic_registry.snapshot_identity().clone();
         let origin = self.owner;
         self.compact_to_outputs();
@@ -1197,13 +1207,15 @@ fn checked_index(index: usize, entity: EntityKind) -> Result<ValueIndex, BuildEr
 
 #[cfg(test)]
 mod tests {
+    use super::super::EncodedNumericContract;
     use super::super::{
         AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, F32, F32Add,
         F32Constant, F32Multiply, NormativeDefinitionRef, OpKey, OperationArity,
         OperationAttributeSchema, OperationConformance, OperationDefinition,
         OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
-        OperationSchema, ProviderIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
-        SemanticRegistryRegistrar, StrictSerialF32Sum, add_f32_op,
+        OperationSchema, ProviderIdentity, QuantSchemeKey, SemanticRegistryBuilder,
+        SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum, TypeArguments,
+        TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op,
     };
     use super::*;
     use crate::shape::{Axis, Shape, StaticShape};
@@ -1335,6 +1347,105 @@ mod tests {
                 ),
                 OperationEffect::Pure,
                 Arc::new(DefaultedIdentity),
+            ))
+        }
+    }
+
+    struct CompositeTypeProvider;
+
+    impl SemanticRegistryProvider for CompositeTypeProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "composite-types", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), super::super::RegistryError> {
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Parameterized(
+                    TypeKey::new("test", "container", 1).unwrap(),
+                ),
+                NormativeDefinitionRef::new("test container v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))?;
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::EncodedNumeric(
+                    QuantSchemeKey::new("test", "encoded", 1).unwrap(),
+                ),
+                NormativeDefinitionRef::new("test encoded v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))
+        }
+    }
+
+    struct NominalTypeProvider {
+        name: &'static str,
+        revision: u32,
+    }
+
+    impl SemanticRegistryProvider for NominalTypeProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", self.name, self.revision).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), super::super::RegistryError> {
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(TypeKey::new("test", self.name, 1).unwrap()),
+                NormativeDefinitionRef::new(format!("test {} v1", self.name))?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))
+        }
+    }
+
+    struct AttributedIdentity;
+
+    impl OperationInferencer for AttributedIdentity {
+        fn infer(
+            &self,
+            operands: &[ValueFact],
+            _: &OperationAttributes,
+        ) -> Result<Vec<ValueFact>, OperationInferenceError> {
+            Ok(vec![operands[0].clone()])
+        }
+    }
+
+    struct AttributedOperationProvider;
+
+    impl SemanticRegistryProvider for AttributedOperationProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "attributed-operation", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), super::super::RegistryError> {
+            registrar.register_operation(OperationDefinition::new(
+                OpKey::new("test", "attributed-identity", 1).unwrap(),
+                OperationSchema::new(
+                    OperationArity::exact(1),
+                    OperationArity::exact(1),
+                    [
+                        OperationAttributeSchema::required(
+                            AttributeFieldId::new(1),
+                            CanonicalValueKind::Type,
+                        ),
+                        OperationAttributeSchema::required(
+                            AttributeFieldId::new(2),
+                            CanonicalValueKind::FloatBits,
+                        ),
+                    ],
+                )
+                .unwrap(),
+                NormativeDefinitionRef::new("test attributed identity v1")?,
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(AttributedIdentity),
             ))
         }
     }
@@ -1497,6 +1608,54 @@ mod tests {
         let mut builder = error.into_builder();
         builder.output(output_key("x"), x).unwrap();
         assert_eq!(builder.build().unwrap().output_count(), 1);
+    }
+
+    #[test]
+    fn borrowed_validation_reports_reachable_authority_exhaustion_with_typed_source() {
+        let mut registry = SemanticRegistryBuilder::new();
+        registry.register_provider(&CompositeTypeProvider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        for index in 0..super::super::MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS {
+            let resolved_type = ResolvedValueType::parameterized(
+                TypeKey::new("test", "container", 1).unwrap(),
+                TypeArguments::new([CanonicalValue::unsigned_u64(
+                    u64::try_from(index).expect("the governed authority limit fits u64"),
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+            let value = builder
+                .input_resolved(
+                    input_key(&format!("input-{index}")),
+                    Shape::new([]),
+                    resolved_type,
+                )
+                .unwrap();
+            builder
+                .output_resolved(output_key(&format!("output-{index}")), value)
+                .unwrap();
+        }
+
+        let diagnostics = builder.validate().unwrap_err();
+        assert!(matches!(
+            diagnostics.as_slice(),
+            [ValidationDiagnostic::SemanticAuthority(
+                super::super::RegistryError::SemanticAuthorityResourceExceeded {
+                    resource: super::super::SemanticAuthorityResource::ClosureItems,
+                    limit: super::super::MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS,
+                    actual,
+                }
+            )] if *actual == super::super::MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS + 1
+        ));
+        let diagnostic_source = std::error::Error::source(&diagnostics).unwrap();
+        assert!(std::error::Error::source(diagnostic_source).is_some());
+
+        let error = builder.build().unwrap_err();
+        assert_eq!(error.diagnostics(), Some(&diagnostics));
+        assert!(matches!(
+            error.failure(),
+            ProgramBuildFailure::Validation(_)
+        ));
     }
 
     #[test]
@@ -1819,6 +1978,128 @@ mod tests {
             first.semantic_registry_snapshot_identity(),
             second.semantic_registry_snapshot_identity()
         );
+    }
+
+    #[test]
+    fn program_authority_projection_follows_nested_and_encoded_value_types() {
+        fn build(leaf_revision: u32) -> SemanticProgram {
+            let leaf = ResolvedValueType::nominal(TypeKey::new("test", "leaf", 1).unwrap());
+            let encoded = ResolvedValueType::encoded_numeric(
+                QuantSchemeKey::new("test", "encoded", 1).unwrap(),
+                EncodedNumericContract::new([CanonicalField::new(
+                    AttributeFieldId::new(1),
+                    CanonicalValue::value_type(leaf),
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+            let container = ResolvedValueType::parameterized(
+                TypeKey::new("test", "container", 1).unwrap(),
+                TypeArguments::new([CanonicalValue::value_type(encoded)]).unwrap(),
+            )
+            .unwrap();
+            let mut registry = SemanticRegistryBuilder::new();
+            registry.register_provider(&CompositeTypeProvider).unwrap();
+            registry
+                .register_provider(&NominalTypeProvider {
+                    name: "leaf",
+                    revision: leaf_revision,
+                })
+                .unwrap();
+            let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+            let input = builder
+                .input_resolved(input_key("x"), Shape::from_dims([2]), container)
+                .unwrap();
+            builder
+                .output_resolved(output_key("result"), input)
+                .unwrap();
+            builder.build().unwrap()
+        }
+
+        let first = build(1);
+        let second = build(2);
+        assert_eq!(
+            first.semantic_graph_identity(),
+            second.semantic_graph_identity()
+        );
+        assert_eq!(
+            first.reached_semantic_definitions(),
+            second.reached_semantic_definitions()
+        );
+        assert_ne!(
+            first.semantic_admission_provenance(),
+            second.semantic_admission_provenance()
+        );
+    }
+
+    #[test]
+    fn program_authority_projection_follows_type_and_float_bits_occurrence_attributes() {
+        fn build(type_revision: u32, float_revision: u32) -> SemanticProgram {
+            let mut registry = SemanticRegistryBuilder::standard().unwrap();
+            registry
+                .register_provider(&NominalTypeProvider {
+                    name: "type-attribute",
+                    revision: type_revision,
+                })
+                .unwrap();
+            registry
+                .register_provider(&NominalTypeProvider {
+                    name: "float-format",
+                    revision: float_revision,
+                })
+                .unwrap();
+            registry
+                .register_provider(&AttributedOperationProvider)
+                .unwrap();
+            let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+            let input = builder
+                .input::<F32>(input_key("x"), Shape::from_dims([2]))
+                .unwrap();
+            let attributes = OperationAttributes::new([
+                CanonicalField::new(
+                    AttributeFieldId::new(1),
+                    CanonicalValue::value_type(ResolvedValueType::nominal(
+                        TypeKey::new("test", "type-attribute", 1).unwrap(),
+                    )),
+                ),
+                CanonicalField::new(
+                    AttributeFieldId::new(2),
+                    CanonicalValue::float_bits(
+                        TypeKey::new("test", "float-format", 1).unwrap(),
+                        [0_u8],
+                    )
+                    .unwrap(),
+                ),
+            ])
+            .unwrap();
+            let result = builder
+                .apply_typed_single::<F32>(
+                    OpKey::new("test", "attributed-identity", 1).unwrap(),
+                    attributes,
+                    &[input.erase()],
+                )
+                .unwrap();
+            builder.output(output_key("result"), result).unwrap();
+            builder.build().unwrap()
+        }
+
+        let baseline = build(1, 1);
+        let type_changed = build(2, 1);
+        let float_changed = build(1, 2);
+        for changed in [&type_changed, &float_changed] {
+            assert_eq!(
+                baseline.semantic_graph_identity(),
+                changed.semantic_graph_identity()
+            );
+            assert_eq!(
+                baseline.reached_semantic_definitions(),
+                changed.reached_semantic_definitions()
+            );
+            assert_ne!(
+                baseline.semantic_admission_provenance(),
+                changed.semantic_admission_provenance()
+            );
+        }
     }
 
     #[test]

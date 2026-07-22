@@ -190,9 +190,11 @@ Benchmarks are not substitutes for these correctness cases.
 - Reached semantic-authority closure tests cover nested parameterized and
   encoded components, occurrence `Type` and `FloatBits` references, operation
   defaults/facts/conformance, missing definition references, finite cycles,
-  and aggregate resource exhaustion at the first item beyond the governed
-  limit. Used provider revisions change admission and snapshot subjects;
-  unused revisions change only the full snapshot subject.
+  root-iterator and unique-closure resource exhaustion at the first item beyond
+  each governed limit, and no polling of a root iterator's remaining tail.
+  Program-level tests vary providers reached only through composite value types
+  and occurrence attributes. Used provider revisions change admission and
+  snapshot subjects; unused revisions change only the full snapshot subject.
 - Region identity tests distinguish equal semantic content at different graph
   occurrences; index/schedule/KIR structure remains reusable while checked
   refinements and complete-program coverage retain exact occurrence bindings.

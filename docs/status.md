@@ -38,9 +38,12 @@ remain private until their dedicated generic IR/verifier tickets replace them.
 ADR 0072 defines separate graph meaning, reached provider-independent
 definitions, admission-provider provenance, and complete registry snapshot
 subjects. The corrected semantic implementation computes one deterministic,
-iterative, cycle-safe, aggregate-bounded authority closure across retained
+iterative, cycle-safe, incrementally bounded authority closure across retained
 types, operations, occurrence attributes, definition facts, defaults, and
-conformance requirements. Completed programs own the authoritative definition
+conformance requirements. Root ingestion and unique discovered authority have
+separate governed bounds. Borrowed validation runs the same reachable closure
+as commitment and preserves authority failures as typed diagnostics. Completed
+programs own the authoritative definition
 and admission projections; compiler requests and artifact-construction plans
 retain all four typed semantic subjects independently. Region occurrence,
 checked refinement,
