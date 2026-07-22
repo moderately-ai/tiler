@@ -1,7 +1,7 @@
 ---
 id: reconcile-implementation-work-graph-after-authority-audit
 title: Reconcile the implementation work graph after the authority audit
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-canonical-index-region-slice]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, contracts/optimizer, implementation/workspace, co
 shared_scopes: []
 paths: []
 tags: [maintenance, architecture, implementation]
-claimed_from: todo
-assignee: gpt-sol-reconcile
-lease_expires_at: 1784735955
 ---
 
 Apply the adversarial ticket-DAG, implementation-coverage, and ticket-quality
@@ -40,13 +37,12 @@ The two already-open owners, `correct-semantic-identity-layering` and
 index-canonicality findings respectively. Do not duplicate those obligations
 into a competing ticket.
 
-This in-progress bulk reconciliation ticket temporarily claims
-`project/tickets` exclusively because it rewrites the shared work graph as one
-transaction. That is a deliberate exception to the repository convention:
+While in progress, this bulk reconciliation ticket temporarily claimed
+`project/tickets` exclusively because it rewrote the shared work graph as one
+transaction. That was a deliberate exception to the repository convention:
 ordinary nonterminal successor tickets use additive shared `project/tickets`
-coverage so independent ticket-file updates do not conflict. This ticket
-becomes terminal when the reconciliation is accepted; the exception must not
-be copied into successor work.
+coverage so independent ticket-file updates do not conflict. Acceptance made
+this ticket terminal; the exception must not be copied into successor work.
 
 ## Required outcome
 
