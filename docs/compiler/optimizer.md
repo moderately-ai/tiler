@@ -21,6 +21,13 @@ exhaustion, or fused target infeasibility rejects only the fused alternative;
 failure of a compiler-produced verifier remains a hard compiler error. General
 memo search, partitioning, and calibrated cost estimation remain unimplemented.
 
+The bounded slice rederives alternative identity, structural cost, KIR,
+program, artifact receipt, and selection from the verified semantic/request
+subject before returning a portfolio. Selection authority is the verified
+alternative identity under a named cost model, not a caller-editable vector
+index or stored cost. Explain records retain typed subjects, evidence class,
+budget actual/limit pairs, feasibility facts, and provenanced cost values.
+
 ## Ownership boundary
 
 This document owns planning phases, rule contracts, alternative retention,
@@ -96,6 +103,9 @@ verification boundaries:
 Semantic, index, schedule, program/buffer, and structured-kernel verifiers have
 separate authority. Target feasibility cannot repair intrinsic invalidity;
 costing observes only candidates that have passed the applicable gates.
+`Intrinsic` and refinement failures therefore remain invalid compiler output;
+only a checked target/resource rejection can contribute to a valid empty
+physical frontier.
 Search implementations may interleave cover and local-frontier exploration,
 feed pruning information in either direction, and lazily schedule only regions
 retained by viable covers. Such feedback is implementation freedom: it cannot

@@ -212,9 +212,54 @@ pub(crate) struct VerifiedTargetRequest {
     pub(crate) capabilities: CompilerCapabilitySnapshot,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedRequestSubject {
+    pub(crate) normalized: NormalizedSerialSumSubject,
+    pub(crate) semantic_identity: SemanticIdentity,
+    pub(crate) numerical_contract: StrictF32NumericalContract,
+    pub(crate) budgets: DeterministicBudgets,
+    pub(crate) target_profile: PrototypeTargetProfile,
+    pub(crate) capabilities: CompilerCapabilitySnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedSerialSumSubject {
+    pub(crate) input_key: InputKey,
+    pub(crate) output_key: OutputKey,
+    pub(crate) input_shape: Shape,
+    pub(crate) output_shape: Shape,
+    pub(crate) reduction_axes: Vec<Axis>,
+    pub(crate) scale_bits: u32,
+    pub(crate) bias_bits: u32,
+    pub(crate) input_elements: u64,
+    pub(crate) output_elements: u64,
+}
+
 impl VerifiedTargetRequest {
     pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
         self.normalized.serial_sum()
+    }
+
+    pub(crate) fn subject(&self) -> VerifiedRequestSubject {
+        let normalized = self.serial_sum();
+        VerifiedRequestSubject {
+            normalized: NormalizedSerialSumSubject {
+                input_key: normalized.input_key.clone(),
+                output_key: normalized.output_key.clone(),
+                input_shape: normalized.input_shape.clone(),
+                output_shape: normalized.output_shape.clone(),
+                reduction_axes: normalized.reduction_axes.clone(),
+                scale_bits: normalized.scale_bits,
+                bias_bits: normalized.bias_bits,
+                input_elements: normalized.input_elements,
+                output_elements: normalized.output_elements,
+            },
+            semantic_identity: self.semantic_identity.clone(),
+            numerical_contract: self.numerical_contract,
+            budgets: self.budgets,
+            target_profile: self.target_profile,
+            capabilities: self.capabilities,
+        }
     }
 }
 
@@ -222,15 +267,18 @@ impl VerifiedCompilationRequest {
     pub(crate) fn for_target(
         &self,
         target_profile: PrototypeTargetProfile,
-    ) -> VerifiedTargetRequest {
-        VerifiedTargetRequest {
+    ) -> Result<VerifiedTargetRequest, RequestError> {
+        if !self.target_profiles.contains(&target_profile) {
+            return Err(RequestError::UnverifiedTargetSelection);
+        }
+        Ok(VerifiedTargetRequest {
             normalized: self.normalized.clone(),
             semantic_identity: self.semantic_identity.clone(),
             numerical_contract: self.numerical_contract,
             budgets: self.budgets,
             target_profile,
             capabilities: self.capabilities,
-        }
+        })
     }
 }
 
@@ -239,6 +287,7 @@ pub(crate) enum RequestError {
     UnsupportedRequestVersion,
     EmptyTargetSet,
     DuplicateTargetProfile,
+    UnverifiedTargetSelection,
     BudgetExceeded {
         resource: &'static str,
         limit: u32,
@@ -263,6 +312,9 @@ impl fmt::Display for RequestError {
                 .write_str("compile.request.targets.empty: at least one target is required"),
             Self::DuplicateTargetProfile => formatter
                 .write_str("compile.request.targets.duplicate: target profile keys must be unique"),
+            Self::UnverifiedTargetSelection => formatter.write_str(
+                "compile.request.targets.selection: target was not verified by the request",
+            ),
             Self::BudgetExceeded {
                 resource,
                 limit,
@@ -313,7 +365,7 @@ pub(crate) fn verify_request(
     if request
         .target_profiles
         .iter()
-        .any(|target| target.key != PrototypeTargetProfile::governed().key)
+        .any(|target| *target != PrototypeTargetProfile::governed())
     {
         return unsupported("target", "prototype-target-neutral-baseline-v1");
     }
@@ -360,7 +412,7 @@ fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProg
 }
 
 fn check_budget(resource: &'static str, limit: u32, actual: usize) -> Result<(), RequestError> {
-    if usize::try_from(limit).expect("u32 fits every supported host") < actual {
+    if u64::try_from(actual).map_or(true, |actual| actual > u64::from(limit)) {
         return Err(RequestError::BudgetExceeded {
             resource,
             limit,
@@ -381,8 +433,20 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
         return mismatch("dtype-f32");
     }
 
-    let input = program.inputs().next().expect("input count checked");
-    let output = program.outputs().next().expect("output count checked");
+    let input = program
+        .inputs()
+        .next()
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "missing-input",
+        })?;
+    let output = program
+        .outputs()
+        .next()
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "missing-output",
+        })?;
     let sum = producer(program, output.value(), &strict_serial_sum_f32_op())?;
     let sum_operands: Vec<_> = sum.operands().collect();
     let sum_results: Vec<_> = sum.results().collect();
@@ -413,6 +477,22 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
         .clone();
     if input_shape.rank() == 0 {
         return mismatch("input-rank");
+    }
+    let rank = input_shape.rank();
+    let mut previous = None;
+    for axis in &axes {
+        let index =
+            usize::try_from(axis.get()).map_err(|_| RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "sum-axis-range",
+            })?;
+        if index >= rank {
+            return mismatch("sum-axis-range");
+        }
+        if previous.is_some_and(|previous| previous >= axis.get()) {
+            return mismatch("sum-axes-canonical");
+        }
+        previous = Some(axis.get());
     }
     if program.shape(*pointwise_result).ok() != Some(&input_shape) {
         return mismatch("pointwise-shape");
@@ -488,7 +568,12 @@ fn constant_bits(program: &SemanticProgram, value: ValueId) -> Result<u32, Reque
     else {
         return mismatch("constant-bits");
     };
-    if bits.format() != &TypeKey::new("tiler", "f32", 1).expect("the governed F32 key is valid") {
+    let governed_f32 =
+        TypeKey::new("tiler", "f32", 1).map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "governed-f32-key",
+        })?;
+    if bits.format() != &governed_f32 {
         return mismatch("constant-bits-format");
     }
     <[u8; 4]>::try_from(bits.bits())

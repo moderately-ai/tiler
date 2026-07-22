@@ -198,6 +198,10 @@ pub(crate) struct ArtifactConstructionPlan {
     pub(crate) entry_regions: Vec<RegionId>,
     pub(crate) routing_guard: HostExprId,
     pub(crate) lowering_providers: Vec<LoweringProviderIdentity>,
+    pub(crate) request_subject: crate::request::VerifiedRequestSubject,
+    pub(crate) verified_program: KernelProgram,
+    pub(crate) verified_schedules: Vec<VerifiedScheduledRegion>,
+    pub(crate) verified_kernels: Vec<VerifiedStructuredKernel>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -249,6 +253,11 @@ pub(crate) fn build_kernel_program(
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
 ) -> Result<KernelProgram, ProgramError> {
+    if scheduled.len() != 2 {
+        return Err(ProgramError::Structure {
+            rule: "strategy-cardinality",
+        });
+    }
     let expressions = host_expressions(request)?;
     let input_bytes = HostExprId(2);
     let output_bytes = HostExprId(4);
@@ -628,12 +637,25 @@ fn verify_program_structure(
             rule: "cardinality",
         });
     }
-    let values = evaluate_expressions(&program.host_expressions)?;
-    if values.get(usize::from(program.applicability_guard.0)) != Some(&HostValue::Bool(true)) {
+    let Some(first_schedule) = scheduled.first() else {
         return Err(ProgramError::Structure {
-            rule: "applicability-guard",
+            rule: "cardinality",
+        });
+    };
+    if scheduled
+        .iter()
+        .any(|region| region.request_subject != first_schedule.request_subject)
+    {
+        return Err(ProgramError::Structure {
+            rule: "request-subject",
         });
     }
+    for region in scheduled {
+        crate::physical::lower_structured_kernel(region).map_err(|_| ProgramError::Structure {
+            rule: "schedule-verification",
+        })?;
+    }
+    let values = verify_host_contract(program, scheduled, first_schedule)?;
     if scheduled
         .iter()
         .any(|region| region.target_profile_key != program.target_profile_key)
@@ -682,9 +704,55 @@ fn verify_program_structure(
     Ok(values)
 }
 
+fn verify_host_contract(
+    program: &KernelProgram,
+    scheduled: &[VerifiedScheduledRegion],
+    first_schedule: &VerifiedScheduledRegion,
+) -> Result<Vec<HostValue>, ProgramError> {
+    let (input_elements, output_elements) = scheduled_element_counts(scheduled)?;
+    let expected_expressions = canonical_host_expressions(input_elements, output_elements);
+    if program.host_expressions != expected_expressions {
+        return Err(ProgramError::HostExpression {
+            rule: "canonical-graph",
+            expression: HostExprId(0),
+        });
+    }
+    if program.host_expressions.len()
+        > usize::try_from(first_schedule.request_subject.budgets.host_expression_nodes).map_err(
+            |_| ProgramError::Structure {
+                rule: "host-expression-budget",
+            },
+        )?
+    {
+        return Err(ProgramError::Structure {
+            rule: "host-expression-budget",
+        });
+    }
+    if program.buffer_plan.values.len()
+        > usize::try_from(first_schedule.request_subject.budgets.buffers).map_err(|_| {
+            ProgramError::Storage {
+                rule: "buffer-budget",
+            }
+        })?
+    {
+        return Err(ProgramError::Storage {
+            rule: "buffer-budget",
+        });
+    }
+    let values = evaluate_expressions(&program.host_expressions)?;
+    if values.get(usize::from(program.applicability_guard.0)) != Some(&HostValue::Bool(true)) {
+        return Err(ProgramError::Structure {
+            rule: "applicability-guard",
+        });
+    }
+    Ok(values)
+}
+
 pub(crate) fn build_artifact_plan(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+    kernels: &[VerifiedStructuredKernel],
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
@@ -693,6 +761,43 @@ pub(crate) fn build_artifact_plan(
             rule: "semantic-request-binding",
         });
     }
+    if scheduled.is_empty()
+        || scheduled
+            .iter()
+            .any(|region| region.request_subject != request.subject())
+        || kernels.len() != scheduled.len()
+    {
+        return Err(ProgramError::Structure {
+            rule: "artifact-refinement-cardinality",
+        });
+    }
+    for (region, kernel) in scheduled.iter().zip(kernels) {
+        let expected = crate::physical::lower_structured_kernel(region).map_err(|_| {
+            ProgramError::Structure {
+                rule: "artifact-schedule-refinement",
+            }
+        })?;
+        if kernel != &expected {
+            return Err(ProgramError::Structure {
+                rule: "artifact-kernel-refinement",
+            });
+        }
+    }
+    let expected_program = match scheduled {
+        [single] => build_fused_kernel_program(request, single)?,
+        [_, _] => build_kernel_program(request, scheduled)?,
+        _ => {
+            return Err(ProgramError::Structure {
+                rule: "artifact-strategy-cardinality",
+            });
+        }
+    };
+    if program != &expected_program {
+        return Err(ProgramError::Structure {
+            rule: "artifact-program-refinement",
+        });
+    }
+    assert_kernels_match_program(program, kernels)?;
     let semantic_output = semantic.outputs().next().ok_or(ProgramError::Structure {
         rule: "semantic-output-coverage",
     })?;
@@ -704,13 +809,28 @@ pub(crate) fn build_artifact_plan(
             rule: "semantic-output-coverage",
         });
     }
-    if program
-        .entries
-        .iter()
-        .any(|entry| entry.numerical.profile_key != request.numerical_contract.key)
+    if program.target_profile_key != request.target_profile.key
+        || program
+            .entries
+            .iter()
+            .any(|entry| entry.numerical != request.numerical_contract.into())
     {
         return Err(ProgramError::Structure {
             rule: "artifact-numerical-realization",
+        });
+    }
+    let expected_providers = match program.stages.len() {
+        1 => request
+            .capabilities
+            .fused_serial_sum
+            .into_iter()
+            .collect::<Vec<_>>(),
+        2 => vec![request.capabilities.materialized_serial_sum],
+        _ => Vec::new(),
+    };
+    if providers.is_empty() || providers != expected_providers {
+        return Err(ProgramError::Structure {
+            rule: "artifact-provider-coverage",
         });
     }
     Ok(ArtifactConstructionPlan {
@@ -729,55 +849,105 @@ pub(crate) fn build_artifact_plan(
             .collect(),
         routing_guard: program.applicability_guard,
         lowering_providers: providers,
+        request_subject: request.subject(),
+        verified_program: program.clone(),
+        verified_schedules: scheduled.to_vec(),
+        verified_kernels: kernels.to_vec(),
     })
 }
 
+pub(crate) fn verify_artifact_plan(
+    plan: &ArtifactConstructionPlan,
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+    kernels: &[VerifiedStructuredKernel],
+    program: &KernelProgram,
+    providers: Vec<LoweringProviderIdentity>,
+) -> Result<(), ProgramError> {
+    let expected = build_artifact_plan(semantic, request, scheduled, kernels, program, providers)?;
+    if plan != &expected {
+        return Err(ProgramError::Structure {
+            rule: "artifact-receipt",
+        });
+    }
+    Ok(())
+}
+
 fn host_expressions(request: &VerifiedTargetRequest) -> Result<Vec<HostExpr>, ProgramError> {
-    let expressions = vec![
-        expression(0, HostValueType::U64, HostExprNode::U64(4)),
-        expression(
-            1,
-            HostValueType::U64,
-            HostExprNode::U64(request.serial_sum().input_elements),
-        ),
-        expression(
-            2,
-            HostValueType::U64,
-            HostExprNode::CheckedMultiply(HostExprId(0), HostExprId(1)),
-        ),
-        expression(
-            3,
-            HostValueType::U64,
-            HostExprNode::U64(request.serial_sum().output_elements),
-        ),
-        expression(
-            4,
-            HostValueType::U64,
-            HostExprNode::CheckedMultiply(HostExprId(0), HostExprId(3)),
-        ),
-        expression(
-            5,
-            HostValueType::U64,
-            HostExprNode::U64(request.serial_sum().input_elements),
-        ),
-        expression(
-            6,
-            HostValueType::U64,
-            HostExprNode::U64(request.serial_sum().output_elements),
-        ),
-        expression(7, HostValueType::Bool, HostExprNode::Bool(true)),
-        expression(8, HostValueType::U64, HostExprNode::U64(1)),
-    ];
+    let expressions = canonical_host_expressions(
+        request.serial_sum().input_elements,
+        request.serial_sum().output_elements,
+    );
     let actual = expressions.len();
     if actual
-        > usize::try_from(request.budgets.host_expression_nodes)
-            .expect("u32 fits every supported host")
+        > usize::try_from(request.budgets.host_expression_nodes).map_err(|_| {
+            ProgramError::Structure {
+                rule: "host-expression-budget",
+            }
+        })?
     {
         return Err(ProgramError::Structure {
             rule: "host-expression-budget",
         });
     }
     Ok(expressions)
+}
+
+fn canonical_host_expressions(input_elements: u64, output_elements: u64) -> Vec<HostExpr> {
+    vec![
+        expression(0, HostValueType::U64, HostExprNode::U64(4)),
+        expression(1, HostValueType::U64, HostExprNode::U64(input_elements)),
+        expression(
+            2,
+            HostValueType::U64,
+            HostExprNode::CheckedMultiply(HostExprId(0), HostExprId(1)),
+        ),
+        expression(3, HostValueType::U64, HostExprNode::U64(output_elements)),
+        expression(
+            4,
+            HostValueType::U64,
+            HostExprNode::CheckedMultiply(HostExprId(0), HostExprId(3)),
+        ),
+        expression(5, HostValueType::U64, HostExprNode::U64(input_elements)),
+        expression(6, HostValueType::U64, HostExprNode::U64(output_elements)),
+        expression(7, HostValueType::Bool, HostExprNode::Bool(true)),
+        expression(8, HostValueType::U64, HostExprNode::U64(1)),
+    ]
+}
+
+fn scheduled_element_counts(
+    scheduled: &[VerifiedScheduledRegion],
+) -> Result<(u64, u64), ProgramError> {
+    let first = scheduled.first().ok_or(ProgramError::Structure {
+        rule: "cardinality",
+    })?;
+    let last = scheduled.last().ok_or(ProgramError::Structure {
+        rule: "cardinality",
+    })?;
+    let input_elements = match first
+        .region
+        .index
+        .accesses
+        .first()
+        .map(|access| &access.map)
+    {
+        Some(crate::physical::LogicalAccess::ReductionContributor { input_shape, .. }) => {
+            shape_elements(input_shape)
+        }
+        Some(crate::physical::LogicalAccess::LinearIdentity) => {
+            shape_elements(&first.region.index.iteration_shape)
+        }
+        None => None,
+    }
+    .ok_or(ProgramError::Structure {
+        rule: "input-element-count",
+    })?;
+    let output_elements =
+        shape_elements(&last.region.index.iteration_shape).ok_or(ProgramError::Structure {
+            rule: "output-element-count",
+        })?;
+    Ok((input_elements, output_elements))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -930,12 +1100,22 @@ fn verify_fused_storage(
         || output.tensor != TensorRole::Output
         || output.role != ValueRole::Output
         || output.definition != Some(StageId(0))
+        || input.allocation != AllocationId(0)
+        || output.allocation != AllocationId(1)
+        || input_allocation.id != input.allocation
+        || output_allocation.id != output.allocation
         || input.shape
-            != match &scheduled[0].region.index.accesses[0].map {
-                crate::physical::LogicalAccess::ReductionContributor { input_shape, .. } => {
-                    input_shape.clone()
-                }
-                crate::physical::LogicalAccess::LinearIdentity => {
+            != match scheduled[0]
+                .region
+                .index
+                .accesses
+                .first()
+                .map(|access| &access.map)
+            {
+                Some(crate::physical::LogicalAccess::ReductionContributor {
+                    input_shape, ..
+                }) => input_shape.clone(),
+                Some(crate::physical::LogicalAccess::LinearIdentity) | None => {
                     return Err(ProgramError::Storage {
                         rule: "fused-input-map",
                     });
@@ -1185,11 +1365,13 @@ pub(crate) fn assert_kernels_match_program(
 }
 
 pub(crate) fn verify_semantic_output_type(program: &SemanticProgram) -> Result<(), ProgramError> {
-    if program.outputs().any(|output| {
-        program
-            .value(output.value())
-            .map_or(true, |value| value.resolved_type() != &F32::resolved_type())
-    }) {
+    if program.output_count() == 0
+        || program.outputs().any(|output| {
+            program
+                .value(output.value())
+                .map_or(true, |value| value.resolved_type() != &F32::resolved_type())
+        })
+    {
         return Err(ProgramError::Structure {
             rule: "semantic-output-type",
         });
@@ -1239,7 +1421,7 @@ mod tests {
             .unwrap();
         let semantic = builder.build().unwrap();
         let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
-        let request = request.for_target(request.target_profiles[0]);
+        let request = request.for_target(request.target_profiles[0]).unwrap();
         let scheduled = build_scheduled_regions(&request).unwrap();
         (semantic, request, scheduled)
     }
@@ -1254,6 +1436,12 @@ mod tests {
             build_artifact_plan(
                 &different_semantic,
                 &request,
+                &scheduled,
+                &scheduled
+                    .iter()
+                    .map(lower_structured_kernel)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
                 &program,
                 vec![request.capabilities.materialized_serial_sum],
             ),
@@ -1276,6 +1464,8 @@ mod tests {
         let artifact = build_artifact_plan(
             &semantic,
             &request,
+            &scheduled,
+            &kernels,
             &program,
             vec![request.capabilities.materialized_serial_sum],
         )
@@ -1406,8 +1596,9 @@ mod tests {
         wrong_bytes.host_expressions[2].node = HostExprNode::U64(4);
         assert_eq!(
             verify_kernel_program(wrong_bytes, &scheduled),
-            Err(ProgramError::Storage {
-                rule: "required-byte-count"
+            Err(ProgramError::HostExpression {
+                rule: "canonical-graph",
+                expression: HostExprId(0),
             })
         );
 
@@ -1415,9 +1606,9 @@ mod tests {
         wrong_launch.host_expressions[5].node = HostExprNode::U64(5);
         assert_eq!(
             verify_kernel_program(wrong_launch, &scheduled),
-            Err(ProgramError::Abi {
-                rule: "launch-expression",
-                stage: StageId(0),
+            Err(ProgramError::HostExpression {
+                rule: "canonical-graph",
+                expression: HostExprId(0),
             })
         );
 
@@ -1511,7 +1702,7 @@ mod tests {
         let mut program = build_kernel_program(&request, &scheduled).unwrap();
         program.host_expressions[0].node = HostExprNode::U64(u64::MAX);
         assert_eq!(
-            verify_kernel_program(program, &scheduled),
+            evaluate_expressions(&program.host_expressions),
             Err(ProgramError::HostExpression {
                 rule: "overflow",
                 expression: HostExprId(2),
@@ -1524,9 +1715,97 @@ mod tests {
         assert_eq!(
             verify_kernel_program(malformed, &scheduled),
             Err(ProgramError::HostExpression {
-                rule: "operand",
-                expression: HostExprId(2),
+                rule: "canonical-graph",
+                expression: HostExprId(0),
             })
         );
+    }
+
+    #[test]
+    fn builders_and_verifiers_are_total_over_short_and_forged_slices() {
+        let (_, request, scheduled) = fixture();
+        assert_eq!(
+            build_kernel_program(&request, &[]),
+            Err(ProgramError::Structure {
+                rule: "strategy-cardinality",
+            })
+        );
+        assert_eq!(
+            build_kernel_program(&request, &scheduled[..1]),
+            Err(ProgramError::Structure {
+                rule: "strategy-cardinality",
+            })
+        );
+
+        let fused = build_fused_scheduled_region(&request).unwrap();
+        let program = build_fused_kernel_program(&request, &fused).unwrap();
+        let mut malformed_schedule = fused;
+        malformed_schedule.region.index.accesses.clear();
+        assert_eq!(
+            verify_fused_serial_sum_program(program, std::slice::from_ref(&malformed_schedule)),
+            Err(ProgramError::Structure {
+                rule: "schedule-verification",
+            })
+        );
+    }
+
+    #[test]
+    fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
+        let (semantic, request, scheduled) = fixture();
+        let program = build_kernel_program(&request, &scheduled).unwrap();
+        let kernels = scheduled
+            .iter()
+            .map(lower_structured_kernel)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let provider = request.capabilities.materialized_serial_sum;
+
+        for providers in [Vec::new(), vec![provider, provider]] {
+            assert_eq!(
+                build_artifact_plan(
+                    &semantic, &request, &scheduled, &kernels, &program, providers,
+                ),
+                Err(ProgramError::Structure {
+                    rule: "artifact-provider-coverage",
+                })
+            );
+        }
+
+        let plan = build_artifact_plan(
+            &semantic,
+            &request,
+            &scheduled,
+            &kernels,
+            &program,
+            vec![provider],
+        )
+        .unwrap();
+        let mut forged = plan.clone();
+        forged.routing_guard = HostExprId(6);
+        assert_eq!(
+            verify_artifact_plan(
+                &forged,
+                &semantic,
+                &request,
+                &scheduled,
+                &kernels,
+                &program,
+                vec![provider],
+            ),
+            Err(ProgramError::Structure {
+                rule: "artifact-receipt",
+            })
+        );
+
+        let mut swapped =
+            build_fused_kernel_program(&request, &build_fused_scheduled_region(&request).unwrap())
+                .unwrap();
+        swapped.buffer_plan.values[0].allocation = AllocationId(1);
+        swapped.buffer_plan.values[1].allocation = AllocationId(0);
+        let fused = build_fused_scheduled_region(&request).unwrap();
+        assert!(matches!(
+            verify_fused_serial_sum_program(swapped, std::slice::from_ref(&fused)),
+            Err(ProgramError::Storage { .. })
+        ));
     }
 }
