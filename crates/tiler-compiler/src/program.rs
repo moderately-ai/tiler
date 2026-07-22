@@ -205,7 +205,6 @@ pub(crate) struct ArtifactConstructionPlan {
 }
 
 impl KernelProgram {
-    #[cfg(test)]
     pub(crate) fn stages(&self) -> &[ProgramStage] {
         &self.stages
     }
@@ -215,7 +214,6 @@ impl KernelProgram {
         &self.buffer_plan
     }
 
-    #[cfg(test)]
     pub(crate) fn dependencies(&self) -> &[Dependency] {
         &self.dependencies
     }

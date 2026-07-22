@@ -41,7 +41,19 @@ be completed:
 - whether canonical traces are serialized or embedded in artifacts;
 - which renderer guarantees, retention controls, and provider-detail/redaction
   policy form part of the public contract.
+- whether public enums are non-exhaustive, versioned schema views, or both;
+- which component may mint trusted evidence receipts for external providers;
+- whether the public identity is canonical bytes, a specified digest, or both;
+- how much of the request-qualified renderer header is stable versus redacted.
 
 No provider emission trait is proposed yet. The draft keeps emission
 compiler-owned and exposes only private read accessors, avoiding a premature
 extension contract while preserving typed provider and rule identities.
+
+The correction pass after immutable review also keeps terminal decisions in a
+typed ledger: successful traces require one selected alternative and one
+selection disposition per feasible or target-rejected considered alternative; failed target
+compilations retain their original typed source plus one terminal failure
+record. Configured limits govern optional detail only. Mandatory decisions and
+the typed truncation summary are retained independently under the compiler's
+hard aggregate bound, so detail retention cannot change planning.

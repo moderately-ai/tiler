@@ -5,12 +5,13 @@
 
 use std::error::Error;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::fusion::FusionNumericalProof;
-use crate::request::{LoweringProviderIdentity, VerifiedRequestSubject, VerifiedTargetRequest};
+use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
 pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 1;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 1;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 2;
 const MAX_KEY_BYTES: usize = 255;
 const MAX_RECORDS: u32 = 4_096;
 const MAX_CANONICAL_BYTES: u32 = 1024 * 1024;
@@ -18,6 +19,7 @@ const MAX_SUBJECTS_PER_RECORD: u32 = 16;
 const MAX_CAUSES_PER_RECORD: u32 = 16;
 const MAX_FACTS_PER_ASSESSMENT: u32 = 32;
 const MAX_COST_TERMS: u32 = 32;
+static NEXT_WRITER_AUTHORITY: AtomicU64 = AtomicU64::new(1);
 
 macro_rules! key_type {
     ($name:ident, $kind:expr) => {
@@ -90,6 +92,7 @@ pub(crate) enum ExplainDisposition {
     Retained,
     DominancePruned,
     HigherCost,
+    NotSelectedTradeoff,
     Selected,
     CompilerFailure,
     Truncated,
@@ -102,6 +105,7 @@ pub(crate) enum SubjectKind {
     Region,
     Boundary,
     Candidate,
+    Capability,
     Schedule,
     Target,
     Kernel,
@@ -171,7 +175,6 @@ impl RuleRef {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CompilationSubject {
-    request: VerifiedRequestSubject,
     canonical: Box<[u8]>,
 }
 
@@ -179,7 +182,7 @@ impl CompilationSubject {
     pub(crate) fn from_request(request: &VerifiedTargetRequest) -> Self {
         let request = request.subject();
         let canonical = request.canonical_explain_subject_bytes().into_boxed_slice();
-        Self { request, canonical }
+        Self { canonical }
     }
 }
 
@@ -200,7 +203,7 @@ impl SubjectRef {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum EvidenceBasis {
     NormativeGuarantee,
     CheckedInvariant,
@@ -211,8 +214,14 @@ pub(crate) enum EvidenceBasis {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct VerifiedEvidenceRef(EvidenceReceiptKind);
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedEvidenceRef {
+    kind: EvidenceReceiptKind,
+    compilation: Box<[u8]>,
+    candidate: SubjectKey,
+    provider: ProviderRef,
+    proof: Box<[u8]>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EvidenceReceiptKind {
@@ -220,8 +229,21 @@ enum EvidenceReceiptKind {
 }
 
 impl VerifiedEvidenceRef {
-    pub(crate) const fn from_fusion_numerical(_: &FusionNumericalProof) -> Self {
-        Self(EvidenceReceiptKind::FusionNumerical)
+    pub(crate) fn from_fusion_numerical(
+        request: &VerifiedTargetRequest,
+        proof: &FusionNumericalProof,
+        provider: ProviderRef,
+    ) -> Result<Self, ExplainError> {
+        Ok(Self {
+            kind: EvidenceReceiptKind::FusionNumerical,
+            compilation: request
+                .subject()
+                .canonical_explain_subject_bytes()
+                .into_boxed_slice(),
+            candidate: SubjectKey::new(proof.candidate_stable_id())?,
+            provider,
+            proof: proof.canonical_explain_evidence_bytes().into_boxed_slice(),
+        })
     }
 }
 
@@ -271,7 +293,13 @@ impl PredicateAssessment {
         predicate: impl AsRef<str>,
         basis: EvidenceBasis,
     ) -> Result<Self, ExplainError> {
-        if matches!(basis, EvidenceBasis::Unknown) {
+        if !matches!(
+            basis,
+            EvidenceBasis::NormativeGuarantee
+                | EvidenceBasis::CheckedInvariant
+                | EvidenceBasis::SoundProof(_)
+                | EvidenceBasis::ExhaustiveFinite
+        ) {
             return Err(ExplainError::EvidenceEscalation);
         }
         Ok(Self {
@@ -363,7 +391,8 @@ pub(crate) enum CostDisposition {
 pub(crate) enum SelectionOutcome {
     Selected,
     Dominated,
-    HigherCost,
+    NotSelectedTradeoff,
+    Infeasible,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -479,6 +508,10 @@ impl ExplainEvent {
             Self::Feasibility {
                 outcome: FeasibilityOutcome::Rejected(_),
                 ..
+            }
+            | Self::Selection {
+                outcome: SelectionOutcome::Infeasible,
+                ..
             } => ExplainDisposition::RejectedTarget,
             Self::CostAssessment {
                 disposition: CostDisposition::Retained,
@@ -495,11 +528,11 @@ impl ExplainEvent {
             Self::CostAssessment {
                 disposition: CostDisposition::HigherCost,
                 ..
-            }
-            | Self::Selection {
-                outcome: SelectionOutcome::HigherCost,
-                ..
             } => ExplainDisposition::HigherCost,
+            Self::Selection {
+                outcome: SelectionOutcome::NotSelectedTradeoff,
+                ..
+            } => ExplainDisposition::NotSelectedTradeoff,
             Self::Selection {
                 outcome: SelectionOutcome::Selected,
                 ..
@@ -512,7 +545,9 @@ impl ExplainEvent {
     fn validate(&self) -> Result<(), ExplainError> {
         match self {
             Self::Check {
-                stage, assessment, ..
+                stage,
+                assessment,
+                rejection,
             } => {
                 if matches!(
                     stage,
@@ -520,9 +555,29 @@ impl ExplainEvent {
                         | ExplainStage::Costing
                         | ExplainStage::Selection
                         | ExplainStage::CapabilityResolution
-                ) || matches!(assessment.basis, EvidenceBasis::SoundProof(_))
+                ) || matches!(&assessment.basis, EvidenceBasis::SoundProof(_))
                     && *stage != ExplainStage::NumericalLegality
                 {
+                    return Err(ExplainError::InvalidStageEvent);
+                }
+                let rejection_matches_stage = matches!(
+                    (stage, rejection),
+                    (
+                        ExplainStage::NumericalLegality,
+                        RejectionClass::NumericalIllegal
+                    ) | (
+                        ExplainStage::RequestVerification
+                            | ExplainStage::Normalization
+                            | ExplainStage::RegionFormation
+                            | ExplainStage::CandidateEnumeration
+                            | ExplainStage::IntrinsicScheduling
+                            | ExplainStage::KernelRefinement
+                            | ExplainStage::ProgramVerification
+                            | ExplainStage::ArtifactPlanning,
+                        RejectionClass::IntrinsicInvalid
+                    )
+                );
+                if !rejection_matches_stage {
                     return Err(ExplainError::InvalidStageEvent);
                 }
                 check_bound(
@@ -555,8 +610,32 @@ impl ExplainEvent {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ExplainRecordId(u32);
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExplainRecordId {
+    local: u32,
+    writer_authority: u64,
+    request_qualifier: u64,
+}
+
+impl PartialEq for ExplainRecordId {
+    fn eq(&self, other: &Self) -> bool {
+        self.local == other.local
+    }
+}
+
+impl Eq for ExplainRecordId {}
+
+impl PartialOrd for ExplainRecordId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ExplainRecordId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.local.cmp(&other.local)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ExplainRecord {
@@ -600,11 +679,7 @@ impl ExplainLimits {
         max_records: u32,
         max_canonical_bytes: u32,
     ) -> Result<Self, ExplainError> {
-        if max_records < 2
-            || max_records > MAX_RECORDS
-            || max_canonical_bytes < 1_024
-            || max_canonical_bytes > MAX_CANONICAL_BYTES
-        {
+        if max_records > MAX_RECORDS || max_canonical_bytes > MAX_CANONICAL_BYTES {
             return Err(ExplainError::InvalidLimits);
         }
         Ok(Self {
@@ -626,11 +701,17 @@ impl Default for ExplainLimits {
 #[derive(Clone, Debug)]
 pub(crate) struct ExplainWriter {
     subject: CompilationSubject,
+    authority: u64,
+    request_qualifier: u64,
+    allowed_providers: Vec<ProviderRef>,
     limits: ExplainLimits,
     records: Vec<ExplainRecord>,
     retained_bytes: usize,
+    retained_detail_records: usize,
+    retained_detail_bytes: usize,
     omitted_records: u64,
     omitted_bytes: u64,
+    infeasible_alternatives: Vec<(SubjectRef, Option<ExplainRecordId>)>,
 }
 
 impl ExplainWriter {
@@ -639,17 +720,29 @@ impl ExplainWriter {
         limits: ExplainLimits,
     ) -> Result<Self, ExplainError> {
         let subject = CompilationSubject::from_request(request);
+        let mut allowed_providers = vec![ProviderRef::lowering(
+            request.capabilities().materialized_serial_sum,
+        )?];
+        if let Some(provider) = request.capabilities().fused_serial_sum {
+            allowed_providers.push(ProviderRef::lowering(provider)?);
+        }
         let retained_bytes = encode_trace(EXPLAIN_SCHEMA_VERSION, &subject, &[]).len();
-        if retained_bytes > usize::try_from(limits.max_canonical_bytes).unwrap_or(usize::MAX) {
+        if retained_bytes > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX) {
             return Err(ExplainError::TerminalCapacity);
         }
         Ok(Self {
+            authority: NEXT_WRITER_AUTHORITY.fetch_add(1, Ordering::Relaxed),
+            request_qualifier: stable_qualifier(&subject.canonical),
             subject,
+            allowed_providers,
             limits,
             records: Vec::new(),
             retained_bytes,
+            retained_detail_records: 0,
+            retained_detail_bytes: 0,
             omitted_records: 0,
             omitted_bytes: 0,
+            infeasible_alternatives: Vec::new(),
         })
     }
 
@@ -689,12 +782,18 @@ impl ExplainWriter {
     fn push(
         &mut self,
         rule: RuleRef,
-        subjects: Vec<SubjectRef>,
-        event: ExplainEvent,
-        causes: Vec<ExplainRecordId>,
+        mut subjects: Vec<SubjectRef>,
+        mut event: ExplainEvent,
+        mut causes: Vec<ExplainRecordId>,
         terminal: bool,
     ) -> Result<Option<ExplainRecordId>, ExplainError> {
+        canonicalize_record_parts(&mut subjects, &mut event, &mut causes)?;
         event.validate()?;
+        if rule.provider != ProviderRef::builtin()
+            && !self.allowed_providers.contains(&rule.provider)
+        {
+            return Err(ExplainError::ProviderAuthorityMismatch);
+        }
         if subjects.is_empty() {
             return Err(ExplainError::EmptySubjects);
         }
@@ -706,19 +805,41 @@ impl ExplainWriter {
         {
             return Err(ExplainError::CrossCompilationSubject);
         }
-        let mut unique = causes.clone();
-        unique.sort_unstable();
-        if unique.windows(2).any(|pair| pair[0] == pair[1]) {
+        if let ExplainEvent::Check {
+            assessment:
+                PredicateAssessment {
+                    basis: EvidenceBasis::SoundProof(receipt),
+                    ..
+                },
+            ..
+        } = &event
+            && (receipt.compilation.as_ref() != self.subject.canonical.as_ref()
+                || receipt.provider != rule.provider
+                || subjects.len() != 1
+                || subjects[0].kind != SubjectKind::Candidate
+                || subjects[0].key != receipt.candidate)
+        {
+            return Err(ExplainError::EvidenceSubjectMismatch);
+        }
+        if causes.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(ExplainError::DuplicateCause);
         }
-        let next = ExplainRecordId(
-            u32::try_from(self.records.len()).map_err(|_| ExplainError::TerminalCapacity)?,
-        );
-        if causes.iter().any(|cause| cause.0 >= next.0) {
+        if causes.iter().any(|cause| {
+            cause.writer_authority != self.authority
+                || cause.request_qualifier != self.request_qualifier
+        }) {
+            return Err(ExplainError::CrossWriterCause);
+        }
+        let next = ExplainRecordId {
+            local: u32::try_from(self.records.len()).map_err(|_| ExplainError::TerminalCapacity)?,
+            writer_authority: self.authority,
+            request_qualifier: self.request_qualifier,
+        };
+        if causes.iter().any(|cause| cause.local >= next.local) {
             return Err(ExplainError::InvalidCause {
                 cause: *causes
                     .iter()
-                    .find(|cause| cause.0 >= next.0)
+                    .find(|cause| cause.local >= next.local)
                     .expect("checked cause exists"),
                 next,
             });
@@ -731,14 +852,17 @@ impl ExplainWriter {
             causes,
         };
         let bytes = encode_record(&record).len();
-        // Current compilation has at most two alternatives, each needing a
-        // terminal selection record, plus a possible truncation record.
-        let record_reserve = if terminal { 0 } else { 3 };
-        let byte_reserve = if terminal { 0 } else { 1_024 };
-        let exceeds = self.records.len().saturating_add(1 + record_reserve)
-            > usize::try_from(self.limits.max_records).unwrap_or(usize::MAX)
-            || self.retained_bytes.saturating_add(bytes + byte_reserve)
-                > usize::try_from(self.limits.max_canonical_bytes).unwrap_or(usize::MAX);
+        let exceeds = if terminal {
+            self.records.len().saturating_add(1)
+                > usize::try_from(MAX_RECORDS).unwrap_or(usize::MAX)
+                || self.retained_bytes.saturating_add(bytes)
+                    > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX)
+        } else {
+            self.retained_detail_records.saturating_add(1)
+                > usize::try_from(self.limits.max_records).unwrap_or(usize::MAX)
+                || self.retained_detail_bytes.saturating_add(bytes)
+                    > usize::try_from(self.limits.max_canonical_bytes).unwrap_or(usize::MAX)
+        };
         if exceeds && !terminal {
             self.omitted_records = self.omitted_records.saturating_add(1);
             self.omitted_bytes = self
@@ -750,23 +874,130 @@ impl ExplainWriter {
             return Err(ExplainError::TerminalCapacity);
         }
         self.retained_bytes += bytes;
+        if !terminal {
+            self.retained_detail_records += 1;
+            self.retained_detail_bytes += bytes;
+        }
         self.records.push(record);
         Ok(Some(next))
     }
 
-    pub(crate) fn finish(mut self) -> Result<VerifiedExplainTrace, ExplainError> {
-        if self.omitted_records != 0 {
-            let subject = self.subject(SubjectKind::KernelProgram, "explain-report")?;
+    pub(crate) fn finish_success(
+        mut self,
+        alternatives: &[&str],
+        selected: &str,
+    ) -> Result<VerifiedExplainTrace, ExplainError> {
+        for (subject, cause) in std::mem::take(&mut self.infeasible_alternatives) {
             self.push_terminal(
-                RuleRef::builtin("explain.retention")?,
+                RuleRef::builtin("tiler.selection.structural-pareto.v1")?,
                 vec![subject],
-                ExplainEvent::Truncated {
-                    omitted_records: self.omitted_records,
-                    omitted_bytes: self.omitted_bytes,
+                ExplainEvent::Selection {
+                    policy: SelectionPolicyKey::new("tiler.selection.structural-pareto.v1")?,
+                    outcome: SelectionOutcome::Infeasible,
                 },
-                Vec::new(),
+                cause.into_iter().collect(),
             )?;
         }
+        self.append_truncation_summary()?;
+        if self.records.is_empty() {
+            return Err(ExplainError::EmptyTrace);
+        }
+        let mut expected = alternatives
+            .iter()
+            .map(SubjectKey::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        let selected = SubjectKey::new(selected)?;
+        let mut observed = Vec::new();
+        let mut observed_selected = Vec::new();
+        for record in &self.records {
+            if let ExplainEvent::Selection { outcome, .. } = record.event {
+                let [subject] = record.subjects.as_slice() else {
+                    return Err(ExplainError::InvalidTerminalLedger);
+                };
+                if subject.kind != SubjectKind::Alternative {
+                    return Err(ExplainError::InvalidTerminalLedger);
+                }
+                observed.push(subject.key.clone());
+                if outcome == SelectionOutcome::Selected {
+                    observed_selected.push(subject.key.clone());
+                }
+                if outcome == SelectionOutcome::Infeasible {
+                    expected.push(subject.key.clone());
+                }
+            }
+        }
+        observed.sort();
+        let mut expected_sorted = expected;
+        expected_sorted.sort();
+        if observed != expected_sorted
+            || observed_selected.as_slice() != std::slice::from_ref(&selected)
+        {
+            return Err(ExplainError::InvalidTerminalLedger);
+        }
+        self.seal()
+    }
+
+    pub(crate) fn finish_failure(
+        mut self,
+        reason: ReasonCode,
+    ) -> Result<VerifiedExplainTrace, ExplainError> {
+        self.append_truncation_summary()?;
+        let subject = self.subject(SubjectKind::KernelProgram, "compilation")?;
+        self.push_terminal(
+            RuleRef::builtin("compile.failure")?,
+            vec![subject],
+            ExplainEvent::CompilerFailure {
+                stage: ExplainStage::ProgramVerification,
+                reason,
+            },
+            Vec::new(),
+        )?;
+        let failures = self
+            .records
+            .iter()
+            .filter(|record| matches!(record.event, ExplainEvent::CompilerFailure { .. }))
+            .count();
+        let selections = self
+            .records
+            .iter()
+            .filter(|record| matches!(record.event, ExplainEvent::Selection { .. }))
+            .count();
+        if failures != 1 || selections != 0 {
+            return Err(ExplainError::InvalidTerminalLedger);
+        }
+        self.seal()
+    }
+
+    pub(crate) fn note_infeasible_alternative(
+        &mut self,
+        subject: SubjectRef,
+        cause: Option<ExplainRecordId>,
+    ) -> Result<(), ExplainError> {
+        if subject.compilation != self.subject || subject.kind != SubjectKind::Alternative {
+            return Err(ExplainError::CrossCompilationSubject);
+        }
+        self.infeasible_alternatives.push((subject, cause));
+        Ok(())
+    }
+
+    fn append_truncation_summary(&mut self) -> Result<(), ExplainError> {
+        if self.omitted_records == 0 {
+            return Ok(());
+        }
+        let subject = self.subject(SubjectKind::KernelProgram, "explain-report")?;
+        self.push_terminal(
+            RuleRef::builtin("explain.retention")?,
+            vec![subject],
+            ExplainEvent::Truncated {
+                omitted_records: self.omitted_records,
+                omitted_bytes: self.omitted_bytes,
+            },
+            Vec::new(),
+        )?;
+        Ok(())
+    }
+
+    fn seal(self) -> Result<VerifiedExplainTrace, ExplainError> {
         if self.records.is_empty() {
             return Err(ExplainError::EmptyTrace);
         }
@@ -778,6 +1009,46 @@ impl ExplainWriter {
             canonical_identity: ExplainIdentity(identity.into_boxed_slice()),
         })
     }
+}
+
+fn canonicalize_record_parts(
+    subjects: &mut [SubjectRef],
+    event: &mut ExplainEvent,
+    causes: &mut [ExplainRecordId],
+) -> Result<(), ExplainError> {
+    subjects.sort_by(|left, right| (left.kind, &left.key).cmp(&(right.kind, &right.key)));
+    if subjects
+        .windows(2)
+        .any(|pair| pair[0].kind == pair[1].kind && pair[0].key == pair[1].key)
+    {
+        return Err(ExplainError::DuplicateSubject);
+    }
+    causes.sort_unstable();
+    match event {
+        ExplainEvent::Check { assessment, .. } => {
+            assessment
+                .facts
+                .sort_by(|left, right| left.key.cmp(&right.key));
+            if assessment
+                .facts
+                .windows(2)
+                .any(|pair| pair[0].key == pair[1].key)
+            {
+                return Err(ExplainError::DuplicateFact);
+            }
+        }
+        ExplainEvent::CostAssessment { terms, .. } => {
+            terms.sort_by(|left, right| left.metric.cmp(&right.metric));
+            if terms
+                .windows(2)
+                .any(|pair| pair[0].metric == pair[1].metric)
+            {
+                return Err(ExplainError::DuplicateCostTerm);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -807,13 +1078,16 @@ impl VerifiedExplainTrace {
     }
 
     pub(crate) fn render(&self) -> String {
-        let mut output = format!("tiler-explain-v{EXPLAIN_RENDERER_VERSION}\n");
+        let mut output = format!(
+            "tiler-explain-v{EXPLAIN_RENDERER_VERSION} request={:016x}\n",
+            stable_qualifier(&self.compilation_subject.canonical)
+        );
         for record in &self.records {
             use fmt::Write as _;
             let _ = write!(
                 output,
                 "{} {} {} rule={}@{} provider={}@{} subject=",
-                record.id.0,
+                record.id.local,
                 stage_name(record.event.stage()),
                 disposition_name(record.event.disposition()),
                 record.rule.key.as_str(),
@@ -842,7 +1116,7 @@ impl VerifiedExplainTrace {
                     if index != 0 {
                         output.push(',');
                     }
-                    let _ = write!(output, "{}", cause.0);
+                    let _ = write!(output, "{}", cause.local);
                 }
             }
             output.push('\n');
@@ -870,7 +1144,7 @@ impl VerifiedExplainTrace {
         for (index, record) in self.records.iter().enumerate() {
             let mut unique_causes = record.causes.clone();
             unique_causes.sort_unstable();
-            if record.id.0 != u32::try_from(index).unwrap_or(u32::MAX)
+            if record.id.local != u32::try_from(index).unwrap_or(u32::MAX)
                 || record.subjects.is_empty()
                 || record.subjects.len()
                     > usize::try_from(MAX_SUBJECTS_PER_RECORD).unwrap_or(usize::MAX)
@@ -884,7 +1158,7 @@ impl VerifiedExplainTrace {
                 || record
                     .causes
                     .iter()
-                    .any(|cause| usize::try_from(cause.0).map_or(true, |cause| cause >= index))
+                    .any(|cause| usize::try_from(cause.local).map_or(true, |cause| cause >= index))
             {
                 return Err(ExplainError::StaleIdentity);
             }
@@ -903,7 +1177,7 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 "check:{}:{}:{}",
                 assessment.predicate.as_str(),
                 assessment_text(&assessment.assessment),
-                basis_name(assessment.basis)
+                basis_name(&assessment.basis)
             );
             if !assessment.facts.is_empty() {
                 output.push_str(":facts=");
@@ -958,7 +1232,7 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 output,
                 "cost:{}:{}:{}:",
                 model.as_str(),
-                basis_name(*basis),
+                basis_name(basis),
                 cost_disposition_name(*disposition)
             );
             for (index, term) in terms.iter().enumerate() {
@@ -1047,6 +1321,7 @@ const fn disposition_name(disposition: ExplainDisposition) -> &'static str {
         ExplainDisposition::Retained => "retained",
         ExplainDisposition::DominancePruned => "dominance-pruned",
         ExplainDisposition::HigherCost => "higher-cost",
+        ExplainDisposition::NotSelectedTradeoff => "not-selected-tradeoff",
         ExplainDisposition::Selected => "selected",
         ExplainDisposition::CompilerFailure => "compiler-failure",
         ExplainDisposition::Truncated => "truncated",
@@ -1060,6 +1335,7 @@ const fn subject_kind_name(kind: SubjectKind) -> &'static str {
         SubjectKind::Region => "region",
         SubjectKind::Boundary => "boundary",
         SubjectKind::Candidate => "candidate",
+        SubjectKind::Capability => "capability",
         SubjectKind::Schedule => "schedule",
         SubjectKind::Target => "target",
         SubjectKind::Kernel => "kernel",
@@ -1078,7 +1354,7 @@ fn assessment_text(assessment: &Assessment) -> String {
     }
 }
 
-const fn basis_name(basis: EvidenceBasis) -> &'static str {
+const fn basis_name(basis: &EvidenceBasis) -> &'static str {
     match basis {
         EvidenceBasis::NormativeGuarantee => "normative-guarantee",
         EvidenceBasis::CheckedInvariant => "checked-invariant",
@@ -1118,7 +1394,8 @@ const fn selection_name(outcome: SelectionOutcome) -> &'static str {
     match outcome {
         SelectionOutcome::Selected => "selected",
         SelectionOutcome::Dominated => "dominated",
-        SelectionOutcome::HigherCost => "higher-cost",
+        SelectionOutcome::NotSelectedTradeoff => "not-selected-tradeoff",
+        SelectionOutcome::Infeasible => "infeasible",
     }
 }
 
@@ -1129,6 +1406,7 @@ pub(crate) enum ExplainError {
         bytes: usize,
     },
     InvalidLimits,
+    InvalidTerminalLedger,
     BoundExceeded {
         bound: BoundKind,
         limit: u32,
@@ -1137,12 +1415,18 @@ pub(crate) enum ExplainError {
     EmptySubjects,
     CrossCompilationSubject,
     DuplicateCause,
+    DuplicateSubject,
+    DuplicateFact,
+    DuplicateCostTerm,
+    CrossWriterCause,
     InvalidCause {
         cause: ExplainRecordId,
         next: ExplainRecordId,
     },
     InvalidStageEvent,
     EvidenceEscalation,
+    EvidenceSubjectMismatch,
+    ProviderAuthorityMismatch,
     QuantityKindMismatch,
     UnknownQuantityUnit,
     EmptyCostEvidence,
@@ -1212,7 +1496,7 @@ fn encode_trace(schema: u32, subject: &CompilationSubject, records: &[ExplainRec
 
 fn encode_record(record: &ExplainRecord) -> Vec<u8> {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(&record.id.0.to_be_bytes());
+    bytes.extend_from_slice(&record.id.local.to_be_bytes());
     encode_bytes(&mut bytes, record.rule.key.as_str().as_bytes());
     bytes.extend_from_slice(&record.rule.revision.to_be_bytes());
     encode_bytes(&mut bytes, record.rule.provider.key.as_str().as_bytes());
@@ -1233,7 +1517,7 @@ fn encode_record(record: &ExplainRecord) -> Vec<u8> {
             .to_be_bytes(),
     );
     for cause in &record.causes {
-        bytes.extend_from_slice(&cause.0.to_be_bytes());
+        bytes.extend_from_slice(&cause.local.to_be_bytes());
     }
     bytes
 }
@@ -1297,7 +1581,7 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
         } => {
             bytes.push(5);
             encode_bytes(bytes, model.as_str().as_bytes());
-            encode_basis(bytes, *basis);
+            encode_basis(bytes, basis);
             bytes.push(match disposition {
                 CostDisposition::Retained => 1,
                 CostDisposition::Dominated => 2,
@@ -1315,7 +1599,8 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             bytes.push(match outcome {
                 SelectionOutcome::Selected => 1,
                 SelectionOutcome::Dominated => 2,
-                SelectionOutcome::HigherCost => 3,
+                SelectionOutcome::NotSelectedTradeoff => 3,
+                SelectionOutcome::Infeasible => 4,
             });
         }
         ExplainEvent::CompilerFailure { stage, reason } => {
@@ -1350,7 +1635,7 @@ fn encode_assessment(bytes: &mut Vec<u8>, assessment: &PredicateAssessment) {
             encode_bytes(bytes, reason.as_str().as_bytes());
         }
     }
-    encode_basis(bytes, assessment.basis);
+    encode_basis(bytes, &assessment.basis);
     bytes.extend_from_slice(
         &u64::try_from(assessment.facts.len())
             .unwrap_or(u64::MAX)
@@ -1386,11 +1671,22 @@ fn encode_assessment(bytes: &mut Vec<u8>, assessment: &PredicateAssessment) {
     }
 }
 
-fn encode_basis(bytes: &mut Vec<u8>, basis: EvidenceBasis) {
+fn encode_basis(bytes: &mut Vec<u8>, basis: &EvidenceBasis) {
     bytes.push(match basis {
         EvidenceBasis::NormativeGuarantee => 1,
         EvidenceBasis::CheckedInvariant => 2,
-        EvidenceBasis::SoundProof(VerifiedEvidenceRef(EvidenceReceiptKind::FusionNumerical)) => 3,
+        EvidenceBasis::SoundProof(receipt) => {
+            bytes.push(3);
+            bytes.push(match receipt.kind {
+                EvidenceReceiptKind::FusionNumerical => 1,
+            });
+            encode_bytes(bytes, &receipt.compilation);
+            encode_bytes(bytes, receipt.candidate.as_str().as_bytes());
+            encode_bytes(bytes, receipt.provider.key.as_str().as_bytes());
+            bytes.extend_from_slice(&receipt.provider.revision.to_be_bytes());
+            encode_bytes(bytes, &receipt.proof);
+            return;
+        }
         EvidenceBasis::ExhaustiveFinite => 4,
         EvidenceBasis::Empirical => 5,
         EvidenceBasis::Assumption => 6,
@@ -1408,6 +1704,12 @@ fn encode_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
     bytes.extend_from_slice(value);
 }
 
+fn stable_qualifier(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
 const fn subject_kind_tag(kind: SubjectKind) -> u8 {
     match kind {
         SubjectKind::SemanticProgram => 1,
@@ -1415,12 +1717,13 @@ const fn subject_kind_tag(kind: SubjectKind) -> u8 {
         SubjectKind::Region => 3,
         SubjectKind::Boundary => 4,
         SubjectKind::Candidate => 5,
-        SubjectKind::Schedule => 6,
-        SubjectKind::Target => 7,
-        SubjectKind::Kernel => 8,
-        SubjectKind::KernelProgram => 9,
-        SubjectKind::ArtifactPlan => 10,
-        SubjectKind::Alternative => 11,
+        SubjectKind::Capability => 6,
+        SubjectKind::Schedule => 7,
+        SubjectKind::Target => 8,
+        SubjectKind::Kernel => 9,
+        SubjectKind::KernelProgram => 10,
+        SubjectKind::ArtifactPlan => 11,
+        SubjectKind::Alternative => 12,
     }
 }
 
@@ -1445,6 +1748,7 @@ const fn stage_tag(stage: ExplainStage) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fusion::{CandidateKind, enumerate_candidates, prove_fused_numerics};
     use crate::request::{CompilationRequest, verify_request};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
@@ -1494,6 +1798,26 @@ mod tests {
         causes: Vec<ExplainRecordId>,
     }
 
+    fn finish_test_trace(mut writer: ExplainWriter) -> VerifiedExplainTrace {
+        let subject = writer
+            .subject(SubjectKind::Alternative, "alternative:test")
+            .unwrap();
+        writer
+            .push_terminal(
+                RuleRef::builtin("selection.v1").unwrap(),
+                vec![subject],
+                ExplainEvent::Selection {
+                    policy: SelectionPolicyKey::new("pareto.v1").unwrap(),
+                    outcome: SelectionOutcome::Selected,
+                },
+                Vec::new(),
+            )
+            .unwrap();
+        writer
+            .finish_success(&["alternative:test"], "alternative:test")
+            .unwrap()
+    }
+
     #[test]
     fn deterministic_trace_is_sealed_and_rendered_separately() {
         let request = request(2.0);
@@ -1502,10 +1826,16 @@ mod tests {
         first
             .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
             .unwrap();
-        let trace = first.finish().unwrap();
+        assert_eq!(
+            first
+                .clone()
+                .finish_success(&["alternative:test"], "alternative:test"),
+            Err(ExplainError::InvalidTerminalLedger)
+        );
+        let trace = finish_test_trace(first);
         assert!(trace.verify().is_ok());
         assert_eq!(trace.render(), trace.render());
-        assert!(trace.render().starts_with("tiler-explain-v1\n"));
+        assert!(trace.render().starts_with("tiler-explain-v2 request="));
         assert!(!trace.identity().0.is_empty());
     }
 
@@ -1547,7 +1877,11 @@ mod tests {
                     .unwrap(),
                     rejection: RejectionClass::IntrinsicInvalid
                 },
-                vec![ExplainRecordId(0)]
+                vec![ExplainRecordId {
+                    local: 0,
+                    writer_authority: first.authority,
+                    request_qualifier: first.request_qualifier,
+                }]
             ),
             Err(ExplainError::InvalidCause { .. })
         ));
@@ -1567,12 +1901,56 @@ mod tests {
             ),
             Err(ExplainError::QuantityKindMismatch)
         );
+
+        let parts = admitted(&first, "candidate:first");
+        let first_cause = first
+            .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
+            .unwrap()
+            .unwrap();
+        let mut same_request =
+            ExplainWriter::new(&first_request, ExplainLimits::default()).unwrap();
+        let parts = admitted(&same_request, "candidate:other-writer-root");
+        same_request
+            .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
+            .unwrap();
+        let parts = admitted(&same_request, "candidate:other-writer-child");
+        assert_eq!(
+            same_request.push_detail(parts.rule, parts.subjects, parts.event, vec![first_cause]),
+            Err(ExplainError::CrossWriterCause)
+        );
+
+        let parts = admitted(&first, "candidate:foreign-provider");
+        assert_eq!(
+            first.push_detail(
+                RuleRef::provided(
+                    "foreign.rule",
+                    1,
+                    ProviderRef {
+                        key: ProviderKey::new("foreign.provider").unwrap(),
+                        revision: 1,
+                    },
+                )
+                .unwrap(),
+                parts.subjects,
+                parts.event,
+                Vec::new(),
+            ),
+            Err(ExplainError::ProviderAuthorityMismatch)
+        );
     }
 
     #[test]
     fn invalid_stage_and_evidence_escalation_fail_closed() {
         assert_eq!(
             PredicateAssessment::proven("unknown", EvidenceBasis::Unknown),
+            Err(ExplainError::EvidenceEscalation)
+        );
+        assert_eq!(
+            PredicateAssessment::proven("measured", EvidenceBasis::Empirical),
+            Err(ExplainError::EvidenceEscalation)
+        );
+        assert_eq!(
+            PredicateAssessment::proven("assumed", EvidenceBasis::Assumption),
             Err(ExplainError::EvidenceEscalation)
         );
         let request = request(2.0);
@@ -1597,13 +1975,72 @@ mod tests {
             ),
             Err(ExplainError::InvalidStageEvent)
         );
+        let subject = writer
+            .subject(SubjectKind::Candidate, "candidate:b")
+            .unwrap();
+        assert_eq!(
+            writer.push_detail(
+                RuleRef::builtin("test.rule").unwrap(),
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::Normalization,
+                    assessment: PredicateAssessment::disproved(
+                        "normalization.invalid",
+                        ReasonCode::new("invalid").unwrap(),
+                        EvidenceBasis::CheckedInvariant,
+                    )
+                    .unwrap(),
+                    rejection: RejectionClass::NumericalIllegal,
+                },
+                Vec::new(),
+            ),
+            Err(ExplainError::InvalidStageEvent)
+        );
+    }
+
+    #[test]
+    fn sound_proof_receipts_are_bound_to_request_candidate_and_provider() {
+        let first_request = request(2.0);
+        let second_request = request(3.0);
+        let candidates = enumerate_candidates(&first_request).unwrap();
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.kind == CandidateKind::FusedSerialSum)
+            .unwrap();
+        let proof = prove_fused_numerics(&first_request, candidate).unwrap();
+        let provider =
+            ProviderRef::lowering(first_request.capabilities().fused_serial_sum.unwrap()).unwrap();
+        let receipt =
+            VerifiedEvidenceRef::from_fusion_numerical(&first_request, &proof, provider.clone())
+                .unwrap();
+        let mut writer = ExplainWriter::new(&second_request, ExplainLimits::default()).unwrap();
+        let subject = writer
+            .subject(SubjectKind::Candidate, candidate.stable_id.as_str())
+            .unwrap();
+        assert_eq!(
+            writer.push_detail(
+                RuleRef::provided("fusion.strict-f32-equivalence", 1, provider).unwrap(),
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::NumericalLegality,
+                    assessment: PredicateAssessment::proven(
+                        "fusion.strict-f32-equivalence",
+                        EvidenceBasis::SoundProof(receipt),
+                    )
+                    .unwrap(),
+                    rejection: RejectionClass::NumericalIllegal,
+                },
+                Vec::new(),
+            ),
+            Err(ExplainError::EvidenceSubjectMismatch)
+        );
     }
 
     #[test]
     fn bounds_truncate_details_but_retain_terminal_selection() {
         let request = request(2.0);
         let mut writer =
-            ExplainWriter::new(&request, ExplainLimits::new(4, 64 * 1024).unwrap()).unwrap();
+            ExplainWriter::new(&request, ExplainLimits::new(1, 64 * 1024).unwrap()).unwrap();
         for key in ["candidate:a", "candidate:b", "candidate:c"] {
             let parts = admitted(&writer, key);
             writer
@@ -1638,7 +2075,9 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-        let trace = writer.finish().unwrap();
+        let trace = writer
+            .finish_success(&["alternative:baseline", "alternative:a"], "alternative:a")
+            .unwrap();
         assert!(trace.records().iter().any(|record| matches!(
             record.event(),
             ExplainEvent::Selection {
@@ -1662,6 +2101,37 @@ mod tests {
     }
 
     #[test]
+    fn failure_trace_has_one_terminal_failure_and_survives_zero_detail_limits() {
+        let request = request(2.0);
+        let mut writer = ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
+        let parts = admitted(&writer, "candidate:omitted");
+        assert_eq!(
+            writer
+                .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
+                .unwrap(),
+            None
+        );
+        let trace = writer
+            .finish_failure(ReasonCode::new("invalid-compiler-output").unwrap())
+            .unwrap();
+        assert_eq!(
+            trace
+                .records()
+                .iter()
+                .filter(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+                .count(),
+            1
+        );
+        assert!(trace.records().iter().any(|record| matches!(
+            record.event(),
+            ExplainEvent::Truncated {
+                omitted_records: 1,
+                ..
+            }
+        )));
+    }
+
+    #[test]
     fn stale_identity_and_reordered_records_are_rejected() {
         let request = request(2.0);
         let mut writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
@@ -1675,7 +2145,7 @@ mod tests {
         writer
             .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
             .unwrap();
-        let trace = writer.finish().unwrap();
+        let trace = finish_test_trace(writer);
 
         let mut stale_digest = trace.clone();
         stale_digest.canonical_identity.0[0] ^= 1;
@@ -1751,7 +2221,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-        let rendered = writer.finish().unwrap().render();
+        let rendered = finish_test_trace(writer).render();
         assert!(rendered.contains("disproved:shape-mismatch:checked-invariant:facts=rank:count=3"));
     }
 }
