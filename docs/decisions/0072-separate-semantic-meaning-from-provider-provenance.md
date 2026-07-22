@@ -112,7 +112,9 @@ artifact + live device/context/specialization -> runtime cache
   receipt are implemented for their bounded profiles. The completed semantic
   program owns definition and admission subjects computed by one deterministic,
   iterative, cycle-safe transitive authority closure with incremental root and
-  unique-subject bounds. Borrowed program validation runs the same closure and
+  unique-subject bounds. Bound values remain private implementation policy while
+  typed failures expose the resource, active limit, and rejected count.
+  Borrowed program validation runs the same closure and
   preserves a typed registry-error source;
   compiler requests and artifact-construction plans retain their non-forgeable
   four-subject bundle atomically. Region occurrence, semantic checked refinement,

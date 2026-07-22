@@ -293,7 +293,9 @@ references, type-definition facts, and operation defaults, facts, and
 conformance requirements. Closure is deterministic, iterative, cycle-safe,
 and governed by separate bounds for roots consumed and unique authority
 subjects discovered. Both are enforced while ingesting or enqueuing, before an
-unbounded worklist can form. A caller cannot manufacture
+unbounded worklist can form. Their numeric limits are private implementation
+policy rather than public API constants; typed resource errors still report the
+resource, active limit, and first rejected count. A caller cannot manufacture
 program-complete evidence by supplying an incomplete root list to a registry
 projection API; consumers obtain the authoritative bundle from the completed
 program.

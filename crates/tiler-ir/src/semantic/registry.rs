@@ -20,9 +20,12 @@ use super::types::{
 
 const MAX_DEFINITION_REFERENCE_BYTES: usize = 4 * 1024;
 /// Maximum aggregate subjects in one frozen or reached semantic-authority closure.
-pub const MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS: usize = 4_096;
+const MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS: usize = 4_096;
+#[cfg(test)]
+pub(super) const TEST_MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS: usize =
+    MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS;
 /// Maximum roots consumed from caller-owned semantic-authority iterators.
-pub const MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS: usize = 1_000_000;
+const MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS: usize = 1_000_000;
 
 /// Bounded resource counted while closing semantic authority transitively.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

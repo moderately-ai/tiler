@@ -1,0 +1,7 @@
+error[E0432]: unresolved imports `tiler_ir::semantic::MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS`, `tiler_ir::semantic::MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS`
+ --> tests/typed-handles/fail/private_authority_limits.rs:2:5
+  |
+2 |     MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS, MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS` in `semantic`
+  |     |
+  |     no `MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS` in `semantic`

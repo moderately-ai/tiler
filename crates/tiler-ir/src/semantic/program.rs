@@ -1615,7 +1615,7 @@ mod tests {
         let mut registry = SemanticRegistryBuilder::new();
         registry.register_provider(&CompositeTypeProvider).unwrap();
         let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
-        for index in 0..super::super::MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS {
+        for index in 0..super::super::registry::TEST_MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS {
             let resolved_type = ResolvedValueType::parameterized(
                 TypeKey::new("test", "container", 1).unwrap(),
                 TypeArguments::new([CanonicalValue::unsigned_u64(
@@ -1642,10 +1642,10 @@ mod tests {
             [ValidationDiagnostic::SemanticAuthority(
                 super::super::RegistryError::SemanticAuthorityResourceExceeded {
                     resource: super::super::SemanticAuthorityResource::ClosureItems,
-                    limit: super::super::MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS,
+                    limit: super::super::registry::TEST_MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS,
                     actual,
                 }
-            )] if *actual == super::super::MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS + 1
+            )] if *actual == super::super::registry::TEST_MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS + 1
         ));
         let diagnostic_source = std::error::Error::source(&diagnostics).unwrap();
         assert!(std::error::Error::source(diagnostic_source).is_some());

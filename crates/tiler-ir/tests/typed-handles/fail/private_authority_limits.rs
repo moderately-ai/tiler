@@ -1,0 +1,5 @@
+use tiler_ir::semantic::{
+    MAX_SEMANTIC_AUTHORITY_CLOSURE_ITEMS, MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS,
+};
+
+fn main() {}

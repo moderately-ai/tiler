@@ -60,6 +60,9 @@ tickets; this correction must not add placeholder forms for them.
 
 The correction now uses one iterative ordered-worklist closure with separately
 governed, incrementally enforced root-ingestion and unique-subject bounds.
+Their values are private implementation policy; the public non-exhaustive
+resource class and typed `{ resource, limit, actual }` diagnostic remain stable
+inspection surfaces.
 Borrowed builder validation runs the same reachable authority projection as
 commitment and preserves typed registry failures. Completed programs own one
 non-forgeable `SemanticIdentity` with named borrowed accessors for the four
