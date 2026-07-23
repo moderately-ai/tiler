@@ -1,7 +1,7 @@
 ---
 id: record-compiler-capability-registration-in-operation-extensions
 title: Record compiler capability registration in the operation-extension contract
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contracts, extensions]
+claimed_from: todo
+assignee: agent-record-compiler-capability-registration-in-operation-extensions
+lease_expires_at: 1784834740
 ---
 docs/operation-extensions.md (around line 104-105) states "Compiler capability registration is not [implemented]: its owner is prototype-operation-capability-registry." That ticket is now complete and merged (`crates/tiler-compiler/src/capability.rs`), so the sentence is stale. The capability-registry agent correctly left this untouched because the file is contracts/foundation, outside its implementation scope.
 

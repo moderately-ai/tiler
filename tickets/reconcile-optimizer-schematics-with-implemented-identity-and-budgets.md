@@ -1,7 +1,7 @@
 ---
 id: reconcile-optimizer-schematics-with-implemented-identity-and-budgets
 title: Reconcile optimizer schematics with implemented identity and budgets
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contracts, optimizer]
+claimed_from: todo
+assignee: agent-reconcile-optimizer-schematics-with-implemented-identity-and-budgets
+lease_expires_at: 1784834740
 ---
 Two illustrative schematics in the optimizer contracts predate the merged region-formation code and now describe a shape the implementation no longer uses. Found during the region-enumeration contract update, correctly left unfixed there because both are conceptual sketches rather than the two passages that ticket owned, and neither is strictly false today.
 
