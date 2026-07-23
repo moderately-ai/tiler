@@ -1,7 +1,7 @@
 ---
 id: record-explain-ownership-decision
 title: Record the explain ownership decision as an ADR
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/optimizer]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [documentation, decisions, explain]
-claimed_from: todo
-assignee: agent-record-explain-ownership-decision
-lease_expires_at: 1784827223
 ---
 Tom decided on 2026-07-23 that typed explain infrastructure stays a compiler-owned module rather than becoming a `tiler-explain` crate. File the next sequential ADR recording it, and represent the explain authority in docs/compiler/optimizer.md, which owns Explainability.
 
