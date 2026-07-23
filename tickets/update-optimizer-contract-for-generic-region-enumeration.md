@@ -1,7 +1,7 @@
 ---
 id: update-optimizer-contract-for-generic-region-enumeration
 title: Update optimizer contract for generic region enumeration
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contracts, optimizer]
+claimed_from: todo
+assignee: agent-update-optimizer-contract-for-generic-region-enumeration
+lease_expires_at: 1784832272
 ---
 Generic region formation replaced the hardcoded serial-Sum recognizer with a deterministic `EnumerateRegionCandidates` stage over an arbitrary verified DAG (merged as `crates/tiler-compiler/src/region.rs`). Two normative passages in the optimizer contracts still describe the superseded bounded recognizer and now contradict the code:
 
