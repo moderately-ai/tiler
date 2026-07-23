@@ -13,14 +13,34 @@ evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.resea
 
 **Status:** accepted research contract; bounded prototype implementation
 
-The private strict-`f32` serial-`Sum` slice now enumerates five singleton
-candidates, the four-operation pointwise candidate, and one full-region fused
-candidate from canonical semantic occurrence roles. This is a bounded
-recognizer, not evidence that hand-enumeration is complete. It checks membership,
-boundaries, connectivity, convexity, numerical permissions, deterministic
-candidate budget, schedule feasibility, and structured-kernel refinement. This
-is evidence for the architecture, not a general region enumerator or public
-fusion API.
+Region formation is now the deterministic `EnumerateRegionCandidates` stage
+over an arbitrary verified semantic DAG, not a graph-specific serial-`Sum`
+recognizer. It proposes every connected convex region up to the declared
+budgets: every operation's singleton is emitted unconditionally, larger regions
+are seeded from their minimum member so each connected set is generated exactly
+once, and convexity is decided when a set is emitted by re-reaching the region
+through its forward closure. Each candidate carries member operations, boundary
+inputs, retained outputs, an allowed-duplication policy, and separate
+region-content and region-occurrence identities: content canonicalizes the
+region's internal computation with members renumbered to region-local positions,
+while occurrence additionally pins the exact graph site in canonical
+coordinates. Five deterministic budgets (`region_members`,
+`region_boundary_outputs`, `region_live_values`, `region_candidates_per_seed`,
+`region_expansions`) bound the search, and every budget that fires is retained
+as a typed explain budget-stop, so a legal alternative lost to a bound is
+reported rather than silently dropped. Enumeration is validated against an
+independent exhaustive subset oracle that agrees set-for-set without budget
+pressure.
+
+Enumeration only proposes candidates. It selects no cover, chooses no
+implementation, lowers no index region, plans nothing physical, and costs
+nothing; those remain the later
+[complete-cover enumeration](../../tickets/prototype-region-cover-enumeration.md),
+[physical-implementation frontier](../../tickets/prototype-physical-implementation-frontier.md),
+and [complete physical-plan selection](../../tickets/prototype-complete-physical-plan-selection.md)
+stages. Producer duplication stays disabled in the first profile while the
+exhaustive tiny-DAG oracle retains it as a completeness witness. This stage is
+a candidate enumerator, not a cover selector or a public fusion API.
 
 Every prototype candidate recomputes its stable identity from its exact member
 occurrences and boundaries. Numerical evidence is bound to that candidate, the

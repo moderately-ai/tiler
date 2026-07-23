@@ -336,9 +336,16 @@ materialized producer once per parent, detect cycles, and retain structured
 rule/candidate provenance. Search-budget exhaustion returns the best complete
 plan found under deterministic fallback heuristics.
 
-Before global DAG planning is implemented, the same interfaces may be backed by
-a trivial region builder for a narrow semantic graph; this staged shortcut is
-explicit rather than a second optimizer architecture.
+Region enumeration is already general rather than a trivial builder for a narrow
+semantic graph: `EnumerateRegionCandidates` proposes every connected convex
+region of an arbitrary verified DAG up to the declared budgets, with separate
+content and occurrence identities and typed budget-stops, and is checked against
+an exhaustive subset oracle. Goal-directed property search over those candidates
+is the staged future work:
+[cover enumeration](../../tickets/prototype-region-cover-enumeration.md),
+[physical-implementation frontiers](../../tickets/prototype-physical-implementation-frontier.md),
+and [complete physical-plan selection](../../tickets/prototype-complete-physical-plan-selection.md)
+are separate later stages, not a second optimizer architecture.
 
 ## Symbolic parameters and routing
 
