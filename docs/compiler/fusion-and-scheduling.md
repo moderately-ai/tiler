@@ -84,10 +84,16 @@ RegionCandidate {
     boundary_inputs,
     retained_outputs,
     allowed_duplication,
-    semantic_region_id,
-    numerical_contract_id,
+    region_content_identity,
+    region_occurrence_identity,
 }
 ```
+
+This is a conceptual sketch, not the literal Rust definition. In
+`crates/tiler-compiler/src/region.rs` the two identity fields are the
+region-content identity, which folds the numerical-contract key into its
+canonical bytes, and the region-occurrence identity, which additionally pins the
+exact graph site; there is no standalone numerical-contract-id field.
 
 The initial region is also connected and convex. If `a -> b -> d` and
 `a -> c -> d`, the set `{a, b, d}` is illegal because another path between its
