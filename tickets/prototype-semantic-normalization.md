@@ -1,7 +1,7 @@
 ---
 id: prototype-semantic-normalization
 title: Implement bounded semantic normalization
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-typed-explain-infrastructure, correct-reference-value-and-authority-contracts]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, normalization]
+claimed_from: todo
+assignee: agent-prototype-semantic-normalization
+lease_expires_at: 1784827223
 ---
 Introduce the deterministic normalization stage before region formation. The
 first profile may be identity-only or contain a deliberately tiny proved rule
