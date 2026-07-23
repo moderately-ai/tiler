@@ -12,6 +12,9 @@ use crate::fusion::{
     CandidateError, CandidateKind, FusionNumericalProof, enumerate_candidates,
     prove_fused_numerics, verify_fused_numerics,
 };
+use crate::normalize::{
+    NORMALIZATION_SUBJECT, NormalizationOutcome, NormalizeError, normalize_semantics,
+};
 use crate::physical::{
     PhysicalError, VerifiedScheduledRegion, VerifiedStructuredKernel, build_fused_scheduled_region,
     build_scheduled_regions, lower_structured_kernel,
@@ -109,6 +112,7 @@ pub(crate) enum CompilerOutputError {
     Program(ProgramError),
     Candidate(CandidateError),
     Explain(ExplainError),
+    Normalization(NormalizeError),
 }
 
 impl fmt::Display for CompileError {
@@ -131,6 +135,9 @@ impl fmt::Display for CompileError {
             Self::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => {
                 error.fmt(formatter)
             }
+            Self::InvalidCompilerOutput(CompilerOutputError::Normalization(error)) => {
+                error.fmt(formatter)
+            }
             Self::Explained { source, .. } => source.fmt(formatter),
         }
     }
@@ -148,6 +155,7 @@ impl Error for CompileError {
             Self::InvalidCompilerOutput(CompilerOutputError::Program(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Candidate(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::Normalization(error)) => Some(error),
             Self::Explained { source, .. } => Some(source),
         }
     }
@@ -196,17 +204,59 @@ impl From<ExplainError> for CompileError {
     }
 }
 
+impl From<NormalizeError> for CompileError {
+    fn from(value: NormalizeError) -> Self {
+        Self::InvalidCompilerOutput(CompilerOutputError::Normalization(value))
+    }
+}
+
 pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProduct, CompileError> {
     let semantic = request.program;
+    let shape_environment = request.shape_environment;
+    let target_profiles = request.target_profiles.clone();
+    let capabilities = request.capabilities;
     let verified = verify_request(request)?;
     verify_semantic_output_type(semantic)?;
+    // `NormalizeSemantics` runs after request verification and before region
+    // formation. It observes only the verified program and never mutates it.
+    let normalization =
+        normalize_semantics(semantic, verified.budgets(), verified.numerical_contract())?;
+    let Some(normalized) = normalization.normalized_program() else {
+        return compile_verified(semantic, &verified, &normalization);
+    };
+    // A committed rewrite is a new program, so it must independently re-enter
+    // the request boundary rather than inheriting the input's verification.
+    // Rejection here is invalid compiler output, not an unsupported user
+    // program: the input was already admitted.
+    let readmitted = verify_request(CompilationRequest {
+        program: normalized,
+        shape_environment,
+        numerical_contract: verified.numerical_contract(),
+        budgets: verified.budgets(),
+        target_profiles,
+        capabilities,
+    })
+    .map_err(|_| {
+        CompileError::from(NormalizeError::InvalidRewrite {
+            rule: "request-readmission",
+        })
+    })?;
+    verify_semantic_output_type(normalized)?;
+    compile_verified(normalized, &readmitted, &normalization)
+}
+
+fn compile_verified(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    verified: &crate::request::VerifiedCompilationRequest,
+    normalization: &NormalizationOutcome,
+) -> Result<CompilationProduct, CompileError> {
     let targets = verified
         .target_profiles()
         .iter()
         .copied()
         .map(|target| {
             let target_request = verified.for_target(target)?;
-            compile_target(semantic, &target_request)
+            compile_target(semantic, &target_request, normalization)
         })
         .collect::<Result<_, _>>()?;
     Ok(CompilationProduct { targets })
@@ -215,9 +265,10 @@ pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProd
 fn compile_target(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
+    normalization: &NormalizationOutcome,
 ) -> Result<TargetCompilationProduct, CompileError> {
     let mut explain = ExplainWriter::new(verified, ExplainLimits::default())?;
-    match compile_target_with_explain(semantic, verified, &mut explain) {
+    match compile_target_with_explain(semantic, verified, normalization, &mut explain) {
         Ok(portfolio) => {
             let expected_alternatives = portfolio
                 .alternatives
@@ -431,6 +482,7 @@ impl TargetRejections {
 fn compile_target_with_explain(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
+    normalization: &NormalizationOutcome,
     explain: &mut ExplainWriter,
 ) -> Result<ProgramPortfolio, TargetFailure> {
     let request_record = (|| -> Result<_, CompileError> {
@@ -456,29 +508,15 @@ fn compile_target_with_explain(
             None,
         )
     })?;
-    let normalization_record = (|| -> Result<_, CompileError> {
-        let subject = explain.subject(SubjectKind::Normalization, "normalization:serial-sum")?;
-        Ok(explain.push_detail(
-            RuleRef::builtin("normalize.serial-sum.v1")?,
-            vec![subject],
-            check(
-                ExplainStage::Normalization,
-                "normalize.semantic-equivalence",
-                EvidenceBasis::CheckedInvariant,
-            )?,
-            optional_cause(request_record),
-        )?)
-    })()
-    .map_err(|source| {
-        target_failure(
-            source,
-            ExplainStage::Normalization,
-            "explain-normalization",
-            SubjectKind::Normalization,
-            "normalization:serial-sum",
-            record_cause(request_record),
-        )
-    })?;
+    let normalization_record = explain_step(
+        normalization
+            .record(explain, request_record)
+            .map_err(CompileError::from),
+        ExplainStage::Normalization,
+        SubjectKind::Normalization,
+        NORMALIZATION_SUBJECT,
+        record_cause(request_record),
+    )?;
     let mut alternatives = Vec::new();
     let mut alternative_causes = Vec::new();
     let mut target_rejections = TargetRejections::default();
@@ -634,6 +672,11 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
             format!("explain-{}", explain_error_reason(error)),
             SubjectKind::KernelProgram,
             "compiler-explain".to_owned(),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Normalization(error)) => (
+            format!("normalize-{}", error.reason()),
+            SubjectKind::Normalization,
+            NORMALIZATION_SUBJECT.to_owned(),
         ),
         CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(error))
         | CompileError::InvalidRequest(error)
@@ -1918,6 +1961,25 @@ mod tests {
         builder.build().unwrap()
     }
 
+    /// Builds the serial-sum program with one constant shared by both operands.
+    ///
+    /// This is the canonical spelling that `NormalizeSemantics` produces from a
+    /// program that authored the same constant twice.
+    fn shared_constant_semantic(shape: Shape, constant_bits: u32) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), shape)
+            .unwrap();
+        let constant = F32Constant::apply(&mut builder, constant_bits).unwrap();
+        let product = F32Multiply::apply(&mut builder, input, constant).unwrap();
+        let mapped = F32Add::apply(&mut builder, product, constant).unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
     fn interpret_fused(kernel: &VerifiedStructuredKernel, input: &[f32]) -> Vec<f32> {
         match &kernel.kernel().body {
             StructuredBody::FusedEmptyReduction {
@@ -2153,7 +2215,7 @@ mod tests {
                 ("fusion.strict-f32-equivalence", 1),
                 ("kernel.fused-schedule-refinement", 1),
                 ("kernel.schedule-refinement", 1),
-                ("normalize.serial-sum.v1", 1),
+                ("normalize.semantics.v1", 1),
                 ("program.fused-serial-sum", 1),
                 ("program.two-stage-materialized", 1),
                 ("schedule.coverage-and-ownership", 1),
@@ -2171,6 +2233,7 @@ mod tests {
             ])
         );
         let expected_counts = [
+            ("normalize.semantics.v1", "rewrite-count", 0),
             ("compile.boundary.materialized", "dependency-count", 1),
             ("schedule.coverage-and-ownership", "schedule-count", 2),
             ("kernel.schedule-refinement", "kernel-count", 2),
@@ -2271,6 +2334,70 @@ mod tests {
             Some(&SelectionOutcome::Selected)
         );
         assert!(trace.render().starts_with("tiler-explain-v2 request="));
+    }
+
+    #[test]
+    fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
+        let shape = Shape::from_dims([2, 3]);
+        let bits = 2.0_f32.to_bits();
+        let duplicated = semantic_case(shape.clone(), bits, bits, false);
+        let shared = shared_constant_semantic(shape, bits);
+        assert_eq!(duplicated.operation_count(), 5);
+        assert_eq!(shared.operation_count(), 4);
+        assert_ne!(
+            duplicated.semantic_identity().graph(),
+            shared.semantic_identity().graph()
+        );
+
+        let from_duplicated = compile(CompilationRequest::governed(&duplicated)).unwrap();
+        let from_shared = compile(CompilationRequest::governed(&shared)).unwrap();
+
+        // Both spellings normalize to the same canonical program, so every
+        // downstream physical decision and receipt is identical.
+        assert_eq!(
+            from_duplicated.targets[0].portfolio,
+            from_shared.targets[0].portfolio
+        );
+
+        // The traces differ only in what normalization actually did.
+        let rewrite_counts = |product: &CompilationProduct| {
+            product.targets[0]
+                .explain
+                .records()
+                .iter()
+                .find(|record| record.rule().key().as_str() == "normalize.semantics.v1")
+                .and_then(|record| match record.event() {
+                    ExplainEvent::Check { assessment, .. } => Some(
+                        assessment
+                            .facts()
+                            .iter()
+                            .find(|fact| fact.key().as_str() == "rewrite-count")
+                            .map(|fact| fact.value().clone())
+                            .unwrap(),
+                    ),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert_eq!(rewrite_counts(&from_duplicated), FactValue::Count(1));
+        assert_eq!(rewrite_counts(&from_shared), FactValue::Count(0));
+        assert!(
+            from_duplicated.targets[0]
+                .explain
+                .records()
+                .iter()
+                .any(
+                    |record| record.rule().key().as_str() == "normalize.common-subexpression.v1"
+                        && record.event().disposition() == ExplainDisposition::Admitted
+                )
+        );
+        assert!(
+            !from_shared.targets[0]
+                .explain
+                .records()
+                .iter()
+                .any(|record| record.rule().key().as_str() == "normalize.common-subexpression.v1")
+        );
     }
 
     #[test]
