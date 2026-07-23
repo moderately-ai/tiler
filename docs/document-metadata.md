@@ -48,6 +48,16 @@ Status is kind-specific:
 `primary-source-synthesis`, `executable-model`, `bounded-measurement`,
 `exhaustive-finite`, `sound-proof`, `normative-guarantee`, and `unknown`.
 
+`implementation_status` names the highest implementation maturity the record's
+own decided behaviour has reached. It is a retained high-water mark, not a live
+mirror of the working tree: superseding a decision updates `decision_status`
+alone and never lowers `implementation_status`. On a `superseded` decision the
+field is therefore read historically — the maturity the work reached while the
+decision was in force — while the superseding decision carries the present
+maturity of the contract that replaced it. A superseded decision keeps
+`implemented` when its work was built and later replaced; it reads
+`not-started` only when it was superseded before any of its work was built.
+
 | Evidence class | Meaning |
 | --- | --- |
 | `primary-source-synthesis` | A conclusion traced to named specifications, papers, or inspected source revisions. |
@@ -127,9 +137,13 @@ A reproducible experiment requires nonempty `entrypoints` and `evidence_classes`
 Those field rules bind on every experiment record carrying the field rather than on a reproducible one alone: `last_verified` is an ISO `YYYY-MM-DD` date no later than today, and entrypoints are normalized repository-root POSIX paths to existing regular files; absolute paths, backslashes, `.`/`..`, directories, and repo escapes are invalid.
 
 An accepted decision has at least one `applies_to` contract and one `evidence`
-research record. An accepted contract has an inbound accepted decision. Adopted
-or partially adopted research has an `informs` or `adopted_by` destination.
-`unknown` is exclusive when used as an evidence class.
+research record. An accepted contract has an inbound accepted decision. Every
+`superseded` decision is the target of at least one decision `supersedes` edge,
+and every decision named as a `supersedes` target is itself `superseded`, so the
+successor that carries the present state is always reachable and the retained
+historical `implementation_status` stays legible rather than contradicting the
+current tree. Adopted or partially adopted research has an `informs` or
+`adopted_by` destination. `unknown` is exclusive when used as an evidence class.
 
 Live ticket status and calculated backlinks never appear in document
 frontmatter. Ticketsplease owns workflow state. Generated catalog sections are

@@ -302,6 +302,32 @@ def test_malformed_question_heading_is_rejected(tmp_path: Path):
     assert any("malformed question heading" in error for error in errors)
 
 
+def _decision(number: int, status: str, supersedes: list[str] | None = None) -> "docs.Record":
+    meta: dict[str, object] = {
+        "id": f"ADR-{number:04d}",
+        "kind": "decision",
+        "decision_status": status,
+    }
+    if supersedes is not None:
+        meta["supersedes"] = supersedes
+    return docs.Record(Path(f"docs/decisions/{number:04d}-test.md"), meta, "")
+
+
+def test_superseded_decision_and_replacement_reference_each_other():
+    orphaned = docs.validate_graph([_decision(1, "superseded")], Path("."))
+    assert any("superseded decision must be the target" in error for error in orphaned)
+
+    unmarked = docs.validate_graph(
+        [_decision(2, "accepted"), _decision(3, "accepted", ["ADR-0002"])], Path(".")
+    )
+    assert any("supersedes target must be superseded" in error for error in unmarked)
+
+    consistent = docs.validate_graph(
+        [_decision(4, "superseded"), _decision(5, "accepted", ["ADR-0004"])], Path(".")
+    )
+    assert not any("supersede" in error for error in consistent)
+
+
 def test_direct_entrypoints_must_be_executable(tmp_path: Path):
     deps = tmp_path / "deps.sh"
     deps.write_text("#!/bin/sh\n", encoding="utf-8")
