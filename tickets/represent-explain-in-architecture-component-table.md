@@ -1,7 +1,7 @@
 ---
 id: represent-explain-in-architecture-component-table
 title: Represent explain authority in the architecture component table
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, contracts/decisions]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [documentation, architecture]
-claimed_from: todo
-assignee: agent-represent-explain-in-architecture-component-table
-lease_expires_at: 1784832272
 ---
 ADR 0073 records that typed explain infrastructure is owned by `tiler-compiler`, and declares `applies_to: ["tiler.contract.optimizer"]` only. That was deliberate and correct: `docs/architecture.md`'s component table lists `tiler-compiler` as "Normalization, rule engine, fusion planning, index lowering, schedule search, costing" without enumerating explainability, so claiming `applies_to` over architecture would have asserted authority the document does not currently represent — and the authoring ticket did not hold `contracts/foundation`.
 
