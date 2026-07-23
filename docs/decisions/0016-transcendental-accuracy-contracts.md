@@ -16,6 +16,11 @@ ticket: "numerical-policy-contract"
 
 **Status:** accepted
 
+The contract vocabulary that this decision leaves open is fixed by ADR 0042:
+four discriminated accuracy forms, exact rational tolerances, versioned metric
+keys, and separately classified conformance evidence. Only the initial
+supported subset remains a product-profile choice.
+
 ## Traceability
 
 - **Normative owner:** [Numerical semantics](../numerical-semantics.md).

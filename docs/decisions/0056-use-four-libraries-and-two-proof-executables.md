@@ -16,7 +16,8 @@ ticket: "prototype-foundation-contract"
 
 **Status:** superseded by ADR 0065 for the reusable-crate count and reference
 evaluator placement and by ADR 0070 for the compiler-to-artifact dependency
-edge; the remaining packaging boundaries are retained
+edge; ADRs 0070 and 0071 additionally retire its lockstep artifact/IR
+consequence; the remaining packaging boundaries are retained
 
 ## Context
 
@@ -46,7 +47,13 @@ reusable Metal-runtime crate is created for the first proof.
   source compatibility through re-exports when evidence justifies them.
 - `tiler-artifact` may use lockstep internal IR types during the prototype but
   may not invoke compiler passes. A durable public wire format requires
-  artifact-owned DTOs and checked conversion later.
+  artifact-owned DTOs and checked conversion later. **Retired:** ADR 0070 gives
+  `tiler-ir` sole ownership of the shared target-neutral representation and
+  makes `tiler-artifact` depend on it directly, and ADR 0071 requires artifact
+  decoding to reconstruct values through those checked builders and verifiers.
+  There is therefore no lockstep compiler-internal type to borrow and no
+  artifact-owned duplicate program model to introduce later. The retained
+  boundary is the unchanged prohibition on invoking compiler passes.
 
 ## Alternatives considered
 

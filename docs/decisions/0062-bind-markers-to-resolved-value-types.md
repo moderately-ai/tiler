@@ -9,6 +9,7 @@ decision_status: "accepted"
 implementation_status: "implemented"
 applies_to: ["tiler.contract.ir", "tiler.contract.numerical-semantics", "tiler.contract.operation-extensions"]
 evidence: ["tiler.research.numerics.dtype-identity-admission-policy", "tiler.research.numerics.quantized-value-and-transform-contract", "tiler.research.numerics.mature-dtype-taxonomy"]
+refines: ["ADR-0059", "ADR-0060"]
 ticket: "prototype-resolved-value-type-registry"
 ---
 

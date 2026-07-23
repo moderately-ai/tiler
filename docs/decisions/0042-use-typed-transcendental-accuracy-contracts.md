@@ -9,6 +9,7 @@ decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.transcendental-accuracy-precedents"]
+refines: ["ADR-0016"]
 ticket: "numerical-policy-contract"
 ---
 

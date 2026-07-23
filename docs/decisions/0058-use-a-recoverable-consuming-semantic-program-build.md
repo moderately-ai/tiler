@@ -53,6 +53,11 @@ Expose conceptual `shape`, `semantic`, and `reference` namespaces in
 belongs to `shape`; graph handles and interface keys belong to `semantic`.
 Do not create a generic `newtypes` module or a separate identifier crate.
 
+ADR 0065 supersedes the `reference` namespace named above: reference evaluation
+moved to the separate `tiler-reference` crate and `tiler_ir::reference` no
+longer exists. The `shape` and `semantic` namespaces and every other rule in
+this paragraph remain in force.
+
 Public semantic handles are opaque, typed, graph-owned, and invalid across
 graphs. They have no public raw constructor or serialization promise. Internal
 edges use private compact typed `u32` indices; later IR levels define their own

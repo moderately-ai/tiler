@@ -32,7 +32,7 @@ names and source spans do not. Frontends without authored keys derive canonical
 ordinal keys.
 
 Operation attributes use Tiler's bounded discriminated
-`CanonicalAttrValue`: booleans, explicit-width signed/unsigned bits, governed
+`CanonicalValue`: booleans, explicit-width signed/unsigned bits, governed
 float-format bits, bytes, exact UTF-8, type keys, ordered sequences, and records
 with stable `AttributeFieldId(u32)` keys. Records are sorted and duplicate-free;
 schema defaults have one canonical representation; unknown fields are rejected
@@ -64,11 +64,12 @@ explicit default to omission before structural identity is computed. Registry
 definition identities commit to the field requirement/default policy, and
 registered defaults are checked against the semantic type authority.
 
-This is still partial implementation of the ADR. The current Rust type is named
-`CanonicalValue` rather than the design-document spelling
-`CanonicalAttrValue`, and the broader artifact codec and schema-evolution
-compatibility policy remain intentionally unselected. The canonical identity
-encoding is internal and versioned; it is not yet a public interchange format.
+This is still partial implementation of the ADR. `CanonicalValue` is the single
+spelling used by this decision, the IR and extension contracts, and the Rust
+type; the earlier `CanonicalAttrValue` design-document spelling is retired. The
+broader artifact codec and schema-evolution compatibility policy remain
+intentionally unselected. The canonical identity encoding is internal and
+versioned; it is not yet a public interchange format.
 
 ## Alternatives considered
 

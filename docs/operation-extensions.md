@@ -6,7 +6,7 @@ title: "Operation extension contract"
 topics: ["extensions", "operations", "semantics"]
 contract_status: "mixed"
 implementation_status: "partial"
-evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.extensions.proc-macro-extension-visibility"]
+evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.extensions.proc-macro-extension-visibility", "tiler.research.extensions.semantic-foundation-api-v2"]
 ---
 
 # Operation extension contract
@@ -217,7 +217,7 @@ Tiler, not arbitrary extension `Serialize` output. The contract defines:
 Providers declare attribute schemas/defaults and validate semantic constraints;
 the host canonicalizes, bounds, serializes, and hashes the data.
 
-The accepted v1 model is the discriminated `CanonicalAttrValue` defined in
+The accepted v1 model is the discriminated `CanonicalValue` defined in
 [the IR contract](ir.md): fixed-width signed/unsigned bits, governed float bits,
 bytes, exact UTF-8, type keys, ordered sequences, and records keyed by stable
 `AttributeFieldId`. It has one tagged big-endian identity encoding, rejects

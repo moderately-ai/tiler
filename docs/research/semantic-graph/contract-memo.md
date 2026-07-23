@@ -476,5 +476,15 @@ are material:
    may still recompute the shared value independently when that is cheaper than
    reuse or materialization.
 
+   **Relocated, not superseded (confirmed by Tom on 2026-07-23):** ADR 0064
+   places common-subexpression elimination outside commitment compaction and in
+   "their existing later layers". That moved this merge obligation's home; it
+   did not reject the 2026-07-18 decision. Its home is the deterministic
+   semantic normalization stage proposed above under "Sharing versus duplicated
+   pure computation", which runs before computation identity is committed. The
+   implementation obligation is recorded on
+   [`prototype-semantic-normalization`](../../../tickets/prototype-semantic-normalization.md);
+   no contract or ADR restates it, and ADR 0064 is not superseded.
+
 These choices do not change the operation/value shape of the graph, but they do
 define cache identity, deterministic serialization, and explain output.
