@@ -8,6 +8,10 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::{Axis, Shape};
 
+// The numerical-realization vocabulary is target-neutral and owned by the shared
+// IR (ADR 0070); the compiler contract references it rather than duplicating it.
+pub(crate) use tiler_ir::schedule::{NumericalPermission, SubnormalMode};
+
 use crate::region::SemanticMemberId;
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
@@ -44,16 +48,6 @@ pub(crate) struct StrictF32NumericalContract {
     pub(crate) reassociation: NumericalPermission,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SubnormalMode {
-    Preserve,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NumericalPermission {
-    Forbidden,
-}
-
 impl StrictF32NumericalContract {
     pub(crate) const fn governed() -> Self {
         Self {
@@ -64,6 +58,19 @@ impl StrictF32NumericalContract {
             contraction: NumericalPermission::Forbidden,
             reassociation: NumericalPermission::Forbidden,
         }
+    }
+
+    /// Projects this contract into the target-neutral numerical realization the
+    /// scheduled-region IR preserves.
+    pub(crate) const fn realization(&self) -> tiler_ir::schedule::NumericalRealization {
+        tiler_ir::schedule::NumericalRealization::new(
+            self.key,
+            self.canonical_arithmetic_nan_bits,
+            self.input_subnormals,
+            self.result_subnormals,
+            self.contraction,
+            self.reassociation,
+        )
     }
 }
 
