@@ -3,11 +3,25 @@ use std::fmt;
 
 use tiler_ir::shape::{Axis, Shape};
 
+use crate::feasibility::{
+    AvailabilityPhase, AxisRequirement, CapabilityAxis, CapabilityFact, CheckedTargetProfile,
+    FactAuthority, FactProvenance, FactValidityScope, FeasibilityError, FeasibilityOutcome,
+    FeasibilityProposal, ProfileIdentity, ResolvedPredicate,
+};
 use crate::region::SemanticMemberId;
 use crate::request::{
     NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract, SubnormalMode,
     VerifiedRequestSubject, VerifiedTargetRequest,
 };
+
+/// Feasibility-rule version of the prototype baseline's checked target profile.
+///
+/// Bumped when the baseline's predicate set or bounds change in a way that alters
+/// how feasibility is decided, so the versioned profile identity stays honest.
+const PROTOTYPE_FEASIBILITY_RULE_VERSION: u32 = 1;
+
+/// Stable candidate identity used when assessing one scheduled region.
+const REGION_PROPOSAL_CANDIDATE: &str = "tiler.prototype.scheduled-region";
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RegionId(pub(crate) u8);
@@ -937,51 +951,150 @@ fn assess_target(
     work_items: u64,
     target: &PrototypeTargetProfile,
 ) -> Result<(), PhysicalError> {
-    if work_items > target.max_threads_per_grid_axis {
-        return target_error(
-            "grid-axis",
-            region,
-            work_items,
-            target.max_threads_per_grid_axis,
-        );
+    assess_region(region, requirements, work_items, target).map(|_| ())
+}
+
+/// Assesses one scheduled region against the typed feasibility authority.
+///
+/// This is the single hard-feasibility decision for the bounded serial-Sum path.
+/// It builds an immutable checked target profile and a typed candidate proposal,
+/// then maps the four-outcome result onto the existing physical-error contract:
+/// a proven candidate yields its resolved predicates (consumed by the explain
+/// admitted trace); a rejected candidate yields the canonical representative
+/// disproved predicate as a [`PhysicalError::Target`]. The governed baseline
+/// declares only compile-profile-resolvable predicates, so a deferred or unknown
+/// verdict — like a malformed profile or proposal — signals that the checked
+/// contract drifted from the prototype limits and fails closed as an intrinsic
+/// error rather than admitting an unproven plan. Cost never enters this decision.
+pub(crate) fn assess_region(
+    region: RegionId,
+    requirements: ResourceRequirements,
+    work_items: u64,
+    target: &PrototypeTargetProfile,
+) -> Result<Vec<ResolvedPredicate>, PhysicalError> {
+    let profile =
+        checked_target_profile(target).map_err(|error| feasibility_intrinsic(error, region))?;
+    let proposal = region_proposal(requirements, work_items)
+        .map_err(|error| feasibility_intrinsic(error, region))?;
+    match profile.assess(&proposal, AvailabilityPhase::CompileProfile) {
+        FeasibilityOutcome::Proven(predicates) => Ok(predicates),
+        FeasibilityOutcome::Rejected(rejection) => {
+            let representative = rejection.representative();
+            Err(PhysicalError::Target {
+                rule: representative.axis().key(),
+                region,
+                required: representative.required().value(),
+                available: representative.available().value(),
+            })
+        }
+        FeasibilityOutcome::Deferred(_) | FeasibilityOutcome::Unknown(_) => {
+            Err(PhysicalError::Intrinsic {
+                rule: "target-assessment-unresolved",
+                region,
+            })
+        }
     }
-    if requirements.threads_per_workgroup > target.max_threads_per_workgroup {
-        return target_error(
-            "threads-per-workgroup",
-            region,
-            u64::from(requirements.threads_per_workgroup),
-            u64::from(target.max_threads_per_workgroup),
-        );
-    }
-    if requirements.buffer_bindings > target.max_buffer_bindings_per_entry {
-        return target_error(
-            "buffer-bindings",
-            region,
-            u64::from(requirements.buffer_bindings),
-            u64::from(target.max_buffer_bindings_per_entry),
-        );
-    }
-    if target.index_bits != 64 {
-        return target_error("index-bits", region, 64, u64::from(target.index_bits));
-    }
-    if requirements.requires_device_memory && !target.supports_device_memory {
-        return target_error("device-memory", region, 1, 0);
-    }
-    if requirements.requires_strict_f32 && !target.supports_strict_f32 {
-        return target_error("strict-f32", region, 1, 0);
-    }
-    if requirements.local_memory_bytes != 0 {
-        return target_error(
-            "local-memory-bytes",
-            region,
-            requirements.local_memory_bytes,
-            0,
-        );
-    }
-    if requirements.barriers != 0 {
-        return target_error("barriers", region, u64::from(requirements.barriers), 0);
-    }
-    Ok(())
+}
+
+/// Builds the immutable checked profile for the prototype baseline target.
+///
+/// The prototype profile has no explicitly stageable local memory or barriers,
+/// so those axes carry a conservative compile-time ceiling of zero. Every axis is
+/// a compile-profile guarantee, keeping the bounded serial-Sum candidate provable
+/// without any later-phase query.
+fn checked_target_profile(
+    target: &PrototypeTargetProfile,
+) -> Result<CheckedTargetProfile, FeasibilityError> {
+    let identity = ProfileIdentity::new(target.key, PROTOTYPE_FEASIBILITY_RULE_VERSION);
+    let fact = |axis: CapabilityAxis, bound: u64| {
+        CapabilityFact::new(
+            axis,
+            bound,
+            AvailabilityPhase::CompileProfile,
+            FactAuthority::GovernedProfile,
+            FactValidityScope::PortableProfile,
+            FactProvenance::declared_by(identity),
+        )
+    };
+    CheckedTargetProfile::new(
+        identity,
+        vec![
+            fact(
+                CapabilityAxis::GridAxisThreads,
+                target.max_threads_per_grid_axis,
+            ),
+            fact(
+                CapabilityAxis::WorkgroupThreads,
+                u64::from(target.max_threads_per_workgroup),
+            ),
+            fact(
+                CapabilityAxis::BufferBindings,
+                u64::from(target.max_buffer_bindings_per_entry),
+            ),
+            fact(CapabilityAxis::IndexWidthBits, u64::from(target.index_bits)),
+            fact(
+                CapabilityAxis::DeviceAddressSpace,
+                u64::from(target.supports_device_memory),
+            ),
+            fact(
+                CapabilityAxis::StrictF32Arithmetic,
+                u64::from(target.supports_strict_f32),
+            ),
+            fact(CapabilityAxis::LocalMemoryBytes, 0),
+            fact(CapabilityAxis::Barriers, 0),
+        ],
+    )
+}
+
+/// Builds the typed candidate proposal for one scheduled region.
+///
+/// The candidate requires 64-bit indexing and the device address space and
+/// strict-f32 arithmetic whenever its resource requirements demand them; the
+/// prototype baseline needs no local memory or barriers.
+fn region_proposal(
+    requirements: ResourceRequirements,
+    work_items: u64,
+) -> Result<FeasibilityProposal, FeasibilityError> {
+    FeasibilityProposal::new(
+        REGION_PROPOSAL_CANDIDATE,
+        vec![
+            AxisRequirement::new(CapabilityAxis::GridAxisThreads, work_items),
+            AxisRequirement::new(
+                CapabilityAxis::WorkgroupThreads,
+                u64::from(requirements.threads_per_workgroup),
+            ),
+            AxisRequirement::new(
+                CapabilityAxis::BufferBindings,
+                u64::from(requirements.buffer_bindings),
+            ),
+            AxisRequirement::new(CapabilityAxis::IndexWidthBits, 64),
+            AxisRequirement::new(
+                CapabilityAxis::DeviceAddressSpace,
+                u64::from(requirements.requires_device_memory),
+            ),
+            AxisRequirement::new(
+                CapabilityAxis::StrictF32Arithmetic,
+                u64::from(requirements.requires_strict_f32),
+            ),
+            AxisRequirement::new(
+                CapabilityAxis::LocalMemoryBytes,
+                requirements.local_memory_bytes,
+            ),
+            AxisRequirement::new(CapabilityAxis::Barriers, u64::from(requirements.barriers)),
+        ],
+    )
+}
+
+/// Maps a feasibility intrinsic error onto the physical-error contract.
+///
+/// A malformed profile or proposal is a contract violation, not a feasibility
+/// outcome, so it fails closed as an intrinsic scheduling error.
+const fn feasibility_intrinsic(error: FeasibilityError, region: RegionId) -> PhysicalError {
+    let rule = match error {
+        FeasibilityError::MalformedProfile { .. } => "target-profile-malformed",
+        FeasibilityError::MalformedProposal { .. } => "target-proposal-malformed",
+    };
+    PhysicalError::Intrinsic { rule, region }
 }
 
 pub(crate) fn lower_structured_kernel(
@@ -1514,20 +1627,6 @@ fn element_count(shape: &Shape, region: RegionId) -> Result<u64, PhysicalError> 
 
 fn intrinsic<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError> {
     Err(PhysicalError::Intrinsic { rule, region })
-}
-
-fn target_error<T>(
-    rule: &'static str,
-    region: RegionId,
-    required: u64,
-    available: u64,
-) -> Result<T, PhysicalError> {
-    Err(PhysicalError::Target {
-        rule,
-        region,
-        required,
-        available,
-    })
 }
 
 fn refinement<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError> {

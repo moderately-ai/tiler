@@ -386,7 +386,7 @@ impl Quantity {
         }
     }
 
-    const fn value(self) -> u64 {
+    pub(crate) const fn value(self) -> u64 {
         match self {
             Self::Count(value)
             | Self::Bytes(value)

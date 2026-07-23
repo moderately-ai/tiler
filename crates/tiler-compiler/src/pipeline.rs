@@ -1323,62 +1323,34 @@ fn record_target_admissions(
     let profile = request.target_profile();
     for scheduled in &alternative.scheduled_regions {
         let region = scheduled.region();
-        let requirements = scheduled.requirements();
-        let checks = [
-            (
-                "grid-axis",
-                Quantity::Threads(region.schedule.work_items),
-                Quantity::Threads(profile.max_threads_per_grid_axis),
-            ),
-            (
-                "threads-per-workgroup",
-                Quantity::Threads(u64::from(requirements.threads_per_workgroup)),
-                Quantity::Threads(u64::from(profile.max_threads_per_workgroup)),
-            ),
-            (
-                "buffer-bindings",
-                Quantity::Bindings(u64::from(requirements.buffer_bindings)),
-                Quantity::Bindings(u64::from(profile.max_buffer_bindings_per_entry)),
-            ),
-            (
-                "index-bits",
-                Quantity::Count(64),
-                Quantity::Count(u64::from(profile.index_bits)),
-            ),
-            (
-                "device-memory",
-                Quantity::Count(u64::from(requirements.requires_device_memory)),
-                Quantity::Count(u64::from(profile.supports_device_memory)),
-            ),
-            (
-                "strict-f32",
-                Quantity::Count(u64::from(requirements.requires_strict_f32)),
-                Quantity::Count(u64::from(profile.supports_strict_f32)),
-            ),
-            (
-                "local-memory-bytes",
-                Quantity::Bytes(requirements.local_memory_bytes),
-                Quantity::Bytes(0),
-            ),
-            (
-                "barriers",
-                Quantity::Count(u64::from(requirements.barriers)),
-                Quantity::Count(0),
-            ),
-        ];
-        for (predicate, required, available) in checks {
+        // Re-derive the admitted feasibility facts from the single feasibility
+        // authority rather than a parallel check list, so the admitted trace
+        // cannot drift from the decision that admitted the region. A verified
+        // region has already proven feasible, so a non-proven verdict here is an
+        // internal inconsistency and fails closed via the physical-error stage.
+        let admitted = crate::physical::assess_region(
+            region.index.id,
+            scheduled.requirements(),
+            region.schedule.work_items,
+            &profile,
+        )
+        .map_err(|error| {
+            let stage = physical_error_stage(&error);
+            failure_at_source(error.into(), stage, record_cause(cause))
+        })?;
+        for predicate in admitted {
             let key = format!("{}/region:{}", alternative.stable_id, region.index.id.0);
             cause = explain_step(
                 (|| -> Result<_, CompileError> {
                     let subject = explain.subject(SubjectKind::Region, &key)?;
                     Ok(explain.push_detail(
-                        RuleRef::builtin(format!("target.{predicate}"))?,
+                        RuleRef::builtin(format!("target.{}", predicate.axis().key()))?,
                         vec![subject],
                         ExplainEvent::Feasibility {
-                            predicate: PredicateKey::new(predicate)?,
+                            predicate: PredicateKey::new(predicate.axis().key())?,
                             outcome: crate::explain::FeasibilityOutcome::Admitted,
-                            required,
-                            available,
+                            required: predicate.required(),
+                            available: predicate.available(),
                         },
                         optional_cause(cause),
                     )?)
