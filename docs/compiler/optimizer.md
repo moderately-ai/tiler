@@ -403,3 +403,25 @@ Every rejection records its stage, stable reason code, rule/provider identity,
 affected operation/value or candidate, failed predicate/evidence, and whether
 the result is a hard rejection, safe deferral, budget stop, dominance pruning,
 or cost disadvantage. Explain output never collapses these into “not fused.”
+
+### Explain authority
+
+Under ADR 0073 the typed explain vocabulary — records, subjects, stages,
+dispositions, reason and rule keys, evidence classes, and retention bounds — is a
+module of `tiler-compiler`, not a separate `tiler-explain` crate. The compiler
+owns record construction, canonical identity, causal integrity, and the versioned
+renderer. Emission is compiler-owned: sibling compiler modules obtain record
+handles from a writer, and no provider-facing emission trait is published. Module
+visibility is a public-facade question rather than a packaging one; the module is
+private while the compiler boundary is private.
+
+If a second crate must ever read canonical traces, the record, subject, and
+disposition vocabulary moves into `tiler-ir` following the `AbiExpr` co-location
+precedent of ADRs 0068 and 0070, with emission staying compiler-owned. A new
+crate is not the expansion path. Until that trigger fires, a component that
+cannot depend on `tiler-compiler` has no explain contract; it is an explicit
+unsupported case rather than a licence to copy the vocabulary.
+
+Canonical trace content is data and the renderer is presentation. Nothing in this
+contract requires an explain trace to be serialized into an artifact envelope,
+and the artifact contract does not carry one.
