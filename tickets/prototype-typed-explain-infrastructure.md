@@ -109,3 +109,36 @@ longer manufacture two distinct bridge record IDs for the same logical cause.
 Fixtures cover duplicate retained handles and duplicate cloned omitted tokens,
 then reuse each unchanged writer successfully to prove admission failure is
 transactional.
+
+## Outcome
+
+One bounded typed explain authority is implemented as the private
+`tiler_compiler::explain` module and integrated into the compiler pipeline.
+Each successful target compilation product carries a sealed, request-qualified
+`VerifiedExplainTrace`, and the normalization, fusion, feasibility, costing,
+selection, kernel, program, and artifact-plan flow now emit typed records
+rather than presentation strings. Canonical identity uses an explicit schema
+encoding; the versioned text renderer is presentation only. Retention is
+bounded across the complete canonical trace, mandatory terminal decisions and
+the typed truncation summary are retained independently of configured detail
+limits, and `TerminalCause` is an opaque writer-minted token whose omitted form
+restores its exact predecessor edges through a mandatory bridge rather than
+severing the trace DAG.
+
+Tom accepted the internal architecture on 2026-07-23 and the branch merged. The
+implementation adds 4,997 insertions confined to `crates/tiler-compiler`; every
+new item is `pub(crate)`, `lib.rs` gains only `mod explain;`, and the crate
+exports nothing new, so the merge crossed no public boundary. Integration
+verification ran the complete repository gate and `tkt guard` against the
+branch's true base, both clean.
+
+Tom also settled the first deferred public-surface question on 2026-07-23:
+explain remains a compiler-owned module rather than a `tiler-explain` crate,
+because extraction would invert the dependency direction while no second
+consumer exists. That decision, its evidence, and its reconsideration trigger
+are recorded by
+[`record-explain-ownership-decision`](record-explain-ownership-decision.md).
+The remaining seven public-surface questions are carried as the inherited
+review agenda on
+[`prototype-public-compiler-api`](prototype-public-compiler-api.md), which owns
+the boundary that would introduce them.
