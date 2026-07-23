@@ -1,7 +1,7 @@
 ---
 id: prototype-generic-region-formation
 title: Implement generic fusion-region formation
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-semantic-normalization]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, fusion, milestone-0b]
+claimed_from: todo
+assignee: agent-prototype-generic-region-formation
+lease_expires_at: 1784828687
 ---
 Replace proof-graph recognition and hard-coded occurrences with deterministic
 bounded enumeration of connected convex regions from arbitrary supported DAGs.

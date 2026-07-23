@@ -1,7 +1,7 @@
 ---
 id: close-remaining-adr-status-drift
 title: Close the remaining ADR status drift
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions]
+claimed_from: todo
+assignee: agent-close-remaining-adr-status-drift
+lease_expires_at: 1784828687
 ---
 The coherence sweep bumped ADR 0006, ADR 0018, and numerical-semantics.md from `not-started` to `partial` after reading their implementations, and deliberately stopped there rather than silently widening accepted-ADR maturity metadata beyond the audited set. Two further ADRs carry the same class of drift and were reported with evidence:
 
