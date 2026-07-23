@@ -1,7 +1,7 @@
 ---
 id: prototype-operation-capability-registry
 title: Implement operation capability registration and resolution
-status: in-progress
+status: done
 priority: p0
 dependencies: [reconcile-implementation-work-graph-after-authority-audit, correct-reference-value-and-authority-contracts]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-foundation, extensions]
-claimed_from: todo
-assignee: agent-prototype-operation-capability-registry
-lease_expires_at: 1784832271
 ---
 Add versioned typed registration, deterministic resolution, ambiguity/missing
 diagnostics, and provenance for index/access and scalar-lowering capability
