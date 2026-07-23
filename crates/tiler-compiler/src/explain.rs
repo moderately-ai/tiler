@@ -2206,7 +2206,7 @@ mod tests {
         assert_eq!(
             trace.render(),
             concat!(
-                "tiler-explain-v2 request=9d93c7444c678abd\n",
+                "tiler-explain-v2 request=d467ccebb6dfa565\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

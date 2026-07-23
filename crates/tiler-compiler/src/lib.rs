@@ -5,6 +5,7 @@
 
 mod explain;
 mod fusion;
+mod normalize;
 mod physical;
 mod pipeline;
 mod program;

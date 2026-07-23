@@ -3,8 +3,8 @@ use std::fmt;
 
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-    OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticIdentity, SemanticProgram, TypeKey, ValueId,
-    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    OperationId, OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticIdentity, SemanticProgram, TypeKey,
+    ValueId, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -14,6 +14,10 @@ const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
 const BASELINE_PROVIDER_KEY: &str = "tiler.prototype.materialized-serial-sum";
 const FUSED_PROVIDER_KEY: &str = "tiler.prototype.fused-serial-sum";
 const PROVIDER_REVISION: u32 = 1;
+/// Recognized operation count when both pointwise constants are one shared value.
+const RECOGNIZED_OPERATIONS_MIN: usize = 4;
+/// Recognized operation count when each pointwise constant is a distinct value.
+const RECOGNIZED_OPERATIONS_MAX: usize = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StaticShapeEnvironment {
@@ -69,6 +73,12 @@ pub(crate) struct DeterministicBudgets {
     pub(crate) host_expression_nodes: u32,
     pub(crate) buffers: u32,
     pub(crate) fusion_candidates: u32,
+    /// Rewrites the deterministic normalization stage may commit.
+    ///
+    /// Normalization visits each verified operation exactly once, so its
+    /// traversal is already bounded by `semantic_operations`. This is the
+    /// stage's own explicit budget over committed rewrites.
+    pub(crate) normalization_rewrites: u32,
 }
 
 impl DeterministicBudgets {
@@ -81,6 +91,7 @@ impl DeterministicBudgets {
             host_expression_nodes: 32,
             buffers: 3,
             fusion_candidates: 7,
+            normalization_rewrites: 8,
         }
     }
 }
@@ -344,6 +355,7 @@ impl VerifiedRequestSubject {
             self.budgets.host_expression_nodes,
             self.budgets.buffers,
             self.budgets.fusion_candidates,
+            self.budgets.normalization_rewrites,
         ] {
             bytes.extend_from_slice(&budget.to_be_bytes());
         }
@@ -420,6 +432,16 @@ impl NormalizedSerialSumSubject {
 impl VerifiedCompilationRequest {
     pub(crate) fn target_profiles(&self) -> &[PrototypeTargetProfile] {
         &self.target_profiles
+    }
+
+    /// Returns the verified deterministic budgets bound to this request.
+    pub(crate) const fn budgets(&self) -> DeterministicBudgets {
+        self.budgets
+    }
+
+    /// Returns the verified numerical contract bound to this request.
+    pub(crate) const fn numerical_contract(&self) -> StrictF32NumericalContract {
+        self.numerical_contract
     }
 
     pub(crate) fn for_target(
@@ -649,7 +671,15 @@ fn check_budget(resource: &'static str, limit: u32, actual: usize) -> Result<(),
 }
 
 fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum, RequestError> {
-    if program.input_count() != 1 || program.output_count() != 1 || program.operation_count() != 5 {
+    // The recognized structure is exactly one reduction, two pointwise
+    // operations, and one or two constants; a shared constant is the normalized
+    // spelling of the same program. The exact count is pinned against the
+    // distinct recognized set once the structural walk has identified it.
+    if program.input_count() != 1
+        || program.output_count() != 1
+        || !(RECOGNIZED_OPERATIONS_MIN..=RECOGNIZED_OPERATIONS_MAX)
+            .contains(&program.operation_count())
+    {
         return mismatch("signature");
     }
     if program
@@ -690,8 +720,19 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
     if tensor_input != input.value() {
         return mismatch("pointwise-input");
     }
-    let scale = constant_bits(program, scale)?;
-    let bias = constant_bits(program, bias)?;
+    let (scale, scale_operation) = constant_bits(program, scale)?;
+    let (bias, bias_operation) = constant_bits(program, bias)?;
+
+    check_recognized_operation_cover(
+        program,
+        [
+            sum.id(),
+            add.id(),
+            multiply.id(),
+            scale_operation,
+            bias_operation,
+        ],
+    )?;
     let axes = reduction_axes(sum.attributes())?;
 
     let input_shape = program
@@ -704,22 +745,7 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
     if input_shape.rank() == 0 {
         return mismatch("input-rank");
     }
-    let rank = input_shape.rank();
-    let mut previous = None;
-    for axis in &axes {
-        let index =
-            usize::try_from(axis.get()).map_err(|_| RequestError::UnsupportedCapability {
-                phase: "strategy",
-                rule: "sum-axis-range",
-            })?;
-        if index >= rank {
-            return mismatch("sum-axis-range");
-        }
-        if previous.is_some_and(|previous| previous >= axis.get()) {
-            return mismatch("sum-axes-canonical");
-        }
-        previous = Some(axis.get());
-    }
+    check_canonical_reduction_axes(&axes, input_shape.rank())?;
     if program.shape(*pointwise_result).ok() != Some(&input_shape) {
         return mismatch("pointwise-shape");
     }
@@ -744,6 +770,47 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
         input_elements,
         output_elements,
     })
+}
+
+/// Requires reduction axes to be in range and in strictly ascending order.
+fn check_canonical_reduction_axes(axes: &[Axis], rank: usize) -> Result<(), RequestError> {
+    let mut previous = None;
+    for axis in axes {
+        let index =
+            usize::try_from(axis.get()).map_err(|_| RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "sum-axis-range",
+            })?;
+        if index >= rank {
+            return mismatch("sum-axis-range");
+        }
+        if previous.is_some_and(|previous| previous >= axis.get()) {
+            return mismatch("sum-axes-canonical");
+        }
+        previous = Some(axis.get());
+    }
+    Ok(())
+}
+
+/// Requires the recognized operations to cover the whole program exactly.
+///
+/// A built program retains only output-reachable operations, so demanding that
+/// the reachable count equal the distinct recognized set rejects any operation
+/// outside this exact structure. One constant shared by both pointwise operands
+/// is the normalized spelling of the same program and covers four distinct
+/// operations instead of five.
+fn check_recognized_operation_cover(
+    program: &SemanticProgram,
+    recognized: [OperationId; RECOGNIZED_OPERATIONS_MAX],
+) -> Result<(), RequestError> {
+    let mut recognized = recognized;
+    recognized.sort_unstable();
+    let mut distinct = recognized.to_vec();
+    distinct.dedup();
+    if program.operation_count() != distinct.len() {
+        return mismatch("signature");
+    }
+    Ok(())
 }
 
 fn producer<'a>(
@@ -782,7 +849,10 @@ fn split_tensor_and_scalar(
     }
 }
 
-fn constant_bits(program: &SemanticProgram, value: ValueId) -> Result<u32, RequestError> {
+fn constant_bits(
+    program: &SemanticProgram,
+    value: ValueId,
+) -> Result<(u32, OperationId), RequestError> {
     let operation = producer(program, value, &constant_f32_op())?;
     if operation.operands().len() != 0 || operation.results().len() != 1 {
         return mismatch("constant-signature");
@@ -803,7 +873,7 @@ fn constant_bits(program: &SemanticProgram, value: ValueId) -> Result<u32, Reque
         return mismatch("constant-bits-format");
     }
     <[u8; 4]>::try_from(bits.bits())
-        .map(u32::from_be_bytes)
+        .map(|bytes| (u32::from_be_bytes(bytes), operation.id()))
         .map_err(|_| RequestError::UnsupportedCapability {
             phase: "strategy",
             rule: "constant-bits",
