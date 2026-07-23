@@ -7,7 +7,7 @@ topics: ["explain", "architecture", "dependencies", "rust"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
 implementation_status: "partial"
-applies_to: ["tiler.contract.optimizer"]
+applies_to: ["tiler.contract.optimizer", "tiler.contract.architecture"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv", "tiler.research.program-planning.general-compilation-boundary"]
 refines: ["ADR-0070"]
 ticket: "record-explain-ownership-decision"
