@@ -1,7 +1,7 @@
 ---
 id: close-semantic-identity-test-gaps
 title: Close semantic identity and registry hardening residuals
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, testing, hardening]
-claimed_from: todo
-assignee: agent-close-semantic-identity-test-gaps
-lease_expires_at: 1784828687
 ---
 Four adversarially verified residuals from the 2026-07-23 audit that the completed hardening tickets did not cover:
 
