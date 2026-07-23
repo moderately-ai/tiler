@@ -1,7 +1,7 @@
 ---
 id: repair-research-evidence-residuals
 title: Repair research evidence residuals
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/embedding, research/numerics, research/target-profiles, resear
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, documentation, evidence]
-claimed_from: todo
-assignee: agent-repair-research-evidence-residuals
-lease_expires_at: 1784825414
 ---
 Adversarially verified measurement and provenance defects that survived the evidence-provenance reconciliation (2026-07-23 audit):
 
