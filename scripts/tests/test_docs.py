@@ -2,6 +2,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+REPOSITORY = Path(__file__).parents[2]
 SPEC = importlib.util.spec_from_file_location("tiler_docs", Path(__file__).parents[1] / "docs.py")
 docs = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = docs
@@ -146,6 +147,104 @@ def test_link_validation_rejects_duplicate_definitions_file_uris_and_html(tmp_pa
     assert any("duplicate reference-style" in error for error in errors)
     assert any("raw HTML" in error for error in errors)
     assert "file URI" in docs.validate_local_target(record, "file:///tmp/private", tmp_path)
+
+
+def test_related_is_licensed_only_for_navigational_kinds(tmp_path: Path):
+    typed = docs.Record(
+        Path("docs/decisions/0099-test.md"),
+        {
+            "schema": docs.SCHEMA,
+            "id": "ADR-0099",
+            "kind": "decision",
+            "title": "Test",
+            "topics": ["test"],
+            "catalog_group": "documentation-governance",
+            "decision_status": "accepted",
+            "implementation_status": "implemented",
+            "applies_to": ["tiler.contract.test"],
+            "evidence": ["tiler.research.test"],
+            "related": ["ADR-0100"],
+        },
+        "# 0099: Test\n",
+    )
+    navigational = docs.Record(
+        Path("docs/status.md"),
+        {
+            "schema": docs.SCHEMA,
+            "id": "tiler.portal.test",
+            "kind": "portal",
+            "title": "Test",
+            "topics": ["test"],
+            "related": ["tiler.roadmap"],
+        },
+        "# Test\n",
+    )
+
+    assert any(
+        "unknown field related for decision" in error
+        for error in docs.validate_record(typed, tmp_path)
+    )
+    assert not any("related" in error for error in docs.validate_record(navigational, tmp_path))
+
+
+def test_chronology_orders_every_decision_by_number():
+    records = [
+        docs.Record(
+            Path("docs/decisions/0010-later.md"),
+            {"id": "ADR-0010", "kind": "decision", "title": "Later", "decision_status": "accepted"},
+            "",
+        ),
+        docs.Record(
+            Path("docs/decisions/0002-earlier.md"),
+            {
+                "id": "ADR-0002",
+                "kind": "decision",
+                "title": "Earlier",
+                "decision_status": "superseded",
+            },
+            "",
+        ),
+        docs.Record(
+            Path("docs/decisions/README.md"), {"id": "tiler.portal.test", "kind": "portal"}, ""
+        ),
+    ]
+
+    assert docs.chronology(records).splitlines() == [
+        "- [0002: Earlier](0002-earlier.md) — superseded",
+        "- [0010: Later](0010-later.md) — accepted",
+    ]
+
+
+def test_checked_in_adr_chronology_is_generated_and_complete():
+    relative, marker = docs.CHRONOLOGY
+    text = (REPOSITORY / relative).read_text(encoding="utf-8")
+    records, errors = docs.load(REPOSITORY)
+
+    assert errors == []
+    assert text.count(f"<!-- BEGIN GENERATED {marker} -->") == 1
+    assert docs.chronology(records) in text
+
+
+def test_experiment_field_rules_hold_outside_reproducible_status(tmp_path: Path):
+    metadata = {
+        "schema": docs.SCHEMA,
+        "id": "tiler.spike.test",
+        "kind": "experiment",
+        "title": "Test",
+        "topics": ["test"],
+        "experiment_status": "planned",
+        "implementation_status": "spike-only",
+        "evidence_classes": ["bounded-measurement"],
+        "supports": ["tiler.research.test"],
+        "entrypoints": ["../outside/probe.py"],
+        "last_verified": "2026-13-40",
+    }
+    record = docs.Record(Path("README.md"), metadata, "# Test\n")
+
+    errors = docs.validate_record(record, tmp_path)
+
+    assert any("last_verified must be YYYY-MM-DD" in error for error in errors)
+    assert any("invalid repository-root entrypoint" in error for error in errors)
 
 
 def test_reproducible_experiment_requires_canonical_date_and_entrypoint(tmp_path: Path):

@@ -82,16 +82,10 @@ and
 are complete for their bounded claims. The
 [`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md)
 slice establishes the accepted module, verifier, builder, and dependency
-direction without publishing the graph-specific proof structs. The semantic
-identity and canonical index-region corrections are integrated. The immediate
-compiler frontier is the
-[`verifier subject-binding correction`](../tickets/harden-compiler-verifier-subject-binding-and-totality.md).
-Downstream work is split into typed explain,
-bounded normalization, capability registration, checked semantic/index
-refinement, a generic index reference oracle, legal region covers, target
-feasibility, scheduled-region verification, physical frontiers,
-complete physical-plan selection, structured KIR, target-neutral kernel programs,
-artifact-facing programs, and conformance. A reviewed
+direction without publishing the graph-specific proof structs.
+The semantic identity, canonical index-region, and [`verifier subject-binding`](../tickets/harden-compiler-verifier-subject-binding-and-totality.md) corrections are integrated.
+The immediate compiler frontier is the three dependency-satisfied authorities that may proceed in parallel: [`typed explain`](../tickets/prototype-typed-explain-infrastructure.md), [`operation capability registration`](../tickets/prototype-operation-capability-registry.md), and the [`generic index-region reference oracle`](../tickets/prototype-index-region-reference-oracle.md).
+Downstream work is split into bounded normalization, generic region formation, checked semantic/index refinement, fusion legality, legal region covers, target feasibility, scheduled-region verification, physical frontiers, complete physical-plan selection, structured KIR, target-neutral kernel programs, artifact-facing programs, and conformance. A reviewed
 [`public compiler boundary`](../tickets/prototype-public-compiler-api.md)
 follows conformance and is consumed by the inline frontend. Backend feasibility
 spikes may proceed when their actual verifier and IR prerequisites exist; they

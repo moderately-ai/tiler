@@ -10,7 +10,6 @@ implementation_status: "partial"
 applies_to: ["tiler.contract.architecture"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv"]
 ticket: "prototype-foundation-contract"
-related: ["ADR-0065", "ADR-0070"]
 ---
 
 # 0056: Use four libraries and two proof executables

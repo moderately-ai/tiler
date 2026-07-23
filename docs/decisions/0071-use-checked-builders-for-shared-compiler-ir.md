@@ -9,6 +9,7 @@ decision_status: "accepted"
 implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.artifact-abi"]
 evidence: ["tiler.research.semantic-graph.rust-construction-lifecycle", "tiler.research.kernel-ir.structured-kernel-ir-verifier"]
+refines: ["ADR-0070"]
 ticket: "prototype-shared-compiler-ir-ownership"
 ---
 

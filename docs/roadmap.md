@@ -101,14 +101,11 @@ generalized cache, and consumer integration. They are prerequisites and
 evidence for this milestone, not its complete exit.
 
 The live ticket graph deliberately gates those proofs on a backend-consumable
-target-neutral compiler path. Its dependency direction is:
+target-neutral compiler path.
+[Compiler verifier hardening](../tickets/harden-compiler-verifier-subject-binding-and-totality.md) is complete, so the remaining dependency direction is:
 
-1. [compiler verifier hardening](../tickets/harden-compiler-verifier-subject-binding-and-totality.md),
-   [typed explain](../tickets/prototype-typed-explain-infrastructure.md), and
-   [bounded normalization](../tickets/prototype-semantic-normalization.md);
-2. parallel [operation capability registration](../tickets/prototype-operation-capability-registry.md)
-   and [generic index oracle](../tickets/prototype-index-region-reference-oracle.md)
-   authorities;
+1. the parallel [typed explain](../tickets/prototype-typed-explain-infrastructure.md), [operation capability registration](../tickets/prototype-operation-capability-registry.md), and [generic index oracle](../tickets/prototype-index-region-reference-oracle.md) authorities;
+2. [bounded normalization](../tickets/prototype-semantic-normalization.md) after typed explain;
 3. [generic region formation](../tickets/prototype-generic-region-formation.md),
    then [checked semantic/index refinement](../tickets/prototype-semantic-index-refinement.md),
    then [fusion legality](../tickets/prototype-fusion-legality-and-numerical-proof.md),

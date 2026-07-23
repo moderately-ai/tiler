@@ -85,8 +85,10 @@ that decision adopting the report's proposal.
 
 Contract `governed_by` is derived from decision `applies_to`; research
 `reproduced_by` is derived from experiment `supports`. These backlink fields are
-invalid in stored v1 frontmatter. `related` is symmetric but stored only once on
-the lexicographically smaller source ID. A generic `links` or `deps` field is
+invalid in stored v1 frontmatter.
+`related` is symmetric, stored only once on the lexicographically smaller source ID, and licensed only for the navigational kinds marked in the table below.
+A contract, decision, research report, or experiment already owns a directed predicate for every association it can make, so recording one as `related` would discard the direction that names which document supersedes, refines, or depends on the other.
+A generic `links` or `deps` field is
 invalid. Human Markdown still links the important route in prose; frontmatter
 does not replace explanation.
 
@@ -118,12 +120,11 @@ values are `foundation-semantics-extensions`, `numerical-operations`,
 `catalog_group` supplies one stable coarse location in generated catalogs.
 
 All kinds may use `depends_on`, `refines`, and `supersedes` where their typed
-meaning applies. Present arrays are nonempty, contain unique homogeneous scalar
-values, and use no empty placeholder. A reproducible experiment requires
-nonempty `entrypoints` and `evidence_classes` plus an ISO `YYYY-MM-DD`
-`last_verified` date. Entrypoints are normalized repository-root POSIX paths to
-existing regular files; absolute paths, backslashes, `.`/`..`, directories, and
-repo escapes are invalid.
+meaning applies.
+`related` is not among them; the optional column above is its exhaustive licence.
+Present arrays are nonempty, contain unique homogeneous scalar values, and use no empty placeholder.
+A reproducible experiment requires nonempty `entrypoints` and `evidence_classes` plus a `last_verified` date.
+Those field rules bind on every experiment record carrying the field rather than on a reproducible one alone: `last_verified` is an ISO `YYYY-MM-DD` date no later than today, and entrypoints are normalized repository-root POSIX paths to existing regular files; absolute paths, backslashes, `.`/`..`, directories, and repo escapes are invalid.
 
 An accepted decision has at least one `applies_to` contract and one `evidence`
 research record. An accepted contract has an inbound accepted decision. Adopted
