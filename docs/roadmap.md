@@ -101,29 +101,23 @@ generalized cache, and consumer integration. They are prerequisites and
 evidence for this milestone, not its complete exit.
 
 The live ticket graph deliberately gates those proofs on a backend-consumable
-target-neutral compiler path.
-[Compiler verifier hardening](../tickets/harden-compiler-verifier-subject-binding-and-totality.md) is complete, so the remaining dependency direction is:
+target-neutral compiler path. That path lowers a verified semantic program
+through semantic normalization, generic fusion-region formation and legality,
+checked semantic-to-index refinement, region covers, target feasibility and
+scheduling, physical-implementation planning and complete-plan selection,
+structured kernel IR, and artifact-facing programs, closed by the
+[optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md)
+and the reviewed [public compiler API](../tickets/prototype-public-compiler-api.md)
+that the inline frontend consumes. These are independent authorities with real
+dependencies, not a single linear pipeline, and their dependency-satisfied
+ordering shifts as work lands. `tkt rollup` and `tkt ready` — not a chain
+enumerated here — report which authorities are complete, dispatchable, or
+blocked.
 
-1. the parallel [typed explain](../tickets/prototype-typed-explain-infrastructure.md), [operation capability registration](../tickets/prototype-operation-capability-registry.md), and [generic index oracle](../tickets/prototype-index-region-reference-oracle.md) authorities;
-2. [bounded normalization](../tickets/prototype-semantic-normalization.md) after typed explain;
-3. [generic region formation](../tickets/prototype-generic-region-formation.md),
-   then [checked semantic/index refinement](../tickets/prototype-semantic-index-refinement.md),
-   then [fusion legality](../tickets/prototype-fusion-legality-and-numerical-proof.md),
-   then [legal complete-region covers](../tickets/prototype-region-cover-enumeration.md);
-4. independently developed [target feasibility](../tickets/prototype-target-feasibility-authority.md),
-   [checked scheduled regions](../tickets/prototype-scheduled-region-ir.md), and
-   [physical implementation frontiers](../tickets/prototype-physical-implementation-frontier.md);
-5. [complete physical-plan selection](../tickets/prototype-complete-physical-plan-selection.md),
-   [structured KIR](../tickets/prototype-structured-kir-slice.md),
-   [target-neutral KernelProgram IR](../tickets/prototype-kernel-program-ir.md), and
-   the [artifact-facing program model](../tickets/prototype-artifact-program-model.md);
-6. the [optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md)
-   followed by the reviewed [public compiler API](../tickets/prototype-public-compiler-api.md).
-
-Opaque physical calls are not part of this bounded frontier. Their reviewed
-[provider ticket](../tickets/implement-opaque-physical-call-providers.md) follows
-optimizer conformance and the mature boundary-property and analytical-cost
-authorities.
+Opaque physical calls are not part of this bounded compiler path. Their reviewed
+[provider ticket](../tickets/implement-opaque-physical-call-providers.md) is
+deferred behind the optimizer conformance gate and the mature boundary-property
+and analytical-cost authorities.
 
 Metal is then split into independently verifiable KIR lowering, strict
 numerical realization, Apple offline compilation, artifact codec/bundle
