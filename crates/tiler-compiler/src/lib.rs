@@ -6,6 +6,7 @@
 pub mod capability;
 mod explain;
 mod fusion;
+pub mod legality;
 mod normalize;
 mod physical;
 mod pipeline;
