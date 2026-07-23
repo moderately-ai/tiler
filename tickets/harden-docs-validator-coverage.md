@@ -1,7 +1,7 @@
 ---
 id: harden-docs-validator-coverage
 title: Harden documentation validator coverage
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, contracts/decisions, research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, tooling]
-claimed_from: todo
-assignee: agent-harden-docs-validator-coverage
-lease_expires_at: 1784823821
 ---
 Three verified gaps where docs.py enforces less than document-metadata.md promises, letting status-bearing prose drift silently:
 
