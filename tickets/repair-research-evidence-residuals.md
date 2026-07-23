@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: []
 related: []
-scopes: [research/embedding, research/numerics, research/target-profiles, research/region-search, research/runtime, research/transfers, contracts/artifacts]
+scopes: [research/embedding, research/numerics, research/target-profiles, research/region-search, research/runtime, research/transfers, contracts/artifacts, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, documentation, evidence]
