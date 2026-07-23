@@ -1,7 +1,7 @@
 ---
 id: prototype-fusion-legality-and-numerical-proof
 title: Derive fusion legality and numerical evidence
-status: in-progress
+status: done
 priority: p0
 dependencies: [repair-numerical-witness-integrity, prototype-semantic-index-refinement, prototype-index-region-reference-oracle]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, fusion, numerics]
-claimed_from: todo
-assignee: agent-prototype-fusion-legality
-lease_expires_at: 1784851462
 ---
 Derive legality from operation capabilities, access/effect contracts, materialization boundaries, conversions, and numerical policy instead of graph-specific rule tables or asserted proof labels. Produce replayable evidence or typed Unknown/rejection and cover exceptional values, conversion rounding, contraction, empty domains, and reduction order.
 
