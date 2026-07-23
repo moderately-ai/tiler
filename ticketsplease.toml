@@ -123,13 +123,14 @@ satisfies_dependents = false
 "implementation/artifact" = "tiler-artifact"
 "implementation/compiler" = "tiler-compiler"
 "implementation/metal" = "tiler-metal"
-"implementation/metal-aot" = "tiler-prototype-compile"
+"implementation/metal-aot" = "tiler-metal-aot"
 "implementation/runtime" = "tiler-prototype-run"
 
 # Cache, frontend, and Candle scopes have no crate mapping until their owning
-# crates are admitted. The Metal-AOT and runtime mappings are temporary owners
-# while their production crates are absent. Each crate-admission ticket must
-# atomically add the real workspace package and add or move its mapping here.
+# crates are admitted. The runtime mapping is a temporary owner while its
+# production crate is absent; the Metal-AOT mapping now names its real owner,
+# tiler-metal-aot. Each crate-admission ticket must atomically add the real
+# workspace package and add or move its mapping here.
 
 # Name a forked/external dependency (pinned via `git = … rev = …`) as a scope.
 # The guard flags a branch that bumps the pin (matched by `repo`) or edits an

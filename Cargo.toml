@@ -4,6 +4,7 @@ members = [
     "crates/tiler-compiler",
     "crates/tiler-ir",
     "crates/tiler-metal",
+    "crates/tiler-metal-aot",
     "crates/tiler-reference",
     "prototypes/serial-sum-compile",
     "prototypes/serial-sum-run",
