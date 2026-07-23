@@ -1,7 +1,7 @@
 ---
 id: decouple-status-prose-from-the-live-board
 title: Decouple status prose from the live ticket board
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, governance, maintenance]
-claimed_from: todo
-assignee: agent-decouple-status-prose-from-the-live-board
-lease_expires_at: 1784832272
 ---
 `docs/status.md` names specific in-flight tickets as "the immediate compiler frontier" and `docs/roadmap.md` enumerates a dependency chain by ticket id. Both rot on every merge: within one working session the named frontier went stale twice, and today two of the three named authorities completed while a fourth listed as downstream also completed. `docs/status.md` currently carries nine ticket links.
 
