@@ -1,7 +1,7 @@
 ---
 id: reconcile-scalar-broadcast-contract
 title: Reconcile scalar broadcast with the semantic-graph contract
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: []
