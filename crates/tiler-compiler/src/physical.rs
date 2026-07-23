@@ -967,13 +967,25 @@ fn assess_target(
             u64::from(target.max_buffer_bindings_per_entry),
         );
     }
-    if target.index_bits != 64
-        || (requirements.requires_device_memory && !target.supports_device_memory)
-        || (requirements.requires_strict_f32 && !target.supports_strict_f32)
-        || requirements.local_memory_bytes != 0
-        || requirements.barriers != 0
-    {
-        return target_error("capability", region, 1, 0);
+    if target.index_bits != 64 {
+        return target_error("index-bits", region, 64, u64::from(target.index_bits));
+    }
+    if requirements.requires_device_memory && !target.supports_device_memory {
+        return target_error("device-memory", region, 1, 0);
+    }
+    if requirements.requires_strict_f32 && !target.supports_strict_f32 {
+        return target_error("strict-f32", region, 1, 0);
+    }
+    if requirements.local_memory_bytes != 0 {
+        return target_error(
+            "local-memory-bytes",
+            region,
+            requirements.local_memory_bytes,
+            0,
+        );
+    }
+    if requirements.barriers != 0 {
+        return target_error("barriers", region, u64::from(requirements.barriers), 0);
     }
     Ok(())
 }

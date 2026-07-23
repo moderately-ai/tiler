@@ -74,6 +74,75 @@ pub(crate) struct FusionNumericalProof {
     forbidden_transforms: ForbiddenTransformProof,
 }
 
+impl FusionNumericalProof {
+    pub(crate) fn candidate_stable_id(&self) -> &str {
+        &self.candidate.stable_id
+    }
+
+    pub(crate) fn canonical_explain_evidence_bytes(&self) -> Vec<u8> {
+        let mut bytes = self.request_subject.canonical_explain_subject_bytes();
+        bytes.extend_from_slice(self.candidate.stable_id.as_bytes());
+        bytes.extend_from_slice(
+            &u64::try_from(self.candidate.members.len())
+                .unwrap_or(u64::MAX)
+                .to_be_bytes(),
+        );
+        for member in &self.candidate.members {
+            bytes.push(match member {
+                SemanticOccurrence::ScaleConstant => 1,
+                SemanticOccurrence::Multiply => 2,
+                SemanticOccurrence::BiasConstant => 3,
+                SemanticOccurrence::Add => 4,
+                SemanticOccurrence::StrictSum => 5,
+            });
+        }
+        for boundaries in [
+            &self.candidate.boundary_inputs,
+            &self.candidate.boundary_outputs,
+        ] {
+            bytes.extend_from_slice(
+                &u64::try_from(boundaries.len())
+                    .unwrap_or(u64::MAX)
+                    .to_be_bytes(),
+            );
+            for boundary in boundaries {
+                bytes.push(match boundary {
+                    BoundaryValue::InputTensor => 1,
+                    BoundaryValue::ScaleConstant => 2,
+                    BoundaryValue::Product => 3,
+                    BoundaryValue::BiasConstant => 4,
+                    BoundaryValue::PointwiseResult => 5,
+                    BoundaryValue::OutputTensor => 6,
+                });
+            }
+        }
+        bytes.extend_from_slice(self.materialized_reference_provider.key.as_bytes());
+        bytes.extend_from_slice(&self.materialized_reference_provider.revision.to_be_bytes());
+        bytes.push(match self.atomic_operations {
+            AtomicOperationProof::MultiplyThenAdd => 1,
+        });
+        bytes.push(match self.contributor_order {
+            ContributorOrderProof::OriginalAxisLexicographic => 1,
+        });
+        bytes.push(match self.nan_boundaries {
+            NaNBoundaryProof::CanonicalizeAfterEveryArithmeticOperation => 1,
+        });
+        bytes.push(match self.materialization_boundaries {
+            MaterializationBoundaryProof::NoObservableBoundaryRemoved => 1,
+        });
+        for permission in [
+            self.forbidden_transforms.contraction,
+            self.forbidden_transforms.reassociation,
+            self.forbidden_transforms.permutation,
+        ] {
+            bytes.push(match permission {
+                NumericalPermission::Forbidden => 1,
+            });
+        }
+        bytes
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AtomicOperationProof {
     MultiplyThenAdd,

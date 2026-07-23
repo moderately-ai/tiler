@@ -16,6 +16,18 @@ pub(crate) struct HostExprId(u8);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct StageId(u8);
 
+impl HostExprId {
+    pub(crate) const fn index(self) -> u8 {
+        self.0
+    }
+}
+
+impl StageId {
+    pub(crate) const fn index(self) -> u8 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct MaterializedValueId(pub(crate) u8);
 
@@ -205,7 +217,6 @@ pub(crate) struct ArtifactConstructionPlan {
 }
 
 impl KernelProgram {
-    #[cfg(test)]
     pub(crate) fn stages(&self) -> &[ProgramStage] {
         &self.stages
     }
@@ -215,7 +226,6 @@ impl KernelProgram {
         &self.buffer_plan
     }
 
-    #[cfg(test)]
     pub(crate) fn dependencies(&self) -> &[Dependency] {
         &self.dependencies
     }

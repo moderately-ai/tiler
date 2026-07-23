@@ -1,13 +1,20 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::explain::{
+    CostDisposition, CostModelKey, CostTerm, EvidenceBasis, ExplainError, ExplainEvent,
+    ExplainFact, ExplainLimits, ExplainRecordId, ExplainStage, ExplainWriter, FactValue,
+    FailureDescriptor, MAX_TERMINAL_CAUSES, PredicateAssessment, PredicateKey, ProviderRef,
+    Quantity, ReasonCode, RejectionClass, ResourceKey, RuleRef, SelectionOutcome, SubjectKind,
+    TerminalCause, VerifiedEvidenceRef, VerifiedExplainTrace,
+};
 use crate::fusion::{
     CandidateError, CandidateKind, FusionNumericalProof, enumerate_candidates,
     prove_fused_numerics, verify_fused_numerics,
 };
 use crate::physical::{
-    PhysicalError, RegionId, VerifiedScheduledRegion, VerifiedStructuredKernel,
-    build_fused_scheduled_region, build_scheduled_regions, lower_structured_kernel,
+    PhysicalError, VerifiedScheduledRegion, VerifiedStructuredKernel, build_fused_scheduled_region,
+    build_scheduled_regions, lower_structured_kernel,
 };
 use crate::program::{
     ArtifactConstructionPlan, KernelProgram, ProgramError, assert_kernels_match_program,
@@ -19,75 +26,6 @@ use crate::request::{CompilationRequest, RequestError, verify_request};
 const SELECTION_POLICY_KEY: &str = "tiler.selection.structural-pareto.v1";
 const STRUCTURAL_COST_MODEL_KEY: &str = "tiler.cost.structural.v1";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExplainPhase {
-    RequestVerification,
-    RegionFormation,
-    IntrinsicSchedule,
-    TargetFeasibility,
-    KernelRefinement,
-    ProgramVerification,
-    ArtifactPlanning,
-    CandidateEnumeration,
-    NumericalLegality,
-    PortfolioSelection,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExplainOutcome {
-    Accepted,
-    Rejected,
-    Selected,
-    NotSelected,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ExplainRecord {
-    pub(crate) phase: ExplainPhase,
-    pub(crate) rule: &'static str,
-    pub(crate) subject: ExplainSubject,
-    pub(crate) outcome: ExplainOutcome,
-    pub(crate) evidence: ExplainEvidence,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ExplainSubject {
-    SemanticProgram,
-    Region(RegionId),
-    Regions(Vec<RegionId>),
-    Boundary(&'static str),
-    Candidate(String),
-    CandidateRegion { stable_id: String, region: RegionId },
-    Alternative(&'static str),
-    KernelProgram,
-    ArtifactPlan,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum EvidenceClass {
-    ValidatedInvariant,
-    SoundNumericalProof,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExplainEvidence {
-    Predicate {
-        class: EvidenceClass,
-    },
-    Budget {
-        limit: u32,
-        actual: usize,
-    },
-    Feasibility {
-        required: u64,
-        available: u64,
-    },
-    Cost {
-        model_key: &'static str,
-        cost: StructuralCost,
-    },
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CompilationProduct {
     pub(crate) targets: Vec<TargetCompilationProduct>,
@@ -97,10 +35,10 @@ pub(crate) struct CompilationProduct {
 pub(crate) struct TargetCompilationProduct {
     pub(crate) target_profile_key: &'static str,
     pub(crate) portfolio: ProgramPortfolio,
-    pub(crate) explain: Vec<ExplainRecord>,
+    pub(crate) explain: VerifiedExplainTrace,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum ProgramAlternativeKind {
     Materialized,
     Fused,
@@ -153,6 +91,10 @@ pub(crate) enum CompileError {
     BudgetExhausted(RequestError),
     NoFeasiblePlan(NoFeasiblePlanError),
     InvalidCompilerOutput(CompilerOutputError),
+    Explained {
+        source: Box<CompileError>,
+        explain: VerifiedExplainTrace,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -166,6 +108,7 @@ pub(crate) enum CompilerOutputError {
     Physical(PhysicalError),
     Program(ProgramError),
     Candidate(CandidateError),
+    Explain(ExplainError),
 }
 
 impl fmt::Display for CompileError {
@@ -185,6 +128,10 @@ impl fmt::Display for CompileError {
             Self::InvalidCompilerOutput(CompilerOutputError::Candidate(error)) => {
                 error.fmt(formatter)
             }
+            Self::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => {
+                error.fmt(formatter)
+            }
+            Self::Explained { source, .. } => source.fmt(formatter),
         }
     }
 }
@@ -200,6 +147,8 @@ impl Error for CompileError {
             | Self::InvalidCompilerOutput(CompilerOutputError::Physical(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Program(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Candidate(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => Some(error),
+            Self::Explained { source, .. } => Some(source),
         }
     }
 }
@@ -241,6 +190,12 @@ impl From<ProgramError> for CompileError {
     }
 }
 
+impl From<ExplainError> for CompileError {
+    fn from(value: ExplainError) -> Self {
+        Self::InvalidCompilerOutput(CompilerOutputError::Explain(value))
+    }
+}
+
 pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProduct, CompileError> {
     let semantic = request.program;
     let verified = verify_request(request)?;
@@ -261,73 +216,548 @@ fn compile_target(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
 ) -> Result<TargetCompilationProduct, CompileError> {
-    let mut explain = request_explain();
+    let mut explain = ExplainWriter::new(verified, ExplainLimits::default())?;
+    match compile_target_with_explain(semantic, verified, &mut explain) {
+        Ok(portfolio) => {
+            let expected_alternatives = portfolio
+                .alternatives
+                .iter()
+                .map(|alternative| alternative.stable_id)
+                .collect::<Vec<_>>();
+            let explain = explain.finish_success(
+                &expected_alternatives,
+                portfolio.selection.selected_alternative_id,
+            )?;
+            Ok(TargetCompilationProduct {
+                target_profile_key: verified.target_profile().key,
+                portfolio,
+                explain,
+            })
+        }
+        Err(failure) => {
+            let explain = explain.finish_failure(*failure.context)?;
+            Err(CompileError::Explained {
+                source: failure.source,
+                explain,
+            })
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TargetFailure {
+    source: Box<CompileError>,
+    context: Box<FailureDescriptor>,
+}
+
+fn target_failure(
+    source: CompileError,
+    stage: ExplainStage,
+    reason: impl AsRef<str>,
+    subject_kind: SubjectKind,
+    subject_key: impl AsRef<str>,
+    cause: Option<TerminalCause>,
+) -> TargetFailure {
+    match FailureDescriptor::new(stage, reason, subject_kind, subject_key, cause) {
+        Ok(context) => TargetFailure {
+            source: Box::new(source),
+            context: Box::new(context),
+        },
+        Err(error) => TargetFailure {
+            source: Box::new(CompileError::InvalidCompilerOutput(
+                CompilerOutputError::Explain(error),
+            )),
+            context: Box::new(
+                FailureDescriptor::new(
+                    ExplainStage::ProgramVerification,
+                    "failure-context-invalid",
+                    SubjectKind::KernelProgram,
+                    "compiler-explain",
+                    None,
+                )
+                .expect("static fallback failure context is valid"),
+            ),
+        },
+    }
+}
+
+fn target_failure_with_causes(
+    source: CompileError,
+    stage: ExplainStage,
+    reason: impl AsRef<str>,
+    subject_kind: SubjectKind,
+    subject_key: impl AsRef<str>,
+    causes: Vec<TerminalCause>,
+) -> TargetFailure {
+    match FailureDescriptor::with_causes(stage, reason, subject_kind, subject_key, causes) {
+        Ok(context) => TargetFailure {
+            source: Box::new(source),
+            context: Box::new(context),
+        },
+        Err(error) => target_failure(
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Explain(error)),
+            ExplainStage::ProgramVerification,
+            "failure-context-invalid",
+            SubjectKind::KernelProgram,
+            "compiler-explain",
+            None,
+        ),
+    }
+}
+
+fn record_cause(record: Option<ExplainRecordId>) -> Option<TerminalCause> {
+    record.map(TerminalCause::from_record)
+}
+
+fn explain_step<T>(
+    result: Result<T, CompileError>,
+    stage: ExplainStage,
+    subject_kind: SubjectKind,
+    subject_key: impl AsRef<str>,
+    cause: Option<TerminalCause>,
+) -> Result<T, TargetFailure> {
+    result.map_err(|source| {
+        let reason = match &source {
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => {
+                format!("explain-{}", explain_error_reason(error))
+            }
+            _ => "explain-step-source-mismatch".to_owned(),
+        };
+        target_failure(source, stage, reason, subject_kind, subject_key, cause)
+    })
+}
+
+fn failure_at_source(
+    source: CompileError,
+    stage: ExplainStage,
+    cause: Option<TerminalCause>,
+) -> TargetFailure {
+    let (reason, subject_kind, subject_key) = failure_source_details(&source);
+    target_failure(source, stage, reason, subject_kind, subject_key, cause)
+}
+
+fn failure_at_source_with_causes(
+    source: CompileError,
+    stage: ExplainStage,
+    causes: Vec<TerminalCause>,
+) -> TargetFailure {
+    let (reason, subject_kind, subject_key) = failure_source_details(&source);
+    target_failure_with_causes(source, stage, reason, subject_kind, subject_key, causes)
+}
+
+const fn physical_error_stage(error: &PhysicalError) -> ExplainStage {
+    match error {
+        PhysicalError::Target { .. } => ExplainStage::TargetFeasibility,
+        PhysicalError::Intrinsic { .. } | PhysicalError::ShapeProductOverflow { .. } => {
+            ExplainStage::IntrinsicScheduling
+        }
+        PhysicalError::Refinement { .. } => ExplainStage::KernelRefinement,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TargetRejection {
+    kind: ProgramAlternativeKind,
+    error: PhysicalError,
+    cause: TerminalCause,
+}
+
+#[derive(Default)]
+struct TargetRejections {
+    values: Vec<TargetRejection>,
+}
+
+impl TargetRejections {
+    fn push(&mut self, rejection: TargetRejection) -> Result<(), TargetFailure> {
+        if u32::try_from(self.values.len()).unwrap_or(u32::MAX) >= MAX_TERMINAL_CAUSES {
+            return Err(target_failure(
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                    ProgramError::Structure {
+                        rule: "target-rejection-cause-capacity",
+                    },
+                )),
+                ExplainStage::Selection,
+                "target-rejection-cause-capacity",
+                SubjectKind::KernelProgram,
+                "portfolio",
+                None,
+            ));
+        }
+        let insertion = self
+            .values
+            .binary_search_by_key(&rejection.kind, |existing| existing.kind)
+            .unwrap_or_else(|insertion| insertion);
+        if self
+            .values
+            .get(insertion)
+            .is_some_and(|existing| existing.kind == rejection.kind)
+        {
+            return Err(target_failure(
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                    ProgramError::Structure {
+                        rule: "duplicate-target-rejection",
+                    },
+                )),
+                ExplainStage::Selection,
+                "duplicate-target-rejection",
+                SubjectKind::KernelProgram,
+                "portfolio",
+                None,
+            ));
+        }
+        self.values.insert(insertion, rejection);
+        Ok(())
+    }
+
+    fn into_failure(self) -> Option<TargetFailure> {
+        let representative = self.values.first()?.error.clone();
+        let causes = self
+            .values
+            .into_iter()
+            .map(|rejection| rejection.cause)
+            .collect();
+        Some(failure_at_source_with_causes(
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(representative)),
+            ExplainStage::TargetFeasibility,
+            causes,
+        ))
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps the phase-local failure contexts beside the target compilation transaction"
+)]
+fn compile_target_with_explain(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    verified: &crate::request::VerifiedTargetRequest,
+    explain: &mut ExplainWriter,
+) -> Result<ProgramPortfolio, TargetFailure> {
+    let request_record = (|| -> Result<_, CompileError> {
+        let request_subject = explain.subject(SubjectKind::SemanticProgram, "semantic-program")?;
+        Ok(explain.push_detail(
+            RuleRef::builtin("compile.request.general-boundary")?,
+            vec![request_subject],
+            check(
+                ExplainStage::RequestVerification,
+                "compile.request.verified",
+                EvidenceBasis::CheckedInvariant,
+            )?,
+            Vec::new(),
+        )?)
+    })()
+    .map_err(|source| {
+        target_failure(
+            source,
+            ExplainStage::RequestVerification,
+            "explain-request-verification",
+            SubjectKind::SemanticProgram,
+            "semantic-program",
+            None,
+        )
+    })?;
+    let normalization_record = (|| -> Result<_, CompileError> {
+        let subject = explain.subject(SubjectKind::Normalization, "normalization:serial-sum")?;
+        Ok(explain.push_detail(
+            RuleRef::builtin("normalize.serial-sum.v1")?,
+            vec![subject],
+            check(
+                ExplainStage::Normalization,
+                "normalize.semantic-equivalence",
+                EvidenceBasis::CheckedInvariant,
+            )?,
+            optional_cause(request_record),
+        )?)
+    })()
+    .map_err(|source| {
+        target_failure(
+            source,
+            ExplainStage::Normalization,
+            "explain-normalization",
+            SubjectKind::Normalization,
+            "normalization:serial-sum",
+            record_cause(request_record),
+        )
+    })?;
     let mut alternatives = Vec::new();
-    let mut target_rejection = None;
-    match build_baseline_alternative(semantic, verified) {
+    let mut alternative_causes = Vec::new();
+    let mut target_rejections = TargetRejections::default();
+    match build_baseline_alternative(semantic, verified, record_cause(normalization_record)) {
         Ok(baseline) => {
-            explain.extend(baseline_explain());
+            let cause =
+                record_baseline_explain(explain, verified, &baseline, normalization_record)?;
+            alternative_causes.push((baseline.stable_id, cause));
             alternatives.push(baseline);
         }
-        Err(CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
-            error @ PhysicalError::Target { .. },
-        ))) => {
-            explain.push(target_rejection_record(&error, None));
-            target_rejection = Some(error);
-        }
-        Err(error) => return Err(error),
+        Err(failure) => match *failure.source {
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+                error @ PhysicalError::Target { .. },
+            )) => {
+                let cause = record_target_rejection(
+                    explain,
+                    &error,
+                    "alternative:materialized-serial-sum.v1",
+                    normalization_record,
+                )?;
+                target_rejections.push(TargetRejection {
+                    kind: ProgramAlternativeKind::Materialized,
+                    error,
+                    cause,
+                })?;
+            }
+            source => {
+                return Err(TargetFailure {
+                    source: Box::new(source),
+                    context: failure.context,
+                });
+            }
+        },
     }
     consider_fused_alternative(
         semantic,
         verified,
         &mut alternatives,
-        &mut explain,
-        &mut target_rejection,
+        explain,
+        normalization_record,
+        &mut alternative_causes,
+        &mut target_rejections,
     )?;
     if alternatives.is_empty() {
-        let error = target_rejection.ok_or({
-            CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
-                ProgramError::Structure {
-                    rule: "portfolio-empty-without-target-rejection",
-                },
-            ))
-        })?;
-        return Err(CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
-            error,
-        )));
+        if target_rejections.values.is_empty() {
+            return Err(target_failure(
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                    ProgramError::Structure {
+                        rule: "portfolio-empty-without-target-rejection",
+                    },
+                )),
+                ExplainStage::Selection,
+                "portfolio-empty-without-target-rejection",
+                SubjectKind::KernelProgram,
+                "portfolio",
+                record_cause(normalization_record),
+            ));
+        }
+        return Err(target_rejections
+            .into_failure()
+            .expect("nonempty target rejection set yields one failure"));
     }
-    let selected_alternative_id = select_structural_pareto(&alternatives)?;
-    verify_portfolio(semantic, verified, &alternatives, selected_alternative_id)?;
-    record_selection(&alternatives, selected_alternative_id, &mut explain);
-    Ok(TargetCompilationProduct {
-        target_profile_key: verified.target_profile().key,
-        portfolio: ProgramPortfolio {
-            alternatives,
-            selection: PortfolioSelection {
-                policy_key: SELECTION_POLICY_KEY,
-                selected_alternative_id,
-            },
-        },
+    let selected_alternative_id = select_structural_pareto(&alternatives).map_err(|source| {
+        target_failure(
+            source,
+            ExplainStage::Selection,
+            "portfolio-selection",
+            SubjectKind::KernelProgram,
+            "portfolio",
+            record_cause(normalization_record),
+        )
+    })?;
+    verify_portfolio(
+        semantic,
+        verified,
+        &alternatives,
+        selected_alternative_id,
+        record_cause(normalization_record),
+    )?;
+    record_cost_and_selection(
+        &alternatives,
+        selected_alternative_id,
+        &alternative_causes,
         explain,
+    )?;
+    Ok(ProgramPortfolio {
+        alternatives,
+        selection: PortfolioSelection {
+            policy_key: SELECTION_POLICY_KEY,
+            selected_alternative_id,
+        },
     })
+}
+
+fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String) {
+    match error {
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
+            rule,
+            region,
+            ..
+        }))
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Target { rule, region, .. },
+        )) => (
+            format!("target-{rule}"),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.0),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(
+            CandidateError::Budget { limit, actual },
+        )) => (
+            format!("candidate-budget-{limit}-{actual}"),
+            SubjectKind::Candidate,
+            "candidate-enumeration".to_owned(),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(
+            CandidateError::Invalid { candidate, rule },
+        )) => (
+            format!("candidate-{rule}"),
+            SubjectKind::Candidate,
+            candidate.clone(),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Intrinsic { rule, region },
+        )) => (
+            format!("intrinsic-{rule}"),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.0),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Refinement { rule, region },
+        )) => (
+            format!("refinement-{rule}"),
+            SubjectKind::Kernel,
+            format!("failed-region:{}", region.0),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Program(error)) => {
+            program_failure_details(error)
+        }
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::ShapeProductOverflow { region },
+        )) => (
+            "shape-product-overflow".to_owned(),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.0),
+        ),
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(_)) => (
+            "invalid-no-feasible-physical-class".to_owned(),
+            SubjectKind::KernelProgram,
+            "compiler-output".to_owned(),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => (
+            format!("explain-{}", explain_error_reason(error)),
+            SubjectKind::KernelProgram,
+            "compiler-explain".to_owned(),
+        ),
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(error))
+        | CompileError::InvalidRequest(error)
+        | CompileError::UnsupportedCapability(error)
+        | CompileError::BudgetExhausted(error) => request_failure_details(error),
+        CompileError::Explained { .. } => (
+            "nested-explained-error".to_owned(),
+            SubjectKind::KernelProgram,
+            "compiler-explain".to_owned(),
+        ),
+    }
+}
+
+fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String) {
+    let reason = match error {
+        RequestError::UnsupportedRequestVersion => "request-version".to_owned(),
+        RequestError::EmptyTargetSet => "target-set-empty".to_owned(),
+        RequestError::DuplicateTargetProfile => "target-profile-duplicate".to_owned(),
+        RequestError::UnverifiedTargetSelection => "target-selection-unverified".to_owned(),
+        RequestError::BudgetExceeded {
+            resource,
+            limit,
+            actual,
+        } => format!("budget-{resource}-{limit}-{actual}"),
+        RequestError::UnsupportedCapability { phase, rule } => {
+            format!("unsupported-{phase}-{rule}")
+        }
+        RequestError::ShapeProductOverflow { role } => format!("shape-product-overflow-{role}"),
+    };
+    (
+        reason,
+        SubjectKind::SemanticProgram,
+        "semantic-program".to_owned(),
+    )
+}
+
+fn program_failure_details(error: &ProgramError) -> (String, SubjectKind, String) {
+    let (reason, subject) = match error {
+        ProgramError::HostExpression { rule, expression } => (
+            format!("host-expression-{rule}"),
+            format!("host-expression:{}", expression.index()),
+        ),
+        ProgramError::Structure { rule } => {
+            (format!("structure-{rule}"), "kernel-program".to_owned())
+        }
+        ProgramError::Dependency { rule } => {
+            (format!("dependency-{rule}"), "kernel-program".to_owned())
+        }
+        ProgramError::Storage { rule } => (format!("storage-{rule}"), "kernel-program".to_owned()),
+        ProgramError::Abi { rule, stage } => {
+            (format!("abi-{rule}"), format!("stage:{}", stage.index()))
+        }
+        ProgramError::Routing { rule } => (format!("routing-{rule}"), "kernel-program".to_owned()),
+    };
+    (reason, SubjectKind::KernelProgram, subject)
+}
+
+fn explain_error_reason(error: &ExplainError) -> &'static str {
+    match error {
+        ExplainError::InvalidKey { .. } => "invalid-key",
+        ExplainError::InvalidLimits => "invalid-limits",
+        ExplainError::InvalidTerminalLedger => "invalid-terminal-ledger",
+        ExplainError::TerminalLedgerCapacity => "terminal-ledger-capacity",
+        ExplainError::InvalidEventClass => "invalid-event-class",
+        ExplainError::BoundExceeded { .. } => "bound-exceeded",
+        ExplainError::EmptySubjects => "empty-subjects",
+        ExplainError::CrossCompilationSubject => "cross-compilation-subject",
+        ExplainError::DuplicateCause => "duplicate-cause",
+        ExplainError::DuplicateSubject => "duplicate-subject",
+        ExplainError::DuplicateFact => "duplicate-fact",
+        ExplainError::DuplicateCostTerm => "duplicate-cost-term",
+        ExplainError::CrossWriterCause => "cross-writer-cause",
+        ExplainError::InvalidCause { .. } => "invalid-cause",
+        ExplainError::InvalidStageEvent => "invalid-stage-event",
+        ExplainError::EvidenceEscalation => "evidence-escalation",
+        ExplainError::EvidenceSubjectMismatch => "evidence-subject-mismatch",
+        ExplainError::ProviderAuthorityMismatch => "provider-authority-mismatch",
+        ExplainError::QuantityKindMismatch => "quantity-kind-mismatch",
+        ExplainError::InvalidQuantityRelation => "invalid-quantity-relation",
+        ExplainError::UnknownQuantityUnit => "unknown-quantity-unit",
+        ExplainError::EmptyCostEvidence => "empty-cost-evidence",
+        ExplainError::TerminalCapacity => "terminal-capacity",
+        ExplainError::EmptyTrace => "empty-trace",
+        ExplainError::StaleIdentity => "stale-identity",
+    }
 }
 
 fn build_baseline_alternative(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
-) -> Result<ProgramAlternative, CompileError> {
-    let baseline_regions = build_scheduled_regions(verified)?;
+    cause: Option<TerminalCause>,
+) -> Result<ProgramAlternative, TargetFailure> {
+    let baseline_regions = build_scheduled_regions(verified).map_err(|error| {
+        let stage = physical_error_stage(&error);
+        failure_at_source(error.into(), stage, cause.clone())
+    })?;
     let baseline_kernels = baseline_regions
         .iter()
         .map(lower_structured_kernel)
-        .collect::<Result<Vec<_>, _>>()?;
-    let baseline_program = build_kernel_program(verified, &baseline_regions)?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            let stage = physical_error_stage(&error);
+            failure_at_source(error.into(), stage, cause.clone())
+        })?;
+    let baseline_program = build_kernel_program(verified, &baseline_regions).map_err(|error| {
+        failure_at_source(
+            error.into(),
+            ExplainStage::ProgramVerification,
+            cause.clone(),
+        )
+    })?;
     assert_kernels_match_program(
         verified,
         &baseline_regions,
         &baseline_program,
         &baseline_kernels,
-    )?;
+    )
+    .map_err(|error| {
+        failure_at_source(
+            error.into(),
+            ExplainStage::ProgramVerification,
+            cause.clone(),
+        )
+    })?;
     let baseline_artifact = build_artifact_plan(
         semantic,
         verified,
@@ -335,17 +765,25 @@ fn build_baseline_alternative(
         &baseline_kernels,
         &baseline_program,
         vec![verified.capabilities().materialized_serial_sum],
-    )?;
-    let input_bytes =
-        verified
-            .serial_sum()
-            .input_elements
-            .checked_mul(4)
-            .ok_or(CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(
-                RequestError::ShapeProductOverflow {
-                    role: "input-bytes",
-                },
-            )))?;
+    )
+    .map_err(|error| {
+        failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.clone())
+    })?;
+    let input_bytes = verified
+        .serial_sum()
+        .input_elements
+        .checked_mul(4)
+        .ok_or_else(|| {
+            failure_at_source(
+                CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(
+                    RequestError::ShapeProductOverflow {
+                        role: "input-bytes",
+                    },
+                )),
+                ExplainStage::Costing,
+                cause,
+            )
+        })?;
     Ok(ProgramAlternative {
         stable_id: "alternative:materialized-serial-sum.v1",
         kind: ProgramAlternativeKind::Materialized,
@@ -365,125 +803,369 @@ fn build_baseline_alternative(
     })
 }
 
-fn request_explain() -> Vec<ExplainRecord> {
-    vec![accepted(
-        ExplainPhase::RequestVerification,
-        "compile.request.general-boundary",
-        ExplainSubject::SemanticProgram,
-    )]
+fn check(
+    stage: ExplainStage,
+    predicate: &str,
+    basis: EvidenceBasis,
+) -> Result<ExplainEvent, ExplainError> {
+    Ok(ExplainEvent::Check {
+        stage,
+        assessment: PredicateAssessment::proven(predicate, basis)?,
+        rejection: if stage == ExplainStage::NumericalLegality {
+            RejectionClass::NumericalIllegal
+        } else {
+            RejectionClass::IntrinsicInvalid
+        },
+    })
 }
 
-fn baseline_explain() -> Vec<ExplainRecord> {
-    vec![
-        accepted(
-            ExplainPhase::RegionFormation,
-            "compile.region.pointwise",
-            ExplainSubject::Region(RegionId(0)),
-        ),
-        accepted(
-            ExplainPhase::RegionFormation,
-            "compile.region.strict-sum",
-            ExplainSubject::Region(RegionId(1)),
-        ),
-        accepted(
-            ExplainPhase::RegionFormation,
-            "compile.boundary.materialized",
-            ExplainSubject::Boundary("pointwise-to-sum"),
-        ),
-        accepted(
-            ExplainPhase::IntrinsicSchedule,
-            "schedule.coverage-and-ownership",
-            ExplainSubject::Regions(vec![RegionId(0), RegionId(1)]),
-        ),
-        accepted(
-            ExplainPhase::TargetFeasibility,
-            "target.prototype-target-neutral-baseline.v1",
-            ExplainSubject::Regions(vec![RegionId(0), RegionId(1)]),
-        ),
-        accepted(
-            ExplainPhase::KernelRefinement,
-            "kernel.schedule-refinement",
-            ExplainSubject::Regions(vec![RegionId(0), RegionId(1)]),
-        ),
-        accepted(
-            ExplainPhase::ProgramVerification,
-            "program.two-stage-materialized",
-            ExplainSubject::KernelProgram,
-        ),
-        accepted(
-            ExplainPhase::ArtifactPlanning,
-            "artifact.neutral-construction-plan",
-            ExplainSubject::ArtifactPlan,
-        ),
-    ]
+fn check_with_count(
+    stage: ExplainStage,
+    predicate: &str,
+    fact: &str,
+    count: usize,
+) -> Result<ExplainEvent, ExplainError> {
+    Ok(ExplainEvent::Check {
+        stage,
+        assessment: PredicateAssessment::proven(predicate, EvidenceBasis::CheckedInvariant)?
+            .with_fact(ExplainFact::new(
+                fact,
+                FactValue::Count(u64::try_from(count).unwrap_or(u64::MAX)),
+            )?)?,
+        rejection: RejectionClass::IntrinsicInvalid,
+    })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the helper keeps each typed emitter's complete phase and subject context explicit"
+)]
+fn record_count_step(
+    explain: &mut ExplainWriter,
+    rule: &str,
+    subject_kind: SubjectKind,
+    subject_key: &str,
+    stage: ExplainStage,
+    predicate: &str,
+    fact: &str,
+    count: usize,
+    cause: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(subject_kind, subject_key)?;
+            Ok(explain.push_detail(
+                RuleRef::builtin(rule)?,
+                vec![subject],
+                check_with_count(stage, predicate, fact, count)?,
+                optional_cause(cause),
+            )?)
+        })(),
+        stage,
+        subject_kind,
+        subject_key,
+        record_cause(cause),
+    )
+}
+
+fn optional_cause(cause: Option<ExplainRecordId>) -> Vec<ExplainRecordId> {
+    cause.into_iter().collect()
+}
+
+fn record_baseline_explain(
+    explain: &mut ExplainWriter,
+    request: &crate::request::VerifiedTargetRequest,
+    alternative: &ProgramAlternative,
+    root: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let mut boundary_causes = Vec::new();
+    for scheduled in &alternative.scheduled_regions {
+        let region_id = scheduled.region().index.id.0;
+        let key = format!("{}/region:{region_id}", alternative.stable_id);
+        let record = explain_step(
+            (|| -> Result<_, CompileError> {
+                let subject = explain.subject(SubjectKind::Region, &key)?;
+                Ok(explain.push_detail(
+                    RuleRef::provided(
+                        "compile.region.verified",
+                        1,
+                        ProviderRef::lowering(request.capabilities().materialized_serial_sum)?,
+                    )?,
+                    vec![subject],
+                    check(
+                        ExplainStage::RegionFormation,
+                        "region.semantic-coverage",
+                        EvidenceBasis::CheckedInvariant,
+                    )?,
+                    optional_cause(root),
+                )?)
+            })(),
+            ExplainStage::RegionFormation,
+            SubjectKind::Region,
+            &key,
+            record_cause(root),
+        )?;
+        boundary_causes.extend(optional_cause(record));
+    }
+    let key = format!("{}/materialized-boundary", alternative.stable_id);
+    let boundary = explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(SubjectKind::Boundary, &key)?;
+            Ok(explain.push_detail(
+                RuleRef::builtin("compile.boundary.materialized")?,
+                vec![subject],
+                check_with_count(
+                    ExplainStage::RegionFormation,
+                    "boundary.materialized",
+                    "dependency-count",
+                    alternative.program.dependencies().len(),
+                )?,
+                boundary_causes,
+            )?)
+        })(),
+        ExplainStage::RegionFormation,
+        SubjectKind::Boundary,
+        &key,
+        record_cause(root),
+    )?;
+    record_baseline_refinement(explain, request, alternative, boundary)
+}
+
+fn record_baseline_refinement(
+    explain: &mut ExplainWriter,
+    request: &crate::request::VerifiedTargetRequest,
+    alternative: &ProgramAlternative,
+    boundary: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let key = format!("{}/schedules", alternative.stable_id);
+    let schedule = record_count_step(
+        explain,
+        "schedule.coverage-and-ownership",
+        SubjectKind::Schedule,
+        &key,
+        ExplainStage::IntrinsicScheduling,
+        "schedule.intrinsic-valid",
+        "schedule-count",
+        alternative.scheduled_regions.len(),
+        boundary,
+    )?;
+    let target = record_target_admissions(explain, request, alternative, schedule)?;
+    let key = format!("{}/kernels", alternative.stable_id);
+    let kernel = record_count_step(
+        explain,
+        "kernel.schedule-refinement",
+        SubjectKind::Kernel,
+        &key,
+        ExplainStage::KernelRefinement,
+        "kernel.exact-refinement",
+        "kernel-count",
+        alternative.kernels.len(),
+        target,
+    )?;
+    let key = format!("{}/program", alternative.stable_id);
+    let program = record_count_step(
+        explain,
+        "program.two-stage-materialized",
+        SubjectKind::KernelProgram,
+        &key,
+        ExplainStage::ProgramVerification,
+        "program.verified",
+        "stage-count",
+        alternative.program.stages().len(),
+        kernel,
+    )?;
+    let key = format!("{}/artifact", alternative.stable_id);
+    record_count_step(
+        explain,
+        "artifact.neutral-construction-plan",
+        SubjectKind::ArtifactPlan,
+        &key,
+        ExplainStage::ArtifactPlanning,
+        "artifact.plan-verified",
+        "provider-count",
+        alternative.artifact_plan.lowering_providers().len(),
+        program,
+    )
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps one fused-alternative transaction and its explain causes together"
+)]
 fn consider_fused_alternative(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
     alternatives: &mut Vec<ProgramAlternative>,
-    explain: &mut Vec<ExplainRecord>,
-    target_rejection: &mut Option<PhysicalError>,
-) -> Result<(), CompileError> {
+    explain: &mut ExplainWriter,
+    root: Option<ExplainRecordId>,
+    alternative_causes: &mut Vec<(&'static str, Option<ExplainRecordId>)>,
+    target_rejections: &mut TargetRejections,
+) -> Result<(), TargetFailure> {
     match enumerate_candidates(verified) {
-        Err(CandidateError::Budget { limit, actual }) => explain.push(ExplainRecord {
-            phase: ExplainPhase::CandidateEnumeration,
-            rule: "fusion.candidates.budget",
-            subject: ExplainSubject::Candidate("bounded-recognizer".to_owned()),
-            outcome: ExplainOutcome::Rejected,
-            evidence: ExplainEvidence::Budget { limit, actual },
-        }),
+        Err(CandidateError::Budget { limit, actual }) => {
+            (|| -> Result<_, CompileError> {
+                let subject = explain.subject(SubjectKind::Candidate, "bounded-recognizer")?;
+                explain.push_detail(
+                    RuleRef::builtin("fusion.candidates")?,
+                    vec![subject],
+                    ExplainEvent::BudgetStop {
+                        stage: ExplainStage::CandidateEnumeration,
+                        resource: ResourceKey::new("fusion-candidates")?,
+                        limit: u64::from(limit),
+                        actual: u64::try_from(actual).unwrap_or(u64::MAX),
+                    },
+                    optional_cause(root),
+                )?;
+                Ok(())
+            })()
+            .map_err(|source| {
+                failure_at_source(
+                    source,
+                    ExplainStage::CandidateEnumeration,
+                    record_cause(root),
+                )
+            })?;
+        }
         Err(error @ CandidateError::Invalid { .. }) => {
-            return Err(CompileError::InvalidCompilerOutput(
-                CompilerOutputError::Candidate(error),
+            return Err(failure_at_source(
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error)),
+                ExplainStage::CandidateEnumeration,
+                record_cause(root),
             ));
         }
         Ok(candidates) => {
+            let mut fused_candidate_record = None;
             for candidate in &candidates {
-                explain.push(accepted(
-                    ExplainPhase::CandidateEnumeration,
-                    "fusion.candidate.legal",
-                    ExplainSubject::Candidate(candidate.stable_id.clone()),
-                ));
+                let record = (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(SubjectKind::Candidate, &candidate.stable_id)?;
+                    Ok(explain.push_detail(
+                        RuleRef::builtin("fusion.candidate.legal")?,
+                        vec![subject],
+                        check(
+                            ExplainStage::CandidateEnumeration,
+                            "candidate.legal",
+                            EvidenceBasis::CheckedInvariant,
+                        )?,
+                        optional_cause(root),
+                    )?)
+                })()
+                .map_err(|source| {
+                    failure_at_source(
+                        source,
+                        ExplainStage::CandidateEnumeration,
+                        record_cause(root),
+                    )
+                })?;
+                if candidate.kind == CandidateKind::FusedSerialSum {
+                    fused_candidate_record = record;
+                }
             }
             let Some(fused_candidate) = candidates
                 .iter()
                 .find(|candidate| candidate.kind == CandidateKind::FusedSerialSum)
             else {
-                return Err(CompileError::InvalidCompilerOutput(
-                    CompilerOutputError::Candidate(CandidateError::Invalid {
-                        candidate: "bounded-recognizer".to_owned(),
-                        rule: "missing-fused-candidate",
-                    }),
+                return Err(failure_at_source(
+                    CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(
+                        CandidateError::Invalid {
+                            candidate: "bounded-recognizer".to_owned(),
+                            rule: "missing-fused-candidate",
+                        },
+                    )),
+                    ExplainStage::CandidateEnumeration,
+                    record_cause(root),
                 ));
             };
             if let Some(provider) = verified.capabilities().fused_serial_sum {
                 let proof = prove_fused_numerics(verified, fused_candidate).map_err(|error| {
-                    CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error))
+                    failure_at_source(
+                        CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error)),
+                        ExplainStage::NumericalLegality,
+                        record_cause(fused_candidate_record.or(root)),
+                    )
                 })?;
-                explain.push(accepted(
-                    ExplainPhase::NumericalLegality,
-                    "fusion.strict-f32-equivalence",
-                    ExplainSubject::Candidate(fused_candidate.stable_id.clone()),
-                ));
+                let proof_record = (|| -> Result<_, CompileError> {
+                    let provider_ref = ProviderRef::lowering(provider)?;
+                    let subject =
+                        explain.subject(SubjectKind::Candidate, &fused_candidate.stable_id)?;
+                    Ok(explain.push_detail(
+                        RuleRef::provided(
+                            "fusion.strict-f32-equivalence",
+                            1,
+                            provider_ref.clone(),
+                        )?,
+                        vec![subject],
+                        check(
+                            ExplainStage::NumericalLegality,
+                            "fusion.strict-f32-equivalence",
+                            EvidenceBasis::SoundProof(VerifiedEvidenceRef::from_fusion_numerical(
+                                verified,
+                                &proof,
+                                provider_ref,
+                            )?),
+                        )?,
+                        optional_cause(fused_candidate_record),
+                    )?)
+                })()
+                .map_err(|source| {
+                    failure_at_source(
+                        source,
+                        ExplainStage::NumericalLegality,
+                        record_cause(fused_candidate_record.or(root)),
+                    )
+                })?;
                 match build_fused_scheduled_region(verified) {
                     Err(error @ PhysicalError::Target { .. }) => {
-                        explain.push(target_rejection_record(
+                        let cause = record_target_rejection(
+                            explain,
                             &error,
-                            Some(&fused_candidate.stable_id),
-                        ));
-                        target_rejection.get_or_insert(error);
+                            "alternative:fused-serial-sum.v1",
+                            proof_record.or(root),
+                        )?;
+                        target_rejections.push(TargetRejection {
+                            kind: ProgramAlternativeKind::Fused,
+                            error,
+                            cause,
+                        })?;
                     }
-                    Err(error) => return Err(error.into()),
+                    Err(error) => {
+                        let stage = physical_error_stage(&error);
+                        return Err(failure_at_source(
+                            error.into(),
+                            stage,
+                            record_cause(proof_record.or(root)),
+                        ));
+                    }
                     Ok(fused_region) => {
-                        let fused_kernel = lower_structured_kernel(&fused_region)?;
-                        let fused_program = build_fused_kernel_program(verified, &fused_region)?;
+                        let fused_kernel =
+                            lower_structured_kernel(&fused_region).map_err(|error| {
+                                let stage = physical_error_stage(&error);
+                                failure_at_source(
+                                    error.into(),
+                                    stage,
+                                    record_cause(proof_record.or(root)),
+                                )
+                            })?;
+                        let fused_program = build_fused_kernel_program(verified, &fused_region)
+                            .map_err(|error| {
+                                failure_at_source(
+                                    error.into(),
+                                    ExplainStage::ProgramVerification,
+                                    record_cause(proof_record.or(root)),
+                                )
+                            })?;
                         assert_kernels_match_program(
                             verified,
                             std::slice::from_ref(&fused_region),
                             &fused_program,
                             std::slice::from_ref(&fused_kernel),
-                        )?;
+                        )
+                        .map_err(|error| {
+                            failure_at_source(
+                                error.into(),
+                                ExplainStage::ProgramVerification,
+                                record_cause(proof_record.or(root)),
+                            )
+                        })?;
                         let fused_artifact = build_artifact_plan(
                             semantic,
                             verified,
@@ -491,29 +1173,67 @@ fn consider_fused_alternative(
                             std::slice::from_ref(&fused_kernel),
                             &fused_program,
                             vec![provider],
-                        )?;
-                        alternatives.push(fused_alternative(
+                        )
+                        .map_err(|error| {
+                            failure_at_source(
+                                error.into(),
+                                ExplainStage::ArtifactPlanning,
+                                record_cause(proof_record.or(root)),
+                            )
+                        })?;
+                        let alternative = fused_alternative(
                             fused_region,
                             fused_kernel,
                             fused_program,
                             fused_artifact,
                             proof,
-                        ));
+                        );
+                        let cause = record_fused_refinement(
+                            explain,
+                            verified,
+                            &alternative,
+                            proof_record.or(root),
+                        )?;
+                        alternative_causes.push(("alternative:fused-serial-sum.v1", cause));
+                        alternatives.push(alternative);
                     }
                 }
             } else {
-                explain.push(rejected(
-                    ExplainPhase::KernelRefinement,
-                    "fusion.provider-unavailable",
-                    ExplainSubject::Candidate(fused_candidate.stable_id.clone()),
-                ));
+                (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(
+                        SubjectKind::Capability,
+                        "fused-serial-sum/provider:tiler.prototype.fused-serial-sum@1",
+                    )?;
+                    explain.push_detail(
+                        RuleRef::builtin("fusion.capability-resolution")?,
+                        vec![subject],
+                        ExplainEvent::DeferredCapability {
+                            predicate: PredicateKey::new("fusion.provider-available")?,
+                            reason: ReasonCode::new("provider-unavailable")?,
+                        },
+                        optional_cause(fused_candidate_record),
+                    )?;
+                    Ok(())
+                })()
+                .map_err(|source| {
+                    failure_at_source(
+                        source,
+                        ExplainStage::CapabilityResolution,
+                        record_cause(fused_candidate_record.or(root)),
+                    )
+                })?;
             }
         }
     }
     Ok(())
 }
 
-fn target_rejection_record(error: &PhysicalError, candidate: Option<&str>) -> ExplainRecord {
+fn record_target_rejection(
+    explain: &mut ExplainWriter,
+    error: &PhysicalError,
+    alternative: &str,
+    cause: Option<ExplainRecordId>,
+) -> Result<TerminalCause, TargetFailure> {
     let PhysicalError::Target {
         rule,
         region,
@@ -523,21 +1243,187 @@ fn target_rejection_record(error: &PhysicalError, candidate: Option<&str>) -> Ex
     else {
         unreachable!("target rejection records require a target-feasibility error")
     };
-    ExplainRecord {
-        phase: ExplainPhase::TargetFeasibility,
-        rule,
-        subject: candidate.map_or(ExplainSubject::Region(*region), |stable_id| {
-            ExplainSubject::CandidateRegion {
-                stable_id: stable_id.to_owned(),
-                region: *region,
-            }
-        }),
-        outcome: ExplainOutcome::Rejected,
-        evidence: ExplainEvidence::Feasibility {
-            required: *required,
-            available: *available,
-        },
+    let key = format!("{alternative}/region:{}", region.0);
+    let rejected = explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(SubjectKind::Region, &key)?;
+            Ok(explain.push_causal_detail(
+                RuleRef::builtin(format!("target.{rule}"))?,
+                subject,
+                &ExplainEvent::Feasibility {
+                    predicate: PredicateKey::new(*rule)?,
+                    outcome: crate::explain::FeasibilityOutcome::Rejected(ReasonCode::new(
+                        "target-infeasible",
+                    )?),
+                    required: target_quantity(rule, *required)?,
+                    available: target_quantity(rule, *available)?,
+                },
+                optional_cause(cause),
+            )?)
+        })(),
+        ExplainStage::TargetFeasibility,
+        SubjectKind::Region,
+        &key,
+        record_cause(cause),
+    )?;
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(SubjectKind::Alternative, alternative)?;
+            explain.note_infeasible_alternative(subject, Some(rejected.clone()))?;
+            Ok(())
+        })(),
+        ExplainStage::Selection,
+        SubjectKind::Alternative,
+        alternative,
+        Some(rejected.clone()),
+    )?;
+    Ok(rejected)
+}
+
+fn record_target_admissions(
+    explain: &mut ExplainWriter,
+    request: &crate::request::VerifiedTargetRequest,
+    alternative: &ProgramAlternative,
+    mut cause: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let profile = request.target_profile();
+    for scheduled in &alternative.scheduled_regions {
+        let region = scheduled.region();
+        let requirements = scheduled.requirements();
+        let checks = [
+            (
+                "grid-axis",
+                Quantity::Threads(region.schedule.work_items),
+                Quantity::Threads(profile.max_threads_per_grid_axis),
+            ),
+            (
+                "threads-per-workgroup",
+                Quantity::Threads(u64::from(requirements.threads_per_workgroup)),
+                Quantity::Threads(u64::from(profile.max_threads_per_workgroup)),
+            ),
+            (
+                "buffer-bindings",
+                Quantity::Bindings(u64::from(requirements.buffer_bindings)),
+                Quantity::Bindings(u64::from(profile.max_buffer_bindings_per_entry)),
+            ),
+            (
+                "index-bits",
+                Quantity::Count(64),
+                Quantity::Count(u64::from(profile.index_bits)),
+            ),
+            (
+                "device-memory",
+                Quantity::Count(u64::from(requirements.requires_device_memory)),
+                Quantity::Count(u64::from(profile.supports_device_memory)),
+            ),
+            (
+                "strict-f32",
+                Quantity::Count(u64::from(requirements.requires_strict_f32)),
+                Quantity::Count(u64::from(profile.supports_strict_f32)),
+            ),
+            (
+                "local-memory-bytes",
+                Quantity::Bytes(requirements.local_memory_bytes),
+                Quantity::Bytes(0),
+            ),
+            (
+                "barriers",
+                Quantity::Count(u64::from(requirements.barriers)),
+                Quantity::Count(0),
+            ),
+        ];
+        for (predicate, required, available) in checks {
+            let key = format!("{}/region:{}", alternative.stable_id, region.index.id.0);
+            cause = explain_step(
+                (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(SubjectKind::Region, &key)?;
+                    Ok(explain.push_detail(
+                        RuleRef::builtin(format!("target.{predicate}"))?,
+                        vec![subject],
+                        ExplainEvent::Feasibility {
+                            predicate: PredicateKey::new(predicate)?,
+                            outcome: crate::explain::FeasibilityOutcome::Admitted,
+                            required,
+                            available,
+                        },
+                        optional_cause(cause),
+                    )?)
+                })(),
+                ExplainStage::TargetFeasibility,
+                SubjectKind::Region,
+                &key,
+                record_cause(cause),
+            )?;
+        }
     }
+    Ok(cause)
+}
+
+fn target_quantity(rule: &str, value: u64) -> Result<Quantity, ExplainError> {
+    match rule {
+        "grid-axis" | "threads-per-workgroup" => Ok(Quantity::Threads(value)),
+        "buffer-bindings" => Ok(Quantity::Bindings(value)),
+        "local-memory-bytes" => Ok(Quantity::Bytes(value)),
+        "index-bits" | "device-memory" | "strict-f32" | "barriers" => Ok(Quantity::Count(value)),
+        _ => Err(ExplainError::UnknownQuantityUnit),
+    }
+}
+
+fn record_fused_refinement(
+    explain: &mut ExplainWriter,
+    request: &crate::request::VerifiedTargetRequest,
+    alternative: &ProgramAlternative,
+    root: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let key = format!("{}/schedules", alternative.stable_id);
+    let schedule = record_count_step(
+        explain,
+        "schedule.fused-serial-sum",
+        SubjectKind::Schedule,
+        &key,
+        ExplainStage::IntrinsicScheduling,
+        "schedule.intrinsic-valid",
+        "schedule-count",
+        alternative.scheduled_regions.len(),
+        root,
+    )?;
+    let target = record_target_admissions(explain, request, alternative, schedule)?;
+    let key = format!("{}/kernels", alternative.stable_id);
+    let kernel = record_count_step(
+        explain,
+        "kernel.fused-schedule-refinement",
+        SubjectKind::Kernel,
+        &key,
+        ExplainStage::KernelRefinement,
+        "kernel.exact-refinement",
+        "kernel-count",
+        alternative.kernels.len(),
+        target,
+    )?;
+    let key = format!("{}/program", alternative.stable_id);
+    let program = record_count_step(
+        explain,
+        "program.fused-serial-sum",
+        SubjectKind::KernelProgram,
+        &key,
+        ExplainStage::ProgramVerification,
+        "program.verified",
+        "stage-count",
+        alternative.program.stages().len(),
+        kernel,
+    )?;
+    let key = format!("{}/artifact", alternative.stable_id);
+    record_count_step(
+        explain,
+        "artifact.fused-construction-plan",
+        SubjectKind::ArtifactPlan,
+        &key,
+        ExplainStage::ArtifactPlanning,
+        "artifact.plan-verified",
+        "provider-count",
+        alternative.artifact_plan.lowering_providers().len(),
+        program,
+    )
 }
 
 fn fused_alternative(
@@ -566,27 +1452,85 @@ fn fused_alternative(
     }
 }
 
-fn record_selection(
+fn record_cost_and_selection(
     alternatives: &[ProgramAlternative],
     selected_alternative_id: &str,
-    explain: &mut Vec<ExplainRecord>,
-) {
+    causes: &[(&'static str, Option<ExplainRecordId>)],
+    explain: &mut ExplainWriter,
+) -> Result<(), TargetFailure> {
     for alternative in alternatives {
-        explain.push(ExplainRecord {
-            phase: ExplainPhase::PortfolioSelection,
-            rule: SELECTION_POLICY_KEY,
-            subject: ExplainSubject::Alternative(alternative.stable_id),
-            outcome: if alternative.stable_id == selected_alternative_id {
-                ExplainOutcome::Selected
-            } else {
-                ExplainOutcome::NotSelected
-            },
-            evidence: ExplainEvidence::Cost {
-                model_key: STRUCTURAL_COST_MODEL_KEY,
-                cost: alternative.structural_cost,
-            },
-        });
+        let cost = alternative.structural_cost;
+        let cause = causes
+            .iter()
+            .find_map(|(id, cause)| (*id == alternative.stable_id).then_some(*cause))
+            .flatten();
+        let (subject, cost_record) = explain_step(
+            (|| -> Result<_, CompileError> {
+                let subject = explain.subject(SubjectKind::Alternative, alternative.stable_id)?;
+                let terms = vec![
+                    CostTerm::new(
+                        "dispatch-count",
+                        Quantity::Count(u64::from(cost.dispatch_count)),
+                    )?,
+                    CostTerm::new(
+                        "temporary-allocation-count",
+                        Quantity::Count(u64::from(cost.temporary_allocation_count)),
+                    )?,
+                    CostTerm::new(
+                        "materialized-bytes",
+                        Quantity::Bytes(cost.materialized_bytes),
+                    )?,
+                    CostTerm::new(
+                        "intermediate-global-reads",
+                        Quantity::Bytes(cost.intermediate_global_reads),
+                    )?,
+                    CostTerm::new(
+                        "intermediate-global-writes",
+                        Quantity::Bytes(cost.intermediate_global_writes),
+                    )?,
+                ];
+                let record = explain.push_causal_detail(
+                    RuleRef::builtin(STRUCTURAL_COST_MODEL_KEY)?,
+                    subject.clone(),
+                    &ExplainEvent::CostAssessment {
+                        model: CostModelKey::new(STRUCTURAL_COST_MODEL_KEY)?,
+                        basis: EvidenceBasis::CheckedInvariant,
+                        terms,
+                        disposition: CostDisposition::Retained,
+                    },
+                    optional_cause(cause),
+                )?;
+                Ok((subject, record))
+            })(),
+            ExplainStage::Costing,
+            SubjectKind::Alternative,
+            alternative.stable_id,
+            record_cause(cause),
+        )?;
+        let outcome = if alternative.stable_id == selected_alternative_id {
+            SelectionOutcome::Selected
+        } else if alternatives
+            .iter()
+            .find(|item| item.stable_id == selected_alternative_id)
+            .is_some_and(|selected| {
+                structurally_dominates(selected.structural_cost, alternative.structural_cost)
+            })
+        {
+            SelectionOutcome::Dominated
+        } else {
+            SelectionOutcome::NotSelectedTradeoff
+        };
+        explain_step(
+            explain
+                .note_selection(subject, outcome, Some(cost_record.clone()))
+                .map_err(Into::into),
+            ExplainStage::Selection,
+            SubjectKind::Alternative,
+            alternative.stable_id,
+            Some(cost_record),
+        )?;
     }
+    Ok(())
 }
 
 fn select_structural_pareto(
@@ -613,7 +1557,8 @@ fn verify_portfolio(
     request: &crate::request::VerifiedTargetRequest,
     alternatives: &[ProgramAlternative],
     selected_id: &str,
-) -> Result<(), CompileError> {
+    cause: Option<TerminalCause>,
+) -> Result<(), TargetFailure> {
     if alternatives.is_empty()
         || alternatives
             .iter()
@@ -622,24 +1567,33 @@ fn verify_portfolio(
             .len()
             != alternatives.len()
     {
-        return Err(ProgramError::Structure {
-            rule: "portfolio-identity",
-        }
-        .into());
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-identity",
+            }
+            .into(),
+            ExplainStage::ProgramVerification,
+            cause,
+        ));
     }
     for alternative in alternatives {
-        verify_alternative(semantic, request, alternative)?;
+        verify_alternative(semantic, request, alternative, cause.clone())?;
     }
-    let recomputed = select_structural_pareto(alternatives)?;
+    let recomputed = select_structural_pareto(alternatives)
+        .map_err(|source| failure_at_source(source, ExplainStage::Selection, cause.clone()))?;
     if selected_id != recomputed
         || !alternatives
             .iter()
             .any(|item| item.stable_id == selected_id)
     {
-        return Err(ProgramError::Structure {
-            rule: "portfolio-selection",
-        }
-        .into());
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-selection",
+            }
+            .into(),
+            ExplainStage::Selection,
+            cause,
+        ));
     }
     Ok(())
 }
@@ -653,20 +1607,33 @@ struct ExpectedAlternative {
     artifact: ArtifactConstructionPlan,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps each rederived layer beside its exact phase-local failure context"
+)]
 fn rederive_alternative(
     semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
     kind: ProgramAlternativeKind,
-) -> Result<ExpectedAlternative, CompileError> {
+    cause: Option<TerminalCause>,
+) -> Result<ExpectedAlternative, TargetFailure> {
     let (stable_id, cost) = match kind {
         ProgramAlternativeKind::Materialized => {
-            let materialized_bytes = request.serial_sum().input_elements.checked_mul(4).ok_or(
-                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
-                    ProgramError::Structure {
-                        rule: "portfolio-cost-overflow",
-                    },
-                )),
-            )?;
+            let materialized_bytes = request
+                .serial_sum()
+                .input_elements
+                .checked_mul(4)
+                .ok_or_else(|| {
+                    failure_at_source(
+                        CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                            ProgramError::Structure {
+                                rule: "portfolio-cost-overflow",
+                            },
+                        )),
+                        ExplainStage::Costing,
+                        cause.clone(),
+                    )
+                })?;
             (
                 "alternative:materialized-serial-sum.v1",
                 StructuralCost {
@@ -692,17 +1659,38 @@ fn rederive_alternative(
         ),
     };
     let scheduled = match kind {
-        ProgramAlternativeKind::Materialized => build_scheduled_regions(request)?,
-        ProgramAlternativeKind::Fused => vec![build_fused_scheduled_region(request)?],
+        ProgramAlternativeKind::Materialized => {
+            build_scheduled_regions(request).map_err(|error| {
+                let stage = physical_error_stage(&error);
+                failure_at_source(error.into(), stage, cause.clone())
+            })?
+        }
+        ProgramAlternativeKind::Fused => {
+            vec![build_fused_scheduled_region(request).map_err(|error| {
+                let stage = physical_error_stage(&error);
+                failure_at_source(error.into(), stage, cause.clone())
+            })?]
+        }
     };
     let kernels = scheduled
         .iter()
         .map(lower_structured_kernel)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            let stage = physical_error_stage(&error);
+            failure_at_source(error.into(), stage, cause.clone())
+        })?;
     let program = match kind {
-        ProgramAlternativeKind::Materialized => build_kernel_program(request, &scheduled)?,
-        ProgramAlternativeKind::Fused => build_fused_kernel_program(request, &scheduled[0])?,
-    };
+        ProgramAlternativeKind::Materialized => build_kernel_program(request, &scheduled),
+        ProgramAlternativeKind::Fused => build_fused_kernel_program(request, &scheduled[0]),
+    }
+    .map_err(|error| {
+        failure_at_source(
+            error.into(),
+            ExplainStage::ProgramVerification,
+            cause.clone(),
+        )
+    })?;
     let providers = match kind {
         ProgramAlternativeKind::Materialized => {
             vec![request.capabilities().materialized_serial_sum]
@@ -713,8 +1701,10 @@ fn rederive_alternative(
             .into_iter()
             .collect(),
     };
-    let artifact =
-        build_artifact_plan(semantic, request, &scheduled, &kernels, &program, providers)?;
+    let artifact = build_artifact_plan(
+        semantic, request, &scheduled, &kernels, &program, providers,
+    )
+    .map_err(|error| failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause))?;
     Ok(ExpectedAlternative {
         stable_id,
         cost,
@@ -729,37 +1719,58 @@ fn verify_alternative(
     semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
     alternative: &ProgramAlternative,
-) -> Result<(), CompileError> {
-    let expected = rederive_alternative(semantic, request, alternative.kind)?;
+    cause: Option<TerminalCause>,
+) -> Result<(), TargetFailure> {
+    let expected = rederive_alternative(semantic, request, alternative.kind, cause.clone())?;
     if alternative.stable_id != expected.stable_id || alternative.structural_cost != expected.cost {
-        return Err(ProgramError::Structure {
-            rule: "portfolio-cost-or-identity",
-        }
-        .into());
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-cost-or-identity",
+            }
+            .into(),
+            ExplainStage::Costing,
+            cause,
+        ));
     }
     if alternative.scheduled_regions != expected.scheduled {
-        return Err(ProgramError::Structure {
-            rule: "portfolio-schedule-binding",
-        }
-        .into());
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-schedule-binding",
+            }
+            .into(),
+            ExplainStage::IntrinsicScheduling,
+            cause,
+        ));
     }
     if alternative.kernels != expected.kernels {
-        return Err(ProgramError::Structure {
-            rule: "portfolio-kernel-binding",
-        }
-        .into());
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-kernel-binding",
+            }
+            .into(),
+            ExplainStage::KernelRefinement,
+            cause,
+        ));
     }
     if alternative.program != expected.program {
-        return Err(ProgramError::Structure {
-            rule: "portfolio-program-binding",
-        }
-        .into());
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-program-binding",
+            }
+            .into(),
+            ExplainStage::ProgramVerification,
+            cause,
+        ));
     }
     if alternative.artifact_plan != expected.artifact {
-        return Err(ProgramError::Structure {
-            rule: "portfolio-artifact-receipt",
-        }
-        .into());
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-artifact-receipt",
+            }
+            .into(),
+            ExplainStage::ArtifactPlanning,
+            cause,
+        ));
     }
     verify_artifact_plan(
         &alternative.artifact_plan,
@@ -769,8 +1780,12 @@ fn verify_alternative(
         &expected.kernels,
         &expected.program,
         expected.artifact.lowering_providers().to_vec(),
-    )?;
+    )
+    .map_err(|error| {
+        failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.clone())
+    })?;
     verify_equivalence(request, alternative)
+        .map_err(|source| failure_at_source(source, ExplainStage::NumericalLegality, cause))
 }
 
 fn verify_equivalence(
@@ -834,38 +1849,11 @@ const fn structurally_dominates(candidate: StructuralCost, incumbent: Structural
     no_worse && strictly_better
 }
 
-fn accepted(phase: ExplainPhase, rule: &'static str, subject: ExplainSubject) -> ExplainRecord {
-    ExplainRecord {
-        phase,
-        rule,
-        subject,
-        outcome: ExplainOutcome::Accepted,
-        evidence: ExplainEvidence::Predicate {
-            class: if phase == ExplainPhase::NumericalLegality {
-                EvidenceClass::SoundNumericalProof
-            } else {
-                EvidenceClass::ValidatedInvariant
-            },
-        },
-    }
-}
-
-fn rejected(phase: ExplainPhase, rule: &'static str, subject: ExplainSubject) -> ExplainRecord {
-    ExplainRecord {
-        phase,
-        rule,
-        subject,
-        outcome: ExplainOutcome::Rejected,
-        evidence: ExplainEvidence::Predicate {
-            class: EvidenceClass::ValidatedInvariant,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physical::{ContributorOrder, StructuredBody, TensorRole};
+    use crate::explain::ExplainDisposition;
+    use crate::physical::{ContributorOrder, RegionId, StructuredBody, TensorRole};
     use crate::program::{DependencyReason, MaterializedValueId, ValueRole};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
@@ -1031,6 +2019,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "keeps the exact explain snapshot beside the end-to-end product invariants"
+    )]
     fn product_is_deterministic_and_preserves_the_materialized_boundary() {
         let first = semantic(false);
         let second = semantic(true);
@@ -1043,6 +2035,11 @@ mod tests {
 
         assert_eq!(first, second);
         let first = &first.targets[0];
+        let rendered = first.explain.render();
+        assert!(rendered.starts_with("tiler-explain-v2 request="));
+        assert!(rendered.contains("feasibility:threads-per-workgroup:admitted"));
+        assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
+        assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
         assert_eq!(first.portfolio.alternatives.len(), 2);
         assert_eq!(
             first.portfolio.selection.selected_alternative_id,
@@ -1119,10 +2116,161 @@ mod tests {
                 ..
             }
         ));
-        assert!(first.explain.iter().any(|record| {
-            record.rule == "compile.boundary.materialized"
-                && record.outcome == ExplainOutcome::Accepted
+        assert!(first.explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "compile.boundary.materialized"
+                && record.event().disposition() == ExplainDisposition::Admitted
         }));
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one exhaustive fixture checks every current typed emitter family"
+    )]
+    fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
+        let semantic = semantic(false);
+        let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+        let trace = &product.targets[0].explain;
+        let rule_counts =
+            trace
+                .records()
+                .iter()
+                .fold(std::collections::BTreeMap::new(), |mut counts, record| {
+                    *counts
+                        .entry(record.rule().key().as_str())
+                        .or_insert(0_usize) += 1;
+                    counts
+                });
+        assert_eq!(
+            rule_counts,
+            std::collections::BTreeMap::from([
+                ("artifact.fused-construction-plan", 1),
+                ("artifact.neutral-construction-plan", 1),
+                ("compile.boundary.materialized", 1),
+                ("compile.region.verified", 2),
+                ("compile.request.general-boundary", 1),
+                ("fusion.candidate.legal", 7),
+                ("fusion.strict-f32-equivalence", 1),
+                ("kernel.fused-schedule-refinement", 1),
+                ("kernel.schedule-refinement", 1),
+                ("normalize.serial-sum.v1", 1),
+                ("program.fused-serial-sum", 1),
+                ("program.two-stage-materialized", 1),
+                ("schedule.coverage-and-ownership", 1),
+                ("schedule.fused-serial-sum", 1),
+                ("target.barriers", 3),
+                ("target.buffer-bindings", 3),
+                ("target.device-memory", 3),
+                ("target.grid-axis", 3),
+                ("target.index-bits", 3),
+                ("target.local-memory-bytes", 3),
+                ("target.strict-f32", 3),
+                ("target.threads-per-workgroup", 3),
+                ("tiler.cost.structural.v1", 2),
+                ("tiler.selection.structural-pareto.v1", 2),
+            ])
+        );
+        let expected_counts = [
+            ("compile.boundary.materialized", "dependency-count", 1),
+            ("schedule.coverage-and-ownership", "schedule-count", 2),
+            ("kernel.schedule-refinement", "kernel-count", 2),
+            ("program.two-stage-materialized", "stage-count", 2),
+            ("artifact.neutral-construction-plan", "provider-count", 1),
+            ("schedule.fused-serial-sum", "schedule-count", 1),
+            ("kernel.fused-schedule-refinement", "kernel-count", 1),
+            ("program.fused-serial-sum", "stage-count", 1),
+            ("artifact.fused-construction-plan", "provider-count", 1),
+        ];
+        for (rule, fact_key, expected) in expected_counts {
+            let record = trace
+                .records()
+                .iter()
+                .find(|record| record.rule().key().as_str() == rule)
+                .unwrap_or_else(|| panic!("missing typed count emitter {rule}"));
+            let ExplainEvent::Check { assessment, .. } = record.event() else {
+                panic!("typed count emitter {rule} must be a checked assertion");
+            };
+            assert!(assessment.predicate().as_str().contains('.'));
+            assert!(assessment.facts().iter().any(|fact| {
+                fact.key().as_str() == fact_key
+                    && matches!(fact.value(), FactValue::Count(value) if *value == expected)
+            }));
+        }
+
+        let mut target_predicates = std::collections::BTreeMap::new();
+        for record in trace.records() {
+            let ExplainEvent::Feasibility {
+                predicate,
+                outcome: crate::explain::FeasibilityOutcome::Admitted,
+                required,
+                available,
+            } = record.event()
+            else {
+                continue;
+            };
+            let unit_is_exact = match predicate.as_str() {
+                "grid-axis" | "threads-per-workgroup" => {
+                    matches!(
+                        (required, available),
+                        (Quantity::Threads(_), Quantity::Threads(_))
+                    )
+                }
+                "buffer-bindings" => matches!(
+                    (required, available),
+                    (Quantity::Bindings(_), Quantity::Bindings(_))
+                ),
+                "local-memory-bytes" => {
+                    matches!(
+                        (required, available),
+                        (Quantity::Bytes(_), Quantity::Bytes(_))
+                    )
+                }
+                "index-bits" | "device-memory" | "strict-f32" | "barriers" => {
+                    matches!(
+                        (required, available),
+                        (Quantity::Count(_), Quantity::Count(_))
+                    )
+                }
+                other => panic!("unexpected target predicate {other}"),
+            };
+            assert!(unit_is_exact);
+            *target_predicates
+                .entry(predicate.as_str())
+                .or_insert(0_usize) += 1;
+        }
+        assert_eq!(
+            target_predicates,
+            std::collections::BTreeMap::from([
+                ("barriers", 3),
+                ("buffer-bindings", 3),
+                ("device-memory", 3),
+                ("grid-axis", 3),
+                ("index-bits", 3),
+                ("local-memory-bytes", 3),
+                ("strict-f32", 3),
+                ("threads-per-workgroup", 3),
+            ])
+        );
+
+        let selections = trace
+            .records()
+            .iter()
+            .filter_map(|record| match record.event() {
+                ExplainEvent::Selection { outcome, .. } => {
+                    Some((record.subjects()[0].key().as_str(), *outcome))
+                }
+                _ => None,
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            selections.get("alternative:materialized-serial-sum.v1"),
+            Some(&SelectionOutcome::Dominated)
+        );
+        assert_eq!(
+            selections.get("alternative:fused-serial-sum.v1"),
+            Some(&SelectionOutcome::Selected)
+        );
+        assert!(trace.render().starts_with("tiler-explain-v2 request="));
     }
 
     #[test]
@@ -1205,17 +2353,18 @@ mod tests {
                 .selected_alternative_id,
             "alternative:materialized-serial-sum.v1"
         );
-        assert!(product.targets[0].explain.iter().any(|record| {
-            record.rule == "fusion.provider-unavailable"
-                && record.outcome == ExplainOutcome::Rejected
+        assert!(product.targets[0].explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "fusion.capability-resolution"
+                && record.event().disposition() == ExplainDisposition::DeferredUnsupported
         }));
 
         let mut bounded = CompilationRequest::governed(&semantic);
         bounded.budgets.fusion_candidates = 6;
         let product = compile(bounded).unwrap();
         assert_eq!(product.targets[0].portfolio.alternatives.len(), 1);
-        assert!(product.targets[0].explain.iter().any(|record| {
-            record.rule == "fusion.candidates.budget" && record.outcome == ExplainOutcome::Rejected
+        assert!(product.targets[0].explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "fusion.candidates"
+                && record.event().disposition() == ExplainDisposition::BudgetStopped
         }));
     }
 
@@ -1236,16 +2385,214 @@ mod tests {
             target.portfolio.alternatives[0].kind,
             ProgramAlternativeKind::Fused
         );
-        assert!(target.explain.iter().any(|record| {
-            record.rule == "grid-axis"
-                && record.subject == ExplainSubject::Region(RegionId(0))
-                && record.outcome == ExplainOutcome::Rejected
-                && record.evidence
-                    == ExplainEvidence::Feasibility {
-                        required: 140_000,
-                        available: 65_535,
+        assert!(target.explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "target.grid-axis"
+                && record.subjects()[0].key().as_str()
+                    == "alternative:materialized-serial-sum.v1/region:0"
+                && record.event().disposition() == ExplainDisposition::RejectedTarget
+                && matches!(
+                    record.event(),
+                    ExplainEvent::Feasibility {
+                        required: Quantity::Threads(140_000),
+                        available: Quantity::Threads(65_535),
+                        ..
                     }
+                )
         }));
+    }
+
+    #[test]
+    fn no_feasible_plan_retains_a_typed_terminal_failure_trace() {
+        let semantic = semantic_case_with_axis(
+            Shape::from_dims([70_000, 70_000]),
+            2.0_f32.to_bits(),
+            1.0_f32.to_bits(),
+            false,
+            Axis::new(1),
+        );
+        let error = compile(CompilationRequest::governed(&semantic)).unwrap_err();
+        let CompileError::Explained { source, explain } = error else {
+            panic!("target compilation failures retain their explain trace");
+        };
+        let CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
+            region,
+            ..
+        })) = *source
+        else {
+            panic!("source retains the exact selected target rejection");
+        };
+        assert_eq!(
+            explain
+                .records()
+                .iter()
+                .filter(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+                .count(),
+            1
+        );
+        let failure = explain
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+            .unwrap();
+        assert!(matches!(
+            failure.event(),
+            ExplainEvent::CompilerFailure {
+                stage: ExplainStage::TargetFeasibility,
+                reason,
+            } if reason.as_str() == "target-grid-axis"
+        ));
+        assert_eq!(failure.causes().len(), 2);
+        let causal_rejections = failure
+            .causes()
+            .iter()
+            .map(|cause| {
+                explain
+                    .records()
+                    .iter()
+                    .find(|record| record.id() == *cause)
+                    .expect("every failure cause is a retained exact target rejection")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            causal_rejections.iter().all(|record| {
+                record.event().disposition() == ExplainDisposition::RejectedTarget
+            })
+        );
+        assert_eq!(
+            causal_rejections
+                .iter()
+                .map(|record| record.subjects()[0].key().as_str())
+                .collect::<Vec<_>>(),
+            [
+                format!("alternative:materialized-serial-sum.v1/region:{}", region.0),
+                format!("alternative:fused-serial-sum.v1/region:{}", region.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_feasible_failure_aggregates_distinct_alternative_rejection_predicates() {
+        let semantic = semantic(false);
+        let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+        let request = request.for_target(request.target_profiles()[0]).unwrap();
+        let mut explain = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let materialized = PhysicalError::Target {
+            rule: "grid-axis",
+            region: RegionId(0),
+            required: 65_536,
+            available: 65_535,
+        };
+        let fused = PhysicalError::Target {
+            rule: "threads-per-workgroup",
+            region: RegionId(1),
+            required: 2,
+            available: 1,
+        };
+        let materialized_cause = record_target_rejection(
+            &mut explain,
+            &materialized,
+            "alternative:materialized-serial-sum.v1",
+            None,
+        )
+        .unwrap();
+        let fused_cause = record_target_rejection(
+            &mut explain,
+            &fused,
+            "alternative:fused-serial-sum.v1",
+            None,
+        )
+        .unwrap();
+        let mut rejections = TargetRejections::default();
+        rejections
+            .push(TargetRejection {
+                kind: ProgramAlternativeKind::Fused,
+                error: fused,
+                cause: fused_cause,
+            })
+            .unwrap();
+        rejections
+            .push(TargetRejection {
+                kind: ProgramAlternativeKind::Materialized,
+                error: materialized,
+                cause: materialized_cause,
+            })
+            .unwrap();
+        let failure = rejections.into_failure().unwrap();
+        let trace = explain.finish_failure(*failure.context).unwrap();
+        let terminal = trace
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+            .unwrap();
+        assert_eq!(terminal.causes().len(), 2);
+        let predicates = terminal
+            .causes()
+            .iter()
+            .map(|cause| {
+                trace
+                    .records()
+                    .iter()
+                    .find(|record| record.id() == *cause)
+                    .and_then(|record| match record.event() {
+                        ExplainEvent::Feasibility { predicate, .. } => Some(predicate.as_str()),
+                        _ => None,
+                    })
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(predicates, ["grid-axis", "threads-per-workgroup"]);
+    }
+
+    #[test]
+    fn rederivation_uses_the_physical_error_stage_for_both_alternative_kinds() {
+        let semantic = semantic_case_with_axis(
+            Shape::from_dims([70_000, 70_000]),
+            2.0_f32.to_bits(),
+            1.0_f32.to_bits(),
+            false,
+            Axis::new(1),
+        );
+        let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+        let request = request.for_target(request.target_profiles()[0]).unwrap();
+        for kind in [
+            ProgramAlternativeKind::Materialized,
+            ProgramAlternativeKind::Fused,
+        ] {
+            let Err(failure) = rederive_alternative(&semantic, &request, kind, None) else {
+                panic!("oversized alternative must fail target feasibility");
+            };
+            assert_eq!(failure.context.stage, ExplainStage::TargetFeasibility);
+            assert_eq!(failure.context.reason.as_str(), "target-grid-axis");
+            assert!(matches!(
+                *failure.source,
+                CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+                    PhysicalError::Target {
+                        rule: "grid-axis",
+                        ..
+                    }
+                ))
+            ));
+        }
+        assert_eq!(
+            physical_error_stage(&PhysicalError::Intrinsic {
+                rule: "fixture",
+                region: RegionId(0),
+            }),
+            ExplainStage::IntrinsicScheduling
+        );
+        assert_eq!(
+            physical_error_stage(&PhysicalError::ShapeProductOverflow {
+                region: RegionId(0),
+            }),
+            ExplainStage::IntrinsicScheduling
+        );
+        assert_eq!(
+            physical_error_stage(&PhysicalError::Refinement {
+                rule: "fixture",
+                region: RegionId(0),
+            }),
+            ExplainStage::KernelRefinement
+        );
     }
 
     #[test]
@@ -1274,6 +2621,36 @@ mod tests {
             },
             incumbent
         ));
+
+        let semantic = semantic(false);
+        let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+        let target = verified.for_target(verified.target_profiles()[0]).unwrap();
+        let mut alternatives = compile(CompilationRequest::governed(&semantic))
+            .unwrap()
+            .targets
+            .remove(0)
+            .portfolio
+            .alternatives;
+        alternatives[1].structural_cost.temporary_allocation_count = 2;
+        let selected = select_structural_pareto(&alternatives).unwrap();
+        assert_eq!(selected, "alternative:materialized-serial-sum.v1");
+        let mut explain = ExplainWriter::new(&target, ExplainLimits::default()).unwrap();
+        record_cost_and_selection(&alternatives, selected, &[], &mut explain).unwrap();
+        let ids = alternatives
+            .iter()
+            .map(|alternative| alternative.stable_id)
+            .collect::<Vec<_>>();
+        let trace = explain.finish_success(&ids, selected).unwrap();
+        assert!(trace.records().iter().any(|record| {
+            record.subjects()[0].key().as_str() == "alternative:fused-serial-sum.v1"
+                && matches!(
+                    record.event(),
+                    ExplainEvent::Selection {
+                        outcome: SelectionOutcome::NotSelectedTradeoff,
+                        ..
+                    }
+                )
+        }));
     }
 
     #[test]
@@ -1324,13 +2701,40 @@ mod tests {
         let alternatives = &target.portfolio.alternatives;
         let selected = target.portfolio.selection.selected_alternative_id;
 
-        assert!(verify_portfolio(&semantic, &request, alternatives, selected).is_ok());
-        assert!(verify_portfolio(&semantic, &request, &[], selected).is_err());
-        assert!(verify_portfolio(&semantic, &request, alternatives, "stale-selection").is_err());
+        assert!(verify_portfolio(&semantic, &request, alternatives, selected, None).is_ok());
+        assert!(verify_portfolio(&semantic, &request, &[], selected, None).is_err());
+        let selection =
+            verify_portfolio(&semantic, &request, alternatives, "stale-selection", None)
+                .unwrap_err();
+        assert_eq!(selection.context.stage, ExplainStage::Selection);
+        assert_eq!(
+            selection.context.reason.as_str(),
+            "structure-portfolio-selection"
+        );
 
         let mut forged = alternatives.clone();
         forged[0].structural_cost.dispatch_count = 0;
-        assert!(verify_portfolio(&semantic, &request, &forged, selected).is_err());
+        assert!(verify_portfolio(&semantic, &request, &forged, selected, None).is_err());
+
+        let mut forged_artifact = alternatives.clone();
+        forged_artifact[0].artifact_plan = forged_artifact[1].artifact_plan.clone();
+        let artifact =
+            verify_portfolio(&semantic, &request, &forged_artifact, selected, None).unwrap_err();
+        assert_eq!(artifact.context.stage, ExplainStage::ArtifactPlanning);
+        assert_eq!(
+            artifact.context.reason.as_str(),
+            "structure-portfolio-artifact-receipt"
+        );
+
+        let mut forged_numerics = alternatives.clone();
+        forged_numerics[0].equivalence = forged_numerics[1].equivalence.clone();
+        let numerical =
+            verify_portfolio(&semantic, &request, &forged_numerics, selected, None).unwrap_err();
+        assert_eq!(numerical.context.stage, ExplainStage::NumericalLegality);
+        assert_eq!(
+            numerical.context.reason.as_str(),
+            "structure-portfolio-equivalence"
+        );
     }
 
     #[test]
