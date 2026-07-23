@@ -661,7 +661,7 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
         )) => (
             format!("target-{rule}"),
             SubjectKind::Region,
-            format!("failed-region:{}", region.0),
+            format!("failed-region:{}", region.get()),
         ),
         CompileError::InvalidCompilerOutput(
             CompilerOutputError::Region(error)
@@ -686,14 +686,14 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
         )) => (
             format!("intrinsic-{rule}"),
             SubjectKind::Region,
-            format!("failed-region:{}", region.0),
+            format!("failed-region:{}", region.get()),
         ),
         CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
             PhysicalError::Refinement { rule, region },
         )) => (
             format!("refinement-{rule}"),
             SubjectKind::Kernel,
-            format!("failed-region:{}", region.0),
+            format!("failed-region:{}", region.get()),
         ),
         CompileError::InvalidCompilerOutput(CompilerOutputError::Program(error)) => {
             program_failure_details(error)
@@ -703,7 +703,7 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
         )) => (
             "shape-product-overflow".to_owned(),
             SubjectKind::Region,
-            format!("failed-region:{}", region.0),
+            format!("failed-region:{}", region.get()),
         ),
         CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(_)) => (
             "invalid-no-feasible-physical-class".to_owned(),
@@ -965,7 +965,7 @@ fn record_baseline_explain(
 ) -> Result<Option<ExplainRecordId>, TargetFailure> {
     let mut boundary_causes = Vec::new();
     for scheduled in &alternative.scheduled_regions {
-        let region_id = scheduled.region().index.id.0;
+        let region_id = scheduled.region().index.id.get();
         let key = format!("{}/region:{region_id}", alternative.stable_id);
         let record = explain_step(
             (|| -> Result<_, CompileError> {
@@ -1277,7 +1277,7 @@ fn record_target_rejection(
     else {
         unreachable!("target rejection records require a target-feasibility error")
     };
-    let key = format!("{alternative}/region:{}", region.0);
+    let key = format!("{alternative}/region:{}", region.get());
     let rejected = explain_step(
         (|| -> Result<_, CompileError> {
             let subject = explain.subject(SubjectKind::Region, &key)?;
@@ -1339,7 +1339,7 @@ fn record_target_admissions(
             failure_at_source(error.into(), stage, record_cause(cause))
         })?;
         for predicate in admitted {
-            let key = format!("{}/region:{}", alternative.stable_id, region.index.id.0);
+            let key = format!("{}/region:{}", alternative.stable_id, region.index.id.get());
             cause = explain_step(
                 (|| -> Result<_, CompileError> {
                     let subject = explain.subject(SubjectKind::Region, &key)?;
@@ -1814,11 +1814,7 @@ fn verify_equivalence(
             })?;
             verify_fused_numerics(formation.graph(), request, candidate, proof)?;
             if alternative.scheduled_regions.len() != 1
-                || alternative.scheduled_regions[0]
-                    .region()
-                    .index
-                    .semantic_members
-                    != candidate.members()
+                || alternative.scheduled_regions[0].semantic_members() != candidate.members()
             {
                 return Err(ProgramError::Structure {
                     rule: "portfolio-candidate-schedule-binding",
@@ -2570,8 +2566,11 @@ mod tests {
                 .map(|record| record.subjects()[0].key().as_str())
                 .collect::<Vec<_>>(),
             [
-                format!("alternative:materialized-serial-sum.v1/region:{}", region.0),
-                format!("alternative:fused-serial-sum.v1/region:{}", region.0),
+                format!(
+                    "alternative:materialized-serial-sum.v1/region:{}",
+                    region.get()
+                ),
+                format!("alternative:fused-serial-sum.v1/region:{}", region.get()),
             ]
         );
     }
@@ -2584,13 +2583,13 @@ mod tests {
         let mut explain = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
         let materialized = PhysicalError::Target {
             rule: "grid-axis",
-            region: RegionId(0),
+            region: RegionId::new(0),
             required: 65_536,
             available: 65_535,
         };
         let fused = PhysicalError::Target {
             rule: "threads-per-workgroup",
-            region: RegionId(1),
+            region: RegionId::new(1),
             required: 2,
             available: 1,
         };
@@ -2682,20 +2681,20 @@ mod tests {
         assert_eq!(
             physical_error_stage(&PhysicalError::Intrinsic {
                 rule: "fixture",
-                region: RegionId(0),
+                region: RegionId::new(0),
             }),
             ExplainStage::IntrinsicScheduling
         );
         assert_eq!(
             physical_error_stage(&PhysicalError::ShapeProductOverflow {
-                region: RegionId(0),
+                region: RegionId::new(0),
             }),
             ExplainStage::IntrinsicScheduling
         );
         assert_eq!(
             physical_error_stage(&PhysicalError::Refinement {
                 rule: "fixture",
-                region: RegionId(0),
+                region: RegionId::new(0),
             }),
             ExplainStage::KernelRefinement
         );
@@ -2847,7 +2846,7 @@ mod tests {
     fn intrinsic_physical_failures_are_invalid_output_not_empty_frontiers() {
         let error = CompileError::from(PhysicalError::Intrinsic {
             rule: "forged",
-            region: RegionId(0),
+            region: RegionId::new(0),
         });
         assert!(matches!(
             error,

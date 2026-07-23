@@ -850,7 +850,7 @@ pub(crate) fn build_artifact_plan(
         || program
             .entries
             .iter()
-            .any(|entry| entry.numerical != request.numerical_contract().into())
+            .any(|entry| entry.numerical != request.numerical_contract().realization())
     {
         return Err(ProgramError::Structure {
             rule: "artifact-numerical-realization",
@@ -1557,7 +1557,7 @@ mod tests {
         );
         assert!(!program.routing[1].fallback_permitted);
         assert!(!program.routing[2].fallback_permitted);
-        assert_eq!(artifact.entry_regions, [RegionId(0), RegionId(1)]);
+        assert_eq!(artifact.entry_regions, [RegionId::new(0), RegionId::new(1)]);
         assert_eq!(
             artifact.numerical_realizations,
             [

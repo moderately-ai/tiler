@@ -28,6 +28,8 @@
 
 /// Public target-independent iteration, access, and scalar-region vocabulary.
 pub mod index;
+/// Public target-neutral scheduled-region IR, verifier, and identity.
+pub mod schedule;
 /// Public semantic tensor-program vocabulary.
 pub mod semantic;
 /// Target-independent fixed shape vocabulary.
