@@ -1,4 +1,5 @@
 use std::any::{TypeId, type_name};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt;
@@ -16,7 +17,7 @@ use super::operation::{
 };
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
-    ResolvedValueType, TypeIdentityError, TypeKey, validate_key,
+    ResolvedValueType, TypeIdentityError, TypeKey, validate_canonical_value, validate_key,
 };
 
 const MAX_DEFINITION_REFERENCE_BYTES: usize = 4 * 1024;
@@ -249,7 +250,12 @@ impl TypeDefinitionFacts {
 }
 
 /// Which family of resolved types one semantic definition governs.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+///
+/// Durable registry identity iterates definitions in this key's total order, so
+/// the order is part of the identity contract rather than an incidental
+/// property of the Rust variant declaration order. [`Ord`] is therefore written
+/// out against the same stable family discriminants the encoding emits.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum ValueTypeDefinitionKey {
     /// One exact nominal type.
@@ -274,23 +280,42 @@ impl ValueTypeDefinitionKey {
         Self::EncodedNumeric(scheme.clone())
     }
 
-    fn encode(&self, output: &mut Vec<u8>) {
+    /// Returns the stable family discriminant shared by ordering and encoding.
+    const fn family_discriminant(&self) -> u8 {
         match self {
-            Self::Nominal(key) => {
-                output.push(1);
-                encode_type_key(output, key);
-            }
-            Self::Parameterized(key) => {
-                output.push(2);
-                encode_type_key(output, key);
-            }
+            Self::Nominal(_) => 1,
+            Self::Parameterized(_) => 2,
+            Self::EncodedNumeric(_) => 3,
+        }
+    }
+
+    fn encode(&self, output: &mut Vec<u8>) {
+        output.push(self.family_discriminant());
+        match self {
+            Self::Nominal(key) | Self::Parameterized(key) => encode_type_key(output, key),
             Self::EncodedNumeric(key) => {
-                output.push(3);
                 encode_bytes(output, key.namespace().as_bytes());
                 encode_bytes(output, key.name().as_bytes());
                 output.extend_from_slice(&key.semantic_version().to_be_bytes());
             }
         }
+    }
+}
+
+impl Ord for ValueTypeDefinitionKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Nominal(left), Self::Nominal(right))
+            | (Self::Parameterized(left), Self::Parameterized(right)) => left.cmp(right),
+            (Self::EncodedNumeric(left), Self::EncodedNumeric(right)) => left.cmp(right),
+            _ => self.family_discriminant().cmp(&other.family_discriminant()),
+        }
+    }
+}
+
+impl PartialOrd for ValueTypeDefinitionKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -780,11 +805,31 @@ impl SemanticRegistryRegistrar<'_> {
         Ok(())
     }
 
+    /// Re-measures one caller-supplied canonical value before this registration
+    /// can carry it into durable registry identity.
+    ///
+    /// The facts, conformance, and schema-default wrappers accept an
+    /// already-constructed [`CanonicalValue`] without re-measuring it, so this
+    /// registration boundary is where the complete structural bounds are
+    /// enforced.
+    fn admit_definition_value(
+        &mut self,
+        subject: DefinitionValueSubject,
+        value: &CanonicalValue,
+    ) -> Result<(), RegistryError> {
+        if let Err(source) = validate_canonical_value(value) {
+            let error = RegistryError::InvalidDefinitionValue { subject, source };
+            return Err(self.fail(&error));
+        }
+        Ok(())
+    }
+
     /// Registers one semantic nominal, constructor, or scheme definition.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] for duplicate authority within this provider.
+    /// Returns [`RegistryError`] for duplicate authority within this provider
+    /// or for canonical facts outside the governed structural bounds.
     pub fn register_value_type(
         &mut self,
         definition: ValueTypeDefinition,
@@ -792,6 +837,10 @@ impl SemanticRegistryRegistrar<'_> {
         if let Some(error) = self.prior_failure() {
             return Err(error);
         }
+        self.admit_definition_value(
+            DefinitionValueSubject::TypeDefinitionFacts,
+            definition.canonical_facts().value(),
+        )?;
         let key = definition.key().clone();
         if self.batch.definitions.contains_key(&key) {
             let error = RegistryError::DuplicateTypeAuthority { key: Arc::new(key) };
@@ -815,13 +864,33 @@ impl SemanticRegistryRegistrar<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`RegistryError`] for duplicate authority within this provider.
+    /// Returns [`RegistryError`] for duplicate authority within this provider
+    /// or for canonical facts, conformance identity, or schema attribute
+    /// defaults outside the governed structural bounds.
     pub fn register_operation(
         &mut self,
         definition: OperationDefinition,
     ) -> Result<(), RegistryError> {
         if let Some(error) = self.prior_failure() {
             return Err(error);
+        }
+        self.admit_definition_value(
+            DefinitionValueSubject::OperationDefinitionFacts,
+            definition.canonical_facts().value(),
+        )?;
+        self.admit_definition_value(
+            DefinitionValueSubject::OperationConformance,
+            definition.conformance().value(),
+        )?;
+        for field in definition.schema().attributes() {
+            if let Some(default) = field.default() {
+                self.admit_definition_value(
+                    DefinitionValueSubject::OperationAttributeDefault {
+                        field_id: field.id(),
+                    },
+                    default,
+                )?;
+            }
         }
         let key = definition.key().clone();
         if self.batch.operations.contains_key(&key) {
@@ -1583,12 +1652,50 @@ impl TypeInstanceRejection {
     }
 }
 
+/// Which registration-owned canonical value violated a structural bound.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DefinitionValueSubject {
+    /// Canonical facts owned by one value-type definition.
+    TypeDefinitionFacts,
+    /// Canonical facts owned by one operation definition.
+    OperationDefinitionFacts,
+    /// Canonical conformance-evidence identity owned by one operation definition.
+    OperationConformance,
+    /// One schema-owned canonical operation-attribute default.
+    OperationAttributeDefault {
+        /// Stable schema-local field ID carrying the rejected default.
+        field_id: AttributeFieldId,
+    },
+}
+
+impl fmt::Display for DefinitionValueSubject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TypeDefinitionFacts => formatter.write_str("type definition facts"),
+            Self::OperationDefinitionFacts => formatter.write_str("operation definition facts"),
+            Self::OperationConformance => formatter.write_str("operation conformance identity"),
+            Self::OperationAttributeDefault { field_id } => {
+                write!(formatter, "operation attribute default {field_id}")
+            }
+        }
+    }
+}
+
 /// Failure to build, freeze, or validate semantic registry authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RegistryError {
     /// Provider identity did not satisfy canonical identity rules.
     InvalidProviderIdentity(TypeIdentityError),
+    /// A registration carried a canonical value outside the governed
+    /// structural bounds for resolved semantic data.
+    InvalidDefinitionValue {
+        /// Rejected registration-owned canonical value.
+        subject: DefinitionValueSubject,
+        /// Exact structural bound the value violated.
+        source: TypeIdentityError,
+    },
     /// No semantic definition was registered.
     EmptyRegistry,
     /// A provider transaction contained no semantic contribution.
@@ -1668,6 +1775,9 @@ impl fmt::Display for RegistryError {
             Self::InvalidProviderIdentity(source) => {
                 write!(formatter, "invalid provider identity: {source}")
             }
+            Self::InvalidDefinitionValue { subject, source } => {
+                write!(formatter, "invalid {subject}: {source}")
+            }
             Self::EmptyRegistry => formatter.write_str("semantic registry is empty"),
             Self::ProviderRegisteredNothing { provider } => {
                 write!(formatter, "semantic provider {provider} registered nothing")
@@ -1737,7 +1847,9 @@ impl fmt::Display for RegistryError {
 impl Error for RegistryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::InvalidProviderIdentity(source) => Some(source),
+            Self::InvalidProviderIdentity(source) | Self::InvalidDefinitionValue { source, .. } => {
+                Some(source)
+            }
             Self::RejectedTypeInstance(rejection) => Some(&rejection.source),
             Self::RejectedOperationApplication(rejection) => Some(&rejection.source),
             _ => None,
@@ -2762,6 +2874,89 @@ mod tests {
     }
 
     #[test]
+    fn governed_constant_rejects_every_non_binary32_payload() {
+        fn rejection_code(error: &RegistryError) -> &str {
+            let RegistryError::RejectedOperationApplication(rejection) = error else {
+                panic!("a payload rejection must be reported as an application rejection")
+            };
+            rejection.source_error().code().as_str()
+        }
+
+        fn bits_attributes(format: TypeKey, bits: &[u8]) -> OperationAttributes {
+            OperationAttributes::new([CanonicalField::new(
+                F32_CONSTANT_BITS_ATTRIBUTE,
+                CanonicalValue::float_bits(format, bits).unwrap(),
+            )])
+            .unwrap()
+        }
+
+        // The alternate format must itself be registered, or missing type
+        // authority would reject the occurrence before the inferencer runs.
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&ExternalProvider).unwrap();
+        let registry = builder.freeze().unwrap();
+        let f32_key = TypeKey::new("tiler", "f32", 1).unwrap();
+        let foreign_key = TypeKey::new("acme", "f8-special", 1).unwrap();
+
+        for attributes in [
+            bits_attributes(foreign_key, &[0; 4]),
+            bits_attributes(f32_key.clone(), &[0; 2]),
+            bits_attributes(f32_key, &[0; 8]),
+        ] {
+            let error = registry
+                .infer_operation(&constant_f32_op(), &[], &attributes)
+                .unwrap_err();
+            assert_eq!(rejection_code(&error), "constant.bits");
+        }
+    }
+
+    #[test]
+    fn governed_constant_rechecks_the_payload_category_after_schema_preflight() {
+        // The registered schema declares the bits attribute as `FloatBits`, so
+        // preflight normally rejects another category first. Re-registering the
+        // same inferencer behind a permissive schema proves it still fails
+        // closed on its own.
+        let permissive = OpKey::new("test", "constant-permissive-bits", 1).unwrap();
+        let provider = TestProvider {
+            name: "constant-permissive-bits",
+            revision: 1,
+            definitions: Vec::new(),
+            operations: vec![OperationDefinition::new(
+                permissive.clone(),
+                exact_schema(
+                    0,
+                    1,
+                    [OperationAttributeSchema::required(
+                        F32_CONSTANT_BITS_ATTRIBUTE,
+                        CanonicalValueKind::Bytes,
+                    )],
+                ),
+                NormativeDefinitionRef::new("test permissive constant bits").unwrap(),
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(ConstantF32),
+            )],
+        };
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder.register_provider(&provider).unwrap();
+        let registry = builder.freeze().unwrap();
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            F32_CONSTANT_BITS_ATTRIBUTE,
+            CanonicalValue::bytes([0_u8; 4]).unwrap(),
+        )])
+        .unwrap();
+
+        let error = registry
+            .infer_operation(&permissive, &[], &attributes)
+            .unwrap_err();
+        let RegistryError::RejectedOperationApplication(rejection) = error else {
+            panic!("a payload rejection must be reported as an application rejection")
+        };
+        assert_eq!(rejection.source_error().code().as_str(), "constant.bits");
+    }
+
+    #[test]
     fn operation_attributes_require_registered_embedded_type_authority() {
         let registry = SemanticRegistryBuilder::standard()
             .unwrap()
@@ -2871,6 +3066,113 @@ mod tests {
         ));
         builder.register_provider(&ExternalProvider).unwrap();
         assert!(builder.freeze().unwrap().contains(&external_f8()));
+    }
+
+    #[test]
+    fn registration_rejects_definition_values_over_the_structural_bound() {
+        /// One canonical value that only the unvalidated wrappers can carry:
+        /// wrapping an already-maximal resolved type adds one level too many.
+        fn over_bound() -> CanonicalValue {
+            CanonicalValue::value_type(super::super::types::maximal_depth_resolved_type())
+        }
+
+        fn expected(subject: DefinitionValueSubject) -> RegistryError {
+            RegistryError::InvalidDefinitionValue {
+                subject,
+                source: TypeIdentityError::NestingTooDeep,
+            }
+        }
+
+        let default_field = AttributeFieldId::new(1);
+        let staged = [
+            (
+                TestProvider {
+                    name: "over-bound-type-facts",
+                    revision: 1,
+                    definitions: vec![nominal_definition(
+                        TypeKey::new("test", "over-bound", 1).unwrap(),
+                        over_bound(),
+                    )],
+                    operations: Vec::new(),
+                },
+                expected(DefinitionValueSubject::TypeDefinitionFacts),
+            ),
+            (
+                TestProvider {
+                    name: "over-bound-operation-facts",
+                    revision: 1,
+                    definitions: Vec::new(),
+                    operations: vec![OperationDefinition::new(
+                        OpKey::new("test", "over-bound-facts", 1).unwrap(),
+                        exact_schema(1, 1, []),
+                        NormativeDefinitionRef::new("test over-bound facts").unwrap(),
+                        OperationDefinitionFacts::new(over_bound()),
+                        OperationConformance::new(CanonicalValue::boolean(true)),
+                        OperationEffect::Pure,
+                        Arc::new(IdentityInferencer),
+                    )],
+                },
+                expected(DefinitionValueSubject::OperationDefinitionFacts),
+            ),
+            (
+                TestProvider {
+                    name: "over-bound-conformance",
+                    revision: 1,
+                    definitions: Vec::new(),
+                    operations: vec![OperationDefinition::new(
+                        OpKey::new("test", "over-bound-conformance", 1).unwrap(),
+                        exact_schema(1, 1, []),
+                        NormativeDefinitionRef::new("test over-bound conformance").unwrap(),
+                        OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                        OperationConformance::new(over_bound()),
+                        OperationEffect::Pure,
+                        Arc::new(IdentityInferencer),
+                    )],
+                },
+                expected(DefinitionValueSubject::OperationConformance),
+            ),
+            (
+                TestProvider {
+                    name: "over-bound-attribute-default",
+                    revision: 1,
+                    definitions: Vec::new(),
+                    operations: vec![OperationDefinition::new(
+                        OpKey::new("test", "over-bound-default", 1).unwrap(),
+                        exact_schema(
+                            1,
+                            1,
+                            [OperationAttributeSchema::defaulted(
+                                default_field,
+                                CanonicalValueKind::Type,
+                                over_bound(),
+                            )
+                            .unwrap()],
+                        ),
+                        NormativeDefinitionRef::new("test over-bound default").unwrap(),
+                        OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                        OperationConformance::new(CanonicalValue::boolean(true)),
+                        OperationEffect::Pure,
+                        Arc::new(IdentityInferencer),
+                    )],
+                },
+                expected(DefinitionValueSubject::OperationAttributeDefault {
+                    field_id: default_field,
+                }),
+            ),
+        ];
+
+        for (provider, expected) in staged {
+            let mut builder = SemanticRegistryBuilder::standard().unwrap();
+            assert_eq!(builder.register_provider(&provider), Err(expected.clone()));
+            assert_eq!(
+                std::error::Error::source(&expected)
+                    .and_then(|source| source.downcast_ref::<TypeIdentityError>()),
+                Some(&TypeIdentityError::NestingTooDeep)
+            );
+            // The rejected batch never reaches the builder, so the untouched
+            // standard authority still freezes.
+            builder.freeze().unwrap();
+        }
     }
 
     #[test]
@@ -3493,5 +3795,97 @@ mod tests {
             }) if actual == MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS + 1
         ));
         assert_eq!(polls.get(), MAX_SEMANTIC_AUTHORITY_ROOT_ITEMS + 1);
+    }
+
+    /// Frozen snapshot identity for [`FamilyOrderFixture`].
+    ///
+    /// Registry identity iterates definitions in [`ValueTypeDefinitionKey`]
+    /// order, so these bytes pin both that order and the record encoding.
+    /// Change them only together with a deliberate identity-version bump.
+    const FAMILY_ORDER_IDENTITY_FIXTURE: &str = concat!(
+        "74696c65722e73656d616e7469632d72656769737472792e76350000000000000000030100000000",
+        "000000047465737400000000000000037a7a7a00000001000000000000000b74657374207a7a7a20",
+        "7631042000000001000000000000000474657374000000000000000b6f72642d6669787475726500",
+        "0000010200000000000000047465737400000000000000036d6d6d00000001000000000000000b74",
+        "657374206d6d6d207631042000000002000000000000000474657374000000000000000b6f72642d",
+        "66697874757265000000010300000000000000047465737400000000000000036161610000000100",
+        "0000000000000b746573742061616120763104200000000300000000000000047465737400000000",
+        "0000000b6f72642d66697874757265000000010000000000000000",
+    );
+
+    /// Registers one definition per family, named so that comparing only the
+    /// inner identity would invert the required family order.
+    struct FamilyOrderFixture;
+
+    impl SemanticRegistryProvider for FamilyOrderFixture {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "ord-fixture", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(TypeKey::new("test", "zzz", 1).unwrap()),
+                NormativeDefinitionRef::new("test zzz v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::unsigned_u32(1)),
+            ))?;
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Parameterized(TypeKey::new("test", "mmm", 1).unwrap()),
+                NormativeDefinitionRef::new("test mmm v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::unsigned_u32(2)),
+            ))?;
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::EncodedNumeric(
+                    QuantSchemeKey::new("test", "aaa", 1).unwrap(),
+                ),
+                NormativeDefinitionRef::new("test aaa v1")?,
+                TypeDefinitionFacts::new(CanonicalValue::unsigned_u32(3)),
+            ))
+        }
+    }
+
+    fn decode_hex(value: &str) -> Vec<u8> {
+        assert!(
+            value.len().is_multiple_of(2),
+            "fixture hex encodes whole bytes"
+        );
+        (0..value.len() / 2)
+            .map(|index| {
+                u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+                    .expect("fixture hex is valid")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn definition_family_order_is_explicit_and_byte_stable() {
+        let nominal = ValueTypeDefinitionKey::Nominal(TypeKey::new("test", "zzz", 1).unwrap());
+        let parameterized =
+            ValueTypeDefinitionKey::Parameterized(TypeKey::new("test", "mmm", 1).unwrap());
+        let encoded =
+            ValueTypeDefinitionKey::EncodedNumeric(QuantSchemeKey::new("test", "aaa", 1).unwrap());
+        assert!(nominal < parameterized);
+        assert!(parameterized < encoded);
+        assert!(
+            ValueTypeDefinitionKey::Nominal(TypeKey::new("test", "aaa", 1).unwrap())
+                < ValueTypeDefinitionKey::Nominal(TypeKey::new("test", "zzz", 1).unwrap())
+        );
+        // The ordering rank and the serialized discriminant are the same value,
+        // so a reordered family cannot silently keep its encoding tag.
+        for key in [&nominal, &parameterized, &encoded] {
+            let mut encoding = Vec::new();
+            key.encode(&mut encoding);
+            assert_eq!(encoding.first(), Some(&key.family_discriminant()));
+        }
+
+        let mut builder = SemanticRegistryBuilder::new();
+        builder.register_provider(&FamilyOrderFixture).unwrap();
+        let registry = builder.freeze().unwrap();
+        assert_eq!(
+            registry.snapshot_identity().as_bytes(),
+            decode_hex(FAMILY_ORDER_IDENTITY_FIXTURE)
+        );
     }
 }

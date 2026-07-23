@@ -1197,6 +1197,38 @@ fn validate_resolved_type(value: &ResolvedValueType) -> Result<(), TypeIdentityE
     validate_type_at(value, 1, &mut budget)
 }
 
+/// Validates one standalone canonical value against the complete structural bounds.
+///
+/// The collection constructors validate their own items, but
+/// [`CanonicalValue::value_type`] wraps an already-admitted resolved type
+/// without re-measuring it, which adds one structural level. Any boundary that
+/// retains a caller-supplied canonical value must therefore re-measure the
+/// complete value before it reaches durable identity.
+pub(super) fn validate_canonical_value(value: &CanonicalValue) -> Result<(), TypeIdentityError> {
+    let mut budget = ValidationBudget::default();
+    validate_argument_at(value, 1, &mut budget)
+}
+
+/// Returns a resolved type whose deepest node sits exactly on
+/// [`MAX_RESOLVED_TYPE_DEPTH`], so any further wrapping costs one level too many.
+#[cfg(test)]
+pub(super) fn maximal_depth_resolved_type() -> ResolvedValueType {
+    let wrap = |argument| {
+        ResolvedValueType::parameterized(
+            TypeKey::new("tiler", "wrap", 1).expect("the wrapper key is canonical"),
+            TypeArguments::new([argument]).expect("each wrapper stays within its bound"),
+        )
+        .expect("each wrapper stays within its bound")
+    };
+    // One parameterized wrapper occupies two structural levels: its own type
+    // node and its argument node.
+    let mut value = wrap(CanonicalValue::boolean(true));
+    for _ in 1..MAX_RESOLVED_TYPE_DEPTH / 2 {
+        value = wrap(CanonicalValue::value_type(value));
+    }
+    value
+}
+
 fn validate_type_at(
     value: &ResolvedValueType,
     depth: usize,
@@ -1519,6 +1551,21 @@ mod tests {
             CanonicalValue::sequence([argument]),
             Err(TypeIdentityError::NestingTooDeep)
         ));
+    }
+
+    #[test]
+    fn wrapping_a_maximal_resolved_type_is_rejected_by_standalone_validation() {
+        let maximal = maximal_depth_resolved_type();
+        assert_eq!(
+            validate_canonical_value(&CanonicalValue::value_type(maximal.clone())),
+            Err(TypeIdentityError::NestingTooDeep)
+        );
+        assert_eq!(
+            TypeArguments::new([CanonicalValue::value_type(maximal.clone())]),
+            Err(TypeIdentityError::NestingTooDeep)
+        );
+        // The wrapped type is itself admitted, so only the added level is at fault.
+        assert!(validate_resolved_type(&maximal).is_ok());
     }
 
     #[test]

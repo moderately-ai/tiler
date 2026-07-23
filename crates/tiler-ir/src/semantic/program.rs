@@ -2139,6 +2139,56 @@ mod tests {
     }
 
     #[test]
+    fn identity_ignores_live_topological_insertion_order() {
+        /// Builds one live DAG in two valid topological insertion orders. Only
+        /// the order of the two independent multiplications changes; the
+        /// ordered input interface and every operand edge stay identical.
+        fn build(swap_independent_operations: bool) -> SemanticProgram {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let x = builder
+                .input::<F32>(input_key("x"), Shape::from_dims([2, 3]))
+                .unwrap();
+            let y = builder
+                .input::<F32>(input_key("y"), Shape::from_dims([2, 3]))
+                .unwrap();
+            let scale = constant(&mut builder, 3.0).unwrap();
+            let (left, right) = if swap_independent_operations {
+                let right = multiply(&mut builder, y, scale).unwrap();
+                (multiply(&mut builder, x, scale).unwrap(), right)
+            } else {
+                let left = multiply(&mut builder, x, scale).unwrap();
+                (left, multiply(&mut builder, y, scale).unwrap())
+            };
+            let result = add(&mut builder, left, right).unwrap();
+            builder.output(output_key("result"), result).unwrap();
+            builder.build().unwrap()
+        }
+
+        fn arena_edges(program: &SemanticProgram) -> Vec<Vec<usize>> {
+            program
+                .operations()
+                .map(|operation| {
+                    operation
+                        .operands()
+                        .map(|operand| operand.index.as_usize())
+                        .collect()
+                })
+                .collect()
+        }
+
+        let ordered = build(false);
+        let swapped = build(true);
+
+        // Without genuinely different arenas the identity comparison below
+        // would hold vacuously.
+        assert_ne!(arena_edges(&ordered), arena_edges(&swapped));
+        assert_eq!(
+            ordered.semantic_identity().graph(),
+            swapped.semantic_identity().graph()
+        );
+    }
+
+    #[test]
     fn graph_meaning_excludes_provider_revision_but_provenance_retains_it() {
         fn build(revision: u32) -> SemanticProgram {
             let mut registry = SemanticRegistryBuilder::standard().unwrap();
@@ -2442,6 +2492,16 @@ mod tests {
         assert!(has_code(
             sum(&mut builder, x, [Axis::new(1), Axis::new(1)]),
             "sum.axes.canonical"
+        ));
+        // The operand has rank two, so axis two is the first position at or
+        // beyond its rank.
+        assert!(has_code(
+            sum(&mut builder, x, [Axis::new(2)]),
+            "sum.axes.range"
+        ));
+        assert!(has_code(
+            sum(&mut builder, x, [Axis::new(0), Axis::new(u32::MAX)]),
+            "sum.axes.range"
         ));
         assert_eq!(
             before,
