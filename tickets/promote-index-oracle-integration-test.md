@@ -1,7 +1,7 @@
 ---
 id: promote-index-oracle-integration-test
 title: Promote the index-region oracle test to an admitted target
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, testing, workspace]
-claimed_from: todo
-assignee: agent-promote-index-oracle-integration-test
-lease_expires_at: 1784834740
 ---
 The IndexRegion oracle's end-to-end cases live in `crates/tiler-reference/src/oracle.rs` rather than a dedicated integration target. That was a scope-respecting choice, not a shortcut: `scripts/check_workspace.py` holds a closed `EXPECTED_TESTS` allowlist that admits only `serial_sum_slice` for `tiler-reference`, so adding `crates/tiler-reference/tests/index_region_oracle.rs` fails the workspace contract, and amending the allowlist needs `implementation/workspace`, which the oracle ticket did not hold.
 
