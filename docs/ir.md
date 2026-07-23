@@ -516,6 +516,27 @@ does not claim that storage was transposed or copied. Frontends may accept
 implicit broadcasting syntax, but the canonical semantic graph makes the
 mapping explicit before optimization.
 
+One narrow admission is operation semantics rather than an implicit graph rule.
+A binary elementwise signature may declare that it accepts a rank-zero operand,
+in which case that operand contributes its single value at every output
+coordinate and the result takes the other operand's shape. The built-in
+`tiler::add-f32@1` and `tiler::multiply-f32@1` signatures declare exactly that
+admission. [ADR 0061](decisions/0061-layer-checked-shape-evidence-over-values.md)
+accepts the `F32Add` and `F32Multiply` authoring facades over it and names their
+scalar broadcast, while this document owns the admission itself. A declaring
+signature checks the rule in its own inference and states it in its normative
+definition. No node is synthesized: canonical identity records the binary
+operation and its two operand identities, never an implicit `Broadcast`.
+
+Nothing else broadcasts implicitly. Operands of nonzero rank must agree in
+shape, and rank padding, extent-one stretching, and every other many-to-one
+mapping still require an explicit `Broadcast` with an axis mapping, in every
+signature and at every rank. A signature that does not declare scalar admission
+rejects a rank-zero operand exactly as it rejects any other shape disagreement.
+The admission is a shape rule alone: a declaring signature still requires
+matching resolved operand value types, so it grants no promotion, weak-scalar,
+or other dtype permission.
+
 ### Proposed public experimental operation extension contract
 
 Built-in and third-party operations use the same public experimental operation
@@ -647,7 +668,14 @@ are not reported through Rust's causal `Error::source` chain.
   availability phase are supported by every semantic factor that consumes it.
 - Target-property bindings use stable versioned keys and cannot depend on a
   selected or prepared physical pipeline in the initial execution model.
-- Binary operations use explicit broadcasting.
+- Binary operations use explicit broadcasting, except where a signature
+  declares scalar admission as part of its own semantics: such a signature
+  accepts a rank-zero operand and gives the result the other operand's shape.
+  The built-in `tiler::add-f32@1` and `tiler::multiply-f32@1` signatures
+  declare it, and ADR 0061 accepts the authoring facades over it. Operands of
+  nonzero rank must agree in shape, every other many-to-one mapping still
+  requires an explicit `Broadcast`, and the admission grants no dtype
+  permission.
 - Reindex mappings are total over their output domain.
 - Reductions name valid axes and explicit accumulation/output dtypes.
 - Every reduction declares a typed empty-domain result or rejects empty input.
