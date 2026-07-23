@@ -6,7 +6,7 @@ title: "Use typed phased target feasibility"
 topics: ["targets", "feasibility", "scheduling"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.cpu-backend", "tiler.contract.optimizer", "tiler.contract.fusion-and-scheduling", "tiler.contract.cost-model"]
 evidence: ["tiler.research.target-profiles.physical-feasibility-model"]
 ticket: "target-profile-feasibility-model"

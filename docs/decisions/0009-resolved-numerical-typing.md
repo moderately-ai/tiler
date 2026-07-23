@@ -6,7 +6,7 @@ title: "Resolve numerical typing before semantic optimization"
 topics: ["numerics","dtypes","semantics"]
 catalog_group: "numerical-operations"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.dtype-resolution-precedents"]
 ticket: "numerical-policy-contract"

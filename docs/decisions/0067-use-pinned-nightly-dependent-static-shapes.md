@@ -6,7 +6,7 @@ title: "Use pinned-nightly dependent arrays for exact shape evidence"
 topics: ["rust", "toolchains", "shapes", "const-generics", "api"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "partial"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.frontend-integration"]
 evidence: ["tiler.research.shapes.nightly-const-shape-parameters", "tiler.research.shapes.public-static-shape-spelling", "tiler.research.shapes.stable-rust-shape-evidence"]
 refines: ["ADR-0061"]

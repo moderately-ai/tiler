@@ -6,7 +6,7 @@ title: "Use round-to-nearest ties-to-even for initial arithmetic"
 topics: ["numerics","floating-point","rounding"]
 catalog_group: "numerical-operations"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.operation-conformance-matrix"]
 ticket: "numerical-policy-contract"
