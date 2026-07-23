@@ -1,9 +1,27 @@
 //! Host reference values and evaluation for verified Tiler semantic programs.
+//!
+//! Two independent oracles share one exact tensor value boundary. The semantic
+//! evaluator executes a verified [`tiler_ir::semantic::SemanticProgram`], and
+//! the index-region oracle executes a verified
+//! [`tiler_ir::index::VerifiedIndexRegion`] without reusing any graph-specific
+//! host expression.
+
+mod arithmetic;
+mod oracle;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
+
+pub use oracle::{
+    CanonicalScalarReferenceRegistryIdentity, FrozenScalarReferenceRegistry,
+    IndexReferenceResource, IndexRegionAuthority, IndexRegionEvaluation,
+    IndexRegionEvaluationError, IndexRegionEvaluator, IndexRegionInput,
+    ScalarCapabilityAttribution, ScalarReferenceOperation, ScalarReferenceOutputs,
+    ScalarReferenceRegistryBuilder, ScalarReferenceRegistryError, ScalarReferenceRequest,
+    UnsupportedRegionFeature,
+};
 
 use tiler_ir::semantic::{
     CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalIntegerWidth, CanonicalValueView, Definition, F32,
@@ -16,12 +34,12 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 
 const MAX_REFERENCE_ELEMENT_BYTES: usize = 1024 * 1024;
-const MAX_REFERENCE_TENSOR_ELEMENTS: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_REFERENCE_TENSOR_ELEMENTS: usize = 16 * 1024 * 1024;
 const MAX_REFERENCE_TENSOR_BYTES: usize = 64 * 1024 * 1024;
 const MAX_REFERENCE_COMPONENTS: usize = 1_024;
 const MAX_REFERENCE_COMPONENT_DEPTH: usize = 32;
-const MAX_REFERENCE_CAPABILITIES: usize = 4_096;
-const MAX_REFERENCE_REGISTRY_IDENTITY_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_REFERENCE_CAPABILITIES: usize = 4_096;
+pub(crate) const MAX_REFERENCE_REGISTRY_IDENTITY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Byte order supplied when constructing exact floating-point elements.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1003,7 +1021,7 @@ impl FrozenReferenceRegistry {
         Ok(capability)
     }
 
-    fn validate_value(
+    pub(crate) fn validate_value(
         &self,
         tensor: &Tensor,
         semantic_registry: &FrozenSemanticRegistry,
@@ -2083,7 +2101,7 @@ fn encode_reference_authority(output: &mut Vec<u8>, authority: &SemanticCapabili
     encode_bytes(output, authority.registry_snapshot().as_bytes());
 }
 
-fn encode_provider_capability(
+pub(crate) fn encode_provider_capability(
     output: &mut Vec<u8>,
     provider: &ProviderIdentity,
     revision: ReferenceCapabilityRevision,
@@ -2100,7 +2118,7 @@ fn encode_op_key(output: &mut Vec<u8>, key: &OpKey) {
     output.extend_from_slice(&key.semantic_version().to_be_bytes());
 }
 
-fn encode_signature(output: &mut Vec<u8>, signature: &ReferenceSignature) {
+pub(crate) fn encode_signature(output: &mut Vec<u8>, signature: &ReferenceSignature) {
     for values in [signature.operands(), signature.results()] {
         encode_len(output, values.len());
         for value in values {
@@ -2110,7 +2128,7 @@ fn encode_signature(output: &mut Vec<u8>, signature: &ReferenceSignature) {
     }
 }
 
-const fn encoded_bytes_len(payload_len: usize) -> usize {
+pub(crate) const fn encoded_bytes_len(payload_len: usize) -> usize {
     std::mem::size_of::<u64>().saturating_add(payload_len)
 }
 
@@ -2134,7 +2152,7 @@ fn reference_authority_identity_len(authority: &SemanticCapabilityAuthority) -> 
     .fold(0_usize, usize::saturating_add)
 }
 
-fn reference_provider_identity_len(provider: &ProviderIdentity) -> usize {
+pub(crate) fn reference_provider_identity_len(provider: &ProviderIdentity) -> usize {
     encoded_bytes_len(provider.namespace().len())
         .saturating_add(encoded_bytes_len(provider.name().len()))
         .saturating_add(2 * std::mem::size_of::<u32>())
@@ -2151,7 +2169,7 @@ fn reference_value_identity_len(
         .saturating_add(reference_provider_identity_len(provider))
 }
 
-fn reference_signature_identity_len(signature: &ReferenceSignature) -> usize {
+pub(crate) fn reference_signature_identity_len(signature: &ReferenceSignature) -> usize {
     [signature.operands(), signature.results()]
         .into_iter()
         .map(|values| {
@@ -2205,7 +2223,7 @@ fn collect_signature_types(
     Ok(retained)
 }
 
-fn encode_len(output: &mut Vec<u8>, value: usize) {
+pub(crate) fn encode_len(output: &mut Vec<u8>, value: usize) {
     output.extend_from_slice(
         &u64::try_from(value)
             .expect("supported usize fits u64")
@@ -2213,7 +2231,7 @@ fn encode_len(output: &mut Vec<u8>, value: usize) {
     );
 }
 
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
+pub(crate) fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
     encode_len(output, value.len());
     output.extend_from_slice(value);
 }
