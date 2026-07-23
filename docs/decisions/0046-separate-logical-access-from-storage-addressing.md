@@ -6,7 +6,7 @@ title: "Separate logical tensor access from storage addressing"
 topics: ["indexing", "storage", "ir"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 applies_to: ["tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
 evidence: ["tiler.research.indexing.index-access-model"]
 ticket: "index-access-model"

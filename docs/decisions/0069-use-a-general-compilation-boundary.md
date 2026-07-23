@@ -6,7 +6,7 @@ title: "Use a general compilation boundary with explicit support failures"
 topics: ["program-planning", "compiler-api", "capabilities", "extensions"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.optimizer"]
 evidence: ["tiler.research.program-planning.general-compilation-boundary"]
 ticket: "prototype-target-neutral-baseline-slice"

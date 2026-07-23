@@ -6,7 +6,7 @@ title: "Separate dtype representability from operation support"
 topics: ["numerics","dtypes","capabilities"]
 catalog_group: "dtypes-quantization"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.mature-dtype-taxonomy"]
 ticket: "enumerate-the-mature-tensor-dtype-taxonomy"

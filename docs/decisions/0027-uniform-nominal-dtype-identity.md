@@ -6,7 +6,7 @@ title: "Use uniform nominal identities for built-in and extension dtypes"
 topics: ["numerics","dtypes","identity"]
 catalog_group: "dtypes-quantization"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.dtype-identity-admission-policy"]
 ticket: "define-dtype-namespace-admission-policy"

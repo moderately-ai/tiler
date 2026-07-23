@@ -6,7 +6,7 @@ title: "Verify structured kernels as schedule refinements"
 topics: ["kernel-ir", "verification", "scheduling"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]
 evidence: ["tiler.research.kernel-ir.structured-kernel-ir-verifier"]
 ticket: "structured-kernel-ir-verifier"
