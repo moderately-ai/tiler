@@ -805,6 +805,83 @@ impl RegionGraph {
         }
         Ok(true)
     }
+
+    /// Returns the content-derived canonical position of one region member.
+    ///
+    /// This is the site-independent region-local ordering key: two occurrences
+    /// of the same content order their members identically, so a legality
+    /// derivation can range over members without leaking an authoring accident.
+    pub(crate) fn member_canonical_position(
+        &self,
+        member: SemanticMemberId,
+    ) -> Result<u32, RegionError> {
+        self.canonical_position(member.0)
+    }
+
+    /// Returns the borrowed semantic-operation facts of one region member.
+    ///
+    /// The facts are the read-only projection legality derivation needs: the
+    /// operation family key, whether the frozen authority proved the operation
+    /// pure, and the canonical encodings of its ordered operand and result value
+    /// types. It exposes no graph-local ordinal and no mutable state.
+    pub(crate) fn member_operation_facts(
+        &self,
+        member: SemanticMemberId,
+    ) -> Result<MemberOperationFacts<'_>, RegionError> {
+        let operation = self.operation(member.0)?;
+        let operand_types = operation
+            .operands
+            .iter()
+            .map(|value| self.value(*value).map(|graph| graph.type_encoding.as_ref()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result_types = operation
+            .results
+            .iter()
+            .map(|value| self.value(*value).map(|graph| graph.type_encoding.as_ref()))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(MemberOperationFacts {
+            key: &operation.key,
+            pure: operation.pure,
+            operand_types,
+            result_types,
+        })
+    }
+}
+
+/// Borrowed semantic-operation facts of one region member.
+///
+/// This is a derived read-only view: it copies nothing the frozen semantic
+/// authority did not already validate and exists only so a legality derivation
+/// can inspect one member's operation family, proven purity, and canonical
+/// operand/result value-type encodings without re-walking handles.
+#[derive(Clone, Debug)]
+pub(crate) struct MemberOperationFacts<'a> {
+    key: &'a OpKey,
+    pure: bool,
+    operand_types: Vec<&'a [u8]>,
+    result_types: Vec<&'a [u8]>,
+}
+
+impl<'a> MemberOperationFacts<'a> {
+    /// Returns the operation family key of the member.
+    pub(crate) const fn key(&self) -> &'a OpKey {
+        self.key
+    }
+
+    /// Returns whether the frozen authority proved the operation pure.
+    pub(crate) const fn is_pure(&self) -> bool {
+        self.pure
+    }
+
+    /// Returns the canonical encodings of the ordered operand value types.
+    pub(crate) fn operand_type_encodings(&self) -> &[&'a [u8]] {
+        &self.operand_types
+    }
+
+    /// Returns the canonical encodings of the ordered result value types.
+    pub(crate) fn result_type_encodings(&self) -> &[&'a [u8]] {
+        &self.result_types
+    }
 }
 
 /// The derived boundary of one member set.
