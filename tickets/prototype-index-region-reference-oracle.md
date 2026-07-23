@@ -5,7 +5,7 @@ status: todo
 priority: p0
 dependencies: [prototype-canonical-index-region-slice, correct-reference-value-and-authority-contracts]
 related: []
-scopes: [implementation/reference, implementation/ir]
+scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, indexing, oracle]
