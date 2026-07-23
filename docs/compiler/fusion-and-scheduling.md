@@ -247,11 +247,14 @@ barrier requirements, accumulator type, and target capabilities. There is no
 underspecified portable “block reduce” operation in final scheduled IR.
 
 A multi-pass reduction is a `KernelSubprogram`: an initial scheduled kernel
-writes typed partials to declared scratch, a typed dependency and
-`StorageHandoff` makes those bits visible, and a later scheduled kernel produces
-the result. Scratch preserves accumulator bits unless the semantic contract
-explicitly admits a conversion. Canonical stream/list order alone is not a
-durable storage-handoff proof.
+fully defines a typed partials temporary in declared scratch, a typed `Data`
+dependency on that materialized value makes those bits visible to its reader,
+and a later scheduled kernel produces the result. `StorageHandoff` is the
+separate allocation-reuse ordering edge that would place the partials
+temporary's final users before a new writer of the same allocation; it is not
+the producer-to-consumer visibility mechanism. Scratch preserves accumulator
+bits unless the semantic contract explicitly admits a conversion. Canonical
+stream/list order alone proves neither dependency.
 
 ## Rearrangement schedules
 

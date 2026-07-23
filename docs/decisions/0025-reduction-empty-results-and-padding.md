@@ -9,6 +9,7 @@ decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.reduction-semantics-and-legality"]
+refines: ["ADR-0022"]
 ticket: "reduction-semantics-contract"
 ---
 

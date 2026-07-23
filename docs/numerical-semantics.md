@@ -5,7 +5,7 @@ kind: "contract"
 title: "Numerical semantics"
 topics: ["numerics", "semantics", "dtypes", "accuracy"]
 contract_status: "mixed"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence: ["tiler.research.numerics.affine-quantization-semantics","tiler.research.numerics.dtype-identity-admission-policy","tiler.research.numerics.dtype-resolution-precedents","tiler.research.numerics.float-to-integer-conversion-precedents","tiler.research.numerics.floating-point-extrema-precedents","tiler.research.numerics.integer-division-precedents","tiler.research.numerics.integer-overflow-precedents","tiler.research.numerics.mature-dtype-taxonomy","tiler.research.numerics.operation-conformance-matrix","tiler.research.numerics.quantization-ir-precedents","tiler.research.numerics.quantized-value-and-transform-contract","tiler.research.numerics.reduction-semantics-and-legality","tiler.research.numerics.region-accuracy-contract","tiler.research.numerics.sound-region-analyzer-spike","tiler.research.numerics.transcendental-accuracy-precedents"]
 ticket: "numerical-policy-contract"
 ---
@@ -22,14 +22,17 @@ of semantic meaning, legality, plan identity, artifact identity, and testing.
 
 This document owns Tiler's target-independent numerical meaning and legality.
 It does not claim that every recognized dtype or semantic tuple is implemented.
-The accepted decisions are [ADRs 0009–0042](decisions/README.md), with primary
-support in the [numerical research corpus](research/numerics/). Implementation
-support remains capability-gated and unmeasured unless a linked experiment says
-otherwise.
+The accepted decisions are [ADRs 0009–0042](decisions/README.md) together with
+ADRs 0055, 0059, 0060, 0062, and 0066, with primary support in the
+[numerical research corpus](research/numerics/). Implementation support remains
+capability-gated and unmeasured unless a linked experiment says otherwise.
 
 ## Three parts of the contract
 
-Numerical meaning is divided into three machine-checkable parts.
+Numerical meaning is divided into three machine-checkable parts: operation
+semantics, optimization permissions, and execution guarantees. Each part below
+is a subsection of this section; later sections elaborate individual contracts
+rather than adding a fourth part.
 
 ### Operation semantics
 
@@ -38,7 +41,7 @@ identity and empty-domain behavior, division/modulo behavior, and min/max NaN
 and signed-zero contract. These are properties of the operation, not global
 optimizer switches.
 
-## Resolved numerical typing
+#### Resolved numerical typing
 
 Every compilable semantic tensor value has a resolved value dtype. Every
 operation has a resolved numerical signature sufficient to define its
@@ -180,7 +183,7 @@ independent. One permission never implies another. A backend compiler switch
 that couples several freedoms is usable only when every freedom it enables is
 already authorized for the affected operations.
 
-## Value assumptions and validation
+#### Value assumptions and validation
 
 Every value-domain fact used for correctness has explicit provenance:
 

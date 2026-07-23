@@ -379,7 +379,7 @@ Input interface keys participate in identity; optional display names do not.
 Canonical operation attributes use this bounded host-owned data model:
 
 ```text
-CanonicalAttrValue =
+CanonicalValue =
     Bool
   | SignedInt { width: 8 | 16 | 32 | 64, bits }
   | UnsignedInt { width: 8 | 16 | 32 | 64, bits }
@@ -387,8 +387,8 @@ CanonicalAttrValue =
   | Bytes
   | Utf8String
   | Type(ResolvedValueType)
-  | Sequence([CanonicalAttrValue])
-  | Record([(AttributeFieldId, CanonicalAttrValue)])
+  | Sequence([CanonicalValue])
+  | Record([(AttributeFieldId, CanonicalValue)])
 ```
 
 `AttributeFieldId(u32)` is stable within one versioned operation attribute

@@ -6,7 +6,7 @@ title: "Model semantic programs as operation/value graphs"
 topics: ["semantics", "graph", "ir"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.ir", "tiler.contract.optimizer"]
 evidence: ["tiler.research.semantic-graph.contract-memo"]
 ticket: "semantic-graph-contract"

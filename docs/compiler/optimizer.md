@@ -6,7 +6,7 @@ title: "Optimizer model"
 topics: ["optimizer", "search", "planning"]
 contract_status: "accepted"
 implementation_status: "partial"
-evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.research.reference.normative-reference-slice", "tiler.research.cost-model.bootstrap-cost-model"]
+evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.research.reference.normative-reference-slice", "tiler.research.cost-model.bootstrap-cost-model", "tiler.research.program-planning.general-compilation-boundary"]
 ---
 
 # Optimizer model
@@ -46,6 +46,37 @@ The contract synthesizes the [region oracle](../research/region-search/exhaustiv
 [scheduled-region model](../research/scheduling/scheduled-region-model.md),
 [whole-program plan](../research/program-planning/kernel-program-buffer-plan.md),
 and [structured-kernel verifier](../research/kernel-ir/structured-kernel-ir-verifier.md).
+
+## Compilation boundary and failure classes
+
+Everything below is reached through one general, consumer-independent
+compilation boundary over a verified `SemanticProgram` and explicit request
+inputs. Under ADR 0069 there is no graph-specific entry point, `experimental`
+namespace, or serial-Sum support profile. A bounded vertical slice remains a
+private strategy, conformance fixture, and explain identity; its fixed region,
+stage, entry, and buffer cardinalities are not request or result invariants.
+
+The boundary returns either general target-neutral program products or a typed
+outcome drawn from five distinct failure classes:
+
+- **invalid request:** the semantic program, resolved numerical contracts,
+  shapes, frozen registry, or request inputs are malformed;
+- **missing compilation capability:** the program is valid, but no installed
+  access, scheduling, lowering, or provider capability covers it;
+- **infeasible plan:** every candidate is intrinsically invalid or rejected by
+  typed target feasibility;
+- **exhausted bounded search:** a declared candidate or expansion budget
+  stopped exploration before a complete plan was selected; and
+- **compiler IR verification failure:** a compiler-produced index, schedule,
+  kernel, or program value failed its authoritative verifier.
+
+These classes are not interchangeable. A valid program that lacks coverage is
+never reported as malformed, and an unsupported case fails closed with an
+explainable reason rather than being approximated to retain a fast path. A
+budget that stops one growth path while complete coverage survives is an
+explain reason on the selected plan, not this failure class. A verifier failure
+is invalid compiler output and remains a hard error rather than a costed
+rejection.
 
 ## Planning model
 

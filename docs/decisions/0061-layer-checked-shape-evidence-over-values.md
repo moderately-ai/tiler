@@ -9,6 +9,7 @@ decision_status: "accepted"
 implementation_status: "partial"
 applies_to: ["tiler.contract.ir"]
 evidence: ["tiler.research.shapes.shape-environment-contract", "tiler.research.shapes.constraint-prover-boundary", "tiler.research.shapes.stable-rust-shape-evidence", "tiler.research.shapes.public-static-shape-spelling", "tiler.research.shapes.nightly-const-shape-parameters", "tiler.research.semantic-graph.rust-construction-lifecycle"]
+refines: ["ADR-0059"]
 ticket: "prototype-shaped-value-api"
 ---
 
@@ -116,8 +117,10 @@ names and call-site details.
   resistance, foreign-graph rejection, and preservation of the single
   admission path.
 - ADR 0067 selects one pinned-nightly dependent-array `StaticShape` family for
-  exact evidence across arbitrary ranks. The retained conformance spike must
-  pass before the shaped-value implementation lands.
+  exact evidence across arbitrary ranks. Its retained conformance spike passed
+  before the shaped-value implementation landed and now runs as part of the
+  repository Rust gate, so a pin migration that breaks it fails the gate rather
+  than silently weakening exact evidence.
 
 ## Alternatives considered
 
