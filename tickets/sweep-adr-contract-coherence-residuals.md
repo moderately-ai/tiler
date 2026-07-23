@@ -1,7 +1,7 @@
 ---
 id: sweep-adr-contract-coherence-residuals
 title: Sweep ADR and contract coherence residuals
-status: in-progress
+status: done
 priority: p1
 dependencies: [reconcile-scalar-broadcast-contract]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/foundation, contracts/numerics, contract
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions]
-claimed_from: todo
-assignee: agent-sweep-adr-contract-coherence-residuals
-lease_expires_at: 1784825414
 ---
 Adversarially verified coherence residuals across accepted ADRs and contracts (2026-07-23 audit), none owned by an open ticket. Sequenced after reconcile-scalar-broadcast-contract because both edit ir.md/numerical-semantics.md.
 
