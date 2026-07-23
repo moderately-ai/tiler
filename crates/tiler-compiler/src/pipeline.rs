@@ -5,12 +5,11 @@ use crate::explain::{
     CostDisposition, CostModelKey, CostTerm, EvidenceBasis, ExplainError, ExplainEvent,
     ExplainFact, ExplainLimits, ExplainRecordId, ExplainStage, ExplainWriter, FactValue,
     FailureDescriptor, MAX_TERMINAL_CAUSES, PredicateAssessment, PredicateKey, ProviderRef,
-    Quantity, ReasonCode, RejectionClass, ResourceKey, RuleRef, SelectionOutcome, SubjectKind,
-    TerminalCause, VerifiedEvidenceRef, VerifiedExplainTrace,
+    Quantity, ReasonCode, RejectionClass, RuleRef, SelectionOutcome, SubjectKind, TerminalCause,
+    VerifiedEvidenceRef, VerifiedExplainTrace,
 };
 use crate::fusion::{
-    CandidateError, CandidateKind, FusionNumericalProof, enumerate_candidates,
-    prove_fused_numerics, verify_fused_numerics,
+    FusionError, FusionNumericalProof, prove_fused_numerics, verify_fused_numerics,
 };
 use crate::normalize::{
     NORMALIZATION_SUBJECT, NormalizationOutcome, NormalizeError, normalize_semantics,
@@ -23,6 +22,10 @@ use crate::program::{
     ArtifactConstructionPlan, KernelProgram, ProgramError, assert_kernels_match_program,
     build_artifact_plan, build_fused_kernel_program, build_kernel_program, verify_artifact_plan,
     verify_semantic_output_type,
+};
+use crate::region::{
+    REGION_FORMATION_SUBJECT, RegionError, RegionFormationOutcome, RegionFormationRecords,
+    form_region_candidates,
 };
 use crate::request::{CompilationRequest, RequestError, verify_request};
 
@@ -110,7 +113,8 @@ pub(crate) enum NoFeasiblePlanError {
 pub(crate) enum CompilerOutputError {
     Physical(PhysicalError),
     Program(ProgramError),
-    Candidate(CandidateError),
+    Region(RegionError),
+    Fusion(FusionError),
     Explain(ExplainError),
     Normalization(NormalizeError),
 }
@@ -129,9 +133,8 @@ impl fmt::Display for CompileError {
             Self::InvalidCompilerOutput(CompilerOutputError::Program(error)) => {
                 error.fmt(formatter)
             }
-            Self::InvalidCompilerOutput(CompilerOutputError::Candidate(error)) => {
-                error.fmt(formatter)
-            }
+            Self::InvalidCompilerOutput(CompilerOutputError::Region(error)) => error.fmt(formatter),
+            Self::InvalidCompilerOutput(CompilerOutputError::Fusion(error)) => error.fmt(formatter),
             Self::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => {
                 error.fmt(formatter)
             }
@@ -153,7 +156,8 @@ impl Error for CompileError {
             Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(error))
             | Self::InvalidCompilerOutput(CompilerOutputError::Physical(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Program(error)) => Some(error),
-            Self::InvalidCompilerOutput(CompilerOutputError::Candidate(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::Region(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::Fusion(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Normalization(error)) => Some(error),
             Self::Explained { source, .. } => Some(source),
@@ -207,6 +211,18 @@ impl From<ExplainError> for CompileError {
 impl From<NormalizeError> for CompileError {
     fn from(value: NormalizeError) -> Self {
         Self::InvalidCompilerOutput(CompilerOutputError::Normalization(value))
+    }
+}
+
+impl From<RegionError> for CompileError {
+    fn from(value: RegionError) -> Self {
+        Self::InvalidCompilerOutput(CompilerOutputError::Region(value))
+    }
+}
+
+impl From<FusionError> for CompileError {
+    fn from(value: FusionError) -> Self {
+        Self::InvalidCompilerOutput(CompilerOutputError::Fusion(value))
     }
 }
 
@@ -517,13 +533,34 @@ fn compile_target_with_explain(
         NORMALIZATION_SUBJECT,
         record_cause(request_record),
     )?;
+    // `EnumerateRegionCandidates` runs immediately after normalization and only
+    // proposes regions. Cover selection, implementation choice, index lowering,
+    // physical planning, and costing all remain later authorities.
+    let formation =
+        form_region_candidates(semantic, verified.budgets(), verified.numerical_contract())
+            .map_err(|source| {
+                failure_at_source(
+                    source.into(),
+                    ExplainStage::RegionFormation,
+                    record_cause(normalization_record),
+                )
+            })?;
+    let region_records = explain_step(
+        formation
+            .record(explain, normalization_record)
+            .map_err(CompileError::from),
+        ExplainStage::RegionFormation,
+        SubjectKind::Region,
+        REGION_FORMATION_SUBJECT,
+        record_cause(normalization_record),
+    )?;
+    let region_root = region_records.summary.or(normalization_record);
     let mut alternatives = Vec::new();
     let mut alternative_causes = Vec::new();
     let mut target_rejections = TargetRejections::default();
-    match build_baseline_alternative(semantic, verified, record_cause(normalization_record)) {
+    match build_baseline_alternative(semantic, verified, record_cause(region_root)) {
         Ok(baseline) => {
-            let cause =
-                record_baseline_explain(explain, verified, &baseline, normalization_record)?;
+            let cause = record_baseline_explain(explain, verified, &baseline, region_root)?;
             alternative_causes.push((baseline.stable_id, cause));
             alternatives.push(baseline);
         }
@@ -535,7 +572,7 @@ fn compile_target_with_explain(
                     explain,
                     &error,
                     "alternative:materialized-serial-sum.v1",
-                    normalization_record,
+                    region_root,
                 )?;
                 target_rejections.push(TargetRejection {
                     kind: ProgramAlternativeKind::Materialized,
@@ -554,9 +591,10 @@ fn compile_target_with_explain(
     consider_fused_alternative(
         semantic,
         verified,
+        &formation,
         &mut alternatives,
         explain,
-        normalization_record,
+        region_records,
         &mut alternative_causes,
         &mut target_rejections,
     )?;
@@ -572,7 +610,7 @@ fn compile_target_with_explain(
                 "portfolio-empty-without-target-rejection",
                 SubjectKind::KernelProgram,
                 "portfolio",
-                record_cause(normalization_record),
+                record_cause(region_root),
             ));
         }
         return Err(target_rejections
@@ -586,7 +624,7 @@ fn compile_target_with_explain(
             "portfolio-selection",
             SubjectKind::KernelProgram,
             "portfolio",
-            record_cause(normalization_record),
+            record_cause(region_root),
         )
     })?;
     verify_portfolio(
@@ -594,7 +632,7 @@ fn compile_target_with_explain(
         verified,
         &alternatives,
         selected_alternative_id,
-        record_cause(normalization_record),
+        record_cause(region_root),
     )?;
     record_cost_and_selection(
         &alternatives,
@@ -625,19 +663,23 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
             SubjectKind::Region,
             format!("failed-region:{}", region.0),
         ),
-        CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(
-            CandidateError::Budget { limit, actual },
-        )) => (
-            format!("candidate-budget-{limit}-{actual}"),
-            SubjectKind::Candidate,
-            "candidate-enumeration".to_owned(),
+        CompileError::InvalidCompilerOutput(
+            CompilerOutputError::Region(error)
+            | CompilerOutputError::Fusion(FusionError::Region(error)),
+        ) => (
+            format!("region-{}-{}", error.class(), error.reason()),
+            SubjectKind::Region,
+            match error {
+                RegionError::Structure { .. } => REGION_FORMATION_SUBJECT.to_owned(),
+                RegionError::Invalid { region, .. } => region.clone(),
+            },
         ),
-        CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(
-            CandidateError::Invalid { candidate, rule },
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Fusion(
+            error @ FusionError::Invalid { region, .. },
         )) => (
-            format!("candidate-{rule}"),
+            format!("fusion-{}", error.reason()),
             SubjectKind::Candidate,
-            candidate.clone(),
+            region.clone(),
         ),
         CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
             PhysicalError::Intrinsic { rule, region },
@@ -1033,103 +1075,52 @@ fn record_baseline_refinement(
 
 #[allow(
     clippy::too_many_lines,
+    clippy::too_many_arguments,
     reason = "keeps one fused-alternative transaction and its explain causes together"
 )]
 fn consider_fused_alternative(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
+    formation: &RegionFormationOutcome,
     alternatives: &mut Vec<ProgramAlternative>,
     explain: &mut ExplainWriter,
-    root: Option<ExplainRecordId>,
+    records: RegionFormationRecords,
     alternative_causes: &mut Vec<(&'static str, Option<ExplainRecordId>)>,
     target_rejections: &mut TargetRejections,
 ) -> Result<(), TargetFailure> {
-    match enumerate_candidates(verified) {
-        Err(CandidateError::Budget { limit, actual }) => {
-            (|| -> Result<_, CompileError> {
-                let subject = explain.subject(SubjectKind::Candidate, "bounded-recognizer")?;
-                explain.push_detail(
-                    RuleRef::builtin("fusion.candidates")?,
-                    vec![subject],
-                    ExplainEvent::BudgetStop {
-                        stage: ExplainStage::CandidateEnumeration,
-                        resource: ResourceKey::new("fusion-candidates")?,
-                        limit: u64::from(limit),
-                        actual: u64::try_from(actual).unwrap_or(u64::MAX),
-                    },
-                    optional_cause(root),
-                )?;
-                Ok(())
-            })()
-            .map_err(|source| {
-                failure_at_source(
-                    source,
-                    ExplainStage::CandidateEnumeration,
-                    record_cause(root),
-                )
-            })?;
-        }
-        Err(error @ CandidateError::Invalid { .. }) => {
+    let root = records.summary;
+    match formation.whole_program_candidate() {
+        // A whole-graph set is trivially convex, so for a request the boundary
+        // already admitted the only reason it can be absent is a budget that
+        // stopped that growth path. Its typed stop is already recorded, and the
+        // unfused baseline survives.
+        None if !formation.budget_stops().is_empty() => {}
+        None => {
             return Err(failure_at_source(
-                CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error)),
-                ExplainStage::CandidateEnumeration,
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Region(
+                    RegionError::Structure {
+                        rule: "missing-whole-program-region",
+                    },
+                )),
+                ExplainStage::RegionFormation,
                 record_cause(root),
             ));
         }
-        Ok(candidates) => {
-            let mut fused_candidate_record = None;
-            for candidate in &candidates {
-                let record = (|| -> Result<_, CompileError> {
-                    let subject = explain.subject(SubjectKind::Candidate, &candidate.stable_id)?;
-                    Ok(explain.push_detail(
-                        RuleRef::builtin("fusion.candidate.legal")?,
-                        vec![subject],
-                        check(
-                            ExplainStage::CandidateEnumeration,
-                            "candidate.legal",
-                            EvidenceBasis::CheckedInvariant,
-                        )?,
-                        optional_cause(root),
-                    )?)
-                })()
-                .map_err(|source| {
-                    failure_at_source(
-                        source,
-                        ExplainStage::CandidateEnumeration,
-                        record_cause(root),
-                    )
-                })?;
-                if candidate.kind == CandidateKind::FusedSerialSum {
-                    fused_candidate_record = record;
-                }
-            }
-            let Some(fused_candidate) = candidates
-                .iter()
-                .find(|candidate| candidate.kind == CandidateKind::FusedSerialSum)
-            else {
-                return Err(failure_at_source(
-                    CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(
-                        CandidateError::Invalid {
-                            candidate: "bounded-recognizer".to_owned(),
-                            rule: "missing-fused-candidate",
-                        },
-                    )),
-                    ExplainStage::CandidateEnumeration,
-                    record_cause(root),
-                ));
-            };
+        Some(fused_candidate) => {
+            let fused_candidate_record = records.whole_program;
             if let Some(provider) = verified.capabilities().fused_serial_sum {
-                let proof = prove_fused_numerics(verified, fused_candidate).map_err(|error| {
-                    failure_at_source(
-                        CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error)),
-                        ExplainStage::NumericalLegality,
-                        record_cause(fused_candidate_record.or(root)),
-                    )
-                })?;
+                let proof = prove_fused_numerics(formation.graph(), verified, fused_candidate)
+                    .map_err(|error| {
+                        failure_at_source(
+                            error.into(),
+                            ExplainStage::NumericalLegality,
+                            record_cause(fused_candidate_record.or(root)),
+                        )
+                    })?;
                 let proof_record = (|| -> Result<_, CompileError> {
                     let provider_ref = ProviderRef::lowering(provider)?;
                     let subject =
-                        explain.subject(SubjectKind::Candidate, &fused_candidate.stable_id)?;
+                        explain.subject(SubjectKind::Candidate, fused_candidate.stable_id())?;
                     Ok(explain.push_detail(
                         RuleRef::provided(
                             "fusion.strict-f32-equivalence",
@@ -1827,11 +1818,12 @@ fn verify_alternative(
     .map_err(|error| {
         failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.clone())
     })?;
-    verify_equivalence(request, alternative)
+    verify_equivalence(semantic, request, alternative)
         .map_err(|source| failure_at_source(source, ExplainStage::NumericalLegality, cause))
 }
 
 fn verify_equivalence(
+    semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
     alternative: &ProgramAlternative,
 ) -> Result<(), CompileError> {
@@ -1839,28 +1831,22 @@ fn verify_equivalence(
         EquivalenceEvidence::MaterializedReference
             if alternative.kind == ProgramAlternativeKind::Materialized => {}
         EquivalenceEvidence::Fused(proof) if alternative.kind == ProgramAlternativeKind::Fused => {
-            let candidates = enumerate_candidates(request).map_err(|error| {
-                CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error))
+            let formation =
+                form_region_candidates(semantic, request.budgets(), request.numerical_contract())?;
+            let candidate = formation.whole_program_candidate().ok_or({
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                    ProgramError::Structure {
+                        rule: "portfolio-fused-region",
+                    },
+                ))
             })?;
-            let candidate = candidates
-                .iter()
-                .find(|candidate| candidate.kind == CandidateKind::FusedSerialSum)
-                .ok_or({
-                    CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
-                        ProgramError::Structure {
-                            rule: "portfolio-fused-candidate",
-                        },
-                    ))
-                })?;
-            verify_fused_numerics(request, candidate, proof).map_err(|error| {
-                CompileError::InvalidCompilerOutput(CompilerOutputError::Candidate(error))
-            })?;
+            verify_fused_numerics(formation.graph(), request, candidate, proof)?;
             if alternative.scheduled_regions.len() != 1
                 || alternative.scheduled_regions[0]
                     .region()
                     .index
                     .semantic_members
-                    != candidate.members.as_slice()
+                    != candidate.members()
             {
                 return Err(ProgramError::Structure {
                     rule: "portfolio-candidate-schedule-binding",
@@ -2211,13 +2197,14 @@ mod tests {
                 ("compile.boundary.materialized", 1),
                 ("compile.region.verified", 2),
                 ("compile.request.general-boundary", 1),
-                ("fusion.candidate.legal", 7),
                 ("fusion.strict-f32-equivalence", 1),
                 ("kernel.fused-schedule-refinement", 1),
                 ("kernel.schedule-refinement", 1),
                 ("normalize.semantics.v1", 1),
                 ("program.fused-serial-sum", 1),
                 ("program.two-stage-materialized", 1),
+                ("region.candidate.v1", 17),
+                ("region.formation.v1", 1),
                 ("schedule.coverage-and-ownership", 1),
                 ("schedule.fused-serial-sum", 1),
                 ("target.barriers", 3),
@@ -2234,6 +2221,8 @@ mod tests {
         );
         let expected_counts = [
             ("normalize.semantics.v1", "rewrite-count", 0),
+            ("region.formation.v1", "candidate-count", 17),
+            ("region.formation.v1", "operation-count", 5),
             ("compile.boundary.materialized", "dependency-count", 1),
             ("schedule.coverage-and-ownership", "schedule-count", 2),
             ("kernel.schedule-refinement", "kernel-count", 2),
@@ -2467,7 +2456,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_provider_and_fusion_budget_retain_the_verified_baseline() {
+    fn missing_provider_and_region_budget_retain_the_verified_baseline() {
         let semantic = semantic(false);
         let mut missing_provider = CompilationRequest::governed(&semantic);
         missing_provider.capabilities.fused_serial_sum = None;
@@ -2485,14 +2474,32 @@ mod tests {
                 && record.event().disposition() == ExplainDisposition::DeferredUnsupported
         }));
 
+        // A growth budget stops the fused region without removing the complete
+        // singleton coverage the unfused baseline depends on.
         let mut bounded = CompilationRequest::governed(&semantic);
-        bounded.budgets.fusion_candidates = 6;
+        bounded.budgets.region_candidates_per_seed = 0;
         let product = compile(bounded).unwrap();
         assert_eq!(product.targets[0].portfolio.alternatives.len(), 1);
+        assert_eq!(
+            product.targets[0]
+                .portfolio
+                .selection
+                .selected_alternative_id,
+            "alternative:materialized-serial-sum.v1"
+        );
         assert!(product.targets[0].explain.records().iter().any(|record| {
-            record.rule().key().as_str() == "fusion.candidates"
+            record.rule().key().as_str() == "region.formation.v1"
                 && record.event().disposition() == ExplainDisposition::BudgetStopped
         }));
+        assert_eq!(
+            product.targets[0]
+                .explain
+                .records()
+                .iter()
+                .filter(|record| record.rule().key().as_str() == "region.candidate.v1")
+                .count(),
+            5
+        );
     }
 
     #[test]

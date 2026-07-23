@@ -1,67 +1,22 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+//! Numerical legality evidence for one proposed fusion region.
+//!
+//! Region formation proposes candidates; this module answers a different
+//! question about one of them: whether implementing that region as a single
+//! strict-`f32` kernel preserves the request's numerical contract exactly.
+//!
+//! The evidence is bound to the exact region occurrence, the exact region
+//! content, the canonical request subject, and the exact materialized reference
+//! provider. A candidate label or a copied stable string is not evidence.
+
 use std::error::Error;
 use std::fmt;
 
+use crate::region::{RegionCandidate, RegionError, RegionGraph, verify_candidate};
 use crate::request::{
     LoweringProviderIdentity, NumericalPermission, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum SemanticOccurrence {
-    ScaleConstant,
-    Multiply,
-    BiasConstant,
-    Add,
-    StrictSum,
-}
-
-impl SemanticOccurrence {
-    pub(crate) const ALL: [Self; 5] = [
-        Self::ScaleConstant,
-        Self::Multiply,
-        Self::BiasConstant,
-        Self::Add,
-        Self::StrictSum,
-    ];
-
-    const fn stable_name(self) -> &'static str {
-        match self {
-            Self::ScaleConstant => "scale-constant",
-            Self::Multiply => "multiply",
-            Self::BiasConstant => "bias-constant",
-            Self::Add => "add",
-            Self::StrictSum => "strict-sum",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum BoundaryValue {
-    InputTensor,
-    ScaleConstant,
-    Product,
-    BiasConstant,
-    PointwiseResult,
-    OutputTensor,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CandidateKind {
-    Singleton,
-    Pointwise,
-    FusedSerialSum,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RegionCandidate {
-    pub(crate) stable_id: String,
-    pub(crate) kind: CandidateKind,
-    pub(crate) members: Vec<SemanticOccurrence>,
-    pub(crate) boundary_inputs: BTreeSet<BoundaryValue>,
-    pub(crate) boundary_outputs: BTreeSet<BoundaryValue>,
-    request_subject: VerifiedRequestSubject,
-}
-
+/// Machine-checkable evidence that one whole-program region fuses exactly.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FusionNumericalProof {
     candidate: RegionCandidate,
@@ -76,47 +31,17 @@ pub(crate) struct FusionNumericalProof {
 
 impl FusionNumericalProof {
     pub(crate) fn candidate_stable_id(&self) -> &str {
-        &self.candidate.stable_id
+        self.candidate.stable_id()
     }
 
     pub(crate) fn canonical_explain_evidence_bytes(&self) -> Vec<u8> {
         let mut bytes = self.request_subject.canonical_explain_subject_bytes();
-        bytes.extend_from_slice(self.candidate.stable_id.as_bytes());
-        bytes.extend_from_slice(
-            &u64::try_from(self.candidate.members.len())
-                .unwrap_or(u64::MAX)
-                .to_be_bytes(),
+        encode_evidence_bytes(&mut bytes, self.candidate.occurrence().as_bytes());
+        encode_evidence_bytes(&mut bytes, self.candidate.content().as_bytes());
+        encode_evidence_bytes(
+            &mut bytes,
+            self.materialized_reference_provider.key.as_bytes(),
         );
-        for member in &self.candidate.members {
-            bytes.push(match member {
-                SemanticOccurrence::ScaleConstant => 1,
-                SemanticOccurrence::Multiply => 2,
-                SemanticOccurrence::BiasConstant => 3,
-                SemanticOccurrence::Add => 4,
-                SemanticOccurrence::StrictSum => 5,
-            });
-        }
-        for boundaries in [
-            &self.candidate.boundary_inputs,
-            &self.candidate.boundary_outputs,
-        ] {
-            bytes.extend_from_slice(
-                &u64::try_from(boundaries.len())
-                    .unwrap_or(u64::MAX)
-                    .to_be_bytes(),
-            );
-            for boundary in boundaries {
-                bytes.push(match boundary {
-                    BoundaryValue::InputTensor => 1,
-                    BoundaryValue::ScaleConstant => 2,
-                    BoundaryValue::Product => 3,
-                    BoundaryValue::BiasConstant => 4,
-                    BoundaryValue::PointwiseResult => 5,
-                    BoundaryValue::OutputTensor => 6,
-                });
-            }
-        }
-        bytes.extend_from_slice(self.materialized_reference_provider.key.as_bytes());
         bytes.extend_from_slice(&self.materialized_reference_provider.revision.to_be_bytes());
         bytes.push(match self.atomic_operations {
             AtomicOperationProof::MultiplyThenAdd => 1,
@@ -141,6 +66,11 @@ impl FusionNumericalProof {
         }
         bytes
     }
+}
+
+fn encode_evidence_bytes(output: &mut Vec<u8>, value: &[u8]) {
+    output.extend_from_slice(&u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    output.extend_from_slice(value);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,78 +100,77 @@ pub(crate) struct ForbiddenTransformProof {
     pub(crate) permutation: NumericalPermission,
 }
 
+/// Typed failure of fused numerical-legality proof construction.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum CandidateError {
-    Budget {
-        limit: u32,
-        actual: usize,
-    },
-    Invalid {
-        candidate: String,
-        rule: &'static str,
-    },
+pub(crate) enum FusionError {
+    /// The candidate failed recomputation from its own exact contents.
+    Region(RegionError),
+    /// The candidate is not the subject this evidence may describe.
+    Invalid { region: String, rule: &'static str },
 }
 
-impl fmt::Display for CandidateError {
+impl FusionError {
+    pub(crate) const fn reason(&self) -> &'static str {
+        match self {
+            Self::Region(error) => error.reason(),
+            Self::Invalid { rule, .. } => rule,
+        }
+    }
+}
+
+impl fmt::Display for FusionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Budget { limit, actual } => write!(
-                formatter,
-                "fusion.candidates.budget: {actual} exceeds deterministic limit {limit}"
-            ),
-            Self::Invalid { candidate, rule } => {
-                write!(formatter, "fusion.candidate.{rule}: {candidate} rejected")
+            Self::Region(error) => error.fmt(formatter),
+            Self::Invalid { region, rule } => {
+                write!(formatter, "fusion.numerics.{rule}: {region} rejected")
             }
         }
     }
 }
 
-impl Error for CandidateError {}
-
-pub(crate) fn enumerate_candidates(
-    request: &VerifiedTargetRequest,
-) -> Result<Vec<RegionCandidate>, CandidateError> {
-    let mut candidates: Vec<_> = SemanticOccurrence::ALL
-        .into_iter()
-        .map(|occurrence| candidate(request, CandidateKind::Singleton, [occurrence]))
-        .collect();
-    candidates.push(candidate(
-        request,
-        CandidateKind::Pointwise,
-        [
-            SemanticOccurrence::ScaleConstant,
-            SemanticOccurrence::Multiply,
-            SemanticOccurrence::BiasConstant,
-            SemanticOccurrence::Add,
-        ],
-    ));
-    candidates.push(candidate(
-        request,
-        CandidateKind::FusedSerialSum,
-        SemanticOccurrence::ALL,
-    ));
-    if candidates.len() > usize::try_from(request.budgets().fusion_candidates).unwrap_or(usize::MAX)
-    {
-        return Err(CandidateError::Budget {
-            limit: request.budgets().fusion_candidates,
-            actual: candidates.len(),
-        });
+impl Error for FusionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Region(error) => Some(error),
+            Self::Invalid { .. } => None,
+        }
     }
-    for candidate in &candidates {
-        verify_candidate(candidate)?;
-    }
-    Ok(candidates)
 }
 
+impl From<RegionError> for FusionError {
+    fn from(value: RegionError) -> Self {
+        Self::Region(value)
+    }
+}
+
+/// Proves that one whole-program region preserves strict `f32` semantics.
+///
+/// The candidate is rederived from the graph before anything else is checked,
+/// and it is admitted only when it covers every operation of the verified
+/// program, reads exactly one boundary value, and exports exactly one named
+/// program result with no external consumer. The request boundary already pins
+/// the program to that exact recognized structure, so this identifies one
+/// region without naming any operation role.
 pub(crate) fn prove_fused_numerics(
+    graph: &RegionGraph,
     request: &VerifiedTargetRequest,
     candidate: &RegionCandidate,
-) -> Result<FusionNumericalProof, CandidateError> {
-    verify_candidate(candidate)?;
-    if candidate.kind != CandidateKind::FusedSerialSum
-        || candidate.request_subject != request.subject()
-    {
-        return invalid(candidate, "numerical-proof-kind");
+) -> Result<FusionNumericalProof, FusionError> {
+    verify_candidate(
+        graph,
+        request.budgets(),
+        request.numerical_contract(),
+        candidate,
+    )?;
+    if !candidate.covers_whole_program() || candidate.boundary_inputs().len() != 1 {
+        return invalid(candidate, "region-coverage");
+    }
+    let [retained] = candidate.retained_outputs() else {
+        return invalid(candidate, "region-retained-outputs");
+    };
+    if !retained.named_result || retained.external_consumers {
+        return invalid(candidate, "region-boundary-outputs");
     }
     let proof = FusionNumericalProof {
         candidate: candidate.clone(),
@@ -268,212 +197,23 @@ pub(crate) fn prove_fused_numerics(
     Ok(proof)
 }
 
+/// Rederives the proof and requires it to equal the retained evidence exactly.
 pub(crate) fn verify_fused_numerics(
+    graph: &RegionGraph,
     request: &VerifiedTargetRequest,
     candidate: &RegionCandidate,
     proof: &FusionNumericalProof,
-) -> Result<(), CandidateError> {
-    let expected = prove_fused_numerics(request, candidate)?;
+) -> Result<(), FusionError> {
+    let expected = prove_fused_numerics(graph, request, candidate)?;
     if proof != &expected {
         return invalid(candidate, "numerical-proof-subject");
     }
     Ok(())
 }
 
-fn candidate(
-    request: &VerifiedTargetRequest,
-    kind: CandidateKind,
-    members: impl IntoIterator<Item = SemanticOccurrence>,
-) -> RegionCandidate {
-    let members: Vec<_> = members.into_iter().collect();
-    let stable_id = stable_candidate_id(&members);
-    let membership = members.iter().copied().collect();
-    let (boundary_inputs, boundary_outputs) = boundaries(&membership);
-    RegionCandidate {
-        stable_id,
-        kind,
-        members,
-        boundary_inputs,
-        boundary_outputs,
-        request_subject: request.subject(),
-    }
-}
-
-fn dependencies() -> BTreeMap<SemanticOccurrence, BTreeSet<SemanticOccurrence>> {
-    BTreeMap::from([
-        (SemanticOccurrence::ScaleConstant, BTreeSet::new()),
-        (
-            SemanticOccurrence::Multiply,
-            BTreeSet::from([SemanticOccurrence::ScaleConstant]),
-        ),
-        (SemanticOccurrence::BiasConstant, BTreeSet::new()),
-        (
-            SemanticOccurrence::Add,
-            BTreeSet::from([
-                SemanticOccurrence::Multiply,
-                SemanticOccurrence::BiasConstant,
-            ]),
-        ),
-        (
-            SemanticOccurrence::StrictSum,
-            BTreeSet::from([SemanticOccurrence::Add]),
-        ),
-    ])
-}
-
-fn boundaries(
-    members: &BTreeSet<SemanticOccurrence>,
-) -> (BTreeSet<BoundaryValue>, BTreeSet<BoundaryValue>) {
-    let mut inputs = BTreeSet::new();
-    let mut outputs = BTreeSet::new();
-    if members.contains(&SemanticOccurrence::ScaleConstant)
-        && !members.contains(&SemanticOccurrence::Multiply)
-    {
-        outputs.insert(BoundaryValue::ScaleConstant);
-    }
-    if members.contains(&SemanticOccurrence::Multiply) {
-        inputs.insert(BoundaryValue::InputTensor);
-        if !members.contains(&SemanticOccurrence::ScaleConstant) {
-            inputs.insert(BoundaryValue::ScaleConstant);
-        }
-        if !members.contains(&SemanticOccurrence::Add) {
-            outputs.insert(BoundaryValue::Product);
-        }
-    }
-    if members.contains(&SemanticOccurrence::BiasConstant)
-        && !members.contains(&SemanticOccurrence::Add)
-    {
-        outputs.insert(BoundaryValue::BiasConstant);
-    }
-    if members.contains(&SemanticOccurrence::Add) {
-        if !members.contains(&SemanticOccurrence::Multiply) {
-            inputs.insert(BoundaryValue::Product);
-        }
-        if !members.contains(&SemanticOccurrence::BiasConstant) {
-            inputs.insert(BoundaryValue::BiasConstant);
-        }
-        if !members.contains(&SemanticOccurrence::StrictSum) {
-            outputs.insert(BoundaryValue::PointwiseResult);
-        }
-    }
-    if members.contains(&SemanticOccurrence::StrictSum) {
-        if !members.contains(&SemanticOccurrence::Add) {
-            inputs.insert(BoundaryValue::PointwiseResult);
-        }
-        outputs.insert(BoundaryValue::OutputTensor);
-    }
-    (inputs, outputs)
-}
-
-fn verify_candidate(candidate: &RegionCandidate) -> Result<(), CandidateError> {
-    let membership: BTreeSet<_> = candidate.members.iter().copied().collect();
-    if candidate.members.is_empty()
-        || membership.len() != candidate.members.len()
-        || candidate
-            .members
-            .iter()
-            .any(|member| !SemanticOccurrence::ALL.contains(member))
-    {
-        return invalid(candidate, "membership");
-    }
-    let expected_kind = if candidate.members.len() == 1 {
-        CandidateKind::Singleton
-    } else if candidate.members
-        == [
-            SemanticOccurrence::ScaleConstant,
-            SemanticOccurrence::Multiply,
-            SemanticOccurrence::BiasConstant,
-            SemanticOccurrence::Add,
-        ]
-    {
-        CandidateKind::Pointwise
-    } else if candidate.members == SemanticOccurrence::ALL {
-        CandidateKind::FusedSerialSum
-    } else {
-        return invalid(candidate, "bounded-recognizer-membership");
-    };
-    if candidate.kind != expected_kind
-        || candidate.stable_id != stable_candidate_id(&candidate.members)
-    {
-        return invalid(candidate, "identity");
-    }
-    if boundaries(&membership)
-        != (
-            candidate.boundary_inputs.clone(),
-            candidate.boundary_outputs.clone(),
-        )
-    {
-        return invalid(candidate, "boundaries");
-    }
-    if !is_connected(&membership) {
-        return invalid(candidate, "connectivity");
-    }
-    if !is_convex(&membership) {
-        return invalid(candidate, "convexity");
-    }
-    Ok(())
-}
-
-fn stable_candidate_id(members: &[SemanticOccurrence]) -> String {
-    format!(
-        "candidate:{}",
-        members
-            .iter()
-            .copied()
-            .map(SemanticOccurrence::stable_name)
-            .collect::<Vec<_>>()
-            .join("+")
-    )
-}
-
-fn is_connected(members: &BTreeSet<SemanticOccurrence>) -> bool {
-    let graph = dependencies();
-    let Some(start) = members.first().copied() else {
-        return false;
-    };
-    let mut queue = VecDeque::from([start]);
-    let mut reached = BTreeSet::new();
-    while let Some(node) = queue.pop_front() {
-        if !reached.insert(node) {
-            continue;
-        }
-        let neighbors = graph.get(&node).into_iter().flatten().copied().chain(
-            graph
-                .iter()
-                .filter_map(|(consumer, inputs)| inputs.contains(&node).then_some(*consumer)),
-        );
-        queue.extend(neighbors.filter(|neighbor| members.contains(neighbor)));
-    }
-    reached == *members
-}
-
-fn is_convex(members: &BTreeSet<SemanticOccurrence>) -> bool {
-    let graph = dependencies();
-    for start in members {
-        let mut queue: VecDeque<_> = graph
-            .iter()
-            .filter_map(|(consumer, inputs)| inputs.contains(start).then_some((*consumer, false)))
-            .collect();
-        let mut seen = BTreeSet::new();
-        while let Some((node, left_region)) = queue.pop_front() {
-            if !seen.insert((node, left_region)) {
-                continue;
-            }
-            let now_left = left_region || !members.contains(&node);
-            if now_left && members.contains(&node) {
-                return false;
-            }
-            queue.extend(graph.iter().filter_map(|(consumer, inputs)| {
-                inputs.contains(&node).then_some((*consumer, now_left))
-            }));
-        }
-    }
-    true
-}
-
-fn invalid<T>(candidate: &RegionCandidate, rule: &'static str) -> Result<T, CandidateError> {
-    Err(CandidateError::Invalid {
-        candidate: candidate.stable_id.clone(),
+fn invalid<T>(candidate: &RegionCandidate, rule: &'static str) -> Result<T, FusionError> {
+    Err(FusionError::Invalid {
+        region: candidate.stable_id().to_owned(),
         rule,
     })
 }
@@ -481,14 +221,15 @@ fn invalid<T>(candidate: &RegionCandidate, rule: &'static str) -> Result<T, Cand
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::region::form_region_candidates;
     use crate::request::{CompilationRequest, verify_request};
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
-        StrictSerialF32Sum,
+        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
+        SemanticProgramBuilder, StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
 
-    fn request() -> VerifiedTargetRequest {
+    fn program() -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
@@ -501,129 +242,125 @@ mod tests {
         builder
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
-        let semantic = builder.build().unwrap();
-        let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+        builder.build().unwrap()
+    }
+
+    fn target_request(program: &SemanticProgram) -> VerifiedTargetRequest {
+        let verified = verify_request(CompilationRequest::governed(program)).unwrap();
         verified.for_target(verified.target_profiles()[0]).unwrap()
     }
 
     #[test]
-    fn bounded_recognizer_is_stable_and_boundary_checked() {
-        let request = request();
-        let candidates = enumerate_candidates(&request).unwrap();
-        assert_eq!(candidates.len(), 7);
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.stable_id.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "candidate:scale-constant",
-                "candidate:multiply",
-                "candidate:bias-constant",
-                "candidate:add",
-                "candidate:strict-sum",
-                "candidate:scale-constant+multiply+bias-constant+add",
-                "candidate:scale-constant+multiply+bias-constant+add+strict-sum",
-            ]
-        );
-        let fused = candidates.last().unwrap();
-        assert_eq!(
-            fused.boundary_inputs,
-            BTreeSet::from([BoundaryValue::InputTensor])
-        );
-        assert_eq!(
-            fused.boundary_outputs,
-            BTreeSet::from([BoundaryValue::OutputTensor])
-        );
-        prove_fused_numerics(&request, fused).unwrap();
-        assert_eq!(
-            candidates[1].boundary_inputs,
-            BTreeSet::from([BoundaryValue::InputTensor, BoundaryValue::ScaleConstant,])
-        );
-        assert_eq!(
-            candidates[1].boundary_outputs,
-            BTreeSet::from([BoundaryValue::Product])
-        );
+    fn only_the_whole_program_region_carries_fused_numerical_evidence() {
+        let program = program();
+        let request = target_request(&program);
+        let outcome =
+            form_region_candidates(&program, request.budgets(), request.numerical_contract())
+                .unwrap();
+        let whole = outcome.whole_program_candidate().unwrap();
+        let proof = prove_fused_numerics(outcome.graph(), &request, whole).unwrap();
+        verify_fused_numerics(outcome.graph(), &request, whole, &proof).unwrap();
+        assert_eq!(proof.candidate_stable_id(), whole.stable_id());
+
+        for candidate in outcome.candidates() {
+            if candidate.covers_whole_program() {
+                continue;
+            }
+            assert!(matches!(
+                prove_fused_numerics(outcome.graph(), &request, candidate),
+                Err(FusionError::Invalid { .. })
+            ));
+        }
     }
 
     #[test]
-    fn disconnected_and_nonconvex_candidates_fail_closed() {
-        let request = request();
-        let disconnected = candidate(
-            &request,
-            CandidateKind::Pointwise,
-            [
-                SemanticOccurrence::ScaleConstant,
-                SemanticOccurrence::BiasConstant,
-            ],
-        );
-        assert!(matches!(
-            verify_candidate(&disconnected),
-            Err(CandidateError::Invalid {
-                rule: "bounded-recognizer-membership",
-                ..
-            })
-        ));
+    fn forged_candidates_and_stale_proofs_fail_closed() {
+        let program = program();
+        let request = target_request(&program);
+        let outcome =
+            form_region_candidates(&program, request.budgets(), request.numerical_contract())
+                .unwrap();
+        let whole = outcome.whole_program_candidate().unwrap();
+        let proof = prove_fused_numerics(outcome.graph(), &request, whole).unwrap();
 
-        let nonconvex = candidate(
-            &request,
-            CandidateKind::FusedSerialSum,
-            [SemanticOccurrence::Multiply, SemanticOccurrence::StrictSum],
-        );
+        let mut forged = proof.clone();
+        forged.materialized_reference_provider.revision += 1;
         assert!(matches!(
-            verify_candidate(&nonconvex),
-            Err(CandidateError::Invalid {
-                rule: "bounded-recognizer-membership",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn candidate_and_numerical_evidence_are_bound_to_the_exact_subject() {
-        let request = request();
-        let candidates = enumerate_candidates(&request).unwrap();
-        let fused = candidates.last().unwrap();
-
-        let mut stale_id = fused.clone();
-        stale_id.stable_id.push_str("-forged");
-        assert!(matches!(
-            verify_candidate(&stale_id),
-            Err(CandidateError::Invalid {
-                rule: "identity",
-                ..
-            })
-        ));
-
-        let mut wrong_kind = fused.clone();
-        wrong_kind.kind = CandidateKind::Pointwise;
-        assert!(matches!(
-            verify_candidate(&wrong_kind),
-            Err(CandidateError::Invalid {
-                rule: "identity",
-                ..
-            })
-        ));
-
-        let mut reordered = fused.clone();
-        reordered.members.swap(0, 1);
-        assert!(matches!(
-            verify_candidate(&reordered),
-            Err(CandidateError::Invalid {
-                rule: "bounded-recognizer-membership",
-                ..
-            })
-        ));
-
-        let proof = prove_fused_numerics(&request, fused).unwrap();
-        let mut wrong_proof = proof.clone();
-        wrong_proof.candidate.stable_id.push_str("-forged");
-        assert!(matches!(
-            verify_fused_numerics(&request, fused, &wrong_proof),
-            Err(CandidateError::Invalid {
+            verify_fused_numerics(outcome.graph(), &request, whole, &forged),
+            Err(FusionError::Invalid {
                 rule: "numerical-proof-subject",
                 ..
             })
         ));
+
+        // Evidence bytes bind the occurrence, the content, and the request.
+        let singleton = &outcome.candidates()[0];
+        assert_ne!(
+            proof.canonical_explain_evidence_bytes(),
+            FusionNumericalProof {
+                candidate: singleton.clone(),
+                ..proof.clone()
+            }
+            .canonical_explain_evidence_bytes()
+        );
+    }
+
+    #[test]
+    fn a_region_from_another_graph_is_rejected_before_any_numerical_claim() {
+        let program = program();
+        let request = target_request(&program);
+        let outcome =
+            form_region_candidates(&program, request.budgets(), request.numerical_contract())
+                .unwrap();
+        let whole = outcome.whole_program_candidate().unwrap().clone();
+
+        // A structurally different program yields a different graph, so the
+        // stored occurrence identity no longer rederives.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4, 5]))
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 3.0_f32.to_bits()).unwrap();
+        let bias = F32Constant::apply(&mut builder, 4.0_f32.to_bits()).unwrap();
+        let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let mapped = F32Add::apply(&mut builder, product, bias).unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        let other = builder.build().unwrap();
+        let other_request = target_request(&other);
+        let other_outcome = form_region_candidates(
+            &other,
+            other_request.budgets(),
+            other_request.numerical_contract(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            prove_fused_numerics(other_outcome.graph(), &other_request, &whole),
+            Err(FusionError::Region(RegionError::Invalid {
+                rule: "identity",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn errors_report_their_exact_rule() {
+        let error = FusionError::Invalid {
+            region: "region:0000000000000000".to_owned(),
+            rule: "strict-f32-proof",
+        };
+        assert_eq!(error.reason(), "strict-f32-proof");
+        assert_eq!(
+            error.to_string(),
+            "fusion.numerics.strict-f32-proof: region:0000000000000000 rejected"
+        );
+        let error = FusionError::from(RegionError::Structure {
+            rule: "value-ordinal",
+        });
+        assert_eq!(error.reason(), "value-ordinal");
+        assert!(error.source().is_some());
     }
 }

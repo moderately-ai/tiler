@@ -2126,15 +2126,16 @@ const fn disposition_tag(disposition: ExplainDisposition) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fusion::{CandidateKind, enumerate_candidates, prove_fused_numerics};
+    use crate::fusion::prove_fused_numerics;
+    use crate::region::form_region_candidates;
     use crate::request::{CompilationRequest, verify_request};
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
-        StrictSerialF32Sum,
+        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
+        SemanticProgramBuilder, StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
 
-    fn request(scale: f32) -> VerifiedTargetRequest {
+    fn program(scale: f32) -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
@@ -2147,7 +2148,11 @@ mod tests {
         builder
             .output(OutputKey::new("result").unwrap(), output)
             .unwrap();
-        let program = builder.build().unwrap();
+        builder.build().unwrap()
+    }
+
+    fn request(scale: f32) -> VerifiedTargetRequest {
+        let program = program(scale);
         let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
         verified.for_target(verified.target_profiles()[0]).unwrap()
     }
@@ -2206,7 +2211,7 @@ mod tests {
         assert_eq!(
             trace.render(),
             concat!(
-                "tiler-explain-v2 request=d467ccebb6dfa565\n",
+                "tiler-explain-v2 request=a77c2404e1240ca4\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -2418,14 +2423,17 @@ mod tests {
 
     #[test]
     fn sound_proof_receipts_are_bound_to_request_candidate_and_provider() {
+        let first_program = program(2.0);
         let first_request = request(2.0);
         let second_request = request(3.0);
-        let candidates = enumerate_candidates(&first_request).unwrap();
-        let candidate = candidates
-            .iter()
-            .find(|candidate| candidate.kind == CandidateKind::FusedSerialSum)
-            .unwrap();
-        let proof = prove_fused_numerics(&first_request, candidate).unwrap();
+        let formation = form_region_candidates(
+            &first_program,
+            first_request.budgets(),
+            first_request.numerical_contract(),
+        )
+        .unwrap();
+        let candidate = formation.whole_program_candidate().unwrap();
+        let proof = prove_fused_numerics(formation.graph(), &first_request, candidate).unwrap();
         let provider =
             ProviderRef::lowering(first_request.capabilities().fused_serial_sum.unwrap()).unwrap();
         let receipt =
@@ -2433,7 +2441,7 @@ mod tests {
                 .unwrap();
         let mut writer = ExplainWriter::new(&second_request, ExplainLimits::default()).unwrap();
         let subject = writer
-            .subject(SubjectKind::Candidate, candidate.stable_id.as_str())
+            .subject(SubjectKind::Candidate, candidate.stable_id())
             .unwrap();
         assert_eq!(
             writer.push_detail(

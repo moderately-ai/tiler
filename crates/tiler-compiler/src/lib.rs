@@ -9,6 +9,7 @@ mod normalize;
 mod physical;
 mod pipeline;
 mod program;
+mod region;
 mod request;
 
 // Keep the bounded compiler path in the ordinary library target while its
