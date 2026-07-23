@@ -6,7 +6,7 @@ title: "Transfer synchronization and resource-lifetime contract"
 topics: ["transfers", "synchronization", "resource-lifetime", "placement"]
 catalog_group: "runtime-integration-placement"
 research_status: "complete"
-disposition: "adopted"
+disposition: "pending"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration", "tiler.contract.cpu-backend", "tiler.contract.metal-backend"]
@@ -15,7 +15,8 @@ ticket: "transfer-synchronization-and-resource-lifetime-contract"
 
 # Transfer synchronization and resource-lifetime contract
 
-**Status:** completed research incorporated into the physical and runtime contracts
+**Status:** completed research; the normalized contract below remains a proposal
+that no accepted ADR and no normative contract has yet incorporated
 **Ticket:** `transfer-synchronization-and-resource-lifetime-contract`
 
 ## Outcome
@@ -42,7 +43,7 @@ successful terminal state. Cancellation is a request, not completion: after
 `RoutingCommit` it never restores fallback authority or permits resources to be
 released while device use may remain.
 
-This contract supplies the transfer/synchronization layer required by ADR 0047
+This proposal supplies the transfer/synchronization layer required by ADR 0047
 without enabling distributed scheduling. It preserves symbolic multi-device
 and multiple-queue extension points, while an executable profile may still
 restrict all affinities to one bound device and one ordered stream.
@@ -589,6 +590,16 @@ failure boundaries above.
 
 ## Traceability
 
-This contract refines the placement and runtime boundaries and is exercised by
-the [transfer spike](../../../spikes/transfers/README.md). Backend-specific
-multi-device measurements and calibrated transfer costs remain future evidence.
+- **Current disposition:** pending. The [proposed CPU/SIMD target profile](../../backends/cpu.md)
+  is the only contract that names this report as evidence, and it cites it for a
+  physical-resource boundary rather than reproducing the transfer, dependency,
+  hazard, or retention rules above.
+- **Normative destinations:** the [artifact ABI](../../artifact-abi.md),
+  [Candle integration](../../integration/candle.md), CPU target profile, and
+  [Metal AOT backend](../../backends/metal.md) contracts. None of them carries
+  this content yet. ADR 0047 requires such a layer but takes its evidence from
+  the device/memory-domain research instead, so no accepted decision adopts this
+  proposal.
+- **Reproduction:** the [transfer spike](../../../spikes/transfers/README.md)
+  exercises the proposed invariants. Backend-specific multi-device measurements
+  and calibrated transfer costs remain future evidence.

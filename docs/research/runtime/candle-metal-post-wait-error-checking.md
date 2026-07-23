@@ -182,13 +182,19 @@ transition and returns the command-buffer error.
 ## Measurement boundary
 
 No real Metal command-buffer fault was induced. The host has an Apple M4 Max
-and Metal 4 support, but `xcrun metal -v` failed because the separately
-downloadable Metal Toolchain is not installed. More importantly, no existing
-checked-in Candle kernel was identified that deterministically and safely
-causes a runtime command-buffer error rather than an encode-time Objective-C
-validation exception, undefined memory behavior, a hang, or a device-wide
-timeout. Manufacturing one of those failures solely to strengthen an already
-decisive source test would be an unsafe experiment.
+and Metal 4 support. On 2026-07-20 `xcrun metal -v` failed because the
+separately downloadable Metal Toolchain was absent; that observation predates
+the user-authorized installation of component build 17F109
+(`com.apple.dt.toolchain.Metal.32023.883`), which the
+[Apple artifact-compatibility research](../apple-targets/artifact-compatibility.md)
+records and its 2026-07-21 rerun used. Compiler-component availability is
+therefore no longer a boundary of this report, and it never was the reason a
+fault was not injected. That reason stands: no existing checked-in Candle kernel
+was identified that deterministically and safely causes a runtime command-buffer
+error rather than an encode-time Objective-C validation exception, undefined
+memory behavior, a hang, or a device-wide timeout. Manufacturing one of those
+failures solely to strengthen an already decisive source test would be an unsafe
+experiment.
 
 Accordingly:
 
