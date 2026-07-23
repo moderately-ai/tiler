@@ -1,7 +1,7 @@
 ---
 id: prototype-physical-implementation-frontier
 title: Implement the physical implementation frontier
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-scheduled-region-ir, prototype-target-feasibility-authority, prototype-fusion-legality-and-numerical-proof]
 related: [implement-opaque-physical-call-providers]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, scheduling]
+claimed_from: todo
+assignee: agent-prototype-physical-implementation-frontier
+lease_expires_at: 1784853895
 ---
 Add the typed provider surface for checked scheduled-kernel implementations,
 then enumerate their proposals with typed boundary
