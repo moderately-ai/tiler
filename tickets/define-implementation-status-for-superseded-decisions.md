@@ -1,7 +1,7 @@
 ---
 id: define-implementation-status-for-superseded-decisions
 title: Define implementation status for superseded decisions
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, governance, metadata]
-claimed_from: todo
-assignee: agent-define-implementation-status-for-superseded-decisions
-lease_expires_at: 1784834740
 ---
 The ADR status audit found a corpus inconsistency it correctly declined to fix, because the metadata contract does not define the case. ADR 0057 carries `decision_status: "superseded"` together with `implementation_status: "implemented"`, but the state it claims to have implemented — a workspace `rust-version = "1.89"` floor — is no longer true: ADR 0067 replaced it with the pinned nightly, and no `rust-version` is declared in the workspace or any member manifest. Verified 2026-07-23.
 
