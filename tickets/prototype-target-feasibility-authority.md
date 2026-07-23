@@ -1,7 +1,7 @@
 ---
 id: prototype-target-feasibility-authority
 title: Implement checked target-profile feasibility authority
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-typed-explain-infrastructure]
 related: [target-profile-feasibility-model]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, target-profile, feasibility, authority]
-claimed_from: todo
-assignee: agent-prototype-target-feasibility-authority
-lease_expires_at: 1784843428
 ---
 Implement immutable checked target profiles and typed feasibility predicates,
 facts, provenance, evaluation phases, resource limits, and Unknown outcomes.
