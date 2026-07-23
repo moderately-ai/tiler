@@ -10,29 +10,35 @@ shared_scopes: [project/tickets, contracts/integrations, contracts/navigation, c
 paths: []
 tags: [implementation, prototype, metal, runtime, vertical-slice]
 ---
-Execute the produced bundle through the non-published `serial-sum-run` consumer
-without importing `tiler-ir`, the compiler, or backend internals. The compile
-producer supplies a separate bounded proof-case sidecar containing input and
-normative expected bytes; the runner treats those bytes as test data, not as
-artifact semantics or an independent reference implementation.
+Integration gate only: execute the produced bundle through the non-published
+`serial-sum-run` consumer without importing `tiler-ir`, the compiler, or
+backend internals. This ticket builds no runtime capability itself —
+device-free artifact validation is owned by
+`prototype-runtime-artifact-validation`, live device/library/function/pipeline/
+resource/launch preflight by `prototype-metal-runtime-preflight`, the one-way
+routing/fallback commit by `prototype-runtime-routing-commit`, and
+allocation/dispatch/terminal-status/resource-retention by
+`prototype-metal-runtime-execution`. If integration exposes a gap in a
+component, reopen or follow up that ticket rather than implementing the
+capability here. The compile producer supplies a separate bounded proof-case
+sidecar containing input and normative expected bytes; the runner treats those
+bytes as test data, not as artifact semantics or an independent reference
+implementation.
+
+The integration must:
 
 - validate the sidecar schema, section digests, unique case keys, and exact
   association with the selected envelope before using any case;
-- perform device-free artifact validation, then, for each independent proof
-  execution, validate the live device, library, every function and pipeline
-  required by the selected complete program, resource requirements, bindings,
-  and launch geometry before its one-way routing commit;
-- consume that execution's routing/fallback authority before allocating its
-  program resources or encoding its work;
-- allocate and initialize resources, dispatch the fused kernel, wait for
-  terminal command status, and keep every resource lifetime valid through its
-  final device use;
+- compose the component capabilities in contract order for each independent
+  proof execution: device-free validation, live preflight, one-way routing
+  commit consumed before any allocation or encoding, then execution through
+  terminal command status with resource lifetimes retained through final
+  device use;
 - execute the retained materialized program in one explicit proof run, then
   execute the normally selected fused program in a separate proof run and
-  compare both readbacks with
-  the producer's normative expected bytes for canonical NaN, infinity,
-  signed-zero, subnormal, contraction-sensitive, empty-domain, singleton, and
-  nontrivial reduction cases; and
+  compare both readbacks with the producer's normative expected bytes for
+  canonical NaN, infinity, signed-zero, subnormal, contraction-sensitive,
+  empty-domain, singleton, and nontrivial reduction cases; and
 - record the observed dispatch count, eliminated intermediate, pre-commit
   routing boundary, terminal status, and post-commit failure behavior.
 

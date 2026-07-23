@@ -10,38 +10,35 @@ shared_scopes: [project/tickets, contracts/artifacts, contracts/numerics, implem
 paths: []
 tags: [implementation, prototype, metal, vertical-slice]
 ---
-Turn the selected fused program and retained materialized reference program into
-one self-validating Metal AOT bundle:
+Integration gate only: wire the already-implemented component capabilities into
+the non-published `serial-sum-compile` producer and prove the complete offline
+path end to end. This ticket builds no component capability itself — MSL
+emission is owned by `prototype-metal-kir-lowering`, the exact-math/NaN
+realization by `prototype-metal-numerical-realization`, SDK/family/flag
+selection and `xcrun metal`/`xcrun metallib` invocation by
+`prototype-apple-aot-driver`, bundle packaging by
+`prototype-metal-bundle-assembly`, sidecar generation by
+`prototype-proof-case-sidecar`, and decode/validation by
+`prototype-neutral-artifact-codec`. If integration exposes a gap in a
+component, reopen or follow up that ticket rather than implementing the
+capability here.
 
-- emit deterministic MSL only from verified structured kernel IR, with every
-  entry point needed by the one-stage fused and two-stage materialized programs;
-- make the selected Apple artifact family, SDK, deployment minimum, MSL version,
-  exact-math realization, compiler/linker flags, and compiler provenance
-  explicit rather than inheriting toolchain defaults;
-- realize the prototype's canonical arithmetic-NaN contract explicitly in
-  generated code, prohibit unlicensed contraction/reassociation, and test these
-  semantics independently of compiler fast/safe-math flags;
-- invoke `xcrun metal` and `xcrun metallib` from the non-published
-  `serial-sum-compile` producer;
-- package the exact MSL identity, target facts, manifest, section digests, and
-  metallib as one canonical bounded immutable bundle;
-- generate a separate versioned prototype proof-case sidecar containing stable
-  case keys, bit-preserving input bytes, expected bytes produced by the normative
-  reference evaluator, semantic-program identity, numerical-profile identity,
-  reference-evaluator/profile version, section digests, and the exact envelope
-  digest it accompanies; the
-  sidecar is test evidence and must not become runtime artifact semantics; and
-- decode and validate the produced bundle without a live device, including
-  negative tests for noncanonical encoding, truncation, trailing content,
-  corruption, duplicate/missing references, identity mismatch, and unsupported
-  target facts or schema versions.
+The integration must:
 
-The proof succeeds when the offline compiler accepts the fixed program, the
-device-free validator accepts the completed bundle, and every output-affecting
-input is represented in identity or provenance as specified by the artifact
-contract. Generated MSL and canonical manifest bytes must be deterministic.
-Measure and record metallib byte reproducibility with complete host/toolchain
-provenance; it is not a correctness claim
-or gate unless the selected toolchain evidence proves it. Library loading and
-pipeline creation belong to the runtime ticket. Do not implement dispatch, a
-generalized cache, a proc macro, or production artifact compatibility.
+- drive the selected fused program and retained materialized reference program
+  through the composed components into one self-validating bundle plus its
+  versioned proof-case sidecar, with every output-affecting input represented
+  in identity or provenance as specified by the artifact contract;
+- prove generated MSL and canonical manifest bytes are deterministic across
+  repeated producer runs;
+- decode and validate the produced bundle without a live device, exercising the
+  codec's negative paths against this real bundle (noncanonical encoding,
+  truncation, trailing content, corruption, duplicate/missing references,
+  identity mismatch, unsupported target facts or schema versions); and
+- measure and record metallib byte reproducibility with complete host/toolchain
+  provenance; reproducibility is evidence, not a correctness claim or gate
+  unless the selected toolchain evidence proves it.
+
+Library loading and pipeline creation belong to the runtime tickets. Do not
+implement dispatch, a generalized cache, a proc macro, or production artifact
+compatibility.
