@@ -132,7 +132,10 @@ EXPECTED_TESTS = {
         "shape_evidence_ui": "crates/tiler-ir/tests/shape_evidence_ui.rs",
         "typed_handles": "crates/tiler-ir/tests/typed_handles.rs",
     },
-    "tiler-reference": {"serial_sum_slice": "crates/tiler-reference/tests/serial_sum_slice.rs"},
+    "tiler-reference": {
+        "index_region_oracle": "crates/tiler-reference/tests/index_region_oracle.rs",
+        "serial_sum_slice": "crates/tiler-reference/tests/serial_sum_slice.rs",
+    },
 }
 
 
