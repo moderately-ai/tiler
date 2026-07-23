@@ -83,13 +83,21 @@ are complete for their bounded claims. The
 [`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md)
 slice establishes the accepted module, verifier, builder, and dependency
 direction without publishing the graph-specific proof structs.
-The semantic identity, canonical index-region, and [`verifier subject-binding`](../tickets/harden-compiler-verifier-subject-binding-and-totality.md) corrections are integrated.
-The immediate compiler frontier is the three dependency-satisfied authorities that may proceed in parallel: [`typed explain`](../tickets/prototype-typed-explain-infrastructure.md), [`operation capability registration`](../tickets/prototype-operation-capability-registry.md), and the [`generic index-region reference oracle`](../tickets/prototype-index-region-reference-oracle.md).
-Downstream work is split into bounded normalization, generic region formation, checked semantic/index refinement, fusion legality, legal region covers, target feasibility, scheduled-region verification, physical frontiers, complete physical-plan selection, structured KIR, target-neutral kernel programs, artifact-facing programs, and conformance. A reviewed
-[`public compiler boundary`](../tickets/prototype-public-compiler-api.md)
-follows conformance and is consumed by the inline frontend. Backend feasibility
-spikes may proceed when their actual verifier and IR prerequisites exist; they
-do not depend on that ergonomic facade merely for ordering.
+The semantic identity, canonical index-region, and verifier subject-binding
+corrections are integrated, and the target-neutral compiler path has begun
+landing its authorities: typed explain, the generic index-region reference
+oracle, bounded semantic normalization with common-subexpression elimination,
+and generic fusion-region formation are merged. That path continues through
+checked semantic-to-index refinement, fusion legality and region covers,
+target feasibility and scheduling, physical-implementation planning and
+complete-plan selection, structured kernel IR, and artifact-facing programs,
+closed by an optimizer conformance gate and the reviewed
+[`public compiler boundary`](../tickets/prototype-public-compiler-api.md), which
+the inline frontend consumes. Which of those authorities is dispatchable is the
+board's to report, not this page's: `tkt ready` shows the current frontier and
+`tkt rollup` the complete and blocked sets. Backend feasibility spikes may
+proceed when their actual verifier and IR prerequisites exist; they do not
+depend on that ergonomic facade merely for ordering.
 
 This chain is an architectural value proof. Separate tickets now track the
 neutral artifact codec, Metal lowering and offline driver, runtime validation
