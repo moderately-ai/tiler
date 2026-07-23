@@ -417,6 +417,31 @@ def validate_graph(records: list[Record], root: Path) -> list[str]:
             and not (m.get("informs") or m.get("adopted_by"))
         ):
             errors.append(f"{record.path}: adopted research requires informs or adopted_by")
+    # A superseded decision retains a historical implementation_status, so the
+    # decision that carries the present state must be reachable: superseded
+    # decisions and their replacing decisions reference each other by exactly
+    # the decision-to-decision supersedes edge.
+    superseding = {
+        target
+        for record in records
+        if record.meta.get("kind") == "decision"
+        for target in record.meta.get("supersedes", [])
+    }
+    for record in records:
+        m = record.meta
+        if m.get("kind") != "decision":
+            continue
+        is_superseded = m.get("decision_status") == "superseded"
+        has_successor = record.id in superseding
+        if is_superseded and not has_successor:
+            errors.append(
+                f"{record.path}: superseded decision must be the target of a supersedes "
+                "edge from its replacement"
+            )
+        if has_successor and not is_superseded:
+            errors.append(
+                f"{record.path}: decision named as a supersedes target must be superseded"
+            )
     for name, relation_edges in edges.items():
         graph: dict[str, list[str]] = defaultdict(list)
         for source, target in relation_edges:
