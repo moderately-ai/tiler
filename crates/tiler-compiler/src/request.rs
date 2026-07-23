@@ -3,10 +3,12 @@ use std::fmt;
 
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-    OperationId, OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticIdentity, SemanticProgram, TypeKey,
-    ValueId, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticIdentity, SemanticProgram, TypeKey, ValueId,
+    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
+
+use crate::region::SemanticMemberId;
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
 const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
@@ -72,13 +74,26 @@ pub(crate) struct DeterministicBudgets {
     pub(crate) regions: u32,
     pub(crate) host_expression_nodes: u32,
     pub(crate) buffers: u32,
-    pub(crate) fusion_candidates: u32,
     /// Rewrites the deterministic normalization stage may commit.
     ///
     /// Normalization visits each verified operation exactly once, so its
     /// traversal is already bounded by `semantic_operations`. This is the
     /// stage's own explicit budget over committed rewrites.
     pub(crate) normalization_rewrites: u32,
+    /// Semantic occurrences admitted in one region candidate.
+    pub(crate) region_members: u32,
+    /// Retained boundary outputs admitted for one region candidate.
+    pub(crate) region_boundary_outputs: u32,
+    /// Boundary and member-result values live across one region candidate.
+    pub(crate) region_live_values: u32,
+    /// Grown candidates admitted for one seed occurrence.
+    ///
+    /// Singleton coverage is emitted before growth starts and is never bounded
+    /// by this budget, so exhausting it loses fused alternatives rather than the
+    /// unfused plan.
+    pub(crate) region_candidates_per_seed: u32,
+    /// Candidate expansion attempts admitted for one compilation request.
+    pub(crate) region_expansions: u32,
 }
 
 impl DeterministicBudgets {
@@ -90,8 +105,12 @@ impl DeterministicBudgets {
             regions: 2,
             host_expression_nodes: 32,
             buffers: 3,
-            fusion_candidates: 7,
             normalization_rewrites: 8,
+            region_members: 32,
+            region_boundary_outputs: 8,
+            region_live_values: 64,
+            region_candidates_per_seed: 32,
+            region_expansions: 10_000,
         }
     }
 }
@@ -174,6 +193,61 @@ impl CompilationRequest<'_> {
     }
 }
 
+/// The recognized serial-sum occurrences as canonical region member sets.
+///
+/// The strategy recognizer already walks the verified program to identify these
+/// operations, so the exact occurrences it matched are retained instead of being
+/// re-encoded as a fixed role vocabulary downstream. Only the ascending member
+/// sets are retained: two programs that `tiler-ir` gives one canonical graph
+/// identity may store the pointwise constants in either order, and the recognized
+/// coverage must not depend on which spelling the caller authored. A shared
+/// pointwise constant simply contributes one member instead of two.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RecognizedSerialSumMembers {
+    pointwise: Vec<SemanticMemberId>,
+    reduction: Vec<SemanticMemberId>,
+}
+
+impl RecognizedSerialSumMembers {
+    fn new(scale_constant: u32, multiply: u32, bias_constant: u32, add: u32, sum: u32) -> Self {
+        Self {
+            pointwise: ascending([scale_constant, multiply, bias_constant, add]),
+            reduction: ascending([sum]),
+        }
+    }
+
+    /// Returns the pointwise prologue members in ascending order.
+    pub(crate) fn pointwise(&self) -> &[SemanticMemberId] {
+        &self.pointwise
+    }
+
+    /// Returns the reduction members in ascending order.
+    pub(crate) fn reduction(&self) -> &[SemanticMemberId] {
+        &self.reduction
+    }
+
+    /// Returns every recognized member in ascending order.
+    pub(crate) fn all(&self) -> Vec<SemanticMemberId> {
+        let mut members: Vec<_> = self
+            .pointwise
+            .iter()
+            .chain(&self.reduction)
+            .copied()
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        members
+    }
+}
+
+fn ascending<const N: usize>(ordinals: [u32; N]) -> Vec<SemanticMemberId> {
+    let mut ordinals = ordinals;
+    ordinals.sort_unstable();
+    let mut members: Vec<_> = ordinals.into_iter().map(SemanticMemberId).collect();
+    members.dedup();
+    members
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedSerialSum {
     pub(crate) input_key: InputKey,
@@ -183,6 +257,7 @@ pub(crate) struct NormalizedSerialSum {
     pub(crate) reduction_axes: Vec<Axis>,
     pub(crate) scale_bits: u32,
     pub(crate) bias_bits: u32,
+    pub(crate) members: RecognizedSerialSumMembers,
     pub(crate) input: ValueId,
     pub(crate) pointwise_result: ValueId,
     pub(crate) output: ValueId,
@@ -251,6 +326,7 @@ pub(crate) struct NormalizedSerialSumSubject {
     reduction_axes: Vec<Axis>,
     scale_bits: u32,
     bias_bits: u32,
+    members: RecognizedSerialSumMembers,
     input_elements: u64,
     output_elements: u64,
 }
@@ -335,6 +411,19 @@ impl VerifiedRequestSubject {
         }
         bytes.extend_from_slice(&self.normalized.scale_bits.to_be_bytes());
         bytes.extend_from_slice(&self.normalized.bias_bits.to_be_bytes());
+        for members in [
+            self.normalized.members.pointwise(),
+            self.normalized.members.reduction(),
+        ] {
+            bytes.extend_from_slice(
+                &u64::try_from(members.len())
+                    .unwrap_or(u64::MAX)
+                    .to_be_bytes(),
+            );
+            for member in members {
+                bytes.extend_from_slice(&member.0.to_be_bytes());
+            }
+        }
         bytes.extend_from_slice(&self.normalized.input_elements.to_be_bytes());
         bytes.extend_from_slice(&self.normalized.output_elements.to_be_bytes());
         encode_explain_bytes(&mut bytes, self.numerical_contract.key.as_bytes());
@@ -354,8 +443,12 @@ impl VerifiedRequestSubject {
             self.budgets.regions,
             self.budgets.host_expression_nodes,
             self.budgets.buffers,
-            self.budgets.fusion_candidates,
             self.budgets.normalization_rewrites,
+            self.budgets.region_members,
+            self.budgets.region_boundary_outputs,
+            self.budgets.region_live_values,
+            self.budgets.region_candidates_per_seed,
+            self.budgets.region_expansions,
         ] {
             bytes.extend_from_slice(&budget.to_be_bytes());
         }
@@ -420,6 +513,9 @@ impl NormalizedSerialSumSubject {
     }
     pub(crate) const fn bias_bits(&self) -> u32 {
         self.bias_bits
+    }
+    pub(crate) const fn members(&self) -> &RecognizedSerialSumMembers {
+        &self.members
     }
     pub(crate) const fn input_elements(&self) -> u64 {
         self.input_elements
@@ -503,6 +599,7 @@ fn request_subject(
             reduction_axes: normalized.reduction_axes.clone(),
             scale_bits: normalized.scale_bits,
             bias_bits: normalized.bias_bits,
+            members: normalized.members.clone(),
             input_elements: normalized.input_elements,
             output_elements: normalized.output_elements,
         },
@@ -703,7 +800,7 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
             phase: "strategy",
             rule: "missing-output",
         })?;
-    let sum = producer(program, output.value(), &strict_serial_sum_f32_op())?;
+    let (sum_operation, sum) = producer(program, output.value(), &strict_serial_sum_f32_op())?;
     let sum_operands: Vec<_> = sum.operands().collect();
     let sum_results: Vec<_> = sum.results().collect();
     let [pointwise_result] = sum_operands.as_slice() else {
@@ -713,26 +810,24 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
         return mismatch("sum-output");
     }
 
-    let add = producer(program, *pointwise_result, &add_f32_op())?;
+    let (add_operation, add) = producer(program, *pointwise_result, &add_f32_op())?;
     let (multiply_result, bias) = split_tensor_and_scalar(program, &add)?;
-    let multiply = producer(program, multiply_result, &multiply_f32_op())?;
+    let (multiply_operation, multiply) = producer(program, multiply_result, &multiply_f32_op())?;
     let (tensor_input, scale) = split_tensor_and_scalar(program, &multiply)?;
     if tensor_input != input.value() {
         return mismatch("pointwise-input");
     }
     let (scale, scale_operation) = constant_bits(program, scale)?;
     let (bias, bias_operation) = constant_bits(program, bias)?;
+    let members = RecognizedSerialSumMembers::new(
+        scale_operation,
+        multiply_operation,
+        bias_operation,
+        add_operation,
+        sum_operation,
+    );
 
-    check_recognized_operation_cover(
-        program,
-        [
-            sum.id(),
-            add.id(),
-            multiply.id(),
-            scale_operation,
-            bias_operation,
-        ],
-    )?;
+    check_recognized_operation_cover(program, &members)?;
     let axes = reduction_axes(sum.attributes())?;
 
     let input_shape = program
@@ -764,6 +859,7 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
         reduction_axes: axes,
         scale_bits: scale,
         bias_bits: bias,
+        members,
         input: input.value(),
         pointwise_result: *pointwise_result,
         output: output.value(),
@@ -801,13 +897,9 @@ fn check_canonical_reduction_axes(axes: &[Axis], rank: usize) -> Result<(), Requ
 /// operations instead of five.
 fn check_recognized_operation_cover(
     program: &SemanticProgram,
-    recognized: [OperationId; RECOGNIZED_OPERATIONS_MAX],
+    recognized: &RecognizedSerialSumMembers,
 ) -> Result<(), RequestError> {
-    let mut recognized = recognized;
-    recognized.sort_unstable();
-    let mut distinct = recognized.to_vec();
-    distinct.dedup();
-    if program.operation_count() != distinct.len() {
+    if program.operation_count() != recognized.all().len() {
         return mismatch("signature");
     }
     Ok(())
@@ -817,10 +909,11 @@ fn producer<'a>(
     program: &'a SemanticProgram,
     value: ValueId,
     expected: &OpKey,
-) -> Result<tiler_ir::semantic::OperationRef<'a>, RequestError> {
-    let operation = program
+) -> Result<(u32, tiler_ir::semantic::OperationRef<'a>), RequestError> {
+    let (ordinal, operation) = program
         .operations()
-        .find(|operation| operation.results().any(|result| result == value))
+        .enumerate()
+        .find(|(_, operation)| operation.results().any(|result| result == value))
         .ok_or(RequestError::UnsupportedCapability {
             phase: "strategy",
             rule: "missing-producer",
@@ -828,7 +921,11 @@ fn producer<'a>(
     if operation.key() != expected {
         return mismatch("operation-family");
     }
-    Ok(operation)
+    let ordinal = u32::try_from(ordinal).map_err(|_| RequestError::UnsupportedCapability {
+        phase: "strategy",
+        rule: "operation-ordinal",
+    })?;
+    Ok((ordinal, operation))
 }
 
 fn split_tensor_and_scalar(
@@ -849,11 +946,8 @@ fn split_tensor_and_scalar(
     }
 }
 
-fn constant_bits(
-    program: &SemanticProgram,
-    value: ValueId,
-) -> Result<(u32, OperationId), RequestError> {
-    let operation = producer(program, value, &constant_f32_op())?;
+fn constant_bits(program: &SemanticProgram, value: ValueId) -> Result<(u32, u32), RequestError> {
+    let (ordinal, operation) = producer(program, value, &constant_f32_op())?;
     if operation.operands().len() != 0 || operation.results().len() != 1 {
         return mismatch("constant-signature");
     }
@@ -873,7 +967,7 @@ fn constant_bits(
         return mismatch("constant-bits-format");
     }
     <[u8; 4]>::try_from(bits.bits())
-        .map(|bytes| (u32::from_be_bytes(bytes), operation.id()))
+        .map(|bytes| (u32::from_be_bytes(bytes), ordinal))
         .map_err(|_| RequestError::UnsupportedCapability {
             phase: "strategy",
             rule: "constant-bits",

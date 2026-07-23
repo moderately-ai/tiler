@@ -3,7 +3,7 @@ use std::fmt;
 
 use tiler_ir::shape::{Axis, Shape};
 
-use crate::fusion::SemanticOccurrence;
+use crate::region::SemanticMemberId;
 use crate::request::{
     NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract, SubnormalMode,
     VerifiedRequestSubject, VerifiedTargetRequest,
@@ -122,7 +122,12 @@ pub(crate) struct IndexRegion {
     pub(crate) ownership_proof: OwnershipProof,
     pub(crate) scalar_program: ScalarProgram,
     pub(crate) numerical: NumericalRealization,
-    pub(crate) semantic_members: Vec<SemanticOccurrence>,
+    /// Exact semantic occurrences this physical region covers.
+    ///
+    /// These are graph-local operation ordinals of the verified program, not a
+    /// fixed role vocabulary, so a schedule cannot claim coverage of operations
+    /// the request boundary did not actually recognize.
+    pub(crate) semantic_members: Vec<SemanticMemberId>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -460,12 +465,7 @@ fn pointwise_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
                     != NumericalPermission::Forbidden,
             },
             numerical: request.numerical_contract().into(),
-            semantic_members: vec![
-                SemanticOccurrence::ScaleConstant,
-                SemanticOccurrence::Multiply,
-                SemanticOccurrence::BiasConstant,
-                SemanticOccurrence::Add,
-            ],
+            semantic_members: request.serial_sum().members.pointwise().to_vec(),
         },
         schedule: linear_schedule(request.serial_sum().input_elements, OwnershipWitnessId(0)),
     }
@@ -530,7 +530,7 @@ fn reduction_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
                 empty_identity_bits: 0.0_f32.to_bits(),
             },
             numerical: request.numerical_contract().into(),
-            semantic_members: vec![SemanticOccurrence::StrictSum],
+            semantic_members: request.serial_sum().members.reduction().to_vec(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -607,7 +607,7 @@ fn fused_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
                 contraction: false,
             },
             numerical: request.numerical_contract().into(),
-            semantic_members: SemanticOccurrence::ALL.to_vec(),
+            semantic_members: request.serial_sum().members.all(),
         },
         schedule: KernelSchedule {
             reduction: ReductionTopology::Serial {
@@ -714,13 +714,7 @@ fn verify_region_subject_binding(
             canonical_nan_bits,
             contraction,
         } => {
-            region.index.semantic_members
-                == [
-                    SemanticOccurrence::ScaleConstant,
-                    SemanticOccurrence::Multiply,
-                    SemanticOccurrence::BiasConstant,
-                    SemanticOccurrence::Add,
-                ]
+            region.index.semantic_members == normalized.members().pointwise()
                 && region.index.id == RegionId(0)
                 && region.index.iteration_shape == *normalized.input_shape()
                 && *scale_bits == normalized.scale_bits()
@@ -734,7 +728,7 @@ fn verify_region_subject_binding(
             canonical_nan_bits,
             ..
         } => {
-            region.index.semantic_members == [SemanticOccurrence::StrictSum]
+            region.index.semantic_members == normalized.members().reduction()
                 && region.index.id == RegionId(1)
                 && region.index.iteration_shape == *normalized.output_shape()
                 && axes == normalized.reduction_axes()
@@ -748,7 +742,7 @@ fn verify_region_subject_binding(
             canonical_nan_bits,
             ..
         } => {
-            region.index.semantic_members == SemanticOccurrence::ALL
+            region.index.semantic_members == normalized.members().all()
                 && region.index.id == RegionId(0)
                 && region.index.iteration_shape == *normalized.output_shape()
                 && *scale_bits == normalized.scale_bits()
