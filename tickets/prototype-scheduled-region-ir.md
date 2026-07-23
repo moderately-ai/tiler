@@ -1,7 +1,7 @@
 ---
 id: prototype-scheduled-region-ir
 title: Implement checked scheduled-region IR
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-semantic-index-refinement]
 related: [scheduled-region-model]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, scheduling, verifier]
+claimed_from: todo
+assignee: agent-prototype-scheduled-region-ir
+lease_expires_at: 1784844875
 ---
 Implement reviewed target-neutral ScheduledRegion and KernelSchedule builders,
 canonical identities, and intrinsic verifier. Validate axes, work ownership,

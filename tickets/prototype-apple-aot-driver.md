@@ -1,7 +1,7 @@
 ---
 id: prototype-apple-aot-driver
 title: Implement the Apple offline compiler driver
-status: todo
+status: in-progress
 priority: p0
 dependencies: [repair-apple-target-experiment-integrity, prototype-target-feasibility-authority, enforce-repository-validation-gate-integrity]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/metal-aot, implementation/workspace]
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, metal, aot, toolchain]
+claimed_from: todo
+assignee: agent-prototype-apple-aot-driver
+lease_expires_at: 1784844874
 ---
 Implement a bounded driver with explicit SDK, platform family, deployment minimum, MSL version, output-affecting flags, metal/metallib invocation, diagnostics, fingerprint and provenance. Use one selected SDK and never inherit output-affecting defaults silently; exclude cache and proc-macro concerns.
 
