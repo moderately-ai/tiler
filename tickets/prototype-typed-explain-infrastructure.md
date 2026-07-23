@@ -1,7 +1,7 @@
 ---
 id: prototype-typed-explain-infrastructure
 title: Implement typed optimizer explain infrastructure
-status: in-progress
+status: done
 priority: p0
 dependencies: [reconcile-implementation-work-graph-after-authority-audit, harden-compiler-verifier-subject-binding-and-totality]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, explain, authority]
-claimed_from: todo
-assignee: tech-lead-integrator
-lease_expires_at: 1784823801
 ---
 Implement one bounded typed explain authority shared by normalization, region,
 feasibility, costing, selection, and refinement stages. Stable stage,

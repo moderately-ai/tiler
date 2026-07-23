@@ -17,4 +17,18 @@ reference revalidation, transactional failure, canonical identity, and typed
 explain records. Normalization must not imply the later alternative-producing
 rewrite engine.
 
+This stage owns one relocated obligation. Tom accepted on 2026-07-18 that
+identical referentially transparent operation invocations normalize to one
+semantic value before computation identity — equality requiring the same
+operation key, operands, canonical attributes, numerical contract, and inferred
+result types, with source origins preserved for explanation but excluded from
+equality. ADR 0064 later placed common-subexpression elimination outside
+commitment compaction and in "existing later layers"; Tom confirmed on
+2026-07-23 that this relocated the obligation rather than cancelling it, and
+that this normalization stage is its home. Implementing it here is in scope
+whenever the first profile's proved rule set admits it; deferring it is
+acceptable only with an explicit note recording that the obligation remains
+open and unowned elsewhere. Physical planning may still recompute a shared
+value independently when that is cheaper than reuse or materialization.
+
 Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.
