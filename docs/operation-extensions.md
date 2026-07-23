@@ -102,15 +102,29 @@ Provider objects are expected to be `Send + Sync + 'static` unless an explicit
 compiler mode serializes a capability.
 
 The semantic registry, value-type registry, and reference capability dispatch
-are implemented for the bounded profile. Compiler capability registration is
-not: its owner is
+are implemented for the bounded profile. Compiler capability registration for
+the index/access and scalar-lowering families is now implemented in
+`tiler_compiler::capability`, merged from
 [`prototype-operation-capability-registry`](../tickets/prototype-operation-capability-registry.md).
-That registry resolves available lowering knowledge but does not prove an
-occurrence was lowered correctly. Exact occurrence, value, access, numerical,
-and provider bindings belong to the separate checked
-[`semantic-to-index refinement`](../tickets/prototype-semantic-index-refinement.md).
-The ordinary public compiler session remains a later reviewed boundary, so
-these implementation tickets must not silently stabilize its call-site API.
+Registration is transactional per call and rejects colliding capabilities
+deterministically, while resolution reports deterministic ambiguity and
+missing-capability diagnostics. Its canonical provenance is built from durable
+semantic and provider identities, never `TypeId`, vtable, function, or
+allocation addresses, and a provider emits only through the canonical
+`IndexRegionBuilder` wrapped by a narrow checked context — never constructing
+provider-owned IR or finalizing the region. Scheduled-kernel and opaque physical
+providers remain owned by their own later tickets.
+
+This registry resolves available lowering knowledge and provenance but does not
+prove an occurrence was lowered correctly. That checked refinement — binding an
+exact occurrence, value, access, numerical, and provider selection to a resolved
+provider and proving the emitted work refines it — remains owned by the separate
+checked
+[`semantic-to-index refinement`](../tickets/prototype-semantic-index-refinement.md),
+which is being implemented in parallel. The registered surface is a reviewed
+prototype boundary, not a stabilized compiler-session API; the ordinary public
+compiler session remains a later reviewed boundary these tickets must not
+silently stabilize.
 
 ## Semantic and provider identity
 
