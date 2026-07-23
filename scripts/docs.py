@@ -72,10 +72,9 @@ COMMON = {
     "depends_on",
     "refines",
     "supersedes",
-    "related",
 }
 FIELDS = {
-    "portal": set(),
+    "portal": {"related"},
     "contract": {"contract_status", "implementation_status", "evidence", "ticket"},
     "decision": {
         "decision_status",
@@ -104,9 +103,9 @@ FIELDS = {
         "last_verified",
         "ticket",
     },
-    "roadmap": {"roadmap_status"},
-    "questions": {"questions_status"},
-    "prior-art": {"informs"},
+    "roadmap": {"roadmap_status", "related"},
+    "questions": {"questions_status", "related"},
+    "prior-art": {"informs", "related"},
 }
 REQUIRED = {
     "portal": set(),
@@ -161,6 +160,7 @@ MARKERS = {
     "research": (Path("docs/research/README.md"), "RESEARCH CATALOG"),
     "experiment": (Path("spikes/README.md"), "EXPERIMENT CATALOG"),
 }
+CHRONOLOGY = (Path("docs/decisions/README.md"), "ADR CHRONOLOGY")
 STABLE_ID = re.compile(r"(?:ADR-\d{4}|[a-z0-9]+(?:[.-][a-z0-9]+)*)")
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -301,18 +301,23 @@ def validate_record(record: Record, root: Path) -> list[str]:
     expected = re.sub(r"^\d{4}:\s*", "", heading or "")
     if expected != m.get("title"):
         errors.append(f"{p}: title {m.get('title')!r} does not match H1 {heading!r}")
-    if kind == "experiment" and m.get("experiment_status") == "reproducible":
-        for key in ("evidence_classes", "entrypoints", "last_verified"):
-            if key not in m:
-                errors.append(f"{p}: reproducible experiment requires {key}")
-        verified = m.get("last_verified")
-        try:
-            if not isinstance(verified, str) or not ISO_DATE.fullmatch(verified):
-                raise ValueError
-            if date.fromisoformat(verified) > date.today():
-                errors.append(f"{p}: last_verified is in the future")
-        except ValueError:
-            errors.append(f"{p}: last_verified must be YYYY-MM-DD")
+    if kind == "experiment":
+        if m.get("experiment_status") == "reproducible":
+            for key in ("evidence_classes", "entrypoints", "last_verified"):
+                if key not in m:
+                    errors.append(f"{p}: reproducible experiment requires {key}")
+        # Only presence is reproducible-only. The field rules bind wherever a
+        # value exists so a planned, partial, or blocked record cannot park a
+        # malformed date or an unresolvable entrypoint until it is promoted.
+        if "last_verified" in m:
+            verified = m["last_verified"]
+            try:
+                if not isinstance(verified, str) or not ISO_DATE.fullmatch(verified):
+                    raise ValueError
+                if date.fromisoformat(verified) > date.today():
+                    errors.append(f"{p}: last_verified is in the future")
+            except ValueError:
+                errors.append(f"{p}: last_verified must be YYYY-MM-DD")
         for entry in m.get("entrypoints", []):
             posix = PurePosixPath(str(entry))
             if (
@@ -616,13 +621,30 @@ def catalog(records: list[Record], kind: str) -> str:
     return "\n".join(lines).rstrip()
 
 
+def chronology(records: list[Record]) -> str:
+    """Render every ADR in number order; the validated `ADR-NNNN` id is the sole key."""
+    directory = CHRONOLOGY[0].parent.as_posix()
+    decisions = sorted((r for r in records if r.meta.get("kind") == "decision"), key=lambda r: r.id)
+    return "\n".join(
+        f"- [{record.id[4:]}: {record.meta['title']}]"
+        f"({posixpath.relpath(record.path.as_posix(), directory)}) — "
+        f"{record.meta['decision_status']}"
+        for record in decisions
+    )
+
+
+def generated(records: list[Record]) -> list[tuple[Path, str, str]]:
+    blocks = [(path, marker, catalog(records, kind)) for kind, (path, marker) in MARKERS.items()]
+    return [*blocks, (CHRONOLOGY[0], CHRONOLOGY[1], chronology(records))]
+
+
 def render(root: Path, records: list[Record], check: bool) -> list[str]:
     errors = []
-    for kind, (relative, marker) in MARKERS.items():
+    for relative, marker, body in generated(records):
         path = root / relative
         text = path.read_text(encoding="utf-8")
         begin, end = f"<!-- BEGIN GENERATED {marker} -->", f"<!-- END GENERATED {marker} -->"
-        replacement = f"{begin}\n{catalog(records, kind)}\n{end}"
+        replacement = f"{begin}\n{body}\n{end}"
         updated, count = re.subn(
             re.escape(begin) + r".*?" + re.escape(end), replacement, text, flags=re.DOTALL
         )

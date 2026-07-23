@@ -112,6 +112,7 @@ accepted. Unresolved questions are collected in
 
 ## Chronological index
 
+<!-- BEGIN GENERATED ADR CHRONOLOGY -->
 - [0001: Separate semantic planning from physical scheduling](0001-separate-semantic-and-physical-plans.md) — accepted
 - [0002: Generate Metal artifacts ahead of time](0002-aot-metal-artifacts.md) — accepted
 - [0003: Keep the compiler independent of Candle](0003-candle-is-an-integration.md) — accepted
@@ -171,6 +172,20 @@ accepted. Unresolved questions are collected in
 - [0057: Set the prototype MSRV to Rust 1.89](0057-set-the-prototype-msrv-to-rust-1-89.md) — superseded
 - [0058: Use a recoverable consuming semantic-program build](0058-use-a-recoverable-consuming-semantic-program-build.md) — accepted
 - [0059: Use exact typed authoring handles over runtime-typed semantic values](0059-use-exact-typed-authoring-handles.md) — accepted
+- [0060: Bind Rust type markers through the explicit registry](0060-bind-rust-type-markers-through-the-registry.md) — accepted
+- [0061: Layer checked shape evidence over canonical typed values](0061-layer-checked-shape-evidence-over-values.md) — accepted
+- [0062: Bind Rust markers to complete resolved value types](0062-bind-markers-to-resolved-value-types.md) — accepted
+- [0063: Check value graph ownership at semantic admission](0063-check-graph-ownership-at-admission.md) — accepted
+- [0064: Compact semantic programs at commitment](0064-compact-at-semantic-program-commit.md) — accepted
+- [0065: Extract reference evaluation from the IR crate](0065-extract-reference-evaluation-from-ir.md) — accepted
+- [0066: Separate semantic type authority from Rust marker bindings](0066-separate-semantic-authority-from-rust-markers.md) — accepted
+- [0067: Use pinned-nightly dependent arrays for exact shape evidence](0067-use-pinned-nightly-dependent-static-shapes.md) — accepted
+- [0068: Co-locate ABI expressions with executable program IR](0068-co-locate-abi-expressions-with-executable-program-ir.md) — accepted
+- [0069: Use a general compilation boundary with explicit support failures](0069-use-a-general-compilation-boundary.md) — accepted
+- [0070: Own shared target-neutral compiler IR in tiler-ir](0070-own-shared-compiler-ir-in-tiler-ir.md) — accepted
+- [0071: Use checked builders for shared compiler IR](0071-use-checked-builders-for-shared-compiler-ir.md) — accepted
+- [0072: Separate semantic meaning from provider provenance](0072-separate-semantic-meaning-from-provider-provenance.md) — accepted
+<!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template
 

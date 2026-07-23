@@ -9,8 +9,8 @@ decision_status: "accepted"
 implementation_status: "partial"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.artifact-abi"]
 evidence: ["tiler.research.program-planning.abi-expression-ownership", "tiler.research.kernel-ir.structured-kernel-ir-verifier"]
+supersedes: ["ADR-0056"]
 ticket: "prototype-shared-compiler-ir-ownership"
-related: ["ADR-0071"]
 ---
 
 # 0070: Own shared target-neutral compiler IR in tiler-ir

@@ -10,7 +10,7 @@ disposition: "superseded"
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis", "executable-model", "bounded-measurement"]
 informs: ["tiler.contract.ir"]
-related: ["tiler.research.shapes.stable-rust-shape-evidence"]
+depends_on: ["tiler.research.shapes.stable-rust-shape-evidence"]
 ticket: "research-the-public-static-shape-evidence-spelling"
 ---
 
