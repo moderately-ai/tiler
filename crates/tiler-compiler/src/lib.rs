@@ -7,6 +7,7 @@ pub mod capability;
 mod explain;
 mod feasibility;
 mod fusion;
+mod fusion_legality;
 pub mod legality;
 mod normalize;
 mod physical;
