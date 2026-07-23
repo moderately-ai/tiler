@@ -168,10 +168,15 @@ pruning, and explicit search budgets. Tiny graphs should have an exhaustive
 oracle in tests so heuristic completeness and plan quality can be measured
 before a memo architecture is chosen.
 
-The first deterministic safety budgets are 32 semantic occurrences per region,
-8 boundary outputs, 64 live boundary/internal values, 32 candidates per seed,
-8 nondominated implementations per region, and 10,000 candidate expansions per
-compilation request. Producer duplication is disabled outside oracle tests in
+Five of the first deterministic safety budgets are implemented today as the
+`region_*` fields of `DeterministicBudgets`: 32 semantic occurrences per region
+(`region_members`), 8 boundary outputs (`region_boundary_outputs`), 64 live
+boundary/internal values (`region_live_values`), 32 candidates per seed
+(`region_candidates_per_seed`), and 10,000 candidate expansions per compilation
+request (`region_expansions`). A sixth budget, 8 nondominated implementations
+per region, is forward-looking: it bounds the per-region physical-implementation
+frontier, a stage that is not yet implemented, so it becomes a real budget only
+when that stage lands. Producer duplication is disabled outside oracle tests in
 the initial implementation. Hitting a budget stops only that growth path,
 emits an explain reason, and never removes singleton/unfused coverage. These
 defaults are calibration inputs, not correctness constants.
