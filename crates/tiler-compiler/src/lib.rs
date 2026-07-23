@@ -3,6 +3,7 @@
 //! This crate owns compiler decisions and may construct artifact plans. It must
 //! not depend on Metal emission, live runtime APIs, Candle, or frontend syntax.
 
+pub mod capability;
 mod explain;
 mod fusion;
 mod normalize;
