@@ -24,7 +24,9 @@ reasons. It is not a proposal to exhaustively optimize real programs.
 
 ## Precedents
 
-Burn's `OperationFuser` in `crates/burn-fusion/src/backend.rs` admits operations
+Burn's `OperationFuser` at inspected revision
+[`e5467f02`](https://github.com/tracel-ai/burn/blob/e5467f02c3cf88eb5d709f190c170005ce26038d/crates/burn-fusion/src/backend.rs)
+(workspace version 0.22.0-pre.1) admits operations
 incrementally, exposes open/closed state, reports whether a candidate is ready,
 and scores ready implementations. Its search tests retain open alternatives
 instead of committing to the first ready prefix. This is strong precedent for

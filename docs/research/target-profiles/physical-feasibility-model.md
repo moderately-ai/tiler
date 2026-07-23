@@ -229,7 +229,9 @@ post-execution measurements. `threadExecutionWidth` is not an MSL vector width,
 and merely choosing its multiple is generally a performance recommendation
 unless the generated algorithm requires that subgroup width.
 
-The inspected Candle checkout reinforces the phase boundary. Its Metal
+Candle at inspected revision
+[`31f35b14`](https://github.com/huggingface/candle/blob/31f35b147389700ed2a178ee66a91c3cc25cc80d/candle-metal-kernels/src/metal/compute_pipeline.rs)
+(version 0.11.0) reinforces the phase boundary. Its Metal
 pipeline wrapper (`candle-metal-kernels/src/metal/compute_pipeline.rs`) exposes
 function-specific maximum threads but not execution width or static
 threadgroup bytes; `src/utils.rs` launch helpers either choose that maximum or

@@ -148,14 +148,21 @@ payload and constant-buffer fallback are target/runtime capabilities.
 
 ## Numerical compiler realization
 
-Tiler never inherits the Metal compiler's math defaults. On the qualified local
-Metal 32023.883 toolchain, the measured strict baseline is:
+Tiler never inherits the Metal compiler's math defaults. The strict baseline
+spellings for the local Metal 32023.883 toolchain row are:
 
 ```text
 -fmetal-math-mode=safe
 -fmetal-math-fp32-functions=precise
 -ffp-contract=off
 ```
+
+The [Apple artifact-compatibility probe](../research/apple-targets/artifact-compatibility.md)
+measured only that this toolchain accepted these exact spellings and compiled
+every tested macOS, iOS-device, and iOS-simulator tuple with them. That probe
+qualifies the row for bounded compile and same-host reproducibility alone; it
+explicitly does not qualify it for Tiler's runtime support matrix or numerical
+conformance, and it did not observe the numerical behavior these flags request.
 
 These spellings are a governed realization for that toolchain row, not a
 portable promise that future Metal compilers use the same flags or definitions.

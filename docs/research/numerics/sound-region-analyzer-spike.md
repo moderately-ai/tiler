@@ -9,7 +9,7 @@ research_status: "complete"
 disposition: "informational"
 implementation_status: "spike-only"
 evidence_classes: ["primary-source-synthesis","executable-model","bounded-measurement"]
-informs: ["tiler.contract.correctness-and-testing"]
+informs: ["tiler.contract.numerical-semantics", "tiler.contract.correctness-and-testing"]
 ticket: "spike-sound-region-accuracy-analyzer-integration"
 ---
 
@@ -50,7 +50,7 @@ The measured profile supports `+`, `-`, `*`, `/`, `sqrt`, explicit FMA,
 explicit f32/f16 precision boundaries, relational input assumptions, and
 small reductions unrolled in their exact topology. Analysis itself took
 8--320 ms in the measured cases; Scala frontend startup made total invocation
-time roughly 0.9--1.5 seconds. This is viable for a bounded compile-time proof
+time roughly 1.0--1.5 seconds. This is viable for a bounded compile-time proof
 portfolio with caching, not for indiscriminate use on every search candidate.
 
 The profile does **not** produce an independently checkable proof certificate.
@@ -157,9 +157,19 @@ in [`measurements.json`](../../../spikes/numerics/sound_accuracy/measurements.js
 | explicit f16 materialization | 4.88817720906809e-4 | 4.8828125e-4 | 8 / 1033 ms |
 | four-term left reduction | 12.000001072883606 | 1 | included in batch |
 | four-term tree reduction | 16.000001072883606 | 2 | included in batch |
-| `x / y`, `x == y`, independent ranges | 4.768372292574121e-7 | 0 over 5 executed equal-f32 samples | 13 / 1171 ms |
+| `x / y`, `x == y`, independent ranges | 4.768372292574121e-7 | 0 over 5 executed equal-f32 samples | included in batch |
 | same, Z3 relational ranges | 4.172325844820215e-7 | 0 over the same 5 samples | 192 / 1350 ms |
-| gradual-subnormal add | 2.1019476964872256e-45 | not sampled | 8 / 914 ms |
+| gradual-subnormal add | 2.1019476964872256e-45 | not sampled | not recorded |
+
+`measurements.json` retains an analysis/total timing pair for exactly four
+profile invocations: the default scalar-region batch at 16 / 1012 ms, the
+mixed-precision f16 profile at 8 / 1033 ms, interval subdivision at
+320 / 1451 ms, and the relational SMT profile at 192 / 1350 ms. The
+equality-constrained ratio is one of the seven functions the default profile
+requires, so it carries that batch timing rather than a separate pair. The
+gradual-subnormal case lives in `boundary_regions.scala`, which the governed
+runner never invokes; its bound was retained without any timing, so none is
+reported for it.
 
 Interval subdivision reduced the `sqrt`/division bound to
 5.456627528741025e-7, while raising the whole batch's analysis time from 16 ms

@@ -162,9 +162,12 @@ identical copies. At 32 same-crate invocations it retained 13, consistent with
 folding inside some codegen partitions; that explanation is an inference, not
 a contract. The dev same-crate build retained six while the cross-crate build
 retained eight. Identity did not affect the eight-copy release binary size.
-The central eight-copy release cell appeared in both the count and boundary
-submatrices, so its time and RSS above are medians of six fresh builds; all
-other rows use three.
+Both same-crate eight-copy release configurations, identical and unique, ran
+once in the count submatrix and again in the boundary submatrix, so the wall
+time and RSS of those two rows are medians of six fresh builds; every other row
+in this table is a median of three. The boundary table below reports the
+identical configuration's three boundary-submatrix builds alone, which is why
+its wall time and RSS differ from the corresponding row here.
 
 The result needed by the architecture is negative: neither identical literals,
 same-crate placement, nor a release profile guarantees one stored copy.

@@ -9,7 +9,7 @@ implementation_status: "implemented"
 evidence_classes: ["executable-model"]
 supports: ["tiler.research.documentation.information-architecture-audit"]
 entrypoints: ["scripts/docs.py", "scripts/tests/test_docs.py"]
-last_verified: "2026-07-21"
+last_verified: "2026-07-23"
 ticket: "docs-integrity-gate"
 ---
 
