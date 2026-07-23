@@ -1,7 +1,7 @@
 ---
 id: prototype-index-region-reference-oracle
 title: Implement the generic IndexRegion reference oracle
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-canonical-index-region-slice, correct-reference-value-and-authority-contracts]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, reference, indexing, oracle]
-claimed_from: todo
-assignee: agent-prototype-index-region-reference-oracle
-lease_expires_at: 1784823820
 ---
 Implement a slow generic checked IndexRegion oracle in tiler-reference. Resolve
 registered scalar evaluators without downcasting, execute ordered multi-result
