@@ -1,7 +1,7 @@
 ---
 id: correct-roadmap-capability-wiring-claims
 title: Correct the roadmap's stale claim that no capability registry caller exists
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -21,3 +21,15 @@ Correct both passages against the tree rather than deleting them: the surroundin
 Scope note: `propagate-lowering-capability-wiring-into-contracts` owns the same correction for `contracts/optimizer`, `contracts/numerics`, and `contracts/foundation`. `docs/roadmap.md` is `contracts/navigation` and falls outside it, which is why this is separate. Coordinate so the two do not restate each other.
 
 Run `uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py` before completion.
+
+## Outcome
+
+Done by the coordinator at merge time rather than dispatched: `contracts/navigation` was free once `draft-public-extension-seam-ownership-adr` merged, and both corrections are factual edits with the evidence already in hand.
+
+**Both sites corrected, not one.** The ticket named two and both were live on `main`. The claim at the Milestone 6 framing said `capability.rs` and `legality.rs` are "`pub mod` draft authorities with no in-crate production caller" and that "no governed provider registers an index-access or scalar-lowering capability"; the claim in the support matrix's structural-limits paragraph said the same of the registry. Verified false before editing: `crates/tiler-compiler/src/pipeline.rs:827` calls `resolve_lowering` on the ordinary path, and `crates/tiler-compiler/src/governed.rs` registers four index-access providers.
+
+Each correction is marked as an after-the-fact correction naming what the text previously read, rather than silently rewritten, so a reader tracing the claim can see what changed and why. Both were true when written and were falsified by `wire-capability-and-refinement-into-compile-path`.
+
+**The surrounding claims survive and were preserved deliberately.** At the Milestone 6 site, the reason a contraction still cannot be presented is *not* that the authorities are unwired — it is that no capability exists for a contraction occurrence, so resolution fails closed rather than lowering one. That is a stronger statement than the one it replaces. In the support matrix, the operation-family rungs are unaffected: capability resolution constrains which programs compile, not how far any operation family was built.
+
+This is the third stale-claim class found today, after the `select_alternative` citation and three rotted verbatim quotations of `docs/compiler/optimizer.md`. `detect-stale-cross-document-quotations` owns the mechanical question of whether the gate can catch the quotation form; this one was a paraphrase of implementation state rather than a quotation, so that check would not have caught it.
