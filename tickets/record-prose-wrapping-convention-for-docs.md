@@ -37,3 +37,13 @@ reasons; mixed wrapping in the meantime is expected and is not drift to be
 
 If a mechanical check is ever added, it must only assert the convention for newly
 authored or substantively edited documents, never reformat wholesale.
+
+## Outcome
+
+`docs/document-metadata.md` gained a **Prose source form** section and extended its Ownership statement to cover the source form of governed Markdown; `docs/README.md`'s reading-order note now routes an author there before authoring. The section states the rule, its scope (prose inside list items, table cells, block quotations, and footnotes, never the newlines that carry structure), the transitional policy (the paragraph converts when edited; the file is not reflowed; a half-wrapped paragraph is a defect rather than a transitional state), and why no gate enforces it yet.
+
+Two facts in that section were verified rather than assumed. `scripts/docs.py` constructs `MarkdownIt("commonmark")` at line 454 against a locked `markdown-it-py==4.2.0`, so the `softbreak`-inside-`paragraph` predicate the section names is exact rather than heuristic. `catalog()` emits each generated entry as a single line, so the renderer already writes the form the rule asks authors for.
+
+Two consequences the ticket declined to take are recorded as tickets rather than left implicit: `convert-docs-prose-to-unwrapped-source-form` (deferred; carries the 133/15/6 corpus measurement, the mechanical-safety argument, and the quiescent-tree trigger) and `enforce-unwrapped-prose-in-the-docs-gate` (deferred behind it, with the two check shapes that must never be added).
+
+`uv run --locked python scripts/docs.py render` and `tkt lint` pass.
