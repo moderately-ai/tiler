@@ -1,7 +1,7 @@
 ---
 id: prototype-optimizer-conformance-gate
 title: Gate the target-neutral optimizer conformance profile
-status: todo
+status: in-progress
 priority: p0
 dependencies: [enforce-repository-validation-gate-integrity, prototype-artifact-program-model]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir, implementation/reference, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, conformance, milestone-0b]
+claimed_from: todo
+assignee: agent-prototype-optimizer-conformance-gate
+lease_expires_at: 1784917189
 ---
 Exercise an externally registered operation through the ordinary compiler path,
 not a test-only shortcut. Cover at least two non-isomorphic graph shapes plus
