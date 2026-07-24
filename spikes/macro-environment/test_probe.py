@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import selectors
 import subprocess
 import sys
 import time
@@ -14,6 +15,10 @@ from probe import ProbeFailure, parse_cfg, parse_trace_line, validate_record, ve
 
 RESULTS = Path(__file__).with_name("results")
 RECORD_PID = "import os, pathlib, sys\npathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+# One child program shared by the two tests that drive a deadline past the
+# streaming loop, so the wall-clock and signal paths stay comparable.
+CLOSE_PIPES_AND_SLEEP = RECORD_PID + "import os, time\nos.close(1)\nos.close(2)\ntime.sleep(30)\n"
+ALARM_AFTER_DRAIN_SECONDS = 0.2
 
 
 def valid_trace_line() -> str:
@@ -114,7 +119,7 @@ def test_command_capture_rejects_output_while_streaming(
     probe.start_deadline()
     try:
         with pytest.raises(ProbeFailure, match="stdout exceeds 64 bytes"):
-            probe.capture(["python3", "-c", "print('x' * 1000)"])
+            probe.capture([sys.executable, "-c", "print('x' * 1000)"])
     finally:
         probe.signal.setitimer(probe.signal.ITIMER_REAL, 0)
 
@@ -173,12 +178,7 @@ def test_command_capture_enforces_deadline_after_capture_pipes_close(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     child_pid = tmp_path / "pid"
-    command = [
-        sys.executable,
-        "-c",
-        RECORD_PID + "import os, time\nos.close(1)\nos.close(2)\ntime.sleep(30)\n",
-        str(child_pid),
-    ]
+    command = [sys.executable, "-c", CLOSE_PIPES_AND_SLEEP, str(child_pid)]
     monkeypatch.setattr(probe, "HARNESS_DEADLINE", time.monotonic() + 1.0)
     started = time.monotonic()
 
@@ -239,22 +239,43 @@ def test_overall_timeout_handler_fails_closed() -> None:
         probe.overall_timeout_handler(0, None)
 
 
-def test_overall_alarm_reaps_child_after_capture_pipes_close(tmp_path: Path) -> None:
+def test_overall_alarm_reaps_child_after_capture_pipes_close(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    armed: list[float] = []
+
+    class DrainArmedSelector(selectors.DefaultSelector):
+        """Arm the overall alarm at the instant both capture pipes reach end of file."""
+
+        def unregister(self, fileobj: object) -> selectors.SelectorKey:
+            key = super().unregister(fileobj)
+            if not self.get_map():
+                armed.append(time.monotonic())
+                probe.signal.setitimer(probe.signal.ITIMER_REAL, ALARM_AFTER_DRAIN_SECONDS)
+            return key
+
+    # Which failure `capture` raises is decided by where the alarm lands. Inside
+    # `selector.select` it is re-raised as a per-command deadline; only past the
+    # streaming loop does the handler's own failure propagate. Arming a fixed
+    # timer before the child starts races that boundary against interpreter
+    # startup, which lets ambient `PATH` decide the outcome. Arming on the last
+    # `unregister` synchronizes on the closure the test is about and leaves no
+    # later `select` call for the signal to land in, so the margin no longer
+    # has to out-run anything.
+    monkeypatch.setattr(probe.selectors, "DefaultSelector", DrainArmedSelector)
     child_pid = tmp_path / "pid"
+    command = [sys.executable, "-c", CLOSE_PIPES_AND_SLEEP, str(child_pid)]
     probe.start_deadline()
-    probe.signal.setitimer(probe.signal.ITIMER_REAL, 0.2)
-    command = [
-        "python3",
-        "-c",
-        "import os,pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
-        "os.close(1); os.close(2); time.sleep(10)",
-        str(child_pid),
-    ]
     try:
         with pytest.raises(ProbeFailure, match="overall deadline"):
             probe.capture(command)
     finally:
         probe.signal.setitimer(probe.signal.ITIMER_REAL, 0)
+
+    # Fail on the synchronization itself if it ever stops engaging, rather than
+    # leaving the test to wait out the child's own sleep and then report a
+    # missing exception that does not name the cause.
+    assert len(armed) == 1
     assert child_pid.is_file()
     with pytest.raises(ProcessLookupError):
         probe.os.kill(int(child_pid.read_text()), 0)

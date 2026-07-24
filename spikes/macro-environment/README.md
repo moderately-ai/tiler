@@ -8,7 +8,7 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.macro-environment.build-environment"]
-entrypoints: ["spikes/macro-environment/run.sh", "spikes/macro-environment/run-target.sh", "spikes/macro-environment/run-family-cfg.sh", "spikes/macro-environment/probe.py", "spikes/macro-environment/cleanup_signal_demonstration.py"]
+entrypoints: ["spikes/macro-environment/run.sh", "spikes/macro-environment/run-target.sh", "spikes/macro-environment/run-family-cfg.sh", "spikes/macro-environment/probe.py", "spikes/macro-environment/cleanup_signal_demonstration.py", "spikes/macro-environment/alarm_landing_site.py"]
 last_verified: "2026-07-24"
 ticket: "macro-build-environment"
 ---
@@ -63,6 +63,23 @@ uv run --locked pytest spikes/macro-environment/test_probe.py
 refused or an undelivered group signal, so the cleanup contract that
 `kill_process_group` implements can be observed deterministically, including
 against an earlier revision extracted with `git show`.
+
+`alarm_landing_site.py` takes a census of where the overall alarm interrupts
+`capture`, which is what decides whether an expired deadline surfaces as the
+harness's own `overall deadline` or as the streaming loop's rewritten
+`command exceeded deadline`. `--construction pre-armed` arms a fixed timer
+before the child is spawned and therefore races the child interpreter's startup;
+`--construction drain-armed` arms it from the `unregister` that empties the
+selector map, after which no `selector.select` call remains for the signal to
+land in. Both report the spawn-to-drain latency a pre-armed margin has to
+out-run, and `--interpreter` selects the child, so an ambient-`PATH` interpreter
+is reproducible directly:
+
+```sh
+spikes/macro-environment/alarm_landing_site.py \
+  --module spikes/macro-environment/probe.py --construction pre-armed \
+  --trials 5 --interpreter "$(command -v python3)"
+```
 
 The malformed-output tests reject missing, duplicate, invalid-hex, unknown
 version, wrong-fingerprint, unexpected-environment, malformed-cfg, and invalid
