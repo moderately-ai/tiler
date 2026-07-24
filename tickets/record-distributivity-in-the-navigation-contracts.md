@@ -1,7 +1,7 @@
 ---
 id: record-distributivity-in-the-navigation-contracts
 title: Record distributivity in the navigation contracts
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [settle-contraction-chain-distributivity-permission, scope-einsum-contraction-support, decide-whether-to-admit-a-distributivity-permission]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics]
-claimed_from: todo
-assignee: agent-record-distributivity-in-the-navigation-contracts
-lease_expires_at: 1784929885
 ---
 `settle-contraction-chain-distributivity-permission` established that regrouping a tensor-contraction chain consumes **distributivity**, a numerical dimension independent of reassociation and operand permutation. It held `contracts/numerics` and `contracts/optimizer` and routed two `contracts/navigation` consequences here.
 
