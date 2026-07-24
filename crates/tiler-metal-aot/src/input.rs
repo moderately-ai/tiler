@@ -5,6 +5,45 @@
 //! realization flags are required inputs, so
 //! [`NumericalRealization`](crate::input::NumericalRealization) deliberately has
 //! no `Default` implementation.
+//!
+//! # The Apple target vocabulary is deliberately owned twice
+//!
+//! [`MslVersion`](crate::input::MslVersion),
+//! [`ApplePlatform`](crate::input::ApplePlatform), and
+//! [`DeploymentMinimum`](crate::input::DeploymentMinimum) have
+//! counterparts in `tiler_metal::target`: `MslLanguageVersion`,
+//! `MetalPlatform`, and `MetalDeploymentMinimum`. They describe the same three
+//! facts about the same targets. That duplication is a decision recorded by
+//! `choose-one-owner-for-apple-target-vocabulary`, not an accident to be
+//! consolidated by the next reader who notices it.
+//!
+//! **Why this crate keeps its own copy.** This crate has an empty dependency
+//! closure on purpose. It spawns `xcrun` and its whole value is being a small
+//! shim whose exact compiler invocation can be read and audited without the
+//! lowering stack behind it. `tiler-metal` depends on `tiler-ir` and
+//! `tiler-artifact`, so importing its vocabulary would pull both into the build
+//! graph of the component that runs the compiler, and would do so to obtain
+//! three enums. Reversing the edge is worse: a normal `tiler-metal` →
+//! `tiler-metal-aot` dependency puts Apple tool discovery into every consumer's
+//! build graph, and Cargo's cycle rule would then forbid the
+//! `tiler-metal-aot` → `tiler-metal` direction that the existing
+//! development-only edge exists to keep available.
+//!
+//! **These types are matched across the crate boundary, so they stay
+//! exhaustive.** `tiler-metal` maps [`MslVersion`](crate::input::MslVersion)
+//! and [`ApplePlatform`](crate::input::ApplePlatform) onto
+//! its own vocabulary *totally*, in a test module reached through its
+//! development dependency on this crate. Under ADR 0074 convention 5b that
+//! makes both 5b types: marking either `#[non_exhaustive]` would force a
+//! wildcard arm into a map whose every arm must produce the counterpart the
+//! variant alone determines, and a wildcard there could only invent a family or
+//! a language standard. A variant added to either enum is meant to fail
+//! `tiler-metal`'s build until the emitter gains the matching one.
+//!
+//! Nothing else in this module is constrained that way. A caller outside this
+//! crate constructs [`AppleSdk`](crate::input::AppleSdk),
+//! [`OptimizationLevel`](crate::input::OptimizationLevel), and the input
+//! records without matching them, which is ADR 0074 convention 5a.
 
 use core::fmt;
 
@@ -62,6 +101,12 @@ impl AppleSdk {
 }
 
 /// The measured Apple artifact family a compiled `metallib` belongs to.
+///
+/// This is the family a compilation *produces*, and
+/// `tiler_metal::target::MetalPlatform` is the family emitted source
+/// *declares*, with the same three variants and the same stable identifiers.
+/// Adding a family here without adding it there fails `tiler-metal`'s build.
+/// Do not mark this `#[non_exhaustive]`: see this module's documentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ApplePlatform {
     /// macOS.
@@ -90,6 +135,12 @@ impl ApplePlatform {
 /// is not evidence that a produced `metallib` runs on every OS at or above it;
 /// deployment minimum, platform family, language features, and live GPU
 /// capabilities remain independent compatibility dimensions.
+///
+/// It reaches the `air64-apple-*` target triple through [`MetalTarget::triple`].
+/// `tiler_metal::target::MetalDeploymentMinimum` holds the same two components
+/// and renders them the same way, but reaches an emitted provenance header
+/// instead. Both spellings are asserted to agree from `tiler-metal`, which is
+/// what makes that header's claim about this compilation true.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DeploymentMinimum {
     major: u16,
@@ -125,6 +176,13 @@ impl fmt::Display for DeploymentMinimum {
 /// The selected Metal Shading Language standard.
 ///
 /// MSL 3.1 is the standard the Apple artifact-compatibility probe measured.
+///
+/// This is the standard a compilation is *invoked* with;
+/// `tiler_metal::target::MslLanguageVersion` is the standard emitted source
+/// *declares it was written against*, with the same variants and the same
+/// `-std` tokens. Adding a standard here without adding it there fails
+/// `tiler-metal`'s build. Do not mark this `#[non_exhaustive]`: see this
+/// module's documentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MslVersion {
     /// MSL 3.0, spelled `-std=metal3.0`.
@@ -576,6 +634,31 @@ mod tests {
         assert_eq!(target.triple(), "air64-apple-ios17.0-simulator");
         assert_eq!(target.platform(), ApplePlatform::IOsSimulator);
         assert_eq!(target.sdk.selector(), "iphonesimulator");
+    }
+
+    /// Every artifact family names the SDK selector that produces it.
+    ///
+    /// [`AppleSdk::platform`] is total in one direction: every SDK yields a
+    /// family. The direction that can rot is the other one — a family added to
+    /// [`ApplePlatform`] with no SDK producing it would be recordable in
+    /// provenance and impossible to compile for. The match below is exhaustive
+    /// over [`ApplePlatform`], so a new family fails to compile here until it
+    /// names its selector.
+    #[test]
+    fn every_artifact_family_names_the_sdk_that_selects_it() {
+        for family in [
+            ApplePlatform::MacOs,
+            ApplePlatform::IOsDevice,
+            ApplePlatform::IOsSimulator,
+        ] {
+            let (sdk, selector) = match family {
+                ApplePlatform::MacOs => (AppleSdk::MacOs, "macosx"),
+                ApplePlatform::IOsDevice => (AppleSdk::IPhoneOs, "iphoneos"),
+                ApplePlatform::IOsSimulator => (AppleSdk::IPhoneSimulator, "iphonesimulator"),
+            };
+            assert_eq!(sdk.platform(), family, "{}", family.as_str());
+            assert_eq!(sdk.selector(), selector, "{}", family.as_str());
+        }
     }
 
     #[test]

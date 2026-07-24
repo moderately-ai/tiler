@@ -29,16 +29,43 @@ additively:
   these completely; `tiler-compiler` and `tiler-metal` construct them:
   `ReductionTopology`, `BoundsProofKind`, `OwnershipProofKind`,
   `ExecutionBinding`, `TailPolicy`, `ContributorOrder`.
-- `tiler-metal-aot`: `AppleSdk` (reserves Mac Catalyst), `MslVersion`,
-  `OptimizationLevel`, and the output records `ArtifactProvenance` and
-  `CompiledArtifact` (which gain the deferred content digest). Leave the input
-  structs (`CompileRequest`, `MetalTarget`, `NumericalRealization`) exhaustive:
-  callers construct them and their growth is a `new()`-signature change regardless.
-  These types have no consumer outside `tiler-metal-aot` at all, so the amendment
-  does not touch this bullet.
+- `tiler-metal-aot`: `AppleSdk` (reserves Mac Catalyst), `OptimizationLevel`, and
+  the output records `ArtifactProvenance` and `CompiledArtifact` (which gain the
+  deferred content digest). Leave the input structs (`CompileRequest`,
+  `MetalTarget`, `NumericalRealization`) exhaustive: callers construct them and
+  their growth is a `new()`-signature change regardless.
 
-**Do not mark these four; leaving them exhaustive is the decided rule, not an
-omission.** Record in the Outcome that they were deliberately excluded.
+**Revised again 2026-07-24 after `choose-one-owner-for-apple-target-vocabulary`.**
+The premise that `tiler-metal-aot`'s types "have no consumer outside
+`tiler-metal-aot` at all" did not survive checking, and `MslVersion` is removed
+from the bullet above because of it. `compile-golden-msl-through-the-aot-driver-in-the-gate`
+gave `tiler-metal` a `[dev-dependencies]` edge to the driver, and
+`#[non_exhaustive]` binds every out-of-crate consumer regardless of dependency
+kind. Several driver types now have out-of-crate consumers; three of them must
+stay exhaustive:
+
+- `MslVersion` and `ApplePlatform` — convention 5b.
+  `crates/tiler-metal/src/target_correspondence.rs` maps both onto
+  `tiler_metal::target::{MslLanguageVersion, MetalPlatform}` *totally*, so that
+  neither crate can gain a language standard or an artifact family the other
+  lacks. Marking either forces a wildcard into a map whose only honest arm is
+  the counterpart the variant itself determines; a wildcard could only invent
+  one. `ApplePlatform` was never on the mark list — this records why it must
+  stay off it.
+- `DriverError` — convention 5c, and not previously considered here.
+  `crates/tiler-metal/src/golden_compilation.rs::resolved_toolchain` recognizes
+  it out of crate to separate an absent Apple toolchain (self-skip) from a
+  defect (report). A wildcard there is correct today and silently wrong the
+  moment a variant lands that must not read as an absent toolchain, which would
+  convert a defect into a skipped test. The type now says so in its own doc
+  comment.
+
+`AppleSdk` and `OptimizationLevel` keep their place on the mark list: `tiler-metal`
+constructs both and matches neither, which is 5a.
+
+**Do not mark these four `tiler_ir::schedule` types; leaving them exhaustive is
+the decided rule, not an omission.** Record in the Outcome that they were
+deliberately excluded, alongside the three `tiler-metal-aot` types above.
 
 - `SubnormalMode` and `NumericalPermission` — convention 5b. Two crates map them
   *totally*: `tiler_compiler::fusion::FusionNumericalProof::canonical_explain_evidence_bytes`
