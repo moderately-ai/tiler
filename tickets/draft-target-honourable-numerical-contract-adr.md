@@ -1,7 +1,7 @@
 ---
 id: draft-target-honourable-numerical-contract-adr
 title: Draft a proposed ADR for target-honourable numerical contracts
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [prototype-metal-numerical-realization, prototype-artifact-program-model, own-operation-family-support-matrix]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, decisions, numerics, feasibility]
-claimed_from: todo
-assignee: agent-draft-target-honourable-numerical-contract-adr
-lease_expires_at: 1784915749
 ---
 Record, as a **proposed** ADR, how a numerical contract expresses what a target
 can actually honour — so a real target can be conformant rather than permanently
