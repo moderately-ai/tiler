@@ -31,7 +31,20 @@ relative to its latency, and its one catch is better served by a written
 convention. That argues for a policy that spends Tom's attention on genuine
 compatibility commitments instead of on conformance.
 
-## Policy to record (proposal — the exact boundary is the decision)
+## Policy to record — **Tom decided this boundary on 2026-07-24**
+
+The exact split below is no longer a proposal to survey: Tom was asked the
+boundary directly and chose it, over a tighter variant (also bring him every new
+public *type*) and a looser one (let the coordinator promote `pub(crate)` to
+`pub` unaided). Record it as his decision with that context, and do not re-open
+the alternatives as though undecided — note only that the looser variant was
+declined because promotion is the moment a surface becomes externally
+load-bearing, and may be revisited once the optimizer conformance gate has
+actually exercised a seam end to end.
+
+This ticket's dependency is satisfied: ADR 0074 (the conventions) was accepted on
+2026-07-24, so "conforms to the conventions" now names something checkable, which
+is what makes the no-approval half of this policy safe rather than open-ended.
 
 - **No approval required:** a new compiler-internal authority introduced as a
   `pub(crate)` draft; additive `#[non_exhaustive]` growth; a new public error,
