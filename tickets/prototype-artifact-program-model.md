@@ -1,7 +1,7 @@
 ---
 id: prototype-artifact-program-model
 title: Implement the artifact-facing program model
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-kernel-program-ir]
 related: [prototype-neutral-artifact-codec]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, manifest]
-claimed_from: todo
-assignee: agent-prototype-artifact-program-model
-lease_expires_at: 1784913390
 ---
 Project verified KernelProgram content into a bounded versioned artifact model:
 entry points, ABI and launch expressions, portfolios/routing predicates,
