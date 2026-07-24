@@ -27,13 +27,15 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::Shape;
 
+use super::codec::ArtifactEnvelope;
 use super::error::{
     AbiExprUse, ArtifactBuildError, ArtifactEntityKind, ArtifactLimitKind,
     ArtifactVerificationError, invalid_handle, limit,
 };
 use super::expr::{
     AbiBinaryOp, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue, AvailabilityPhase, ExprNode,
-    binary_operand_type, evaluate, expr_key, node_type, unary_operand_type,
+    binary_operand_type, evaluate, expr_key, node_is_interface_only, node_phase, node_type,
+    unary_operand_type,
 };
 use super::facts::AbiFactBinder;
 use super::handles::{
@@ -453,7 +455,10 @@ impl ArtifactProgramBuilder {
         let data = self.assemble();
         let mut diagnostics = super::verify::verify_artifact(&data);
         if diagnostics.is_empty() {
-            match encode_identity(&data) {
+            // Identity is derived from the canonical envelope so that the bytes
+            // a producer stamps and the bytes a decoder re-derives come from
+            // one encoder rather than from two that agree by inspection.
+            match ArtifactEnvelope::project(&data).and_then(|envelope| encode_identity(&envelope)) {
                 Ok(identity) => return Ok(VerifiedArtifactProgram { data, identity }),
                 Err(diagnostic) => diagnostics.push(diagnostic),
             }
@@ -509,48 +514,15 @@ impl ArtifactProgramBuilder {
         )?;
         self.expression_types
             .push(node_type(&node, &self.expression_types));
-        self.expression_phases.push(self.node_phase(&node));
-        self.expression_interface_only
-            .push(self.node_is_interface_only(&node));
+        self.expression_phases
+            .push(node_phase(&node, &self.expression_phases));
+        self.expression_interface_only.push(node_is_interface_only(
+            &node,
+            &self.expression_interface_only,
+        ));
         self.expression_keys.push(key);
         self.expressions.push(node);
         Ok(id)
-    }
-
-    fn node_phase(&self, node: &ExprNode) -> AvailabilityPhase {
-        match node {
-            ExprNode::Root(root) => root.available_at(),
-            ExprNode::Unary { operand, .. } => self.expression_phases[usize_of(*operand)],
-            ExprNode::Binary { left, right, .. } => self.expression_phases[usize_of(*left)]
-                .max(self.expression_phases[usize_of(*right)]),
-            ExprNode::Select {
-                condition,
-                if_true,
-                if_false,
-            } => self.expression_phases[usize_of(*condition)]
-                .max(self.expression_phases[usize_of(*if_true)])
-                .max(self.expression_phases[usize_of(*if_false)]),
-        }
-    }
-
-    fn node_is_interface_only(&self, node: &ExprNode) -> bool {
-        match node {
-            ExprNode::Root(root) => root.is_interface_fact(),
-            ExprNode::Unary { operand, .. } => self.expression_interface_only[usize_of(*operand)],
-            ExprNode::Binary { left, right, .. } => {
-                self.expression_interface_only[usize_of(*left)]
-                    && self.expression_interface_only[usize_of(*right)]
-            }
-            ExprNode::Select {
-                condition,
-                if_true,
-                if_false,
-            } => {
-                self.expression_interface_only[usize_of(*condition)]
-                    && self.expression_interface_only[usize_of(*if_true)]
-                    && self.expression_interface_only[usize_of(*if_false)]
-            }
-        }
     }
 
     fn expect_type(&self, node: u32, expected: AbiType) -> Result<(), ArtifactBuildError> {

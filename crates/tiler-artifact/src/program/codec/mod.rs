@@ -1,0 +1,94 @@
+#![allow(
+    dead_code,
+    reason = "the neutral artifact codec is a crate-private draft authority (ADR 0074 convention 7). It reserves the envelope framing, canonical manifest encoding, section digests, governed feature and schema compatibility, and the decoder's re-proven obligations. Its first consumer is `prototype-metal-bundle-assembly`, which needs the section table to carry backend metadata and code; promoting the surface to `pub` is Tom's call under ADR 0075 and has not been made."
+)]
+
+//! The bounded canonical lockstep codec for the target-neutral artifact envelope.
+//!
+//! This module owns what `docs/artifact-abi.md` assigns to the artifact
+//! contract: envelope framing, the canonical manifest's wire encoding, section
+//! digests, component schema and required-feature compatibility, and failure
+//! classification. It does not own program or portfolio meaning, canonical
+//! identity semantics, or ABI-expression semantics; those stay with the model
+//! and the shared IR, and this module reaches them rather than restating them.
+//!
+//! # What the encoding commits to
+//!
+//! An encoded envelope is a fixed-width framing header, one canonical manifest,
+//! and a stream of length-delimited sections. The header bounds total length,
+//! manifest length, and section count before anything is allocated, names the
+//! governed digest algorithm explicitly, and carries the digest of the exact
+//! manifest bytes. Each section descriptor in the manifest carries that
+//! section's exact byte length and the digest of its exact bytes. The digest
+//! over the complete envelope is derived externally and is never stored inside
+//! the bytes it covers.
+//!
+//! The manifest carries every fact the artifact layer owns: the governed
+//! component schema versions, the routing policy, the derived required-feature
+//! set, the three reached semantic subjects, the ordered named interface, the
+//! selected capability providers, the backend payload descriptors, the shared
+//! ABI expression arena, and each plan variant with its guard, declared target
+//! profile and feasibility rule set, deferred predicates, and executable
+//! entries — each entry's stage subject, proven resource requirements, declared
+//! numerical realization, ABI bindings, launch contract, and backend entry. It
+//! also carries the artifact's canonical identity once, which the decoder
+//! re-derives from the content and compares.
+//!
+//! # What it deliberately excludes
+//!
+//! **The frozen registry snapshot.** ADR 0072 keeps the provenance of providers
+//! a plan never used out of packaged artifact identity. Carrying it here would
+//! put it back into the envelope's bytes and therefore into its digest, so an
+//! unused provider could invalidate a cache entry. Only the three reached
+//! subjects travel.
+//!
+//! **Presentation-only declaration order.** Providers, payloads, deferred
+//! predicates, launch preconditions, entries, expression arena nodes, and
+//! sections are all written in the canonical content order artifact identity
+//! already uses. Two artifacts with equal identity therefore encode to equal
+//! bytes, which is what makes an envelope digest usable as a cache key. Variant
+//! order, interface order, and ABI binding order are meaning and are retained.
+//!
+//! **Backend payload bytes.** A payload is named by governed backend and
+//! representation keys, its own schema version, its opaque content digest, and
+//! its execution policy — exactly as the artifact model names it. Whether a
+//! bundle's identity is content-addressed over its compilation inputs or over
+//! the emitted payload bytes is `prototype-metal-bundle-assembly`'s decision,
+//! and this codec does not pre-empt it. The section machinery it will need
+//! exists and is exercised; the governed section purposes it will add are its
+//! own versioned extension.
+//!
+//! **A reconstructable kernel program.** A section carries one packaged
+//! variant's *canonical kernel-program identity*, not the program. A decoder
+//! cannot rebuild a `VerifiedKernelProgram`: `KernelProgramBuilder::new` needs a
+//! `SemanticProgram`, which needs a frozen registry holding live inferencer
+//! implementations, and neither is representable as bytes. The consequence is
+//! stated rather than approximated — a decoded envelope proves *which* program
+//! an artifact names and cannot resurrect it, and the stage execution order of
+//! a multi-stage program is not recoverable, which is why an envelope that
+//! needs one declares a required feature this reader refuses.
+//!
+//! # Lockstep
+//!
+//! The reader supports exactly the versions and features this build writes. A
+//! major mismatch, a minor beyond what this build implements, an unrecognized
+//! digest algorithm, or a required feature this build cannot supply is a typed
+//! rejection, never a best-effort read.
+
+mod budget;
+mod decode;
+mod digest;
+mod encode;
+mod error;
+mod model;
+mod validate;
+
+// Only the identity encoder in `super::model` and the builder's terminal reach
+// into this module today; everything else stays behind its own module path so
+// the crate-private surface stays exactly as wide as its use.
+pub(crate) use model::{
+    ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, expression_keys, position,
+};
+
+#[cfg(test)]
+mod tests;
