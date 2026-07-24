@@ -116,11 +116,47 @@ def verify_lockfiles(before: dict[Path, str]) -> None:
         raise GateFailure(f"lockfile.mutated: Cargo changed {changed}")
 
 
+def _ignored(paths: list[Path]) -> set[str]:
+    """The subset of `paths` git ignores, empty outside a git work tree.
+
+    Return codes: 0 means some paths are ignored and are printed; 1 means none
+    are; 128 (outside a repository) or a missing git means the question could
+    not be asked, so nothing is treated as ignored and the filesystem stands as
+    the only authority — which is what the synthetic trees the integrity tests
+    build rely on.
+    """
+    if not paths:
+        return set()
+    try:
+        completed = subprocess.run(
+            ["git", "check-ignore", "--stdin", "-z"],
+            cwd=ROOT,
+            input="\0".join(str(path) for path in paths),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return set()
+    if completed.returncode not in (0, 1):
+        return set()
+    return {name for name in completed.stdout.split("\0") if name}
+
+
 def retained_diagnostics(root: Path) -> list[Path]:
-    """Enumerate every checked-in compiler diagnostic retained under a tree."""
-    return sorted(
+    """Enumerate every checked-in compiler diagnostic retained under a tree.
+
+    A retained diagnostic is checked-in evidence. A regenerable `.stderr` a
+    harness writes under a gitignored run-output directory — `local-results/`,
+    say — is not, so a gitignored path is excluded; a compiler scratch tree
+    under `target/` is excluded the same way. Outside a git work tree nothing is
+    known-ignored and every `.stderr` is retained.
+    """
+    candidates = sorted(
         path for path in root.rglob("*.stderr") if "target" not in path.relative_to(root).parts
     )
+    ignored = _ignored(candidates)
+    return [path for path in candidates if str(path) not in ignored]
 
 
 def ui_fixtures(workspace: Path) -> list[Path]:
