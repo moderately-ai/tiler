@@ -1,7 +1,7 @@
 ---
 id: settle-contraction-chain-distributivity-permission
 title: Settle whether reassociation permission authorizes contraction-chain regrouping
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [qualify-contraction-association-reassociation-permission, scope-einsum-contraction-support, disambiguate-contraction-in-the-glossary]
@@ -9,9 +9,6 @@ scopes: [contracts/numerics, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics, optimizer]
-claimed_from: todo
-assignee: agent-settle-contraction-chain-distributivity-permission
-lease_expires_at: 1784925959
 ---
 `docs/compiler/optimizer.md` now admits the tensor-contraction association rewrite only under an effective reassociation permission, and the Milestone 6 framing in `docs/roadmap.md` calls regrouping `(AB)C` into `A(BC)` a floating-point reassociation in ADR 0014's sense. That makes the reassociation permission necessary. It does not establish that it is sufficient.
 
