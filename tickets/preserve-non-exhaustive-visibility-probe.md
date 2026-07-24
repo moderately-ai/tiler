@@ -1,7 +1,7 @@
 ---
 id: preserve-non-exhaustive-visibility-probe
 title: Check in the two-crate probe behind ADR 0074's non-exhaustive measurements
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [resolve-non-exhaustive-recognizer-hole, extend-canonical-identity-encodings-for-reserved-variants]
@@ -9,9 +9,6 @@ scopes: [research/extensions, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, spike, verification]
-claimed_from: todo
-assignee: agent-preserve-non-exhaustive-visibility-probe
-lease_expires_at: 1784919376
 ---
 The amendment to ADR 0074 rests on measurements of Rust's `#[non_exhaustive]`
 behaviour, and those measurements have **no checked-in harness**. The two-crate
