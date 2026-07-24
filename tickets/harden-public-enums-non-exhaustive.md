@@ -119,3 +119,16 @@ runnable doctest if it can be done without ~25 lines of scalar-registry setup
 equivalence is currently proven only by the integration test, so the example
 itself is unverified). If a runnable example remains impractical, record that
 explicitly rather than leaving it looking like an oversight.
+
+## The list decays — re-derive it, do not execute it as written
+
+**Revised again 2026-07-24, second time in one day.** This ticket's enumeration has now been invalidated twice by consumers landing *after* it was written, and both times the correction was found by the ticket that created the consumer rather than by this one.
+
+- `choose-one-owner-for-apple-target-vocabulary` added `crates/tiler-metal/src/target_correspondence.rs`, an out-of-crate total map over `MslVersion` and `ApplePlatform`, and `golden_compilation.rs` recognizes `DriverError` out of crate. That removed `MslVersion` from the mark list and put `ApplePlatform` and `DriverError` permanently off it.
+- `prototype-neutral-artifact-codec` added `value_role_tag`, `subnormal_tag`, and `permission_tag` in `crates/tiler-artifact/src/program/model.rs` — exhaustive matches with **no wildcard arm** over `tiler_ir`'s `ValueRole`, `SubnormalMode`, and `NumericalPermission`. All three are now convention 5b and must **not** be marked.
+
+**Inference — the defect is the form, not the entries.** A list of "enums to mark" is a snapshot of which out-of-crate consumers existed on the day it was written, and ADR 0074 states the classification "is a property of the consumers that exist". Every new cross-crate total map silently invalidates a line of it, and executing a stale line is not a no-op: forcing a wildcard into a total map converts a would-be build error into a silently wrong encoding, which is the exact failure convention 5b exists to prevent.
+
+**Whoever takes this must re-derive the classification at execution time rather than trusting the enumeration above.** For each candidate enum, find every out-of-crate match on it and decide by what those consumers do — total map (5b, stay exhaustive), support recognizer (5c, stay exhaustive while pre-alpha), or partial/forwarding classification (5a, mark). Record the consumer that justifies each verdict, so the next reader can tell a decayed entry from a decided one.
+
+**One entry has a pending trigger rather than a verdict.** `widen-numerical-vocabulary-and-complete-identity` will grow `SubnormalMode` and `NumericalPermission`, which will break the codec's exhaustive tag maps by construction. That break is the guard working; it is not a reason to add a wildcard.
