@@ -1,7 +1,7 @@
 ---
 id: record-metal-aot-in-architecture-crate-profile
 title: Record tiler-metal-aot in the architecture crate profile and target-metadata ownership
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [choose-one-owner-for-apple-target-vocabulary, prototype-apple-aot-driver]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, architecture, metal]
-claimed_from: todo
-assignee: agent-record-metal-aot-in-architecture-crate-profile
-lease_expires_at: 1784919376
 ---
 `docs/architecture.md` has two gaps about `tiler-metal-aot` that a reader hits together, both found while deciding `choose-one-owner-for-apple-target-vocabulary`. Neither is in that ticket's scope (`implementation/metal`, `implementation/metal-aot`), so they are routed here.
 
