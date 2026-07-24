@@ -1,7 +1,7 @@
 ---
 id: record-prose-wrapping-convention-for-docs
 title: Record the prose-wrapping convention for authored documentation
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [draft-public-api-conventions-adr]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, conventions]
-claimed_from: todo
-assignee: agent-record-prose-wrapping-convention-for-docs
-lease_expires_at: 1784932575
 ---
 Tom's standing authoring instruction is to **never hard-wrap prose** — no
 newlines inserted mid-paragraph to hit a column width, in file writes as much as
