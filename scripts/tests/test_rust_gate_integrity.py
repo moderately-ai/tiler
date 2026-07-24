@@ -302,6 +302,88 @@ def test_lockfile_mutation_is_a_typed_failure(
         check_rust.verify_lockfiles(snapshot)
 
 
+def test_every_retained_spike_diagnostic_has_a_decided_posture() -> None:
+    """Keep the checked-in tree conforming to the admission rule it declares."""
+    check_rust.validate_spike_evidence_custody()
+    governed = (*check_rust.GATED_SPIKE_WORKSPACES, *check_rust.OFF_PIN_SPIKE_WORKSPACES)
+    assert check_rust.retained_diagnostics(check_rust.SPIKES)
+    assert all(
+        any(path.is_relative_to(workspace) for workspace in governed)
+        for path in check_rust.retained_diagnostics(check_rust.SPIKES)
+    )
+
+
+def planted_spikes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the custody predicate at a synthetic spike tree."""
+    spikes = tmp_path / "spikes"
+    admitted = spikes / "admitted"
+    (admitted / "tests/ui/fail").mkdir(parents=True)
+    (admitted / "tests/ui/fail/case.stderr").write_text("error: planted\n")
+    off_pin = spikes / "off-pin"
+    off_pin.mkdir()
+    (off_pin / "held.stderr").write_text("error: planted\n")
+    monkeypatch.setattr(check_rust, "ROOT", tmp_path)
+    monkeypatch.setattr(check_rust, "SPIKES", spikes)
+    monkeypatch.setattr(check_rust, "GATED_SPIKE_WORKSPACES", (admitted,))
+    monkeypatch.setattr(check_rust, "OFF_PIN_SPIKE_WORKSPACES", {off_pin: "stable 1.89.0"})
+    return spikes
+
+
+def test_a_retained_diagnostic_outside_every_governed_workspace_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spikes = planted_spikes(tmp_path, monkeypatch)
+    check_rust.validate_spike_evidence_custody()
+
+    (spikes / "newcomer").mkdir()
+    (spikes / "newcomer/case.stderr").write_text("error: planted\n")
+    with pytest.raises(check_rust.GateFailure, match="spike.ungoverned-evidence"):
+        check_rust.validate_spike_evidence_custody()
+
+
+def test_a_generated_target_tree_neither_supplies_nor_demands_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spikes = planted_spikes(tmp_path, monkeypatch)
+    # `trybuild` writes its scratch crate under the workspace `target/`, so a
+    # rebuilt copy of every fixture diagnostic appears there. Treating one as a
+    # retained claim would demand custody for a regenerable file.
+    (spikes / "newcomer/target/tests").mkdir(parents=True)
+    (spikes / "newcomer/target/tests/case.stderr").write_text("error: regenerated\n")
+
+    check_rust.validate_spike_evidence_custody()
+
+
+def test_an_off_pin_exclusion_that_retains_nothing_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spikes = planted_spikes(tmp_path, monkeypatch)
+    (spikes / "off-pin/held.stderr").unlink()
+    with pytest.raises(check_rust.GateFailure, match="spike.stale-exclusion"):
+        check_rust.validate_spike_evidence_custody()
+
+
+def test_a_spike_run_that_exercised_no_fixture_cannot_report_agreement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "spikes/probe"
+    (workspace / "crate/tests/ui/fail").mkdir(parents=True)
+    (workspace / "crate/tests/ui/fail/case.rs").write_text("fn main() {}\n")
+    monkeypatch.setattr(check_rust, "ROOT", tmp_path)
+
+    check_rust.verify_fixture_coverage(
+        workspace, "test tests/ui/fail/case.rs [should fail to compile] ... ok\n"
+    )
+    # The transcript a vacuous `trybuild` glob produces: an ordinary passing
+    # test that names no case at all.
+    with pytest.raises(check_rust.GateFailure, match="spike.fixtures"):
+        check_rust.verify_fixture_coverage(workspace, "test result: ok. 1 passed; 0 failed;\n")
+
+    (workspace / "crate/tests/ui/fail/case.rs").unlink()
+    with pytest.raises(check_rust.GateFailure, match="retains no trybuild case"):
+        check_rust.verify_fixture_coverage(workspace, "test result: ok. 1 passed; 0 failed;\n")
+
+
 def test_command_plan_uses_one_pin_locked_operations_and_release_numerics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,6 +405,14 @@ def test_command_plan_uses_one_pin_locked_operations_and_release_numerics(
     )
     monkeypatch.setattr(check_rust, "verify_toolchain", lambda *_args: phases.append("toolchain"))
     monkeypatch.setattr(check_rust, "validate_workspace", lambda *_args: phases.append("workspace"))
+    monkeypatch.setattr(
+        check_rust, "validate_spike_evidence_custody", lambda: phases.append("custody")
+    )
+    monkeypatch.setattr(
+        check_rust,
+        "verify_fixture_coverage",
+        lambda workspace, _transcript: phases.append(f"coverage:{workspace.name}"),
+    )
 
     def record(
         command: list[str],
@@ -330,8 +420,9 @@ def test_command_plan_uses_one_pin_locked_operations_and_release_numerics(
         environment: dict[str, str],
         cwd: Path = check_rust.ROOT,
         capture: bool = False,
+        combined: bool = False,
     ) -> subprocess.CompletedProcess[str]:
-        del cwd, capture
+        del cwd, capture, combined
         commands.append(command)
         command_environments.append(environment.copy())
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -342,11 +433,14 @@ def test_command_plan_uses_one_pin_locked_operations_and_release_numerics(
     toolchain = check_workspace.configured_toolchain(REPOSITORY_ROOT)
     prefix = ["/rustup", "run", toolchain, "cargo"]
     assert phases == [
+        "custody",
         "configs",
         "sanitize",
         "snapshot",
         "toolchain",
         "workspace",
+        "coverage:nightly-dependent-static-shapes",
+        "coverage:non-exhaustive-visibility",
         "verify-locks",
     ]
     assert commands == [
@@ -366,11 +460,22 @@ def test_command_plan_uses_one_pin_locked_operations_and_release_numerics(
         ],
         prefix + ["doc", "--workspace", "--no-deps", "--locked"],
         ["/bin/bash", str(check_rust.SHAPE_ROOT / "check.sh"), "/rustup", toolchain],
+        prefix
+        + [
+            "test",
+            "--locked",
+            "--manifest-path",
+            str(check_rust.VISIBILITY_ROOT / "Cargo.toml"),
+        ],
     ]
     assert "RUSTDOCFLAGS" not in command_environments[0]
     assert command_environments[5]["RUSTDOCFLAGS"] == "-D warnings"
     assert command_environments[6]["CARGO_TARGET_DIR"] == str(check_rust.SHAPE_ROOT / "target")
-    assert not (check_rust.SHAPE_ROOT / "rust-toolchain.toml").exists()
+    assert command_environments[7]["CARGO_TARGET_DIR"] == str(check_rust.VISIBILITY_ROOT / "target")
+    # Every gated spike takes the repository pin from the one authority that
+    # owns it; a toolchain file inside a spike would silently select another.
+    for workspace in check_rust.GATED_SPIKE_WORKSPACES:
+        assert not (workspace / "rust-toolchain.toml").exists()
 
 
 def test_lock_verification_runs_after_a_failed_phase(monkeypatch: pytest.MonkeyPatch) -> None:

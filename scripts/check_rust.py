@@ -17,7 +17,28 @@ import check_workspace
 
 ROOT = Path(__file__).resolve().parents[1]
 SHAPE_ROOT = ROOT / "spikes/shapes/nightly-dependent-static-shapes"
-LOCKFILES = (ROOT / "Cargo.lock", SHAPE_ROOT / "Cargo.lock")
+VISIBILITY_ROOT = ROOT / "spikes/extensions/non-exhaustive-visibility"
+SPIKES = ROOT / "spikes"
+# A spike Cargo workspace is compiled by this gate when it retains a
+# compiler-produced golden artifact — a `trybuild` `.stderr` — that a governed
+# document cites, *and* that artifact was captured on the toolchain
+# `rust-toolchain.toml` pins. Reproducing such a fixture is the only check that
+# compares a retained diagnostic against the code that is supposed to produce
+# it; every other predicate over these directories compares a record to a file
+# that a source edit can silently invalidate.
+GATED_SPIKE_WORKSPACES = (SHAPE_ROOT, VISIBILITY_ROOT)
+# A spike whose evidence is deliberately tied to a *different* toolchain cannot
+# join the set above. Re-deriving it needs a compiler this gate has no
+# authority to install, and re-recording it on the pin would destroy the claim
+# the spike exists to make. Its diagnostics stay retained evidence, verified
+# against their record rather than reproduced, and the exclusion is named here
+# so that "not compiled" is a decision with a reason instead of an omission.
+OFF_PIN_SPIKE_WORKSPACES = {ROOT / "spikes/shapes/shape-evidence": "stable 1.89.0"}
+LOCKFILES = (
+    ROOT / "Cargo.lock",
+    SHAPE_ROOT / "Cargo.lock",
+    VISIBILITY_ROOT / "Cargo.lock",
+)
 
 FORBIDDEN_ENVIRONMENT = {
     "RUSTUP_TOOLCHAIN",
@@ -95,6 +116,76 @@ def verify_lockfiles(before: dict[Path, str]) -> None:
         raise GateFailure(f"lockfile.mutated: Cargo changed {changed}")
 
 
+def retained_diagnostics(root: Path) -> list[Path]:
+    """Enumerate every checked-in compiler diagnostic retained under a tree."""
+    return sorted(
+        path for path in root.rglob("*.stderr") if "target" not in path.relative_to(root).parts
+    )
+
+
+def ui_fixtures(workspace: Path) -> list[Path]:
+    """Enumerate the `trybuild` cases a spike workspace is expected to exercise."""
+    return sorted(
+        path
+        for path in workspace.rglob("tests/ui/*/*.rs")
+        if "target" not in path.relative_to(workspace).parts
+    )
+
+
+def validate_spike_evidence_custody() -> None:
+    """Require every retained spike diagnostic to have a decided gate posture.
+
+    A `.stderr` checked in beside a fixture is a positive claim about what a
+    compiler emits, and it outlives whatever produced it: the file stays on
+    disk unchanged when the source beside it is edited. Only a compilation
+    compares the two. This predicate is therefore the admission rule made
+    mechanical — a directory that gains such a claim is either compiled here
+    or is recorded as off-pin with the toolchain its evidence belongs to, and
+    a third, unexamined state cannot be reached by adding a file.
+    """
+    for workspace, channel in OFF_PIN_SPIKE_WORKSPACES.items():
+        if not retained_diagnostics(workspace):
+            raise GateFailure(
+                f"spike.stale-exclusion: {workspace.relative_to(ROOT)} is recorded as retaining "
+                f"{channel} evidence this gate cannot reproduce, but retains no diagnostic; "
+                "remove the exclusion"
+            )
+    governed = (*GATED_SPIKE_WORKSPACES, *OFF_PIN_SPIKE_WORKSPACES)
+    ungoverned = [
+        str(path.relative_to(ROOT))
+        for path in retained_diagnostics(SPIKES)
+        if not any(path.is_relative_to(workspace) for workspace in governed)
+    ]
+    if ungoverned:
+        raise GateFailure(
+            f"spike.ungoverned-evidence: {ungoverned} retain a compiler diagnostic outside every "
+            "workspace this gate compiles or explicitly excludes; admit the workspace to "
+            "GATED_SPIKE_WORKSPACES, or record the toolchain its evidence is tied to in "
+            "OFF_PIN_SPIKE_WORKSPACES"
+        )
+
+
+def verify_fixture_coverage(workspace: Path, transcript: str) -> None:
+    """Reject a spike run that reported success without exercising its fixtures.
+
+    `trybuild` resolves its cases from a glob, so a suite whose fixtures moved
+    or whose glob stopped matching reports an ordinary passing test having
+    compiled nothing. Nothing else in the run distinguishes that from real
+    agreement, and for a workspace whose only content is the fixture set the
+    silent loss is total, so the transcript must name every retained case.
+    """
+    fixtures = ui_fixtures(workspace)
+    if not fixtures:
+        raise GateFailure(f"spike.fixtures: {workspace.relative_to(ROOT)} retains no trybuild case")
+    missing = [
+        str(path.relative_to(ROOT))
+        for path in fixtures
+        if "/".join(path.parts[-4:]) not in transcript
+    ]
+    if missing:
+        raise GateFailure(f"spike.fixtures: {missing} were not exercised by the run")
+
+
 def hostile_environment(environment: dict[str, str]) -> list[str]:
     """Return ambient controls capable of weakening or redirecting Rust checks."""
     return sorted(
@@ -141,7 +232,7 @@ def cargo_config_paths(environment: dict[str, str]) -> list[Path]:
     if ambient_home:
         homes.append(Path(ambient_home).expanduser())
     directories: list[Path] = []
-    for workspace in (ROOT, SHAPE_ROOT):
+    for workspace in (ROOT, SHAPE_ROOT, VISIBILITY_ROOT):
         for directory in (workspace, *workspace.parents):
             if directory not in directories:
                 directories.append(directory)
@@ -187,9 +278,22 @@ def run(
     environment: dict[str, str],
     cwd: Path = ROOT,
     capture: bool = False,
+    combined: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    """Run one checked command in the governed environment."""
+    """Run one checked command in the governed environment.
+
+    `capture` keeps the child's streams apart for a caller that parses one of
+    them. `combined` instead folds standard error into standard output and
+    tees the merged stream, which is what inspecting a compilation requires:
+    Cargo, the test harness, and `trybuild` split their reporting across both
+    streams, so a predicate over one stream alone reads a partial transcript.
+    Teeing rather than buffering keeps a long cold build's progress visible,
+    and the transcript is attached to a failure so that a compile step's
+    diagnostics survive being read by the gate.
+    """
     print(f"+ {shlex.join(command)}", flush=True)
+    if combined:
+        return tee(command, environment=environment, cwd=cwd)
     try:
         return subprocess.run(
             command,
@@ -201,6 +305,38 @@ def run(
         )
     except (OSError, subprocess.CalledProcessError) as error:
         raise GateFailure(f"command.failed: {shlex.join(command)}: {error}") from error
+
+
+def tee(
+    command: list[str],
+    *,
+    environment: dict[str, str],
+    cwd: Path,
+) -> subprocess.CompletedProcess[str]:
+    """Run one checked command, echoing and returning its merged output."""
+    lines: list[str] = []
+    try:
+        with subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        ) as process:
+            if process.stdout is None:
+                raise GateFailure(f"command.failed: {shlex.join(command)}: capture pipe is missing")
+            for line in process.stdout:
+                print(line, end="", flush=True)
+                lines.append(line)
+    except OSError as error:
+        raise GateFailure(f"command.failed: {shlex.join(command)}: {error}") from error
+    transcript = "".join(lines)
+    if process.returncode != 0:
+        raise GateFailure(
+            f"command.failed: {shlex.join(command)}: exit status {process.returncode}\n{transcript}"
+        )
+    return subprocess.CompletedProcess(command, process.returncode, transcript, "")
 
 
 def rustup_command(rustup: str, toolchain: str, executable: str, *arguments: str) -> list[str]:
@@ -333,6 +469,7 @@ def run_gate(environment: dict[str, str] | None = None) -> None:
     """Run the complete Rust gate or raise one typed failure."""
     source_environment = os.environ.copy() if environment is None else environment.copy()
     toolchain = check_workspace.configured_toolchain(ROOT)
+    validate_spike_evidence_custody()
     validate_cargo_configs(source_environment)
     child_environment = sanitized_environment(source_environment)
     rustup = governed_rustup()
@@ -385,10 +522,27 @@ def run_gate(environment: dict[str, str] | None = None) -> None:
             cargo_command(rustup, toolchain, "doc", "--workspace", "--no-deps", "--locked"),
             environment=doc_environment,
         )
-        run(
+        shapes = run(
             ["/bin/bash", str(SHAPE_ROOT / "check.sh"), rustup, toolchain],
             environment=child_environment | {"CARGO_TARGET_DIR": str(SHAPE_ROOT / "target")},
+            combined=True,
         )
+        verify_fixture_coverage(SHAPE_ROOT, shapes.stdout)
+        # The recorded procedure of the retained measurement, run under the
+        # pin rather than under whichever toolchain a directory search finds.
+        visibility = run(
+            cargo_command(
+                rustup,
+                toolchain,
+                "test",
+                "--locked",
+                "--manifest-path",
+                str(VISIBILITY_ROOT / "Cargo.toml"),
+            ),
+            environment=child_environment | {"CARGO_TARGET_DIR": str(VISIBILITY_ROOT / "target")},
+            combined=True,
+        )
+        verify_fixture_coverage(VISIBILITY_ROOT, visibility.stdout)
     finally:
         verify_lockfiles(locks)
 
