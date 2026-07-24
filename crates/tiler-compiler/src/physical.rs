@@ -155,6 +155,10 @@ impl fmt::Display for PhysicalError {
 
 impl Error for PhysicalError {}
 
+#[allow(
+    dead_code,
+    reason = "canonical region constructor the governed physical provider proposes through the frontier; retained as the single definition of each recognized region and exercised by its own tests"
+)]
 pub(crate) fn build_scheduled_regions(
     request: &VerifiedTargetRequest,
 ) -> Result<Vec<VerifiedScheduledRegion>, PhysicalError> {
@@ -166,6 +170,10 @@ pub(crate) fn build_scheduled_regions(
     ])
 }
 
+#[allow(
+    dead_code,
+    reason = "canonical region constructor the governed physical provider proposes through the frontier; retained as the single definition of each recognized region and exercised by its own tests"
+)]
 pub(crate) fn build_fused_scheduled_region(
     request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
@@ -243,7 +251,14 @@ pub(crate) fn pointwise_region(
     (region, request.serial_sum().members.pointwise().to_vec())
 }
 
-fn reduction_region(request: &VerifiedTargetRequest) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+/// Builds the canonical materialized reduction scheduled region for one request.
+///
+/// Like [`pointwise_region`], this is the raw region and its recognized members;
+/// every gate is applied when the frontier resubmits it through the ordinary
+/// checked verification path.
+pub(crate) fn reduction_region(
+    request: &VerifiedTargetRequest,
+) -> (ScheduledRegion, Vec<SemanticMemberId>) {
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(1),
@@ -320,7 +335,14 @@ fn reduction_region(request: &VerifiedTargetRequest) -> (ScheduledRegion, Vec<Se
     (region, request.serial_sum().members.reduction().to_vec())
 }
 
-fn fused_region(request: &VerifiedTargetRequest) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+/// Builds the canonical fused whole-program scheduled region for one request.
+///
+/// Like [`pointwise_region`], this is the raw region and its recognized members;
+/// every gate is applied when the frontier resubmits it through the ordinary
+/// checked verification path.
+pub(crate) fn fused_region(
+    request: &VerifiedTargetRequest,
+) -> (ScheduledRegion, Vec<SemanticMemberId>) {
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(0),
@@ -423,6 +445,10 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
 /// zero-domain behaviour before any feasibility query. Only then does the
 /// compiler layer its request-subject binding and the single hard-feasibility
 /// decision. No cost or provider callback participates.
+#[allow(
+    dead_code,
+    reason = "the predicate-free spelling of the checked verification path; the frontier consumes the predicate-carrying form"
+)]
 pub(crate) fn verify_schedule(
     region: ScheduledRegion,
     semantic_members: Vec<SemanticMemberId>,

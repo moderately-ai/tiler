@@ -50,11 +50,6 @@
 //! Every item here is a reviewed *draft* boundary, not a stable compiler API,
 //! until Tom accepts the exact interface.
 
-#![allow(
-    dead_code,
-    reason = "reviewed draft authority; the bounded frontier is exercised by its own tests and is not yet wired into the private compile() facade, which the complete physical-plan-selection slice will do"
-)]
-
 use std::error::Error;
 use std::fmt;
 
@@ -133,6 +128,10 @@ pub(crate) struct ReservedProposalSeam {
     descriptor: &'static str,
 }
 
+#[allow(
+    dead_code,
+    reason = "reserved additive seam preserved so an unsupported body rejects explicitly instead of being silently approximated"
+)]
 impl ReservedProposalSeam {
     /// Wraps an uninterpreted descriptor for a reserved proposal body.
     pub(crate) const fn new(descriptor: &'static str) -> Self {
@@ -151,6 +150,10 @@ impl ReservedProposalSeam {
 /// implements only [`Self::ScheduledKernel`] and reserves the rest so an
 /// unsupported body rejects explicitly instead of being silently approximated.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "reserved additive seam preserved so an unsupported body rejects explicitly instead of being silently approximated"
+)]
 pub(crate) enum ProposalBody {
     /// A checked scheduled region carrying a minimal serial schedule. The
     /// frontier resubmits it through ordinary intrinsic + feasibility verification.
@@ -191,6 +194,10 @@ pub(crate) struct TargetApplicability {
     target_profile_keys: Vec<&'static str>,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl TargetApplicability {
     /// Builds an applicability predicate over a set of governed target keys.
     ///
@@ -239,6 +246,10 @@ pub(crate) struct PhysicalCostEstimate {
     temporary_bytes: u64,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl PhysicalCostEstimate {
     /// Builds a cost estimate attributed to an explicit cost-model key.
     pub(crate) const fn new(
@@ -474,6 +485,10 @@ pub(crate) struct ImplementationProvenance {
     kind: PhysicalProposalKind,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl ImplementationProvenance {
     /// Returns the provider that produced the implementation.
     pub(crate) const fn provider(&self) -> &ProviderIdentity {
@@ -527,6 +542,10 @@ pub(crate) struct ImplementationContext<'a> {
     subject: &'a FrontierRegionSubject,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl ImplementationContext<'_> {
     /// Returns the verified target request.
     pub(crate) const fn request(&self) -> &VerifiedTargetRequest {
@@ -631,6 +650,10 @@ pub(crate) struct AdmittedImplementation {
     identity: ImplementationProposalIdentity,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl AdmittedImplementation {
     /// Returns the provider and kind that produced this implementation.
     pub(crate) const fn provenance(&self) -> &ImplementationProvenance {
@@ -757,6 +780,10 @@ pub(crate) struct ImplementationFrontier {
     rejections: Vec<FrontierRejection>,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl ImplementationFrontier {
     /// Returns the assessed target profile key.
     pub(crate) const fn target_profile_key(&self) -> &'static str {
@@ -836,6 +863,16 @@ pub(crate) enum FrontierError {
         /// The ungoverned cost-model key the provider declared.
         declared_model_key: &'static str,
     },
+}
+
+impl FrontierError {
+    /// Returns the stable reason code of the fault.
+    pub(crate) const fn reason(&self) -> &'static str {
+        match self {
+            Self::MalformedProposal { .. } => "malformed-proposal",
+            Self::MalformedCostProvenance { .. } => "malformed-cost-provenance",
+        }
+    }
 }
 
 impl fmt::Display for FrontierError {
@@ -992,6 +1029,92 @@ pub(crate) fn enumerate_frontier(
         admitted,
         rejections,
     })
+}
+
+/// Namespace of Tiler's own governed physical implementation provider.
+const GOVERNED_PHYSICAL_NAMESPACE: &str = "tiler";
+/// Name of Tiler's own governed physical implementation provider.
+const GOVERNED_PHYSICAL_NAME: &str = "prototype-serial-sum-physical";
+/// Output-affecting revision of the governed physical provider.
+const GOVERNED_PHYSICAL_REVISION: u32 = 1;
+
+/// Tiler's own governed physical implementation provider for the bounded profile.
+///
+/// It offers one checked scheduled-kernel body per *recognized* region subject —
+/// the materialized pointwise prologue, the materialized reduction, and the fused
+/// whole-program region — and nothing at all for any other member set. Offering
+/// nothing is a legitimate local result, so a cover this profile cannot implement
+/// is reported by complete-plan selection as an unimplemented region rather than
+/// being silently approximated.
+///
+/// The provider declares only a body, an applicability predicate, and a cost
+/// estimate. It cannot stamp its own provenance, derive its resources, or bypass
+/// verification: the frontier resubmits every body through the ordinary checked
+/// path in [`crate::physical::verify_schedule_with_feasibility`].
+pub(crate) struct GovernedPhysicalProvider;
+
+impl GovernedPhysicalProvider {
+    /// Returns the governed physical provider identity.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if Tiler's compile-time governed provider components violate
+    /// the canonical provider-identity grammar.
+    pub(crate) fn identity() -> ProviderIdentity {
+        ProviderIdentity::new(
+            GOVERNED_PHYSICAL_NAMESPACE,
+            GOVERNED_PHYSICAL_NAME,
+            GOVERNED_PHYSICAL_REVISION,
+        )
+        .expect("the governed physical provider identity is valid")
+    }
+}
+
+impl PhysicalImplementationProvider for GovernedPhysicalProvider {
+    fn provenance(&self) -> PhysicalProviderProvenance {
+        PhysicalProviderProvenance::new(Self::identity())
+    }
+
+    fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+        let request = context.request();
+        let members = context.subject().semantic_members();
+        let recognized = &request.serial_sum().members;
+        let input_elements = request.serial_sum().input_elements;
+        let output_elements = request.serial_sum().output_elements;
+        // A materialized f32 intermediate costs four bytes per element. The
+        // estimate is structural and is never a feasibility input.
+        let intermediate_bytes = input_elements.saturating_mul(4);
+        let applicability = TargetApplicability::for_targets([request.target_profile().key]);
+        let (region, cost) = if members == recognized.pointwise() {
+            (
+                crate::physical::pointwise_region(request).0,
+                PhysicalCostEstimate::structural(1, input_elements, intermediate_bytes),
+            )
+        } else if members == recognized.reduction() {
+            (
+                crate::physical::reduction_region(request).0,
+                PhysicalCostEstimate::structural(1, output_elements, 0),
+            )
+        } else if members == recognized.all() {
+            // The fused whole-program region exists only when a lowering provider
+            // for it is installed. Offering nothing when it is absent keeps the
+            // capability gap a deferred capability rather than an illegal fusion.
+            if request.capabilities().fused_serial_sum.is_none() {
+                return Vec::new();
+            }
+            (
+                crate::physical::fused_region(request).0,
+                PhysicalCostEstimate::structural(1, output_elements, 0),
+            )
+        } else {
+            return Vec::new();
+        };
+        vec![ImplementationProposal::new(
+            ProposalBody::ScheduledKernel(Box::new(region)),
+            applicability,
+            cost,
+        )]
+    }
 }
 
 fn encode_proposal_identity(
