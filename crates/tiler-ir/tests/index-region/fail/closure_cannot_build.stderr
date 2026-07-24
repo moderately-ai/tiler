@@ -1,0 +1,13 @@
+error[E0507]: cannot move out of `*builder` which is behind a mutable reference
+ --> tests/index-region/fail/closure_cannot_build.rs:8:25
+  |
+8 |         let _verified = builder.build();
+  |                         ^^^^^^^ ------- `*builder` moved due to this method call
+  |                         |
+  |                         move occurs because `*builder` has type `IndexRegionBuilder`, which does not implement the `Copy` trait
+  |
+note: `IndexRegionBuilder::build` takes ownership of the receiver `self`, which moves `*builder`
+ --> src/index/builder.rs
+  |
+  |     pub fn build(self) -> Result<VerifiedIndexRegion, IndexRegionBuildError> {
+  |                  ^^^^
