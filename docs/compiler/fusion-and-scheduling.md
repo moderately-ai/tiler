@@ -308,6 +308,8 @@ Einsum adds global contraction-order choices and local implementations:
 Contraction planning should follow, not precede, the boundary-contract and cost
 infrastructure.
 
+The global contraction-order choice in that sentence is not one of the local implementations listed under it. It is the tensor-contraction association rewrite that [the optimizer](optimizer.md) admits only under an effective reassociation permission, so a schedule may assume a contraction order only after that rewrite has been authorized — which the strict `f32` contract the compiler registers today does not do. The local implementations remain subject to the numerical-semantics legality rules above, which prove reassociation and operand permutation separately. "Contraction" is the tensor sense throughout this section, not ADR 0015's fused-multiply-add permission.
+
 ## Search control
 
 Schedule exploration must be bounded using target limits, ranked candidate
