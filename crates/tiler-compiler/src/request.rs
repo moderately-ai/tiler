@@ -1,10 +1,12 @@
 use std::error::Error;
 use std::fmt;
+use std::sync::OnceLock;
 
+use tiler_ir::index::FrozenScalarRegistry;
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-    OutputKey, REDUCTION_AXES_ATTRIBUTE, SemanticIdentity, SemanticProgram, TypeKey, ValueId,
-    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, SemanticIdentity, SemanticProgram,
+    TypeKey, ValueId, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -12,14 +14,15 @@ use tiler_ir::shape::{Axis, Shape};
 // IR (ADR 0070); the compiler contract references it rather than duplicating it.
 pub(crate) use tiler_ir::schedule::{NumericalPermission, SubnormalMode};
 
+use crate::capability::{
+    CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
+};
+use crate::governed::{governed_lowering_capabilities, governed_scalars};
 use crate::region::SemanticMemberId;
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
 const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
 const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
-const BASELINE_PROVIDER_KEY: &str = "tiler.prototype.materialized-serial-sum";
-const FUSED_PROVIDER_KEY: &str = "tiler.prototype.fused-serial-sum";
-const PROVIDER_REVISION: u32 = 1;
 /// Recognized operation count when both pointwise constants are one shared value.
 const RECOGNIZED_OPERATIONS_MIN: usize = 4;
 /// Recognized operation count when each pointwise constant is a distinct value.
@@ -134,34 +137,140 @@ impl DeterministicBudgets {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// The exact lowering capability whose provider realized one occurrence.
+///
+/// Both halves are retained because ADR 0072 keeps them separate: the
+/// [`ProviderIdentity`] revision is the admitting provider's own
+/// output-affecting revision, and the [`LoweringCapabilityRevision`] covers the
+/// exact lowering that provider registered for this family and signature. One
+/// provider may own several capabilities at independent revisions.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct LoweringProviderIdentity {
-    pub(crate) key: &'static str,
-    pub(crate) revision: u32,
+    provider: ProviderIdentity,
+    capability_revision: LoweringCapabilityRevision,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+impl LoweringProviderIdentity {
+    /// Binds one resolved capability's provider and capability revision.
+    pub(crate) const fn new(
+        provider: ProviderIdentity,
+        capability_revision: LoweringCapabilityRevision,
+    ) -> Self {
+        Self {
+            provider,
+            capability_revision,
+        }
+    }
+
+    /// Returns the admitting provider identity.
+    pub(crate) const fn provider(&self) -> &ProviderIdentity {
+        &self.provider
+    }
+
+    /// Returns the resolved capability's output-affecting revision.
+    pub(crate) const fn capability_revision(&self) -> LoweringCapabilityRevision {
+        self.capability_revision
+    }
+}
+
+/// The installed lowering authority one compilation request is bound to.
+///
+/// The snapshot carries the frozen lowering-capability registry the compile path
+/// resolves every recognized occurrence through, together with the exact frozen
+/// scalar authority that registry was registered against. Neither is a
+/// compile-time constant: an out-of-crate provider registered into the registry
+/// drives compilation the same way the governed profile does.
+#[derive(Clone, Debug)]
 pub(crate) struct CompilerCapabilitySnapshot {
-    pub(crate) schema_version: u32,
-    pub(crate) materialized_serial_sum: LoweringProviderIdentity,
-    pub(crate) fused_serial_sum: Option<LoweringProviderIdentity>,
+    schema_version: u32,
+    lowering: FrozenLoweringCapabilityRegistry,
+    scalars: FrozenScalarRegistry,
 }
 
 impl CompilerCapabilitySnapshot {
-    pub(crate) const fn governed() -> Self {
+    /// Binds one installed lowering registry and the scalar authority it was
+    /// registered against.
+    pub(crate) const fn new(
+        lowering: FrozenLoweringCapabilityRegistry,
+        scalars: FrozenScalarRegistry,
+    ) -> Self {
         Self {
             schema_version: REQUEST_SCHEMA_VERSION,
-            materialized_serial_sum: LoweringProviderIdentity {
-                key: BASELINE_PROVIDER_KEY,
-                revision: PROVIDER_REVISION,
-            },
-            fused_serial_sum: Some(LoweringProviderIdentity {
-                key: FUSED_PROVIDER_KEY,
-                revision: PROVIDER_REVISION,
-            }),
+            lowering,
+            scalars,
         }
     }
+
+    /// Returns the lowering capabilities the bounded profile ships with.
+    ///
+    /// The snapshot is assembled once and shared. Assembly is deterministic and
+    /// depends on nothing outside this crate and `tiler-ir`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when Tiler's own governed profile violates the public capability
+    /// contract, which is a defect in this crate rather than a caller error.
+    pub(crate) fn governed() -> Self {
+        static GOVERNED: OnceLock<CompilerCapabilitySnapshot> = OnceLock::new();
+        GOVERNED
+            .get_or_init(|| {
+                let scalars =
+                    governed_scalars().expect("the governed scalar authority is well formed");
+                let lowering = governed_lowering_capabilities(&scalars)
+                    .expect("the governed lowering capabilities are well formed");
+                Self::new(lowering, scalars)
+            })
+            .clone()
+    }
+
+    /// Returns the installed lowering-capability registry.
+    pub(crate) const fn lowering(&self) -> &FrozenLoweringCapabilityRegistry {
+        &self.lowering
+    }
+
+    /// Returns the scalar authority every resolved provider emits against.
+    pub(crate) const fn scalars(&self) -> &FrozenScalarRegistry {
+        &self.scalars
+    }
+
+    /// Returns the registry's canonical provenance.
+    pub(crate) fn registry_identity(&self) -> &CanonicalLoweringRegistryIdentity {
+        self.lowering.canonical_identity()
+    }
+
+    /// Returns a snapshot whose registry admits no lowering capability at all.
+    ///
+    /// It is the smallest installed authority that still pairs correctly with
+    /// the governed scalar profile, so a fixture can distinguish "the registry
+    /// resolved nothing" from "the request was malformed".
+    #[cfg(test)]
+    pub(crate) fn without_capabilities() -> Self {
+        let scalars = governed_scalars().expect("the governed scalar authority is well formed");
+        let lowering = crate::capability::LoweringCapabilityRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        )
+        .freeze();
+        Self::new(lowering, scalars)
+    }
 }
+
+/// Two snapshots are equal exactly when their declared authority is.
+///
+/// The canonical registry identity binds every registered capability's family,
+/// operation, signature, provider, capability revision, and reached authority,
+/// together with the composed semantic and scalar snapshots. Provider
+/// implementations are deliberately outside it: a provider whose emitted
+/// lowering changes must raise its capability revision, which is inside it.
+impl PartialEq for CompilerCapabilitySnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.schema_version == other.schema_version
+            && self.registry_identity() == other.registry_identity()
+            && self.scalars.snapshot_identity() == other.scalars.snapshot_identity()
+    }
+}
+
+impl Eq for CompilerCapabilitySnapshot {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PrototypeTargetProfile {
@@ -335,6 +444,12 @@ pub(crate) struct VerifiedTargetRequest {
     authority: VerifiedRequestSubject,
 }
 
+/// The exact request facts every explain record and receipt is bound to.
+///
+/// The installed lowering authority participates through its canonical registry
+/// identity rather than the registry itself: the identity is comparable and
+/// orderable while a registry holding provider implementations is neither, and
+/// the identity already binds every authority the registry was frozen over.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedRequestSubject {
     normalized: NormalizedSerialSumSubject,
@@ -342,7 +457,8 @@ pub(crate) struct VerifiedRequestSubject {
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
     target_profile: PrototypeTargetProfile,
-    capabilities: CompilerCapabilitySnapshot,
+    capability_schema_version: u32,
+    lowering_registry: CanonicalLoweringRegistryIdentity,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -371,7 +487,7 @@ impl VerifiedTargetRequest {
             self.numerical_contract,
             self.budgets,
             self.target_profile,
-            self.capabilities,
+            &self.capabilities,
         )
     }
 
@@ -391,8 +507,8 @@ impl VerifiedTargetRequest {
         self.target_profile
     }
 
-    pub(crate) const fn capabilities(&self) -> CompilerCapabilitySnapshot {
-        self.capabilities
+    pub(crate) const fn capabilities(&self) -> &CompilerCapabilitySnapshot {
+        &self.capabilities
     }
 
     pub(crate) const fn semantic_identity(&self) -> &SemanticIdentity {
@@ -499,15 +615,8 @@ impl VerifiedRequestSubject {
         bytes.push(self.target_profile.index_bits);
         bytes.push(u8::from(self.target_profile.supports_device_memory));
         bytes.push(u8::from(self.target_profile.supports_strict_f32));
-        bytes.extend_from_slice(&self.capabilities.schema_version.to_be_bytes());
-        encode_explain_provider(&mut bytes, self.capabilities.materialized_serial_sum);
-        match self.capabilities.fused_serial_sum {
-            Some(provider) => {
-                bytes.push(1);
-                encode_explain_provider(&mut bytes, provider);
-            }
-            None => bytes.push(0),
-        }
+        bytes.extend_from_slice(&self.capability_schema_version.to_be_bytes());
+        encode_explain_bytes(&mut bytes, self.lowering_registry.as_bytes());
         bytes
     }
 }
@@ -526,11 +635,6 @@ fn encode_explain_shape(output: &mut Vec<u8>, shape: &Shape) {
     for extent in shape.extents() {
         output.extend_from_slice(&extent.get().to_be_bytes());
     }
-}
-
-fn encode_explain_provider(output: &mut Vec<u8>, provider: LoweringProviderIdentity) {
-    encode_explain_bytes(output, provider.key.as_bytes());
-    output.extend_from_slice(&provider.revision.to_be_bytes());
 }
 
 impl NormalizedSerialSumSubject {
@@ -592,7 +696,7 @@ impl VerifiedCompilationRequest {
             self.numerical_contract,
             self.budgets,
             target_profile,
-            self.capabilities,
+            &self.capabilities,
         );
         if target_profile != PrototypeTargetProfile::governed()
             || self
@@ -610,7 +714,7 @@ impl VerifiedCompilationRequest {
             numerical_contract: self.numerical_contract,
             budgets: self.budgets,
             target_profile,
-            capabilities: self.capabilities,
+            capabilities: self.capabilities.clone(),
             authority: current_authority,
         })
     }
@@ -622,7 +726,7 @@ fn request_subject(
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
     target_profile: PrototypeTargetProfile,
-    capabilities: CompilerCapabilitySnapshot,
+    capabilities: &CompilerCapabilitySnapshot,
 ) -> VerifiedRequestSubject {
     let normalized = normalized.serial_sum();
     VerifiedRequestSubject {
@@ -642,7 +746,8 @@ fn request_subject(
         numerical_contract,
         budgets,
         target_profile,
-        capabilities,
+        capability_schema_version: capabilities.schema_version,
+        lowering_registry: capabilities.registry_identity().clone(),
     }
 }
 
@@ -709,16 +814,18 @@ pub(crate) fn verify_request(
     if request.shape_environment != StaticShapeEnvironment::governed() {
         return Err(RequestError::UnsupportedRequestVersion);
     }
-    let governed_capabilities = CompilerCapabilitySnapshot::governed();
-    if request.capabilities.schema_version != governed_capabilities.schema_version
-        || request.capabilities.materialized_serial_sum
-            != governed_capabilities.materialized_serial_sum
-        || request
-            .capabilities
-            .fused_serial_sum
-            .is_some_and(|provider| Some(provider) != governed_capabilities.fused_serial_sum)
-    {
+    if request.capabilities.schema_version != REQUEST_SCHEMA_VERSION {
         return Err(RequestError::UnsupportedRequestVersion);
+    }
+    // The registry itself is deliberately unconstrained: an externally
+    // registered lowering provider is exactly what this boundary admits. What is
+    // constrained is that the request pairs the registry with the same scalar
+    // authority its capabilities were admitted against, because every resolved
+    // provider is driven through — and revalidated under — that snapshot.
+    if request.capabilities.lowering.scalar_snapshot()
+        != request.capabilities.scalars.snapshot_identity()
+    {
+        return unsupported("capability", "scalar-authority-pairing");
     }
     if request.target_profiles.is_empty() {
         return Err(RequestError::EmptyTargetSet);
@@ -772,7 +879,7 @@ pub(crate) fn verify_request(
                 request.numerical_contract,
                 request.budgets,
                 *target,
-                request.capabilities,
+                &request.capabilities,
             )
         })
         .collect();
@@ -1359,7 +1466,7 @@ mod tests {
         );
 
         let mut forged = verified.clone();
-        forged.capabilities.materialized_serial_sum.revision += 1;
+        forged.capabilities = CompilerCapabilitySnapshot::without_capabilities();
         assert_eq!(
             forged.for_target(governed_target),
             Err(RequestError::UnverifiedTargetSelection)
@@ -1405,7 +1512,7 @@ mod tests {
         assert!(!forged.is_authoritative());
 
         let mut forged = target.clone();
-        forged.capabilities.materialized_serial_sum.revision += 1;
+        forged.capabilities = CompilerCapabilitySnapshot::without_capabilities();
         assert!(!forged.is_authoritative());
 
         let mut forged = target.clone();

@@ -22,6 +22,28 @@ const MAX_SCALAR_DEFINITIONS: usize = 65_536;
 const MAX_SCALAR_REGISTRY_CANONICAL_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SCALAR_DEFINITION_PROJECTION_BYTES: usize = 8 * 1024 * 1024;
 
+/// Returns the governed per-point `f32` constant scalar operation key.
+#[must_use]
+pub fn constant_f32_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("constant-f32")
+}
+
+/// Returns the governed per-point `f32` multiplication scalar operation key.
+#[must_use]
+pub fn multiply_f32_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("multiply-f32")
+}
+
+/// Returns the governed per-point `f32` addition scalar operation key.
+#[must_use]
+pub fn add_f32_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("add-f32")
+}
+
+fn governed_scalar_op(name: &str) -> ScalarOpKey {
+    ScalarOpKey::new("tiler.scalar", name, 1).expect("the governed scalar key is valid")
+}
+
 /// Stable identity of one scalar operation family.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ScalarOpKey(TypeKey);
@@ -811,6 +833,85 @@ struct RegisteredScalarOperation {
     provider: ProviderIdentity,
 }
 
+/// Assembles one governed standard scalar definition.
+fn standard_definition(
+    key: ScalarOpKey,
+    normative: &str,
+    attributes: ScalarAttributeSchema,
+    operands: ScalarArity,
+    inferencer: Arc<dyn ScalarOperationInferencer>,
+) -> Result<ScalarOperationDefinition, ScalarRegistryError> {
+    let canonical = |source| ScalarRegistryError::CanonicalAttributes(Arc::new(source));
+    let authority = |source| ScalarRegistryError::TypeAuthority(Arc::new(source));
+    Ok(ScalarOperationDefinition::new(
+        key,
+        NormativeDefinitionRef::new(normative).map_err(authority)?,
+        ScalarOperationContract::new(
+            attributes,
+            operands,
+            ScalarArity::exact(1)?,
+            ScalarEffect::Pure,
+            CanonicalValue::record([]).map_err(canonical)?,
+            CanonicalValue::record([]).map_err(canonical)?,
+        ),
+        inferencer,
+    ))
+}
+
+fn constant_attribute_schema() -> Result<ScalarAttributeSchema, ScalarRegistryError> {
+    // The governed scalar constant reuses the semantic family's stable field
+    // identifier, so an index-access lowering forwards an occurrence's attribute
+    // record without re-keying it.
+    ScalarAttributeSchema::new([ScalarAttributeField::required(
+        crate::semantic::F32_CONSTANT_BITS_ATTRIBUTE,
+        CanonicalValueKind::FloatBits,
+    )])
+}
+
+/// Infers the governed `f32` result of a nullary scalar constant.
+struct StandardF32Constant;
+
+impl ScalarOperationInferencer for StandardF32Constant {
+    fn infer(
+        &self,
+        _: ScalarInferenceRequest<'_>,
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        outputs.try_push(crate::semantic::F32::resolved_type())
+    }
+}
+
+/// Infers the shared operand type of a governed binary `f32` scalar operation.
+///
+/// The operand types are required to be identical rather than merely both
+/// numeric: a governed binary `f32` operation has no defined mixed-type
+/// behaviour, so an application that would need one is rejected instead of
+/// silently resolving to the first operand.
+struct StandardF32Binary;
+
+impl ScalarOperationInferencer for StandardF32Binary {
+    fn infer(
+        &self,
+        request: ScalarInferenceRequest<'_>,
+        outputs: &mut ScalarInferenceOutputs,
+    ) -> Result<(), ScalarInferenceError> {
+        let f32_type = crate::semantic::F32::resolved_type();
+        if request
+            .operands()
+            .iter()
+            .any(|operand| operand != &f32_type)
+        {
+            return Err(ScalarInferenceError::new(
+                ProviderDiagnosticCode::new("tiler.scalar.operand-type")
+                    .expect("the governed diagnostic code is valid"),
+                "governed binary f32 scalars require f32 operands",
+            )
+            .expect("the governed diagnostic message is bounded"));
+        }
+        outputs.try_push(f32_type)
+    }
+}
+
 /// Failure while defining or applying scalar authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -968,6 +1069,58 @@ impl ScalarRegistryBuilder {
             canonical_bytes: 0,
         }
     }
+
+    /// Creates the mutable governed standard scalar profile.
+    ///
+    /// It is composed with [`FrozenSemanticRegistry::standard`] and defines the
+    /// exact per-point scalar operations the governed `f32` semantic families
+    /// lower to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`], and
+    /// [`add_f32_scalar_op`]. An extension composes with it by registering
+    /// further definitions on the returned builder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalarRegistryError`] when the governed semantic authority or a
+    /// governed scalar definition violates the same public contract an
+    /// extension is held to.
+    pub fn standard() -> Result<Self, ScalarRegistryError> {
+        let semantic = FrozenSemanticRegistry::standard()
+            .map_err(|source| ScalarRegistryError::TypeAuthority(Arc::new(source)))?;
+        let mut builder = Self::new(semantic);
+        let provider = ProviderIdentity::new("tiler", "standard-scalars", 1)
+            .map_err(|source| ScalarRegistryError::TypeAuthority(Arc::new(source)))?;
+        builder.register(
+            provider.clone(),
+            standard_definition(
+                constant_f32_scalar_op(),
+                "IEEE 754-2019 binary32 constant; tiler.scalar::constant-f32@1",
+                constant_attribute_schema()?,
+                ScalarArity::exact(0)?,
+                Arc::new(StandardF32Constant),
+            )?,
+        )?;
+        builder.register(
+            provider.clone(),
+            standard_definition(
+                multiply_f32_scalar_op(),
+                "IEEE 754-2019 binary32 multiplication; tiler.scalar::multiply-f32@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(2)?,
+                Arc::new(StandardF32Binary),
+            )?,
+        )?;
+        builder.register(
+            provider,
+            standard_definition(
+                add_f32_scalar_op(),
+                "IEEE 754-2019 binary32 addition; tiler.scalar::add-f32@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(2)?,
+                Arc::new(StandardF32Binary),
+            )?,
+        )?;
+        Ok(builder)
+    }
     /// Registers one definition with separate admission provenance.
     ///
     /// # Errors
@@ -1047,10 +1200,34 @@ impl fmt::Debug for FrozenScalarRegistry {
 }
 
 impl FrozenScalarRegistry {
+    /// Builds the governed standard scalar profile.
+    ///
+    /// The snapshot is computed once and shared, so every consumer that lowers
+    /// the governed `f32` families binds the same scalar authority instead of
+    /// composing an ad-hoc one whose snapshot identity nothing else agrees with.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalarRegistryError`] when a governed definition violates the
+    /// same public contract used by extensions.
+    pub fn standard() -> Result<Self, ScalarRegistryError> {
+        static STANDARD: std::sync::OnceLock<Result<FrozenScalarRegistry, ScalarRegistryError>> =
+            std::sync::OnceLock::new();
+        STANDARD
+            .get_or_init(|| Ok(ScalarRegistryBuilder::standard()?.freeze()))
+            .clone()
+    }
+
     /// Returns complete scalar-registry snapshot provenance.
     #[must_use]
     pub fn snapshot_identity(&self) -> &CanonicalScalarRegistrySnapshotIdentity {
         &self.0.snapshot
+    }
+
+    /// Returns the exact semantic type authority this snapshot is composed with.
+    #[must_use]
+    pub fn semantic_authority(&self) -> &FrozenSemanticRegistry {
+        &self.0.semantic
     }
     pub(super) fn validate_type(
         &self,
@@ -1240,10 +1417,10 @@ impl FrozenScalarRegistry {
             .map_err(|error| ScalarRegistryError::TypeAuthority(Arc::new(error)))?;
         let mut admission = b"tiler.scalar-admission-provenance.v1\0".to_vec();
         encode_len(&mut admission, reached.len());
-        for key in reached {
-            encode_key(&mut admission, &key);
+        for key in &reached {
+            encode_key(&mut admission, key);
             let provider = self
-                .provider(&key)
+                .provider(key)
                 .ok_or_else(|| ScalarRegistryError::UnknownOperation { key: key.clone() })?;
             encode_bytes(&mut admission, provider.namespace().as_bytes());
             encode_bytes(&mut admission, provider.name().as_bytes());
@@ -1251,6 +1428,7 @@ impl FrozenScalarRegistry {
         }
         Ok(ScalarAuthorityEvidence {
             region: region.canonical_identity().clone(),
+            reached: reached.into_iter().collect(),
             definitions,
             admission: ScalarAdmissionProvenanceIdentity(admission),
             type_definitions: type_authority.reached_definitions().clone(),
@@ -1532,6 +1710,7 @@ impl CanonicalScalarRegistrySnapshotIdentity {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScalarAuthorityEvidence {
     region: CanonicalIndexRegionIdentity,
+    reached: Vec<ScalarOpKey>,
     definitions: CanonicalScalarDefinitionProjection,
     admission: ScalarAdmissionProvenanceIdentity,
     type_definitions: SemanticDefinitionProjectionIdentity,
@@ -1545,6 +1724,17 @@ impl ScalarAuthorityEvidence {
     pub const fn region(&self) -> &CanonicalIndexRegionIdentity {
         &self.region
     }
+    /// Returns the distinct scalar operations the region reached, in key order.
+    ///
+    /// The projection is the canonical identity contribution; these are the
+    /// exact keys behind it, so an authority that must decide whether a region
+    /// stayed inside a declared permission can compare sets instead of comparing
+    /// opaque bytes for equality.
+    #[must_use]
+    pub fn reached_operations(&self) -> &[ScalarOpKey] {
+        &self.reached
+    }
+
     /// Returns reached provider-independent definitions.
     #[must_use]
     pub const fn definitions(&self) -> &CanonicalScalarDefinitionProjection {

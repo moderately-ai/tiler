@@ -27,6 +27,15 @@ fn fixture() -> (
     fixture_with_scale(2.0_f32.to_bits())
 }
 
+/// Returns the lowering provenance the request's installed registry resolves.
+fn resolved_providers(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+) -> Vec<crate::request::LoweringProviderIdentity> {
+    crate::lowering::resolve_capabilities(semantic, request)
+        .expect("the governed registry lowers the fixture")
+}
+
 fn fixture_with_scale(
     scale_bits: u32,
 ) -> (
@@ -71,7 +80,7 @@ fn artifact_construction_rejects_a_cross_program_semantic_request_mix() {
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap(),
             &program,
-            vec![request.capabilities().materialized_serial_sum],
+            resolved_providers(&semantic, &request),
         ),
         Err(ProgramError::Structure {
             rule: "semantic-request-binding",
@@ -103,7 +112,7 @@ fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
         &scheduled,
         &kernels,
         &program,
-        vec![request.capabilities().materialized_serial_sum],
+        resolved_providers(&semantic, &request),
     )
     .unwrap();
 
@@ -360,9 +369,23 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
         .map(lower_structured_kernel)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let provider = request.capabilities().materialized_serial_sum;
+    let resolved = resolved_providers(&semantic, &request);
+    let first = resolved
+        .first()
+        .expect("the governed registry resolves at least one provider")
+        .clone();
 
-    for providers in [Vec::new(), vec![provider, provider]] {
+    // A receipt that under-reports, duplicates, or drops resolved provenance is
+    // not the provenance the installed registry resolves for this program.
+    for providers in [
+        Vec::new(),
+        vec![first.clone()],
+        resolved
+            .iter()
+            .cloned()
+            .chain(std::iter::once(first))
+            .collect(),
+    ] {
         assert_eq!(
             build_artifact_plan(
                 &semantic, &request, &scheduled, &kernels, &program, providers,
@@ -379,7 +402,7 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
         &scheduled,
         &kernels,
         &program,
-        vec![provider],
+        resolved.clone(),
     )
     .unwrap();
     let mut forged = plan.clone();
@@ -392,7 +415,7 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
             &scheduled,
             &kernels,
             &program,
-            vec![provider],
+            resolved.clone(),
         ),
         Err(ProgramError::Structure {
             rule: "artifact-receipt",
@@ -403,14 +426,7 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
     let fused_region = build_fused_scheduled_region(&request).unwrap();
     let fused = build_fused_kernel_program(&semantic, &request, &fused_region).unwrap();
     assert_eq!(
-        build_artifact_plan(
-            &semantic,
-            &request,
-            &scheduled,
-            &kernels,
-            &fused,
-            vec![provider],
-        ),
+        build_artifact_plan(&semantic, &request, &scheduled, &kernels, &fused, resolved),
         Err(ProgramError::Structure {
             rule: "artifact-program-refinement",
         })

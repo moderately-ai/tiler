@@ -1096,12 +1096,11 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
                 PhysicalCostEstimate::structural(1, output_elements, 0),
             )
         } else if members == recognized.all() {
-            // The fused whole-program region exists only when a lowering provider
-            // for it is installed. Offering nothing when it is absent keeps the
-            // capability gap a deferred capability rather than an illegal fusion.
-            if request.capabilities().fused_serial_sum.is_none() {
-                return Vec::new();
-            }
+            // Whether the whole-program region may be *fused* belongs to the
+            // numerical-legality authority and whether it *fits* belongs to this
+            // target; neither is a capability question. Every occurrence the
+            // region covers already resolved its lowering capability before any
+            // cover reached this proposer, so no capability gap is left to defer.
             (
                 crate::physical::fused_region(request).0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),

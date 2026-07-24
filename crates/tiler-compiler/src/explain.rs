@@ -137,11 +137,14 @@ impl ProviderRef {
         }
     }
 
-    pub(crate) fn lowering(provider: LoweringProviderIdentity) -> Result<Self, ExplainError> {
-        Ok(Self {
-            key: ProviderKey::new(provider.key)?,
-            revision: provider.revision,
-        })
+    /// References the provider that lowered one occurrence.
+    ///
+    /// The retained revision is the *provider's* output-affecting revision, not
+    /// the capability revision: a `ProviderRef` names an authority, and ADR 0072
+    /// keeps a provider's identity separate from the revisions of the individual
+    /// capabilities it registers.
+    pub(crate) fn lowering(provider: &LoweringProviderIdentity) -> Result<Self, ExplainError> {
+        Self::registered(provider.provider())
     }
 
     /// References a registered provider by its governed namespaced identity.
@@ -363,6 +366,23 @@ impl PredicateAssessment {
         })
     }
 
+    /// Records a predicate the compilation could not decide.
+    ///
+    /// Unknown is a third class, not a soft rejection: the predicate was neither
+    /// proven nor disproved, so its basis is [`EvidenceBasis::Unknown`] and no
+    /// downstream reader may treat its absence of a rejection as a pass.
+    pub(crate) fn unknown(
+        predicate: impl AsRef<str>,
+        reason: ReasonCode,
+    ) -> Result<Self, ExplainError> {
+        Ok(Self {
+            predicate: PredicateKey::new(predicate)?,
+            assessment: Assessment::Unknown(reason),
+            basis: EvidenceBasis::Unknown,
+            facts: Vec::new(),
+        })
+    }
+
     pub(crate) fn with_fact(mut self, fact: ExplainFact) -> Result<Self, ExplainError> {
         check_bound(
             BoundKind::Facts,
@@ -379,6 +399,10 @@ impl PredicateAssessment {
 
     pub(crate) const fn predicate(&self) -> &PredicateKey {
         &self.predicate
+    }
+
+    pub(crate) const fn basis(&self) -> &EvidenceBasis {
+        &self.basis
     }
 }
 
@@ -600,12 +624,17 @@ impl ExplainEvent {
                 assessment,
                 rejection,
             } => {
+                // Target feasibility, costing, and selection each own a typed
+                // event that carries structure a checked predicate cannot, so a
+                // `Check` at those stages would silently lose it. Capability
+                // resolution has no such richer event for its admitted and
+                // disproved cases — `DeferredCapability` only classes an absent
+                // capability — so a checked predicate is its exact vocabulary.
                 if matches!(
                     stage,
                     ExplainStage::TargetFeasibility
                         | ExplainStage::Costing
                         | ExplainStage::Selection
-                        | ExplainStage::CapabilityResolution
                 ) || matches!(&assessment.basis, EvidenceBasis::SoundProof(_))
                     && *stage != ExplainStage::NumericalLegality
                 {
@@ -621,6 +650,7 @@ impl ExplainEvent {
                             | ExplainStage::Normalization
                             | ExplainStage::RegionFormation
                             | ExplainStage::CandidateEnumeration
+                            | ExplainStage::CapabilityResolution
                             | ExplainStage::IntrinsicScheduling
                             | ExplainStage::KernelRefinement
                             | ExplainStage::ProgramVerification
@@ -909,19 +939,18 @@ impl ExplainWriter {
     ) -> Result<Self, ExplainError> {
         let subject = CompilationSubject::from_request(request);
         // Every authority whose rules this compilation may attribute to a
-        // provider: the request's installed lowering providers plus the
-        // compiler's own governed physical-implementation and fusion-capability
-        // providers. A rule attributed to any other provider is a provenance
-        // forgery and fails closed (ADR 0072).
+        // provider: every provider the request's installed lowering registry
+        // admits, plus the compiler's own governed physical-implementation and
+        // fusion-capability providers. A rule attributed to any other provider is
+        // a provenance forgery and fails closed (ADR 0072).
         let mut allowed_providers = vec![
-            ProviderRef::lowering(request.capabilities().materialized_serial_sum)?,
             ProviderRef::registered(&crate::frontier::GovernedPhysicalProvider::identity())?,
             ProviderRef::registered(
                 crate::fusion_legality::FusionNumericalCapabilities::governed().provider(),
             )?,
         ];
-        if let Some(provider) = request.capabilities().fused_serial_sum {
-            allowed_providers.push(ProviderRef::lowering(provider)?);
+        for provider in request.capabilities().lowering().providers() {
+            allowed_providers.push(ProviderRef::registered(&provider)?);
         }
         let retained_bytes = encode_trace(EXPLAIN_SCHEMA_VERSION, &subject, &[]).len();
         if retained_bytes > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX) {
@@ -2180,6 +2209,18 @@ mod tests {
         verified.for_target(verified.target_profiles()[0]).unwrap()
     }
 
+    /// Returns one provider the request's installed lowering registry admits.
+    fn governed_lowering_provider(request: &VerifiedTargetRequest) -> ProviderRef {
+        let provider = request
+            .capabilities()
+            .lowering()
+            .providers()
+            .into_iter()
+            .next()
+            .expect("the governed registry admits at least one lowering provider");
+        ProviderRef::registered(&provider).unwrap()
+    }
+
     fn admitted(writer: &ExplainWriter, key: &str) -> ExplainRecordParts {
         ExplainRecordParts {
             rule: RuleRef::builtin("test.rule").unwrap(),
@@ -2234,7 +2275,7 @@ mod tests {
         assert_eq!(
             trace.render(),
             concat!(
-                "tiler-explain-v2 request=35189829a24a372f\n",
+                "tiler-explain-v2 request=47bfe7ba37961bc3\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -2457,8 +2498,7 @@ mod tests {
         .unwrap();
         let candidate = formation.whole_program_candidate().unwrap();
         let proof = prove_fused_numerics(formation.graph(), &first_request, candidate).unwrap();
-        let provider =
-            ProviderRef::lowering(first_request.capabilities().fused_serial_sum.unwrap()).unwrap();
+        let provider = governed_lowering_provider(&first_request);
         let receipt =
             VerifiedEvidenceRef::from_fusion_numerical(&first_request, &proof, provider.clone())
                 .unwrap();
@@ -2486,7 +2526,7 @@ mod tests {
         let invalid_cost_receipt = VerifiedEvidenceRef::from_fusion_numerical(
             &first_request,
             &proof,
-            ProviderRef::lowering(first_request.capabilities().fused_serial_sum.unwrap()).unwrap(),
+            governed_lowering_provider(&first_request),
         )
         .unwrap();
         let subject = writer
