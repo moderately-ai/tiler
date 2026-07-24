@@ -1,7 +1,7 @@
 ---
 id: draft-public-api-conventions-adr
 title: Draft a proposed ADR for public API shape conventions
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [draft-public-boundary-approval-policy-adr, draft-public-extension-seam-ownership-adr, harden-public-enums-non-exhaustive, extend-canonical-identity-encodings-for-reserved-variants]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, decisions, public-api, governance]
-claimed_from: todo
-assignee: agent-draft-public-api-conventions-adr
-lease_expires_at: 1784906005
 ---
 Record, as a **proposed** ADR, the conventions a public Tiler API must satisfy.
 The point is to make conformance mechanically checkable so that a public surface
