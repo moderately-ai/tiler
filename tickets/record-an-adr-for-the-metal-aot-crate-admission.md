@@ -1,7 +1,7 @@
 ---
 id: record-an-adr-for-the-metal-aot-crate-admission
 title: Record an ADR for the tiler-metal-aot crate admission
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [record-metal-aot-in-architecture-crate-profile, choose-one-owner-for-apple-target-vocabulary, prototype-apple-aot-driver, compile-golden-msl-through-the-aot-driver-in-the-gate, correct-adr-0074-driver-vocabulary-consumers, correct-artifact-crate-lockstep-ir-permission]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, architecture, metal, decisions]
-claimed_from: todo
-assignee: agent-record-an-adr-for-the-metal-aot-crate-admission
-lease_expires_at: 1784925958
 ---
 **Fact — no accepted ADR records `tiler-metal-aot`'s admission, and two accepted ADRs still read as though it does not exist.** `prototype-apple-aot-driver` created the crate, added it to `Cargo.toml`'s `members` and `[workspace.dependencies]`, and pinned it in `scripts/check_workspace.py`'s `EXPECTED_MEMBERS`, `PACKAGE_DESCRIPTIONS`, `PACKAGE_DIRS`, and `EXPECTED_DEPENDENCIES` (empty list). It held `implementation/metal-aot` and `implementation/workspace`, never `contracts/decisions`, so it could not have written one. `record-metal-aot-in-architecture-crate-profile` then recorded the crate, its empty dependency closure, and the development-only `tiler-metal` → `tiler-metal-aot` edge in `docs/architecture.md`'s accepted packaging profile, and stated there that the ADR record is still open. That is the whole gap this ticket closes.
 
