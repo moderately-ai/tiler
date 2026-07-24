@@ -57,7 +57,7 @@ state, package identity, and environment-field state. It also requires the
 post-`cargo test` expansion count instead of merely running the command. Each
 harness has one overall deadline shared by all compiler and Cargo subprocesses.
 Exact raw and decoded records from the latest native run are retained in
-[`native-2026-07-21.json`](../../../spikes/macro-environment/results/native-2026-07-21.json).
+[`native-2026-07-24.json`](../../../spikes/macro-environment/results/native-2026-07-24.json).
 
 The proc macro records only a fixed allowlist of non-secret environment names.
 It simulates a content-addressed entry using the canonical invocation tokens and
@@ -174,7 +174,7 @@ device has empty `target_abi`, iOS simulator uses `target_abi="sim"`, and
 Catalyst uses `target_abi="macabi"`. The exact predicates remain versioned
 generated-code data and require compile tests for every supported Rust target.
 The retained macOS result and diagnostic are in
-[`family-cfg-2026-07-21.json`](../../../spikes/macro-environment/results/family-cfg-2026-07-21.json).
+[`family-cfg-2026-07-24.json`](../../../spikes/macro-environment/results/family-cfg-2026-07-24.json).
 
 ## Options rejected
 

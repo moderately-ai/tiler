@@ -32,6 +32,7 @@ MAX_PROVENANCE_FILES = 4096
 MAX_PROVENANCE_DIRECTORIES = 4096
 MAX_PROVENANCE_BYTES = 512 << 20
 PROVENANCE_TIMEOUT_SECONDS = 30
+CLEANUP_REAP_SECONDS = 5.0
 
 
 class Unknown(RuntimeError):
@@ -307,6 +308,29 @@ def limit_child_files() -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_DIAGNOSTIC_BYTES, MAX_DIAGNOSTIC_BYTES))
 
 
+def kill_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Stop the analyzer tree and reap its leader on a best-effort basis.
+
+    Signalling a group can fail for reasons that are not analyzer failures: a
+    group whose only member is an exited-but-unreaped child answers `EPERM`, and
+    a sandboxed execution context can refuse the syscall outright. A harness must
+    not fail the run it is tidying up after, so tolerate both and fall back to the
+    child this process directly owns. Bound the reap as well, so an undeliverable
+    signal cannot turn a bounded failure into an unbounded wait, and so a caller
+    asserting that the analyzer deadline was enforced observes the child's own
+    state rather than the harness having waited out its natural exit. The reap
+    goes through `communicate` because this harness hands its capture descriptors
+    to the child rather than draining them itself.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            process.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.communicate(timeout=CLEANUP_REAP_SECONDS)
+
+
 def parse_results(
     path: Path,
     expected: tuple[str, ...],
@@ -487,9 +511,7 @@ def run_profile(
         try:
             process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.communicate()
+            kill_process_group(process)
             output = read_bounded(
                 diagnostic_path,
                 MAX_DIAGNOSTIC_BYTES,

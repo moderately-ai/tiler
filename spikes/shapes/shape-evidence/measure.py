@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -28,6 +29,29 @@ SPELLINGS = {
 }
 TOOLCHAIN = "1.89.0"
 TIMEOUT_SECONDS = 300
+CLEANUP_REAP_SECONDS = 5.0
+
+
+def kill_process_group(process: subprocess.Popen[str]) -> None:
+    """Stop a command tree and reap its leader on a best-effort basis.
+
+    Signalling a group can fail for reasons that are not measurement failures: a
+    group whose only member is an exited-but-unreaped child answers `EPERM`, and
+    a sandboxed execution context can refuse the syscall outright. A harness must
+    not fail the run it is tidying up after, so tolerate both and fall back to the
+    child this process directly owns. Bound the reap as well, so an undeliverable
+    signal cannot turn a bounded failure into an unbounded wait, and so a caller
+    asserting that the deadline was enforced observes the child's own state rather
+    than the harness having waited out its natural exit. The reap goes through
+    `communicate` because this harness's capture pipes are drained there.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            process.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.communicate(timeout=CLEANUP_REAP_SECONDS)
 
 
 def run(
@@ -51,8 +75,7 @@ def run(
     try:
         stdout, stderr = process.communicate(timeout=TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.communicate()
+        kill_process_group(process)
         raise RuntimeError(
             f"command exceeded {TIMEOUT_SECONDS}s deadline: {' '.join(command)}"
         ) from error

@@ -46,6 +46,7 @@ OBSERVED = (
 EXPECTED_ABSENT = frozenset(OBSERVED) - {"CARGO_MANIFEST_DIR", "CARGO_PKG_NAME"}
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_OUTPUT_BYTES = 1 << 20
+CLEANUP_REAP_SECONDS = 5.0
 HARNESS_DEADLINE: float | None = None
 PROVENANCE_INPUTS = (
     Path("probe.py"),
@@ -120,6 +121,27 @@ def run(
     return result
 
 
+def kill_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Stop a command tree and reap its leader on a best-effort basis.
+
+    Signalling a group can fail for reasons that are not probe failures: a group
+    whose only member is an exited-but-unreaped child answers `EPERM`, and a
+    sandboxed execution context can refuse the syscall outright. A harness must
+    not fail the run it is tidying up after, so tolerate both and fall back to the
+    child this process directly owns. Bound the reap as well, so an undeliverable
+    signal cannot turn a bounded failure into an unbounded wait, and so a caller
+    asserting that a limit was enforced observes the child's own state rather than
+    the harness having waited out its natural exit.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            process.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=CLEANUP_REAP_SECONDS)
+
+
 def capture(
     command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None
 ) -> tuple[int, CommandResult]:
@@ -146,9 +168,7 @@ def capture(
             try:
                 events = selector.select(remaining_timeout())
             except ProbeFailure:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+                kill_process_group(process)
                 raise ProbeFailure(f"command exceeded deadline: {command!r}") from None
             for key, _ in events:
                 stream = key.fileobj
@@ -158,9 +178,7 @@ def capture(
                     continue
                 buffer = streams[stream]
                 if len(buffer) + len(chunk) > MAX_OUTPUT_BYTES:
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
+                    kill_process_group(process)
                     raise ProbeFailure(
                         f"{('stdout' if stream is process.stdout else 'stderr')} exceeds "
                         f"{MAX_OUTPUT_BYTES} bytes: {command!r}"
@@ -169,15 +187,11 @@ def capture(
         try:
             returncode = process.wait(timeout=remaining_timeout())
         except subprocess.TimeoutExpired as error:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            kill_process_group(process)
             raise ProbeFailure(f"command exceeded deadline: {command!r}") from error
     finally:
         if process.poll() is None:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            kill_process_group(process)
         selector.close()
         process.stdout.close()
         process.stderr.close()

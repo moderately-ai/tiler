@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 from daisy_runner import (
+    CLEANUP_REAP_SECONDS,
     MAX_FIELD_CHARS,
     MAX_PROVENANCE_BYTES,
     MAX_RESULT_ROWS,
     Unknown,
     analyzer_provenance,
     bounded_analyzer_provenance,
+    kill_process_group,
     main,
     parse_results,
     run_profile,
@@ -110,10 +117,56 @@ def test_run_profile_kills_timed_out_process_group(tmp_path: Path) -> None:
     daisy.write_text("#!/bin/sh\nsleep 30\n")
     daisy.chmod(0o755)
 
+    started = time.monotonic()
     with pytest.raises(Unknown, match="exceeded 1 seconds") as raised:
         run_profile(tmp_path, tmp_path, 1, "test-profile", ("first",))
+    elapsed = time.monotonic() - started
 
     assert raised.value.reason == "analyzer_timeout"
+    # Observe enforcement independently of the kill having been attempted. The
+    # analyzer stands in for a 30-second run, so returning inside the deadline
+    # plus one cleanup grace period means the group really was stopped rather
+    # than waited out to its natural exit.
+    assert elapsed < 1 + CLEANUP_REAP_SECONDS
+
+
+def test_kill_process_group_tolerates_unsignalable_group() -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    # Reading to end of file observes the child reaching exit while it remains
+    # unreaped, leaving a group whose only member is an exited leader. Darwin
+    # answers `killpg` on that group with EPERM.
+    assert process.stdout.read() == b""
+
+    kill_process_group(process)
+
+    assert process.returncode is not None
+
+
+def test_kill_process_group_stops_child_when_group_signal_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse_group_signal(_group: int, _number: int) -> None:
+        raise PermissionError("group signalling refused")
+
+    monkeypatch.setattr(os, "killpg", refuse_group_signal)
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    kill_process_group(process)
+
+    # A refused group signal must not fail the analyzer run, and must not leave a
+    # runaway child: cleanup falls back to the process the harness owns.
+    assert process.returncode == -signal.SIGKILL
 
 
 def write_fake_daisy(root: Path, body: str) -> None:
