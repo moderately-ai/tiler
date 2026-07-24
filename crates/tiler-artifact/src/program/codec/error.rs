@@ -110,6 +110,12 @@ pub(crate) enum OrderedSubject {
     Entry,
     /// The framed envelope sections.
     Section,
+    /// The entry mappings of one carried backend payload.
+    PayloadEntryMapping,
+    /// The versioned tool components of one payload provenance record.
+    ProvenanceComponent,
+    /// The recorded target obligations of one carried backend payload.
+    TargetObligation,
 }
 
 impl fmt::Display for OrderedSubject {
@@ -172,6 +178,18 @@ pub(crate) enum CodecLimitKind {
     ShapeRank,
     /// Byte length of one encoded text run.
     TextBytes,
+    /// Byte length of one carried payload's exact compiled source.
+    PayloadSourceBytes,
+    /// Entry-mapping count of one carried backend payload.
+    PayloadEntryMappings,
+    /// Transport-slot count of one entry mapping.
+    EntryTransports,
+    /// Versioned tool-component count of one payload provenance record.
+    ProvenanceComponents,
+    /// Compiler or linker flag count of one payload provenance record.
+    ProvenanceFlags,
+    /// Recorded target-obligation count of one carried backend payload.
+    TargetObligations,
 }
 
 impl fmt::Display for CodecLimitKind {
@@ -209,6 +227,35 @@ pub(crate) enum ArtifactCodecError {
     BadMagic,
     /// The canonical manifest did not open with its versioned domain tag.
     BadManifestDomain,
+    /// A carried payload's metadata did not open with its versioned domain tag.
+    BadPayloadMetadataDomain,
+    /// The payload-metadata schema is not the one this reader implements.
+    UnsupportedPayloadMetadataSchema {
+        /// Encoded major version.
+        major: u16,
+        /// Encoded minor version.
+        minor: u16,
+    },
+    /// A carried payload names a section whose governed purpose is wrong.
+    ///
+    /// A payload's compilation subject and its object bytes are separate
+    /// governed purposes; reading one as the other would digest a subject that
+    /// no compilation established.
+    PayloadSectionPurpose {
+        /// Ordered payload identifier.
+        payload: u32,
+        /// Ordered section identifier.
+        section: u32,
+    },
+    /// A carried payload's declared digest is not the identity of its subject.
+    ///
+    /// The descriptor's content digest is re-derived from the exact
+    /// payload-metadata bytes on every decode, so a payload cannot claim a
+    /// compilation subject it does not carry.
+    PayloadIdentityMismatch {
+        /// Ordered payload identifier.
+        payload: u32,
+    },
     /// The declared total length disagreed with the supplied byte run.
     TotalLengthMismatch {
         /// Length the header declared.
@@ -426,6 +473,10 @@ impl Error for ArtifactCodecError {
             | Self::TrailingManifestBytes { .. }
             | Self::BadMagic
             | Self::BadManifestDomain
+            | Self::BadPayloadMetadataDomain
+            | Self::UnsupportedPayloadMetadataSchema { .. }
+            | Self::PayloadSectionPurpose { .. }
+            | Self::PayloadIdentityMismatch { .. }
             | Self::TotalLengthMismatch { .. }
             | Self::UnsupportedEnvelopeFormat { .. }
             | Self::UnsupportedCanonicalEncoding { .. }

@@ -81,6 +81,7 @@ mod digest;
 mod encode;
 mod error;
 mod model;
+mod payload;
 mod validate;
 
 // Only the identity encoder in `super::model` and the builder's terminal reach
@@ -88,6 +89,10 @@ mod validate;
 // the crate-private surface stays exactly as wide as its use.
 pub(crate) use model::{
     ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, expression_keys, position,
+};
+pub(crate) use payload::{
+    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
+    PayloadTargetObligation, ToolComponent,
 };
 
 #[cfg(test)]

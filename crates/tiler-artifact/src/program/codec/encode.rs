@@ -185,13 +185,24 @@ fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
         bytes.extend_from_slice(&provider.capability_api_version.to_be_bytes());
     }
     push_len(bytes, envelope.payloads().len());
-    for payload in envelope.payloads() {
+    for (payload, content) in envelope.payloads().iter().zip(envelope.payload_content()) {
         push_slice(bytes, payload.backend.as_str().as_bytes());
         push_slice(bytes, payload.representation.as_str().as_bytes());
         bytes.extend_from_slice(&payload.payload_schema.major().to_be_bytes());
         bytes.extend_from_slice(&payload.payload_schema.minor().to_be_bytes());
         push_slice(bytes, payload.digest.as_bytes());
         bytes.push(payload.execution_policy.tag());
+        // A carried payload names its two sections here rather than in the
+        // section table, so a descriptor and the object it names cannot be
+        // separated by a table edit that leaves both individually well formed.
+        match content {
+            Some(sections) => {
+                bytes.push(0x01);
+                bytes.extend_from_slice(&sections.metadata.to_be_bytes());
+                bytes.extend_from_slice(&sections.code.to_be_bytes());
+            }
+            None => bytes.push(0x00),
+        }
     }
 }
 
