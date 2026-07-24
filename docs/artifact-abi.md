@@ -419,6 +419,8 @@ or temporary paths are provenance rather than portable key material when
 equivalent content is otherwise established. Requested deployment minima stay
 in identity even when a trivial measured kernel happens to produce equal bytes.
 
+Those resolved component versions identify the offline compiler and only the offline compiler. Apple's runtime source compiler is a separately versioned build belonging to the execution environment rather than to the artifact, so no artifact identity can name it, and widening this list would not change that. The [Metal backend](backends/metal.md) contract records the measurement, the bounded cross-path agreement that accompanies it, and why Tiler's ahead-of-time exclusion is what keeps this provenance complete for every kernel Tiler compiles.
+
 Target requirement predicates, the feasibility-profile descriptor/rule
 identity, artifact execution policy, deferred query contracts/phases, and exact
 resource requirements are likewise identity. Live fact values and prepared-
