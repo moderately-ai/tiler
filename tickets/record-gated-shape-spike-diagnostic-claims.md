@@ -1,7 +1,7 @@
 ---
 id: record-gated-shape-spike-diagnostic-claims
 title: Record the gated shape spike's diagnostic claims
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [verify-off-pin-shape-evidence-diagnostics, compile-extension-spike-fixtures-in-the-gate]
@@ -9,6 +9,9 @@ scopes: [research/shapes]
 shared_scopes: []
 paths: []
 tags: [testing, gate-reliability, harness]
+claimed_from: todo
+assignee: agent-record-gated-shape-spike-diagnostic-claims
+lease_expires_at: 1784932575
 ---
 `verify-off-pin-shape-evidence-diagnostics` gave `spikes/shapes/shape-evidence` a diagnostics record because the Rust gate cannot compile it, and decided in the same pass that `spikes/shapes/nightly-dependent-static-shapes` does not need the same treatment. That decision closed one half of the question and left this half explicit.
 

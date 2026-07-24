@@ -1,7 +1,7 @@
 ---
 id: reconcile-single-contributor-strict-sum-nan-canonicalization
 title: Reconcile single-contributor strict-serial-sum NaN canonicalization across the three implementations
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [register-governed-scalar-reference-evaluation]
@@ -9,6 +9,9 @@ scopes: [implementation/reference, implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, reference, correctness, milestone-0b]
+claimed_from: todo
+assignee: agent-reconcile-single-contributor-strict-sum-nan-canonicalization
+lease_expires_at: 1784932574
 ---
 A `tiler::strict-serial-sum-f32@1` reduction whose reduced domain holds **exactly one** contributor is computed three ways, and the normative oracle is the odd one out.
 

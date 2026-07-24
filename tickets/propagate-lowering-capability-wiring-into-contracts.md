@@ -1,7 +1,7 @@
 ---
 id: propagate-lowering-capability-wiring-into-contracts
 title: Propagate the wired capability and refinement stage into governed contracts
-status: todo
+status: in-progress
 priority: p1
 dependencies: [wire-capability-and-refinement-into-compile-path]
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer, contracts/numerics, contracts/foundation]
 shared_scopes: []
 paths: []
 tags: [documentation, optimizer, capability, milestone-0b]
+claimed_from: todo
+assignee: agent-propagate-lowering-capability-wiring-into-contracts
+lease_expires_at: 1784932575
 ---
 `wire-capability-and-refinement-into-compile-path` was scoped to `implementation/compiler` and `implementation/ir`, so the governed contracts that describe the compile path were deliberately left untouched. They now under-describe it.
 

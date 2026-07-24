@@ -1,7 +1,7 @@
 ---
 id: reconcile-adr-records-with-the-widened-numerical-vocabulary
 title: Reconcile the ADR records with the widened numerical vocabulary
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [widen-numerical-vocabulary-and-complete-identity, extend-canonical-identity-encodings-for-reserved-variants]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics, identity]
+claimed_from: todo
+assignee: agent-reconcile-adr-records-with-the-widened-numerical-vocabulary
+lease_expires_at: 1784932574
 ---
 `widen-numerical-vocabulary-and-complete-identity` implemented ADR 0076 items 1 and 6. `contracts/decisions` was held by a live sibling for the whole of that work, so the decision records still describe the code as it was before. None of these is a wrong decision; each is a statement of fact or status that the implementation has overtaken.
 

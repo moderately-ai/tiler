@@ -1,7 +1,7 @@
 ---
 id: scope-tiler-numerical-claims-across-the-candle-kernel-boundary
 title: Scope Tiler's numerical claims across the Candle kernel boundary
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [record-metal-runtime-compiler-provenance-gap, prototype-candle-metal-adapter]
@@ -9,6 +9,9 @@ scopes: [contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, candle, metal, numerics]
+claimed_from: todo
+assignee: agent-scope-tiler-numerical-claims-across-the-candle-kernel-boundary
+lease_expires_at: 1784932575
 ---
 Tiler compiles no MSL at runtime — ADR 0002 and ADR 0043 both forbid it, and `docs/backends/metal.md` now records why that exclusion is what keeps an artifact's toolchain provenance complete. The exclusion covers Tiler's kernels. It does not cover the process they run in.
 
