@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tiler_ir::index::{
     AccessMode, CanonicalScalarDefinitionProjection, DomainRole, FrozenScalarRegistry,
@@ -21,22 +21,24 @@ use tiler_ir::index::{
     ScalarRegistryError, ScalarValueDefinitionView, TensorAccessRef, TensorRole,
     VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedIndexRegion,
     VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
-    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
+    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId, add_f32_scalar_op,
+    constant_f32_scalar_op, multiply_f32_scalar_op,
 };
 use tiler_ir::semantic::{
-    CanonicalField, CanonicalValue, CanonicalValueView, FrozenSemanticRegistry, ProviderIdentity,
-    ResolvedValueType,
+    CanonicalField, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
+    FrozenSemanticRegistry, ProviderIdentity, ResolvedValueType, TypeKey,
 };
 use tiler_ir::shape::Shape;
 
 use crate::arithmetic::{ExactInteger, MagnitudeExceeded};
 use crate::{
-    EvaluationError, FrozenReferenceRegistry, MAX_REFERENCE_CAPABILITIES,
+    EvaluationError, FloatBitOrder, FrozenReferenceRegistry, MAX_REFERENCE_CAPABILITIES,
     MAX_REFERENCE_REGISTRY_IDENTITY_BYTES, MAX_REFERENCE_TENSOR_ELEMENTS,
     ReferenceCapabilityRevision, ReferenceElement, ReferenceOperationError, ReferenceRegistryError,
-    ReferenceRegistryResource, ReferenceSignature, Tensor, TensorPayloadView, encode_bytes,
-    encode_len, encode_provider_capability, encode_signature, encoded_bytes_len,
-    reference_provider_identity_len, reference_signature_identity_len,
+    ReferenceRegistryResource, ReferenceSignature, Tensor, TensorPayloadView,
+    canonicalize_arithmetic_f32, decode_f32, encode_bytes, encode_len, encode_provider_capability,
+    encode_signature, encoded_bytes_len, f32_element, reference_provider_identity_len,
+    reference_signature_identity_len,
 };
 
 /// Maximum scalar, reducer-body, and index evaluations in one region evaluation.
@@ -263,6 +265,13 @@ pub enum ScalarReferenceRegistryError {
         /// Typed scalar-registry cause.
         source: Arc<ScalarRegistryError>,
     },
+    /// Composing the governed standard scalar authority itself failed.
+    ///
+    /// This is a defect in Tiler's own governed profile rather than in a
+    /// caller's registration, so it names no operation.
+    ScalarRegistry(Arc<ScalarRegistryError>),
+    /// Forming an exact resolved signature or capability revision failed.
+    ReferenceRegistry(Arc<ReferenceRegistryError>),
     /// A registry resource exceeded its governed bound.
     ResourceExceeded {
         /// Bounded resource.
@@ -291,6 +300,15 @@ impl fmt::Display for ScalarReferenceRegistryError {
                 formatter,
                 "scalar authority for {operation:?} failed: {source}"
             ),
+            Self::ScalarRegistry(source) => {
+                write!(
+                    formatter,
+                    "governed standard scalar authority failed: {source}"
+                )
+            }
+            Self::ReferenceRegistry(source) => {
+                write!(formatter, "reference registry failure: {source}")
+            }
             Self::ResourceExceeded {
                 resource,
                 limit,
@@ -306,9 +324,18 @@ impl fmt::Display for ScalarReferenceRegistryError {
 impl Error for ScalarReferenceRegistryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::ScalarAuthority { source, .. } => Some(source.as_ref()),
+            Self::ScalarAuthority { source, .. } | Self::ScalarRegistry(source) => {
+                Some(source.as_ref())
+            }
+            Self::ReferenceRegistry(source) => Some(source.as_ref()),
             _ => None,
         }
+    }
+}
+
+impl From<ReferenceRegistryError> for ScalarReferenceRegistryError {
+    fn from(value: ReferenceRegistryError) -> Self {
+        Self::ReferenceRegistry(Arc::new(value))
     }
 }
 
@@ -347,6 +374,53 @@ impl ScalarReferenceRegistryBuilder {
             capabilities: BTreeMap::new(),
             canonical_bytes,
         }
+    }
+
+    /// Creates the governed standard scalar reference profile.
+    ///
+    /// The builder is bound to [`FrozenScalarRegistry::standard`] and defines an
+    /// executable oracle for exactly the three scalar operations the governed
+    /// `f32` index-access lowerings emit: `tiler.scalar::constant-f32@1`,
+    /// `multiply-f32@1`, and `add-f32@1`. An extension composes with it by
+    /// registering further capabilities on the returned builder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScalarReferenceRegistryError::ScalarRegistry`] when the
+    /// governed scalar authority rejects its own standard profile, or another
+    /// typed error when a governed registration violates the same public
+    /// contract an extension is held to.
+    pub fn standard() -> Result<Self, ScalarReferenceRegistryError> {
+        let scalars = FrozenScalarRegistry::standard()
+            .map_err(|source| ScalarReferenceRegistryError::ScalarRegistry(Arc::new(source)))?;
+        let mut builder = Self::new(scalars);
+        let provider = standard_scalar_reference_provider();
+        let revision = ReferenceCapabilityRevision::new(1)?;
+        let f32_type = F32::resolved_type();
+        builder.register(
+            provider.clone(),
+            constant_f32_scalar_op(),
+            ReferenceSignature::new([], [f32_type.clone()])?,
+            revision,
+            Arc::new(StandardScalarConstantF32),
+        )?;
+        let binary =
+            || ReferenceSignature::new([f32_type.clone(), f32_type.clone()], [f32_type.clone()]);
+        builder.register(
+            provider.clone(),
+            multiply_f32_scalar_op(),
+            binary()?,
+            revision,
+            Arc::new(StandardScalarBinaryF32::Multiply),
+        )?;
+        builder.register(
+            provider,
+            add_f32_scalar_op(),
+            binary()?,
+            revision,
+            Arc::new(StandardScalarBinaryF32::Add),
+        )?;
+        Ok(builder)
     }
 
     /// Registers one exact scalar operation/signature capability.
@@ -448,6 +522,25 @@ impl fmt::Debug for FrozenScalarReferenceRegistry {
 }
 
 impl FrozenScalarReferenceRegistry {
+    /// Builds the governed standard scalar reference profile.
+    ///
+    /// The snapshot is computed once and shared, so every consumer that executes
+    /// a region emitted by the governed `f32` index-access lowerings checks it
+    /// against the same oracle instead of composing an ad-hoc one.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when a governed registration violates the same
+    /// public contract used by extensions.
+    pub fn standard() -> Result<Self, ScalarReferenceRegistryError> {
+        static STANDARD: OnceLock<
+            Result<FrozenScalarReferenceRegistry, ScalarReferenceRegistryError>,
+        > = OnceLock::new();
+        STANDARD
+            .get_or_init(|| ScalarReferenceRegistryBuilder::standard()?.freeze())
+            .clone()
+    }
+
     /// Returns deterministic complete scalar reference-registry provenance.
     #[must_use]
     pub fn canonical_identity(&self) -> &CanonicalScalarReferenceRegistryIdentity {
@@ -470,6 +563,115 @@ impl CanonicalScalarReferenceRegistryIdentity {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+/// Returns the admitting provider of the governed standard scalar oracle.
+fn standard_scalar_reference_provider() -> ProviderIdentity {
+    ProviderIdentity::new("tiler", "standard-scalar-reference", 1)
+        .expect("the governed scalar reference provider identity is valid")
+}
+
+/// Returns the governed binary32 format key the scalar payloads are typed by.
+fn f32_scalar_format() -> TypeKey {
+    TypeKey::new("tiler", "f32", 1).expect("the governed f32 format key is valid")
+}
+
+/// Decodes one rank-zero governed `f32` operand.
+fn decode_scalar_f32(value: &Tensor) -> Result<f32, ReferenceOperationError> {
+    if value.resolved_type() != &F32::resolved_type() || value.shape().rank() != 0 {
+        return Err(ReferenceOperationError::InvalidApplication);
+    }
+    let TensorPayloadView::Dense([element]) = value.payload() else {
+        return Err(ReferenceOperationError::InvalidApplication);
+    };
+    decode_f32(element)
+}
+
+/// Wraps one exact `f32` payload as a rank-zero governed scalar value.
+fn scalar_f32_value(value: f32) -> Result<Tensor, ReferenceOperationError> {
+    Tensor::scalar(F32::resolved_type(), f32_element(value)?)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)
+}
+
+/// Evaluates `tiler.scalar::constant-f32@1` as its exact declared payload.
+///
+/// A constant reproduces its attribute bits unchanged, including a NaN payload
+/// and the sign of a zero. It performs no arithmetic, so
+/// [`canonicalize_arithmetic_f32`] deliberately does not apply: canonicalizing
+/// here would make the region unable to materialize an exact binary32 pattern
+/// the governed `tiler::constant-f32@1` definition promises to carry verbatim.
+struct StandardScalarConstantF32;
+
+impl ScalarReferenceOperation for StandardScalarConstantF32 {
+    fn evaluate(
+        &self,
+        request: ScalarReferenceRequest<'_>,
+        outputs: &mut ScalarReferenceOutputs,
+    ) -> Result<(), ReferenceOperationError> {
+        if !request.operands().is_empty() {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let CanonicalValueView::Record(fields) = request.attributes().value().view() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        if fields.len() != 1 {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let Some(CanonicalValueView::FloatBits(bits)) = fields
+            .iter()
+            .find(|field| field.id() == F32_CONSTANT_BITS_ATTRIBUTE)
+            .map(|field| field.value().view())
+        else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        if bits.format() != &f32_scalar_format() {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let element =
+            ReferenceElement::from_float_bits(bits.bits(), FloatBitOrder::MostSignificantByteFirst)
+                .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        outputs.push(
+            Tensor::scalar(F32::resolved_type(), element)
+                .map_err(|_| ReferenceOperationError::InvalidApplication)?,
+        )
+    }
+}
+
+/// Evaluates one governed binary `f32` scalar at one iteration point.
+///
+/// Each application is one separately rounded binary32 operation whose NaN
+/// result takes the governed canonical payload, which is exactly what the
+/// tensor-level `tiler::multiply-f32@1` and `tiler::add-f32@1` oracles do. A
+/// scalar that propagated the host's NaN payload instead would make a refined
+/// region and the semantic evaluator disagree on the same program.
+enum StandardScalarBinaryF32 {
+    Multiply,
+    Add,
+}
+
+impl ScalarReferenceOperation for StandardScalarBinaryF32 {
+    fn evaluate(
+        &self,
+        request: ScalarReferenceRequest<'_>,
+        outputs: &mut ScalarReferenceOutputs,
+    ) -> Result<(), ReferenceOperationError> {
+        let [left, right] = request.operands() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        let CanonicalValueView::Record(fields) = request.attributes().value().view() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        if !fields.is_empty() {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let left = decode_scalar_f32(left)?;
+        let right = decode_scalar_f32(right)?;
+        let value = match self {
+            Self::Multiply => left * right,
+            Self::Add => left + right,
+        };
+        outputs.push(scalar_f32_value(canonicalize_arithmetic_f32(value))?)
     }
 }
 

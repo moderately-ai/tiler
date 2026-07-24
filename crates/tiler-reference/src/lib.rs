@@ -1692,7 +1692,7 @@ fn f32_elements(tensor: &Tensor) -> Result<&[ReferenceElement], ReferenceOperati
     }
 }
 
-fn f32_element(value: f32) -> Result<ReferenceElement, ReferenceOperationError> {
+pub(crate) fn f32_element(value: f32) -> Result<ReferenceElement, ReferenceOperationError> {
     ReferenceElement::from_float_bits(
         value.to_bits().to_be_bytes(),
         FloatBitOrder::MostSignificantByteFirst,
@@ -1700,7 +1700,7 @@ fn f32_element(value: f32) -> Result<ReferenceElement, ReferenceOperationError> 
     .map_err(|_| ReferenceOperationError::InvalidApplication)
 }
 
-fn decode_f32(element: &ReferenceElement) -> Result<f32, ReferenceOperationError> {
+pub(crate) fn decode_f32(element: &ReferenceElement) -> Result<f32, ReferenceOperationError> {
     let bits = <[u8; 4]>::try_from(element.as_bytes())
         .map_err(|_| ReferenceOperationError::InvalidApplication)?;
     Ok(f32::from_bits(u32::from_be_bytes(bits)))
@@ -2236,7 +2236,16 @@ pub(crate) fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(value);
 }
 
-fn canonicalize_arithmetic_f32(value: f32) -> f32 {
+/// Replaces any NaN produced by a binary32 arithmetic operation with the one
+/// payload the governed contract declares.
+///
+/// The governed `tiler::multiply-f32@1` and `tiler::add-f32@1` definitions carry
+/// [`CANONICAL_F32_ARITHMETIC_NAN_BITS`] as a declared operation fact, so an
+/// arithmetic NaN has exactly one observable representation and a reference
+/// result never depends on the host's choice of propagated payload. It applies
+/// to an *arithmetic result*: a value that is only read, or an exact constant
+/// payload, keeps its bits.
+pub(crate) fn canonicalize_arithmetic_f32(value: f32) -> f32 {
     if value.is_nan() {
         f32::from_bits(CANONICAL_F32_ARITHMETIC_NAN_BITS)
     } else {
