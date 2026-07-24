@@ -751,3 +751,709 @@ fn scalar_reference_identity_is_deterministic_and_authority_complete() {
         .canonical_identity()
     );
 }
+
+/// Conformance proof for the governed standard scalar reference profile.
+///
+/// The cases above drive the oracle with a deliberately *external* scalar
+/// vocabulary, which is what proves the registration boundary. These drive it
+/// with Tiler's own governed one, which is what proves the numerical contract:
+/// `FrozenScalarReferenceRegistry::standard()` makes the regions the governed
+/// `f32` index-access lowerings emit executable, so a lowering that is proved to
+/// *realize* an occurrence structurally can finally be checked to *compute* it.
+///
+/// Each region here is a hand-written mirror of what `tiler_compiler::governed`
+/// emits for that family. The mirror is necessary rather than preferred:
+/// `tiler-reference` is a dependency of `tiler-compiler` and cannot import it,
+/// and inverting that edge would put the reference oracle downstream of the
+/// compiler. So the constructions follow `governed.rs` step for step and say
+/// where. `execute-governed-refined-regions-against-the-oracle` closes the
+/// residue by running the emitted regions themselves from the compiler crate.
+///
+/// Vectors are explicit bit patterns rather than round-number floats. A vector
+/// built from `f32::NAN` cannot distinguish canonicalizing from propagating,
+/// because `f32::NAN` already *is* the canonical arithmetic payload.
+mod governed {
+    use std::error::Error;
+    use std::sync::Arc;
+
+    use tiler_ir::index::{
+        DimensionId, DomainRole, FrozenScalarRegistry, IndexInteger, IndexRegionBuilder,
+        ScalarAttributes, ScalarValueId, TensorRole, VerifiedIndexRegion, add_f32_scalar_op,
+        constant_f32_scalar_op, multiply_f32_scalar_op,
+    };
+    use tiler_ir::semantic::{
+        CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalField, CanonicalValue, F32,
+        F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply, InputKey, OutputKey,
+        ProviderIdentity, SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum, TypeKey,
+        Value,
+    };
+    use tiler_ir::shape::{Axis, Extent, Shape};
+    use tiler_reference::{
+        FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry,
+        IndexRegionAuthority, IndexRegionEvaluator, IndexRegionInput, InputBinding,
+        ReferenceCapabilityRevision, ReferenceElement, ReferenceEvaluator, ReferenceOperationError,
+        ReferenceSignature, ScalarReferenceOperation, ScalarReferenceOutputs,
+        ScalarReferenceRegistryBuilder, ScalarReferenceRequest, Tensor, TensorPayloadView,
+    };
+
+    use super::{f32_type, input_ids, semantic_authority};
+
+    /// A quiet NaN whose payload is *not* the governed canonical arithmetic one.
+    const NONCANONICAL_QUIET_NAN: u32 = 0x7fc0_1234;
+    /// A negative quiet NaN, differing from the canonical payload in its sign.
+    const NEGATIVE_QUIET_NAN: u32 = 0xffc0_0000;
+    /// A signalling NaN, which no arithmetic result may reproduce verbatim.
+    const SIGNALLING_NAN: u32 = 0x7f80_0001;
+    /// The smallest positive subnormal binary32.
+    const LEAST_SUBNORMAL: u32 = 0x0000_0001;
+
+    fn governed_scalars() -> FrozenScalarRegistry {
+        FrozenScalarRegistry::standard().expect("the governed scalar authority composes")
+    }
+
+    fn governed_evaluator() -> IndexRegionEvaluator {
+        IndexRegionEvaluator::new(
+            FrozenReferenceRegistry::standard().expect("the governed value profile composes"),
+            FrozenScalarReferenceRegistry::standard()
+                .expect("the governed scalar reference profile composes"),
+        )
+    }
+
+    /// Builds one element from exact bits, never routing them through an `f32`.
+    fn bit_element(bits: u32) -> ReferenceElement {
+        ReferenceElement::from_float_bits(
+            bits.to_be_bytes(),
+            FloatBitOrder::MostSignificantByteFirst,
+        )
+        .expect("binary32 payloads are bounded")
+    }
+
+    fn bit_tensor(shape: Shape, bits: &[u32]) -> Tensor {
+        Tensor::dense(
+            f32_type(),
+            shape,
+            bits.iter().copied().map(bit_element).collect(),
+        )
+        .expect("the fixture tensor is well formed")
+    }
+
+    fn tensor_bits(tensor: &Tensor) -> Vec<u32> {
+        let TensorPayloadView::Dense(elements) = tensor.payload() else {
+            panic!("expected a dense f32 tensor")
+        };
+        elements
+            .iter()
+            .map(|value| {
+                u32::from_be_bytes(
+                    <[u8; 4]>::try_from(value.as_bytes())
+                        .expect("binary32 elements are four bytes"),
+                )
+            })
+            .collect()
+    }
+
+    /// Executes one region through the governed standard scalar oracle.
+    fn evaluate_region(region: &VerifiedIndexRegion, inputs: &[&Tensor]) -> Vec<u32> {
+        let ids = input_ids(region);
+        assert_eq!(ids.len(), inputs.len(), "one binding per input boundary");
+        let bindings: Vec<_> = ids
+            .iter()
+            .zip(inputs)
+            .map(|(id, tensor)| IndexRegionInput::new(*id, tensor))
+            .collect();
+        let scalars = governed_scalars();
+        let semantic = semantic_authority();
+        let evaluation = governed_evaluator()
+            .evaluate(
+                region,
+                IndexRegionAuthority::new(&scalars, &semantic),
+                &bindings,
+            )
+            .expect("the governed region evaluates");
+        assert_eq!(evaluation.outputs().len(), 1, "one output root");
+        tensor_bits(&evaluation.outputs()[0])
+    }
+
+    /// Executes one semantic program through the tensor-level oracle.
+    fn evaluate_program(
+        program: &SemanticProgram,
+        input: Option<(&InputKey, &Tensor)>,
+    ) -> Vec<u32> {
+        let bindings: Vec<_> = input
+            .into_iter()
+            .map(|(key, tensor)| InputBinding::new(key, tensor))
+            .collect();
+        let outputs = ReferenceEvaluator::standard()
+            .expect("the governed reference profile composes")
+            .evaluate(program, &bindings)
+            .expect("the governed program evaluates");
+        assert_eq!(outputs.len(), 1, "one program output");
+        tensor_bits(&outputs[0])
+    }
+
+    // Region mirrors of the governed index-access lowerings.
+
+    fn governed_constant_attributes(bits: u32) -> ScalarAttributes {
+        ScalarAttributes::new(
+            CanonicalValue::record([CanonicalField::new(
+                F32_CONSTANT_BITS_ATTRIBUTE,
+                CanonicalValue::float_bits(
+                    TypeKey::new("tiler", "f32", 1).expect("the governed f32 format key is valid"),
+                    bits.to_be_bytes(),
+                )
+                .expect("binary32 payloads are bounded"),
+            )])
+            .expect("the attribute record is canonical"),
+        )
+        .expect("the scalar attributes match the governed schema")
+    }
+
+    /// Mirrors `governed::GovernedConstantF32`: a rank-zero apply and write.
+    fn constant_region(bits: u32) -> Result<VerifiedIndexRegion, Box<dyn Error>> {
+        let mut builder = IndexRegionBuilder::new(governed_scalars())?;
+        let output = builder.tensor(TensorRole::Output, f32_type(), Shape::new([]))?;
+        let value = builder
+            .apply(
+                constant_f32_scalar_op(),
+                governed_constant_attributes(bits),
+                &[],
+            )?
+            .get(0)
+            .ok_or("the governed constant produces one result")?;
+        let write = builder.write(output, &[], &[])?;
+        builder.output(write, value)?;
+        Ok(builder.build()?)
+    }
+
+    /// Mirrors `governed::GovernedPointwiseF32` with a rank-zero right operand.
+    ///
+    /// The occurrence is `out[i] = left[i] <op> right`, which is the one
+    /// broadcast form the governed provider supports.
+    fn pointwise_broadcast_region(
+        multiply: bool,
+        length: u64,
+    ) -> Result<VerifiedIndexRegion, Box<dyn Error>> {
+        let mut builder = IndexRegionBuilder::new(governed_scalars())?;
+        let shape = Shape::from_dims([length]);
+        let i = builder.dimension(DomainRole::Parallel, Extent::new(length))?;
+        let coordinate = builder.dimension_expr(i)?;
+        let left = builder.tensor(TensorRole::Input, f32_type(), shape.clone())?;
+        let right = builder.tensor(TensorRole::Input, f32_type(), Shape::new([]))?;
+        let output = builder.tensor(TensorRole::Output, f32_type(), shape)?;
+        let left_value = builder.read(left, &[i], &[coordinate])?;
+        let right_value = builder.read(right, &[], &[])?;
+        let scalar = if multiply {
+            multiply_f32_scalar_op()
+        } else {
+            add_f32_scalar_op()
+        };
+        let applied = builder
+            .apply(
+                scalar,
+                ScalarAttributes::empty(),
+                &[left_value, right_value],
+            )?
+            .get(0)
+            .ok_or("the governed pointwise scalar produces one result")?;
+        let write = builder.write(output, &[i], &[coordinate])?;
+        builder.output(write, applied)?;
+        Ok(builder.build()?)
+    }
+
+    /// Folds the bound contributors onto `seed` with the governed reducer body.
+    fn fold_contributors(
+        builder: &mut IndexRegionBuilder,
+        bound: DimensionId,
+        contributor: ScalarValueId,
+        seed: ScalarValueId,
+    ) -> Result<ScalarValueId, Box<dyn Error>> {
+        Ok(builder
+            .reduce(&[bound], &[seed], &[contributor], |body| {
+                let accumulated = body.apply(
+                    add_f32_scalar_op(),
+                    ScalarAttributes::empty(),
+                    &[
+                        body.state(0).expect("one state parameter"),
+                        body.contributor(0).expect("one contributor parameter"),
+                    ],
+                )?;
+                body.yield_values(&[accumulated.get(0).expect("the governed add has one result")])
+            })?
+            .get(0)
+            .ok_or("the reduction produces one result")?)
+    }
+
+    /// Mirrors `governed::GovernedStrictSerialSumF32` for a rank-one input.
+    ///
+    /// The kept domain is empty, the reduced sub-shape is the whole input, and
+    /// the linearized reduced offset is the contributor coordinate directly. So
+    /// the emission reduces to exactly what `SumPlan` produces for `[length]`
+    /// with axis zero reduced: a seed read at offset zero, then a fold over
+    /// `length - 1` contributors read at `tail + 1`.
+    fn serial_sum_region(length: u64) -> Result<VerifiedIndexRegion, Box<dyn Error>> {
+        let mut builder = IndexRegionBuilder::new(governed_scalars())?;
+        let input = builder.tensor(TensorRole::Input, f32_type(), Shape::from_dims([length]))?;
+        let output = builder.tensor(TensorRole::Output, f32_type(), Shape::new([]))?;
+
+        let total = if length == 0 {
+            // `SumPlan::fold_empty`: the operand is still read over the vacuous
+            // reduced domain, and the fold yields the `+0.0` identity.
+            let reduced = builder.dimension(DomainRole::Reduction, Extent::new(0))?;
+            let coordinate = builder.dimension_expr(reduced)?;
+            let contributor = builder.read(input, &[reduced], &[coordinate])?;
+            let identity = builder
+                .apply(
+                    constant_f32_scalar_op(),
+                    governed_constant_attributes(0.0_f32.to_bits()),
+                    &[],
+                )?
+                .get(0)
+                .ok_or("the governed constant produces one result")?;
+            fold_contributors(&mut builder, reduced, contributor, identity)?
+        } else {
+            let zero = builder.constant(IndexInteger::from_u64(0))?;
+            let seed = builder.read(input, &[], &[zero])?;
+            if length == 1 {
+                // `GovernedStrictSerialSumF32` writes the seed unchanged: a
+                // single contributor is the whole strict-serial result, and no
+                // arithmetic operation is performed.
+                seed
+            } else {
+                let tail = builder.dimension(DomainRole::Reduction, Extent::new(length - 1))?;
+                let induction = builder.dimension_expr(tail)?;
+                let one = IndexInteger::from_u64(1);
+                let offset = builder.linear_combination(one.clone(), &[(one, induction)])?;
+                let contributor = builder.read(input, &[tail], &[offset])?;
+                fold_contributors(&mut builder, tail, contributor, seed)?
+            }
+        };
+        let write = builder.write(output, &[], &[])?;
+        builder.output(write, total)?;
+        Ok(builder.build()?)
+    }
+
+    // Semantic programs for the same occurrences.
+
+    fn constant_program(bits: u32) -> SemanticProgram {
+        let mut builder =
+            SemanticProgramBuilder::try_standard().expect("the governed profile composes");
+        let value = F32Constant::apply(&mut builder, bits).expect("the constant applies");
+        builder
+            .output(
+                OutputKey::new("result").expect("the output key is valid"),
+                value,
+            )
+            .expect("the output binds");
+        builder.build().expect("the program verifies")
+    }
+
+    fn pointwise_program(
+        multiply: bool,
+        length: u64,
+        right_bits: u32,
+    ) -> (SemanticProgram, InputKey) {
+        let mut builder =
+            SemanticProgramBuilder::try_standard().expect("the governed profile composes");
+        let key = InputKey::new("input").expect("the input key is valid");
+        let left = builder
+            .input::<F32>(key.clone(), Shape::from_dims([length]))
+            .expect("the input binds");
+        let right = F32Constant::apply(&mut builder, right_bits).expect("the constant applies");
+        let applied = if multiply {
+            F32Multiply::apply(&mut builder, left, right)
+        } else {
+            F32Add::apply(&mut builder, left, right)
+        }
+        .expect("the pointwise operation applies");
+        builder
+            .output(
+                OutputKey::new("result").expect("the output key is valid"),
+                applied,
+            )
+            .expect("the output binds");
+        (builder.build().expect("the program verifies"), key)
+    }
+
+    fn serial_sum_program(length: u64) -> (SemanticProgram, InputKey) {
+        let mut builder =
+            SemanticProgramBuilder::try_standard().expect("the governed profile composes");
+        let key = InputKey::new("input").expect("the input key is valid");
+        let input: Value<F32> = builder
+            .input::<F32>(key.clone(), Shape::from_dims([length]))
+            .expect("the input binds");
+        let total = StrictSerialF32Sum::apply(&mut builder, input, [Axis::new(0)])
+            .expect("the sum applies");
+        builder
+            .output(
+                OutputKey::new("result").expect("the output key is valid"),
+                total,
+            )
+            .expect("the output binds");
+        (builder.build().expect("the program verifies"), key)
+    }
+
+    // Question 1 — does the governed scalar arithmetic canonicalize a NaN result?
+
+    /// The governed scalar `add`/`multiply` canonicalize every arithmetic NaN.
+    ///
+    /// The tensor-level `tiler::add-f32@1` and `tiler::multiply-f32@1` oracles
+    /// do, because both operations carry `CANONICAL_F32_ARITHMETIC_NAN_BITS` as
+    /// a declared operation fact. A scalar oracle that propagated the host
+    /// payload instead would make the refined region and the semantic evaluator
+    /// disagree on the very programs refinement exists to check.
+    #[test]
+    fn governed_scalar_arithmetic_canonicalizes_every_nan_result() {
+        for (left, right) in [
+            (NONCANONICAL_QUIET_NAN, 1.0_f32.to_bits()),
+            (1.0_f32.to_bits(), NEGATIVE_QUIET_NAN),
+            (SIGNALLING_NAN, SIGNALLING_NAN),
+            (NEGATIVE_QUIET_NAN, NONCANONICAL_QUIET_NAN),
+            // NaN produced by the operation rather than propagated from an operand.
+            (f32::INFINITY.to_bits(), f32::NEG_INFINITY.to_bits()),
+            (f32::INFINITY.to_bits(), 0.0_f32.to_bits()),
+        ] {
+            for multiply in [false, true] {
+                let region = pointwise_broadcast_region(multiply, 1).expect("the region verifies");
+                let left_tensor = bit_tensor(Shape::from_dims([1]), &[left]);
+                let right_tensor = bit_tensor(Shape::new([]), &[right]);
+                let actual = evaluate_region(&region, &[&left_tensor, &right_tensor]);
+                // `INFINITY + NEG_INFINITY` is NaN but `INFINITY * NEG_INFINITY`
+                // is not, so assert canonicality only where the result is NaN.
+                if f32::from_bits(actual[0]).is_nan() {
+                    assert_eq!(
+                        actual,
+                        [CANONICAL_F32_ARITHMETIC_NAN_BITS],
+                        "multiply={multiply} left={left:#010x} right={right:#010x}"
+                    );
+                }
+
+                let (program, key) = pointwise_program(multiply, 1, right);
+                assert_eq!(
+                    actual,
+                    evaluate_program(&program, Some((&key, &left_tensor))),
+                    "the scalar and tensor oracles must agree: \
+                     multiply={multiply} left={left:#010x} right={right:#010x}"
+                );
+            }
+        }
+    }
+
+    /// Non-NaN results keep their exact payload, including the sign of a zero.
+    ///
+    /// Canonicalization applies to an arithmetic NaN and to nothing else. A
+    /// scalar oracle that normalized more than that would silently erase
+    /// `-0.0`, which the governed serial sum's seeding rule exists to preserve.
+    #[test]
+    fn governed_scalar_arithmetic_preserves_every_non_nan_payload() {
+        for (multiply, left, right, expected) in [
+            (
+                false,
+                (-0.0_f32).to_bits(),
+                0.0_f32.to_bits(),
+                0.0_f32.to_bits(),
+            ),
+            (
+                false,
+                (-0.0_f32).to_bits(),
+                (-0.0_f32).to_bits(),
+                (-0.0_f32).to_bits(),
+            ),
+            (
+                true,
+                0.0_f32.to_bits(),
+                (-1.0_f32).to_bits(),
+                (-0.0_f32).to_bits(),
+            ),
+            (true, LEAST_SUBNORMAL, 1.0_f32.to_bits(), LEAST_SUBNORMAL),
+            (false, LEAST_SUBNORMAL, LEAST_SUBNORMAL, 0x0000_0002),
+            (
+                true,
+                f32::INFINITY.to_bits(),
+                f32::NEG_INFINITY.to_bits(),
+                f32::NEG_INFINITY.to_bits(),
+            ),
+        ] {
+            let region = pointwise_broadcast_region(multiply, 1).expect("the region verifies");
+            let left_tensor = bit_tensor(Shape::from_dims([1]), &[left]);
+            let right_tensor = bit_tensor(Shape::new([]), &[right]);
+            assert_eq!(
+                evaluate_region(&region, &[&left_tensor, &right_tensor]),
+                [expected],
+                "multiply={multiply} left={left:#010x} right={right:#010x}"
+            );
+
+            let (program, key) = pointwise_program(multiply, 1, right);
+            assert_eq!(
+                evaluate_program(&program, Some((&key, &left_tensor))),
+                [expected],
+                "the tensor oracle must agree: multiply={multiply}"
+            );
+        }
+    }
+
+    /// The governed scalar constant reproduces its payload verbatim.
+    ///
+    /// A constant performs no arithmetic, so the canonical-NaN fact does not
+    /// reach it. Canonicalizing here would make it impossible for a region to
+    /// materialize an exact binary32 pattern, which is precisely what
+    /// `tiler::constant-f32@1` promises ("exact IEEE-754 payload").
+    #[test]
+    fn the_governed_scalar_constant_reproduces_an_exact_payload() {
+        for bits in [
+            NONCANONICAL_QUIET_NAN,
+            NEGATIVE_QUIET_NAN,
+            SIGNALLING_NAN,
+            (-0.0_f32).to_bits(),
+            LEAST_SUBNORMAL,
+            CANONICAL_F32_ARITHMETIC_NAN_BITS,
+        ] {
+            let region = constant_region(bits).expect("the region verifies");
+            assert_eq!(
+                evaluate_region(&region, &[]),
+                [bits],
+                "the scalar constant must not canonicalize {bits:#010x}"
+            );
+            assert_eq!(
+                evaluate_program(&constant_program(bits), None),
+                [bits],
+                "the tensor constant must not canonicalize {bits:#010x}"
+            );
+        }
+    }
+
+    // Question 2 — does the seed-with-first-contributor fold match `strict_sum`?
+
+    /// Vectors that separate a first-contributor seed from a `+0.0` one.
+    fn seeding_vectors() -> Vec<Vec<u32>> {
+        vec![
+            // The vector `structured_fused_body_interpreter_matches_reference_evaluator`
+            // already uses, which mixes a subnormal with both signed zeros.
+            vec![
+                1.0_f32.to_bits(),
+                (-2.0_f32).to_bits(),
+                3.5_f32.to_bits(),
+                f32::MIN_POSITIVE.to_bits(),
+                (-0.0_f32).to_bits(),
+                0.0_f32.to_bits(),
+            ],
+            // Sign of zero: only `-0.0 + -0.0` stays negative, so a `+0.0` seed
+            // would turn the first of these into `+0.0` and leave the rest alone.
+            vec![(-0.0_f32).to_bits(); 2],
+            vec![(-0.0_f32).to_bits(), 0.0_f32.to_bits()],
+            vec![0.0_f32.to_bits(), (-0.0_f32).to_bits()],
+            vec![(-0.0_f32).to_bits(); 5],
+            // NaN ordering: the payload that survives must not depend on which
+            // operand the host propagates, nor on where the NaN sits in the fold.
+            vec![NONCANONICAL_QUIET_NAN, 1.0_f32.to_bits()],
+            vec![1.0_f32.to_bits(), NEGATIVE_QUIET_NAN],
+            vec![1.0_f32.to_bits(), SIGNALLING_NAN, 2.0_f32.to_bits()],
+            vec![NEGATIVE_QUIET_NAN, NONCANONICAL_QUIET_NAN],
+            vec![f32::INFINITY.to_bits(), f32::NEG_INFINITY.to_bits()],
+            // Order sensitivity: these sums differ under any reassociation, so
+            // an agreeing result is evidence the contributor order agrees too.
+            vec![1.0_f32.to_bits(), 1e-30_f32.to_bits(), (-1.0_f32).to_bits()],
+            vec![1e-30_f32.to_bits(), 1.0_f32.to_bits(), (-1.0_f32).to_bits()],
+            vec![
+                1e30_f32.to_bits(),
+                1e30_f32.to_bits(),
+                (-1e30_f32).to_bits(),
+                (-1e30_f32).to_bits(),
+            ],
+            vec![LEAST_SUBNORMAL; 4],
+        ]
+    }
+
+    /// The governed fold reproduces `strict_sum` exactly for every fold with work.
+    ///
+    /// This is the load-bearing claim: the governed lowering seeds with the
+    /// first contributor rather than with a `+0.0` identity, and the normative
+    /// oracle seeds the same way, so the two agree on sign-of-zero and NaN
+    /// vectors that a `+0.0`-seeded fold would get wrong.
+    #[test]
+    fn the_governed_serial_fold_matches_the_semantic_oracle_bit_for_bit() {
+        for values in seeding_vectors() {
+            let length = u64::try_from(values.len()).expect("the fixture is small");
+            assert!(
+                length >= 2,
+                "this case covers folds that perform arithmetic"
+            );
+            let region = serial_sum_region(length).expect("the region verifies");
+            let input = bit_tensor(Shape::from_dims([length]), &values);
+            let (program, key) = serial_sum_program(length);
+            assert_eq!(
+                evaluate_region(&region, &[&input]),
+                evaluate_program(&program, Some((&key, &input))),
+                "the governed fold and the semantic oracle disagree on {values:#010x?}"
+            );
+        }
+    }
+
+    /// A `+0.0`-seeded fold really would be observably wrong on these vectors.
+    ///
+    /// Without this the agreement above proves only that two implementations
+    /// match, not that the seeding rule matters. `-0.0 + -0.0` is `-0.0` while
+    /// `0.0 + (-0.0)` is `+0.0`, so the identity seed loses the sign.
+    #[test]
+    fn a_positive_zero_seed_would_change_the_observable_result() {
+        let values = vec![(-0.0_f32).to_bits(); 3];
+        let length = u64::try_from(values.len()).expect("the fixture is small");
+        let input = bit_tensor(Shape::from_dims([length]), &values);
+        let (program, key) = serial_sum_program(length);
+        assert_eq!(
+            evaluate_program(&program, Some((&key, &input))),
+            [(-0.0_f32).to_bits()],
+            "the strict serial sum of negative zeros is negative zero"
+        );
+
+        let seeded: f32 = values
+            .iter()
+            .fold(0.0_f32, |total, bits| total + f32::from_bits(*bits));
+        assert_eq!(
+            seeded.to_bits(),
+            0.0_f32.to_bits(),
+            "a +0.0 seed loses the sign, which is the error this rule prevents"
+        );
+    }
+
+    /// An empty reduced domain yields the `+0.0` identity in both oracles.
+    #[test]
+    fn an_empty_reduced_domain_is_positive_zero_in_both_oracles() {
+        let region = serial_sum_region(0).expect("the region verifies");
+        let input = bit_tensor(Shape::from_dims([0]), &[]);
+        let (program, key) = serial_sum_program(0);
+        assert_eq!(evaluate_region(&region, &[&input]), [0.0_f32.to_bits()]);
+        assert_eq!(
+            evaluate_region(&region, &[&input]),
+            evaluate_program(&program, Some((&key, &input)))
+        );
+    }
+
+    /// A single contributor agrees on every payload but a non-canonical NaN.
+    #[test]
+    fn a_single_contributor_agrees_on_every_payload_but_a_non_canonical_nan() {
+        for bits in [
+            (-0.0_f32).to_bits(),
+            0.0_f32.to_bits(),
+            f32::INFINITY.to_bits(),
+            f32::NEG_INFINITY.to_bits(),
+            LEAST_SUBNORMAL,
+            1.0_f32.to_bits(),
+            CANONICAL_F32_ARITHMETIC_NAN_BITS,
+        ] {
+            let region = serial_sum_region(1).expect("the region verifies");
+            let input = bit_tensor(Shape::from_dims([1]), &[bits]);
+            let (program, key) = serial_sum_program(1);
+            assert_eq!(
+                evaluate_region(&region, &[&input]),
+                evaluate_program(&program, Some((&key, &input))),
+                "the oracles disagree on a lone {bits:#010x}"
+            );
+            assert_eq!(evaluate_region(&region, &[&input]), [bits]);
+        }
+    }
+
+    /// **Measured divergence.** A lone non-canonical NaN contributor is
+    /// canonicalized by the semantic oracle and passed through by the governed
+    /// region.
+    ///
+    /// `strict_sum` canonicalizes its accumulator unconditionally before writing
+    /// it, so a fold that performed *zero* additions still reports the canonical
+    /// arithmetic payload. The governed index-access lowering and
+    /// `tiler_ir::kernel::lower` both write the seed unchanged in that case, and
+    /// the latter says so in a comment. Two of the three implementations agree
+    /// with each other and disagree with the normative oracle.
+    ///
+    /// The existing conformance vector cannot see this: it reduces a `[4, 1]`
+    /// input containing `f32::NAN`, and `f32::NAN` is already
+    /// `CANONICAL_F32_ARITHMETIC_NAN_BITS`, so canonicalizing it is a no-op.
+    ///
+    /// This case pins the disagreement rather than hiding it.
+    /// `reconcile-single-contributor-strict-sum-nan-canonicalization` owns
+    /// deciding which side moves; until it does, a change to either side must
+    /// fail here instead of silently re-aligning the oracles at some unreviewed
+    /// payload.
+    #[test]
+    fn a_lone_non_canonical_nan_contributor_diverges_between_the_two_oracles() {
+        for bits in [NONCANONICAL_QUIET_NAN, NEGATIVE_QUIET_NAN, SIGNALLING_NAN] {
+            let region = serial_sum_region(1).expect("the region verifies");
+            let input = bit_tensor(Shape::from_dims([1]), &[bits]);
+            let (program, key) = serial_sum_program(1);
+
+            assert_eq!(
+                evaluate_region(&region, &[&input]),
+                [bits],
+                "the governed region performs no arithmetic and keeps {bits:#010x}"
+            );
+            assert_eq!(
+                evaluate_program(&program, Some((&key, &input))),
+                [CANONICAL_F32_ARITHMETIC_NAN_BITS],
+                "the semantic oracle canonicalizes a zero-step fold"
+            );
+            assert_ne!(
+                evaluate_region(&region, &[&input]),
+                evaluate_program(&program, Some((&key, &input))),
+                "the divergence is real and this case exists to keep it visible"
+            );
+        }
+    }
+
+    // Registry identity and authority binding.
+
+    /// The governed scalar oracle is bound to the governed scalar authority.
+    #[test]
+    fn the_standard_scalar_oracle_binds_the_governed_scalar_authority() {
+        let registry =
+            FrozenScalarReferenceRegistry::standard().expect("the governed scalar oracle composes");
+        assert_eq!(
+            registry.scalar_registry().snapshot_identity(),
+            governed_scalars().snapshot_identity(),
+            "the oracle and the lowerings must share one scalar snapshot"
+        );
+        assert_eq!(
+            registry.canonical_identity(),
+            FrozenScalarReferenceRegistry::standard()
+                .expect("the governed scalar oracle composes")
+                .canonical_identity(),
+            "the shared snapshot is deterministic"
+        );
+    }
+
+    struct RejectingScalar;
+
+    impl ScalarReferenceOperation for RejectingScalar {
+        fn evaluate(
+            &self,
+            _: ScalarReferenceRequest<'_>,
+            _: &mut ScalarReferenceOutputs,
+        ) -> Result<(), ReferenceOperationError> {
+            Err(ReferenceOperationError::InvalidApplication)
+        }
+    }
+
+    /// The governed profile owns its three keys and refuses to be shadowed.
+    ///
+    /// An extension composes on the returned builder by *adding* capabilities;
+    /// it cannot quietly substitute a different oracle for a governed scalar,
+    /// which is what would let a region be checked against arithmetic the
+    /// governed contract never admitted.
+    #[test]
+    fn a_governed_scalar_capability_cannot_be_shadowed_by_an_extension() {
+        let mut builder = ScalarReferenceRegistryBuilder::standard()
+            .expect("the governed scalar reference profile composes");
+        let shadow = builder.register(
+            ProviderIdentity::new("example", "shadow", 1).expect("the provider identity is valid"),
+            add_f32_scalar_op(),
+            ReferenceSignature::new([f32_type(), f32_type()], [f32_type()])
+                .expect("the signature is bounded"),
+            ReferenceCapabilityRevision::new(1).expect("the revision is nonzero"),
+            Arc::new(RejectingScalar),
+        );
+        assert!(
+            matches!(
+                shadow,
+                Err(tiler_reference::ScalarReferenceRegistryError::DuplicateCapability { .. })
+            ),
+            "the governed profile already owns tiler.scalar::add-f32@1"
+        );
+    }
+}
