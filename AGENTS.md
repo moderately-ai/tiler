@@ -166,6 +166,16 @@ empirical evidence, normative guarantees, and `Unknown` as different classes.
   evidence.
 - Inspect the exact local dependency revision when making a source claim and
   record the commit or version.
+- A failed search is evidence that the search was wrong, not that the thing is
+  absent, until the file has been read. Multi-line attributes, wrapped
+  signatures, and re-exported names defeat substring matching; `git log -S`
+  inherits the same weakness; and a bounded window (`head -N`, a `sed` range, a
+  truncated diff) can split the construct being searched for. When a search
+  result contradicts a documented claim, open the file before concluding the
+  document is wrong.
+- When asserting absence, state the exact check so a reader can reproduce or
+  refute it in one line. Treat a correction that cannot be reproduced that way
+  as unverified, including one arriving from a reviewer.
 - Keep facts about a tested host/toolchain separate from portable guarantees.
 - Turn important unknowns into bounded experiments with explicit inputs,
   outputs, metrics, unsupported cases, and stop conditions.
