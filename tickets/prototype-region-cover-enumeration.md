@@ -1,7 +1,7 @@
 ---
 id: prototype-region-cover-enumeration
 title: Enumerate legal complete region covers
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-fusion-legality-and-numerical-proof]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, partitioning]
-claimed_from: todo
-assignee: agent-prototype-region-cover-enumeration
-lease_expires_at: 1784859360
 ---
 Enumerate bounded legal covers before physical program selection. Cover every
 operation and named output, preserve occurrence identity and boundaries,
