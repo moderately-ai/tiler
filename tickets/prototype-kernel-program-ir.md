@@ -1,7 +1,7 @@
 ---
 id: prototype-kernel-program-ir
 title: Implement verified target-neutral KernelProgram IR
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-structured-kir-slice]
 related: [prototype-artifact-program-model]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, program-planning]
+claimed_from: todo
+assignee: agent-prototype-kernel-program-ir
+lease_expires_at: 1784909932
 ---
 Implement reviewed verified target-neutral KernelProgram IR: stage DAG, exact
 selected scheduled/KIR refinements, checked values/views/allocations and
