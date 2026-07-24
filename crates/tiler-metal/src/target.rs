@@ -15,6 +15,51 @@
 //! Every public item here is a reviewed *draft* boundary (ADR 0074 §7): the
 //! surface is built and tested at full fidelity while the facade is under
 //! review, and it says so rather than pretending to be accepted.
+//!
+//! # The Apple target vocabulary is deliberately owned twice
+//!
+//! [`MslLanguageVersion`](crate::target::MslLanguageVersion),
+//! [`MetalPlatform`](crate::target::MetalPlatform), and
+//! [`MetalDeploymentMinimum`](crate::target::MetalDeploymentMinimum)
+//! have counterparts in `tiler_metal_aot::input`: `MslVersion`,
+//! `ApplePlatform`, and `DeploymentMinimum`. They describe the same three facts
+//! about the same targets. That duplication is a decision recorded by
+//! `choose-one-owner-for-apple-target-vocabulary`, not an accident to be
+//! consolidated by the next reader who notices it.
+//!
+//! **Why neither crate owns both copies.** `tiler-metal-aot` has an empty
+//! dependency closure on purpose: it spawns `xcrun` and its entire value is
+//! being a small shim whose exact compiler invocation can be audited in
+//! isolation. `tiler-metal` depends on `tiler-ir` and `tiler-artifact`, so
+//! giving the driver this crate's vocabulary would pull the whole lowering
+//! stack into the build graph of the component that runs the compiler. Pointing
+//! the edge the other way — a normal `tiler-metal` → `tiler-metal-aot`
+//! dependency — puts Apple tool discovery into every consumer's build graph,
+//! and Cargo's cycle rule would then forbid the eventual `tiler-metal-aot` →
+//! `tiler-metal` production direction outright. A third crate owning
+//! three types would leave both crates still owning the rest of their target
+//! vocabulary and buy no invariant the checked correspondence does not already
+//! give.
+//!
+//! **Why the two records are not one type in disguise.**
+//! [`MetalTargetFacts`](crate::target::MetalTargetFacts)
+//! also carries a launch-index realization, a subnormal-arithmetic fact, and a
+//! binding capacity, none of which a compiler invocation has any use for. The
+//! driver's `MetalTarget` carries an `AppleSdk`, which selects `xcrun --sdk` and
+//! builds the `air64-apple-*` triple — tool-discovery knowledge this crate must
+//! never acquire. Neither record subsumes the other; they overlap in exactly the
+//! three facts above.
+//!
+//! **What keeps them from drifting.** `crate::target_correspondence` maps each
+//! vocabulary onto the other *totally*, so a language standard or an artifact
+//! family added to either crate fails this crate's build until the other gains
+//! it. That check can only live here: the driver cannot see this crate, so this
+//! crate's development dependency on the driver is the sole edge in the
+//! workspace over which both vocabularies are visible at once. It is also the
+//! reason the correspondence is a test rather than a conversion function — a
+//! production `MetalTargetFacts` → `MetalTarget` translation would need a normal
+//! dependency in one direction or the other, so it belongs to whichever
+//! component eventually orchestrates emission and compilation together.
 
 use core::fmt;
 
@@ -22,6 +67,20 @@ use core::fmt;
 ///
 /// MSL 3.1 is the standard the Apple artifact-compatibility probe measured. The
 /// set is a bounded-profile placeholder and will grow.
+///
+/// This is the standard the *emitted source declares it was written against*.
+/// The driver's `tiler_metal_aot::input::MslVersion` is the standard a
+/// compilation is *invoked* with, and the two must name the same set; see this
+/// module's documentation for why they are separate types and
+/// `crate::target_correspondence` for the check that keeps them in step.
+///
+/// **`#[non_exhaustive]` is ADR 0074 convention 5a here, and only while no
+/// consumer outside this crate maps it.** The correspondence lives in this
+/// crate, so the attribute does not obstruct it. The first out-of-crate total
+/// map — an orchestrator deriving a `MetalTarget` from [`MetalTargetFacts`] —
+/// makes this a 5b type, because its wildcard arm would have to invent a
+/// language standard the variant alone determines. That ticket owns removing
+/// the attribute; it is not free to add a wildcard instead.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MslLanguageVersion {
@@ -55,6 +114,16 @@ impl fmt::Display for MslLanguageVersion {
 ///
 /// Family is a compile guarantee, never a live-device fact, and macOS, iOS
 /// device, and iOS simulator remain distinct measured families.
+///
+/// The driver spells the same three families as
+/// `tiler_metal_aot::input::ApplePlatform`, with the same stable identifiers.
+/// It does *not* spell the SDK that selects one; `AppleSdk` is the driver's
+/// tool-discovery vocabulary and has no counterpart here. Mac Catalyst is a
+/// deferred fourth family in both crates and must be added to both at once —
+/// `crate::target_correspondence` fails the build otherwise.
+///
+/// The `#[non_exhaustive]` classification and its trigger are the same as
+/// [`MslLanguageVersion`]'s.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MetalPlatform {
@@ -89,6 +158,13 @@ impl fmt::Display for MetalPlatform {
 /// This is the requested application deployment minimum, recorded in the
 /// emitted provenance header. It is not evidence that the compiled library runs
 /// on every operating-system version at or above it.
+///
+/// The driver's `tiler_metal_aot::input::DeploymentMinimum` holds the same two
+/// components and renders them the same way, but reaches a different output:
+/// this one is written into the emitted header, that one into the
+/// `air64-apple-*` target triple. `crate::target_correspondence` asserts the
+/// components and the rendering agree, which is what makes the header's claim
+/// about the compilation true rather than decorative.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MetalDeploymentMinimum {
     major: u16,

@@ -103,7 +103,9 @@ const GOLDENS: [(&str, &str); 4] = [
 /// `tiler-metal` states a target as [`MetalTargetFacts`] and the driver states
 /// it as [`MetalTarget`]. These are two vocabularies for one target, so
 /// `every_golden_declares_the_target_the_driver_compiles_it_for` checks that
-/// they agree rather than assuming it.
+/// they agree on *this* target rather than assuming it. That check is pointwise
+/// and is about the fixtures; the two vocabularies are checked to name the same
+/// sets in `crate::target_correspondence`.
 fn driver_target() -> MetalTarget {
     MetalTarget::new(
         AppleSdk::MacOs,
@@ -265,6 +267,12 @@ fn every_checked_in_golden_is_compiled_by_this_module() {
 /// A golden compiled for a target it was not emitted for would be a green test
 /// over the wrong evidence, and the two crates spell the same target in
 /// different vocabularies, so the agreement is asserted rather than assumed.
+///
+/// This is deliberately a *pointwise* check on one governed target. It would
+/// stay green if either crate gained a language standard or an artifact family
+/// the other lacked, because it never looks at a variant these fixtures do not
+/// use. `crate::target_correspondence` owns that totality obligation; do not
+/// read this test as covering it.
 #[test]
 fn every_golden_declares_the_target_the_driver_compiles_it_for() {
     let facts = emitter_facts();

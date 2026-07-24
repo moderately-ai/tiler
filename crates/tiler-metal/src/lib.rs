@@ -53,6 +53,13 @@
 //! self-skip where no qualified Apple toolchain resolves, so a green run is
 //! compiler evidence only on a host that has one.
 //!
+//! That development dependency carries a second obligation. The driver owns its
+//! own MSL language version, Apple artifact family, and deployment minimum,
+//! deliberately and for the reasons [`target`] records; this crate's
+//! development edge is the only place in the workspace where both vocabularies
+//! are visible at once, so it is where they are checked to name the same sets.
+//! Those checks need no toolchain and never skip.
+//!
 //! # Boundary status
 //!
 //! Every public item in this crate is a reviewed *draft* boundary under ADR
@@ -184,5 +191,7 @@ pub mod target;
 
 #[cfg(test)]
 mod golden_compilation;
+#[cfg(test)]
+mod target_correspondence;
 #[cfg(test)]
 mod tests;

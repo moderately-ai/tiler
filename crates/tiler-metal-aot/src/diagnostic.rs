@@ -36,6 +36,15 @@ impl fmt::Display for CompileStage {
 ///
 /// The driver fails closed: each variant is a hard rejection, not a fallback to
 /// compiler defaults or to an unqualified toolchain.
+///
+/// **Do not mark this `#[non_exhaustive]`.** `tiler-metal` recognizes it out of
+/// crate to decide whether a failed toolchain resolution means an absent Apple
+/// toolchain — in which case its compiling tests self-skip — or a defect they
+/// must report. That is ADR 0074 convention 5c: a wildcard arm there would be
+/// correct today and wrong the moment a variant lands that must not be read as
+/// an absent toolchain, and the mistake would compile silently and turn a
+/// defect into a skipped test. The compile error is what keeps the
+/// classification complete.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriverError {
     /// The Apple toolchain could not be resolved or did not report its identity.
