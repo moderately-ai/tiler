@@ -249,7 +249,7 @@ impl VerifiedEvidenceRef {
                 .subject()
                 .canonical_explain_subject_bytes()
                 .into_boxed_slice(),
-            candidate: SubjectKey::new(proof.candidate_stable_id())?,
+            candidate: SubjectKey::new(proof.candidate_label())?,
             provider,
             proof: proof.canonical_explain_evidence_bytes().into_boxed_slice(),
         })
@@ -2441,7 +2441,7 @@ mod tests {
                 .unwrap();
         let mut writer = ExplainWriter::new(&second_request, ExplainLimits::default()).unwrap();
         let subject = writer
-            .subject(SubjectKind::Candidate, candidate.stable_id())
+            .subject(SubjectKind::Candidate, candidate.label())
             .unwrap();
         assert_eq!(
             writer.push_detail(

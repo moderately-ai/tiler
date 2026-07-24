@@ -751,7 +751,7 @@ pub(crate) fn derive_fusion_legality(
                 return Ok(FusionLegality::Unknown(FusionUnknown {
                     obligation: FusionObligation::OperationCapabilitiesResolved,
                     reason: "unsupported-operation-capability",
-                    region: candidate.stable_id().to_owned(),
+                    region: candidate.label().to_owned(),
                 }));
             }
         }
@@ -987,7 +987,7 @@ fn first_rejection(
             ObligationAssessment::Rejected { reason } => Some(FusionRejection {
                 obligation: derived.obligation,
                 reason,
-                region: candidate.stable_id().to_owned(),
+                region: candidate.label().to_owned(),
             }),
             _ => None,
         })
@@ -1004,7 +1004,7 @@ fn first_unknown(
             ObligationAssessment::Unknown { reason } => Some(FusionUnknown {
                 obligation: derived.obligation,
                 reason,
-                region: candidate.stable_id().to_owned(),
+                region: candidate.label().to_owned(),
             }),
             _ => None,
         })

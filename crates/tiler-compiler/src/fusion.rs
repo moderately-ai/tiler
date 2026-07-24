@@ -30,8 +30,8 @@ pub(crate) struct FusionNumericalProof {
 }
 
 impl FusionNumericalProof {
-    pub(crate) fn candidate_stable_id(&self) -> &str {
-        self.candidate.stable_id()
+    pub(crate) fn candidate_label(&self) -> &str {
+        self.candidate.label()
     }
 
     pub(crate) fn canonical_explain_evidence_bytes(&self) -> Vec<u8> {
@@ -213,7 +213,7 @@ pub(crate) fn verify_fused_numerics(
 
 fn invalid<T>(candidate: &RegionCandidate, rule: &'static str) -> Result<T, FusionError> {
     Err(FusionError::Invalid {
-        region: candidate.stable_id().to_owned(),
+        region: candidate.label().to_owned(),
         rule,
     })
 }
@@ -260,7 +260,7 @@ mod tests {
         let whole = outcome.whole_program_candidate().unwrap();
         let proof = prove_fused_numerics(outcome.graph(), &request, whole).unwrap();
         verify_fused_numerics(outcome.graph(), &request, whole, &proof).unwrap();
-        assert_eq!(proof.candidate_stable_id(), whole.stable_id());
+        assert_eq!(proof.candidate_label(), whole.label());
 
         for candidate in outcome.candidates() {
             if candidate.covers_whole_program() {

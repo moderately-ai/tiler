@@ -322,7 +322,7 @@ impl SelectedPlanIdentity {
     ///
     /// The label is a digest of the canonical bytes and is presentation only.
     /// Equality decisions always use [`Self::as_bytes`].
-    pub(crate) fn key(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         format!("selected-plan:{:016x}", digest(&self.0))
     }
 }
@@ -393,7 +393,10 @@ impl SelectedPortfolioIdentity {
     }
 
     /// Returns a bounded explain label for this portfolio.
-    pub(crate) fn key(&self) -> String {
+    ///
+    /// The label is a digest of the canonical bytes and is presentation only.
+    /// Equality decisions always use [`Self::as_bytes`].
+    pub(crate) fn label(&self) -> String {
         format!("selected-portfolio:{:016x}", digest(&self.0))
     }
 }
@@ -1915,7 +1918,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(ids(&first), ids(&second));
-        assert!(!first.identity().key().is_empty());
+        assert!(!first.identity().label().is_empty());
     }
 
     /// A forged receipt fails re-derivation: a foreign program, a tampered cost,
