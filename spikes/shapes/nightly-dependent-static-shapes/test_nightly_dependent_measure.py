@@ -1,7 +1,7 @@
 """Cleanup-path tests for the dependent-static-shape measurement harness.
 
-These are not collected by the repository gate: `spikes/shapes` is outside the
-canonical pytest `testpaths`. Run them directly with
+The repository gate collects these: `spikes/shapes/nightly-dependent-static-shapes`
+is in the canonical pytest `testpaths`. Run them alone with
 
     uv run --locked pytest \
       spikes/shapes/nightly-dependent-static-shapes/test_nightly_dependent_measure.py

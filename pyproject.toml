@@ -20,12 +20,36 @@ required-version = "==0.11.28"
 
 [tool.pytest.ini_options]
 addopts = ["--noconftest", "--strict-config", "--strict-markers", "-ra"]
+# Enumerate each gated area exactly. A parent such as `spikes/shapes` would opt
+# future sibling spikes in without a decision, which is the inverse of the gap
+# these entries close.
 testpaths = [
     "scripts/tests",
     "spikes/apple-targets",
     "spikes/embedding",
     "spikes/macro-environment",
     "spikes/numerics/sound_accuracy",
+    "spikes/runtime",
+    "spikes/shapes/nightly-dependent-static-shapes",
+    "spikes/shapes/shape-evidence",
+]
+# Several gated spike directories are themselves Cargo workspace roots, so their
+# generated `target/` tree sits inside a path that must be collected and no
+# choice of testpath granularity can exclude it. `--noconftest` rules out
+# `collect_ignore`, leaving this the only declarative exclusion, and it applies
+# equally to a developer running pytest by hand. Setting the key replaces
+# pytest's default list, so restate those defaults rather than lose them.
+norecursedirs = [
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+    "{arch}",
 ]
 
 [tool.ruff]

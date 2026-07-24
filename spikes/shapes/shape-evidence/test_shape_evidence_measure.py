@@ -1,7 +1,7 @@
 """Cleanup-path tests for the shape-evidence measurement harness.
 
-These are not collected by the repository gate: `spikes/shapes` is outside the
-canonical pytest `testpaths`. Run them directly with
+The repository gate collects these: `spikes/shapes/shape-evidence` is in the
+canonical pytest `testpaths`. Run them alone with
 
     uv run --locked pytest spikes/shapes/shape-evidence/test_shape_evidence_measure.py
 """
