@@ -1,7 +1,7 @@
 ---
 id: own-operation-family-support-matrix
 title: Own the operation-family support matrix (breadth tracking)
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [enumerate-the-mature-tensor-dtype-taxonomy, scope-einsum-contraction-support]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, roadmap, breadth, epic]
+claimed_from: todo
+assignee: agent-own-operation-family-support-matrix
+lease_expires_at: 1784917695
 ---
 Wide operation support is the long-term goal, but it currently has no single
 durable owner in the work graph. The dtype axis is owned:

@@ -1,7 +1,7 @@
 ---
 id: choose-one-owner-for-apple-target-vocabulary
 title: Choose one owner for the shared Apple target vocabulary
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [prototype-metal-kir-lowering, prototype-apple-aot-driver, compile-golden-msl-through-the-aot-driver-in-the-gate]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, api-hardening]
+claimed_from: todo
+assignee: agent-choose-one-owner-for-apple-target-vocabulary
+lease_expires_at: 1784917695
 ---
 `tiler-metal` and `tiler-metal-aot` now each define their own MSL language
 version, Apple platform family, and deployment minimum:

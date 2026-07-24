@@ -1,7 +1,7 @@
 ---
 id: check-in-apple-numerical-behaviour-probe
 title: Check in the Apple numerical behaviour probe
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [draft-target-honourable-numerical-contract-adr, prototype-metal-numerical-realization, compile-golden-msl-through-the-aot-driver-in-the-gate]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, measurement]
+claimed_from: todo
+assignee: agent-check-in-apple-numerical-behaviour-probe
+lease_expires_at: 1784917695
 ---
 ADR 0076's fifth open question, made owned. The measurements the whole record rests on exist only in two ticket outcomes and in the ADR's own re-verification. **No research record owns them, no harness is checked in, and nothing in the repository gate re-establishes them.** `AGENTS.md` requires a reproducible experiment to live under `spikes/` and requires research documents to link to the checked-in harness supporting a claim; neither holds here.
 

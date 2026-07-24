@@ -1,7 +1,7 @@
 ---
 id: record-presentation-label-naming-resolution
 title: Close ADR 0074's presentation-label naming question
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [disambiguate-presentation-label-from-semantic-key-accessors, draft-public-api-conventions-adr]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, api-hardening]
+claimed_from: todo
+assignee: agent-record-presentation-label-naming-resolution
+lease_expires_at: 1784917695
 ---
 Accepted ADR 0074 carries an open question — "Naming for presentation-only digest labels" — that says `key()` names both a presentation digest and a stable semantic key, offers `label()` and `display_id()` as candidates, and records that **no owner is assigned**. An owner was assigned and the work is done: `disambiguate-presentation-label-from-semantic-key-accessors` merged the rename. The ADR now points at an unsettled question whose answer already shipped, which is exactly the "stale status language" the documentation-as-contract rule forbids.
 
