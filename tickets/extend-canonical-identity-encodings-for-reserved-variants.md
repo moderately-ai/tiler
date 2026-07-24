@@ -3,7 +3,7 @@ id: extend-canonical-identity-encodings-for-reserved-variants
 title: Make canonical identity encodings fail closed when reserved enum variants grow
 status: todo
 priority: p1
-dependencies: []
+dependencies: [resolve-non-exhaustive-recognizer-hole]
 related: [prototype-scheduled-region-ir, prototype-fusion-legality-and-numerical-proof, harden-public-enums-non-exhaustive]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
@@ -30,6 +30,33 @@ comment does not fail closed:
   `OperationEffect::Pure` to `1` and every other effect to `u8::MAX` via a
   wildcard arm. Two distinct non-pure effects would therefore share a tag inside
   `FusionLegalityProof`'s occurrence identity.
+
+## Correction 2026-07-24: the `effect_tag` half was unachievable as first written
+
+This ticket originally said to replace both wildcards with exhaustive matches.
+That is correct for the schedule encoder but **was impossible for `effect_tag`**,
+and the reason is a genuine contradiction between two accepted conventions rather
+than an oversight here.
+
+`tiler_ir::semantic::OperationEffect` is **already `#[non_exhaustive]`**
+(`crates/tiler-ir/src/semantic/operation.rs`), and `effect_tag` encodes it from
+`tiler-compiler` — a *different* crate. `#[non_exhaustive]` forbids a wildcard-free
+match across a crate boundary, so ADR 0074's convention 3 (encoders match
+exhaustively so growth is a compile error) and its convention 5 (mark growing
+enums `#[non_exhaustive]`) have been in direct contradiction at that exact site
+since both were accepted. No amount of care in this ticket could satisfy both.
+
+Resolution: `resolve-non-exhaustive-recognizer-hole` amends convention 5 so that
+an enum an out-of-crate consumer maps **totally** — which is precisely what an
+identity encoder does — must not carry the attribute, with convention 3 winning.
+So the fix for `effect_tag` is **two-step**: first remove `#[non_exhaustive]` from
+`OperationEffect` under the amended rule, then make the match exhaustive and give
+each effect its own tag. Doing the second without the first will not compile.
+
+The schedule encoder is unaffected: its enums are encoded from within their own
+defining crate, where the attribute has no effect. That same-crate exemption was
+measured, not assumed — a same-crate exhaustive match over a `#[non_exhaustive]`
+enum compiles, while the cross-crate form fails `E0004`.
 
 Make both fail closed structurally rather than by convention: replace the
 omission and the wildcard with **exhaustive** matches over the enums, so adding a
