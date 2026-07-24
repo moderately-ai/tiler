@@ -24,12 +24,12 @@ MACRO_RESULTS = Path("spikes/macro-environment/results")
         (
             "spikes/macro-environment/probe.py",
             "verify",
-            str(MACRO_RESULTS / "native-2026-07-21.json"),
+            str(MACRO_RESULTS / "native-2026-07-24.json"),
         ),
         (
             "spikes/macro-environment/probe.py",
             "verify",
-            str(MACRO_RESULTS / "family-cfg-2026-07-21.json"),
+            str(MACRO_RESULTS / "family-cfg-2026-07-24.json"),
         ),
         ("spikes/extensions/run.py", "--self-test"),
     ),

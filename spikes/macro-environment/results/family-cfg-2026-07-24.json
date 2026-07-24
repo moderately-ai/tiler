@@ -94,17 +94,17 @@
       "fixture/consumer/src/lib.rs": "5c392164a5b317bdd28de7fc226066e5bf04863015b0ea5063326e229c9a4297",
       "fixture/probe-macro/Cargo.toml": "0ba36989b36d8f76f7db762c94af9145584762826542475008812a4156d9eded",
       "fixture/probe-macro/src/lib.rs": "89f6bad3e8dafd50f8799d68df7f48597617df01df08293a849bb03613e55175",
-      "probe.py": "3a775767e65c52a93cdc03038ba2513997b7de623f107e467a5c54905563e8bc",
+      "probe.py": "acb38825a91d5f6aaf6285879877ee2458c7eae2700b028b849def1d63c6e0d3",
       "run-family-cfg.sh": "1c0da7bd7488f1eb8006924ab7fae36005dca854695feb8a68d982fbfb759085",
       "run-target.sh": "1d96d24c9185dee9d81720c6b43ec180056a5c40e4e60503be250afb1b49490d",
       "run.sh": "91cda2cddbd67c6dc31c1f8b448fdeb71db9375b55b39d2131b81d534de79d93"
     },
     "platform": "macOS-27.0-arm64-arm-64bit",
-    "repository_revision": "840806cee5c60281cf5907468d3ee27c8b69321d",
+    "repository_revision": "b9d91372b3b5ea4d2ea41a06c2dc1ffc1e386931",
     "rustc_verbose": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)\nbinary: rustc\ncommit-hash: eff8269f797067c30555e77f160ec84c0ed15cd9\ncommit-date: 2026-07-18\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 22.1.8"
   },
   "required_compile_status": 1,
-  "required_compile_stderr": "error: selected macOS artifact family could not be built\n --> /Users/tsanterre/workspace/github.com/moderately-ai/tiler-macro-embedding/spikes/macro-environment/family_cfg_required_fail.rs:5:13\n  |\n5 |             compile_error!(\"selected macOS artifact family could not be built\");\n  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nerror: aborting due to 1 previous error\n\n",
+  "required_compile_stderr": "error: selected macOS artifact family could not be built\n --> /Users/tsanterre/workspace/github.com/moderately-ai/.worktrees/tiler/finish-spike-process-group-cleanup/edit/spikes/macro-environment/family_cfg_required_fail.rs:5:13\n  |\n5 |             compile_error!(\"selected macOS artifact family could not be built\");\n  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nerror: aborting due to 1 previous error\n\n",
   "schema": "tiler-macro-environment/v1",
   "success": true,
   "target_predicates": {
