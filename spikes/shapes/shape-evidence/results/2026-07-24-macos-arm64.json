@@ -1,0 +1,245 @@
+{
+  "schema": "tiler-shape-evidence-diagnostics/v1",
+  "recorded": "2026-07-24",
+  "posture": "off-pin",
+  "procedure": "cargo +1.89.0 test --locked --manifest-path spikes/shapes/shape-evidence/Cargo.toml",
+  "verification": "Recorded from a run of the procedure above observed on 2026-07-24 at repository commit 412ceae9b03a63240c79d4571b2e566f63791152. trybuild compares each fixture against the retained .stderr byte for byte, and all six compile-fail cases and three compile-pass cases passed, so every field below describes diagnostics the recorded compiler was seen to emit rather than transcribed text.",
+  "toolchain": {
+    "channel": "1.89.0",
+    "rustc_version": "rustc 1.89.0 (29483883e 2025-08-04)",
+    "rustc_commit_hash": "29483883eed69d5fb4db01964cdf2af4d86e9cb2",
+    "cargo_version": "cargo 1.89.0 (c24e10642 2025-06-23)",
+    "cargo_commit_hash": "c24e1064277fe51ab72011e2612e556ac56addf7",
+    "trybuild_version": "1.0.118",
+    "edition": "2024",
+    "host": "aarch64-apple-darwin",
+    "operating_system": "macOS 27.0"
+  },
+  "claims": [
+    {
+      "id": "out-of-range-reduction-axis-rejected-at-instantiation",
+      "adr": "ADR-0061, stable-rust-shape-evidence finding 3",
+      "statement": "An inline const assertion rejects Axis::<2> on Rank<2> evidence while the generic reduction is instantiated, naming the invariant and the call site.",
+      "outcome": "fails",
+      "case": "tests/ui/fail/axis_out_of_range.rs",
+      "diagnostic_codes": [
+        "E0080"
+      ],
+      "first_line": "error[E0080]: evaluation panicked: reduction axis is out of range",
+      "required_fragments": [
+        "const { assert!(A < R, \"reduction axis is out of range\") }",
+        "evaluation of `shape_evidence_spike::Builder::reduce_axis::<shape_evidence_spike::F32, 2, 2>::{constant#0}` failed here",
+        "note: the above error was encountered while instantiating `fn shape_evidence_spike::Builder::reduce_axis::<shape_evidence_spike::F32, 2, 2>`",
+        "tests/ui/fail/axis_out_of_range.rs:7:13"
+      ],
+      "forbidden_fragments": [
+        "reduction axes must be unique"
+      ]
+    },
+    {
+      "id": "duplicate-reduction-axes-rejected-at-instantiation",
+      "adr": "ADR-0061, stable-rust-shape-evidence finding 3",
+      "statement": "A second inline const assertion rejects Axes2::<1, 1>, so duplicate statically selected axes fail to compile rather than reaching graph admission.",
+      "outcome": "fails",
+      "case": "tests/ui/fail/duplicate_axes.rs",
+      "diagnostic_codes": [
+        "E0080"
+      ],
+      "first_line": "error[E0080]: evaluation panicked: reduction axes must be unique",
+      "required_fragments": [
+        "const { assert!(A != B, \"reduction axes must be unique\") }",
+        "evaluation of `shape_evidence_spike::Builder::reduce_axes2::<shape_evidence_spike::F32, 2, 1, 1>::{constant#1}` failed here",
+        "note: the above error was encountered while instantiating `fn shape_evidence_spike::Builder::reduce_axes2::<shape_evidence_spike::F32, 2, 1, 1>`",
+        "tests/ui/fail/duplicate_axes.rs:7:13"
+      ],
+      "forbidden_fragments": [
+        "reduction axis is out of range"
+      ]
+    },
+    {
+      "id": "exact-shape-mismatch-rejected-by-the-type-system",
+      "adr": "ADR-0061, stable-rust-shape-evidence finding 2",
+      "statement": "pointwise_shaped requires equal evidence types, so two differently shaped Exact descriptors are an ordinary type error at the call site.",
+      "outcome": "fails",
+      "case": "tests/ui/fail/exact_shape_mismatch.rs",
+      "diagnostic_codes": [
+        "E0308"
+      ],
+      "first_line": "error[E0308]: mismatched types",
+      "required_fragments": [
+        "expected `ShapedValue<F32, Exact<TwoByThree>>`, found `ShapedValue<F32, Exact<ThreeByTwo>>`",
+        "arguments to this method are incorrect",
+        "note: method defined here",
+        "pub fn pointwise_shaped<T, E: ShapeEvidence>(",
+        "tests/ui/fail/exact_shape_mismatch.rs:19:44"
+      ],
+      "forbidden_fragments": [
+        "Rank<"
+      ]
+    },
+    {
+      "id": "fixed-rank-mismatch-rejected-by-the-type-system",
+      "adr": "ADR-0061, stable-rust-shape-evidence finding 2",
+      "statement": "The same equal-evidence requirement rejects Rank<2> against Rank<1>, reporting the differing const parameter directly.",
+      "outcome": "fails",
+      "case": "tests/ui/fail/fixed_rank_mismatch.rs",
+      "diagnostic_codes": [
+        "E0308"
+      ],
+      "first_line": "error[E0308]: mismatched types",
+      "required_fragments": [
+        "expected `2`, found `1`",
+        "expected struct `ShapedValue<F32, Rank<2>>`",
+        "found struct `ShapedValue<F32, Rank<1>>`",
+        "arguments to this method are incorrect",
+        "tests/ui/fail/fixed_rank_mismatch.rs:9:46"
+      ],
+      "forbidden_fragments": [
+        "Exact<"
+      ]
+    },
+    {
+      "id": "refined-handles-cannot-be-forged-by-struct-literal",
+      "adr": "ADR-0061, stable-rust-shape-evidence finding 1",
+      "statement": "Field privacy stops a consumer constructing Value or ShapedValue directly, so only the owning builder can attach evidence. Both halves must be rejected.",
+      "outcome": "fails",
+      "case": "tests/ui/fail/forge.rs",
+      "diagnostic_codes": [
+        "E0451",
+        "E0451"
+      ],
+      "first_line": "error[E0451]: fields `graph`, `index` and `marker` of struct `Value` are private",
+      "required_fragments": [
+        "error[E0451]: fields `value` and `evidence` of struct `ShapedValue` are private",
+        "tests/ui/fail/forge.rs:5:9",
+        "tests/ui/fail/forge.rs:10:9"
+      ],
+      "forbidden_fragments": []
+    },
+    {
+      "id": "shape-evidence-is-sealed-against-downstream-implementation",
+      "adr": "ADR-0061, stable-rust-shape-evidence finding 1",
+      "statement": "ShapeEvidence is sealed by a private supertrait, so downstream code cannot claim an evidence class the graph never checked.",
+      "outcome": "fails",
+      "case": "tests/ui/fail/implement_evidence.rs",
+      "diagnostic_codes": [
+        "E0277"
+      ],
+      "first_line": "error[E0277]: the trait bound `Forged: shape_evidence_spike::sealed::Sealed` is not satisfied",
+      "required_fragments": [
+        "the trait `shape_evidence_spike::sealed::Sealed` is not implemented for `Forged`",
+        "required by a bound in `ShapeEvidence`",
+        "pub trait ShapeEvidence: sealed::Sealed + 'static {",
+        "`ShapeEvidence` is a \"sealed trait\"",
+        "shape_evidence_spike::Rank<R>",
+        "shape_evidence_spike::Exact<S>"
+      ],
+      "forbidden_fragments": []
+    },
+    {
+      "id": "checked-refinement-and-explicit-weakening-compile",
+      "adr": "ADR-0061, stable-rust-shape-evidence finding 1",
+      "statement": "Refining to Rank<2>, re-refining the weakened handle to Exact<Matrix>, and weakening back to Value<F32> all compile, so evidence is optional and zero-cost to discard.",
+      "outcome": "compiles",
+      "cases": [
+        "tests/ui/pass/refine_and_weaken.rs"
+      ]
+    },
+    {
+      "id": "library-owned-static-shape-macro-compiles",
+      "adr": "tiler.research.shapes.public-static-shape-spelling",
+      "statement": "The library-owned static_shape!(2, 3) spelling names exact evidence without a downstream StaticShapeSpec implementation.",
+      "outcome": "compiles",
+      "cases": [
+        "tests/ui/pass/owned_static_shape.rs"
+      ]
+    },
+    {
+      "id": "distinct-typed-reduction-axes-compile",
+      "adr": "ADR-0061, stable-rust-shape-evidence finding 3",
+      "statement": "Axes2::<0, 2> on Rank<3> evidence satisfies both const assertions, which is the compiling contrast the two rejected reduction cases are measured against.",
+      "outcome": "compiles",
+      "cases": [
+        "tests/ui/pass/typed_axes.rs"
+      ]
+    }
+  ],
+  "inputs": {
+    "Cargo.lock": {
+      "bytes": 6284,
+      "sha256": "aacc3ca23c6ae2cd092817584cdc467a18df9a73fc747fc045408e623ad1a242"
+    },
+    "Cargo.toml": {
+      "bytes": 274,
+      "sha256": "1519615ba420e7ca7e93407660a92f46cb6480b57f06c75628c0fd58e8f3020a"
+    },
+    "src/lib.rs": {
+      "bytes": 16190,
+      "sha256": "251e5d43c83ac80eadaa2ada9e097624a552f6a971875c4a44efbda56618cf12"
+    },
+    "tests/ui/fail/axis_out_of_range.rs": {
+      "bytes": 269,
+      "sha256": "367dceb9cd1f99c88fbeb30d354b70fb0a01a482b6ebbf9e7392a8751af70a2f"
+    },
+    "tests/ui/fail/axis_out_of_range.stderr": {
+      "bytes": 850,
+      "sha256": "0815ee4c13cc5f4614278ab602047ab8397f00dd2b47b41d4dac1e2f9f5ad2ee"
+    },
+    "tests/ui/fail/duplicate_axes.rs": {
+      "bytes": 275,
+      "sha256": "85f5a959f5e4273d0fa46f47fc01cbf0eb24ff6810bb39d840595a1762f687e4"
+    },
+    "tests/ui/fail/duplicate_axes.stderr": {
+      "bytes": 864,
+      "sha256": "df352f45fc393359330d97332915eea785905324693f2c25f5cfd317021b9338"
+    },
+    "tests/ui/fail/exact_shape_mismatch.rs": {
+      "bytes": 614,
+      "sha256": "ba47a573c69b74a99068b0612ac65a3e3808d0a17b67745b2c8a1c4cb9a9f0c2"
+    },
+    "tests/ui/fail/exact_shape_mismatch.stderr": {
+      "bytes": 650,
+      "sha256": "d3f32eb1faa2c2f4419b666b6eb0e34651b7cebbcb4b678846e1df4193a12dfe"
+    },
+    "tests/ui/fail/fixed_rank_mismatch.rs": {
+      "bytes": 375,
+      "sha256": "20bc4736ad2bdeeb9e6a1e202b82f173d694872eb9d93acd722dddfd463a9e43"
+    },
+    "tests/ui/fail/fixed_rank_mismatch.stderr": {
+      "bytes": 553,
+      "sha256": "63c8f22c6bb5f360604300970767a0c7d587649c32ad57c89784ee09aa94287c"
+    },
+    "tests/ui/fail/forge.rs": {
+      "bytes": 299,
+      "sha256": "dff4206c3a8e36ad0331723ddf36154d78e4a673b40c1f49220f760f3ac22540"
+    },
+    "tests/ui/fail/forge.stderr": {
+      "bytes": 748,
+      "sha256": "b0ac42d089726400a06aba053847fbda5bb3bf9d14673f0c2fec0140b744071c"
+    },
+    "tests/ui/fail/implement_evidence.rs": {
+      "bytes": 162,
+      "sha256": "c55b86e7cae78ce1a6559724bda6eddef9638312c245447563b3f3ea26c8ac63"
+    },
+    "tests/ui/fail/implement_evidence.stderr": {
+      "bytes": 1031,
+      "sha256": "718deabe384700badc66bc4d323353644eef6f27a17a1d5ba73e30b5ef9908b4"
+    },
+    "tests/ui/pass/owned_static_shape.rs": {
+      "bytes": 251,
+      "sha256": "a066da81505e1dc6fb9b6db073b710310f4553f8d8c12aaa39d7c4b9d79b224d"
+    },
+    "tests/ui/pass/refine_and_weaken.rs": {
+      "bytes": 473,
+      "sha256": "e72ec633f8dad6d36ac4c759e0b41d41d2add5978c619bcb56ee376031fe8748"
+    },
+    "tests/ui/pass/typed_axes.rs": {
+      "bytes": 287,
+      "sha256": "a3c6b4fea5735ed134a3b360923dae5988016fe5754fc8e91aadb250a63faf6c"
+    },
+    "tests/ui.rs": {
+      "bytes": 252,
+      "sha256": "ea878ca1965fd18519f6704e28ac414c233b8603f6108a10dfed351a6e7f0809"
+    }
+  }
+}

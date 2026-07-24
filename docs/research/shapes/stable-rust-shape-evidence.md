@@ -59,6 +59,10 @@ single-run feasibility bounds, not stable performance guarantees. Exact
 provenance, individual values, and method are in the
 [measurement summary](../../../spikes/shapes/shape-evidence/measurements/summary.json).
 
+**Measurement:** on 2026-07-24, `cargo +1.89.0 test --locked` over the spike reproduced all six retained compile-fail diagnostics byte for byte and all three compile-pass contrasts, under `rustc 1.89.0 (29483883e 2025-08-04)` with `trybuild` 1.0.118 on arm64 macOS 27. The findings above therefore rest on diagnostics observed from the recorded compiler rather than on transcribed text.
+
+**Custody of those diagnostics.** The repository gate does not reproduce them. `AGENTS.md` compiles a spike workspace only when its retained `.stderr` files were captured on the toolchain `rust-toolchain.toml` pins, and these were captured on stable 1.89.0, so `scripts/check_rust.py` records the workspace as an explicit off-pin exclusion. The evidence is instead checked against [a retained record](../../../spikes/shapes/shape-evidence/results/2026-07-24-macos-arm64.json) naming the exact toolchain, and per case the expected first line, the ordered diagnostic codes, and the required and forbidden fragments, plus a digest of every input that determines what those diagnostics say. `spikes/shapes/shape-evidence/verify_evidence.py` enforces it inside the gate without invoking Cargo, so a `TRYBUILD=overwrite` refresh, a hand edit, a deleted case, or an edit to `src/lib.rs` beneath a diagnostic that quotes it fails rather than passing unnoticed. These remain bounded stable-Rust facts for one recorded compiler; they are not a guarantee about later releases.
+
 ## Feasibility recommendation
 
 This spike established that an open descriptor is safe as an input to checked
