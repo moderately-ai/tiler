@@ -1,40 +1,42 @@
 #!/usr/bin/env python3
-"""Reproduce the Apple GPU floating-point behaviour ADR 0076 depends on.
+"""Reproduce the Apple GPU floating-point behaviour ADR 0076 depends on, per artifact family.
 
 The record ADR 0076 builds on was measured by a hand-built Objective-C host that
 was never checked in, so nothing re-established it. This module is that harness,
 owned by the repository: it generates probe kernels in the emitter's output
 shape, compiles them offline through `xcrun metal` and `xcrun metallib`, reads
-the emitted LLVM IR, dispatches the linked library on the local GPU through
+the emitted LLVM IR, dispatches the linked library through
 `numerical_probe_host.m`, and classifies what came back.
 
 Scope note. Every value this module produces is qualified by one host, one GPU,
-and the two compiler builds that host resolves. `environment()` captures that row
-and `write_record` stores it beside the observations, because none of these
+and the compiler builds that host resolves. `environment()` captures that row and
+`write_record` stores it beside the observations, because none of these
 observations is a portable guarantee about Metal.
 
-# Two compilation paths, compared case by case
+# Three artifact families, and the two halves that do not have the same reach
 
-Tiler's Metal story has two compilation stages: `xcrun metal` at build time and
-runtime pipeline creation through a command stream. An artifact's declared
-numerical realization has to be true of whichever one actually runs, so the same
-generated source bytes go through both here — offline through `xcrun`, and in
-process through `newLibraryWithSource:options:` with an explicit
-`MTLCompileOptions` — and `path_comparisons` pairs the two case by case rather
-than in aggregate.
+`tiler_metal::target::MetalPlatform` declares `MacOs`, `IOsDevice`, and
+`IOsSimulator`, and `MetalTargetFacts::new` requires a caller to state
+`subnormal_arithmetic` for whichever one it is emitting for. `FAMILIES` names all
+three, each with the exact `--sdk` and `-target` that produce its artifact, and
+the two halves of the probe reach differently far:
 
-These are not the same compiler. On the measured row the offline driver reports
-`metalfe-32023.883` and the library the runtime path compiles embeds
-`metalfe-32023.921`; `environment()` records the latter so the pair is never
-mistaken for one compiler invoked twice.
+- **The compile side needs no device.** Every case is compiled for every family
+  and the emitted module is read for all of them, so a per-family difference in
+  `air.compile.denorms_disable`, in the fast-math licence spellings, or in the
+  surviving operation count is a first-class result rather than an assumption
+  that the macOS row generalizes.
+- **The device side is bounded by attached hardware.** A family is dispatched
+  only in *its own* execution environment: macOS on the host GPU, iOS Simulator
+  through `simctl spawn` on a booted runtime, and `IOsDevice` nowhere, because
+  this host has no iPhone or iPad attached.
 
-`MTLCompileOptions` also exposes a different surface from the offline flag set.
-`OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART` names every offline selection with
-no property to set, and the harness records the gap rather than substituting the
-nearest thing: `RUNTIME_PAIRED_OPTIMIZATION` explains which offline row a runtime
-case is paired against, and a runtime result that matches only some of its
-offline candidates is reported as a *measurement of the missing axis* rather
-than as a disagreement between the paths.
+The convenient substitute is available and is refused. On the measured row
+`MTLCreateSystemDefaultDevice` on macOS loads an `air64-apple-ios16.0` metallib
+and runs it without complaint — `hazard.cross_family_load.*` records that
+outcome — but the GPU and driver executing it are the Mac's, so the result is a
+fact about macOS running a foreign module and not a fact about an iOS device.
+`Execution.NONE` is what stops the harness taking it.
 
 # The reason a returned bit pattern is not, by itself, evidence
 
@@ -64,29 +66,67 @@ can never support a preservation claim from this harness at all, and
 operations were deleted or special-cased in hardware is not distinguished here,
 and does not need to be: neither supports a claim about what arithmetic does.
 
-## What replaces layer 1 on the runtime path, which has no readable IR
+## The two ways a layer can be missing, and why neither may be defaulted
 
-`newLibraryWithSource:options:` returns an opaque `MTLLibrary`. There is no
-emitted module to read, so layer 1 is **unavailable** on that path and the
-harness says so rather than substituting something for it:
+Both layers can be absent, on opposite paths, and the data model keeps the
+absence distinguishable from a measurement in both directions.
 
-- `Observation.operations` is `None`, never `()`, for a runtime observation.
-  `()` would assert a measured absence of arithmetic; `None` records that the
-  question was never asked. `subnormal_verdict` skips layer 1 only for `None`,
-  and `record_rows` omits the `float_operations` row entirely instead of writing
-  an empty one, so no reader of the record can mistake the two.
-- Layer 2 carries the admissibility decision alone, which is sound because layer
-  2 is device-side and *sufficient* where layer 1 is compile-side and merely
-  *necessary*: an observation layer 1 would reject emitted no arithmetic, so
-  nothing ran, so the kernel returns its operands, so layer 2 rejects it as
-  `arithmetic-not-executed`. The converse fails, and this harness measured it
-  failing — at `-O0` layer 1 passed with two emitted operations and layer 2 was
-  the layer that caught the deletion. The layer being lost is the one that
-  demonstrably did not catch the hard case.
-- A guard that never refuses anything is not a guard, so the runtime path must
-  keep demonstrating that layer 2 still discriminates *on that path*: the trap
-  kernel is admitted under `safe` and refused under `relaxed` and `fast` in the
-  same run. That live discrimination is what stands in for layer 1's assurance.
+- **Layer 1 is absent on the runtime path.** `newLibraryWithSource:options:`
+  returns an opaque `MTLLibrary`; there is no emitted module to read.
+  `Observation.operations` is `None`, never `()`, because `()` asserts a
+  *measured* absence of arithmetic while `None` records a question that was never
+  asked. `record_rows` omits the `float_operations` row entirely rather than
+  writing an empty one.
+- **Layer 2 is absent for a family with no attached device.** Nothing was
+  dispatched, so there is no returned bit pattern at all.
+  `Observation.results` is `None`, never `()`, for exactly the same reason, and
+  `record_rows` omits the `results` row. `subnormal_verdict` returns
+  `Verdict.NO_DEVICE_OBSERVATION` before consulting anything else, and
+  `result_for` raises rather than inventing a value, so no code path can read a
+  bit pattern that was never measured.
+
+Neither field has a default: a construction site has to state which it means.
+
+Losing layer 1 costs a compile-side cross-check, because layer 2 is *sufficient*
+where layer 1 is merely *necessary* — an observation layer 1 would reject emitted
+no arithmetic, so nothing ran, so the kernel returns its operands, so layer 2
+rejects it as `arithmetic-not-executed`. The converse fails, and this harness
+measured it failing at `-O0`. Losing layer 2 is therefore the expensive
+direction: a compile-side-only observation can never be admissible evidence
+about arithmetic, which is why it gets its own verdict instead of being silently
+classified by the layer that remains.
+
+A guard that never refuses anything is not a guard, so where only layer 2 is
+left the harness must keep demonstrating that layer 2 still discriminates *on
+that path*: the trap kernel is admitted under `safe` and refused under `relaxed`
+and `fast` in the same run.
+
+# Two compilation paths, compared case by case within a family
+
+Tiler's Metal story has two compilation stages: `xcrun metal` at build time and
+runtime pipeline creation through a command stream. An artifact's declared
+numerical realization has to be true of whichever one actually runs, so the same
+generated source bytes go through both here — offline through `xcrun`, and in
+process through `newLibraryWithSource:options:` with an explicit
+`MTLCompileOptions` — and `path_comparisons` pairs the two case by case, within
+one family, rather than in aggregate or across families.
+
+These are not the same compiler, and on this host they are not even the same
+compiler per family. The offline driver is one binary shared by every SDK; the
+runtime compiler is whatever the *execution environment* loads, which is the
+host's `GPUCompiler.framework` for macOS and the simulator runtime's own copy
+for `IOsSimulator`. `report_compiler_images` in the dispatch host reports the
+image dyld actually loaded, and `compiler_build` recovers its build string, so a
+family's runtime compiler is identified rather than inherited from another
+family's row.
+
+`MTLCompileOptions` also exposes a different surface from the offline flag set.
+`OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART` names every offline selection with
+no property to set, and the harness records the gap rather than substituting the
+nearest thing: `RUNTIME_PAIRED_OPTIMIZATION` explains which offline row a runtime
+case is paired against, and a runtime result that matches only some of its
+offline candidates is reported as a *measurement of the missing axis* rather
+than as a disagreement between the paths.
 
 `scan_archive` recovers what little does survive the runtime path, and is
 deliberately not part of the guard. A serialized `MTLBinaryArchive` embeds the
@@ -95,7 +135,10 @@ but the container has no published layout and its string table is stored
 concatenated without separators, so the harness can only test it for the
 presence of a byte sequence. Presence is decidable; the option *set* is not, and
 neither is attachment to the module's `air.compile_options` node, which the
-offline path resolves properly. It is corroboration, not evidence.
+offline path resolves properly. It is corroboration, not evidence. In the iOS
+Simulator it is not even available: serializing an archive aborts the process
+there, so `archive_support` probes for it in a one-entry batch of its own before
+any manifest that carries measurements asks for one.
 """
 
 from __future__ import annotations
@@ -103,12 +146,14 @@ from __future__ import annotations
 import argparse
 import enum
 import hashlib
+import json
 import platform
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -117,14 +162,21 @@ HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parents[1]
 HOST_SOURCE = HERE / "numerical_probe_host.m"
 
-SCHEMA = "tiler.apple-numerical-behaviour/v2"
+SCHEMA = "tiler.apple-numerical-behaviour/v3"
 """Record format identity. Bump this whenever a key's meaning changes.
 
-v2 adds the runtime-compilation path. `case.*.float_operations` and
+v2 added the runtime-compilation path. `case.*.float_operations` and
 `case.*.compile_options` became conditional rather than universal — a case
 compiled at runtime has neither, because nothing readable survives that path —
 and `comparison.*`, `environment.runtime_compiler`, `case.*.applied_options`,
-and `case.*.archived_options` are new.
+and `case.*.archived_options` were new.
+
+v3 adds the artifact family. Every `case.*` and `comparison.*` key is now
+prefixed by the family it was measured for, `case.*.results` became conditional
+because a family with no attached device is never dispatched, the single
+`environment.sdk_*`/`metal_version`/`runtime_compiler`/`device` fields became
+per-family `environment.family.*` rows, and `hazard.*` records a measured
+cross-family outcome that the harness refuses to treat as evidence.
 """
 
 REQUIRE_TOOLCHAIN = "TILER_REQUIRE_METAL_TOOLCHAIN"
@@ -136,7 +188,6 @@ repository strict. It can only make this harness stricter; nothing here lets an
 environment variable weaken a check.
 """
 
-TARGET = "air64-apple-macos13.0"
 MSL_VERSION = "metal3.1"
 FP32_FUNCTIONS = "precise"
 ENTRY_POINT = "tiler_probe"
@@ -169,7 +220,8 @@ offline-only measurement.
 
 OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART = (
     "-target: MTLCompileOptions has no target property; the runtime compiler "
-    "targets the device and OS it is running on",
+    "targets the device and OS it is running on, which is why a runtime case is "
+    "attributed to the family whose execution environment compiled it",
     "-ffp-contract: MTLCompileOptions has no contraction property; the source-level "
     "`#pragma METAL fp contract(...)` is accepted by this front end but changing the "
     "source would break the byte-identical pairing the comparison depends on",
@@ -191,10 +243,10 @@ RUNTIME_PAIRED_OPTIMIZATION = "2"
 performance", so `-O2` is the offline row whose selection the runtime path can
 express. The contraction axis is not narrowed the same way: a runtime case is
 compared against *every* offline contraction setting recorded for its kernel,
-mode, and this level, so a kernel on which contraction is unobservable yields a
-plain agreement and a kernel on which it is observable reports which offline
-setting the runtime default behaves like, instead of a spurious disagreement
-against an arbitrarily chosen one.
+mode, family, and this level, so a kernel on which contraction is unobservable
+yields a plain agreement and a kernel on which it is observable reports which
+offline setting the runtime default behaves like, instead of a spurious
+disagreement against an arbitrarily chosen one.
 """
 
 ARCHIVE_COMPILER = re.compile(rb"Apple metal version [0-9.]+ \(metalfe-[0-9.]+\)")
@@ -202,6 +254,25 @@ ARCHIVE_COMPILER = re.compile(rb"Apple metal version [0-9.]+ \(metalfe-[0-9.]+\)
 
 Unlike the option names below, this one is unambiguously bounded in the
 container, so scanning for it yields the exact string and not a prefix of it.
+"""
+
+COMPILER_BUILD = re.compile(rb"metalfe-[0-9]+(?:\.[0-9]+)+")
+"""The bare build string a loaded compiler image carries.
+
+The archive form above is what a serialized container spells; a compiler dylib
+on disk spells the same build without the surrounding sentence, so this is the
+pattern `compiler_build` scans an image with.
+"""
+
+COMPILER_IMAGE_MARKERS = ("GPUCompiler", "MTLCompiler")
+"""The image-path substrings the dispatch host reports as the runtime compiler.
+
+Both are named because the framework that carries the compiler is not stable
+across OS versions: on the measured row `GPUCompiler.framework` is the image
+dyld loads into a process that compiles MSL, and no image whose path contains
+`MTLCompiler` is loaded at all, even though that framework is present on disk.
+Reporting whichever ones load, and recording the paths, is what keeps the record
+from naming a framework by expectation.
 """
 
 ARCHIVE_OPTION_PROBES = (
@@ -234,6 +305,7 @@ subnormal, so counting it would let a NaN test stand in for a surviving multiply
 FUSED_INTRINSIC = re.compile(r"@(llvm\.(?:fma|fmuladd)\.\S+?)\(")
 COMPILE_OPTIONS = re.compile(r"^!air\.compile_options = !\{(.*)\}$", re.MULTILINE)
 METADATA_STRING = re.compile(r'^!(\d+) = !\{!"([^"]+)"\}$', re.MULTILINE)
+EMITTED_TRIPLE = re.compile(r'^target triple = "([^"]+)"$', re.MULTILINE)
 
 CANONICALIZATION = """\
 // Replaces an arithmetic NaN with the canonical pattern 0x7fc00000, spelled as
@@ -255,6 +327,11 @@ class Reason(enum.Enum):
     for, because the offline driver never dispatches; a host with a Metal
     compiler and no usable GPU is a real configuration and is a skip, not a
     defect.
+
+    A family whose *own* execution environment is absent is not one of these. It
+    does not stop the probe and is not a skip: the compile side still runs and
+    the device side is recorded as unmeasured, because that is a per-family fact
+    the record has to carry rather than a reason to abandon the run.
     """
 
     TOOLCHAIN = "toolchain-unavailable"
@@ -289,6 +366,7 @@ class Verdict(enum.Enum):
 
     FLUSHED_TO_ZERO = "flushed-to-zero"
     PRESERVED = "preserved"
+    NO_DEVICE_OBSERVATION = "no-device-observation"
     NO_EMITTED_ARITHMETIC = "no-emitted-arithmetic"
     ARITHMETIC_NOT_EXECUTED = "arithmetic-not-executed"
     NO_EXECUTION_WITNESS = "no-execution-witness"
@@ -299,6 +377,77 @@ class Verdict(enum.Enum):
     def is_evidence(self) -> bool:
         """Whether this verdict may be cited as a fact about arithmetic."""
         return self in {Verdict.FLUSHED_TO_ZERO, Verdict.PRESERVED}
+
+
+class Execution(enum.Enum):
+    """Where a family's compiled module may legitimately be dispatched.
+
+    A family is dispatched in its own execution environment or not at all.
+    `NONE` is not a degraded form of the others and never becomes one at run
+    time: it is the statement that this host has no device of that family, which
+    is a measurement boundary rather than a configuration to work around.
+    """
+
+    MACOS_HOST = "macos-host-gpu"
+    IOS_SIMULATOR = "ios-simulator-runtime"
+    NONE = "no-attached-device-of-this-family"
+
+
+@dataclass(frozen=True)
+class Family:
+    """One `MetalPlatform` artifact family and how to produce and run its module.
+
+    `target` is the deployment floor the offline driver is asked for. It is not
+    necessarily the triple the module ends up declaring — `-std=metal3.1` raises
+    it — so the emitted triple is measured per family rather than assumed, and
+    recorded beside the requested one.
+    """
+
+    name: str
+    metal_platform: str
+    sdk: str
+    target: str
+    execution: Execution
+
+
+FAMILIES: tuple[Family, ...] = (
+    Family(
+        "macos",
+        "MetalPlatform::MacOs",
+        "macosx",
+        "air64-apple-macos13.0",
+        Execution.MACOS_HOST,
+    ),
+    Family(
+        "ios-device",
+        "MetalPlatform::IOsDevice",
+        "iphoneos",
+        "air64-apple-ios16.0",
+        Execution.NONE,
+    ),
+    Family(
+        "ios-simulator",
+        "MetalPlatform::IOsSimulator",
+        "iphonesimulator",
+        "air64-apple-ios16.0-simulator",
+        Execution.IOS_SIMULATOR,
+    ),
+)
+"""Every family `MetalPlatform` declares, with the SDK and target that emit it.
+
+The deployment floors match the lowest row the checked-in compatibility probe
+compiles, so a difference between the two records is a difference in what was
+asked and not in which artifact was produced.
+"""
+
+FAMILY_BY_NAME = {family.name: family for family in FAMILIES}
+
+HOST_FAMILY = "macos"
+"""The family whose execution environment is the machine running the harness.
+
+Used for the one dispatch that is deliberately *not* a per-family measurement:
+the cross-family load recorded under `hazard.`.
+"""
 
 
 @dataclass(frozen=True)
@@ -477,7 +626,7 @@ through the execution witness.
 
 @dataclass(frozen=True)
 class Configuration:
-    """One offline compilation selection."""
+    """One offline compilation selection, within a family's target and SDK."""
 
     math_mode: str
     optimization: str
@@ -487,10 +636,10 @@ class Configuration:
     def key(self) -> str:
         return f"{self.math_mode}.O{self.optimization}.contract-{self.fp_contract}"
 
-    def flags(self) -> list[str]:
+    def flags(self, family: Family) -> list[str]:
         return [
             "-target",
-            TARGET,
+            family.target,
             f"-std={MSL_VERSION}",
             f"-O{self.optimization}",
             f"-fmetal-math-mode={self.math_mode}",
@@ -508,6 +657,9 @@ class RuntimeConfiguration:
     the counterparts of `MSL_VERSION` and `FP32_FUNCTIONS` rather than left at
     their API defaults, because `mathFloatingPointFunctions` defaults to `Fast`
     and an unpinned runtime case would not be comparable to any offline row.
+
+    There is no target property, so a runtime case's family is decided by which
+    execution environment compiled it rather than by a flag.
     """
 
     math_mode: str
@@ -531,29 +683,32 @@ class RuntimeConfiguration:
 
 @dataclass(frozen=True)
 class Case:
+    family: str
     kernel: str
     configuration: Configuration | RuntimeConfiguration
 
     @property
     def key(self) -> str:
-        return f"{self.kernel}.{self.configuration.key}"
+        return f"{self.family}.{self.kernel}.{self.configuration.key}"
 
     @property
     def is_runtime(self) -> bool:
         return isinstance(self.configuration, RuntimeConfiguration)
 
 
-def cases() -> tuple[Case, ...]:
-    """Every kernel and configuration pair the recorded findings need.
+def cases(family: str) -> tuple[Case, ...]:
+    """Every kernel and configuration pair the recorded findings need, for one family.
 
     The set is assembled per finding and then deduplicated, so a case shared by
     two findings is compiled and dispatched once and a finding cannot quietly
-    lose its configuration when another one changes.
+    lose its configuration when another one changes. The same set is produced for
+    every family, so a per-family difference is a difference in what the
+    toolchain did and never in what was asked of it.
     """
     selected: list[Case] = []
 
     def add(kernel: str, mode: str, optimization: str, contract: str) -> None:
-        selected.append(Case(kernel, Configuration(mode, optimization, contract)))
+        selected.append(Case(family, kernel, Configuration(mode, optimization, contract)))
 
     # The emitted module's own denormal and fast-math declarations, and the
     # fast-math flags each mode attaches, across every contraction selection.
@@ -588,8 +743,8 @@ def cases() -> tuple[Case, ...]:
     return tuple(unique.values())
 
 
-def runtime_cases() -> tuple[Case, ...]:
-    """Every runtime-compilation case, derived from the offline set rather than listed.
+def runtime_cases(family: str) -> tuple[Case, ...]:
+    """Every runtime-compilation case for one family, derived from its offline set.
 
     Deriving it is what keeps the two paths comparable. A runtime case exists for
     each kernel and math mode the offline probe already covers, so no runtime
@@ -599,11 +754,11 @@ def runtime_cases() -> tuple[Case, ...]:
     divergence has somewhere to show up.
     """
     pairs: dict[tuple[str, str], None] = {}
-    for case in cases():
+    for case in cases(family):
         assert isinstance(case.configuration, Configuration)
         pairs.setdefault((case.kernel, case.configuration.math_mode), None)
     return tuple(
-        Case(kernel, RuntimeConfiguration(mode, optimization))
+        Case(family, kernel, RuntimeConfiguration(mode, optimization))
         for kernel, mode in pairs
         for optimization in RUNTIME_OPTIMIZATIONS
     )
@@ -626,22 +781,26 @@ EXECUTION_WITNESS = "execution-witness"
 class Observation:
     """One case's compile-side and device-side facts.
 
-    `compile_options` and `operations` are `None` exactly when the compilation
-    path gave the harness no readable module — never `()`. An empty tuple is a
-    measured absence of arithmetic; `None` records that the question could not be
-    asked, and only the second of those is true of the runtime path. Everything
-    that consumes them must distinguish the two, which is why neither field has a
-    default: a construction site has to state which it means.
+    Three fields are `None` rather than empty when the question could not be
+    asked, and the distinction is load-bearing in both directions:
 
-    `archived_options` and `applied_options` are the runtime path's own
-    compile-side facts, and both are `None` on the offline path. See
-    `scan_archive` for why `archived_options` is corroboration and not evidence.
+    - `compile_options` and `operations` are `None` exactly when the compilation
+      path gave the harness no readable module, which is the runtime path's
+      situation. `()` would be a *measured* absence of arithmetic.
+    - `results` is `None` exactly when the family has no attached device, so
+      nothing was dispatched. `()` would be a measured empty dispatch, which no
+      dispatch this harness performs can produce.
+
+    None of the three has a default: a construction site has to state which it
+    means. `archived_options` and `applied_options` are the runtime path's own
+    compile-side facts and are `None` on the offline path; see `scan_archive` for
+    why `archived_options` is corroboration and not evidence.
     """
 
     case: Case
     compile_options: tuple[str, ...] | None
     operations: tuple[FloatOperation, ...] | None
-    results: tuple[int, ...]
+    results: tuple[int, ...] | None
     applied_options: str | None
     archived_options: str | None
 
@@ -650,18 +809,34 @@ class Observation:
         return BY_NAME[self.case.kernel]
 
     @property
+    def family(self) -> Family:
+        return FAMILY_BY_NAME[self.case.family]
+
+    @property
     def operation_count(self) -> int | None:
         """How many floating-point operations the module emitted, or `None` if unreadable."""
         return None if self.operations is None else len(self.operations)
 
     @property
     def guard_layers(self) -> tuple[str, ...]:
-        """Which layers of the admissibility guard this observation's path can supply."""
-        if self.operations is None:
-            return (EXECUTION_WITNESS,)
-        return (EMITTED_ARITHMETIC, EXECUTION_WITNESS)
+        """Which layers of the admissibility guard this observation's path can supply.
+
+        An observation with no device-side result supplies only layer 1, which is
+        necessary and never sufficient, so it can support no verdict at all. The
+        tuple says which layers exist, not whether the observation passed them.
+        """
+        layers: list[str] = []
+        if self.operations is not None:
+            layers.append(EMITTED_ARITHMETIC)
+        if self.results is not None:
+            layers.append(EXECUTION_WITNESS)
+        return tuple(layers)
 
     def result_for(self, operand: int) -> int:
+        if self.results is None:
+            raise ProbeFailure(
+                f"{self.case.key} was never dispatched, so it has no result for {operand:08x}"
+            )
         return self.results[OPERANDS.index(operand)]
 
     def flags_for(self, opcode: str) -> tuple[tuple[str, ...], ...]:
@@ -673,11 +848,13 @@ class Observation:
 def subnormal_verdict(observation: Observation, probe: SubnormalProbe) -> Verdict:
     """Classify one subnormal observation, refusing to over-read a deleted operation.
 
-    The two guard layers run before the returned pattern is even consulted; see
-    the module documentation for why the emitted operation count alone is not
-    enough on this toolchain row, and for why layer 1 is skipped rather than
-    assumed when the path could not supply it.
+    The guard layers run before the returned pattern is even consulted; see the
+    module documentation for why the emitted operation count alone is not enough
+    on this toolchain row, and for why a missing layer is refused rather than
+    assumed in either direction.
     """
+    if observation.results is None:
+        return Verdict.NO_DEVICE_OBSERVATION
     if observation.operations is not None and not observation.operations:
         return Verdict.NO_EMITTED_ARITHMETIC
     witness = observation.kernel.witness
@@ -701,7 +878,8 @@ def naive_verdict(observation: Observation, probe: SubnormalProbe) -> Verdict:
 
     This is the reading a probe without the guard would produce. It exists so a
     test can assert that the two disagree on the trap kernel; it must never be
-    used to state a fact.
+    used to state a fact. It has no reading at all for an observation that was
+    never dispatched, and `result_for` raises rather than inventing one.
     """
     result = observation.result_for(probe.operand)
     if result == probe.flushing:
@@ -732,33 +910,59 @@ def _first_line(text: str) -> str:
     return text.strip().splitlines()[0].strip() if text.strip() else ""
 
 
-@dataclass(frozen=True)
-class Toolchain:
-    """The resolved offline compiler, linker, SDK, and host compiler."""
+def _normalized(text: str) -> str:
+    """Collapse captured tool output to one line so it can be a record value.
 
-    sdk_path: str
-    sdk_version: str
-    sdk_build: str
+    A record row is one tab-separated line, so a diagnostic that arrives with a
+    newline in it would silently split into two rows and `read_record` would
+    reject the file it just wrote. Every diagnostic that can reach the record
+    comes through here; `record_rows` re-checks the invariant so a future value
+    that bypasses this fails loudly instead of corrupting the evidence.
+    """
+    return " ".join(text.split())
+
+
+@dataclass(frozen=True)
+class Sdk:
+    """One resolved SDK and the offline tools reached through it."""
+
+    name: str
+    path: str
+    version: str
+    build: str
     metal_path: str
     metal_version: str
     metallib_version: str
+
+
+@dataclass(frozen=True)
+class Toolchain:
+    """The resolved offline compilers, linkers, SDKs, and host compiler.
+
+    One `Sdk` per family, because a family is emitted through its own `--sdk`.
+    On the measured row every SDK resolves the *same* `metal` and `metallib`
+    binaries from one MetalToolchain asset, which is itself a measurement worth
+    recording per family rather than assuming.
+    """
+
+    sdks: dict[str, Sdk]
     clang_path: str
 
-    def compile_ir(self, source: Path, destination: Path, configuration: Configuration) -> None:
-        self._metal(["-S", "-emit-llvm"], source, destination, configuration)
+    def compile_ir(self, source: Path, destination: Path, case: Case) -> None:
+        self._metal(["-S", "-emit-llvm"], source, destination, case)
 
-    def compile_air(self, source: Path, destination: Path, configuration: Configuration) -> None:
-        self._metal(["-c"], source, destination, configuration)
+    def compile_air(self, source: Path, destination: Path, case: Case) -> None:
+        self._metal(["-c"], source, destination, case)
 
-    def _metal(
-        self, mode: list[str], source: Path, destination: Path, configuration: Configuration
-    ) -> None:
+    def _metal(self, mode: list[str], source: Path, destination: Path, case: Case) -> None:
+        family = FAMILY_BY_NAME[case.family]
+        assert isinstance(case.configuration, Configuration)
         command = [
             "xcrun",
             "--sdk",
-            "macosx",
+            family.sdk,
             "metal",
-            *configuration.flags(),
+            *case.configuration.flags(family),
             *mode,
             str(source),
             "-o",
@@ -766,25 +970,28 @@ class Toolchain:
         ]
         result = _run(command)
         if result.returncode != 0:
-            raise ProbeFailure(f"metal failed for {source.name}: {result.stderr.strip()}")
+            raise ProbeFailure(f"metal failed for {case.key}: {result.stderr.strip()}")
 
-    def link(self, air: Path, destination: Path) -> None:
-        result = _run(["xcrun", "--sdk", "macosx", "metallib", str(air), "-o", str(destination)])
+    def link(self, air: Path, destination: Path, family: Family) -> None:
+        command = ["xcrun", "--sdk", family.sdk, "metallib", str(air), "-o", str(destination)]
+        result = _run(command)
         if result.returncode != 0:
             raise ProbeFailure(f"metallib failed for {air.name}: {result.stderr.strip()}")
 
-    def build_host(self, destination: Path) -> None:
+    def build_host(self, destination: Path, sdk: str, extra: tuple[str, ...] = ()) -> None:
+        """Compile the dispatch host for one execution environment's SDK."""
         result = _run(
             [
                 "xcrun",
                 "--sdk",
-                "macosx",
+                sdk,
                 "clang",
                 "-fobjc-arc",
                 "-O0",
                 "-Wall",
                 "-Wextra",
                 "-Werror",
+                *extra,
                 "-framework",
                 "Metal",
                 "-framework",
@@ -795,51 +1002,60 @@ class Toolchain:
             ]
         )
         if result.returncode != 0:
-            raise ProbeFailure(f"the dispatch host did not build: {result.stderr.strip()}")
+            raise ProbeFailure(
+                f"the dispatch host did not build for {sdk}: {_normalized(result.stderr)}"
+            )
+
+
+def _resolve_sdk(name: str) -> Sdk:
+    """Resolve one SDK and the offline tools reached through it, or refuse to run."""
+    sdk_path = _run(["xcrun", "--sdk", name, "--show-sdk-path"])
+    if sdk_path.returncode != 0 or not Path(_first_line(sdk_path.stdout)).is_dir():
+        raise ProbeUnavailable(Reason.SDK, f"{name} SDK did not resolve: {sdk_path.stderr.strip()}")
+    version = _run(["xcrun", "--sdk", name, "--show-sdk-version"])
+    build = _run(["xcrun", "--sdk", name, "--show-sdk-build-version"])
+    if version.returncode != 0 or build.returncode != 0:
+        raise ProbeUnavailable(Reason.SDK, f"the {name} SDK reported no version or build")
+    located = _run(["xcrun", "--sdk", name, "--find", "metal"])
+    metal_path = _first_line(located.stdout)
+    if located.returncode != 0 or not metal_path:
+        raise ProbeUnavailable(Reason.TOOLCHAIN, f"metal was not found by xcrun for {name}")
+    versions = {}
+    for tool in ("metal", "metallib"):
+        reported = _run(["xcrun", "--sdk", name, tool, "--version"])
+        versions[tool] = _first_line(reported.stdout)
+        if reported.returncode != 0 or not versions[tool]:
+            raise ProbeUnavailable(Reason.TOOLCHAIN, f"{tool} reported no version for {name}")
+    return Sdk(
+        name=name,
+        path=_first_line(sdk_path.stdout),
+        version=_first_line(version.stdout),
+        build=_first_line(build.stdout),
+        metal_path=metal_path,
+        metal_version=versions["metal"],
+        metallib_version=versions["metallib"],
+    )
 
 
 def resolve() -> Toolchain:
-    """Resolve the offline toolchain, SDK, and host compiler, or refuse to run.
+    """Resolve every family's SDK, the offline toolchain, and the host compiler, or refuse.
 
     Every refusal here is a `ProbeUnavailable`, which callers turn into a skip.
     A tool that resolves and then fails raises `ProbeFailure` instead, so a
-    broken toolchain cannot be mistaken for an absent one.
+    broken toolchain cannot be mistaken for an absent one. An SDK is required for
+    every family, including the one with no attached device: the compile side is
+    the half that has to be complete.
     """
     if platform.system() != "Darwin":
         raise ProbeUnavailable(Reason.TOOLCHAIN, f"host is {platform.system()}, not Darwin")
     if shutil.which("xcrun") is None:
         raise ProbeUnavailable(Reason.TOOLCHAIN, "xcrun is not on PATH")
-    sdk_path = _run(["xcrun", "--sdk", "macosx", "--show-sdk-path"])
-    if sdk_path.returncode != 0 or not Path(_first_line(sdk_path.stdout)).is_dir():
-        raise ProbeUnavailable(Reason.SDK, f"macosx SDK did not resolve: {sdk_path.stderr.strip()}")
-    sdk_version = _run(["xcrun", "--sdk", "macosx", "--show-sdk-version"])
-    sdk_build = _run(["xcrun", "--sdk", "macosx", "--show-sdk-build-version"])
-    if sdk_version.returncode != 0 or sdk_build.returncode != 0:
-        raise ProbeUnavailable(Reason.SDK, "the macosx SDK reported no version or build")
-    found = {}
-    for tool in ("metal", "metallib", "clang"):
-        located = _run(["xcrun", "--sdk", "macosx", "--find", tool])
-        path = _first_line(located.stdout)
-        if located.returncode != 0 or not path:
-            raise ProbeUnavailable(Reason.TOOLCHAIN, f"{tool} was not found by xcrun")
-        found[tool] = path
-    versions = {}
-    for tool in ("metal", "metallib"):
-        reported = _run(["xcrun", "--sdk", "macosx", tool, "--version"])
-        if reported.returncode != 0:
-            raise ProbeUnavailable(Reason.TOOLCHAIN, f"{tool} did not report a version")
-        versions[tool] = _first_line(reported.stdout)
-        if not versions[tool]:
-            raise ProbeUnavailable(Reason.TOOLCHAIN, f"{tool} reported an empty version")
-    return Toolchain(
-        sdk_path=_first_line(sdk_path.stdout),
-        sdk_version=_first_line(sdk_version.stdout),
-        sdk_build=_first_line(sdk_build.stdout),
-        metal_path=found["metal"],
-        metal_version=versions["metal"],
-        metallib_version=versions["metallib"],
-        clang_path=found["clang"],
-    )
+    sdks = {family.sdk: _resolve_sdk(family.sdk) for family in FAMILIES}
+    clang = _run(["xcrun", "--sdk", "macosx", "--find", "clang"])
+    clang_path = _first_line(clang.stdout)
+    if clang.returncode != 0 or not clang_path:
+        raise ProbeUnavailable(Reason.TOOLCHAIN, "clang was not found by xcrun")
+    return Toolchain(sdks=sdks, clang_path=clang_path)
 
 
 def compile_options(ir: str) -> tuple[str, ...]:
@@ -855,6 +1071,20 @@ def compile_options(ir: str) -> tuple[str, ...]:
     strings = dict(METADATA_STRING.findall(ir))
     referenced = re.findall(r"!(\d+)", node.group(1))
     return tuple(strings[identifier] for identifier in referenced if identifier in strings)
+
+
+def emitted_triple(ir: str) -> str:
+    """Return the triple the emitted module declares, which is not the one requested.
+
+    `-std=metal3.1` raises the deployment floor, so `air64-apple-macos13.0` is
+    emitted as `air64_v26-apple-macosx14.0.0`. Recording what the module says is
+    the only per-family compile-side identity that cannot be confused with the
+    flag that asked for it.
+    """
+    found = EMITTED_TRIPLE.search(ir)
+    if found is None:
+        raise ProbeFailure("the emitted module declared no target triple")
+    return found.group(1)
 
 
 def float_operations(ir: str) -> tuple[FloatOperation, ...]:
@@ -875,65 +1105,121 @@ def float_operations(ir: str) -> tuple[FloatOperation, ...]:
 
 
 @dataclass(frozen=True)
+class Reported:
+    """What the dispatch host reported for one manifest entry."""
+
+    results: tuple[int, ...]
+    applied_options: str | None
+    archive: str | None
+
+
+@dataclass(frozen=True)
 class Dispatch:
-    """What one run of the dispatch host reported."""
+    """What one run of the dispatch host reported for a whole manifest.
+
+    `registry_id` is recorded because it is the one value that says plainly
+    which physical GPU answered. On the measured row the iOS Simulator reports a
+    different device *name* and the *same* registry ID as the Mac, which is the
+    exact reason a simulator result is not evidence about an iOS device.
+    """
 
     device: str
-    results: tuple[int, ...]
-    applied_options: str
-    archive: str
+    registry_id: str
+    entries: dict[str, Reported]
+    compiler_images: tuple[str, ...]
 
 
-def _dispatch(host: Path, arguments: list[str], subject: str) -> Dispatch:
-    """Run the dispatch host once and parse its `key=value` lines.
+@dataclass(frozen=True)
+class Attachment:
+    """A family's own execution environment, resolved or precisely absent.
 
-    Both compilation modes come through here, so the device-side procedure is
-    literally the same code for the offline and runtime paths and a difference
-    between them cannot be an artefact of dispatching them differently.
+    `launch` is the argv prefix that runs the dispatch host inside it, which is
+    empty for the machine the harness runs on and `simctl spawn <udid>` for a
+    booted simulator. `detail` is filled exactly when `available` is false, and
+    is the reproducible reason the device side of that family is unmeasured.
     """
-    result = _run([str(host), *arguments, *(f"{value:08x}" for value in OPERANDS)])
+
+    family: Family
+    available: bool
+    detail: str
+    launch: tuple[str, ...]
+    host_sdk: str
+    host_flags: tuple[str, ...]
+    identity: tuple[tuple[str, str], ...]
+
+
+def _manifest_line(key: str, source: Path, function: str, options: str | None) -> str:
+    if options is None:
+        return "\t".join((key, "library", str(source), function))
+    return "\t".join((key, "source", str(source), function, options))
+
+
+def dispatch_batch(host: Path, attachment: Attachment, manifest: Path, subject: str) -> Dispatch:
+    """Run the dispatch host once over a whole manifest and parse its `key=value` lines.
+
+    Every entry comes through here whichever way its library was obtained, so
+    the device-side procedure is literally the same code for the offline and
+    runtime paths within a family, and a difference between them cannot be an
+    artefact of dispatching them differently.
+    """
+    command = [
+        *attachment.launch,
+        str(host),
+        "batch",
+        str(manifest),
+        *(f"{value:08x}" for value in OPERANDS),
+    ]
+    result = _run(command)
     if result.returncode == 3:
-        raise ProbeUnavailable(Reason.DEVICE, result.stderr.strip() or "no default Metal device")
+        raise ProbeUnavailable(
+            Reason.DEVICE, _normalized(result.stderr) or "no default Metal device"
+        )
     if result.returncode != 0:
-        raise ProbeFailure(f"dispatch of {subject} failed: {result.stderr.strip()}")
-    device, applied, archive, values = "", "", "", []
+        # Only stderr is quoted. The host's stdout carries the partial results of
+        # whichever entries did run, which is bulk rather than diagnosis, and one
+        # of these messages is recorded per runtime case in the retained record.
+        raise ProbeFailure(
+            f"dispatch of {subject} failed with {result.returncode}: {_normalized(result.stderr)}"
+        )
+    device, registry = "", ""
+    images: list[str] = []
+    entries: dict[str, Reported] = {}
+    key, applied, archive, values = "", None, None, []
+
+    def close() -> None:
+        if not key:
+            return
+        if len(values) != len(OPERANDS):
+            raise ProbeFailure(
+                f"{subject}: {key} returned {len(values)} results, expected {len(OPERANDS)}"
+            )
+        if key in entries:
+            raise ProbeFailure(f"{subject}: {key} was reported twice")
+        entries[key] = Reported(tuple(values), applied, archive)
+
     for line in result.stdout.splitlines():
-        key, _, value = line.partition("=")
-        if key == "device":
+        name, _, value = line.partition("=")
+        if name == "device":
             device = value
-        elif key == "applied":
+        elif name == "registry-id":
+            registry = value
+        elif name == "runtime-compiler-image":
+            images.append(value)
+        elif name == "case":
+            close()
+            key, applied, archive, values = value, None, None, []
+        elif name == "applied":
             applied = value
-        elif key == "archive":
+        elif name == "archive":
             archive = value
-        elif key == "archive-unavailable":
-            archive = f"unavailable:{value}"
-        elif key == "result":
+        elif name == "archive-unavailable":
+            archive = _normalized(f"unavailable:{value}")
+        elif name == "result":
             values.append(int(value, 16))
-    if len(values) != len(OPERANDS):
-        raise ProbeFailure(f"dispatch returned {len(values)} results, expected {len(OPERANDS)}")
-    return Dispatch(device, tuple(values), applied, archive)
-
-
-def dispatch(host: Path, library: Path) -> tuple[str, tuple[int, ...]]:
-    """Run one offline-linked library on the local GPU and return the device and results."""
-    reported = _dispatch(host, ["library", str(library), ENTRY_POINT], library.name)
-    return reported.device, reported.results
-
-
-def dispatch_source(
-    host: Path, source: Path, configuration: RuntimeConfiguration, archive: Path
-) -> Dispatch:
-    """Compile one source file in the host process and dispatch what came out.
-
-    The source is the byte-identical file the offline path compiles, so the only
-    difference between the two observations is which compiler produced the
-    library.
-    """
-    return _dispatch(
-        host,
-        ["source", str(source), ENTRY_POINT, configuration.options(archive)],
-        f"{source.name} at {configuration.key}",
-    )
+    close()
+    if not entries:
+        raise ProbeFailure(f"dispatch of {subject} reported no case at all")
+    return Dispatch(device, registry, entries, tuple(sorted(set(images))))
 
 
 @dataclass(frozen=True)
@@ -962,20 +1248,58 @@ def scan_archive(path: Path) -> Archive:
     )
 
 
+def compiler_build(images: tuple[str, ...]) -> str:
+    """Recover the build string of the compiler images dyld actually loaded.
+
+    Scans every regular file in the directory of every reported image, not the
+    reported files themselves, because a loaded image may live in the dyld shared
+    cache and have no on-disk copy while its siblings do. Every distinct
+    `metalfe-` build found is reported, sorted, so two compilers in one directory
+    would be visible rather than silently collapsed.
+
+    This is a weaker identity than the archive's version string: it names the
+    build present beside the loaded image, not the one that answered a specific
+    compilation. It exists because in the iOS Simulator the archive cannot be
+    written at all, and a family whose runtime compiler is unidentified is a
+    worse record than one identified this way and labelled.
+    """
+    builds: set[str] = set()
+    for directory in sorted({Path(image).parent for image in images}):
+        if not directory.is_dir():
+            continue
+        for entry in sorted(directory.iterdir()):
+            if not entry.is_file():
+                continue
+            found = COMPILER_BUILD.search(entry.read_bytes())
+            if found is not None:
+                builds.add(found.group(0).decode("ascii"))
+    return " ".join(sorted(builds)) if builds else "unreported"
+
+
 @dataclass(frozen=True)
 class Run:
     """Everything one complete probe execution observed."""
 
     environment: dict[str, str]
     observations: dict[str, Observation]
+    hazards: dict[str, str]
 
-    def of(self, kernel: str, mode: str, optimization: str = "2", contract: str = "off"):
+    def of(
+        self,
+        family: str,
+        kernel: str,
+        mode: str,
+        optimization: str = "2",
+        contract: str = "off",
+    ) -> Observation:
         """Return one offline observation by its case coordinates, failing loudly if absent."""
-        return self._at(Case(kernel, Configuration(mode, optimization, contract)).key)
+        return self._at(Case(family, kernel, Configuration(mode, optimization, contract)).key)
 
-    def runtime(self, kernel: str, mode: str, optimization: str = "default"):
+    def runtime(
+        self, family: str, kernel: str, mode: str, optimization: str = "default"
+    ) -> Observation:
         """Return one runtime-compilation observation by its case coordinates."""
-        return self._at(Case(kernel, RuntimeConfiguration(mode, optimization)).key)
+        return self._at(Case(family, kernel, RuntimeConfiguration(mode, optimization)).key)
 
     def _at(self, key: str) -> Observation:
         if key not in self.observations:
@@ -1031,11 +1355,13 @@ class PathComparison:
 def path_comparisons(run: Run) -> tuple[PathComparison, ...]:
     """Pair every runtime case with the offline cases it can legitimately be compared to.
 
-    The candidate set is every offline case for the same kernel and math mode at
-    `RUNTIME_PAIRED_OPTIMIZATION`, across whatever contraction settings the
-    offline probe recorded. Deriving the set instead of naming one row is what
-    keeps a kernel that becomes contraction-sensitive from reading as a
-    divergence between the two compilers when it is nothing of the kind.
+    The candidate set is every offline case *of the same family* for the same
+    kernel and math mode at `RUNTIME_PAIRED_OPTIMIZATION`, across whatever
+    contraction settings the offline probe recorded. Deriving the set instead of
+    naming one row is what keeps a kernel that becomes contraction-sensitive from
+    reading as a divergence between the two compilers when it is nothing of the
+    kind; restricting it to one family is what keeps a cross-family difference
+    from reading as one.
     """
     compared: list[PathComparison] = []
     for key in sorted(run.observations):
@@ -1048,12 +1374,15 @@ def path_comparisons(run: Run) -> tuple[PathComparison, ...]:
             for other in sorted(run.observations)
             for offline in [run.observations[other].case.configuration]
             if isinstance(offline, Configuration)
+            and run.observations[other].case.family == observation.case.family
             and run.observations[other].case.kernel == observation.case.kernel
             and offline.math_mode == configuration.math_mode
             and offline.optimization == RUNTIME_PAIRED_OPTIMIZATION
         }
         if not candidates:
             raise ProbeFailure(f"{key} has no offline case to be compared against")
+        if observation.results is None:
+            raise ProbeFailure(f"{key} is a runtime case with no dispatch, which cannot happen")
         compared.append(
             PathComparison(
                 runtime_case=key,
@@ -1067,127 +1396,429 @@ def path_comparisons(run: Run) -> tuple[PathComparison, ...]:
     return tuple(compared)
 
 
-def environment(toolchain: Toolchain, device: str, runtime_compiler: str) -> dict[str, str]:
-    """Capture the exact host row every measurement below is qualified by.
+GLOBAL_QUALIFYING = ("os_version", "os_build", "machine", "xcode")
+"""The host-wide environment fields that make two runs comparable.
 
-    `metal_version` and `runtime_compiler` are two different compilers and are
-    recorded separately for that reason. On the measured row they are different
-    builds, so collapsing them would make a cross-path agreement look like a
-    tautology and would hide the toolchain whose numerics a runtime-compiled
-    kernel actually delivers.
+`date_utc` is excluded because it changes every run and qualifies nothing. Every
+`family.*` field is qualifying too and is added by `qualifying_keys`, because a
+family measured through a different SDK, target, execution environment, or
+compiler is not the same measurement.
+"""
+
+
+NON_QUALIFYING_SUFFIXES = (".simulator_device_udid", ".simulator_booted_by_probe")
+"""Per-family environment fields that identify a run rather than qualify a measurement.
+
+A simulator device's UDID is generated when the device is created, so it differs
+between two hosts running identical software and would make the retained record
+uncomparable everywhere but the machine that wrote it. Whether this run had to
+boot the device says nothing about what the device then computed. Both are
+recorded as provenance and excluded here for the same reason `date_utc` is.
+"""
+
+
+def qualifying_keys(environment: dict[str, str]) -> tuple[str, ...]:
+    """Every environment field two runs must agree on before their cases are compared."""
+    return GLOBAL_QUALIFYING + tuple(
+        sorted(
+            key
+            for key in environment
+            if key.startswith("family.") and not key.endswith(NON_QUALIFYING_SUFFIXES)
+        )
+    )
+
+
+SIMULATOR_SPAWN_ATTEMPTS = 60
+SIMULATOR_SPAWN_INTERVAL = 0.5
+"""How long a freshly booted simulator is given to become spawnable.
+
+What this probe needs is a device `simctl spawn` will run a process on, which is
+ready well before the system app is. Polling for the thing actually required
+takes about 3.7 s on the measured host where `simctl bootstatus -b` takes about
+11.5 s, so the wait is bounded by the condition rather than by a proxy for it.
+"""
+
+
+def _simulator_launch() -> tuple[bool, str, tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """Resolve an iOS Simulator device to dispatch in, booting it if it is not booted.
+
+    Returns availability, the exact reason when unavailable, the argv prefix, and
+    the runtime's identity rows.
+
+    The device is chosen by ordering runtimes and devices by identifier and name,
+    not by which one happens to be booted, so the same host chooses the same
+    device every run and the retained record stays comparable. It is then booted
+    if necessary and **left booted**: several worktrees run this gate
+    concurrently and a run that shut a device down would shut it under another
+    run, and leaving it booted is what makes every subsequent run cheap. Shutting
+    it down again is a host operation for whoever wants the resources back
+    (`xcrun simctl shutdown all`), not something a measurement should do behind a
+    concurrent reader's back.
+    """
+    located = _run(["xcrun", "-f", "simctl"])
+    simctl = _first_line(located.stdout)
+    if located.returncode != 0 or not simctl:
+        return False, "simctl was not found by xcrun", (), ()
+    runtimes = _run([simctl, "list", "runtimes", "-j"])
+    devices = _run([simctl, "list", "devices", "available", "-j"])
+    if runtimes.returncode != 0 or devices.returncode != 0:
+        return False, "simctl could not list runtimes or devices", (), ()
+    try:
+        available = [
+            runtime
+            for runtime in json.loads(runtimes.stdout)["runtimes"]
+            if runtime.get("isAvailable") and runtime.get("platform") == "iOS"
+        ]
+        by_runtime = json.loads(devices.stdout)["devices"]
+    except (KeyError, ValueError) as malformed:
+        return False, f"simctl reported malformed JSON: {malformed}", (), ()
+    if not available:
+        return False, "no available iOS simulator runtime is installed", (), ()
+    chosen = None
+    for runtime in sorted(available, key=lambda entry: entry["identifier"]):
+        candidates = sorted(
+            by_runtime.get(runtime["identifier"], []),
+            key=lambda entry: (entry.get("name", ""), entry["udid"]),
+        )
+        if candidates:
+            chosen = (runtime, candidates[0])
+            break
+    if chosen is None:
+        return False, "no available iOS simulator device exists for any runtime", (), ()
+    runtime, device = chosen
+    booted_here = device.get("state") != "Booted"
+    if booted_here:
+        started = _run([simctl, "boot", device["udid"]])
+        if started.returncode != 0:
+            refused = _normalized(started.stderr)
+            return False, f"simctl could not boot {device['udid']}: {refused}", (), ()
+        for _attempt in range(SIMULATOR_SPAWN_ATTEMPTS):
+            if _run([simctl, "spawn", device["udid"], "/usr/bin/true"]).returncode == 0:
+                break
+            time.sleep(SIMULATOR_SPAWN_INTERVAL)
+        else:
+            waited = SIMULATOR_SPAWN_ATTEMPTS * SIMULATOR_SPAWN_INTERVAL
+            return False, f"{device['udid']} was not spawnable within {waited:.0f}s", (), ()
+    described = f"{runtime['name']} {runtime['version']} build {runtime['buildversion']}"
+    identity = (
+        ("simulator_runtime", described),
+        ("simulator_device", device.get("name", "unreported")),
+        ("simulator_device_udid", device["udid"]),
+        ("simulator_booted_by_probe", "true" if booted_here else "false"),
+    )
+    return True, "", (simctl, "spawn", device["udid"]), identity
+
+
+def attachments() -> dict[str, Attachment]:
+    """Resolve every family's own execution environment, or the reason it has none.
+
+    No family borrows another's. `IOsDevice` resolves to `Execution.NONE` here
+    unconditionally, because closing it needs a physical iPhone or iPad
+    connected to this host and no amount of local configuration substitutes for
+    one; the macOS host will happily load and run that family's metallib, which
+    is exactly why the refusal is structural rather than a run-time check.
+    """
+    resolved: dict[str, Attachment] = {}
+    for family in FAMILIES:
+        if family.execution is Execution.MACOS_HOST:
+            resolved[family.name] = Attachment(family, True, "", (), "macosx", (), ())
+        elif family.execution is Execution.IOS_SIMULATOR:
+            available, detail, launch, identity = _simulator_launch()
+            resolved[family.name] = Attachment(
+                family, available, detail, launch, "iphonesimulator", (), identity
+            )
+        else:
+            resolved[family.name] = Attachment(
+                family,
+                False,
+                "no iOS device is attached to this host; closing it needs a physical "
+                "iPhone or iPad and a dispatch run on that device's own GPU",
+                (),
+                "",
+                (),
+                (),
+            )
+    return resolved
+
+
+ARCHIVE_PROBE_CASE = "archive-support"
+
+
+def archive_support(host: Path, attachment: Attachment, work: Path) -> str:
+    """Decide whether a binary archive can be serialized in this execution environment.
+
+    Returns the empty string when it can, or the exact reason it cannot. This is
+    probed in a one-entry manifest of its own because the failure mode is not a
+    returned error: in the iOS Simulator the call aborts the process, so asking
+    for an archive inside a manifest that carries measurements would take the
+    whole run down with it.
+    """
+    source = work / "archive_probe.metal"
+    source.write_text(BY_NAME["multiply_two"].source(), encoding="utf-8")
+    manifest = work / "archive_probe.manifest.tsv"
+    options = RuntimeConfiguration("safe", "default").options(work / "archive_probe.metallib")
+    manifest.write_text(
+        _manifest_line(ARCHIVE_PROBE_CASE, source, ENTRY_POINT, options) + "\n", encoding="utf-8"
+    )
+    try:
+        reported = dispatch_batch(host, attachment, manifest, "the archive-support probe")
+    except ProbeFailure as failed:
+        return _normalized(str(failed))
+    archive = reported.entries[ARCHIVE_PROBE_CASE].archive
+    if archive is None:
+        return "the dispatch host reported no archive"
+    if archive.startswith("unavailable:"):
+        return archive.removeprefix("unavailable:")
+    return ""
+
+
+def _observe_offline(
+    toolchain: Toolchain, work: Path, case: Case, dispatched: bool
+) -> tuple[Observation, Path | None, str]:
+    """Compile one offline case, and link it when its family can be dispatched.
+
+    A family with no attached device is compiled and never linked: the emitted
+    module answers every compile-side question and a metallib nobody may run
+    answers none of them. The compatibility probe is the record that establishes
+    each family links.
+    """
+    family = FAMILY_BY_NAME[case.family]
+    kernel = BY_NAME[case.kernel]
+    stem = case.key.replace(".", "_")
+    source = work / f"{stem}.metal"
+    source.write_text(kernel.source(), encoding="utf-8")
+    ir_path = work / f"{stem}.ll"
+    toolchain.compile_ir(source, ir_path, case)
+    ir = ir_path.read_text(encoding="utf-8")
+    library: Path | None = None
+    if dispatched:
+        air_path = work / f"{stem}.air"
+        library = work / f"{stem}.metallib"
+        toolchain.compile_air(source, air_path, case)
+        toolchain.link(air_path, library, family)
+    observation = Observation(
+        case=case,
+        compile_options=compile_options(ir),
+        operations=float_operations(ir),
+        results=None,
+        applied_options=None,
+        archived_options=None,
+    )
+    return observation, library, emitted_triple(ir)
+
+
+def _cross_family_hazard(
+    toolchain: Toolchain, host: Path, attachment: Attachment, work: Path
+) -> dict[str, str]:
+    """Measure what happens when a foreign family's module is loaded on the host GPU.
+
+    This is the substitute a future edit would reach for when a family has no
+    device, so the record states what it actually does rather than leaving a
+    reader to assume it fails. It is recorded under `hazard.` and never under
+    `case.`: whatever it returns is a fact about the macOS GPU running a foreign
+    module, not a fact about the family the module was compiled for.
+    """
+    measured: dict[str, str] = {}
+    for family in FAMILIES:
+        if family.execution is not Execution.NONE:
+            continue
+        case = Case(family.name, "multiply_two", Configuration("safe", "2", "off"))
+        stem = f"hazard_{case.key.replace('.', '_')}"
+        source = work / f"{stem}.metal"
+        source.write_text(BY_NAME[case.kernel].source(), encoding="utf-8")
+        air_path = work / f"{stem}.air"
+        library = work / f"{stem}.metallib"
+        toolchain.compile_air(source, air_path, case)
+        toolchain.link(air_path, library, family)
+        manifest = work / f"{stem}.manifest.tsv"
+        manifest.write_text(
+            _manifest_line("hazard", library, ENTRY_POINT, None) + "\n", encoding="utf-8"
+        )
+        name = f"cross_family_load.{family.name}_module_on_{attachment.family.name}_gpu"
+        try:
+            reported = dispatch_batch(host, attachment, manifest, name)
+        except ProbeFailure as refused:
+            measured[name] = _normalized(f"refused: {refused}")
+            continue
+        results = reported.entries["hazard"].results
+        measured[name] = "loaded and ran; results " + " ".join(f"{v:08x}" for v in results)
+    return measured
+
+
+def probe(work_directory: Path) -> Run:
+    """Compile every family, dispatch the ones with a device, and classify every case.
+
+    Raises `ProbeUnavailable` when no toolchain, SDK, or host GPU resolves, and
+    `ProbeFailure` for anything that goes wrong after they do. A family whose own
+    execution environment is absent is neither: its compile side runs and its
+    device side is recorded as unmeasured.
+    """
+    toolchain = resolve()
+    work_directory.mkdir(parents=True, exist_ok=True)
+    attached = attachments()
+
+    observations: dict[str, Observation] = {}
+    triples: dict[str, str] = {}
+    devices: dict[str, str] = {}
+    registries: dict[str, str] = {}
+    runtime_compilers: dict[str, str] = {}
+    runtime_images: dict[str, str] = {}
+    runtime_builds: dict[str, str] = {}
+    hosts: dict[str, Path] = {}
+
+    for family in FAMILIES:
+        attachment = attached[family.name]
+        work = work_directory / family.name
+        work.mkdir(parents=True, exist_ok=True)
+        if attachment.available:
+            host = work / "numerical_probe_host"
+            toolchain.build_host(host, attachment.host_sdk, attachment.host_flags)
+            hosts[family.name] = host
+
+        libraries: dict[str, Path] = {}
+        for case in cases(family.name):
+            observation, library, triple = _observe_offline(
+                toolchain, work, case, attachment.available
+            )
+            observations[case.key] = observation
+            if library is not None:
+                libraries[case.key] = library
+            if triples.setdefault(family.name, triple) != triple:
+                raise ProbeFailure(
+                    f"{family.name} emitted two triples: {triples[family.name]} then {triple}"
+                )
+        if not attachment.available:
+            unavailable = f"unavailable:{attachment.detail}"
+            devices[family.name] = unavailable
+            registries[family.name] = unavailable
+            runtime_compilers[family.name] = unavailable
+            runtime_images[family.name] = unavailable
+            runtime_builds[family.name] = unavailable
+            continue
+
+        host = hosts[family.name]
+        archive_reason = archive_support(host, attachment, work)
+        runtime_sources: dict[str, Path] = {}
+        archives: dict[str, Path] = {}
+        lines: list[str] = []
+        for case in cases(family.name):
+            lines.append(_manifest_line(case.key, libraries[case.key], ENTRY_POINT, None))
+        for case in runtime_cases(family.name):
+            assert isinstance(case.configuration, RuntimeConfiguration)
+            stem = case.key.replace(".", "_")
+            # The runtime path compiles the same bytes the offline path compiled,
+            # so the file is written once per case rather than shared: a case
+            # that generated different source would otherwise be invisible here.
+            source = work / f"{stem}.metal"
+            source.write_text(BY_NAME[case.kernel].source(), encoding="utf-8")
+            runtime_sources[case.key] = source
+            archive = None
+            if not archive_reason:
+                archive = work / f"{stem}.archive.metallib"
+                archives[case.key] = archive
+            lines.append(
+                _manifest_line(case.key, source, ENTRY_POINT, case.configuration.options(archive))
+            )
+        manifest = work_directory / f"{family.name}.manifest.tsv"
+        manifest.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+        reported = dispatch_batch(host, attachment, manifest, f"the {family.name} manifest")
+        devices[family.name] = reported.device
+        registries[family.name] = reported.registry_id or "unreported"
+        runtime_images[family.name] = " ".join(reported.compiler_images) or "unreported"
+        runtime_builds[family.name] = compiler_build(reported.compiler_images)
+
+        compiler = ""
+        for case in cases(family.name):
+            entry = reported.entries[case.key]
+            observations[case.key] = Observation(
+                case=case,
+                compile_options=observations[case.key].compile_options,
+                operations=observations[case.key].operations,
+                results=entry.results,
+                applied_options=None,
+                archived_options=None,
+            )
+        for case in runtime_cases(family.name):
+            entry = reported.entries[case.key]
+            if archive_reason:
+                archived = f"unavailable:{archive_reason}"
+            elif entry.archive is None or entry.archive.startswith("unavailable:"):
+                archived = entry.archive or "unavailable:the host reported no archive"
+            else:
+                scanned = scan_archive(Path(entry.archive))
+                archived = " ".join(scanned.present)
+                if compiler and scanned.compiler != compiler:
+                    raise ProbeFailure(
+                        f"{family.name}: the runtime compiler changed mid-run: "
+                        f"{compiler} then {scanned.compiler}"
+                    )
+                compiler = scanned.compiler
+            observations[case.key] = Observation(
+                case=case,
+                compile_options=None,
+                operations=None,
+                results=entry.results,
+                applied_options=entry.applied_options,
+                archived_options=archived,
+            )
+        runtime_compilers[family.name] = compiler or f"unavailable:{archive_reason}"
+
+    hazards = _cross_family_hazard(
+        toolchain, hosts[HOST_FAMILY], attached[HOST_FAMILY], work_directory
+    )
+    measured = {
+        "emitted_triple": triples,
+        "device": devices,
+        "device_registry_id": registries,
+        "runtime_compiler": runtime_compilers,
+        "runtime_compiler_images": runtime_images,
+        "runtime_compiler_build": runtime_builds,
+    }
+    return Run(environment(toolchain, attached, measured), observations, hazards)
+
+
+def environment(
+    toolchain: Toolchain,
+    attached: dict[str, Attachment],
+    measured: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    """Capture the exact host row and per-family rows every measurement is qualified by.
+
+    A family's offline compiler and its runtime compiler are recorded separately
+    and per family, because on this host they are three different builds across
+    two families: one offline driver shared by every SDK, and a runtime compiler
+    that belongs to the execution environment rather than to the toolchain.
+    Collapsing any pair would make a cross-path or cross-family agreement look
+    like a tautology and would hide the toolchain whose numerics a
+    runtime-compiled kernel actually delivers.
     """
     xcode = _run(["xcodebuild", "-version"])
-    return {
+    captured = {
         "date_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "os_version": _first_line(_run(["sw_vers", "-productVersion"]).stdout),
         "os_build": _first_line(_run(["sw_vers", "-buildVersion"]).stdout),
         "machine": _first_line(_run(["uname", "-m"]).stdout),
         "xcode": " ".join(xcode.stdout.split()) if xcode.returncode == 0 else "unreported",
-        "sdk_version": toolchain.sdk_version,
-        "sdk_build": toolchain.sdk_build,
-        "metal_version": toolchain.metal_version,
-        "metallib_version": toolchain.metallib_version,
-        "runtime_compiler": runtime_compiler,
-        "device": device,
     }
-
-
-QUALIFYING = (
-    "os_version",
-    "os_build",
-    "machine",
-    "xcode",
-    "sdk_version",
-    "sdk_build",
-    "metal_version",
-    "metallib_version",
-    "runtime_compiler",
-    "device",
-)
-"""The environment fields that make two runs comparable.
-
-`date_utc` is excluded because it changes every run and qualifies nothing.
-"""
-
-
-def probe(work_directory: Path) -> Run:
-    """Compile, link, dispatch, and classify every case on both compilation paths.
-
-    Raises `ProbeUnavailable` when no toolchain, SDK, or GPU resolves, and
-    `ProbeFailure` for anything that goes wrong after they do.
-    """
-    toolchain = resolve()
-    work_directory.mkdir(parents=True, exist_ok=True)
-    host = work_directory / "numerical_probe_host"
-    toolchain.build_host(host)
-
-    device = ""
-    runtime_compiler = ""
-    observations: dict[str, Observation] = {}
-
-    def observe_device(observed: str) -> None:
-        nonlocal device
-        if device and observed != device:
-            raise ProbeFailure(f"the GPU changed mid-run: {device} then {observed}")
-        device = observed
-
-    for case in cases():
-        kernel = BY_NAME[case.kernel]
-        assert isinstance(case.configuration, Configuration)
-        stem = case.key.replace(".", "_")
-        source = work_directory / f"{stem}.metal"
-        source.write_text(kernel.source(), encoding="utf-8")
-        ir_path = work_directory / f"{stem}.ll"
-        air_path = work_directory / f"{stem}.air"
-        library = work_directory / f"{stem}.metallib"
-        toolchain.compile_ir(source, ir_path, case.configuration)
-        toolchain.compile_air(source, air_path, case.configuration)
-        toolchain.link(air_path, library)
-        ir = ir_path.read_text(encoding="utf-8")
-        observed_device, results = dispatch(host, library)
-        observe_device(observed_device)
-        observations[case.key] = Observation(
-            case=case,
-            compile_options=compile_options(ir),
-            operations=float_operations(ir),
-            results=results,
-            applied_options=None,
-            archived_options=None,
+    for family in FAMILIES:
+        sdk = toolchain.sdks[family.sdk]
+        attachment = attached[family.name]
+        prefix = f"family.{family.name}"
+        captured[f"{prefix}.metal_platform"] = family.metal_platform
+        captured[f"{prefix}.sdk"] = sdk.name
+        captured[f"{prefix}.sdk_version"] = sdk.version
+        captured[f"{prefix}.sdk_build"] = sdk.build
+        captured[f"{prefix}.requested_target"] = family.target
+        captured[f"{prefix}.metal_version"] = sdk.metal_version
+        captured[f"{prefix}.metallib_version"] = sdk.metallib_version
+        captured[f"{prefix}.execution"] = (
+            family.execution.value if attachment.available else f"unavailable:{attachment.detail}"
         )
-
-    for case in runtime_cases():
-        kernel = BY_NAME[case.kernel]
-        assert isinstance(case.configuration, RuntimeConfiguration)
-        stem = case.key.replace(".", "_")
-        # The runtime path compiles the same bytes the offline path compiled, so
-        # the file is written once per case rather than shared: a case that
-        # generated different source would otherwise be invisible here.
-        source = work_directory / f"{stem}.metal"
-        source.write_text(kernel.source(), encoding="utf-8")
-        archive_path = work_directory / f"{stem}.archive.metallib"
-        reported = dispatch_source(host, source, case.configuration, archive_path)
-        observe_device(reported.device)
-        if reported.archive.startswith("unavailable:") or not reported.archive:
-            archived = reported.archive or "unavailable:the host reported no archive"
-        else:
-            archive = scan_archive(Path(reported.archive))
-            archived = " ".join(archive.present)
-            if runtime_compiler and archive.compiler != runtime_compiler:
-                raise ProbeFailure(
-                    f"the runtime compiler changed mid-run: "
-                    f"{runtime_compiler} then {archive.compiler}"
-                )
-            runtime_compiler = archive.compiler
-        observations[case.key] = Observation(
-            case=case,
-            compile_options=None,
-            operations=None,
-            results=reported.results,
-            applied_options=reported.applied_options,
-            archived_options=archived,
-        )
-
-    return Run(environment(toolchain, device, runtime_compiler or "unreported"), observations)
+        for field, byfamily in measured.items():
+            captured[f"{prefix}.{field}"] = byfamily.get(family.name, "unreported")
+        for name, value in attachment.identity:
+            captured[f"{prefix}.{name}"] = value
+    return captured
 
 
 def digest(path: Path) -> str:
@@ -1202,7 +1833,6 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
         ("probe.repository_base_revision", _first_line(revision.stdout) or "unreported"),
         ("probe.harness_sha256", digest(Path(__file__).resolve())),
         ("probe.host_source_sha256", digest(HOST_SOURCE)),
-        ("probe.target", TARGET),
         (
             "probe.fixed_flags",
             f"-std={MSL_VERSION} -fmetal-math-fp32-functions={FP32_FUNCTIONS}",
@@ -1214,7 +1844,8 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
             f"fpfun={FP32_FUNCTIONS} lang={RUNTIME_LANGUAGE}",
         ),
         ("probe.runtime_paired_optimization", f"-O{RUNTIME_PAIRED_OPTIMIZATION}"),
-        ("probe.guard_layers.offline", f"{EMITTED_ARITHMETIC} {EXECUTION_WITNESS}"),
+        ("probe.guard_layers.offline_with_device", f"{EMITTED_ARITHMETIC} {EXECUTION_WITNESS}"),
+        ("probe.guard_layers.offline_without_device", EMITTED_ARITHMETIC),
         ("probe.guard_layers.runtime", EXECUTION_WITNESS),
     ]
     rows += [
@@ -1222,11 +1853,14 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
         for index, gap in enumerate(OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART)
     ]
     rows += [(f"environment.{key}", value) for key, value in run.environment.items()]
+    rows += [(f"hazard.{key}", value) for key, value in sorted(run.hazards.items())]
     for key in sorted(run.observations):
         observation = run.observations[key]
-        # A runtime case gets no `float_operations` row at all. Writing an empty
-        # one would read as a module measured to contain no arithmetic, which is
-        # the single reading this harness must never let a record support.
+        # A runtime case gets no `float_operations` row at all and a case that
+        # was never dispatched gets no `results` row. Writing an empty one would
+        # read as a module measured to contain no arithmetic, or as a dispatch
+        # that returned nothing, and those are the two readings this harness must
+        # never let a record support.
         if observation.compile_options is not None:
             rows.append((f"case.{key}.compile_options", " ".join(observation.compile_options)))
         if observation.operations is not None:
@@ -1237,12 +1871,21 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
             rows.append((f"case.{key}.applied_options", observation.applied_options))
         if observation.archived_options is not None:
             rows.append((f"case.{key}.archived_options", observation.archived_options))
-        rows.append(
-            (f"case.{key}.results", " ".join(f"{value:08x}" for value in observation.results))
-        )
+        if observation.results is not None:
+            rows.append(
+                (f"case.{key}.results", " ".join(f"{value:08x}" for value in observation.results))
+            )
     for comparison in path_comparisons(run):
         rows.append((f"comparison.{comparison.runtime_case}", comparison.render()))
     rows.append(("probe.status", "complete"))
+    # A record row is one tab-separated line. A captured diagnostic that carried
+    # a newline would split into two rows that `read_record` then rejects, and a
+    # value that carried a tab would silently truncate. Both are corrupted
+    # evidence, so the format is enforced where the rows are built rather than
+    # trusted to every producer.
+    for key, value in rows:
+        if "\t" in key or "\n" in key or "\t" in value or "\n" in value:
+            raise ProbeFailure(f"record row {key!r} contains a tab or newline in {value!r}")
     return rows
 
 
@@ -1252,12 +1895,16 @@ def write_record(run: Run, destination: Path) -> None:
     destination.write_text(body, encoding="utf-8")
 
 
-COMPARED_PREFIXES = ("case.", "comparison.")
+COMPARED_PREFIXES = ("case.", "comparison.", "hazard.")
 """The record rows a live run must reproduce exactly on the same environment row.
 
 `comparison.` is included so a divergence between the two compilation paths, or
 a change in which offline contraction setting the runtime path behaves like,
-fails the gate rather than merely being rewritten into the record.
+fails the gate rather than merely being rewritten into the record. `hazard.` is
+included because the reason the harness refuses a convenient substitute is a
+measurement too: if the macOS runtime ever started refusing a foreign family's
+module, the record should notice rather than keep citing an outcome that stopped
+happening.
 """
 
 
@@ -1315,12 +1962,18 @@ def main(arguments: list[str] | None = None) -> int:
     except ProbeUnavailable as unavailable:
         print(f"numerical_probe: skipped, {unavailable}", file=sys.stderr)
         return 0
-    for key in QUALIFYING:
+    for key in qualifying_keys(run.environment):
         print(f"{key}={run.environment[key]}")
+    for key, value in sorted(run.hazards.items()):
+        print(f"hazard.{key}={value}")
     for key in sorted(run.observations):
         observation = run.observations[key]
-        results = " ".join(f"{value:08x}" for value in observation.results)
         count = observation.operation_count
+        results = (
+            "not-dispatched"
+            if observation.results is None
+            else " ".join(f"{value:08x}" for value in observation.results)
+        )
         print(f"{key}\tfp-ops={'unreadable' if count is None else count}\t{results}")
     for comparison in path_comparisons(run):
         print(f"comparison.{comparison.runtime_case}\t{comparison.render()}")
