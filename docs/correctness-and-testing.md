@@ -12,7 +12,7 @@ ticket: "prototype-optimizer-conformance-gate"
 
 # Correctness and testing
 
-**Status:** accepted contract; bounded semantic/reference/index gates implemented
+**Status:** accepted contract; bounded semantic/reference/index gates implemented, plus the lowering-capability and index-refinement gates on the ordinary compile path
 
 Tiler must define semantics before asking a GPU compiler to accept generated
 source. Backend compilation is a validation layer, not the type system or the
@@ -77,6 +77,8 @@ Each lowering verifies its input and output:
 | Frontend | Axis occurrence, ellipsis, factors, introduced/removed axes, source diagnostics |
 | Registry/extension | Key/provider coherence, canonical attributes, capability determinism, trust/budget boundaries |
 | Semantic | Shape, dtype, broadcasting, reduction policy, pure DAG, valid outputs |
+| Lowering capability | Exactly one resolved capability per recognized occurrence; absent and contended resolution as distinct fail-closed dispositions; recorded provenance re-derived from the installed registry |
+| Index refinement | Ordered value-interface realization, reached scalar authority contained in the capability's declaration, agreeing semantic type authority, complete unique-write ownership, proof-budget exhaustion recorded as an unknown gap rather than a pass or a rejection |
 | Index | Rank, integer types, bounds, overflow, divisors, writer coverage, runtime parameters |
 | Schedule | Observational coverage, safe redundancy/tails, resources, convergence, numerical contract, capabilities |
 | Kernel | Scope/dominance, types/effects, access modes/address spaces, schedule-refined bounds and ownership, barrier/collective convergence and fences, reduction/order and launch references |
@@ -92,6 +94,10 @@ operation through the ordinary capability/refinement path, non-isomorphic and
 fan-out or multi-output graphs, deterministic typed explain records, and
 identity/provenance assertions at every implemented layer before the public
 compiler facade is accepted.
+
+**Evidence.** The `pipeline::conformance` module is that gate, and the capability/refinement half of it is now produced rather than owed. `an_externally_registered_lowering_provider_drives_the_compile_path` composes a lowering-capability registry entirely through the public capability surface — substituting an out-of-crate provider for one governed family and keeping the other three — drives it through the compiler's ordinary entry point, and asserts both that every retained alternative's artifact plan records that provider and its capability revision as the occurrence's lowering authority and that the resolution record is attributed at the external provider's own revision rather than the governed one. `externally_registered_operations_compile_through_the_ordinary_path` supplies the external-*operation* half over a registry with no governed semantic definition in scope. Three sibling cases pin the fail-closed behaviour: an installed authority holding no capability at all defers and stops the compilation, two providers claiming one occurrence reject as a disproved check and explicitly not as a deferral, and a refinement the proof budget cannot afford is recorded and not rejected.
+
+**What that evidence does not cover, stated so the gate is not read as closed.** Installing such a registry from outside the crate is unreachable: the compilation request and its capability field are crate-private and no public compile entry point exists, so the external provider is external in construction and in-crate in installation. Ordered multi-output programs are rejected explicitly rather than compiled, so the multi-output row of the requirement above is a negative test. The public compiler facade the requirement gates on remains owned by [`prototype-public-compiler-api`](../tickets/prototype-public-compiler-api.md).
 
 ## Property and differential testing
 
