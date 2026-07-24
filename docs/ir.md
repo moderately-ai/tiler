@@ -75,6 +75,93 @@ The implementation order is index region, scheduled region, structured
 kernel, kernel program, then portfolio. A public module declaration or a
 private proof struct is not implemented support for that layer.
 
+### Accepted public API conventions
+
+ADR 0074 accepts explicit conformance conventions for public Tiler APIs. That
+record owns the decision and its evidence; the rules below are what those
+conventions make normative for the shared IR surfaces this document owns. A
+deviation is an argued decision, not an oversight.
+
+**Errors are typed and non-erasing.** A public fallible IR entry point returns
+a concrete failure enum, never `Box<dyn Error>`, another erased trait object,
+or a string. Distinct failure kinds are distinct variants, and a variant
+carries the structured data a caller reacts to — the rejected entity, the
+exhausted resource with its attempted and permitted quantities, the expected
+and actual arity — rather than a preformatted message. A failure that wraps a
+lower-layer error returns it from `Error::source()` with its own type intact,
+as the borrowed validation and consuming build paths below do for registry
+authority failures. A convenience shared by two layers stays generic over both
+concrete error types instead of unifying them, so an insertion-time admission
+rejection and a whole-object verification failure remain structurally distinct.
+
+**Identities are opaque and expose canonical bytes.** Every canonical identity
+named in this document is a newtype whose byte storage is private and whose
+only public reader is `as_bytes()`. Equality, ordering, hashing, dedup, and
+cache keying use those bytes. An identity a layer derives has no public
+constructor: only the encoder that establishes what the identity means may
+produce one, so no caller can assemble an identity naming a subject that no
+verifier examined. An identity received at a boundary may have an explicit
+wrapping constructor when the constructor and the type both document that the
+bytes are opaque and are never re-derived locally; such a constructor states
+that this layer is not the authority for that subject, and it must not be used
+to shortcut an identity the layer is the authority for. A surface may also
+expose a short bounded label for explain output and diagnostics. That label is
+presentation only and is never an equality or dedup input; the rule is about
+the role of the value rather than the spelling of the accessor returning it.
+
+**Canonical encodings are domain-separated, length-prefixed, ordinal-free, and
+exhaustively matched.** An encoder writes a versioned NUL-terminated domain tag
+of the form `tiler.<subject>.v<N>` before any content, so bytes produced for one
+subject cannot be read as another subject's. It writes a fixed-width length
+before every variable-length run, so no concatenation of fields is ambiguous.
+It excludes transient identifiers — arena indices, builder insertion order,
+graph-local ordinals, planning identifiers — wherever the represented semantics
+are equivalent without them. It matches every encoded enum exhaustively, with
+no wildcard arm and no silently omitted field, destructuring a single-variant
+enum irrefutably so that widening the enum is a compile error at the encoding
+site rather than two structurally distinct subjects that share identity bytes.
+This is the encoding-level form of the common invariants that canonical
+serialization is deterministic and that identity uses canonical content rather
+than allocation identity. ADR 0074 names the encoders that do not yet satisfy
+it; a landed encoder is not evidence that the rule already holds.
+
+**Construction yields an unforgeable verified product.** The lifecycle above is
+also a conformance item. The shared IR terminal is spelled `build`, it consumes
+the builder, and its product cannot be forged: a verified product has private
+fields, so struct-literal construction fails to compile, and it offers no
+mutation, thawing, unchecked constructor, or mutable access to its draft. A
+closure convenience delegates to the same builder and the same consuming
+verifier rather than re-implementing verification, and it scopes the draft by
+mutable borrow so the closure body cannot reach the consuming step. The frozen
+authority snapshots described below consume their builder at `freeze` and are
+immutable and unforgeable in the same sense, but a failed freeze does not
+return builder ownership; whether ADR 0074's terminal rule reaches that
+registry family is a question for that record and is not settled here.
+
+**Verified products expose no public fields; leaf value-data descriptors may.**
+A type whose invariants a verifier established exposes borrowed accessors,
+iterators, and view types that yield meaning without yielding storage. A leaf
+value-data descriptor — a plain record with no cross-field invariant that a
+producer legitimately assembles or reads field by field, and that becomes
+trustworthy only once a verifier binds it into a verified product — may expose
+public fields, because opacity is enforced at the verified boundary rather than
+at the descriptor. Which of the two forms `tiler-ir` should use for its own
+descriptors remains open and is owned by
+[`unify-schedule-index-region-with-verified-index-region`](../tickets/unify-schedule-index-region-with-verified-index-region.md).
+
+**Two of ADR 0074's conventions are deliberately not stated here.** Its rule
+for marking growing public enums and output records `#[non_exhaustive]` is
+under amendment: for an enum a consumer exhaustively recognizes, the attribute
+makes a later variant compile at every cross-crate consumer while silently
+routing it into a reject-unknown arm, which is a silent loss of a supported
+capability rather than the intended fail-closed compile break. That amendment
+is owned by
+[`resolve-non-exhaustive-recognizer-hole`](../tickets/resolve-non-exhaustive-recognizer-hole.md),
+and this contract states no growth-marking rule until the record distinguishes
+recognized enums from produced or read ones. Its staging rule for when a crate
+module may be `pub` constrains component boundaries rather than representation
+shape, and is normative in the architecture contract instead.
+
 ## Layer 0: frontend plan
 
 The frontend plan retains syntax-level information such as axis names,

@@ -22,6 +22,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Capability fact | Typed value for a governed target key with explicit availability phase, validity scope, authority, and provenance. |
 | Capability phase | One of `CompileProfile`, `ArtifactEvidence`, `LiveDevicePreflight`, `PreparedKernelPreflight`, or `LaunchPreflight`, stating when a physical fact becomes available. |
 | Canonical attribute | Host-owned bounded typed value attached to a semantic operation; its normalized encoding, not provider serialization, participates in identity. |
+| Canonical identity | Opaque newtype over the deterministic canonical bytes identifying one subject; the bytes are read only through `as_bytes()` and are the sole input to equality, ordering, hashing, dedup, and cache keying. |
 | Byte offset | Offset used by a buffer-binding API, measured in bytes. |
 | Candidate region set | Overlapping region candidates considered by program planning; a hypergraph may be used as its internal index. |
 | Boundary enforcer | Explicit materialization, layout conversion, cast, or copy that satisfies a boundary requirement. |
@@ -45,6 +46,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Iteration domain | Cartesian coordinate space over which outputs are computed. |
 | Kernel ABI | Ordered buffer and scalar parameters with types, roles, access modes, and binding locations. |
 | Launch geometry | Grid and threadgroup dimensions derived from a schedule. |
+| Leaf value-data descriptor | Plain record with no cross-field invariant that a producer assembles or reads field by field and that becomes trustworthy only once a verifier binds it into a verified product; it may expose public fields. |
 | Logical coordinate | One index for each logical tensor axis. |
 | Logical shape | Ordered axis extents independent of physical storage. |
 | Manifest | Canonical metadata describing a bundle or kernel entry without being executable shader code. |
@@ -63,6 +65,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Operation definition | Registered versioned capabilities that define an operation's schema, semantics, verification, decomposition, optimization, and lowering support. |
 | Operation key | Durable dialect, name, and semantic-version identity stored in semantic IR. |
 | Operation registry snapshot | Immutable deterministic per-compilation mapping from semantic operation keys and capability-provider IDs to trusted implementations and revisions. |
+| Presentation label | Short bounded digest of canonical identity bytes used in explain output and diagnostics; it is never an equality, ordering, or dedup input. |
 | Provider revision | Stable provider-declared fingerprint for output-affecting implementation behavior, distinct from an operation's semantic version. |
 | Program portfolio | Guarded alternatives containing complete kernel programs for one semantic graph. |
 | Program result | Ordered named reference to a semantic value returned by the graph; it is not an `Output` operation. |
@@ -93,6 +96,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Threadgroup | Threads dispatched together with shared synchronization and memory; Metal uses this term where CUDA commonly uses block. |
 | Value | Individually typed semantic result with exactly one definition and zero or more consumers. |
 | Variant | One complete kernel program plus applicability/routing contract for a semantic graph. |
+| Verified product | Immutable value whose invariants a consuming `build` established; it has private storage, no public fields, no unchecked constructor, and no path back to a mutable draft. |
 
 Avoid using **layout** for both logical axis transformations and physical
 strides. Use **reindex** or **axis transform** for the former and **storage

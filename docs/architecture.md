@@ -289,6 +289,29 @@ typed failure retaining builder ownership. Compiler passes, third-party plan
 producers, artifact decoders, and backends use this same verifier authority.
 Only verified products cross those boundaries. See ADR 0071.
 
+ADR 0074 fixes when a landed authority may join a crate's public surface. A
+component that is implemented but not yet reachable from its crate's entry
+point stays a private module whose items are crate-visible, carrying a
+module-level `#![allow(dead_code, reason = "…")]` whose stated reason names
+what the surface reserves and, where it is known, which slice will consume it.
+It becomes public only when Tom accepts the exact facade, and a module that is
+already public while its boundary is still under review says so in its own
+module documentation, so a consumer cannot mistake a reviewed draft for a
+settled interface. That staging rule keeps the ownership table above checkable
+while implementation is incomplete: a row records which component owns a
+responsibility, not that its crate has already published a public surface for
+it.
+
+ADR 0074's remaining conventions constrain the shape of a public API rather
+than the placement of a component: typed non-erasing errors, opaque identities
+that expose canonical bytes, domain-separated and exhaustively matched
+canonical encodings, the transactional builder with a consuming terminal, and
+verified products that expose no public fields. They bind any workspace crate
+that exposes such a surface, and the IR contract states them normatively for
+the representations it owns. This document does not restate them: a component
+boundary in the table above allocates responsibility and dependency direction,
+and it does not license a differently shaped public API.
+
 ## Accepted prototype packaging profile
 
 ADR 0065 refines ADR 0056 after the evaluator implementation exposed a real
