@@ -44,6 +44,37 @@ Say for each whether the mature form is expected to admit *third-party* provider
 or only built-in ones registered through the same path, since that distinction —
 not the `pub` keyword — is what creates the durable obligation.
 
+## Decided 2026-07-24: the physical-provider trait is deliberately deferred, with a trigger
+
+Tom was asked directly about `frontier`'s `PhysicalImplementationProvider` and,
+after examining the reasoning, chose to defer it rather than classify it now.
+Record it that way — as an explicit deferral with a trigger, not as an unexamined
+gap:
+
+- **Visibility stays `pub(crate)`.** Nothing forces a change, and — important
+  context that invalidated an earlier argument — Tiler has no external consumers
+  and is nowhere near an alpha, so there is **no compatibility cost in either
+  direction**. Do not justify this deferral by reversibility or migration cost;
+  that asymmetry does not exist yet. It is deferred because we lack the
+  information, not because reversing would be expensive.
+- **The design stays cross-crate-ready**, which costs nothing because it already
+  is: the trait takes a versioned `ProviderIdentity`, hands the provider a
+  read-only `ImplementationContext`, and has the host re-verify every proposal
+  rather than trusting it.
+- **The question that actually decides it** is prior and architectural: does
+  target-specific scheduling knowledge live as typed **target-profile data**
+  consumed by in-compiler providers, or as **code in backend crates**? Note this
+  is not "third party versus us" — Rust visibility is per-crate, so even a
+  first-party `tiler-metal` implementing providers would force `pub`. Current
+  evidence leans toward data (target profiles are already typed data feeding
+  feasibility and the frontier, and `tiler-metal` is scoped as pure
+  structured-KIR→MSL lowering, downstream of scheduling), but that is an
+  inference from an architecture no backend has ever exercised.
+- **Trigger for reconsideration:** the first time a backend genuinely needs to
+  contribute a physical implementation, or when the optimizer conformance gate
+  pushes a provider through the ordinary compile path — whichever comes first.
+  The Metal vertical answers this empirically, so guessing now buys nothing.
+
 ## Deliverable and boundaries
 
 Create the ADR at the next free number with `decision_status: "proposed"`, its
