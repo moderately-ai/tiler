@@ -374,6 +374,10 @@ impl RegionFormationOutcome {
     }
 
     /// Returns every budget that stopped a growth path.
+    #[allow(
+        dead_code,
+        reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+    )]
     pub(crate) fn budget_stops(&self) -> &[RegionBudgetStop] {
         &self.budget_stops
     }

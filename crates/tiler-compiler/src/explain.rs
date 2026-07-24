@@ -1,6 +1,6 @@
 #![allow(
     dead_code,
-    reason = "private draft reserves reviewed stage/evidence views before the public facade"
+    reason = "the explain authority itself is on the compile path; what stays unconstructed is the reserved evidence, quantity, disposition, and subject vocabulary the bounded profile does not yet produce, plus the presentation renderer, which only a trace consumer calls"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -141,6 +141,20 @@ impl ProviderRef {
         Ok(Self {
             key: ProviderKey::new(provider.key)?,
             revision: provider.revision,
+        })
+    }
+
+    /// References a registered provider by its governed namespaced identity.
+    ///
+    /// The namespace and name are joined so two providers sharing a name in
+    /// different namespaces stay distinct in explain output, and the provider's
+    /// output-affecting revision is retained as provenance (ADR 0072).
+    pub(crate) fn registered(
+        provider: &tiler_ir::semantic::ProviderIdentity,
+    ) -> Result<Self, ExplainError> {
+        Ok(Self {
+            key: ProviderKey::new(format!("{}.{}", provider.namespace(), provider.name()))?,
+            revision: provider.revision(),
         })
     }
 }
@@ -894,9 +908,18 @@ impl ExplainWriter {
         limits: ExplainLimits,
     ) -> Result<Self, ExplainError> {
         let subject = CompilationSubject::from_request(request);
-        let mut allowed_providers = vec![ProviderRef::lowering(
-            request.capabilities().materialized_serial_sum,
-        )?];
+        // Every authority whose rules this compilation may attribute to a
+        // provider: the request's installed lowering providers plus the
+        // compiler's own governed physical-implementation and fusion-capability
+        // providers. A rule attributed to any other provider is a provenance
+        // forgery and fails closed (ADR 0072).
+        let mut allowed_providers = vec![
+            ProviderRef::lowering(request.capabilities().materialized_serial_sum)?,
+            ProviderRef::registered(&crate::frontier::GovernedPhysicalProvider::identity())?,
+            ProviderRef::registered(
+                crate::fusion_legality::FusionNumericalCapabilities::governed().provider(),
+            )?,
+        ];
         if let Some(provider) = request.capabilities().fused_serial_sum {
             allowed_providers.push(ProviderRef::lowering(provider)?);
         }
@@ -2211,7 +2234,7 @@ mod tests {
         assert_eq!(
             trace.render(),
             concat!(
-                "tiler-explain-v2 request=a77c2404e1240ca4\n",
+                "tiler-explain-v2 request=35189829a24a372f\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

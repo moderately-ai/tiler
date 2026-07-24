@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::cover::{CoverEnumeration, CoverError, RegionCover, enumerate_covers};
 use crate::explain::{
     CostDisposition, CostModelKey, CostTerm, EvidenceBasis, ExplainError, ExplainEvent,
     ExplainFact, ExplainLimits, ExplainRecordId, ExplainStage, ExplainWriter, FactValue,
@@ -8,15 +9,22 @@ use crate::explain::{
     Quantity, ReasonCode, RejectionClass, RuleRef, SelectionOutcome, SubjectKind, TerminalCause,
     VerifiedEvidenceRef, VerifiedExplainTrace,
 };
+use crate::frontier::{
+    FrontierError, FrontierRegionSubject, GovernedPhysicalProvider, PhysicalImplementationProvider,
+    enumerate_frontier,
+};
 use crate::fusion::{
     FusionError, FusionNumericalProof, prove_fused_numerics, verify_fused_numerics,
+};
+use crate::fusion_legality::{
+    FusionLegality, FusionLegalityError, FusionLegalityProof, FusionNumericalCapabilities,
+    derive_fusion_legality, verify_fusion_legality,
 };
 use crate::normalize::{
     NORMALIZATION_SUBJECT, NormalizationOutcome, NormalizeError, normalize_semantics,
 };
 use crate::physical::{
-    PhysicalError, VerifiedKernel, VerifiedScheduledRegion, build_fused_scheduled_region,
-    build_scheduled_regions, lower_structured_kernel,
+    PhysicalError, VerifiedKernel, VerifiedScheduledRegion, lower_structured_kernel,
 };
 use crate::program::{
     ArtifactConstructionPlan, KernelProgram, ProgramError, assert_kernels_match_program,
@@ -24,10 +32,14 @@ use crate::program::{
     verify_semantic_output_type,
 };
 use crate::region::{
-    REGION_FORMATION_SUBJECT, RegionError, RegionFormationOutcome, RegionFormationRecords,
+    REGION_FORMATION_SUBJECT, RegionCandidate, RegionError, RegionFormationOutcome,
     form_region_candidates,
 };
 use crate::request::{CompilationRequest, RequestError, verify_request};
+use crate::selection::{
+    CoverFrontiers, PlanStructuralCost, RegionFrontier, SelectedPlan, SelectedPortfolio,
+    SelectionError, select_physical_plans, verify_selected_portfolio,
+};
 
 const SELECTION_POLICY_KEY: &str = "tiler.selection.structural-pareto.v1";
 const STRUCTURAL_COST_MODEL_KEY: &str = "tiler.cost.structural.v1";
@@ -50,38 +62,91 @@ pub(crate) enum ProgramAlternativeKind {
     Fused,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct StructuralCost {
-    pub(crate) model_key: &'static str,
-    pub(crate) dispatch_count: u32,
-    pub(crate) temporary_allocation_count: u32,
-    pub(crate) materialized_bytes: u64,
-    pub(crate) intermediate_global_reads: u64,
-    pub(crate) intermediate_global_writes: u64,
+impl ProgramAlternativeKind {
+    /// Classifies a plan by whether one region covers the whole program.
+    ///
+    /// The classification is a presentation and program-assembly discriminator
+    /// derived from the plan's cover, never a separate authority: a plan is fused
+    /// exactly when its cover places every operation in one region.
+    fn of(cover: &RegionCover, operation_count: u32) -> Self {
+        let whole = cover.region_count() == 1
+            && cover.regions().first().is_some_and(|region| {
+                u32::try_from(region.members().len()).is_ok_and(|count| count == operation_count)
+            });
+        if whole {
+            Self::Fused
+        } else {
+            Self::Materialized
+        }
+    }
+
+    #[allow(
+        dead_code,
+        reason = "stable presentation name of the plan shape, read by diagnostics and by this module's tests"
+    )]
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Materialized => "materialized",
+            Self::Fused => "fused",
+        }
+    }
 }
 
+/// The numerical-equivalence evidence one retained alternative rests on.
+///
+/// Every multi-occurrence region of the plan carries a replayable fusion-legality
+/// proof, and a whole-program fused region additionally carries the strict-`f32`
+/// numerical-equivalence proof the explain trace cites as a sound proof. A plan
+/// whose regions are all single occurrences fuses nothing and carries neither.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum EquivalenceEvidence {
-    MaterializedReference,
-    Fused(Box<FusionNumericalProof>),
+pub(crate) struct EquivalenceEvidence {
+    /// One legality proof per multi-occurrence region, in cover-region order.
+    legality: Vec<(usize, Box<FusionLegalityProof>)>,
+    /// The strict-`f32` equivalence proof of a whole-program fused region.
+    numerical: Option<Box<FusionNumericalProof>>,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
+impl EquivalenceEvidence {
+    /// Returns the per-region fusion-legality proofs the plan rests on.
+    pub(crate) fn legality(&self) -> &[(usize, Box<FusionLegalityProof>)] {
+        &self.legality
+    }
+
+    /// Returns the whole-program strict-`f32` numerical equivalence proof.
+    pub(crate) fn numerical(&self) -> Option<&FusionNumericalProof> {
+        self.numerical.as_deref()
+    }
+}
+
+/// One retained complete plan, assembled through structured KIR into a verified
+/// kernel program and a neutral artifact construction plan.
+///
+/// The alternative *is* the selected physical plan: its stable identifier is the
+/// plan's content-derived identity label, and its cost is the plan's exact
+/// aggregate structural cost. Nothing here re-decides feasibility or legality;
+/// both were settled by the frontier and the fusion-legality authority before the
+/// plan was retained.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ProgramAlternative {
-    pub(crate) stable_id: &'static str,
+    pub(crate) stable_id: String,
     pub(crate) kind: ProgramAlternativeKind,
+    pub(crate) plan: SelectedPlan,
     pub(crate) scheduled_regions: Vec<VerifiedScheduledRegion>,
     pub(crate) kernels: Vec<VerifiedKernel>,
     pub(crate) program: KernelProgram,
     pub(crate) artifact_plan: ArtifactConstructionPlan,
-    pub(crate) structural_cost: StructuralCost,
+    pub(crate) structural_cost: PlanStructuralCost,
     pub(crate) equivalence: EquivalenceEvidence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PortfolioSelection {
     pub(crate) policy_key: &'static str,
-    pub(crate) selected_alternative_id: &'static str,
+    pub(crate) selected_alternative_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -107,6 +172,8 @@ pub(crate) enum CompileError {
 pub(crate) enum NoFeasiblePlanError {
     Request(RequestError),
     Physical(PhysicalError),
+    /// No legal complete cover joined with a compatible implementation set.
+    Selection(SelectionError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,6 +184,10 @@ pub(crate) enum CompilerOutputError {
     Fusion(FusionError),
     Explain(ExplainError),
     Normalization(NormalizeError),
+    Cover(CoverError),
+    FusionLegality(FusionLegalityError),
+    Frontier(FrontierError),
+    Selection(SelectionError),
 }
 
 impl fmt::Display for CompileError {
@@ -127,6 +198,10 @@ impl fmt::Display for CompileError {
             | Self::BudgetExhausted(error)
             | Self::NoFeasiblePlan(NoFeasiblePlanError::Request(error)) => error.fmt(formatter),
             Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(error)) => error.fmt(formatter),
+            Self::NoFeasiblePlan(NoFeasiblePlanError::Selection(error))
+            | Self::InvalidCompilerOutput(CompilerOutputError::Selection(error)) => {
+                error.fmt(formatter)
+            }
             Self::InvalidCompilerOutput(CompilerOutputError::Physical(error)) => {
                 error.fmt(formatter)
             }
@@ -139,6 +214,13 @@ impl fmt::Display for CompileError {
                 error.fmt(formatter)
             }
             Self::InvalidCompilerOutput(CompilerOutputError::Normalization(error)) => {
+                error.fmt(formatter)
+            }
+            Self::InvalidCompilerOutput(CompilerOutputError::Cover(error)) => error.fmt(formatter),
+            Self::InvalidCompilerOutput(CompilerOutputError::FusionLegality(error)) => {
+                error.fmt(formatter)
+            }
+            Self::InvalidCompilerOutput(CompilerOutputError::Frontier(error)) => {
                 error.fmt(formatter)
             }
             Self::Explained { source, .. } => source.fmt(formatter),
@@ -155,11 +237,16 @@ impl Error for CompileError {
             | Self::NoFeasiblePlan(NoFeasiblePlanError::Request(error)) => Some(error),
             Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(error))
             | Self::InvalidCompilerOutput(CompilerOutputError::Physical(error)) => Some(error),
+            Self::NoFeasiblePlan(NoFeasiblePlanError::Selection(error))
+            | Self::InvalidCompilerOutput(CompilerOutputError::Selection(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Program(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Region(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Fusion(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Explain(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Normalization(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::Cover(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::FusionLegality(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::Frontier(error)) => Some(error),
             Self::Explained { source, .. } => Some(source),
         }
     }
@@ -226,6 +313,30 @@ impl From<FusionError> for CompileError {
     }
 }
 
+impl From<CoverError> for CompileError {
+    fn from(value: CoverError) -> Self {
+        Self::InvalidCompilerOutput(CompilerOutputError::Cover(value))
+    }
+}
+
+impl From<FusionLegalityError> for CompileError {
+    fn from(value: FusionLegalityError) -> Self {
+        Self::InvalidCompilerOutput(CompilerOutputError::FusionLegality(value))
+    }
+}
+
+impl From<FrontierError> for CompileError {
+    fn from(value: FrontierError) -> Self {
+        Self::InvalidCompilerOutput(CompilerOutputError::Frontier(value))
+    }
+}
+
+impl From<SelectionError> for CompileError {
+    fn from(value: SelectionError) -> Self {
+        Self::InvalidCompilerOutput(CompilerOutputError::Selection(value))
+    }
+}
+
 pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProduct, CompileError> {
     let semantic = request.program;
     let shape_environment = request.shape_environment;
@@ -289,11 +400,11 @@ fn compile_target(
             let expected_alternatives = portfolio
                 .alternatives
                 .iter()
-                .map(|alternative| alternative.stable_id)
+                .map(|alternative| alternative.stable_id.as_str())
                 .collect::<Vec<_>>();
             let explain = explain.finish_success(
                 &expected_alternatives,
-                portfolio.selection.selected_alternative_id,
+                &portfolio.selection.selected_alternative_id,
             )?;
             Ok(TargetCompilationProduct {
                 target_profile_key: verified.target_profile().key,
@@ -422,9 +533,15 @@ const fn physical_error_stage(error: &PhysicalError) -> ExplainStage {
     }
 }
 
+/// One region subject the implementation frontier rejected as hard-infeasible.
+///
+/// The rejection is a *local* target verdict, never a cost and never a global
+/// coverage claim: it says this exact region cannot run on this target. It is
+/// retained so an empty portfolio can report the exact disproved predicates that
+/// made every plan impossible.
 #[derive(Clone, Debug)]
 struct TargetRejection {
-    kind: ProgramAlternativeKind,
+    role: &'static str,
     error: PhysicalError,
     cause: TerminalCause,
 }
@@ -435,7 +552,16 @@ struct TargetRejections {
 }
 
 impl TargetRejections {
+    /// Retains one region-subject rejection, deduplicated by role and axis.
     fn push(&mut self, rejection: TargetRejection) -> Result<(), TargetFailure> {
+        let key = |item: &TargetRejection| (item.role, target_axis(&item.error));
+        if self
+            .values
+            .iter()
+            .any(|existing| key(existing) == key(&rejection))
+        {
+            return Ok(());
+        }
         if u32::try_from(self.values.len()).unwrap_or(u32::MAX) >= MAX_TERMINAL_CAUSES {
             return Err(target_failure(
                 CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
@@ -452,26 +578,8 @@ impl TargetRejections {
         }
         let insertion = self
             .values
-            .binary_search_by_key(&rejection.kind, |existing| existing.kind)
+            .binary_search_by_key(&key(&rejection), key)
             .unwrap_or_else(|insertion| insertion);
-        if self
-            .values
-            .get(insertion)
-            .is_some_and(|existing| existing.kind == rejection.kind)
-        {
-            return Err(target_failure(
-                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
-                    ProgramError::Structure {
-                        rule: "duplicate-target-rejection",
-                    },
-                )),
-                ExplainStage::Selection,
-                "duplicate-target-rejection",
-                SubjectKind::KernelProgram,
-                "portfolio",
-                None,
-            ));
-        }
         self.values.insert(insertion, rejection);
         Ok(())
     }
@@ -488,6 +596,37 @@ impl TargetRejections {
             ExplainStage::TargetFeasibility,
             causes,
         ))
+    }
+}
+
+const fn target_axis(error: &PhysicalError) -> &'static str {
+    match error {
+        PhysicalError::Target { rule, .. }
+        | PhysicalError::Intrinsic { rule, .. }
+        | PhysicalError::Refinement { rule, .. } => rule,
+        PhysicalError::ShapeProductOverflow { .. } => "shape-product-overflow",
+    }
+}
+
+/// The stable presentation role of one cover region.
+///
+/// The role is derived from the region's *coverage* against the recognized
+/// occurrences, so it names what the region means rather than where it appeared
+/// in an enumeration. A region the bounded profile does not recognize keeps a
+/// distinct role instead of being silently attributed to one it resembles.
+fn region_role(
+    request: &crate::request::VerifiedTargetRequest,
+    members: &[crate::region::SemanticMemberId],
+) -> &'static str {
+    let recognized = &request.serial_sum().members;
+    if members == recognized.pointwise() {
+        "pointwise"
+    } else if members == recognized.reduction() {
+        "reduction"
+    } else if members == recognized.all() {
+        "whole-program"
+    } else {
+        "unrecognized"
     }
 }
 
@@ -555,88 +694,76 @@ fn compile_target_with_explain(
         record_cause(normalization_record),
     )?;
     let region_root = region_records.summary.or(normalization_record);
-    let mut alternatives = Vec::new();
-    let mut alternative_causes = Vec::new();
-    let mut target_rejections = TargetRejections::default();
-    match build_baseline_alternative(semantic, verified, record_cause(region_root)) {
-        Ok(baseline) => {
-            let cause = record_baseline_explain(explain, verified, &baseline, region_root)?;
-            alternative_causes.push((baseline.stable_id, cause));
-            alternatives.push(baseline);
-        }
-        Err(failure) => match *failure.source {
-            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
-                error @ PhysicalError::Target { .. },
-            )) => {
-                let cause = record_target_rejection(
-                    explain,
-                    &error,
-                    "alternative:materialized-serial-sum.v1",
-                    region_root,
-                )?;
-                target_rejections.push(TargetRejection {
-                    kind: ProgramAlternativeKind::Materialized,
-                    error,
-                    cause,
-                })?;
-            }
-            source => {
-                return Err(TargetFailure {
-                    source: Box::new(source),
-                    context: failure.context,
-                });
-            }
-        },
-    }
-    consider_fused_alternative(
+    let plans = enumerate_complete_plans(
         semantic,
         verified,
         &formation,
-        &mut alternatives,
         explain,
-        region_records,
-        &mut alternative_causes,
-        &mut target_rejections,
+        region_root,
+        region_records.whole_program,
     )?;
-    if alternatives.is_empty() {
-        if target_rejections.values.is_empty() {
-            return Err(target_failure(
-                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
-                    ProgramError::Structure {
-                        rule: "portfolio-empty-without-target-rejection",
-                    },
-                )),
-                ExplainStage::Selection,
-                "portfolio-empty-without-target-rejection",
-                SubjectKind::KernelProgram,
-                "portfolio",
-                record_cause(region_root),
-            ));
-        }
-        return Err(target_rejections
-            .into_failure()
-            .expect("nonempty target rejection set yields one failure"));
+    let mut alternatives = Vec::new();
+    let mut alternative_causes = Vec::new();
+    let alternative_cause = record_cause(plans.selection_record.or(region_root));
+    for plan in plans.portfolio.plans() {
+        let kind = ProgramAlternativeKind::of(plan.cover(), formation.graph().operation_count());
+        let alternative = build_alternative(
+            semantic,
+            verified,
+            plan,
+            kind,
+            &plans.legality,
+            plans.numerical.clone(),
+            alternative_cause.as_ref(),
+        )?;
+        let cause = record_alternative_explain(
+            explain,
+            verified,
+            &alternative,
+            plans.selection_record.or(region_root),
+        )?;
+        alternative_causes.push((alternative.stable_id.clone(), cause));
+        alternatives.push(alternative);
     }
-    let selected_alternative_id = select_structural_pareto(&alternatives).map_err(|source| {
-        target_failure(
-            source,
+    if alternatives.is_empty() {
+        if let Some(failure) = plans.rejections.into_failure() {
+            return Err(failure);
+        }
+        return Err(target_failure(
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(
+                SelectionError::Structure {
+                    rule: "no-complete-plan",
+                },
+            )),
             ExplainStage::Selection,
-            "portfolio-selection",
+            "portfolio-empty-without-target-rejection",
             SubjectKind::KernelProgram,
             "portfolio",
             record_cause(region_root),
-        )
-    })?;
+        ));
+    }
+    let selected_alternative_id =
+        select_non_dominated(&plans.portfolio, &alternatives).map_err(|source| {
+            target_failure(
+                source,
+                ExplainStage::Selection,
+                "portfolio-selection",
+                SubjectKind::KernelProgram,
+                "portfolio",
+                record_cause(region_root),
+            )
+        })?;
     verify_portfolio(
         semantic,
         verified,
+        &plans.portfolio,
         &alternatives,
-        selected_alternative_id,
+        &selected_alternative_id,
         record_cause(region_root),
     )?;
     record_cost_and_selection(
         &alternatives,
-        selected_alternative_id,
+        &selected_alternative_id,
         &alternative_causes,
         explain,
     )?;
@@ -649,6 +776,412 @@ fn compile_target_with_explain(
     })
 }
 
+/// Everything the complete-plan authorities produced for one target.
+struct CompletePlans {
+    portfolio: SelectedPortfolio,
+    /// One replayable fusion-legality proof per multi-occurrence region, keyed by
+    /// the region occurrence it was derived for.
+    legality: std::collections::BTreeMap<
+        crate::region::RegionOccurrenceIdentity,
+        Box<FusionLegalityProof>,
+    >,
+    /// The whole-program strict-`f32` numerical equivalence proof, when a
+    /// whole-program candidate exists and its fusion is legal.
+    numerical: Option<Box<FusionNumericalProof>>,
+    /// Region subjects the frontier rejected as hard-infeasible on this target.
+    rejections: TargetRejections,
+    /// The complete-plan selection record every alternative is caused by.
+    selection_record: Option<ExplainRecordId>,
+}
+
+/// Enumerates legal covers, proves their fusion legality, enumerates the local
+/// implementation frontier of every cover region, and joins them into complete
+/// physical plans.
+///
+/// The three authorities stay separate exactly as their contracts require:
+/// [`enumerate_covers`] answers a strictly global legality question and chooses
+/// no implementation; [`derive_fusion_legality`] decides whether a
+/// multi-occurrence region may be realized as one fused region at all;
+/// [`enumerate_frontier`] answers a strictly local feasibility question for one
+/// region and target; and only [`select_physical_plans`] joins them.
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps the cover, legality, frontier, and join stages and their phase-local failure contexts in one readable transaction"
+)]
+fn enumerate_complete_plans(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    verified: &crate::request::VerifiedTargetRequest,
+    formation: &RegionFormationOutcome,
+    explain: &mut ExplainWriter,
+    root: Option<ExplainRecordId>,
+    whole_program_record: Option<ExplainRecordId>,
+) -> Result<CompletePlans, TargetFailure> {
+    let budgets = verified.budgets();
+    let contract = verified.numerical_contract();
+    let enumeration = enumerate_covers(semantic, budgets, contract).map_err(|source| {
+        failure_at_source(
+            source.into(),
+            ExplainStage::CandidateEnumeration,
+            record_cause(root),
+        )
+    })?;
+    let cover_record = record_cover_enumeration(explain, &enumeration, root)?;
+
+    let capabilities = FusionNumericalCapabilities::governed();
+    let mut legality = std::collections::BTreeMap::new();
+    let mut illegal = std::collections::BTreeSet::new();
+    let mut legality_cause = cover_record;
+    for cover in enumeration.covers() {
+        for region in cover.regions() {
+            if region.members().len() < 2
+                || legality.contains_key(region.occurrence())
+                || illegal.contains(region.occurrence())
+            {
+                continue;
+            }
+            let candidate = formation
+                .candidates()
+                .iter()
+                .find(|candidate| candidate.occurrence() == region.occurrence())
+                .ok_or_else(|| {
+                    failure_at_source(
+                        CompileError::InvalidCompilerOutput(CompilerOutputError::Cover(
+                            CoverError::Structure {
+                                rule: "cover-region-candidate",
+                            },
+                        )),
+                        ExplainStage::CandidateEnumeration,
+                        record_cause(cover_record),
+                    )
+                })?;
+            let cause = if candidate.covers_whole_program() {
+                whole_program_record.or(legality_cause)
+            } else {
+                legality_cause
+            };
+            let outcome =
+                derive_fusion_legality(semantic, budgets, contract, &capabilities, candidate)
+                    .map_err(|source| {
+                        failure_at_source(
+                            source.into(),
+                            ExplainStage::NumericalLegality,
+                            record_cause(cover_record),
+                        )
+                    })?;
+            legality_cause =
+                record_fusion_legality(explain, &capabilities, candidate, &outcome, cause)?;
+            match outcome {
+                FusionLegality::Legal(proof) => {
+                    legality.insert(region.occurrence().clone(), proof);
+                }
+                FusionLegality::Rejected(_) | FusionLegality::Unknown(_) => {
+                    illegal.insert(region.occurrence().clone());
+                }
+            }
+        }
+    }
+
+    // A whole-program candidate whose fusion is legal additionally carries the
+    // strict-`f32` numerical equivalence proof the trace cites as a sound proof.
+    let mut numerical = None;
+    let mut numerical_cause = legality_cause;
+    if let Some(candidate) = formation.whole_program_candidate() {
+        if verified.capabilities().fused_serial_sum.is_none() {
+            record_deferred_fusion_capability(explain, cover_record)?;
+        } else if !illegal.contains(candidate.occurrence()) {
+            let proof =
+                prove_fused_numerics(formation.graph(), verified, candidate).map_err(|error| {
+                    failure_at_source(
+                        error.into(),
+                        ExplainStage::NumericalLegality,
+                        record_cause(legality_cause),
+                    )
+                })?;
+            numerical_cause =
+                record_numerical_equivalence(explain, verified, candidate, &proof, legality_cause)?;
+            numerical = Some(Box::new(proof));
+        }
+    }
+
+    let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
+    let mut sources = Vec::new();
+    let mut rejections = TargetRejections::default();
+    let mut frontier_cause = numerical_cause;
+    let mut recorded_roles = std::collections::BTreeMap::new();
+    // Covers every one of whose regions was proposed for, but at least one of
+    // which the target refused. A reader expects those ruled out by feasibility
+    // rather than by a missing capability, so each is noted in the terminal
+    // ledger as an infeasible alternative.
+    let mut refused_covers: Vec<(String, TerminalCause)> = Vec::new();
+    for cover in enumeration.covers() {
+        if cover
+            .regions()
+            .iter()
+            .any(|region| illegal.contains(region.occurrence()))
+        {
+            continue;
+        }
+        let mut region_frontiers = Vec::with_capacity(cover.region_count());
+        let mut proposed_everywhere = true;
+        let mut refusal: Option<TerminalCause> = None;
+        for region in cover.regions() {
+            let role = region_role(verified, region.members());
+            let subject = FrontierRegionSubject::new(role, region.members().to_vec());
+            let frontier =
+                enumerate_frontier(verified, &subject, &providers).map_err(|source| {
+                    failure_at_source(
+                        source.into(),
+                        ExplainStage::IntrinsicScheduling,
+                        record_cause(numerical_cause),
+                    )
+                })?;
+            if frontier.admitted().is_empty() && frontier.rejections().is_empty() {
+                proposed_everywhere = false;
+            }
+            // One region role yields one region subject, so its frontier and any
+            // rejection it carries are recorded exactly once however many covers
+            // place that same region.
+            let first_sighting = !recorded_roles.contains_key(role);
+            if first_sighting {
+                frontier_cause = record_frontier(explain, role, &frontier, frontier_cause)?;
+                for rejection in frontier.rejections() {
+                    if let crate::frontier::FrontierRejection::Infeasible {
+                        axis,
+                        required,
+                        available,
+                        ..
+                    } = rejection
+                    {
+                        let error = PhysicalError::Target {
+                            rule: axis,
+                            region: region_id_of(cover, region),
+                            required: *required,
+                            available: *available,
+                        };
+                        let cause = record_target_rejection(explain, &error, role, frontier_cause)?;
+                        recorded_roles.insert(role, Some(cause.clone()));
+                        rejections.push(TargetRejection { role, error, cause })?;
+                    }
+                }
+                recorded_roles.entry(role).or_insert(None);
+            }
+            if let Some(Some(cause)) = recorded_roles.get(role) {
+                refusal.get_or_insert_with(|| cause.clone());
+            }
+            region_frontiers.push(RegionFrontier::new(subject, frontier));
+        }
+        if proposed_everywhere && let Some(cause) = refusal {
+            refused_covers.push((cover.identity().label(), cause));
+        }
+        sources.push(CoverFrontiers::new(cover.clone(), region_frontiers));
+    }
+
+    let portfolio =
+        select_physical_plans(semantic, budgets, contract, &sources).map_err(|source| {
+            failure_at_source(
+                source.into(),
+                ExplainStage::Selection,
+                record_cause(frontier_cause),
+            )
+        })?;
+    for (label, cause) in refused_covers {
+        if portfolio
+            .plans()
+            .iter()
+            .all(|plan| plan.cover().identity().label() != label)
+        {
+            note_infeasible_cover(explain, &label, Some(cause))?;
+        }
+    }
+    let selection_record = record_plan_selection(explain, &portfolio, frontier_cause)?;
+    Ok(CompletePlans {
+        portfolio,
+        legality,
+        numerical,
+        rejections,
+        selection_record,
+    })
+}
+
+/// Returns the planning ordinal a cover region's implementation will carry.
+///
+/// The ordinal is presentation only; a rejected proposal has no verified region,
+/// so the region subject's position in the cover is the stable coordinate to
+/// attribute the rejection to.
+fn region_id_of(
+    cover: &RegionCover,
+    region: &crate::cover::CoverRegion,
+) -> crate::physical::RegionId {
+    let position = cover
+        .regions()
+        .iter()
+        .position(|candidate| candidate.occurrence() == region.occurrence())
+        .unwrap_or(0);
+    crate::physical::RegionId::new(u32::try_from(position).unwrap_or(u32::MAX))
+}
+
+/// Assembles one retained complete plan into KIR, a kernel program, and a plan.
+fn build_alternative(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    verified: &crate::request::VerifiedTargetRequest,
+    plan: &SelectedPlan,
+    kind: ProgramAlternativeKind,
+    legality: &std::collections::BTreeMap<
+        crate::region::RegionOccurrenceIdentity,
+        Box<FusionLegalityProof>,
+    >,
+    numerical: Option<Box<FusionNumericalProof>>,
+    cause: Option<&TerminalCause>,
+) -> Result<ProgramAlternative, TargetFailure> {
+    let scheduled = plan_regions(plan);
+    let kernels = scheduled
+        .iter()
+        .map(lower_structured_kernel)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            let stage = physical_error_stage(&error);
+            failure_at_source(error.into(), stage, cause.cloned())
+        })?;
+    let program = build_plan_program(semantic, verified, kind, &scheduled).map_err(|error| {
+        failure_at_source(error, ExplainStage::ProgramVerification, cause.cloned())
+    })?;
+    assert_kernels_match_program(verified, &scheduled, &program, &kernels).map_err(|error| {
+        failure_at_source(
+            error.into(),
+            ExplainStage::ProgramVerification,
+            cause.cloned(),
+        )
+    })?;
+    let artifact_plan = build_artifact_plan(
+        semantic,
+        verified,
+        &scheduled,
+        &kernels,
+        &program,
+        plan_providers(verified, kind),
+    )
+    .map_err(|error| {
+        failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.cloned())
+    })?;
+    let equivalence = EquivalenceEvidence {
+        legality: plan
+            .cover()
+            .regions()
+            .iter()
+            .enumerate()
+            .filter_map(|(position, region)| {
+                legality
+                    .get(region.occurrence())
+                    .map(|proof| (position, proof.clone()))
+            })
+            .collect(),
+        numerical: match kind {
+            ProgramAlternativeKind::Fused => numerical,
+            ProgramAlternativeKind::Materialized => None,
+        },
+    };
+    Ok(ProgramAlternative {
+        stable_id: plan.identity().label(),
+        kind,
+        plan: plan.clone(),
+        scheduled_regions: scheduled,
+        kernels,
+        program,
+        artifact_plan,
+        structural_cost: plan.cost(),
+        equivalence,
+    })
+}
+
+/// Returns a plan's verified scheduled regions in ascending planning order.
+///
+/// A plan's selections are in canonical occurrence order, which is content
+/// derived rather than execution ordered. Downstream program assembly consumes
+/// producers before consumers, so the regions are ordered by the planning ordinal
+/// the request-subject binding already pinned for each recognized region.
+fn plan_regions(plan: &SelectedPlan) -> Vec<VerifiedScheduledRegion> {
+    let mut regions: Vec<VerifiedScheduledRegion> = plan
+        .selections()
+        .iter()
+        .map(|selection| selection.implementation().verified().clone())
+        .collect();
+    regions.sort_by_key(|region| region.region().index.id.get());
+    regions
+}
+
+/// Assembles the verified kernel program for one plan shape.
+///
+/// The bounded profile implements exactly two program shapes: a one-region fused
+/// program and a two-region materialized program. Any other retained plan shape
+/// is invalid compiler output and rejects explicitly rather than being
+/// approximated by the closest implemented assembly.
+fn build_plan_program(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    verified: &crate::request::VerifiedTargetRequest,
+    kind: ProgramAlternativeKind,
+    scheduled: &[VerifiedScheduledRegion],
+) -> Result<KernelProgram, CompileError> {
+    match (kind, scheduled) {
+        (ProgramAlternativeKind::Fused, [region]) => {
+            build_fused_kernel_program(semantic, verified, region).map_err(CompileError::from)
+        }
+        (ProgramAlternativeKind::Materialized, [_, _]) => {
+            build_kernel_program(semantic, verified, scheduled).map_err(CompileError::from)
+        }
+        _ => Err(CompileError::from(ProgramError::Structure {
+            rule: "unsupported-plan-shape",
+        })),
+    }
+}
+
+/// Returns the lowering providers whose implementations the plan realizes.
+fn plan_providers(
+    verified: &crate::request::VerifiedTargetRequest,
+    kind: ProgramAlternativeKind,
+) -> Vec<crate::request::LoweringProviderIdentity> {
+    match kind {
+        ProgramAlternativeKind::Fused => verified
+            .capabilities()
+            .fused_serial_sum
+            .into_iter()
+            .collect(),
+        ProgramAlternativeKind::Materialized => {
+            vec![verified.capabilities().materialized_serial_sum]
+        }
+    }
+}
+
+/// Returns the identity of the first structurally non-dominated alternative.
+///
+/// Domination is the Pareto relation the selection authority already computed
+/// over exact structural counts; it is never a scalar latency total order. When
+/// several plans are mutually non-dominated the canonical identity order breaks
+/// the tie deterministically, so the choice is reproducible without inventing a
+/// preference between incomparable trade-offs.
+fn select_non_dominated(
+    portfolio: &SelectedPortfolio,
+    alternatives: &[ProgramAlternative],
+) -> Result<String, CompileError> {
+    let retained = portfolio.non_dominated();
+    let selected = retained
+        .iter()
+        .map(|plan| plan.identity().label())
+        .find(|label| {
+            alternatives
+                .iter()
+                .any(|alternative| &alternative.stable_id == label)
+        });
+    selected.ok_or(CompileError::InvalidCompilerOutput(
+        CompilerOutputError::Program(ProgramError::Structure {
+            rule: "portfolio-empty",
+        }),
+    ))
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one exhaustive match keeps every compile-error class beside the exact reason code, subject kind, and subject key it is attributed to"
+)]
 fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String) {
     match error {
         CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
@@ -719,6 +1252,27 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
             format!("normalize-{}", error.reason()),
             SubjectKind::Normalization,
             NORMALIZATION_SUBJECT.to_owned(),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Cover(error)) => (
+            format!("cover-{}-{}", error.class(), error.reason()),
+            SubjectKind::Candidate,
+            "region-cover".to_owned(),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::FusionLegality(error)) => (
+            format!("fusion-legality-{}", error.reason()),
+            SubjectKind::Candidate,
+            "fusion-legality".to_owned(),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Frontier(error)) => (
+            format!("frontier-{}", error.reason()),
+            SubjectKind::Schedule,
+            "implementation-frontier".to_owned(),
+        ),
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(error))
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Selection(error)) => (
+            format!("selection-{}-{}", error.class(), error.reason()),
+            SubjectKind::KernelProgram,
+            "portfolio".to_owned(),
         ),
         CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(error))
         | CompileError::InvalidRequest(error)
@@ -809,89 +1363,6 @@ fn explain_error_reason(error: &ExplainError) -> &'static str {
     }
 }
 
-fn build_baseline_alternative(
-    semantic: &tiler_ir::semantic::SemanticProgram,
-    verified: &crate::request::VerifiedTargetRequest,
-    cause: Option<TerminalCause>,
-) -> Result<ProgramAlternative, TargetFailure> {
-    let baseline_regions = build_scheduled_regions(verified).map_err(|error| {
-        let stage = physical_error_stage(&error);
-        failure_at_source(error.into(), stage, cause.clone())
-    })?;
-    let baseline_kernels = baseline_regions
-        .iter()
-        .map(lower_structured_kernel)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            let stage = physical_error_stage(&error);
-            failure_at_source(error.into(), stage, cause.clone())
-        })?;
-    let baseline_program =
-        build_kernel_program(semantic, verified, &baseline_regions).map_err(|error| {
-            failure_at_source(
-                error.into(),
-                ExplainStage::ProgramVerification,
-                cause.clone(),
-            )
-        })?;
-    assert_kernels_match_program(
-        verified,
-        &baseline_regions,
-        &baseline_program,
-        &baseline_kernels,
-    )
-    .map_err(|error| {
-        failure_at_source(
-            error.into(),
-            ExplainStage::ProgramVerification,
-            cause.clone(),
-        )
-    })?;
-    let baseline_artifact = build_artifact_plan(
-        semantic,
-        verified,
-        &baseline_regions,
-        &baseline_kernels,
-        &baseline_program,
-        vec![verified.capabilities().materialized_serial_sum],
-    )
-    .map_err(|error| {
-        failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.clone())
-    })?;
-    let input_bytes = verified
-        .serial_sum()
-        .input_elements
-        .checked_mul(4)
-        .ok_or_else(|| {
-            failure_at_source(
-                CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(
-                    RequestError::ShapeProductOverflow {
-                        role: "input-bytes",
-                    },
-                )),
-                ExplainStage::Costing,
-                cause,
-            )
-        })?;
-    Ok(ProgramAlternative {
-        stable_id: "alternative:materialized-serial-sum.v1",
-        kind: ProgramAlternativeKind::Materialized,
-        scheduled_regions: baseline_regions,
-        kernels: baseline_kernels,
-        program: baseline_program,
-        artifact_plan: baseline_artifact,
-        structural_cost: StructuralCost {
-            model_key: STRUCTURAL_COST_MODEL_KEY,
-            dispatch_count: 2,
-            temporary_allocation_count: 1,
-            materialized_bytes: input_bytes,
-            intermediate_global_reads: input_bytes,
-            intermediate_global_writes: input_bytes,
-        },
-        equivalence: EquivalenceEvidence::MaterializedReference,
-    })
-}
-
 fn check(
     stage: ExplainStage,
     predicate: &str,
@@ -961,330 +1432,270 @@ fn optional_cause(cause: Option<ExplainRecordId>) -> Vec<ExplainRecordId> {
     cause.into_iter().collect()
 }
 
-fn record_baseline_explain(
+/// Records the bounded cover enumeration, its budget stops, and infeasibility.
+fn record_cover_enumeration(
     explain: &mut ExplainWriter,
-    request: &crate::request::VerifiedTargetRequest,
-    alternative: &ProgramAlternative,
+    enumeration: &CoverEnumeration,
     root: Option<ExplainRecordId>,
 ) -> Result<Option<ExplainRecordId>, TargetFailure> {
-    let mut boundary_causes = Vec::new();
-    for scheduled in &alternative.scheduled_regions {
-        let region_id = scheduled.region().index.id.get();
-        let key = format!("{}/region:{region_id}", alternative.stable_id);
-        let record = explain_step(
+    let mut cause = record_count_step(
+        explain,
+        "cover.enumeration.v1",
+        SubjectKind::Candidate,
+        "region-cover",
+        ExplainStage::CandidateEnumeration,
+        "cover.complete-and-legal",
+        "cover-count",
+        enumeration.covers().len(),
+        root,
+    )?;
+    for stop in enumeration.budget_stops() {
+        cause = explain_step(
             (|| -> Result<_, CompileError> {
-                let subject = explain.subject(SubjectKind::Region, &key)?;
+                let subject = explain.subject(SubjectKind::Candidate, "region-cover")?;
                 Ok(explain.push_detail(
-                    RuleRef::provided(
-                        "compile.region.verified",
-                        1,
-                        ProviderRef::lowering(request.capabilities().materialized_serial_sum)?,
-                    )?,
+                    RuleRef::builtin("cover.enumeration.v1")?,
                     vec![subject],
-                    check(
-                        ExplainStage::RegionFormation,
-                        "region.semantic-coverage",
-                        EvidenceBasis::CheckedInvariant,
-                    )?,
-                    optional_cause(root),
+                    ExplainEvent::BudgetStop {
+                        stage: ExplainStage::CandidateEnumeration,
+                        resource: crate::explain::ResourceKey::new(stop.resource.key())?,
+                        limit: stop.limit,
+                        actual: stop.actual,
+                    },
+                    optional_cause(cause),
                 )?)
             })(),
-            ExplainStage::RegionFormation,
-            SubjectKind::Region,
-            &key,
-            record_cause(root),
+            ExplainStage::CandidateEnumeration,
+            SubjectKind::Candidate,
+            "region-cover",
+            record_cause(cause),
         )?;
-        boundary_causes.extend(optional_cause(record));
     }
-    let key = format!("{}/materialized-boundary", alternative.stable_id);
-    let boundary = explain_step(
-        (|| -> Result<_, CompileError> {
-            let subject = explain.subject(SubjectKind::Boundary, &key)?;
-            Ok(explain.push_detail(
-                RuleRef::builtin("compile.boundary.materialized")?,
-                vec![subject],
-                check_with_count(
-                    ExplainStage::RegionFormation,
-                    "boundary.materialized",
-                    "dependency-count",
-                    alternative.program.dependency_count(),
-                )?,
-                boundary_causes,
-            )?)
-        })(),
-        ExplainStage::RegionFormation,
-        SubjectKind::Boundary,
-        &key,
-        record_cause(root),
-    )?;
-    record_baseline_refinement(explain, request, alternative, boundary)
+    for infeasibility in enumeration.infeasibilities() {
+        cause = explain_step(
+            (|| -> Result<_, CompileError> {
+                let subject = explain.subject(SubjectKind::Candidate, "region-cover")?;
+                Ok(explain.push_detail(
+                    RuleRef::builtin("cover.enumeration.v1")?,
+                    vec![subject],
+                    ExplainEvent::DeferredCapability {
+                        predicate: PredicateKey::new("cover.complete-and-legal")?,
+                        reason: ReasonCode::new(infeasibility.reason())?,
+                    },
+                    optional_cause(cause),
+                )?)
+            })(),
+            ExplainStage::CandidateEnumeration,
+            SubjectKind::Candidate,
+            "region-cover",
+            record_cause(cause),
+        )?;
+    }
+    Ok(cause)
 }
 
-fn record_baseline_refinement(
+/// Records one region's typed fusion-legality outcome.
+///
+/// A legal region is an admitted check attributed to the capability provider that
+/// declared the member operations' fusion roles; a rejection is a disproved
+/// numerical-legality check, and an unknown is a deferred capability. The three
+/// stay distinct classes rather than collapsing into one "not fused" verdict.
+fn record_fusion_legality(
     explain: &mut ExplainWriter,
-    request: &crate::request::VerifiedTargetRequest,
-    alternative: &ProgramAlternative,
-    boundary: Option<ExplainRecordId>,
+    capabilities: &FusionNumericalCapabilities,
+    candidate: &RegionCandidate,
+    outcome: &FusionLegality,
+    cause: Option<ExplainRecordId>,
 ) -> Result<Option<ExplainRecordId>, TargetFailure> {
-    let key = format!("{}/schedules", alternative.stable_id);
-    let schedule = record_count_step(
-        explain,
-        "schedule.coverage-and-ownership",
-        SubjectKind::Schedule,
+    let key = candidate.label().to_owned();
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let provider = ProviderRef::registered(capabilities.provider())?;
+            let rule = RuleRef::provided("fusion.legality.v1", capabilities.revision(), provider)?;
+            let subject = explain.subject(SubjectKind::Candidate, &key)?;
+            let event = match outcome {
+                FusionLegality::Legal(_) => ExplainEvent::Check {
+                    stage: ExplainStage::NumericalLegality,
+                    assessment: PredicateAssessment::proven(
+                        "fusion.obligations-discharged",
+                        EvidenceBasis::CheckedInvariant,
+                    )?,
+                    rejection: RejectionClass::NumericalIllegal,
+                },
+                FusionLegality::Rejected(rejection) => ExplainEvent::Check {
+                    stage: ExplainStage::NumericalLegality,
+                    assessment: PredicateAssessment::disproved(
+                        "fusion.obligations-discharged",
+                        ReasonCode::new(rejection.reason())?,
+                        EvidenceBasis::CheckedInvariant,
+                    )?,
+                    rejection: RejectionClass::NumericalIllegal,
+                },
+                FusionLegality::Unknown(unknown) => ExplainEvent::DeferredCapability {
+                    predicate: PredicateKey::new("fusion.obligations-discharged")?,
+                    reason: ReasonCode::new(unknown.reason())?,
+                },
+            };
+            Ok(explain.push_detail(rule, vec![subject], event, optional_cause(cause))?)
+        })(),
+        ExplainStage::NumericalLegality,
+        SubjectKind::Candidate,
         &key,
-        ExplainStage::IntrinsicScheduling,
-        "schedule.intrinsic-valid",
-        "schedule-count",
-        alternative.scheduled_regions.len(),
-        boundary,
-    )?;
-    let target = record_target_admissions(explain, request, alternative, schedule)?;
-    let key = format!("{}/kernels", alternative.stable_id);
-    let kernel = record_count_step(
-        explain,
-        "kernel.schedule-refinement",
-        SubjectKind::Kernel,
-        &key,
-        ExplainStage::KernelRefinement,
-        "kernel.exact-refinement",
-        "kernel-count",
-        alternative.kernels.len(),
-        target,
-    )?;
-    let key = format!("{}/program", alternative.stable_id);
-    let program = record_count_step(
-        explain,
-        "program.two-stage-materialized",
-        SubjectKind::KernelProgram,
-        &key,
-        ExplainStage::ProgramVerification,
-        "program.verified",
-        "stage-count",
-        alternative.program.stage_count(),
-        kernel,
-    )?;
-    let key = format!("{}/artifact", alternative.stable_id);
-    record_count_step(
-        explain,
-        "artifact.neutral-construction-plan",
-        SubjectKind::ArtifactPlan,
-        &key,
-        ExplainStage::ArtifactPlanning,
-        "artifact.plan-verified",
-        "provider-count",
-        alternative.artifact_plan.lowering_providers().len(),
-        program,
+        record_cause(cause),
     )
 }
 
-#[allow(
-    clippy::too_many_lines,
-    clippy::too_many_arguments,
-    reason = "keeps one fused-alternative transaction and its explain causes together"
-)]
-fn consider_fused_alternative(
-    semantic: &tiler_ir::semantic::SemanticProgram,
-    verified: &crate::request::VerifiedTargetRequest,
-    formation: &RegionFormationOutcome,
-    alternatives: &mut Vec<ProgramAlternative>,
+/// Records that no lowering provider is installed for the fused whole-program
+/// region, so the fused alternative is deferred rather than illegal.
+fn record_deferred_fusion_capability(
     explain: &mut ExplainWriter,
-    records: RegionFormationRecords,
-    alternative_causes: &mut Vec<(&'static str, Option<ExplainRecordId>)>,
-    target_rejections: &mut TargetRejections,
+    cause: Option<ExplainRecordId>,
 ) -> Result<(), TargetFailure> {
-    let root = records.summary;
-    match formation.whole_program_candidate() {
-        // A whole-graph set is trivially convex, so for a request the boundary
-        // already admitted the only reason it can be absent is a budget that
-        // stopped that growth path. Its typed stop is already recorded, and the
-        // unfused baseline survives.
-        None if !formation.budget_stops().is_empty() => {}
-        None => {
-            return Err(failure_at_source(
-                CompileError::InvalidCompilerOutput(CompilerOutputError::Region(
-                    RegionError::Structure {
-                        rule: "missing-whole-program-region",
-                    },
-                )),
-                ExplainStage::RegionFormation,
-                record_cause(root),
-            ));
-        }
-        Some(fused_candidate) => {
-            let fused_candidate_record = records.whole_program;
-            if let Some(provider) = verified.capabilities().fused_serial_sum {
-                let proof = prove_fused_numerics(formation.graph(), verified, fused_candidate)
-                    .map_err(|error| {
-                        failure_at_source(
-                            error.into(),
-                            ExplainStage::NumericalLegality,
-                            record_cause(fused_candidate_record.or(root)),
-                        )
-                    })?;
-                let proof_record = (|| -> Result<_, CompileError> {
-                    let provider_ref = ProviderRef::lowering(provider)?;
-                    let subject =
-                        explain.subject(SubjectKind::Candidate, fused_candidate.label())?;
-                    Ok(explain.push_detail(
-                        RuleRef::provided(
-                            "fusion.strict-f32-equivalence",
-                            1,
-                            provider_ref.clone(),
-                        )?,
-                        vec![subject],
-                        check(
-                            ExplainStage::NumericalLegality,
-                            "fusion.strict-f32-equivalence",
-                            EvidenceBasis::SoundProof(VerifiedEvidenceRef::from_fusion_numerical(
-                                verified,
-                                &proof,
-                                provider_ref,
-                            )?),
-                        )?,
-                        optional_cause(fused_candidate_record),
-                    )?)
-                })()
-                .map_err(|source| {
-                    failure_at_source(
-                        source,
-                        ExplainStage::NumericalLegality,
-                        record_cause(fused_candidate_record.or(root)),
-                    )
-                })?;
-                match build_fused_scheduled_region(verified) {
-                    Err(error @ PhysicalError::Target { .. }) => {
-                        let cause = record_target_rejection(
-                            explain,
-                            &error,
-                            "alternative:fused-serial-sum.v1",
-                            proof_record.or(root),
-                        )?;
-                        target_rejections.push(TargetRejection {
-                            kind: ProgramAlternativeKind::Fused,
-                            error,
-                            cause,
-                        })?;
-                    }
-                    Err(error) => {
-                        let stage = physical_error_stage(&error);
-                        return Err(failure_at_source(
-                            error.into(),
-                            stage,
-                            record_cause(proof_record.or(root)),
-                        ));
-                    }
-                    Ok(fused_region) => {
-                        let fused_kernel =
-                            lower_structured_kernel(&fused_region).map_err(|error| {
-                                let stage = physical_error_stage(&error);
-                                failure_at_source(
-                                    error.into(),
-                                    stage,
-                                    record_cause(proof_record.or(root)),
-                                )
-                            })?;
-                        let fused_program =
-                            build_fused_kernel_program(semantic, verified, &fused_region).map_err(
-                                |error| {
-                                    failure_at_source(
-                                        error.into(),
-                                        ExplainStage::ProgramVerification,
-                                        record_cause(proof_record.or(root)),
-                                    )
-                                },
-                            )?;
-                        assert_kernels_match_program(
-                            verified,
-                            std::slice::from_ref(&fused_region),
-                            &fused_program,
-                            std::slice::from_ref(&fused_kernel),
-                        )
-                        .map_err(|error| {
-                            failure_at_source(
-                                error.into(),
-                                ExplainStage::ProgramVerification,
-                                record_cause(proof_record.or(root)),
-                            )
-                        })?;
-                        let fused_artifact = build_artifact_plan(
-                            semantic,
-                            verified,
-                            std::slice::from_ref(&fused_region),
-                            std::slice::from_ref(&fused_kernel),
-                            &fused_program,
-                            vec![provider],
-                        )
-                        .map_err(|error| {
-                            failure_at_source(
-                                error.into(),
-                                ExplainStage::ArtifactPlanning,
-                                record_cause(proof_record.or(root)),
-                            )
-                        })?;
-                        let alternative = fused_alternative(
-                            fused_region,
-                            fused_kernel,
-                            fused_program,
-                            fused_artifact,
-                            proof,
-                        );
-                        let cause = record_fused_refinement(
-                            explain,
-                            verified,
-                            &alternative,
-                            proof_record.or(root),
-                        )?;
-                        alternative_causes.push(("alternative:fused-serial-sum.v1", cause));
-                        alternatives.push(alternative);
-                    }
-                }
-            } else {
-                (|| -> Result<_, CompileError> {
-                    let subject = explain.subject(
-                        SubjectKind::Capability,
-                        "fused-serial-sum/provider:tiler.prototype.fused-serial-sum@1",
-                    )?;
-                    explain.push_detail(
-                        RuleRef::builtin("fusion.capability-resolution")?,
-                        vec![subject],
-                        ExplainEvent::DeferredCapability {
-                            predicate: PredicateKey::new("fusion.provider-available")?,
-                            reason: ReasonCode::new("provider-unavailable")?,
-                        },
-                        optional_cause(fused_candidate_record),
-                    )?;
-                    Ok(())
-                })()
-                .map_err(|source| {
-                    failure_at_source(
-                        source,
-                        ExplainStage::CapabilityResolution,
-                        record_cause(fused_candidate_record.or(root)),
-                    )
-                })?;
-            }
-        }
-    }
-    Ok(())
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(
+                SubjectKind::Capability,
+                "fused-serial-sum/provider:tiler.prototype.fused-serial-sum@1",
+            )?;
+            explain.push_detail(
+                RuleRef::builtin("fusion.capability-resolution")?,
+                vec![subject],
+                ExplainEvent::DeferredCapability {
+                    predicate: PredicateKey::new("fusion.provider-available")?,
+                    reason: ReasonCode::new("provider-unavailable")?,
+                },
+                optional_cause(cause),
+            )?;
+            Ok(())
+        })(),
+        ExplainStage::CapabilityResolution,
+        SubjectKind::Capability,
+        "fused-serial-sum/provider:tiler.prototype.fused-serial-sum@1",
+        record_cause(cause),
+    )
 }
 
+/// Records the whole-program strict-`f32` numerical equivalence sound proof.
+fn record_numerical_equivalence(
+    explain: &mut ExplainWriter,
+    verified: &crate::request::VerifiedTargetRequest,
+    candidate: &RegionCandidate,
+    proof: &FusionNumericalProof,
+    cause: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let key = candidate.label().to_owned();
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let provider = verified.capabilities().fused_serial_sum.ok_or_else(|| {
+                CompileError::from(ProgramError::Structure {
+                    rule: "fused-provider-missing",
+                })
+            })?;
+            let provider_ref = ProviderRef::lowering(provider)?;
+            let subject = explain.subject(SubjectKind::Candidate, &key)?;
+            Ok(explain.push_detail(
+                RuleRef::provided("fusion.strict-f32-equivalence", 1, provider_ref.clone())?,
+                vec![subject],
+                check(
+                    ExplainStage::NumericalLegality,
+                    "fusion.strict-f32-equivalence",
+                    EvidenceBasis::SoundProof(VerifiedEvidenceRef::from_fusion_numerical(
+                        verified,
+                        proof,
+                        provider_ref,
+                    )?),
+                )?,
+                optional_cause(cause),
+            )?)
+        })(),
+        ExplainStage::NumericalLegality,
+        SubjectKind::Candidate,
+        &key,
+        record_cause(cause),
+    )
+}
+
+/// Records one region subject's bounded implementation frontier.
+fn record_frontier(
+    explain: &mut ExplainWriter,
+    role: &'static str,
+    frontier: &crate::frontier::ImplementationFrontier,
+    cause: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let key = format!("region:{role}");
+    record_count_step(
+        explain,
+        "frontier.enumeration.v1",
+        SubjectKind::Schedule,
+        &key,
+        ExplainStage::IntrinsicScheduling,
+        "frontier.locally-feasible",
+        "admitted-count",
+        frontier.admitted().len(),
+        cause,
+    )
+}
+
+/// Records the complete-plan join: how many valid plans the portfolio retained.
+fn record_plan_selection(
+    explain: &mut ExplainWriter,
+    portfolio: &SelectedPortfolio,
+    cause: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let mut cause = record_count_step(
+        explain,
+        "selection.complete-plan.v1",
+        SubjectKind::KernelProgram,
+        "portfolio",
+        ExplainStage::CandidateEnumeration,
+        "selection.plans-complete-and-composed",
+        "plan-count",
+        portfolio.plans().len(),
+        cause,
+    )?;
+    for stop in portfolio.budget_stops() {
+        cause = explain_step(
+            (|| -> Result<_, CompileError> {
+                let subject = explain.subject(SubjectKind::KernelProgram, "portfolio")?;
+                Ok(explain.push_detail(
+                    RuleRef::builtin("selection.complete-plan.v1")?,
+                    vec![subject],
+                    ExplainEvent::BudgetStop {
+                        stage: ExplainStage::CandidateEnumeration,
+                        resource: crate::explain::ResourceKey::new(stop.resource.key())?,
+                        limit: stop.limit,
+                        actual: stop.actual,
+                    },
+                    optional_cause(cause),
+                )?)
+            })(),
+            ExplainStage::CandidateEnumeration,
+            SubjectKind::KernelProgram,
+            "portfolio",
+            record_cause(cause),
+        )?;
+    }
+    Ok(cause)
+}
+
+/// Records one region subject's hard-infeasible target rejection.
 fn record_target_rejection(
     explain: &mut ExplainWriter,
     error: &PhysicalError,
-    alternative: &str,
+    role: &'static str,
     cause: Option<ExplainRecordId>,
 ) -> Result<TerminalCause, TargetFailure> {
     let PhysicalError::Target {
         rule,
-        region,
         required,
         available,
+        ..
     } = error
     else {
         unreachable!("target rejection records require a target-feasibility error")
     };
-    let key = format!("{alternative}/region:{}", region.get());
-    let rejected = explain_step(
+    let key = format!("region:{role}");
+    explain_step(
         (|| -> Result<_, CompileError> {
             let subject = explain.subject(SubjectKind::Region, &key)?;
             Ok(explain.push_causal_detail(
@@ -1305,19 +1716,26 @@ fn record_target_rejection(
         SubjectKind::Region,
         &key,
         record_cause(cause),
-    )?;
+    )
+}
+
+/// Notes one cover as an infeasible alternative in the terminal ledger.
+fn note_infeasible_cover(
+    explain: &mut ExplainWriter,
+    label: &str,
+    cause: Option<TerminalCause>,
+) -> Result<(), TargetFailure> {
     explain_step(
         (|| -> Result<_, CompileError> {
-            let subject = explain.subject(SubjectKind::Alternative, alternative)?;
-            explain.note_infeasible_alternative(subject, Some(rejected.clone()))?;
+            let subject = explain.subject(SubjectKind::Alternative, label)?;
+            explain.note_infeasible_alternative(subject, cause.clone())?;
             Ok(())
         })(),
         ExplainStage::Selection,
         SubjectKind::Alternative,
-        alternative,
-        Some(rejected.clone()),
-    )?;
-    Ok(rejected)
+        label,
+        cause,
+    )
 }
 
 fn record_target_admissions(
@@ -1381,29 +1799,80 @@ fn target_quantity(rule: &str, value: u64) -> Result<Quantity, ExplainError> {
     }
 }
 
-fn record_fused_refinement(
+/// Records one retained alternative's per-layer admitted evidence.
+fn record_alternative_explain(
     explain: &mut ExplainWriter,
     request: &crate::request::VerifiedTargetRequest,
     alternative: &ProgramAlternative,
     root: Option<ExplainRecordId>,
 ) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let mut boundary_causes = Vec::new();
+    for scheduled in &alternative.scheduled_regions {
+        let region_id = scheduled.region().index.id.get();
+        let key = format!("{}/region:{region_id}", alternative.stable_id);
+        let record = explain_step(
+            (|| -> Result<_, CompileError> {
+                let subject = explain.subject(SubjectKind::Region, &key)?;
+                Ok(explain.push_detail(
+                    RuleRef::provided(
+                        "compile.region.verified",
+                        1,
+                        ProviderRef::registered(&GovernedPhysicalProvider::identity())?,
+                    )?,
+                    vec![subject],
+                    check(
+                        ExplainStage::RegionFormation,
+                        "region.semantic-coverage",
+                        EvidenceBasis::CheckedInvariant,
+                    )?,
+                    optional_cause(root),
+                )?)
+            })(),
+            ExplainStage::RegionFormation,
+            SubjectKind::Region,
+            &key,
+            record_cause(root),
+        )?;
+        boundary_causes.extend(optional_cause(record));
+    }
+    let key = format!("{}/boundary", alternative.stable_id);
+    let boundary = explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(SubjectKind::Boundary, &key)?;
+            Ok(explain.push_detail(
+                RuleRef::builtin("compile.plan.boundary")?,
+                vec![subject],
+                check_with_count(
+                    ExplainStage::RegionFormation,
+                    "boundary.handoffs-satisfied",
+                    "handoff-count",
+                    alternative.plan.handoffs().len(),
+                )?,
+                boundary_causes,
+            )?)
+        })(),
+        ExplainStage::RegionFormation,
+        SubjectKind::Boundary,
+        &key,
+        record_cause(root),
+    )?;
     let key = format!("{}/schedules", alternative.stable_id);
     let schedule = record_count_step(
         explain,
-        "schedule.fused-serial-sum",
+        "schedule.plan-regions",
         SubjectKind::Schedule,
         &key,
         ExplainStage::IntrinsicScheduling,
         "schedule.intrinsic-valid",
         "schedule-count",
         alternative.scheduled_regions.len(),
-        root,
+        boundary,
     )?;
     let target = record_target_admissions(explain, request, alternative, schedule)?;
     let key = format!("{}/kernels", alternative.stable_id);
     let kernel = record_count_step(
         explain,
-        "kernel.fused-schedule-refinement",
+        "kernel.plan-refinement",
         SubjectKind::Kernel,
         &key,
         ExplainStage::KernelRefinement,
@@ -1415,7 +1884,7 @@ fn record_fused_refinement(
     let key = format!("{}/program", alternative.stable_id);
     let program = record_count_step(
         explain,
-        "program.fused-serial-sum",
+        "program.plan-verified",
         SubjectKind::KernelProgram,
         &key,
         ExplainStage::ProgramVerification,
@@ -1427,7 +1896,7 @@ fn record_fused_refinement(
     let key = format!("{}/artifact", alternative.stable_id);
     record_count_step(
         explain,
-        "artifact.fused-construction-plan",
+        "artifact.plan-construction",
         SubjectKind::ArtifactPlan,
         &key,
         ExplainStage::ArtifactPlanning,
@@ -1438,36 +1907,10 @@ fn record_fused_refinement(
     )
 }
 
-fn fused_alternative(
-    region: VerifiedScheduledRegion,
-    kernel: VerifiedKernel,
-    program: KernelProgram,
-    artifact_plan: ArtifactConstructionPlan,
-    proof: FusionNumericalProof,
-) -> ProgramAlternative {
-    ProgramAlternative {
-        stable_id: "alternative:fused-serial-sum.v1",
-        kind: ProgramAlternativeKind::Fused,
-        scheduled_regions: vec![region],
-        kernels: vec![kernel],
-        program,
-        artifact_plan,
-        structural_cost: StructuralCost {
-            model_key: STRUCTURAL_COST_MODEL_KEY,
-            dispatch_count: 1,
-            temporary_allocation_count: 0,
-            materialized_bytes: 0,
-            intermediate_global_reads: 0,
-            intermediate_global_writes: 0,
-        },
-        equivalence: EquivalenceEvidence::Fused(Box::new(proof)),
-    }
-}
-
 fn record_cost_and_selection(
     alternatives: &[ProgramAlternative],
     selected_alternative_id: &str,
-    causes: &[(&'static str, Option<ExplainRecordId>)],
+    causes: &[(String, Option<ExplainRecordId>)],
     explain: &mut ExplainWriter,
 ) -> Result<(), TargetFailure> {
     for alternative in alternatives {
@@ -1478,27 +1921,18 @@ fn record_cost_and_selection(
             .flatten();
         let (subject, cost_record) = explain_step(
             (|| -> Result<_, CompileError> {
-                let subject = explain.subject(SubjectKind::Alternative, alternative.stable_id)?;
+                let subject =
+                    explain.subject(SubjectKind::Alternative, alternative.stable_id.as_str())?;
                 let terms = vec![
+                    CostTerm::new("dispatch-count", Quantity::Count(cost.dispatch_count()))?,
                     CostTerm::new(
-                        "dispatch-count",
-                        Quantity::Count(u64::from(cost.dispatch_count)),
+                        "launched-threads",
+                        Quantity::Threads(cost.launched_threads()),
                     )?,
+                    CostTerm::new("temporary-bytes", Quantity::Bytes(cost.temporary_bytes()))?,
                     CostTerm::new(
-                        "temporary-allocation-count",
-                        Quantity::Count(u64::from(cost.temporary_allocation_count)),
-                    )?,
-                    CostTerm::new(
-                        "materialized-bytes",
-                        Quantity::Bytes(cost.materialized_bytes),
-                    )?,
-                    CostTerm::new(
-                        "intermediate-global-reads",
-                        Quantity::Bytes(cost.intermediate_global_reads),
-                    )?,
-                    CostTerm::new(
-                        "intermediate-global-writes",
-                        Quantity::Bytes(cost.intermediate_global_writes),
+                        "materialization-count",
+                        Quantity::Count(cost.materialization_count()),
                     )?,
                 ];
                 let record = explain.push_causal_detail(
@@ -1516,7 +1950,7 @@ fn record_cost_and_selection(
             })(),
             ExplainStage::Costing,
             SubjectKind::Alternative,
-            alternative.stable_id,
+            alternative.stable_id.as_str(),
             record_cause(cause),
         )?;
         let outcome = if alternative.stable_id == selected_alternative_id {
@@ -1525,7 +1959,9 @@ fn record_cost_and_selection(
             .iter()
             .find(|item| item.stable_id == selected_alternative_id)
             .is_some_and(|selected| {
-                structurally_dominates(selected.structural_cost, alternative.structural_cost)
+                selected
+                    .structural_cost
+                    .dominates(&alternative.structural_cost)
             })
         {
             SelectionOutcome::Dominated
@@ -1538,43 +1974,39 @@ fn record_cost_and_selection(
                 .map_err(Into::into),
             ExplainStage::Selection,
             SubjectKind::Alternative,
-            alternative.stable_id,
+            alternative.stable_id.as_str(),
             Some(cost_record),
         )?;
     }
     Ok(())
 }
 
-fn select_structural_pareto(
-    alternatives: &[ProgramAlternative],
-) -> Result<&'static str, CompileError> {
-    let Some(first) = alternatives.first() else {
-        return Err(CompileError::InvalidCompilerOutput(
-            CompilerOutputError::Program(ProgramError::Structure {
-                rule: "portfolio-empty",
-            }),
-        ));
-    };
-    let mut selected = first;
-    for candidate in alternatives.iter().skip(1) {
-        if structurally_dominates(candidate.structural_cost, selected.structural_cost) {
-            selected = candidate;
-        }
-    }
-    Ok(selected.stable_id)
-}
-
+/// Re-derives the retained portfolio from the program and its own contents.
+///
+/// The complete-plan authority re-verifies every plan's cover and re-assembles
+/// each plan from its selections; this additionally re-derives each alternative's
+/// KIR, kernel program, and artifact plan and requires them to reproduce the
+/// receipt exactly. A tampered plan, cost, program, or artifact receipt therefore
+/// fails closed instead of being carried into a compilation product.
 fn verify_portfolio(
     semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
+    portfolio: &SelectedPortfolio,
     alternatives: &[ProgramAlternative],
     selected_id: &str,
     cause: Option<TerminalCause>,
 ) -> Result<(), TargetFailure> {
+    verify_selected_portfolio(
+        semantic,
+        request.budgets(),
+        request.numerical_contract(),
+        portfolio,
+    )
+    .map_err(|source| failure_at_source(source.into(), ExplainStage::Selection, cause.clone()))?;
     if alternatives.is_empty()
         || alternatives
             .iter()
-            .map(|alternative| alternative.stable_id)
+            .map(|alternative| alternative.stable_id.as_str())
             .collect::<std::collections::BTreeSet<_>>()
             .len()
             != alternatives.len()
@@ -1591,7 +2023,7 @@ fn verify_portfolio(
     for alternative in alternatives {
         verify_alternative(semantic, request, alternative, cause.clone())?;
     }
-    let recomputed = select_structural_pareto(alternatives)
+    let recomputed = select_non_dominated(portfolio, alternatives)
         .map_err(|source| failure_at_source(source, ExplainStage::Selection, cause.clone()))?;
     if selected_id != recomputed
         || !alternatives
@@ -1610,133 +2042,21 @@ fn verify_portfolio(
     Ok(())
 }
 
-struct ExpectedAlternative {
-    stable_id: &'static str,
-    cost: StructuralCost,
-    scheduled: Vec<VerifiedScheduledRegion>,
-    kernels: Vec<VerifiedKernel>,
-    program: KernelProgram,
-    artifact: ArtifactConstructionPlan,
-}
-
-#[allow(
-    clippy::too_many_lines,
-    reason = "keeps each rederived layer beside its exact phase-local failure context"
-)]
-fn rederive_alternative(
-    semantic: &tiler_ir::semantic::SemanticProgram,
-    request: &crate::request::VerifiedTargetRequest,
-    kind: ProgramAlternativeKind,
-    cause: Option<TerminalCause>,
-) -> Result<ExpectedAlternative, TargetFailure> {
-    let (stable_id, cost) = match kind {
-        ProgramAlternativeKind::Materialized => {
-            let materialized_bytes = request
-                .serial_sum()
-                .input_elements
-                .checked_mul(4)
-                .ok_or_else(|| {
-                    failure_at_source(
-                        CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
-                            ProgramError::Structure {
-                                rule: "portfolio-cost-overflow",
-                            },
-                        )),
-                        ExplainStage::Costing,
-                        cause.clone(),
-                    )
-                })?;
-            (
-                "alternative:materialized-serial-sum.v1",
-                StructuralCost {
-                    model_key: STRUCTURAL_COST_MODEL_KEY,
-                    dispatch_count: 2,
-                    temporary_allocation_count: 1,
-                    materialized_bytes,
-                    intermediate_global_reads: materialized_bytes,
-                    intermediate_global_writes: materialized_bytes,
-                },
-            )
-        }
-        ProgramAlternativeKind::Fused => (
-            "alternative:fused-serial-sum.v1",
-            StructuralCost {
-                model_key: STRUCTURAL_COST_MODEL_KEY,
-                dispatch_count: 1,
-                temporary_allocation_count: 0,
-                materialized_bytes: 0,
-                intermediate_global_reads: 0,
-                intermediate_global_writes: 0,
-            },
-        ),
-    };
-    let scheduled = match kind {
-        ProgramAlternativeKind::Materialized => {
-            build_scheduled_regions(request).map_err(|error| {
-                let stage = physical_error_stage(&error);
-                failure_at_source(error.into(), stage, cause.clone())
-            })?
-        }
-        ProgramAlternativeKind::Fused => {
-            vec![build_fused_scheduled_region(request).map_err(|error| {
-                let stage = physical_error_stage(&error);
-                failure_at_source(error.into(), stage, cause.clone())
-            })?]
-        }
-    };
-    let kernels = scheduled
-        .iter()
-        .map(lower_structured_kernel)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            let stage = physical_error_stage(&error);
-            failure_at_source(error.into(), stage, cause.clone())
-        })?;
-    let program = match kind {
-        ProgramAlternativeKind::Materialized => build_kernel_program(semantic, request, &scheduled),
-        ProgramAlternativeKind::Fused => {
-            build_fused_kernel_program(semantic, request, &scheduled[0])
-        }
-    }
-    .map_err(|error| {
-        failure_at_source(
-            error.into(),
-            ExplainStage::ProgramVerification,
-            cause.clone(),
-        )
-    })?;
-    let providers = match kind {
-        ProgramAlternativeKind::Materialized => {
-            vec![request.capabilities().materialized_serial_sum]
-        }
-        ProgramAlternativeKind::Fused => request
-            .capabilities()
-            .fused_serial_sum
-            .into_iter()
-            .collect(),
-    };
-    let artifact = build_artifact_plan(
-        semantic, request, &scheduled, &kernels, &program, providers,
-    )
-    .map_err(|error| failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause))?;
-    Ok(ExpectedAlternative {
-        stable_id,
-        cost,
-        scheduled,
-        kernels,
-        program,
-        artifact,
-    })
-}
-
+/// Re-derives one alternative's structured, program, and artifact layers.
 fn verify_alternative(
     semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
     alternative: &ProgramAlternative,
     cause: Option<TerminalCause>,
 ) -> Result<(), TargetFailure> {
-    let expected = rederive_alternative(semantic, request, alternative.kind, cause.clone())?;
-    if alternative.stable_id != expected.stable_id || alternative.structural_cost != expected.cost {
+    if alternative.stable_id != alternative.plan.identity().label()
+        || alternative.structural_cost != alternative.plan.cost()
+        || alternative.kind
+            != ProgramAlternativeKind::of(
+                alternative.plan.cover(),
+                total_members(&alternative.plan),
+            )
+    {
         return Err(failure_at_source(
             ProgramError::Structure {
                 rule: "portfolio-cost-or-identity",
@@ -1746,7 +2066,8 @@ fn verify_alternative(
             cause,
         ));
     }
-    if alternative.scheduled_regions != expected.scheduled {
+    let scheduled = plan_regions(&alternative.plan);
+    if alternative.scheduled_regions != scheduled {
         return Err(failure_at_source(
             ProgramError::Structure {
                 rule: "portfolio-schedule-binding",
@@ -1756,7 +2077,15 @@ fn verify_alternative(
             cause,
         ));
     }
-    if alternative.kernels != expected.kernels {
+    let kernels = scheduled
+        .iter()
+        .map(lower_structured_kernel)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            let stage = physical_error_stage(&error);
+            failure_at_source(error.into(), stage, cause.clone())
+        })?;
+    if alternative.kernels != kernels {
         return Err(failure_at_source(
             ProgramError::Structure {
                 rule: "portfolio-kernel-binding",
@@ -1766,7 +2095,11 @@ fn verify_alternative(
             cause,
         ));
     }
-    if alternative.program != expected.program {
+    let program =
+        build_plan_program(semantic, request, alternative.kind, &scheduled).map_err(|error| {
+            failure_at_source(error, ExplainStage::ProgramVerification, cause.clone())
+        })?;
+    if alternative.program != program {
         return Err(failure_at_source(
             ProgramError::Structure {
                 rule: "portfolio-program-binding",
@@ -1776,24 +2109,15 @@ fn verify_alternative(
             cause,
         ));
     }
-    if alternative.artifact_plan != expected.artifact {
-        return Err(failure_at_source(
-            ProgramError::Structure {
-                rule: "portfolio-artifact-receipt",
-            }
-            .into(),
-            ExplainStage::ArtifactPlanning,
-            cause,
-        ));
-    }
+    let providers = plan_providers(request, alternative.kind);
     verify_artifact_plan(
         &alternative.artifact_plan,
         semantic,
         request,
-        &expected.scheduled,
-        &expected.kernels,
-        &expected.program,
-        expected.artifact.lowering_providers().to_vec(),
+        &scheduled,
+        &kernels,
+        &program,
+        providers,
     )
     .map_err(|error| {
         failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.clone())
@@ -1802,17 +2126,82 @@ fn verify_alternative(
         .map_err(|source| failure_at_source(source, ExplainStage::NumericalLegality, cause))
 }
 
+/// Returns the number of semantic occurrences a plan's cover covers.
+fn total_members(plan: &SelectedPlan) -> u32 {
+    u32::try_from(
+        plan.cover()
+            .regions()
+            .iter()
+            .map(|region| region.members().len())
+            .sum::<usize>(),
+    )
+    .unwrap_or(u32::MAX)
+}
+
+/// Replays every retained numerical-equivalence and fusion-legality proof.
 fn verify_equivalence(
     semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
     alternative: &ProgramAlternative,
 ) -> Result<(), CompileError> {
-    match &alternative.equivalence {
-        EquivalenceEvidence::MaterializedReference
-            if alternative.kind == ProgramAlternativeKind::Materialized => {}
-        EquivalenceEvidence::Fused(proof) if alternative.kind == ProgramAlternativeKind::Fused => {
-            let formation =
-                form_region_candidates(semantic, request.budgets(), request.numerical_contract())?;
+    let formation =
+        form_region_candidates(semantic, request.budgets(), request.numerical_contract())?;
+    let capabilities = FusionNumericalCapabilities::governed();
+    // Every multi-occurrence region must carry exactly one replayable legality
+    // proof; a fused region without one would be an unproven fusion.
+    let expected: Vec<usize> = alternative
+        .plan
+        .cover()
+        .regions()
+        .iter()
+        .enumerate()
+        .filter_map(|(position, region)| (region.members().len() > 1).then_some(position))
+        .collect();
+    if alternative
+        .equivalence
+        .legality
+        .iter()
+        .map(|(position, _)| *position)
+        .collect::<Vec<_>>()
+        != expected
+    {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-equivalence",
+        }
+        .into());
+    }
+    for (position, proof) in &alternative.equivalence.legality {
+        let region =
+            alternative
+                .plan
+                .cover()
+                .regions()
+                .get(*position)
+                .ok_or(ProgramError::Structure {
+                    rule: "portfolio-equivalence",
+                })?;
+        let candidate = formation
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.occurrence() == region.occurrence())
+            .ok_or(ProgramError::Structure {
+                rule: "portfolio-equivalence",
+            })?;
+        verify_fusion_legality(
+            semantic,
+            request.budgets(),
+            request.numerical_contract(),
+            &capabilities,
+            candidate,
+            proof,
+        )?;
+    }
+    match (
+        alternative.kind,
+        alternative.equivalence.numerical.as_deref(),
+    ) {
+        (ProgramAlternativeKind::Materialized, None) => Ok(()),
+        (ProgramAlternativeKind::Fused, Some(proof)) => {
             let candidate = formation.whole_program_candidate().ok_or({
                 CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
                     ProgramError::Structure {
@@ -1829,29 +2218,13 @@ fn verify_equivalence(
                 }
                 .into());
             }
+            Ok(())
         }
-        _ => {
-            return Err(ProgramError::Structure {
-                rule: "portfolio-equivalence",
-            }
-            .into());
+        _ => Err(ProgramError::Structure {
+            rule: "portfolio-equivalence",
         }
+        .into()),
     }
-    Ok(())
-}
-
-const fn structurally_dominates(candidate: StructuralCost, incumbent: StructuralCost) -> bool {
-    let no_worse = candidate.dispatch_count <= incumbent.dispatch_count
-        && candidate.temporary_allocation_count <= incumbent.temporary_allocation_count
-        && candidate.materialized_bytes <= incumbent.materialized_bytes
-        && candidate.intermediate_global_reads <= incumbent.intermediate_global_reads
-        && candidate.intermediate_global_writes <= incumbent.intermediate_global_writes;
-    let strictly_better = candidate.dispatch_count < incumbent.dispatch_count
-        || candidate.temporary_allocation_count < incumbent.temporary_allocation_count
-        || candidate.materialized_bytes < incumbent.materialized_bytes
-        || candidate.intermediate_global_reads < incumbent.intermediate_global_reads
-        || candidate.intermediate_global_writes < incumbent.intermediate_global_writes;
-    no_worse && strictly_better
 }
 
 #[cfg(test)]
@@ -1859,6 +2232,7 @@ mod tests {
     use super::*;
     use crate::explain::ExplainDisposition;
     use crate::physical::{RegionId, TensorRole};
+    use crate::request::CompilerCapabilitySnapshot;
     use std::collections::BTreeMap;
     use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView};
     use tiler_ir::program::{DependencyReasonView, ValueRole};
@@ -2129,12 +2503,12 @@ mod tests {
         }
     }
 
-    fn interpret_fused(kernel: &VerifiedKernel, input: &[f32]) -> Vec<f32> {
+    pub(super) fn interpret_fused(kernel: &VerifiedKernel, input: &[f32]) -> Vec<f32> {
         KirMachine::run(kernel, input)
     }
 
     /// Returns the bounded range of the kernel's single guarded reduction loop.
-    fn reduction_loop(kernel: &VerifiedKernel) -> Option<(u64, u64)> {
+    pub(super) fn reduction_loop(kernel: &VerifiedKernel) -> Option<(u64, u64)> {
         kernel
             .body()
             .operations()
@@ -2146,6 +2520,52 @@ mod tests {
             .find_map(|operation| match operation.view() {
                 OperationView::SerialLoop(reduction) => Some((reduction.start(), reduction.end())),
                 _ => None,
+            })
+    }
+
+    /// Returns the one retained alternative of the requested plan shape.
+    fn alternative(
+        product: &CompilationProduct,
+        kind: ProgramAlternativeKind,
+    ) -> &ProgramAlternative {
+        let mut matching = product.targets[0]
+            .portfolio
+            .alternatives
+            .iter()
+            .filter(|alternative| alternative.kind == kind);
+        let found = matching
+            .next()
+            .unwrap_or_else(|| panic!("a retained {} alternative", kind.name()));
+        assert!(
+            matching.next().is_none(),
+            "the bounded profile retains exactly one {} alternative",
+            kind.name()
+        );
+        found
+    }
+
+    /// Returns the kind of the alternative the portfolio selected.
+    fn selected_kind(product: &CompilationProduct) -> ProgramAlternativeKind {
+        let target = &product.targets[0];
+        target
+            .portfolio
+            .alternatives
+            .iter()
+            .find(|alternative| {
+                alternative.stable_id == target.portfolio.selection.selected_alternative_id
+            })
+            .expect("the selected identity names a retained alternative")
+            .kind
+    }
+
+    /// Counts every retained explain record by its stable rule key.
+    fn rule_counts(trace: &VerifiedExplainTrace) -> BTreeMap<&str, usize> {
+        trace
+            .records()
+            .iter()
+            .fold(BTreeMap::new(), |mut counts, record| {
+                *counts.entry(record.rule().key().as_str()).or_insert(0) += 1;
+                counts
             })
     }
 
@@ -2168,7 +2588,7 @@ mod tests {
         let semantic =
             semantic_case_with_axis(shape.clone(), scale_bits, bias_bits, false, reduction_axis);
         let product = compile(CompilationRequest::governed(&semantic)).unwrap();
-        let fused = &product.targets[0].portfolio.alternatives[1];
+        let fused = alternative(&product, ProgramAlternativeKind::Fused);
         let actual = interpret_fused(&fused.kernels[0], &values);
         let key = InputKey::new("input").unwrap();
         let tensor = Tensor::dense(
@@ -2223,19 +2643,16 @@ mod tests {
         let second = compile(CompilationRequest::governed(&second)).unwrap();
 
         assert_eq!(first, second);
-        let first = &first.targets[0];
-        let rendered = first.explain.render();
+        let target = &first.targets[0];
+        let rendered = target.explain.render();
         assert!(rendered.starts_with("tiler-explain-v2 request="));
         assert!(rendered.contains("feasibility:threads-per-workgroup:admitted"));
         assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
         assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
-        assert_eq!(first.portfolio.alternatives.len(), 2);
-        assert_eq!(
-            first.portfolio.selection.selected_alternative_id,
-            "alternative:fused-serial-sum.v1"
-        );
-        let materialized = &first.portfolio.alternatives[0];
-        let fused = &first.portfolio.alternatives[1];
+        assert_eq!(target.portfolio.alternatives.len(), 2);
+        assert_eq!(selected_kind(&first), ProgramAlternativeKind::Fused);
+        let materialized = alternative(&first, ProgramAlternativeKind::Materialized);
+        let fused = alternative(&first, ProgramAlternativeKind::Fused);
         assert_eq!(materialized.program.stage_count(), 2);
         let temporary = materialized
             .program
@@ -2265,82 +2682,75 @@ mod tests {
         assert_eq!(reduction_loop(&materialized.kernels[1]), Some((1, 3)));
         assert_eq!(fused.program.stage_count(), 1);
         assert_eq!(fused.program.core().values().len(), 2);
-        assert_eq!(
-            materialized.structural_cost,
-            StructuralCost {
-                model_key: STRUCTURAL_COST_MODEL_KEY,
-                dispatch_count: 2,
-                temporary_allocation_count: 1,
-                materialized_bytes: 24,
-                intermediate_global_reads: 24,
-                intermediate_global_writes: 24,
-            }
-        );
-        assert_eq!(
-            fused.structural_cost,
-            StructuralCost {
-                model_key: STRUCTURAL_COST_MODEL_KEY,
-                dispatch_count: 1,
-                temporary_allocation_count: 0,
-                materialized_bytes: 0,
-                intermediate_global_reads: 0,
-                intermediate_global_writes: 0,
-            }
+        // The exact aggregate structural cost is the sum of the per-region
+        // estimates plus the cover's deliberate cross-region materializations.
+        assert_eq!(materialized.structural_cost.dispatch_count(), 2);
+        assert_eq!(materialized.structural_cost.launched_threads(), 8);
+        assert_eq!(materialized.structural_cost.temporary_bytes(), 24);
+        assert_eq!(materialized.structural_cost.materialization_count(), 1);
+        assert_eq!(fused.structural_cost.dispatch_count(), 1);
+        assert_eq!(fused.structural_cost.launched_threads(), 2);
+        assert_eq!(fused.structural_cost.temporary_bytes(), 0);
+        assert_eq!(fused.structural_cost.materialization_count(), 0);
+        assert!(
+            fused
+                .structural_cost
+                .dominates(&materialized.structural_cost)
         );
         assert_eq!(
             materialized.artifact_plan.lowering_providers(),
-            [crate::request::CompilerCapabilitySnapshot::governed().materialized_serial_sum]
+            [CompilerCapabilitySnapshot::governed().materialized_serial_sum]
         );
         assert_eq!(
             fused.artifact_plan.lowering_providers(),
-            [crate::request::CompilerCapabilitySnapshot::governed()
+            [CompilerCapabilitySnapshot::governed()
                 .fused_serial_sum
                 .unwrap()]
         );
         assert_eq!(reduction_loop(&fused.kernels[0]), Some((1, 3)));
-        assert!(first.explain.records().iter().any(|record| {
-            record.rule().key().as_str() == "compile.boundary.materialized"
+        assert!(target.explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "compile.plan.boundary"
                 && record.event().disposition() == ExplainDisposition::Admitted
         }));
+        // The materialized plan discharges exactly one cross-region handoff; the
+        // fused plan materializes nothing across a boundary.
+        assert_eq!(materialized.plan.handoffs().len(), 1);
+        assert!(fused.plan.handoffs().is_empty());
+        // Both alternatives are the exact selected plans, so their stable
+        // identity is the plan's content-derived identity label.
+        for alternative in &target.portfolio.alternatives {
+            assert_eq!(alternative.stable_id, alternative.plan.identity().label());
+        }
     }
 
+    /// Every draft authority the conformance gate wires must speak the explain
+    /// vocabulary; a silent authority cannot be audited.
     #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one exhaustive fixture checks every current typed emitter family"
-    )]
-    fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
+    fn every_wired_authority_emits_its_typed_explain_records() {
         let semantic = semantic(false);
         let product = compile(CompilationRequest::governed(&semantic)).unwrap();
         let trace = &product.targets[0].explain;
-        let rule_counts =
-            trace
-                .records()
-                .iter()
-                .fold(std::collections::BTreeMap::new(), |mut counts, record| {
-                    *counts
-                        .entry(record.rule().key().as_str())
-                        .or_insert(0_usize) += 1;
-                    counts
-                });
+        // The exhaustive snapshot: every rule the wired compile path emits, and
+        // exactly how many records each contributes. A new authority that stays
+        // explain-silent, or one that becomes chatty, fails here.
         assert_eq!(
-            rule_counts,
-            std::collections::BTreeMap::from([
-                ("artifact.fused-construction-plan", 1),
-                ("artifact.neutral-construction-plan", 1),
-                ("compile.boundary.materialized", 1),
-                ("compile.region.verified", 2),
+            rule_counts(trace),
+            BTreeMap::from([
                 ("compile.request.general-boundary", 1),
-                ("fusion.strict-f32-equivalence", 1),
-                ("kernel.fused-schedule-refinement", 1),
-                ("kernel.schedule-refinement", 1),
                 ("normalize.semantics.v1", 1),
-                ("program.fused-serial-sum", 1),
-                ("program.two-stage-materialized", 1),
-                ("region.candidate.v1", 17),
                 ("region.formation.v1", 1),
-                ("schedule.coverage-and-ownership", 1),
-                ("schedule.fused-serial-sum", 1),
+                ("region.candidate.v1", 17),
+                ("cover.enumeration.v1", 1),
+                ("fusion.legality.v1", 12),
+                ("fusion.strict-f32-equivalence", 1),
+                ("frontier.enumeration.v1", 4),
+                ("selection.complete-plan.v1", 1),
+                ("compile.region.verified", 3),
+                ("compile.plan.boundary", 2),
+                ("schedule.plan-regions", 2),
+                ("kernel.plan-refinement", 2),
+                ("program.plan-verified", 2),
+                ("artifact.plan-construction", 2),
                 ("target.barriers", 3),
                 ("target.buffer-bindings", 3),
                 ("target.device-memory", 3),
@@ -2353,21 +2763,13 @@ mod tests {
                 ("tiler.selection.structural-pareto.v1", 2),
             ])
         );
-        let expected_counts = [
+        for (rule, fact_key, expected) in [
             ("normalize.semantics.v1", "rewrite-count", 0),
             ("region.formation.v1", "candidate-count", 17),
             ("region.formation.v1", "operation-count", 5),
-            ("compile.boundary.materialized", "dependency-count", 1),
-            ("schedule.coverage-and-ownership", "schedule-count", 2),
-            ("kernel.schedule-refinement", "kernel-count", 2),
-            ("program.two-stage-materialized", "stage-count", 2),
-            ("artifact.neutral-construction-plan", "provider-count", 1),
-            ("schedule.fused-serial-sum", "schedule-count", 1),
-            ("kernel.fused-schedule-refinement", "kernel-count", 1),
-            ("program.fused-serial-sum", "stage-count", 1),
-            ("artifact.fused-construction-plan", "provider-count", 1),
-        ];
-        for (rule, fact_key, expected) in expected_counts {
+            ("cover.enumeration.v1", "cover-count", 16),
+            ("selection.complete-plan.v1", "plan-count", 2),
+        ] {
             let record = trace
                 .records()
                 .iter()
@@ -2377,13 +2779,35 @@ mod tests {
                 panic!("typed count emitter {rule} must be a checked assertion");
             };
             assert!(assessment.predicate().as_str().contains('.'));
-            assert!(assessment.facts().iter().any(|fact| {
-                fact.key().as_str() == fact_key
-                    && matches!(fact.value(), FactValue::Count(value) if *value == expected)
-            }));
+            let actual = assessment
+                .facts()
+                .iter()
+                .find(|fact| fact.key().as_str() == fact_key)
+                .map(|fact| fact.value().clone());
+            assert_eq!(
+                actual,
+                Some(FactValue::Count(expected)),
+                "{rule}/{fact_key}"
+            );
         }
+        // Fusion legality is attributed to the capability provider that declared
+        // the member operations' roles, never to the compiler itself.
+        let legality = trace
+            .records()
+            .iter()
+            .find(|record| record.rule().key().as_str() == "fusion.legality.v1")
+            .expect("a fusion-legality record");
+        assert_eq!(legality.event().disposition(), ExplainDisposition::Admitted);
+        assert!(trace.render().starts_with("tiler-explain-v2 request="));
+    }
 
-        let mut target_predicates = std::collections::BTreeMap::new();
+    #[test]
+    fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
+        let semantic = semantic(false);
+        let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+        let trace = &product.targets[0].explain;
+
+        let mut target_predicates = BTreeMap::new();
         for record in trace.records() {
             let ExplainEvent::Feasibility {
                 predicate,
@@ -2426,7 +2850,7 @@ mod tests {
         }
         assert_eq!(
             target_predicates,
-            std::collections::BTreeMap::from([
+            BTreeMap::from([
                 ("barriers", 3),
                 ("buffer-bindings", 3),
                 ("device-memory", 3),
@@ -2443,20 +2867,21 @@ mod tests {
             .iter()
             .filter_map(|record| match record.event() {
                 ExplainEvent::Selection { outcome, .. } => {
-                    Some((record.subjects()[0].key().as_str(), *outcome))
+                    Some((record.subjects()[0].key().as_str().to_owned(), *outcome))
                 }
                 _ => None,
             })
-            .collect::<std::collections::BTreeMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
+        let materialized = alternative(&product, ProgramAlternativeKind::Materialized);
+        let fused = alternative(&product, ProgramAlternativeKind::Fused);
         assert_eq!(
-            selections.get("alternative:materialized-serial-sum.v1"),
+            selections.get(&materialized.stable_id),
             Some(&SelectionOutcome::Dominated)
         );
         assert_eq!(
-            selections.get("alternative:fused-serial-sum.v1"),
+            selections.get(&fused.stable_id),
             Some(&SelectionOutcome::Selected)
         );
-        assert!(trace.render().starts_with("tiler-explain-v2 request="));
     }
 
     #[test]
@@ -2521,6 +2946,33 @@ mod tests {
                 .iter()
                 .any(|record| record.rule().key().as_str() == "normalize.common-subexpression.v1")
         );
+    }
+
+    /// A shared constant read by two operations is graph fan-out, and a legal
+    /// cover must materialize it once rather than duplicate its producer.
+    #[test]
+    fn shared_constant_fan_out_is_materialized_once_and_never_duplicated() {
+        let shared = shared_constant_semantic(Shape::from_dims([2, 3]), 2.0_f32.to_bits());
+        let product = compile(CompilationRequest::governed(&shared)).unwrap();
+        for alternative in &product.targets[0].portfolio.alternatives {
+            assert!(
+                alternative.plan.cover().duplication().is_none(),
+                "producer duplication is disabled in this profile"
+            );
+            // Every cross-region value is one materialization edge with one or
+            // more consumers, never one edge per consumer.
+            let edges = alternative.plan.cover().materializations();
+            let distinct = edges
+                .iter()
+                .map(crate::cover::MaterializationEdge::producer_position)
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(edges.len(), distinct.len());
+            assert_eq!(
+                alternative.plan.handoffs().len(),
+                edges.len(),
+                "every materialization edge is discharged by exactly one handoff"
+            );
+        }
     }
 
     #[test]
@@ -2597,43 +3049,67 @@ mod tests {
         let product = compile(missing_provider).unwrap();
         assert_eq!(product.targets[0].portfolio.alternatives.len(), 1);
         assert_eq!(
-            product.targets[0]
-                .portfolio
-                .selection
-                .selected_alternative_id,
-            "alternative:materialized-serial-sum.v1"
+            selected_kind(&product),
+            ProgramAlternativeKind::Materialized
         );
         assert!(product.targets[0].explain.records().iter().any(|record| {
             record.rule().key().as_str() == "fusion.capability-resolution"
                 && record.event().disposition() == ExplainDisposition::DeferredUnsupported
         }));
 
-        // A growth budget stops the fused region without removing the complete
-        // singleton coverage the unfused baseline depends on.
+        // A zero per-seed growth budget leaves only singleton candidates, and the
+        // bounded profile implements no singleton region. Every plan therefore
+        // depends on a region that was never formed, so compilation fails closed
+        // with a typed no-complete-plan error rather than implementing a region
+        // region formation never proposed.
         let mut bounded = CompilationRequest::governed(&semantic);
         bounded.budgets.region_candidates_per_seed = 0;
-        let product = compile(bounded).unwrap();
-        assert_eq!(product.targets[0].portfolio.alternatives.len(), 1);
-        assert_eq!(
-            product.targets[0]
-                .portfolio
-                .selection
-                .selected_alternative_id,
-            "alternative:materialized-serial-sum.v1"
-        );
-        assert!(product.targets[0].explain.records().iter().any(|record| {
+        let error = compile(bounded).unwrap_err();
+        let CompileError::Explained { source, explain } = error else {
+            panic!("target compilation failures retain their explain trace");
+        };
+        assert!(matches!(
+            *source,
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(
+                SelectionError::Structure {
+                    rule: "no-complete-plan"
+                }
+            ))
+        ));
+        assert!(explain.records().iter().any(|record| {
             record.rule().key().as_str() == "region.formation.v1"
                 && record.event().disposition() == ExplainDisposition::BudgetStopped
         }));
         assert_eq!(
-            product.targets[0]
-                .explain
+            explain
                 .records()
                 .iter()
                 .filter(|record| record.rule().key().as_str() == "region.candidate.v1")
                 .count(),
             5
         );
+    }
+
+    /// A cover budget never loses the two covers the enumerator retains
+    /// unconditionally — the all-singleton and the whole-program cover — and any
+    /// discovered partition it does lose is reported as a typed budget stop.
+    ///
+    /// The bounded profile implements no singleton region, so the all-singleton
+    /// cover yields no plan. Losing the discovered two-region partition therefore
+    /// costs the materialized alternative, which is exactly what the typed stop
+    /// makes visible instead of silently narrowing the portfolio.
+    #[test]
+    fn cover_budget_stops_are_reported_without_losing_either_extreme() {
+        let semantic = semantic(false);
+        let mut bounded = CompilationRequest::governed(&semantic);
+        bounded.budgets.region_covers = 1;
+        let product = compile(bounded).unwrap();
+        assert_eq!(product.targets[0].portfolio.alternatives.len(), 1);
+        assert_eq!(selected_kind(&product), ProgramAlternativeKind::Fused);
+        assert!(product.targets[0].explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "cover.enumeration.v1"
+                && record.event().disposition() == ExplainDisposition::BudgetStopped
+        }));
     }
 
     #[test]
@@ -2655,8 +3131,7 @@ mod tests {
         );
         assert!(target.explain.records().iter().any(|record| {
             record.rule().key().as_str() == "target.grid-axis"
-                && record.subjects()[0].key().as_str()
-                    == "alternative:materialized-serial-sum.v1/region:0"
+                && record.subjects()[0].key().as_str() == "region:pointwise"
                 && record.event().disposition() == ExplainDisposition::RejectedTarget
                 && matches!(
                     record.event(),
@@ -2666,6 +3141,17 @@ mod tests {
                         ..
                     }
                 )
+        }));
+        // The cover whose pointwise region the target refused is retained in the
+        // terminal ledger as an infeasible alternative rather than disappearing.
+        assert!(target.explain.records().iter().any(|record| {
+            matches!(
+                record.event(),
+                ExplainEvent::Selection {
+                    outcome: SelectionOutcome::Infeasible,
+                    ..
+                }
+            )
         }));
     }
 
@@ -2682,13 +3168,12 @@ mod tests {
         let CompileError::Explained { source, explain } = error else {
             panic!("target compilation failures retain their explain trace");
         };
-        let CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
-            region,
-            ..
-        })) = *source
-        else {
-            panic!("source retains the exact selected target rejection");
-        };
+        assert!(matches!(
+            *source,
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+                PhysicalError::Target { .. }
+            ))
+        ));
         assert_eq!(
             explain
                 .records()
@@ -2709,7 +3194,6 @@ mod tests {
                 reason,
             } if reason.as_str() == "target-grid-axis"
         ));
-        assert_eq!(failure.causes().len(), 2);
         let causal_rejections = failure
             .causes()
             .iter()
@@ -2721,33 +3205,35 @@ mod tests {
                     .expect("every failure cause is a retained exact target rejection")
             })
             .collect::<Vec<_>>();
+        assert!(!causal_rejections.is_empty());
         assert!(
             causal_rejections.iter().all(|record| {
                 record.event().disposition() == ExplainDisposition::RejectedTarget
             })
         );
+        // Every recognized region role the target refused is named exactly once.
+        let mut subjects = causal_rejections
+            .iter()
+            .map(|record| record.subjects()[0].key().as_str())
+            .collect::<Vec<_>>();
+        subjects.sort_unstable();
         assert_eq!(
-            causal_rejections
-                .iter()
-                .map(|record| record.subjects()[0].key().as_str())
-                .collect::<Vec<_>>(),
+            subjects,
             [
-                format!(
-                    "alternative:materialized-serial-sum.v1/region:{}",
-                    region.get()
-                ),
-                format!("alternative:fused-serial-sum.v1/region:{}", region.get()),
+                "region:pointwise",
+                "region:reduction",
+                "region:whole-program"
             ]
         );
     }
 
     #[test]
-    fn no_feasible_failure_aggregates_distinct_alternative_rejection_predicates() {
+    fn target_rejections_are_deduplicated_by_region_role_and_axis() {
         let semantic = semantic(false);
         let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
         let request = request.for_target(request.target_profiles()[0]).unwrap();
         let mut explain = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
-        let materialized = PhysicalError::Target {
+        let pointwise = PhysicalError::Target {
             rule: "grid-axis",
             region: RegionId::new(0),
             required: 65_536,
@@ -2759,33 +3245,31 @@ mod tests {
             required: 2,
             available: 1,
         };
-        let materialized_cause = record_target_rejection(
-            &mut explain,
-            &materialized,
-            "alternative:materialized-serial-sum.v1",
-            None,
-        )
-        .unwrap();
-        let fused_cause = record_target_rejection(
-            &mut explain,
-            &fused,
-            "alternative:fused-serial-sum.v1",
-            None,
-        )
-        .unwrap();
+        let pointwise_cause =
+            record_target_rejection(&mut explain, &pointwise, "pointwise", None).unwrap();
+        let fused_cause =
+            record_target_rejection(&mut explain, &fused, "whole-program", None).unwrap();
         let mut rejections = TargetRejections::default();
         rejections
             .push(TargetRejection {
-                kind: ProgramAlternativeKind::Fused,
-                error: fused,
-                cause: fused_cause,
+                role: "whole-program",
+                error: fused.clone(),
+                cause: fused_cause.clone(),
             })
             .unwrap();
         rejections
             .push(TargetRejection {
-                kind: ProgramAlternativeKind::Materialized,
-                error: materialized,
-                cause: materialized_cause,
+                role: "pointwise",
+                error: pointwise,
+                cause: pointwise_cause,
+            })
+            .unwrap();
+        // The same role and axis observed on another cover adds no second cause.
+        rejections
+            .push(TargetRejection {
+                role: "whole-program",
+                error: fused,
+                cause: fused_cause,
             })
             .unwrap();
         let failure = rejections.into_failure().unwrap();
@@ -2815,35 +3299,16 @@ mod tests {
     }
 
     #[test]
-    fn rederivation_uses_the_physical_error_stage_for_both_alternative_kinds() {
-        let semantic = semantic_case_with_axis(
-            Shape::from_dims([70_000, 70_000]),
-            2.0_f32.to_bits(),
-            1.0_f32.to_bits(),
-            false,
-            Axis::new(1),
+    fn physical_error_stages_are_attributed_to_their_exact_phase() {
+        assert_eq!(
+            physical_error_stage(&PhysicalError::Target {
+                rule: "grid-axis",
+                region: RegionId::new(0),
+                required: 2,
+                available: 1,
+            }),
+            ExplainStage::TargetFeasibility
         );
-        let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
-        let request = request.for_target(request.target_profiles()[0]).unwrap();
-        for kind in [
-            ProgramAlternativeKind::Materialized,
-            ProgramAlternativeKind::Fused,
-        ] {
-            let Err(failure) = rederive_alternative(&semantic, &request, kind, None) else {
-                panic!("oversized alternative must fail target feasibility");
-            };
-            assert_eq!(failure.context.stage, ExplainStage::TargetFeasibility);
-            assert_eq!(failure.context.reason.as_str(), "target-grid-axis");
-            assert!(matches!(
-                *failure.source,
-                CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
-                    PhysicalError::Target {
-                        rule: "grid-axis",
-                        ..
-                    }
-                ))
-            ));
-        }
         assert_eq!(
             physical_error_stage(&PhysicalError::Intrinsic {
                 rule: "fixture",
@@ -2868,60 +3333,47 @@ mod tests {
 
     #[test]
     fn structural_policy_requires_pareto_dominance_instead_of_guessing_latency() {
-        let incumbent = StructuralCost {
-            model_key: STRUCTURAL_COST_MODEL_KEY,
-            dispatch_count: 2,
-            temporary_allocation_count: 0,
-            materialized_bytes: 0,
-            intermediate_global_reads: 0,
-            intermediate_global_writes: 0,
-        };
-        let tradeoff = StructuralCost {
-            model_key: STRUCTURAL_COST_MODEL_KEY,
-            dispatch_count: 1,
-            temporary_allocation_count: 1,
-            materialized_bytes: 4,
-            intermediate_global_reads: 4,
-            intermediate_global_writes: 4,
-        };
-        assert!(!structurally_dominates(tradeoff, incumbent));
-        assert!(structurally_dominates(
-            StructuralCost {
-                dispatch_count: 1,
-                ..incumbent
-            },
-            incumbent
-        ));
-
         let semantic = semantic(false);
-        let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
-        let target = verified.for_target(verified.target_profiles()[0]).unwrap();
-        let mut alternatives = compile(CompilationRequest::governed(&semantic))
-            .unwrap()
-            .targets
-            .remove(0)
+        let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+        let materialized = alternative(&product, ProgramAlternativeKind::Materialized);
+        let fused = alternative(&product, ProgramAlternativeKind::Fused);
+        // Fusion is strictly better on every structural dimension here, so it
+        // dominates; the reverse comparison must not hold.
+        assert!(
+            fused
+                .structural_cost
+                .dominates(&materialized.structural_cost)
+        );
+        assert!(
+            !materialized
+                .structural_cost
+                .dominates(&fused.structural_cost)
+        );
+        // Dominance is a partial order: a plan never dominates itself.
+        assert!(!fused.structural_cost.dominates(&fused.structural_cost));
+        // The selection is the first non-dominated plan in canonical order, so
+        // it is exactly the plan the portfolio's own Pareto view retains.
+        let retained = product.targets[0]
             .portfolio
-            .alternatives;
-        alternatives[1].structural_cost.temporary_allocation_count = 2;
-        let selected = select_structural_pareto(&alternatives).unwrap();
-        assert_eq!(selected, "alternative:materialized-serial-sum.v1");
-        let mut explain = ExplainWriter::new(&target, ExplainLimits::default()).unwrap();
-        record_cost_and_selection(&alternatives, selected, &[], &mut explain).unwrap();
-        let ids = alternatives
+            .alternatives
             .iter()
-            .map(|alternative| alternative.stable_id)
+            .filter(|candidate| {
+                !product.targets[0]
+                    .portfolio
+                    .alternatives
+                    .iter()
+                    .any(|other| other.structural_cost.dominates(&candidate.structural_cost))
+            })
+            .map(|candidate| candidate.stable_id.clone())
             .collect::<Vec<_>>();
-        let trace = explain.finish_success(&ids, selected).unwrap();
-        assert!(trace.records().iter().any(|record| {
-            record.subjects()[0].key().as_str() == "alternative:fused-serial-sum.v1"
-                && matches!(
-                    record.event(),
-                    ExplainEvent::Selection {
-                        outcome: SelectionOutcome::NotSelectedTradeoff,
-                        ..
-                    }
-                )
-        }));
+        assert_eq!(
+            retained,
+            [product.targets[0]
+                .portfolio
+                .selection
+                .selected_alternative_id
+                .clone()]
+        );
     }
 
     #[test]
@@ -2995,13 +3447,30 @@ mod tests {
         let product = compile(CompilationRequest::governed(&semantic)).unwrap();
         let target = &product.targets[0];
         let alternatives = &target.portfolio.alternatives;
-        let selected = target.portfolio.selection.selected_alternative_id;
+        let selected = target.portfolio.selection.selected_alternative_id.clone();
+        let portfolio = plan_portfolio(&semantic, &request);
 
-        assert!(verify_portfolio(&semantic, &request, alternatives, selected, None).is_ok());
-        assert!(verify_portfolio(&semantic, &request, &[], selected, None).is_err());
-        let selection =
-            verify_portfolio(&semantic, &request, alternatives, "stale-selection", None)
-                .unwrap_err();
+        assert!(
+            verify_portfolio(
+                &semantic,
+                &request,
+                &portfolio,
+                alternatives,
+                &selected,
+                None
+            )
+            .is_ok()
+        );
+        assert!(verify_portfolio(&semantic, &request, &portfolio, &[], &selected, None).is_err());
+        let selection = verify_portfolio(
+            &semantic,
+            &request,
+            &portfolio,
+            alternatives,
+            "stale-selection",
+            None,
+        )
+        .unwrap_err();
         assert_eq!(selection.context.stage, ExplainStage::Selection);
         assert_eq!(
             selection.context.reason.as_str(),
@@ -3009,28 +3478,56 @@ mod tests {
         );
 
         let mut forged = alternatives.clone();
-        forged[0].structural_cost.dispatch_count = 0;
-        assert!(verify_portfolio(&semantic, &request, &forged, selected, None).is_err());
+        forged[0].stable_id = "forged-plan".to_owned();
+        let identity = verify_portfolio(&semantic, &request, &portfolio, &forged, &selected, None)
+            .unwrap_err();
+        assert_eq!(identity.context.stage, ExplainStage::Costing);
 
         let mut forged_artifact = alternatives.clone();
         forged_artifact[0].artifact_plan = forged_artifact[1].artifact_plan.clone();
-        let artifact =
-            verify_portfolio(&semantic, &request, &forged_artifact, selected, None).unwrap_err();
+        let artifact = verify_portfolio(
+            &semantic,
+            &request,
+            &portfolio,
+            &forged_artifact,
+            &selected,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(artifact.context.stage, ExplainStage::ArtifactPlanning);
-        assert_eq!(
-            artifact.context.reason.as_str(),
-            "structure-portfolio-artifact-receipt"
-        );
 
         let mut forged_numerics = alternatives.clone();
         forged_numerics[0].equivalence = forged_numerics[1].equivalence.clone();
-        let numerical =
-            verify_portfolio(&semantic, &request, &forged_numerics, selected, None).unwrap_err();
+        let numerical = verify_portfolio(
+            &semantic,
+            &request,
+            &portfolio,
+            &forged_numerics,
+            &selected,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(numerical.context.stage, ExplainStage::NumericalLegality);
         assert_eq!(
             numerical.context.reason.as_str(),
             "structure-portfolio-equivalence"
         );
+    }
+
+    /// Re-derives the selected portfolio for a verified target request.
+    fn plan_portfolio(
+        semantic: &SemanticProgram,
+        request: &crate::request::VerifiedTargetRequest,
+    ) -> crate::selection::SelectedPortfolio {
+        let mut explain = ExplainWriter::new(request, ExplainLimits::default()).unwrap();
+        let formation =
+            form_region_candidates(semantic, request.budgets(), request.numerical_contract())
+                .unwrap();
+        enumerate_complete_plans(semantic, request, &formation, &mut explain, None, None)
+            .map_or_else(
+                |_| panic!("the governed request enumerates complete plans"),
+                |plans| plans.portfolio,
+            )
     }
 
     #[test]
@@ -3045,5 +3542,575 @@ mod tests {
                 PhysicalError::Intrinsic { .. }
             ))
         ));
+    }
+}
+
+/// The target-neutral optimizer conformance gate.
+///
+/// Everything here drives the ordinary `compile()` entry point. Nothing reaches
+/// past it into a stage-local constructor, and no fixture is admitted by a
+/// `cfg(test)` shortcut: the operation definitions come from a registry provider
+/// written entirely against `tiler-ir`'s public surface, exactly as an
+/// out-of-crate consumer would supply them.
+#[cfg(test)]
+mod conformance {
+    use std::sync::Arc;
+
+    use super::tests::{interpret_fused, reduction_loop};
+    use super::{
+        CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind, compile,
+    };
+    use crate::cover::RegionCover;
+    use crate::region::form_region_candidates;
+    use crate::request::{CompilationRequest, RequestError, verify_request};
+    use tiler_ir::semantic::{
+        CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
+        F32_CONSTANT_BITS_ATTRIBUTE, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
+        OperationAttributeSchema, OperationConformance, OperationDefinition,
+        OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
+        OperationSchema, OutputKey, ProviderDiagnosticCode, ProviderIdentity,
+        REDUCTION_AXES_ATTRIBUTE, RegistryError, SemanticProgram, SemanticProgramBuilder,
+        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
+        TypeDefinitionFacts, TypeKey, ValueFact, ValueTypeDefinition, ValueTypeDefinitionKey,
+        add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    };
+    use tiler_ir::shape::{Axis, Shape};
+
+    /// The shape-inference behaviour one externally registered operation declares.
+    #[derive(Clone, Copy)]
+    enum ExternalOperation {
+        Constant,
+        Binary,
+        Sum,
+    }
+
+    impl OperationInferencer for ExternalOperation {
+        fn infer(
+            &self,
+            request: tiler_ir::semantic::OperationInferenceRequest<'_>,
+            outputs: &mut tiler_ir::semantic::OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            let operands = request.operands();
+            match self {
+                Self::Constant => {
+                    outputs.try_push(ValueFact::new(F32::resolved_type(), Shape::new([])))
+                }
+                Self::Binary => {
+                    let left = operands[0].shape();
+                    let right = operands[1].shape();
+                    let shape = if left.rank() == 0 {
+                        right.clone()
+                    } else if right.rank() == 0 || left == right {
+                        left.clone()
+                    } else {
+                        return Err(OperationInferenceError::new(
+                            ProviderDiagnosticCode::new("external.binary.shape").unwrap(),
+                            "operands must have equal shapes or include one scalar",
+                        )
+                        .unwrap());
+                    };
+                    outputs.try_push(ValueFact::new(F32::resolved_type(), shape))
+                }
+                Self::Sum => {
+                    let Some(CanonicalValueView::Sequence(values)) = request
+                        .attributes()
+                        .get(REDUCTION_AXES_ATTRIBUTE)
+                        .map(CanonicalValue::view)
+                    else {
+                        return Err(OperationInferenceError::new(
+                            ProviderDiagnosticCode::new("external.sum.axes").unwrap(),
+                            "sum axes must be a sequence",
+                        )
+                        .unwrap());
+                    };
+                    let axes = values
+                        .iter()
+                        .map(|value| match value.view() {
+                            CanonicalValueView::Unsigned {
+                                width: CanonicalIntegerWidth::Bits32,
+                                bits,
+                            } => u32::try_from(bits).map(Axis::new).map_err(|_| {
+                                OperationInferenceError::new(
+                                    ProviderDiagnosticCode::new("external.sum.axis-width").unwrap(),
+                                    "sum axis exceeds u32",
+                                )
+                                .unwrap()
+                            }),
+                            _ => Err(OperationInferenceError::new(
+                                ProviderDiagnosticCode::new("external.sum.axis-kind").unwrap(),
+                                "sum axes must be u32 values",
+                            )
+                            .unwrap()),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    outputs.try_push(ValueFact::new(
+                        F32::resolved_type(),
+                        operands[0].shape().without_axes(&axes),
+                    ))
+                }
+            }
+        }
+    }
+
+    /// An out-of-crate semantic provider that defines the whole operation set.
+    ///
+    /// Its revision is the output-affecting provider revision ADR 0072 keeps
+    /// separate from graph meaning, so the same graph admitted at two revisions
+    /// is the exact identity-conformance subject this gate asserts.
+    struct ExternalSemantics {
+        revision: u32,
+    }
+
+    impl SemanticRegistryProvider for ExternalSemantics {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("acme", "external-f32-semantics", self.revision).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_marked_value_type::<F32>(
+                ValueTypeDefinition::structurally_valid(
+                    ValueTypeDefinitionKey::Nominal(TypeKey::new("tiler", "f32", 1).unwrap()),
+                    NormativeDefinitionRef::new("external binary32 semantics")?,
+                    TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+                ),
+                F32::resolved_type(),
+            )?;
+            register(
+                registrar,
+                constant_f32_op(),
+                0,
+                &[OperationAttributeSchema::required(
+                    F32_CONSTANT_BITS_ATTRIBUTE,
+                    CanonicalValueKind::FloatBits,
+                )],
+                ExternalOperation::Constant,
+            )?;
+            register(
+                registrar,
+                multiply_f32_op(),
+                2,
+                &[],
+                ExternalOperation::Binary,
+            )?;
+            register(registrar, add_f32_op(), 2, &[], ExternalOperation::Binary)?;
+            register(
+                registrar,
+                strict_serial_sum_f32_op(),
+                1,
+                &[OperationAttributeSchema::required(
+                    REDUCTION_AXES_ATTRIBUTE,
+                    CanonicalValueKind::Sequence,
+                )],
+                ExternalOperation::Sum,
+            )
+        }
+    }
+
+    fn register(
+        registrar: &mut SemanticRegistryRegistrar<'_>,
+        key: OpKey,
+        operands: u32,
+        attributes: &[OperationAttributeSchema],
+        inferencer: ExternalOperation,
+    ) -> Result<(), RegistryError> {
+        registrar.register_operation(OperationDefinition::new(
+            key,
+            OperationSchema::new(
+                OperationArity::exact(operands),
+                OperationArity::exact(1),
+                attributes.to_vec(),
+            )
+            .expect("the external operation schema is valid"),
+            NormativeDefinitionRef::new("external governed operation semantics")?,
+            OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+            OperationConformance::new(CanonicalValue::boolean(true)),
+            OperationEffect::Pure,
+            Arc::new(inferencer),
+        ))
+    }
+
+    /// Builds a scale-bias-then-serial-sum program from the external registry.
+    ///
+    /// Every operation the graph contains is defined by [`ExternalSemantics`];
+    /// nothing in it comes from `SemanticProgramBuilder::try_standard`.
+    fn external_program(
+        revision: u32,
+        shape: Shape,
+        axes: &[Axis],
+        share_constant: bool,
+    ) -> SemanticProgram {
+        external_program_with_bias(revision, shape, axes, share_constant, 1.0_f32.to_bits())
+    }
+
+    /// Builds the same program with an explicit bias constant bit pattern.
+    ///
+    /// A bias equal to the scale gives two *distinct* constant occurrences with
+    /// identical content, which is the region content/occurrence separation
+    /// subject; the default fixture keeps them distinguishable instead.
+    fn external_program_with_bias(
+        revision: u32,
+        shape: Shape,
+        axes: &[Axis],
+        share_constant: bool,
+        bias_bits: u32,
+    ) -> SemanticProgram {
+        let mut registry = SemanticRegistryBuilder::new();
+        registry
+            .register_provider(&ExternalSemantics { revision })
+            .unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), shape)
+            .unwrap();
+        let scale =
+            tiler_ir::semantic::F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let bias = if share_constant {
+            scale
+        } else {
+            tiler_ir::semantic::F32Constant::apply(&mut builder, bias_bits).unwrap()
+        };
+        let product = tiler_ir::semantic::F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let mapped = tiler_ir::semantic::F32Add::apply(&mut builder, product, bias).unwrap();
+        let sum =
+            tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, mapped, axes.to_vec())
+                .unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn alternative(
+        product: &CompilationProduct,
+        kind: ProgramAlternativeKind,
+    ) -> &ProgramAlternative {
+        product.targets[0]
+            .portfolio
+            .alternatives
+            .iter()
+            .find(|alternative| alternative.kind == kind)
+            .expect("the requested plan shape is retained")
+    }
+
+    /// Asserts a cover assigns every operation to exactly one region.
+    fn assert_complete_partition(cover: &RegionCover, operation_count: u32) {
+        let mut members: Vec<u32> = cover
+            .regions()
+            .iter()
+            .flat_map(|region| region.members().iter().map(|member| member.0))
+            .collect();
+        members.sort_unstable();
+        let distinct = members
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            members.len(),
+            distinct.len(),
+            "no operation is double covered"
+        );
+        assert_eq!(
+            u32::try_from(members.len()).unwrap(),
+            operation_count,
+            "no operation is left uncovered"
+        );
+    }
+
+    /// The gate's core claim: an externally defined operation set compiles end to
+    /// end through the ordinary path, and every implemented layer is present.
+    #[test]
+    fn externally_registered_operations_compile_through_the_ordinary_path() {
+        let program = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+        let product = compile(CompilationRequest::governed(&program)).unwrap();
+        let target = &product.targets[0];
+        assert_eq!(
+            target.target_profile_key,
+            "tiler.prototype-target-neutral-baseline.v1"
+        );
+        assert_eq!(target.portfolio.alternatives.len(), 2);
+
+        for alternative in &target.portfolio.alternatives {
+            // Complete legal cover, one implementation per region, verified KIR,
+            // a neutral kernel program, and an artifact construction plan.
+            assert_complete_partition(
+                alternative.plan.cover(),
+                u32::try_from(program.operation_count()).unwrap(),
+            );
+            assert_eq!(
+                alternative.plan.selections().len(),
+                alternative.plan.cover().region_count()
+            );
+            assert_eq!(
+                alternative.kernels.len(),
+                alternative.scheduled_regions.len()
+            );
+            assert_eq!(
+                alternative.program.stage_count(),
+                alternative.scheduled_regions.len()
+            );
+            assert!(!alternative.artifact_plan.lowering_providers().is_empty());
+            // Every retained plan rests on hard-feasibility evidence, never cost.
+            assert!(!alternative.plan.guards().is_empty());
+            // Every fused region carries a replayable fusion-legality proof.
+            let fused_regions = alternative
+                .plan
+                .cover()
+                .regions()
+                .iter()
+                .filter(|region| region.members().len() > 1)
+                .count();
+            assert_eq!(alternative.equivalence.legality().len(), fused_regions);
+        }
+        assert!(
+            alternative(&product, ProgramAlternativeKind::Fused)
+                .equivalence
+                .numerical()
+                .is_some(),
+            "a whole-program fused plan carries its strict-f32 equivalence proof"
+        );
+        assert_eq!(
+            reduction_loop(&alternative(&product, ProgramAlternativeKind::Fused).kernels[0]),
+            Some((1, 3))
+        );
+        // The verified KIR alone drives the backend-shaped interpreter.
+        let values = vec![1.0, -2.0, 3.5, 0.5, -0.0, 0.0];
+        let fused = interpret_fused(
+            &alternative(&product, ProgramAlternativeKind::Fused).kernels[0],
+            &values,
+        );
+        assert_eq!(fused.len(), 2);
+    }
+
+    /// Two non-isomorphic graph shapes — a rank-2 trailing reduction and a rank-3
+    /// interior reduction — both compile, and neither borrows the other's plan.
+    #[test]
+    fn non_isomorphic_graph_shapes_produce_distinct_verified_plans() {
+        let rank_two = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+        let rank_three = external_program(1, Shape::from_dims([2, 3, 2]), &[Axis::new(1)], false);
+        assert_ne!(
+            rank_two.semantic_identity().graph(),
+            rank_three.semantic_identity().graph(),
+            "the two fixtures must be non-isomorphic graphs"
+        );
+
+        let first = compile(CompilationRequest::governed(&rank_two)).unwrap();
+        let second = compile(CompilationRequest::governed(&rank_three)).unwrap();
+        for product in [&first, &second] {
+            assert_eq!(product.targets[0].portfolio.alternatives.len(), 2);
+        }
+        // Distinct semantics yield distinct plan identities at every layer.
+        let left = alternative(&first, ProgramAlternativeKind::Fused);
+        let right = alternative(&second, ProgramAlternativeKind::Fused);
+        assert_ne!(left.plan.identity(), right.plan.identity());
+        assert_ne!(left.stable_id, right.stable_id);
+        assert_ne!(
+            left.scheduled_regions[0].canonical_identity().as_bytes(),
+            right.scheduled_regions[0].canonical_identity().as_bytes()
+        );
+        assert_ne!(left.kernels[0], right.kernels[0]);
+        assert_ne!(left.artifact_plan, right.artifact_plan);
+    }
+
+    /// Graph fan-out: one constant read by two operations is materialized once.
+    #[test]
+    fn shared_producer_fan_out_compiles_without_duplicating_the_producer() {
+        let shared = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], true);
+        assert_eq!(shared.operation_count(), 4);
+        let product = compile(CompilationRequest::governed(&shared)).unwrap();
+        for alternative in &product.targets[0].portfolio.alternatives {
+            assert_complete_partition(
+                alternative.plan.cover(),
+                u32::try_from(shared.operation_count()).unwrap(),
+            );
+            assert!(alternative.plan.cover().duplication().is_none());
+        }
+    }
+
+    /// An ordered multi-output program is not silently approximated; the bounded
+    /// profile rejects it explicitly at the request boundary.
+    #[test]
+    fn ordered_multi_output_programs_reject_explicitly() {
+        let mut registry = SemanticRegistryBuilder::new();
+        registry
+            .register_provider(&ExternalSemantics { revision: 1 })
+            .unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let scale =
+            tiler_ir::semantic::F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let product = tiler_ir::semantic::F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let sum =
+            tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, product, [Axis::new(1)])
+                .unwrap();
+        builder
+            .output(OutputKey::new("reduced").unwrap(), sum)
+            .unwrap();
+        builder
+            .output(OutputKey::new("scaled").unwrap(), product)
+            .unwrap();
+        let multi_output = builder.build().unwrap();
+        assert_eq!(multi_output.output_count(), 2);
+
+        let error = compile(CompilationRequest::governed(&multi_output)).unwrap_err();
+        assert_eq!(
+            error,
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "signature",
+            })
+        );
+    }
+
+    /// ADR 0072 identity conformance for a provider-only revision change.
+    ///
+    /// The same graph admitted by two revisions of the same external provider
+    /// keeps its graph meaning and its reached definition projection, changes its
+    /// admission provenance and registry snapshot, and — because neither is
+    /// structural content — reproduces every structural layer byte for byte.
+    #[test]
+    fn provider_only_revision_changes_provenance_and_not_structure() {
+        let first = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+        let second = external_program(2, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+
+        assert_eq!(
+            first.semantic_identity().graph(),
+            second.semantic_identity().graph()
+        );
+        assert_eq!(
+            first.semantic_identity().reached_definitions(),
+            second.semantic_identity().reached_definitions()
+        );
+        assert_ne!(
+            first.semantic_identity().admission_provenance(),
+            second.semantic_identity().admission_provenance()
+        );
+        assert_ne!(
+            first.semantic_identity().registry_snapshot(),
+            second.semantic_identity().registry_snapshot()
+        );
+
+        let first = compile(CompilationRequest::governed(&first)).unwrap();
+        let second = compile(CompilationRequest::governed(&second)).unwrap();
+        for kind in [
+            ProgramAlternativeKind::Materialized,
+            ProgramAlternativeKind::Fused,
+        ] {
+            let left = alternative(&first, kind);
+            let right = alternative(&second, kind);
+            // Pure structural content is identical: index/schedule identity, KIR,
+            // the complete-plan receipt, and the plan's aggregate cost.
+            assert_eq!(
+                left.scheduled_regions[0].canonical_identity().as_bytes(),
+                right.scheduled_regions[0].canonical_identity().as_bytes()
+            );
+            assert_eq!(left.kernels, right.kernels);
+            assert_eq!(left.plan.identity(), right.plan.identity());
+            assert_eq!(left.stable_id, right.stable_id);
+            assert_eq!(left.structural_cost, right.structural_cost);
+            // Selected-provider provenance is retained and unchanged: a semantic
+            // provider revision is not a lowering-provider revision.
+            assert_eq!(
+                left.artifact_plan.lowering_providers(),
+                right.artifact_plan.lowering_providers()
+            );
+            // The artifact construction plan retains the four-subject semantic
+            // identity bundle atomically, so a changed admission subject is
+            // visible there rather than being silently discarded.
+            assert_ne!(left.artifact_plan, right.artifact_plan);
+        }
+        // The explain trace is bound to the exact compilation subject, so the two
+        // request digests differ while the record sequence does not.
+        assert_ne!(
+            first.targets[0].explain.render(),
+            second.targets[0].explain.render()
+        );
+    }
+
+    /// Equal region *content* is reused across distinct graph *occurrences*.
+    ///
+    /// The two pointwise constants of the unshared program are structurally
+    /// identical singleton regions, so region formation must give them one
+    /// content identity and two distinct occurrence identities (ADR 0072).
+    #[test]
+    fn identical_region_content_keeps_distinct_occurrence_identities() {
+        let program = external_program_with_bias(
+            1,
+            Shape::from_dims([2, 3]),
+            &[Axis::new(1)],
+            false,
+            2.0_f32.to_bits(),
+        );
+        let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        let target = request.for_target(request.target_profiles()[0]).unwrap();
+        let formation =
+            form_region_candidates(&program, target.budgets(), target.numerical_contract())
+                .unwrap();
+        let constants: Vec<_> = formation
+            .candidates()
+            .iter()
+            .filter(|candidate| {
+                candidate.members().len() == 1 && candidate.boundary_inputs().is_empty()
+            })
+            .collect();
+        assert_eq!(
+            constants.len(),
+            2,
+            "the fixture has exactly two constant occurrences"
+        );
+        assert_eq!(
+            constants[0].content(),
+            constants[1].content(),
+            "structurally identical regions share one content identity"
+        );
+        assert_ne!(
+            constants[0].occurrence(),
+            constants[1].occurrence(),
+            "distinct graph occurrences keep distinct occurrence identities"
+        );
+    }
+
+    /// Every enumerated cover a plan rests on is a complete legal partition, and
+    /// every retained plan implements each of its regions exactly once.
+    #[test]
+    fn complete_plan_coverage_is_exact_at_every_retained_plan() {
+        for (shape, axes) in [
+            (Shape::from_dims([2, 3]), vec![Axis::new(1)]),
+            (Shape::from_dims([3, 2]), vec![Axis::new(0)]),
+            (Shape::from_dims([2, 3, 2]), vec![Axis::new(1)]),
+        ] {
+            let program = external_program(1, shape, &axes, false);
+            let product = compile(CompilationRequest::governed(&program)).unwrap();
+            for alternative in &product.targets[0].portfolio.alternatives {
+                assert_complete_partition(
+                    alternative.plan.cover(),
+                    u32::try_from(program.operation_count()).unwrap(),
+                );
+                let mut occurrences: Vec<_> = alternative
+                    .plan
+                    .selections()
+                    .iter()
+                    .map(|selection| selection.occurrence().clone())
+                    .collect();
+                occurrences.sort();
+                let distinct = occurrences.len();
+                occurrences.dedup();
+                assert_eq!(
+                    occurrences.len(),
+                    distinct,
+                    "no region occurrence is implemented twice"
+                );
+                // Every materialization edge the cover proposes is discharged by
+                // exactly one satisfied cross-region handoff.
+                assert_eq!(
+                    alternative.plan.handoffs().len(),
+                    alternative.plan.cover().materializations().len()
+                );
+            }
+        }
     }
 }

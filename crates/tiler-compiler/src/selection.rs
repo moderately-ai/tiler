@@ -57,11 +57,6 @@
 //! Every item here is a reviewed *draft* boundary, not a stable compiler API,
 //! until Tom accepts the exact interface.
 
-#![allow(
-    dead_code,
-    reason = "reviewed draft authority; complete physical-plan selection is exercised by its own tests and is not yet wired into the private compile() facade, which the later conformance-gate slice will do"
-)]
-
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -85,26 +80,6 @@ const SELECTED_PORTFOLIO_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physica
 /// The structural-Pareto selection policy this authority applies. It matches the
 /// pipeline's policy key so a later selector compares plans under one named policy.
 const SELECTION_POLICY_KEY: &str = "tiler.selection.structural-pareto.v1";
-
-/// Deterministic safety budget that bounds complete-plan enumeration.
-///
-/// A cover with several implementations per region has a product of complete
-/// plans; this budget bounds how many combinations one source contributes, so a
-/// legal plan lost to the bound is reported as a typed [`PlanBudgetStop`] rather
-/// than silently dropped. The value is a provisional safety limit, not a
-/// performance conclusion.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PlanBudgets {
-    /// Complete-plan combinations admitted for one cover source.
-    pub(crate) combinations: u64,
-}
-
-impl PlanBudgets {
-    /// The governed provisional budget for the bounded profile.
-    pub(crate) const fn governed() -> Self {
-        Self { combinations: 4096 }
-    }
-}
 
 /// A deterministic budget that bounds complete-plan enumeration.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -156,6 +131,10 @@ pub(crate) struct PlanStructuralCost {
     materialization_count: u64,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl PlanStructuralCost {
     /// Returns the cost-model key every aggregated estimate was attributed to.
     pub(crate) const fn model_key(&self) -> &'static str {
@@ -187,7 +166,7 @@ impl PlanStructuralCost {
     /// Domination is the standard Pareto relation over the structural dimensions:
     /// no dimension is worse and at least one is strictly better. Costs from
     /// different cost models are incomparable.
-    fn dominates(&self, other: &Self) -> bool {
+    pub(crate) fn dominates(&self, other: &Self) -> bool {
         if self.model_key != other.model_key {
             return false;
         }
@@ -233,6 +212,10 @@ pub(crate) struct SatisfiedHandoff {
     availability: BoundaryAvailability,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl SatisfiedHandoff {
     /// Returns the canonical position of the producing member.
     pub(crate) const fn producer_position(&self) -> u32 {
@@ -291,6 +274,10 @@ pub(crate) struct RegionSelection {
     implementation: AdmittedImplementation,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl RegionSelection {
     /// Returns the cover region occurrence this selection implements.
     pub(crate) const fn occurrence(&self) -> &RegionOccurrenceIdentity {
@@ -345,6 +332,10 @@ pub(crate) struct SelectedPlan {
     identity: SelectedPlanIdentity,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl SelectedPlan {
     /// Returns the legal complete cover this plan implements.
     pub(crate) const fn cover(&self) -> &RegionCover {
@@ -386,6 +377,10 @@ impl SelectedPlan {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SelectedPortfolioIdentity(Vec<u8>);
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl SelectedPortfolioIdentity {
     /// Returns the canonical identity bytes.
     pub(crate) fn as_bytes(&self) -> &[u8] {
@@ -417,6 +412,10 @@ pub(crate) struct SelectedPortfolio {
     identity: SelectedPortfolioIdentity,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl SelectedPortfolio {
     /// Returns the structural-Pareto selection policy the portfolio was built under.
     pub(crate) const fn policy_key(&self) -> &'static str {
@@ -690,6 +689,10 @@ pub(crate) struct RegionFrontier {
     frontier: ImplementationFrontier,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl RegionFrontier {
     /// Binds a subject to the frontier that was enumerated for it.
     pub(crate) const fn new(
@@ -721,6 +724,10 @@ pub(crate) struct CoverFrontiers {
     regions: Vec<RegionFrontier>,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl CoverFrontiers {
     /// Pairs a cover with one implementation frontier per region.
     pub(crate) fn new(cover: RegionCover, regions: Vec<RegionFrontier>) -> Self {
@@ -763,7 +770,6 @@ pub(crate) fn select_physical_plans(
     budgets: DeterministicBudgets,
     contract: StrictF32NumericalContract,
     sources: &[CoverFrontiers],
-    plan_budgets: PlanBudgets,
 ) -> Result<SelectedPortfolio, SelectionError> {
     let target_profile_key = coherent_target_profile(sources)?;
     let mut retained: BTreeMap<SelectedPlanIdentity, SelectedPlan> = BTreeMap::new();
@@ -796,7 +802,7 @@ pub(crate) fn select_physical_plans(
             &source.cover,
             &region_impls,
             &cover_identity,
-            plan_budgets,
+            budgets.physical_plan_combinations,
             &mut retained,
             &mut rejections,
             &mut budget_stops,
@@ -975,7 +981,7 @@ fn enumerate_cover_plans(
     cover: &RegionCover,
     region_impls: &[RegionFrontierBinding<'_>],
     cover_identity: &[u8],
-    plan_budgets: PlanBudgets,
+    max_combinations: u64,
     retained: &mut BTreeMap<SelectedPlanIdentity, SelectedPlan>,
     rejections: &mut BTreeMap<Vec<u8>, PlanRejection>,
     budget_stops: &mut BTreeMap<Vec<u8>, PlanBudgetStop>,
@@ -990,11 +996,11 @@ fn enumerate_cover_plans(
     let mut indices = vec![0_usize; counts.len()];
     let mut produced = 0_u64;
     loop {
-        if produced >= plan_budgets.combinations {
+        if produced >= max_combinations {
             let stop = PlanBudgetStop {
                 resource: PlanBudgetResource::Combinations,
-                limit: plan_budgets.combinations,
-                actual: plan_budgets.combinations.saturating_add(1),
+                limit: max_combinations,
+                actual: max_combinations.saturating_add(1),
                 cover: cover_identity.to_vec(),
             };
             budget_stops.entry(cover_identity.to_vec()).or_insert(stop);
@@ -1474,11 +1480,11 @@ fn digest(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundaryDisagreement, CoverFrontiers, PlanBudgets, PlanRejection, RegionBoundary,
-        RegionFrontier, SelectionError, TensorRole, reconcile_boundaries, select_physical_plans,
+        BoundaryDisagreement, CoverFrontiers, PlanRejection, RegionBoundary, RegionFrontier,
+        SelectionError, TensorRole, reconcile_boundaries, select_physical_plans,
         verify_selected_plan, verify_selected_portfolio,
     };
-    use crate::cover::{CoverBudgets, RegionCover, enumerate_covers};
+    use crate::cover::{RegionCover, enumerate_covers};
     use crate::frontier::{
         BoundaryAvailability, BoundaryProduction, FrontierRegionSubject, ImplementationContext,
         ImplementationProposal, PhysicalCostEstimate, PhysicalImplementationProvider,
@@ -1643,7 +1649,6 @@ mod tests {
             program,
             DeterministicBudgets::governed(),
             StrictF32NumericalContract::governed(),
-            CoverBudgets::governed(),
         )
         .unwrap();
         let want: std::collections::BTreeSet<Vec<u32>> = expected.iter().cloned().collect();
@@ -1684,14 +1689,7 @@ mod tests {
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
             ],
         );
-        let portfolio = select_physical_plans(
-            &program,
-            budgets(),
-            contract(),
-            &[source],
-            PlanBudgets::governed(),
-        )
-        .unwrap();
+        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
 
         assert_eq!(portfolio.plans().len(), 1, "exactly one complete plan");
         let plan = &portfolio.plans()[0];
@@ -1731,14 +1729,7 @@ mod tests {
                 empty_frontier(reduction_subject, &request),
             ],
         );
-        let portfolio = select_physical_plans(
-            &program,
-            budgets(),
-            contract(),
-            &[source],
-            PlanBudgets::governed(),
-        )
-        .unwrap();
+        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
 
         assert!(
             portfolio.is_empty(),
@@ -1815,14 +1806,7 @@ mod tests {
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
             ],
         );
-        let portfolio = select_physical_plans(
-            &program,
-            budgets(),
-            contract(),
-            &[source],
-            PlanBudgets::governed(),
-        )
-        .unwrap();
+        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
         assert!(portfolio.rejections().is_empty());
         assert_eq!(portfolio.plans()[0].handoffs().len(), 1);
     }
@@ -1846,14 +1830,7 @@ mod tests {
                 ],
             )],
         );
-        let portfolio = select_physical_plans(
-            &program,
-            budgets(),
-            contract(),
-            &[source],
-            PlanBudgets::governed(),
-        )
-        .unwrap();
+        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
 
         // Validity retains both plans; cost never gates retention.
         assert_eq!(portfolio.plans().len(), 2);
@@ -1893,14 +1870,7 @@ mod tests {
             } else {
                 vec![whole, two]
             };
-            select_physical_plans(
-                &program,
-                budgets(),
-                contract(),
-                &sources,
-                PlanBudgets::governed(),
-            )
-            .unwrap()
+            select_physical_plans(&program, budgets(), contract(), &sources).unwrap()
         };
 
         let first = build(true);
@@ -1935,14 +1905,7 @@ mod tests {
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
             ],
         );
-        let portfolio = select_physical_plans(
-            &program,
-            budgets(),
-            contract(),
-            &[source],
-            PlanBudgets::governed(),
-        )
-        .unwrap();
+        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
         let plan = portfolio.plans()[0].clone();
 
         // A genuinely different program fails cover occurrence re-derivation.
@@ -1995,14 +1958,7 @@ mod tests {
                 &[("fx", PhysicalCostEstimate::structural(1, 2, 0))],
             )],
         );
-        let error = select_physical_plans(
-            &program,
-            budgets(),
-            contract(),
-            &[source],
-            PlanBudgets::governed(),
-        )
-        .unwrap_err();
+        let error = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap_err();
         assert_eq!(error.class(), "cover");
     }
 
@@ -2022,14 +1978,7 @@ mod tests {
                 pointwise_frontier(&request, "pw2", PhysicalCostEstimate::structural(1, 6, 0)),
             ],
         );
-        let error = select_physical_plans(
-            &program,
-            budgets(),
-            contract(),
-            &[source],
-            PlanBudgets::governed(),
-        )
-        .unwrap_err();
+        let error = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap_err();
         assert_eq!(error.class(), "binding");
     }
 

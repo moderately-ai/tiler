@@ -101,10 +101,19 @@ pub(crate) struct DeterministicBudgets {
     pub(crate) region_candidates_per_seed: u32,
     /// Candidate expansion attempts admitted for one compilation request.
     pub(crate) region_expansions: u32,
+    /// Distinct legal complete covers retained for one enumeration request.
+    ///
+    /// The fully-materialized and fused covers are retained unconditionally, so
+    /// exhausting this bound loses additional discovered partitions rather than
+    /// either extreme.
+    pub(crate) region_covers: u32,
+    /// Partition-search expansion attempts admitted for one cover enumeration.
+    pub(crate) region_cover_expansions: u64,
+    /// Complete-plan combinations admitted for one cover source.
+    pub(crate) physical_plan_combinations: u64,
 }
 
 impl DeterministicBudgets {
-    #[cfg(test)]
     pub(crate) const fn governed() -> Self {
         Self {
             semantic_values: 16,
@@ -118,6 +127,9 @@ impl DeterministicBudgets {
             region_live_values: 64,
             region_candidates_per_seed: 32,
             region_expansions: 10_000,
+            region_covers: 1_024,
+            region_cover_expansions: 100_000,
+            physical_plan_combinations: 4_096,
         }
     }
 }
@@ -187,7 +199,16 @@ pub(crate) struct CompilationRequest<'a> {
 }
 
 impl CompilationRequest<'_> {
-    #[cfg(test)]
+    /// Builds the governed compilation request for the bounded prototype profile.
+    ///
+    /// This is the exact profile the request boundary admits: the governed static
+    /// shape environment, strict-`f32` numerical contract, deterministic budgets,
+    /// target profile, and installed lowering capabilities. It is the ordinary
+    /// entry point every in-crate caller uses, not a test-only shortcut.
+    #[allow(
+        dead_code,
+        reason = "the crate-internal governed request profile; its only in-crate callers are the compile path's own conformance and unit tests until a reviewed public facade exposes it"
+    )]
     pub(crate) fn governed(program: &SemanticProgram) -> CompilationRequest<'_> {
         CompilationRequest {
             program,
@@ -456,6 +477,13 @@ impl VerifiedRequestSubject {
             self.budgets.region_live_values,
             self.budgets.region_candidates_per_seed,
             self.budgets.region_expansions,
+            self.budgets.region_covers,
+        ] {
+            bytes.extend_from_slice(&budget.to_be_bytes());
+        }
+        for budget in [
+            self.budgets.region_cover_expansions,
+            self.budgets.physical_plan_combinations,
         ] {
             bytes.extend_from_slice(&budget.to_be_bytes());
         }

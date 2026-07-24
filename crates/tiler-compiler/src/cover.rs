@@ -41,11 +41,6 @@
 //! physical-plan-selection authority. Every item here is a reviewed *draft*
 //! boundary, not a stable compiler API, until Tom accepts the exact interface.
 
-#![allow(
-    dead_code,
-    reason = "reviewed draft authority; cover enumeration is exercised by its own tests and is not yet wired into the private compile() facade, which the complete physical-plan-selection slice will do"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -60,31 +55,6 @@ use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 
 /// Canonical domain-separation tag for one region-cover identity.
 const COVER_IDENTITY_TAG: &[u8] = b"tiler.compiler.region-cover.v1\0";
-
-/// Deterministic safety budgets that bound cover enumeration.
-///
-/// The fully-materialized and fused covers are retained unconditionally; these
-/// budgets bound only the additional partitions the search discovers, so a legal
-/// alternative lost to a bound is reported as a typed [`CoverBudgetStop`] rather
-/// than silently dropped. The values are provisional safety limits, not
-/// performance conclusions.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CoverBudgets {
-    /// Distinct covers retained for one enumeration request.
-    pub(crate) covers: u32,
-    /// Partition-search expansion attempts admitted for one enumeration request.
-    pub(crate) expansions: u64,
-}
-
-impl CoverBudgets {
-    /// The governed provisional budgets for the bounded profile.
-    pub(crate) const fn governed() -> Self {
-        Self {
-            covers: 1024,
-            expansions: 100_000,
-        }
-    }
-}
 
 /// A deterministic budget that bounds cover enumeration.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -174,6 +144,10 @@ impl CoverDuplication {
     }
 
     /// Returns the deliberately duplicated occurrences (empty in this profile).
+    #[allow(
+        dead_code,
+        reason = "reserved duplication seam; this profile disables producer duplication, so the list is read only by a duplication-enabled profile"
+    )]
     pub(crate) fn duplicated_members(&self) -> &[SemanticMemberId] {
         &self.duplicated
     }
@@ -210,6 +184,10 @@ pub(crate) struct MaterializationEdge {
 
 impl MaterializationEdge {
     /// Returns the graph-local ordinal of the materialized value.
+    #[allow(
+        dead_code,
+        reason = "transient authoring coordinate deliberately excluded from identity; read only when mapping an edge back to its authoring value"
+    )]
     pub(crate) const fn value(&self) -> SemanticValueId {
         self.value
     }
@@ -250,6 +228,10 @@ pub(crate) struct CoverRegion {
     label: String,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl CoverRegion {
     /// Returns the region's members in ascending graph-local order.
     pub(crate) fn members(&self) -> &[SemanticMemberId] {
@@ -310,6 +292,10 @@ pub(crate) struct RegionCover {
     identity: RegionCoverIdentity,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl RegionCover {
     /// Returns the placed regions in canonical occurrence order.
     pub(crate) fn regions(&self) -> &[CoverRegion] {
@@ -351,6 +337,10 @@ pub(crate) struct CoverEnumeration {
     operation_count: u32,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+)]
 impl CoverEnumeration {
     /// Returns every enumerated legal cover in canonical identity order.
     pub(crate) fn covers(&self) -> &[RegionCover] {
@@ -499,7 +489,8 @@ impl From<RegionError> for CoverError {
 /// (all-singleton) cover is emitted unconditionally and the fused (whole-program)
 /// cover whenever a whole-program candidate exists; the remaining exact
 /// partitions are enumerated by anchoring each region on the minimum uncovered
-/// operation, bounded by [`CoverBudgets`]. A program whose named output is a bare
+/// operation, bounded by the request's `region_covers` and
+/// `region_cover_expansions` budgets. A program whose named output is a bare
 /// boundary-input passthrough has no legal cover in this profile and yields an
 /// `Ok` result with an empty cover set and a recorded [`CoverInfeasibility`].
 ///
@@ -513,7 +504,6 @@ pub(crate) fn enumerate_covers(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
     contract: StrictF32NumericalContract,
-    cover_budgets: CoverBudgets,
 ) -> Result<CoverEnumeration, CoverError> {
     let outcome = form_region_candidates(program, budgets, contract)?;
     let graph = outcome.graph();
@@ -568,8 +558,8 @@ pub(crate) fn enumerate_covers(
         candidates,
         containing: &containing,
         graph_identity: &graph_identity,
-        max_covers: usize::try_from(cover_budgets.covers).unwrap_or(usize::MAX),
-        max_expansions: cover_budgets.expansions,
+        max_covers: usize::try_from(budgets.region_covers).unwrap_or(usize::MAX),
+        max_expansions: budgets.region_cover_expansions,
         retained,
         stops: BTreeMap::new(),
         expansions: 0,
@@ -1040,8 +1030,8 @@ fn digest(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CoverBudgetResource, CoverBudgets, CoverEnumeration, CoverError, CoverInfeasibility,
-        enumerate_covers, verify_cover,
+        CoverBudgetResource, CoverEnumeration, CoverError, CoverInfeasibility, enumerate_covers,
+        verify_cover,
     };
     use crate::region::{RegionError, SemanticMemberId, form_region_candidates};
     use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
@@ -1143,7 +1133,6 @@ mod tests {
             program,
             DeterministicBudgets::governed(),
             StrictF32NumericalContract::governed(),
-            CoverBudgets::governed(),
         )
         .unwrap()
     }
@@ -1492,15 +1481,10 @@ mod tests {
     #[test]
     fn cover_budget_stops_report_bounded_loss_and_keep_the_required_covers() {
         let program = serial_sum_program();
-        let mut budgets = CoverBudgets::governed();
-        budgets.covers = 1;
-        let enumeration = enumerate_covers(
-            &program,
-            DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
-            budgets,
-        )
-        .unwrap();
+        let mut budgets = DeterministicBudgets::governed();
+        budgets.region_covers = 1;
+        let enumeration =
+            enumerate_covers(&program, budgets, StrictF32NumericalContract::governed()).unwrap();
 
         // The unconditional fully-materialized and fused covers survive the bound.
         assert!(enumeration.fully_materialized_cover().is_some());

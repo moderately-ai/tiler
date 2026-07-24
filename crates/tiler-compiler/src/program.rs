@@ -170,6 +170,10 @@ impl KernelProgram {
         self.core.stages().len()
     }
 
+    #[allow(
+        dead_code,
+        reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
+    )]
     pub(crate) fn dependency_count(&self) -> usize {
         self.core.dependencies().len()
     }

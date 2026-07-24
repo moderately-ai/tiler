@@ -1,6 +1,6 @@
 #![allow(
     dead_code,
-    reason = "private draft reserves the reviewed four-outcome, phased authority surface; the bounded serial-Sum path exercises only the compile-profile Proven/Rejected slice, while the module tests exercise the deferred, unknown, phase, and feasible-set reservations"
+    reason = "the feasibility authority itself is on the compile path through assess_region; what stays unconstructed is the reserved later-phase surface — artifact-evidence, device-runtime, prepared-kernel, and launch phases, their fact authorities and validity scopes, the deferred/unknown verdicts, and the feasible-set view — which no compile-profile assessment can reach"
 )]
 
 //! Typed, phased target-feasibility authority (ADR 0043).

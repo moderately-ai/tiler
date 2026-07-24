@@ -37,11 +37,6 @@
 //! nothing. Every item is a reviewed *draft* boundary, not a stable compiler
 //! API, until Tom accepts the exact interface.
 
-#![allow(
-    dead_code,
-    reason = "reviewed draft authority; not yet wired into the private compile() facade"
-)]
-
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -79,6 +74,10 @@ const GOVERNED_PROVIDER_REVISION: u32 = 1;
 /// finite enumeration or measurement declares itself honestly rather than
 /// masquerading as a proof.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "reserved evidence classes; the bounded profile discharges every obligation by checked invariant, and exhaustive-finite and empirical evidence stay distinct classes a later profile produces"
+)]
 pub(crate) enum FusionEvidenceClass {
     /// The reached operation's normative definition guarantees the property.
     NormativeGuarantee,
@@ -99,6 +98,10 @@ pub(crate) enum FusionEvidenceClass {
     Unknown,
 }
 
+#[allow(
+    dead_code,
+    reason = "reserved evidence classes; the bounded profile discharges every obligation by checked invariant, and exhaustive-finite and empirical evidence stay distinct classes a later profile produces"
+)]
 impl FusionEvidenceClass {
     /// Returns the stable identity tag shared by ordering and encoding.
     const fn tag(self) -> u8 {
@@ -327,6 +330,10 @@ pub(crate) struct DerivedObligation {
     evidence: FusionEvidenceClass,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl DerivedObligation {
     /// Returns the obligation this record assesses.
     pub(crate) const fn obligation(&self) -> FusionObligation {
@@ -385,6 +392,10 @@ pub(crate) struct FusionRegionStructure {
     retained_outputs: u32,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl FusionRegionStructure {
     /// Returns the number of member operations.
     pub(crate) const fn member_count(&self) -> u32 {
@@ -432,6 +443,10 @@ impl FusionLegalityContentIdentity {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct FusionLegalityIdentity(Vec<u8>);
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl FusionLegalityIdentity {
     /// Returns the canonical occurrence-binding bytes.
     pub(crate) fn as_bytes(&self) -> &[u8] {
@@ -449,6 +464,10 @@ pub(crate) struct FusionLegalityContent {
     identity: FusionLegalityContentIdentity,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl FusionLegalityContent {
     /// Returns the canonical region-content identity this legality is over.
     pub(crate) const fn region_content(&self) -> &RegionContentIdentity {
@@ -484,6 +503,10 @@ pub(crate) struct ReachedDefinition {
     effect_tag: u8,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl ReachedDefinition {
     /// Returns the reached operation family key.
     pub(crate) const fn operation(&self) -> &OpKey {
@@ -513,6 +536,10 @@ pub(crate) struct FusionValueBindings {
     retained_outputs: Vec<RetainedOutputBinding>,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl FusionValueBindings {
     /// Returns the graph-local boundary input value ordinals.
     pub(crate) fn boundary_inputs(&self) -> &[u32] {
@@ -544,6 +571,10 @@ pub(crate) struct FusionLegalityProof {
     identity: FusionLegalityIdentity,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl FusionLegalityProof {
     /// Returns the reusable, site-independent content.
     pub(crate) const fn content(&self) -> &FusionLegalityContent {
@@ -584,6 +615,10 @@ pub(crate) struct FusionRejection {
     region: String,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl FusionRejection {
     /// Returns the violated obligation.
     pub(crate) const fn obligation(&self) -> FusionObligation {
@@ -616,6 +651,10 @@ pub(crate) struct FusionUnknown {
     region: String,
 }
 
+#[allow(
+    dead_code,
+    reason = "reviewed proof-record accessor exercised by this authority's own tests; the compile path replays a proof by equality rather than by reading its parts"
+)]
 impl FusionUnknown {
     /// Returns the obligation that could not be established.
     pub(crate) const fn obligation(&self) -> FusionObligation {
