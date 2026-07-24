@@ -26,3 +26,13 @@ Deferred deliberately by `prototype-scheduled-region-ir` because the bounded sli
 did not need the full `VerifiedIndexRegion`; record whether the unified form must
 preserve the schedule module's current canonical identity bytes or may re-baseline
 them (identity is currently a pure function of the schedule's own descriptors).
+
+Also settle here the descriptor-accessor style, flagged and deliberately accepted
+at review time: `tiler_ir::schedule`'s leaf descriptors (`IndexRegion`, `Access`,
+`KernelSchedule`, and the proof descriptors) expose `pub` fields, whereas the
+sibling `tiler_ir::index` uses view accessors. This is not a soundness gap —
+opacity is enforced at `VerifiedScheduledRegion`, and descriptors are only
+reachable through a `&ScheduledRegion` — but it is an inconsistency between two
+modules of the same crate. Decide deliberately: adopt view accessors while
+unifying (preferred if the unified form needs field-level invariants), or record
+why the pub-field value-data form is the intended style for schedule descriptors.

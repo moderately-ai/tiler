@@ -36,3 +36,11 @@ timing-free now and expensive to retrofit after the first consumer lands.
 
 Reviewed as a fast-follow to the two prototype merges (Tom saw the surfaces).
 This ticket does not change any semantics; it only reserves additive growth.
+
+While polishing these newly landed public surfaces, also replace the ` ```ignore `
+rustdoc example on `tiler_ir::index::IndexRegionBuilder::build_with` with a
+runnable doctest if it can be done without ~25 lines of scalar-registry setup
+(that setup cost is why it was left `ignore` at review time; the manual/closure
+equivalence is currently proven only by the integration test, so the example
+itself is unverified). If a runnable example remains impractical, record that
+explicitly rather than leaving it looking like an oversight.

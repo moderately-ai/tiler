@@ -23,3 +23,15 @@ region/index/schedule structure at distinct occurrences, occurrence-specific
 refinements, and complete-plan coverage. Assert identity and selected-provider
 provenance at every implemented layer. Each change must affect only the identity
 and provenance subjects governed by ADR 0072.
+
+The reviewed draft authorities this gate must wire into the ordinary path are now
+concrete: `capability`, `legality`, `fusion_legality`, `frontier`, `cover`, and
+`selection` (plus the pre-existing `explain`/`feasibility` drafts). Each carries a
+module-level `#![allow(dead_code, reason = "reviewed draft authority; not yet
+wired…")]` that must be removed as it is wired — a still-present allow after this
+gate is a sign the authority is not actually on the compile path. Two concrete
+deferrals recorded at their review to settle here: promote `cover`'s draft-local
+`CoverBudgets` into the live `request::DeterministicBudgets` (it is local today
+only to avoid fields read solely under `cfg(test)`), and emit the draft
+authorities' typed events through the explain vocabulary rather than leaving them
+explain-silent.
