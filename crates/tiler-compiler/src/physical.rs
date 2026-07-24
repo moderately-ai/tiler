@@ -1,14 +1,16 @@
 use std::error::Error;
 use std::fmt;
 
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::Shape;
 
-// The target-neutral scheduled-region IR, its intrinsic verifier, and its
-// canonical identity live in `tiler_ir::schedule` (ADR 0070). This module owns
+// The target-neutral scheduled-region IR and the backend-consumable structured
+// kernel IR, with their intrinsic verifiers and canonical identities, live in
+// `tiler_ir::schedule` and `tiler_ir::kernel` (ADR 0070). This module owns only
 // the compiler-specific refinements layered on top of a verified region:
-// semantic-occurrence binding, request-subject binding, target feasibility, and
-// structured-kernel lowering. The schedule vocabulary is re-exported so existing
-// `crate::physical::*` importers continue to resolve.
+// semantic-occurrence binding, request-subject binding, and target feasibility.
+// The shared vocabulary is re-exported so existing `crate::physical::*`
+// importers continue to resolve.
+pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
     ExecutionBinding, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization,
@@ -58,6 +60,13 @@ impl VerifiedScheduledRegion {
     pub(crate) fn region(&self) -> &ScheduledRegion {
         self.verified.region()
     }
+    /// Returns the shared-IR verified region this compiler binding wraps.
+    ///
+    /// Structured-kernel lowering consumes the shared verified value directly,
+    /// so a kernel can only ever refine an intrinsically verified schedule.
+    pub(crate) const fn verified(&self) -> &tiler_ir::schedule::VerifiedScheduledRegion {
+        &self.verified
+    }
     pub(crate) fn requirements(&self) -> ResourceRequirements {
         self.verified.requirements()
     }
@@ -86,116 +95,6 @@ impl VerifiedScheduledRegion {
     }
     pub(crate) fn matches_request(&self, request: &VerifiedTargetRequest) -> bool {
         self.request_subject == request.subject()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum KernelValueType {
-    IndexU64,
-    Bool,
-    F32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BufferAccess {
-    Read,
-    Write,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct KernelBuffer {
-    pub(crate) tensor: TensorRole,
-    pub(crate) access: BufferAccess,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BinaryF32 {
-    Multiply,
-    Add,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum StructuredBody {
-    PredicatedPointwise {
-        index_type: KernelValueType,
-        predicate_type: KernelValueType,
-        value_type: KernelValueType,
-        extent: u64,
-        input_bounds: BoundsWitnessId,
-        output_bounds: BoundsWitnessId,
-        output_ownership: OwnershipWitnessId,
-        scale_bits: u32,
-        bias_bits: u32,
-        operations: Vec<BinaryF32>,
-        canonical_nan_bits: u32,
-        contraction: bool,
-    },
-    EmptyReduction {
-        value_type: KernelValueType,
-        output_count: u64,
-        identity_bits: u32,
-        output_bounds: BoundsWitnessId,
-        output_ownership: OwnershipWitnessId,
-    },
-    NonEmptySerialReduction {
-        value_type: KernelValueType,
-        output_count: u64,
-        contributor_count: u64,
-        loop_start: u64,
-        loop_end: u64,
-        axes: Vec<Axis>,
-        order: ContributorOrder,
-        input_bounds: BoundsWitnessId,
-        output_bounds: BoundsWitnessId,
-        output_ownership: OwnershipWitnessId,
-        combine: BinaryF32,
-        canonical_nan_bits: u32,
-    },
-    FusedEmptyReduction {
-        value_type: KernelValueType,
-        output_count: u64,
-        identity_bits: u32,
-        output_bounds: BoundsWitnessId,
-        output_ownership: OwnershipWitnessId,
-    },
-    FusedNonEmptySerialReduction {
-        value_type: KernelValueType,
-        output_count: u64,
-        contributor_count: u64,
-        loop_start: u64,
-        loop_end: u64,
-        axes: Vec<Axis>,
-        order: ContributorOrder,
-        input_bounds: BoundsWitnessId,
-        output_bounds: BoundsWitnessId,
-        output_ownership: OwnershipWitnessId,
-        scale_bits: u32,
-        bias_bits: u32,
-        prologue_operations: Vec<BinaryF32>,
-        combine: BinaryF32,
-        canonical_nan_bits: u32,
-        contraction: bool,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct StructuredKernel {
-    pub(crate) scheduled_region: RegionId,
-    pub(crate) buffers: Vec<KernelBuffer>,
-    pub(crate) admitted_builtin: ExecutionBinding,
-    pub(crate) body: StructuredBody,
-    pub(crate) requirements: ResourceRequirements,
-    pub(crate) numerical: NumericalRealization,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct VerifiedStructuredKernel {
-    kernel: StructuredKernel,
-}
-
-impl VerifiedStructuredKernel {
-    pub(crate) const fn kernel(&self) -> &StructuredKernel {
-        &self.kernel
     }
 }
 
@@ -830,488 +729,22 @@ const fn feasibility_intrinsic(error: FeasibilityError, region: RegionId) -> Phy
     PhysicalError::Intrinsic { rule, region }
 }
 
+/// Lowers one verified scheduled region to its verified structured kernel.
+///
+/// The structured kernel IR, its canonical lowering, and its verifier live in
+/// [`tiler_ir::kernel`] (ADR 0070). This compiler entry point only forwards an
+/// already request-bound verified region and re-attributes a lowering failure
+/// to the region for the explain trace: a rejected lowering is a compiler
+/// output defect, never a feasibility outcome.
 pub(crate) fn lower_structured_kernel(
     scheduled: &VerifiedScheduledRegion,
-) -> Result<VerifiedStructuredKernel, PhysicalError> {
-    let region = scheduled.region();
-    let [read, write] = region.index.accesses.as_slice() else {
-        return refinement("access-count", region.index.id);
-    };
-    let body = lower_structured_body(region, read, write)?;
-    verify_kernel(
-        StructuredKernel {
-            scheduled_region: region.index.id,
-            buffers: vec![
-                KernelBuffer {
-                    tensor: read.tensor,
-                    access: BufferAccess::Read,
-                },
-                KernelBuffer {
-                    tensor: write.tensor,
-                    access: BufferAccess::Write,
-                },
-            ],
-            admitted_builtin: region.schedule.binding,
-            body,
-            requirements: scheduled.requirements(),
-            numerical: region.index.numerical,
-        },
-        scheduled,
-    )
-}
-
-fn lower_structured_body(
-    region: &ScheduledRegion,
-    read: &Access,
-    write: &Access,
-) -> Result<StructuredBody, PhysicalError> {
-    match &region.index.scalar_program {
-        ScalarProgram::MultiplyThenAdd {
-            scale_bits,
-            bias_bits,
-            canonical_nan_bits,
-            contraction,
-        } => Ok(StructuredBody::PredicatedPointwise {
-            index_type: KernelValueType::IndexU64,
-            predicate_type: KernelValueType::Bool,
-            value_type: KernelValueType::F32,
-            extent: region.schedule.work_items,
-            input_bounds: read.bounds,
-            output_bounds: write.bounds,
-            output_ownership: region.schedule.output_owner,
-            scale_bits: *scale_bits,
-            bias_bits: *bias_bits,
-            operations: vec![BinaryF32::Multiply, BinaryF32::Add],
-            canonical_nan_bits: *canonical_nan_bits,
-            contraction: *contraction,
-        }),
-        ScalarProgram::StrictSerialSum {
-            axes,
-            order,
-            canonical_nan_bits,
-            empty_identity_bits,
-        } => lower_serial_reduction(
-            region,
-            read,
-            write,
-            axes,
-            *order,
-            *canonical_nan_bits,
-            *empty_identity_bits,
-        ),
-        ScalarProgram::FusedMultiplyAddSerialSum {
-            scale_bits,
-            bias_bits,
-            axes,
-            order,
-            canonical_nan_bits,
-            empty_identity_bits,
-            contraction,
-        } => lower_fused_reduction(
-            region,
-            read,
-            write,
-            FusedReductionSpec {
-                scale_bits: *scale_bits,
-                bias_bits: *bias_bits,
-                axes,
-                order: *order,
-                canonical_nan_bits: *canonical_nan_bits,
-                empty_identity_bits: *empty_identity_bits,
-                contraction: *contraction,
-            },
-        ),
-    }
-}
-
-fn lower_serial_reduction(
-    region: &ScheduledRegion,
-    read: &Access,
-    write: &Access,
-    axes: &[Axis],
-    order: ContributorOrder,
-    canonical_nan_bits: u32,
-    empty_identity_bits: u32,
-) -> Result<StructuredBody, PhysicalError> {
-    let contributor_count = contributor_count(axes, &read.map, region.index.id)?;
-    Ok(if contributor_count == 0 {
-        StructuredBody::EmptyReduction {
-            value_type: KernelValueType::F32,
-            output_count: region.schedule.work_items,
-            identity_bits: empty_identity_bits,
-            output_bounds: write.bounds,
-            output_ownership: region.schedule.output_owner,
-        }
-    } else {
-        StructuredBody::NonEmptySerialReduction {
-            value_type: KernelValueType::F32,
-            output_count: region.schedule.work_items,
-            contributor_count,
-            loop_start: 1,
-            loop_end: contributor_count,
-            axes: axes.to_vec(),
-            order,
-            input_bounds: read.bounds,
-            output_bounds: write.bounds,
-            output_ownership: region.schedule.output_owner,
-            combine: BinaryF32::Add,
-            canonical_nan_bits,
+) -> Result<VerifiedKernel, PhysicalError> {
+    tiler_ir::kernel::lower_scheduled_region(scheduled.verified()).map_err(|error| {
+        PhysicalError::Refinement {
+            rule: error.rule(),
+            region: scheduled.region().index.id,
         }
     })
-}
-
-#[derive(Clone, Copy)]
-struct FusedReductionSpec<'a> {
-    scale_bits: u32,
-    bias_bits: u32,
-    axes: &'a [Axis],
-    order: ContributorOrder,
-    canonical_nan_bits: u32,
-    empty_identity_bits: u32,
-    contraction: bool,
-}
-
-fn lower_fused_reduction(
-    region: &ScheduledRegion,
-    read: &Access,
-    write: &Access,
-    spec: FusedReductionSpec<'_>,
-) -> Result<StructuredBody, PhysicalError> {
-    let contributor_count = contributor_count(spec.axes, &read.map, region.index.id)?;
-    Ok(if contributor_count == 0 {
-        StructuredBody::FusedEmptyReduction {
-            value_type: KernelValueType::F32,
-            output_count: region.schedule.work_items,
-            identity_bits: spec.empty_identity_bits,
-            output_bounds: write.bounds,
-            output_ownership: region.schedule.output_owner,
-        }
-    } else {
-        StructuredBody::FusedNonEmptySerialReduction {
-            value_type: KernelValueType::F32,
-            output_count: region.schedule.work_items,
-            contributor_count,
-            loop_start: 1,
-            loop_end: contributor_count,
-            axes: spec.axes.to_vec(),
-            order: spec.order,
-            input_bounds: read.bounds,
-            output_bounds: write.bounds,
-            output_ownership: region.schedule.output_owner,
-            scale_bits: spec.scale_bits,
-            bias_bits: spec.bias_bits,
-            prologue_operations: vec![BinaryF32::Multiply, BinaryF32::Add],
-            combine: BinaryF32::Add,
-            canonical_nan_bits: spec.canonical_nan_bits,
-            contraction: spec.contraction,
-        }
-    })
-}
-
-pub(crate) fn verify_kernel(
-    kernel: StructuredKernel,
-    scheduled: &VerifiedScheduledRegion,
-) -> Result<VerifiedStructuredKernel, PhysicalError> {
-    let region = scheduled.region();
-    let id = region.index.id;
-    let [read, write] = region.index.accesses.as_slice() else {
-        return refinement("access-count", id);
-    };
-    if kernel.scheduled_region != id
-        || kernel.admitted_builtin != region.schedule.binding
-        || kernel.requirements != scheduled.requirements()
-        || kernel.numerical != region.index.numerical
-        || kernel.buffers
-            != [
-                KernelBuffer {
-                    tensor: read.tensor,
-                    access: BufferAccess::Read,
-                },
-                KernelBuffer {
-                    tensor: write.tensor,
-                    access: BufferAccess::Write,
-                },
-            ]
-    {
-        return refinement("signature-or-requirements", id);
-    }
-    if !body_refines_schedule(&kernel.body, scheduled, read, write) {
-        return refinement("body", id);
-    }
-    Ok(VerifiedStructuredKernel { kernel })
-}
-
-fn body_refines_schedule(
-    body: &StructuredBody,
-    scheduled: &VerifiedScheduledRegion,
-    read: &Access,
-    write: &Access,
-) -> bool {
-    match (body, &scheduled.region().index.scalar_program) {
-        (
-            body @ StructuredBody::PredicatedPointwise { .. },
-            scalar @ ScalarProgram::MultiplyThenAdd { .. },
-        ) => pointwise_body_refines(body, scalar, scheduled, read, write),
-        (
-            body @ StructuredBody::EmptyReduction { .. },
-            scalar @ ScalarProgram::StrictSerialSum { .. },
-        ) => empty_reduction_body_refines(body, scalar, scheduled, read, write),
-        (
-            body @ StructuredBody::NonEmptySerialReduction { .. },
-            scalar @ ScalarProgram::StrictSerialSum { .. },
-        ) => nonempty_reduction_body_refines(body, scalar, scheduled, read, write),
-        (
-            body @ StructuredBody::FusedEmptyReduction { .. },
-            scalar @ ScalarProgram::FusedMultiplyAddSerialSum { .. },
-        ) => fused_empty_body_refines(body, scalar, scheduled, read, write),
-        (
-            body @ StructuredBody::FusedNonEmptySerialReduction { .. },
-            scalar @ ScalarProgram::FusedMultiplyAddSerialSum { .. },
-        ) => fused_nonempty_body_refines(body, scalar, scheduled, read, write),
-        _ => false,
-    }
-}
-
-/// Counts the reduction contributors of a scheduled access, attributing any
-/// malformed-domain error to the compiler region for a stable explanation.
-fn contributor_count(
-    axes: &[Axis],
-    access: &LogicalAccess,
-    region: RegionId,
-) -> Result<u64, PhysicalError> {
-    tiler_ir::schedule::contributor_count(axes, access).map_err(|error| PhysicalError::Intrinsic {
-        rule: error.rule(),
-        region,
-    })
-}
-
-fn fused_empty_body_refines(
-    body: &StructuredBody,
-    scalar: &ScalarProgram,
-    scheduled: &VerifiedScheduledRegion,
-    read: &Access,
-    write: &Access,
-) -> bool {
-    let StructuredBody::FusedEmptyReduction {
-        value_type,
-        output_count,
-        identity_bits,
-        output_bounds,
-        output_ownership,
-    } = body
-    else {
-        return false;
-    };
-    let ScalarProgram::FusedMultiplyAddSerialSum {
-        empty_identity_bits,
-        ..
-    } = scalar
-    else {
-        return false;
-    };
-    *value_type == KernelValueType::F32
-        && contributor_count(
-            match scalar {
-                ScalarProgram::FusedMultiplyAddSerialSum { axes, .. } => axes,
-                _ => return false,
-            },
-            &read.map,
-            scheduled.region().index.id,
-        ) == Ok(0)
-        && *output_count == scheduled.region().schedule.work_items
-        && identity_bits == empty_identity_bits
-        && *output_bounds == write.bounds
-        && *output_ownership == scheduled.region().schedule.output_owner
-}
-
-fn fused_nonempty_body_refines(
-    body: &StructuredBody,
-    scalar: &ScalarProgram,
-    scheduled: &VerifiedScheduledRegion,
-    read: &Access,
-    write: &Access,
-) -> bool {
-    let StructuredBody::FusedNonEmptySerialReduction {
-        value_type,
-        output_count,
-        contributor_count,
-        loop_start,
-        loop_end,
-        axes,
-        order,
-        input_bounds,
-        output_bounds,
-        output_ownership,
-        scale_bits,
-        bias_bits,
-        prologue_operations,
-        combine,
-        canonical_nan_bits,
-        contraction,
-    } = body
-    else {
-        return false;
-    };
-    let ScalarProgram::FusedMultiplyAddSerialSum {
-        scale_bits: expected_scale,
-        bias_bits: expected_bias,
-        axes: expected_axes,
-        order: expected_order,
-        canonical_nan_bits: expected_nan,
-        contraction: expected_contraction,
-        ..
-    } = scalar
-    else {
-        return false;
-    };
-    *value_type == KernelValueType::F32
-        && *output_count == scheduled.region().schedule.work_items
-        && self::contributor_count(expected_axes, &read.map, scheduled.region().index.id)
-            == Ok(*contributor_count)
-        && *contributor_count > 0
-        && *loop_start == 1
-        && *loop_end == *contributor_count
-        && axes == expected_axes
-        && order == expected_order
-        && *input_bounds == read.bounds
-        && *output_bounds == write.bounds
-        && *output_ownership == scheduled.region().schedule.output_owner
-        && scale_bits == expected_scale
-        && bias_bits == expected_bias
-        && *prologue_operations == [BinaryF32::Multiply, BinaryF32::Add]
-        && *combine == BinaryF32::Add
-        && canonical_nan_bits == expected_nan
-        && contraction == expected_contraction
-}
-
-fn pointwise_body_refines(
-    body: &StructuredBody,
-    scalar: &ScalarProgram,
-    scheduled: &VerifiedScheduledRegion,
-    read: &Access,
-    write: &Access,
-) -> bool {
-    let StructuredBody::PredicatedPointwise {
-        index_type,
-        predicate_type,
-        value_type,
-        extent,
-        input_bounds,
-        output_bounds,
-        output_ownership,
-        operations,
-        canonical_nan_bits,
-        contraction,
-        scale_bits,
-        bias_bits,
-    } = body
-    else {
-        return false;
-    };
-    let ScalarProgram::MultiplyThenAdd {
-        scale_bits: expected_scale,
-        bias_bits: expected_bias,
-        canonical_nan_bits: expected_nan,
-        contraction: expected_contraction,
-        ..
-    } = scalar
-    else {
-        return false;
-    };
-    *index_type == KernelValueType::IndexU64
-        && *predicate_type == KernelValueType::Bool
-        && *value_type == KernelValueType::F32
-        && *extent == scheduled.region().schedule.work_items
-        && *input_bounds == read.bounds
-        && *output_bounds == write.bounds
-        && *output_ownership == scheduled.region().schedule.output_owner
-        && scale_bits == expected_scale
-        && bias_bits == expected_bias
-        && *operations == [BinaryF32::Multiply, BinaryF32::Add]
-        && canonical_nan_bits == expected_nan
-        && contraction == expected_contraction
-}
-
-fn empty_reduction_body_refines(
-    body: &StructuredBody,
-    scalar: &ScalarProgram,
-    scheduled: &VerifiedScheduledRegion,
-    read: &Access,
-    write: &Access,
-) -> bool {
-    let StructuredBody::EmptyReduction {
-        value_type,
-        output_count,
-        identity_bits,
-        output_bounds,
-        output_ownership,
-    } = body
-    else {
-        return false;
-    };
-    let ScalarProgram::StrictSerialSum {
-        empty_identity_bits,
-        axes,
-        ..
-    } = scalar
-    else {
-        return false;
-    };
-    *value_type == KernelValueType::F32
-        && contributor_count(axes, &read.map, scheduled.region().index.id) == Ok(0)
-        && *output_count == scheduled.region().schedule.work_items
-        && identity_bits == empty_identity_bits
-        && *output_bounds == write.bounds
-        && *output_ownership == scheduled.region().schedule.output_owner
-}
-
-fn nonempty_reduction_body_refines(
-    body: &StructuredBody,
-    scalar: &ScalarProgram,
-    scheduled: &VerifiedScheduledRegion,
-    read: &Access,
-    write: &Access,
-) -> bool {
-    let StructuredBody::NonEmptySerialReduction {
-        value_type,
-        output_count,
-        contributor_count,
-        loop_start,
-        loop_end,
-        axes,
-        order,
-        input_bounds,
-        output_bounds,
-        output_ownership,
-        combine,
-        canonical_nan_bits,
-    } = body
-    else {
-        return false;
-    };
-    let ScalarProgram::StrictSerialSum {
-        axes: expected_axes,
-        order: expected_order,
-        canonical_nan_bits: expected_nan,
-        ..
-    } = scalar
-    else {
-        return false;
-    };
-    *value_type == KernelValueType::F32
-        && *output_count == scheduled.region().schedule.work_items
-        && self::contributor_count(expected_axes, &read.map, scheduled.region().index.id)
-            == Ok(*contributor_count)
-        && *contributor_count > 0
-        && *loop_start == 1
-        && *loop_end == *contributor_count
-        && axes == expected_axes
-        && order == expected_order
-        && *input_bounds == read.bounds
-        && *output_bounds == write.bounds
-        && *output_ownership == scheduled.region().schedule.output_owner
-        && *combine == BinaryF32::Add
-        && canonical_nan_bits == expected_nan
 }
 
 /// Counts the elements of a shape, attributing any overflow to the region.
@@ -1324,18 +757,43 @@ fn intrinsic<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError
     Err(PhysicalError::Intrinsic { rule, region })
 }
 
-fn refinement<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError> {
-    Err(PhysicalError::Refinement { rule, region })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::request::{CompilationRequest, verify_request};
+    use tiler_ir::kernel::{KernelConstant, OperationRef, OperationView};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
         StrictSerialF32Sum,
     };
+    use tiler_ir::shape::Axis;
+
+    /// Returns the bounded loop range of the kernel's guarded region, if any.
+    fn loop_bounds(kernel: &VerifiedKernel) -> Option<(u64, u64)> {
+        guarded_operations(kernel).find_map(|view| match view {
+            OperationView::SerialLoop(reduction) => Some((reduction.start(), reduction.end())),
+            _ => None,
+        })
+    }
+
+    /// Returns the constant the kernel commits, when it stores an immediate.
+    fn stored_constant(kernel: &VerifiedKernel) -> Option<KernelConstant> {
+        guarded_operations(kernel).find_map(|view| match view {
+            OperationView::Store { value, .. } => kernel.value_constant(value).ok().flatten(),
+            _ => None,
+        })
+    }
+
+    fn guarded_operations(kernel: &VerifiedKernel) -> impl Iterator<Item = OperationView<'_>> {
+        kernel
+            .body()
+            .operations()
+            .filter_map(|operation| match operation.view() {
+                OperationView::Predicated { body, .. } => Some(body),
+                _ => None,
+            })
+            .flat_map(|body| body.operations().map(OperationRef::view))
+    }
 
     fn request(shape: Shape, axes: impl IntoIterator<Item = Axis>) -> VerifiedTargetRequest {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -1364,19 +822,21 @@ mod tests {
 
         assert_eq!(regions[0].region().schedule.work_items, 6);
         assert_eq!(regions[1].region().schedule.work_items, 2);
-        let StructuredBody::PredicatedPointwise { operations, .. } = pointwise.kernel.body else {
-            panic!("expected pointwise body");
-        };
-        assert_eq!(operations, [BinaryF32::Multiply, BinaryF32::Add]);
-        assert!(matches!(
-            reduction.kernel.body,
-            StructuredBody::NonEmptySerialReduction {
-                contributor_count: 3,
-                loop_start: 1,
-                loop_end: 3,
-                ..
-            }
-        ));
+        // Each kernel retains the exact identity of the region it refines.
+        assert_eq!(pointwise.scheduled_region(), RegionId::new(0));
+        assert_eq!(reduction.scheduled_region(), RegionId::new(1));
+        assert_eq!(
+            pointwise.scheduled_region_identity(),
+            regions[0].canonical_identity()
+        );
+        assert_eq!(
+            reduction.scheduled_region_identity(),
+            regions[1].canonical_identity()
+        );
+        // The reduction realizes the scheduled contributor order as an explicit
+        // bounded loop; the pointwise region carries none.
+        assert_eq!(loop_bounds(&reduction), Some((1, 3)));
+        assert_eq!(loop_bounds(&pointwise), None);
     }
 
     #[test]
@@ -1403,14 +863,13 @@ mod tests {
         let request = request(Shape::from_dims([2, 0]), [Axis::new(1)]);
         let regions = build_scheduled_regions(&request).unwrap();
         let reduction = lower_structured_kernel(&regions[1]).unwrap();
-        assert!(matches!(
-            reduction.kernel.body,
-            StructuredBody::EmptyReduction {
-                output_count: 2,
-                identity_bits: 0,
-                ..
-            }
-        ));
+        // An empty reduction commits the proved identity directly: no loop and
+        // no contributor load remain for a backend to interpret.
+        assert_eq!(loop_bounds(&reduction), None);
+        assert_eq!(
+            stored_constant(&reduction),
+            Some(KernelConstant::F32Bits(0.0_f32.to_bits()))
+        );
     }
 
     #[test]
@@ -1477,22 +936,6 @@ mod tests {
                 region: RegionId::new(0),
             })
         );
-
-        let mut invalid_kernel = lower_structured_kernel(&regions[0]).unwrap().kernel;
-        let StructuredBody::PredicatedPointwise {
-            output_ownership, ..
-        } = &mut invalid_kernel.body
-        else {
-            panic!("expected pointwise body")
-        };
-        *output_ownership = OwnershipWitnessId::new(9);
-        assert_eq!(
-            verify_kernel(invalid_kernel, &regions[0]),
-            Err(PhysicalError::Refinement {
-                rule: "body",
-                region: RegionId::new(0),
-            })
-        );
     }
 
     #[test]
@@ -1533,7 +976,7 @@ mod tests {
     }
 
     #[test]
-    fn fused_schedule_and_kernel_reject_numerical_and_body_corruption() {
+    fn fused_schedule_rejects_numerical_corruption() {
         let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
         let scheduled = build_fused_scheduled_region(&request).unwrap();
         let mut invalid_schedule = scheduled.region().clone();
@@ -1551,23 +994,6 @@ mod tests {
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "numerical-or-access-refinement",
-                region: RegionId::new(0),
-            })
-        );
-
-        let mut invalid_kernel = lower_structured_kernel(&scheduled).unwrap().kernel;
-        let StructuredBody::FusedNonEmptySerialReduction {
-            prologue_operations,
-            ..
-        } = &mut invalid_kernel.body
-        else {
-            panic!("expected fused reduction body")
-        };
-        prologue_operations.reverse();
-        assert_eq!(
-            verify_kernel(invalid_kernel, &scheduled),
-            Err(PhysicalError::Refinement {
-                rule: "body",
                 region: RegionId::new(0),
             })
         );
@@ -1625,52 +1051,5 @@ mod tests {
                 Err(PhysicalError::Intrinsic { .. })
             ));
         }
-
-        let late_zero = LogicalAccess::ReductionContributor {
-            input_shape: Shape::from_dims([u64::MAX, 2, 0]),
-            output_shape: Shape::from_dims([]),
-            axes: vec![Axis::new(0), Axis::new(1), Axis::new(2)],
-            order: ContributorOrder::OriginalAxisLexicographic,
-        };
-        assert_eq!(
-            contributor_count(
-                &[Axis::new(0), Axis::new(1), Axis::new(2)],
-                &late_zero,
-                RegionId::new(7),
-            ),
-            Ok(0)
-        );
-    }
-
-    #[test]
-    fn structured_kernel_constants_and_contributor_counts_are_rederived() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
-        let regions = build_scheduled_regions(&request).unwrap();
-
-        let mut pointwise = lower_structured_kernel(&regions[0]).unwrap().kernel;
-        let StructuredBody::PredicatedPointwise { scale_bits, .. } = &mut pointwise.body else {
-            panic!("expected pointwise body")
-        };
-        *scale_bits ^= 1;
-        assert!(matches!(
-            verify_kernel(pointwise, &regions[0]),
-            Err(PhysicalError::Refinement { rule: "body", .. })
-        ));
-
-        let mut reduction = lower_structured_kernel(&regions[1]).unwrap().kernel;
-        let StructuredBody::NonEmptySerialReduction {
-            contributor_count,
-            loop_end,
-            ..
-        } = &mut reduction.body
-        else {
-            panic!("expected reduction body")
-        };
-        *contributor_count += 1;
-        *loop_end += 1;
-        assert!(matches!(
-            verify_kernel(reduction, &regions[1]),
-            Err(PhysicalError::Refinement { rule: "body", .. })
-        ));
     }
 }

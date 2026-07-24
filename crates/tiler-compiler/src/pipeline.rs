@@ -15,7 +15,7 @@ use crate::normalize::{
     NORMALIZATION_SUBJECT, NormalizationOutcome, NormalizeError, normalize_semantics,
 };
 use crate::physical::{
-    PhysicalError, VerifiedScheduledRegion, VerifiedStructuredKernel, build_fused_scheduled_region,
+    PhysicalError, VerifiedKernel, VerifiedScheduledRegion, build_fused_scheduled_region,
     build_scheduled_regions, lower_structured_kernel,
 };
 use crate::program::{
@@ -71,7 +71,7 @@ pub(crate) struct ProgramAlternative {
     pub(crate) stable_id: &'static str,
     pub(crate) kind: ProgramAlternativeKind,
     pub(crate) scheduled_regions: Vec<VerifiedScheduledRegion>,
-    pub(crate) kernels: Vec<VerifiedStructuredKernel>,
+    pub(crate) kernels: Vec<VerifiedKernel>,
     pub(crate) program: KernelProgram,
     pub(crate) artifact_plan: ArtifactConstructionPlan,
     pub(crate) structural_cost: StructuralCost,
@@ -1434,7 +1434,7 @@ fn record_fused_refinement(
 
 fn fused_alternative(
     region: VerifiedScheduledRegion,
-    kernel: VerifiedStructuredKernel,
+    kernel: VerifiedKernel,
     program: KernelProgram,
     artifact_plan: ArtifactConstructionPlan,
     proof: FusionNumericalProof,
@@ -1608,7 +1608,7 @@ struct ExpectedAlternative {
     stable_id: &'static str,
     cost: StructuralCost,
     scheduled: Vec<VerifiedScheduledRegion>,
-    kernels: Vec<VerifiedStructuredKernel>,
+    kernels: Vec<VerifiedKernel>,
     program: KernelProgram,
     artifact: ArtifactConstructionPlan,
 }
@@ -1850,8 +1850,10 @@ const fn structurally_dominates(candidate: StructuralCost, incumbent: Structural
 mod tests {
     use super::*;
     use crate::explain::ExplainDisposition;
-    use crate::physical::{ContributorOrder, RegionId, StructuredBody, TensorRole};
+    use crate::physical::{RegionId, TensorRole};
     use crate::program::{DependencyReason, MaterializedValueId, ValueRole};
+    use std::collections::BTreeMap;
+    use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -1934,57 +1936,209 @@ mod tests {
         builder.build().unwrap()
     }
 
-    fn interpret_fused(kernel: &VerifiedStructuredKernel, input: &[f32]) -> Vec<f32> {
-        match &kernel.kernel().body {
-            StructuredBody::FusedEmptyReduction {
-                output_count,
-                identity_bits,
-                ..
-            } => vec![f32::from_bits(*identity_bits); usize::try_from(*output_count).unwrap()],
-            StructuredBody::FusedNonEmptySerialReduction {
-                output_count,
-                contributor_count,
-                scale_bits,
-                bias_bits,
-                canonical_nan_bits,
-                contraction,
-                prologue_operations,
-                ..
-            } => {
-                assert!(!contraction);
-                assert_eq!(
-                    prologue_operations,
-                    &[
-                        crate::physical::BinaryF32::Multiply,
-                        crate::physical::BinaryF32::Add,
-                    ]
-                );
-                let scale = f32::from_bits(*scale_bits);
-                let bias = f32::from_bits(*bias_bits);
-                let canonicalize = |value: f32| {
-                    if value.is_nan() {
-                        f32::from_bits(*canonical_nan_bits)
-                    } else {
-                        value
-                    }
-                };
-                let contributors = usize::try_from(*contributor_count).unwrap();
-                let outputs = usize::try_from(*output_count).unwrap();
-                assert_eq!(input.len(), outputs * contributors);
-                input
-                    .chunks_exact(contributors)
-                    .map(|chunk| {
-                        let mut mapped = chunk.iter().map(|value| {
-                            let product = canonicalize(*value * scale);
-                            canonicalize(product + bias)
-                        });
-                        let first = mapped.next().expect("non-empty fused reduction");
-                        canonicalize(mapped.fold(first, |sum, value| canonicalize(sum + value)))
-                    })
-                    .collect()
+    /// One typed value produced while interpreting a structured kernel.
+    #[derive(Clone, Copy, Debug)]
+    enum KirValue {
+        Bool(bool),
+        Index(u64),
+        F32(f32),
+    }
+
+    impl KirValue {
+        fn index(self) -> u64 {
+            match self {
+                Self::Index(value) => value,
+                other => panic!("expected an index-typed value, found {other:?}"),
             }
-            _ => panic!("expected fused structured body"),
         }
+        fn float(self) -> f32 {
+            match self {
+                Self::F32(value) => value,
+                other => panic!("expected an f32-typed value, found {other:?}"),
+            }
+        }
+        fn boolean(self) -> bool {
+            match self {
+                Self::Bool(value) => value,
+                other => panic!("expected a predicate value, found {other:?}"),
+            }
+        }
+    }
+
+    /// A backend-shaped interpreter that reads only the structured kernel IR.
+    ///
+    /// It resolves nothing from the semantic graph, the request, or the
+    /// schedule: buffer roles and extents, addressing, predication, reduction
+    /// order, and NaN canonicalization all come from the kernel itself. That is
+    /// the property the KIR layer exists to guarantee, so exercising it against
+    /// the reference evaluator is the end-to-end proof that a backend needs no
+    /// graph-specific reconstruction.
+    struct KirMachine<'a> {
+        kernel: &'a VerifiedKernel,
+        input: &'a [f32],
+        output: Vec<f32>,
+        values: BTreeMap<tiler_ir::kernel::VerifiedValueId, KirValue>,
+    }
+
+    impl<'a> KirMachine<'a> {
+        fn run(kernel: &'a VerifiedKernel, input: &'a [f32]) -> Vec<f32> {
+            let mut buffers = kernel.buffers();
+            let read = buffers.next().expect("a read buffer parameter");
+            let write = buffers.next().expect("a write buffer parameter");
+            assert_eq!(read.access, tiler_ir::kernel::BufferAccess::Read);
+            assert_eq!(write.access, tiler_ir::kernel::BufferAccess::Write);
+            assert_eq!(input.len(), usize::try_from(read.element_count).unwrap());
+            let outputs = usize::try_from(write.element_count).unwrap();
+            let mut machine = KirMachine {
+                kernel,
+                input,
+                output: vec![f32::NAN; outputs],
+                values: BTreeMap::new(),
+            };
+            for invocation in 0..u64::try_from(outputs).unwrap() {
+                machine.values.clear();
+                machine.run_block(kernel.body(), invocation);
+            }
+            machine.output
+        }
+
+        fn run_block(&mut self, block: tiler_ir::kernel::BlockRef<'a>, invocation: u64) {
+            for operation in block.operations() {
+                let mut results = operation.results();
+                match operation.view() {
+                    OperationView::Builtin { .. } => {
+                        self.define(&mut results, KirValue::Index(invocation));
+                    }
+                    OperationView::Constant { value } => {
+                        let value = match value {
+                            KernelConstant::Bool(flag) => KirValue::Bool(flag),
+                            KernelConstant::Index(index) => KirValue::Index(index),
+                            KernelConstant::F32Bits(bits) => KirValue::F32(f32::from_bits(bits)),
+                            other => panic!("unsupported constant {other:?}"),
+                        };
+                        self.define(&mut results, value);
+                    }
+                    OperationView::Binary { op, lhs, rhs } => {
+                        let value = match op {
+                            BinaryOp::IndexAdd => {
+                                KirValue::Index(self.get(lhs).index() + self.get(rhs).index())
+                            }
+                            BinaryOp::IndexMultiply => {
+                                KirValue::Index(self.get(lhs).index() * self.get(rhs).index())
+                            }
+                            BinaryOp::IndexDivide => {
+                                KirValue::Index(self.get(lhs).index() / self.get(rhs).index())
+                            }
+                            BinaryOp::IndexModulo => {
+                                KirValue::Index(self.get(lhs).index() % self.get(rhs).index())
+                            }
+                            BinaryOp::F32Add => {
+                                KirValue::F32(self.get(lhs).float() + self.get(rhs).float())
+                            }
+                            BinaryOp::F32Multiply => {
+                                KirValue::F32(self.get(lhs).float() * self.get(rhs).float())
+                            }
+                            other => panic!("unsupported binary operation {other:?}"),
+                        };
+                        self.define(&mut results, value);
+                    }
+                    OperationView::Compare { op, lhs, rhs } => {
+                        let value = match op {
+                            CompareOp::IndexLessThan => {
+                                KirValue::Bool(self.get(lhs).index() < self.get(rhs).index())
+                            }
+                            other => panic!("unsupported comparison {other:?}"),
+                        };
+                        self.define(&mut results, value);
+                    }
+                    OperationView::Convert { op, source } => {
+                        let value = self.get(source).float();
+                        let value = match op {
+                            ConvertOp::CanonicalizeF32Nan => {
+                                if value.is_nan() {
+                                    f32::from_bits(
+                                        self.kernel.numerical().canonical_arithmetic_nan_bits,
+                                    )
+                                } else {
+                                    value
+                                }
+                            }
+                            other => panic!("unsupported conversion {other:?}"),
+                        };
+                        self.define(&mut results, KirValue::F32(value));
+                    }
+                    OperationView::Load { offset, .. } => {
+                        let offset = usize::try_from(self.get(offset).index()).unwrap();
+                        let value = KirValue::F32(self.input[offset]);
+                        self.define(&mut results, value);
+                    }
+                    OperationView::Store { offset, value, .. } => {
+                        let offset = usize::try_from(self.get(offset).index()).unwrap();
+                        self.output[offset] = self.get(value).float();
+                    }
+                    OperationView::Predicated { predicate, body } => {
+                        if self.get(predicate).boolean() {
+                            self.run_block(body, invocation);
+                        }
+                    }
+                    OperationView::SerialLoop(reduction) => {
+                        let mut carried: Vec<KirValue> =
+                            reduction.initial().map(|value| self.get(value)).collect();
+                        let induction = reduction.induction().expect("an induction variable");
+                        let parameters: Vec<_> = reduction.accumulators().collect();
+                        for step in reduction.start()..reduction.end() {
+                            self.values.insert(induction, KirValue::Index(step));
+                            for (parameter, value) in parameters.iter().zip(&carried) {
+                                self.values.insert(*parameter, *value);
+                            }
+                            self.run_block(reduction.body(), invocation);
+                            carried = reduction.yields().map(|value| self.get(value)).collect();
+                        }
+                        for (result, value) in results.zip(carried) {
+                            self.values.insert(result, value);
+                        }
+                    }
+                    OperationView::Barrier { .. } => {}
+                    other => panic!("unsupported structured operation {other:?}"),
+                }
+            }
+        }
+
+        fn define(
+            &mut self,
+            results: &mut impl Iterator<Item = tiler_ir::kernel::VerifiedValueId>,
+            value: KirValue,
+        ) {
+            let result = results.next().expect("one defined result");
+            self.values.insert(result, value);
+        }
+
+        fn get(&self, id: tiler_ir::kernel::VerifiedValueId) -> KirValue {
+            *self
+                .values
+                .get(&id)
+                .expect("a value defined before its use")
+        }
+    }
+
+    fn interpret_fused(kernel: &VerifiedKernel, input: &[f32]) -> Vec<f32> {
+        KirMachine::run(kernel, input)
+    }
+
+    /// Returns the bounded range of the kernel's single guarded reduction loop.
+    fn reduction_loop(kernel: &VerifiedKernel) -> Option<(u64, u64)> {
+        kernel
+            .body()
+            .operations()
+            .filter_map(|operation| match operation.view() {
+                OperationView::Predicated { body, .. } => Some(body),
+                _ => None,
+            })
+            .flat_map(tiler_ir::kernel::BlockRef::operations)
+            .find_map(|operation| match operation.view() {
+                OperationView::SerialLoop(reduction) => Some((reduction.start(), reduction.end())),
+                _ => None,
+            })
     }
 
     fn assert_fused_matches_reference(
@@ -1993,7 +2147,18 @@ mod tests {
         scale_bits: u32,
         bias_bits: u32,
     ) {
-        let semantic = semantic_case(shape.clone(), scale_bits, bias_bits, false);
+        assert_fused_axis_matches_reference(shape, values, scale_bits, bias_bits, Axis::new(1));
+    }
+
+    fn assert_fused_axis_matches_reference(
+        shape: Shape,
+        values: Vec<f32>,
+        scale_bits: u32,
+        bias_bits: u32,
+        reduction_axis: Axis,
+    ) {
+        let semantic =
+            semantic_case_with_axis(shape.clone(), scale_bits, bias_bits, false, reduction_axis);
         let product = compile(CompilationRequest::governed(&semantic)).unwrap();
         let fused = &product.targets[0].portfolio.alternatives[1];
         let actual = interpret_fused(&fused.kernels[0], &values);
@@ -2073,22 +2238,14 @@ mod tests {
             DependencyReason::Data(MaterializedValueId(1))
         );
         assert_eq!(
-            materialized.kernels[0].kernel().buffers[1].tensor,
+            materialized.kernels[0].buffers().nth(1).unwrap().tensor,
             TensorRole::Intermediate
         );
         assert_eq!(
-            materialized.kernels[1].kernel().buffers[0].tensor,
+            materialized.kernels[1].buffers().next().unwrap().tensor,
             TensorRole::Intermediate
         );
-        assert!(matches!(
-            materialized.kernels[1].kernel().body,
-            StructuredBody::NonEmptySerialReduction {
-                order: ContributorOrder::OriginalAxisLexicographic,
-                loop_start: 1,
-                loop_end: 3,
-                ..
-            }
-        ));
+        assert_eq!(reduction_loop(&materialized.kernels[1]), Some((1, 3)));
         assert_eq!(fused.program.stages().len(), 1);
         assert_eq!(fused.program.buffer_plan().values.len(), 2);
         assert_eq!(
@@ -2123,15 +2280,7 @@ mod tests {
                 .fused_serial_sum
                 .unwrap()]
         );
-        assert!(matches!(
-            fused.kernels[0].kernel().body,
-            StructuredBody::FusedNonEmptySerialReduction {
-                contributor_count: 3,
-                loop_start: 1,
-                loop_end: 3,
-                ..
-            }
-        ));
+        assert_eq!(reduction_loop(&fused.kernels[0]), Some((1, 3)));
         assert!(first.explain.records().iter().any(|record| {
             record.rule().key().as_str() == "compile.boundary.materialized"
                 && record.event().disposition() == ExplainDisposition::Admitted
@@ -2793,6 +2942,31 @@ mod tests {
             vec![contraction_input, -1.0],
             contraction_scale.to_bits(),
             contraction_bias.to_bits(),
+        );
+    }
+
+    /// The structured addressing must realize a non-trailing reduced axis.
+    ///
+    /// A leading reduced axis makes the contributor stride differ from one, and
+    /// a middle reduced axis additionally forces the kept coordinate to be
+    /// recovered with an explicit index division and remainder. Both are lowered
+    /// as ordinary index arithmetic, so interpreting the emitted operations must
+    /// still reproduce the reference evaluator exactly.
+    #[test]
+    fn structured_addressing_realizes_non_trailing_reduction_axes() {
+        assert_fused_axis_matches_reference(
+            Shape::from_dims([3, 2]),
+            vec![1.0, -2.0, 3.5, f32::MIN_POSITIVE, -0.0, 0.0],
+            2.0_f32.to_bits(),
+            1.0_f32.to_bits(),
+            Axis::new(0),
+        );
+        assert_fused_axis_matches_reference(
+            Shape::from_dims([2, 3, 2]),
+            (0..12_u8).map(|value| f32::from(value) - 4.0).collect(),
+            0.5_f32.to_bits(),
+            (-0.25_f32).to_bits(),
+            Axis::new(1),
         );
     }
 
