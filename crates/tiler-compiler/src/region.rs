@@ -182,7 +182,7 @@ impl RegionContentIdentity {
     ///
     /// The label is a digest of the canonical bytes and is presentation only.
     /// Equality decisions always use [`Self::as_bytes`].
-    pub(crate) fn key(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         format!("region-content:{:016x}", digest(&self.canonical))
     }
 }
@@ -206,7 +206,7 @@ impl RegionOccurrenceIdentity {
     /// Region formation proves the labels of one compilation's emitted
     /// candidates are pairwise distinct before returning, so within a trace this
     /// label is an injective handle for the occurrence identity.
-    fn key(&self) -> String {
+    fn label(&self) -> String {
         format!("region:{:016x}", digest(&self.canonical))
     }
 }
@@ -220,7 +220,7 @@ pub(crate) struct RegionCandidate {
     duplication: DuplicationPolicy,
     content: RegionContentIdentity,
     occurrence: RegionOccurrenceIdentity,
-    stable_id: String,
+    label: String,
     program_operation_count: u32,
 }
 
@@ -256,8 +256,8 @@ impl RegionCandidate {
     }
 
     /// Returns the bounded explain label of this occurrence.
-    pub(crate) fn stable_id(&self) -> &str {
-        &self.stable_id
+    pub(crate) fn label(&self) -> &str {
+        &self.label
     }
 
     /// Returns whether the region covers every operation of its program.
@@ -503,9 +503,9 @@ fn record_candidate(
             )?)?
             .with_fact(ExplainFact::new(
                 "region-content",
-                FactValue::Identity(SubjectKey::new(candidate.content.key())?),
+                FactValue::Identity(SubjectKey::new(candidate.content.label())?),
             )?)?;
-    let subject = explain.subject(SubjectKind::Candidate, &candidate.stable_id)?;
+    let subject = explain.subject(SubjectKind::Candidate, &candidate.label)?;
     explain.push_detail(
         RuleRef::builtin(REGION_CANDIDATE_RULE)?,
         vec![subject],
@@ -944,19 +944,19 @@ pub(crate) fn verify_candidate(
     let members: Vec<u32> = candidate.members.iter().map(|member| member.0).collect();
     if members.is_empty() || members.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(RegionError::Invalid {
-            region: candidate.stable_id.clone(),
+            region: candidate.label.clone(),
             rule: "membership",
         });
     }
     let rebuilt = form_candidate(graph, budgets, numerical_contract, &members)?;
     match rebuilt {
         Err(rejection) => Err(RegionError::Invalid {
-            region: candidate.stable_id.clone(),
+            region: candidate.label.clone(),
             rule: rejection.rule(),
         }),
         Ok(rebuilt) if rebuilt == *candidate => Ok(()),
         Ok(_) => Err(RegionError::Invalid {
-            region: candidate.stable_id.clone(),
+            region: candidate.label.clone(),
             rule: "identity",
         }),
     }
@@ -1102,7 +1102,7 @@ impl Formation<'_> {
             keyed.into_iter().map(|(_, candidate)| candidate).collect();
         let labels: BTreeSet<&str> = candidates
             .iter()
-            .map(|candidate| candidate.stable_id.as_str())
+            .map(|candidate| candidate.label.as_str())
             .collect();
         if labels.len() != candidates.len() {
             return Err(RegionError::Structure {
@@ -1274,7 +1274,7 @@ fn assemble(
     let duplication = DuplicationPolicy::Disabled;
     let content = encode_content(graph, numerical_contract, members, &shape, duplication)?;
     let occurrence = encode_occurrence(graph, &content, members, &shape)?;
-    let stable_id = occurrence.key();
+    let label = occurrence.label();
     Ok(RegionCandidate {
         members: members
             .iter()
@@ -1289,7 +1289,7 @@ fn assemble(
         duplication,
         content,
         occurrence,
-        stable_id,
+        label,
         program_operation_count: graph.operation_count(),
     })
 }
@@ -2117,7 +2117,7 @@ mod tests {
         // different graph site with different retained-output reasons.
         assert_ne!(left.content(), right.content());
         assert_ne!(left.occurrence(), shared.occurrence());
-        assert_ne!(left.stable_id(), shared.stable_id());
+        assert_ne!(left.label(), shared.label());
 
         // The same content at a different site keeps one content identity.
         let first = form(&serial_sum_program());
@@ -2310,12 +2310,12 @@ mod tests {
             first
                 .candidates()
                 .iter()
-                .map(RegionCandidate::stable_id)
+                .map(RegionCandidate::label)
                 .collect::<Vec<_>>(),
             second
                 .candidates()
                 .iter()
-                .map(RegionCandidate::stable_id)
+                .map(RegionCandidate::label)
                 .collect::<Vec<_>>()
         );
         assert_eq!(first.candidates().len(), 17);
@@ -2336,7 +2336,7 @@ mod tests {
         assert_eq!(whole.members().len(), program.operation_count());
 
         let mut forged = whole.clone();
-        forged.stable_id.push_str("-forged");
+        forged.label.push_str("-forged");
         assert!(matches!(
             verify_candidate(outcome.graph(), budgets, contract, &forged),
             Err(RegionError::Invalid {

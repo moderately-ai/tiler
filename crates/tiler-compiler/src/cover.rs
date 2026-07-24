@@ -247,7 +247,7 @@ pub(crate) struct CoverRegion {
     members: Vec<SemanticMemberId>,
     content: RegionContentIdentity,
     occurrence: RegionOccurrenceIdentity,
-    stable_id: String,
+    label: String,
 }
 
 impl CoverRegion {
@@ -267,8 +267,8 @@ impl CoverRegion {
     }
 
     /// Returns the bounded explain label of the region occurrence.
-    pub(crate) fn stable_id(&self) -> &str {
-        &self.stable_id
+    pub(crate) fn label(&self) -> &str {
+        &self.label
     }
 }
 
@@ -291,7 +291,7 @@ impl RegionCoverIdentity {
     ///
     /// The label is a digest of the canonical bytes and is presentation only.
     /// Equality decisions always use [`Self::as_bytes`].
-    pub(crate) fn key(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         format!("region-cover:{:016x}", digest(&self.0))
     }
 }
@@ -625,12 +625,12 @@ pub(crate) fn verify_cover(
                 .get(&region.occurrence)
                 .copied()
                 .ok_or(CoverError::Region(RegionError::Invalid {
-                    region: region.stable_id.clone(),
+                    region: region.label.clone(),
                     rule: "unknown-region-occurrence",
                 }))?;
         if region.members.as_slice() != candidate.members()
             || &region.content != candidate.content()
-            || region.stable_id != candidate.stable_id()
+            || region.label != candidate.label()
         {
             return Err(CoverError::Structure {
                 rule: "region-occurrence-mismatch",
@@ -838,7 +838,7 @@ fn assemble_cover(
             members: candidate.members().to_vec(),
             content: candidate.content().clone(),
             occurrence: candidate.occurrence().clone(),
-            stable_id: candidate.stable_id().to_owned(),
+            label: candidate.label().to_owned(),
         })
         .collect();
     regions.sort_by(|left, right| left.occurrence.as_bytes().cmp(right.occurrence.as_bytes()));
@@ -1364,9 +1364,9 @@ mod tests {
             }
         }
 
-        // Tampering a region's recorded stable label breaks occurrence identity.
+        // Tampering a region's recorded occurrence label breaks occurrence identity.
         let mut forged = enumeration.fully_materialized_cover().unwrap().clone();
-        forged.regions[0].stable_id.push_str("-forged");
+        forged.regions[0].label.push_str("-forged");
         let error = verify_cover(
             &program,
             DeterministicBudgets::governed(),
@@ -1549,7 +1549,7 @@ mod tests {
         let program = serial_sum_program();
         let enumeration = enumerate(&program);
         let cover = enumeration.fully_materialized_cover().unwrap();
-        assert!(!cover.identity().key().is_empty());
+        assert!(!cover.identity().label().is_empty());
         assert_eq!(CoverBudgetResource::Covers.key(), "region-covers");
         assert_eq!(
             CoverBudgetResource::Expansions.key(),
@@ -1567,7 +1567,7 @@ mod tests {
         }
         for region in cover.regions() {
             let _ = region.content();
-            let _ = region.stable_id();
+            let _ = region.label();
         }
     }
 }

@@ -1124,7 +1124,7 @@ fn consider_fused_alternative(
                 let proof_record = (|| -> Result<_, CompileError> {
                     let provider_ref = ProviderRef::lowering(provider)?;
                     let subject =
-                        explain.subject(SubjectKind::Candidate, fused_candidate.stable_id())?;
+                        explain.subject(SubjectKind::Candidate, fused_candidate.label())?;
                     Ok(explain.push_detail(
                         RuleRef::provided(
                             "fusion.strict-f32-equivalence",
