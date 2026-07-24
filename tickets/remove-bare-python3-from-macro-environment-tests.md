@@ -1,7 +1,7 @@
 ---
 id: remove-bare-python3-from-macro-environment-tests
 title: Remove the bare python3 invocation from the macro-environment probe tests
-status: todo
+status: closed
 priority: p3
 dependencies: []
 related: [finish-spike-process-group-cleanup]
@@ -9,6 +9,8 @@ scopes: [research/macro-environment]
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, harness]
+closed_reason: duplicate
+closed_note: Duplicate of resolve-macro-environment-alarm-path-dependence, which is more thorough and higher priority. Its unique fact — a second bare-python3 site in test_command_capture_rejects_output_while_streaming — was folded into that ticket before closing.
 ---
 `spikes/macro-environment/test_probe.py` spawns children as bare `python3` in `test_command_capture_rejects_output_while_streaming` and `test_overall_alarm_reaps_child_after_capture_pipes_close`. That resolves through the ambient `PATH`.
 

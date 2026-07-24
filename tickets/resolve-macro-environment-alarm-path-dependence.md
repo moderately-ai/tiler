@@ -35,3 +35,9 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -c pyproject.toml -q
 **Proposal.** Spell the child `sys.executable`, matching the sibling tests at lines 197 and 224 of the same file. That removes the `PATH` dependency and cuts the observed startup from 281 ms to 16 ms, restoring most of the 200 ms budget. Consider separately whether 0.2 s is enough margin on a loaded CI host even at 16 ms startup, or whether the test should assert the landing site directly rather than race for it.
 
 Done when the test passes from a pyenv-first login shell as well as under the gate's sanitized environment, and the repository gate still passes.
+
+## Absorbed from a duplicate
+
+`remove-bare-python3-from-macro-environment-tests` was filed independently by `finish-spike-process-group-cleanup` for the same defect and is closed as a duplicate of this ticket. It carried one fact this one did not: **there is a second bare-`python3` site in the same file**, `test_command_capture_rejects_output_while_streaming`, so fix both rather than only the alarm test. It also stated a caution worth keeping — bounding the reap in `make-spike-process-group-cleanup-best-effort` removed the multi-minute *hang* this artifact used to produce, but the `setitimer` race it loses is untouched. Do not describe fixing this as fixing that; they are different defects that happened to compound.
+
+That two agents found the same defect from opposite directions — one while fixing process-group cleanup, one while widening the gate's test collection — is itself evidence it sits on a path contributors actually walk.
