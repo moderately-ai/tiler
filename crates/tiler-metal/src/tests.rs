@@ -1,11 +1,12 @@
 //! Golden, determinism, and fail-closed tests for Metal source emission.
 //!
 //! Golden fixtures pin the exact emitted bytes for the bounded proof profile's
-//! kernels. They are **not** compiler validation: nothing in this crate or in
-//! the repository gate invokes `xcrun metal`, so a passing golden test proves
-//! only that emission is stable and structured as intended. Compiling the
-//! fixtures through the offline driver is owned by
-//! `compile-golden-msl-through-the-aot-driver-in-the-gate`.
+//! kernels. On their own they are **not** compiler validation: a fixture can be
+//! byte-identical to what emission produces and still be rejected by the Metal
+//! compiler, so a passing golden test here proves only that emission is stable
+//! and structured as intended. [`crate::golden_compilation`] closes that gap by
+//! compiling every fixture through the offline `tiler-metal-aot` driver, and it
+//! self-skips where no qualified Apple toolchain resolves.
 //!
 //! The numerical tests here therefore pin *structure*: that the NaN predicate
 //! contains no floating-point operation, and that an obligation the target
@@ -246,7 +247,7 @@ fn reduction_region(
     builder.build().unwrap()
 }
 
-fn pointwise_kernel() -> VerifiedKernel {
+pub(crate) fn pointwise_kernel() -> VerifiedKernel {
     lower_scheduled_region(&pointwise_region(
         RegionId::new(0),
         &Shape::from_dims([4]),
@@ -255,7 +256,7 @@ fn pointwise_kernel() -> VerifiedKernel {
     .expect("bounded pointwise fixture lowers")
 }
 
-fn single_axis_reduction_kernel() -> VerifiedKernel {
+pub(crate) fn single_axis_reduction_kernel() -> VerifiedKernel {
     lower_scheduled_region(&reduction_region(
         RegionId::new(1),
         &Shape::from_dims([2, 3]),
@@ -265,7 +266,7 @@ fn single_axis_reduction_kernel() -> VerifiedKernel {
     .expect("bounded reduction fixture lowers")
 }
 
-fn multi_axis_reduction_kernel() -> VerifiedKernel {
+pub(crate) fn multi_axis_reduction_kernel() -> VerifiedKernel {
     lower_scheduled_region(&reduction_region(
         RegionId::new(2),
         &Shape::from_dims([2, 3, 4]),
@@ -275,7 +276,7 @@ fn multi_axis_reduction_kernel() -> VerifiedKernel {
     .expect("bounded multi-axis reduction fixture lowers")
 }
 
-fn fused_reduction_kernel() -> VerifiedKernel {
+pub(crate) fn fused_reduction_kernel() -> VerifiedKernel {
     lower_scheduled_region(&reduction_region(
         RegionId::new(3),
         &Shape::from_dims([2, 3]),

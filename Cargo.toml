@@ -32,6 +32,7 @@ tiler-artifact = { path = "crates/tiler-artifact" }
 tiler-compiler = { path = "crates/tiler-compiler" }
 tiler-ir = { path = "crates/tiler-ir" }
 tiler-metal = { path = "crates/tiler-metal" }
+tiler-metal-aot = { path = "crates/tiler-metal-aot" }
 tiler-reference = { path = "crates/tiler-reference" }
 trybuild = "1.0.114"
 
