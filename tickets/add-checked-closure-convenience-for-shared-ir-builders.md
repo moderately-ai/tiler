@@ -1,7 +1,7 @@
 ---
 id: add-checked-closure-convenience-for-shared-ir-builders
 title: Add checked closure convenience for shared IR builders
-status: in-progress
+status: done
 priority: p1
 dependencies: [prototype-canonical-index-region-slice]
 related: [prototype-shared-compiler-ir-ownership, update-adr-0071-schedule-builder-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dx]
-claimed_from: todo
-assignee: agent-add-checked-closure-convenience
-lease_expires_at: 1784861597
 ---
 # Add checked closure convenience for shared IR builders
 
