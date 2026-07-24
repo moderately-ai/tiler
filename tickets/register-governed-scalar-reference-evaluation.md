@@ -6,7 +6,7 @@ priority: p1
 dependencies: [wire-capability-and-refinement-into-compile-path]
 related: [reconcile-single-contributor-strict-sum-nan-canonicalization, declare-governed-scalar-numerical-facts, execute-governed-refined-regions-against-the-oracle]
 scopes: [implementation/reference]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, reference, milestone-0b]
 claimed_from: todo
