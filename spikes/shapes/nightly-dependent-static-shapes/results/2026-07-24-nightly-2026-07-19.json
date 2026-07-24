@@ -1,0 +1,169 @@
+{
+  "schema": "tiler-nightly-dependent-shapes-diagnostics/v1",
+  "recorded": "2026-07-24",
+  "posture": "gated",
+  "procedure": "spikes/shapes/nightly-dependent-static-shapes/check.sh \"$(command -v rustup)\" nightly-2026-07-19",
+  "verification": "Recorded from a run of the procedure above observed on 2026-07-24 at repository commit f57e23be8dd8e70f2ba9fb0d63fdf0192e5b9093, and reproduced by scripts/check_rust.py in the same session. trybuild compared each fixture against the retained .stderr byte for byte and all four compile-fail and two compile-pass cases passed, so every diagnostic field below describes text the pinned compiler was seen to emit rather than transcribed text. The adr_clause fields quote docs/decisions/0067-use-pinned-nightly-dependent-static-shapes.md with its hard line wrapping removed; verify_claims.py resolves the reference but not the wording.",
+  "toolchain": {
+    "channel": "nightly-2026-07-19",
+    "rustc_version": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)",
+    "rustc_commit_hash": "eff8269f797067c30555e77f160ec84c0ed15cd9",
+    "cargo_version": "cargo 1.99.0-nightly (3efb1f477 2026-07-17)",
+    "cargo_commit_hash": "3efb1f477e99b42974b982d939fd100303cdf7db",
+    "trybuild_version": "1.0.118",
+    "edition": "2024",
+    "host": "aarch64-apple-darwin",
+    "operating_system": "macOS 27.0"
+  },
+  "claims": [
+    {
+      "id": "shaped-handles-cannot-be-forged-by-struct-literal",
+      "adr": "ADR-0067",
+      "adr_clause": "Rust evidence remains non-authoritative, explicitly weakenable, checked on refinement, and excluded from semantic, compilation, artifact, and cache identity.",
+      "statement": "Field privacy stops a consumer building ShapedValue directly, so evidence can only be attached by Builder::refine after the graph has checked it. Weakening is explicit; forging is not available at all.",
+      "outcome": "fails",
+      "case": "conformance/tests/ui/fail/forge.rs",
+      "first_line": "error[E0451]: fields `value` and `evidence` of struct `ShapedValue` are private",
+      "diagnostic_codes": [
+        "E0451"
+      ],
+      "required_fragments": [
+        "tests/ui/fail/forge.rs:13:9",
+        "let _ = ShapedValue::<F32, Matrix> {",
+        "in this type",
+        "private field"
+      ],
+      "forbidden_fragments": [
+        "sealed::Sealed",
+        "mismatched types"
+      ],
+      "source_fragments": [
+        "use nightly_shape_api::{F32, ShapedValue, StaticShape, Value};",
+        "type Matrix = StaticShape<2, { [2, 3] }>;",
+        "let _ = ShapedValue::<F32, Matrix> {",
+        "value: value(),",
+        "evidence: PhantomData,"
+      ]
+    },
+    {
+      "id": "shape-evidence-is-sealed-against-downstream-implementation",
+      "adr": "ADR-0067",
+      "adr_clause": "Implementing the production `tiler-ir` now implements the selected family as sealed evidence checked by builder- and program-owned refinement.",
+      "statement": "ShapeEvidence is sealed by a private supertrait, so downstream code cannot claim an evidence class the graph never checked, and StaticShape is reported as the only implementor.",
+      "outcome": "fails",
+      "case": "conformance/tests/ui/fail/implement_evidence.rs",
+      "first_line": "error[E0277]: the trait bound `Forged: nightly_shape_api::sealed::Sealed` is not satisfied",
+      "diagnostic_codes": [
+        "E0277"
+      ],
+      "required_fragments": [
+        "tests/ui/fail/implement_evidence.rs:5:24",
+        "impl ShapeEvidence for Forged {",
+        "unsatisfied trait bound",
+        "the trait `nightly_shape_api::sealed::Sealed` is not implemented for `Forged`",
+        "pub trait ShapeEvidence: sealed::Sealed + 'static {",
+        "required by this bound in `ShapeEvidence`",
+        "`ShapeEvidence` is a \"sealed trait\"",
+        "nightly_shape_api::StaticShape<RANK, EXTENTS>"
+      ],
+      "forbidden_fragments": [
+        "private field",
+        "mismatched types"
+      ],
+      "source_fragments": [
+        "use nightly_shape_api::ShapeEvidence;",
+        "struct Forged;",
+        "impl ShapeEvidence for Forged {",
+        "fn matches(_: &[u64]) -> bool {"
+      ]
+    },
+    {
+      "id": "rank-and-extent-array-length-must-agree",
+      "adr": "ADR-0067",
+      "adr_clause": "A mismatched rank and array length is not representable as a Rust type.",
+      "statement": "The dependent array const parameter makes the extent array's length depend on RANK, so StaticShape<2, { [2, 3, 4] }> is rejected by type checking at the alias rather than by a later admission check.",
+      "outcome": "fails",
+      "case": "conformance/tests/ui/fail/rank_array_length.rs",
+      "first_line": "error[E0308]: mismatched types",
+      "diagnostic_codes": [
+        "E0308"
+      ],
+      "required_fragments": [
+        "tests/ui/fail/rank_array_length.rs:3:33",
+        "type Invalid = StaticShape<2, { [2, 3, 4] }>;",
+        "expected an array with a size of 2, found one with a size of 3"
+      ],
+      "forbidden_fragments": [
+        "arguments to this function are incorrect",
+        "private field"
+      ],
+      "source_fragments": [
+        "use nightly_shape_api::StaticShape;",
+        "type Invalid = StaticShape<2, { [2, 3, 4] }>;",
+        "std::mem::size_of::<Invalid>()"
+      ]
+    },
+    {
+      "id": "unequal-extent-arrays-are-unequal-types",
+      "adr": "ADR-0067",
+      "adr_clause": "Rust's intended const-generics model is a closer architectural match: constant values participate structurally in type identity.",
+      "statement": "Two same-rank shapes whose extents differ only in order do not unify, so an axis-order error at a call site is an ordinary type error naming both extent vectors. This is the compile-fail contrast the cross-crate identity case is measured against.",
+      "outcome": "fails",
+      "case": "conformance/tests/ui/fail/unequal_shapes.rs",
+      "first_line": "error[E0308]: mismatched types",
+      "diagnostic_codes": [
+        "E0308"
+      ],
+      "required_fragments": [
+        "tests/ui/fail/unequal_shapes.rs:11:39",
+        "expected `[2, 3]`, found `[3, 2]`",
+        "arguments to this function are incorrect",
+        "expected struct `PhantomData<StaticShape<2, [2, 3]>>`",
+        "found struct `PhantomData<StaticShape<2, [3, 2]>>`",
+        "note: function defined here"
+      ],
+      "forbidden_fragments": [
+        "expected an array with a size of",
+        "private field"
+      ],
+      "source_fragments": [
+        "type Left = StaticShape<2, { [2, 3] }>;",
+        "type Right = StaticShape<2, { [3, 2] }>;",
+        "fn require_same<T>(_: PhantomData<T>, _: PhantomData<T>) {}",
+        "require_same(PhantomData::<Left>, PhantomData::<Right>);"
+      ]
+    },
+    {
+      "id": "one-canonical-family-spans-rank-zero-through-rank-sixty-four",
+      "adr": "ADR-0067",
+      "adr_clause": "Exact static evidence supports arbitrary rank through one canonical family.",
+      "statement": "Ranks 0, 1, 2, and 64 instantiate the same zero-sized StaticShape family, so the arbitrary-rank claim is exercised at both ends rather than at the matrix rank alone.",
+      "outcome": "compiles",
+      "case": "conformance/tests/ui/pass/ranks.rs",
+      "source_fragments": [
+        "type Scalar = StaticShape<0, { [] }>;",
+        "type Vector = StaticShape<1, { [8] }>;",
+        "type Matrix = StaticShape<2, { [2, 3] }>;",
+        "type Rank64 = StaticShape<64, { [1; 64] }>;",
+        "assert_eq!(std::mem::size_of::<Scalar>(), 0);",
+        "assert_eq!(std::mem::size_of::<Rank64>(), 0);"
+      ]
+    },
+    {
+      "id": "equivalent-extents-unify-across-independent-crates",
+      "adr": "ADR-0067",
+      "adr_clause": "Equivalent extent arrays no longer depend on which crate named a descriptor.",
+      "statement": "A literal alias, a const-fed alias, a reexport, an alias in a second independent crate, and a proc-macro-generated alias all name one type, which is the property downstream descriptor families could not provide.",
+      "outcome": "compiles",
+      "case": "conformance/tests/ui/pass/cross_crate_identity.rs",
+      "source_fragments": [
+        "use nightly_shape_aliases_a::{ConstMatrix, LiteralMatrix, ReexportedMatrix};",
+        "use nightly_shape_aliases_b::{LiteralMatrix as OtherLiteralMatrix, MacroMatrix};",
+        "require_same(PhantomData::<LiteralMatrix>, PhantomData::<ConstMatrix>);",
+        "require_same(PhantomData::<LiteralMatrix>, PhantomData::<ReexportedMatrix>);",
+        "require_same(PhantomData::<LiteralMatrix>, PhantomData::<OtherLiteralMatrix>);",
+        "require_same(PhantomData::<LiteralMatrix>, PhantomData::<MacroMatrix>);"
+      ]
+    }
+  ]
+}
