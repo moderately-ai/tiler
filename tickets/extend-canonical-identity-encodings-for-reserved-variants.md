@@ -46,6 +46,20 @@ documented equivalent; if no honest test is possible before the variants land,
 say so explicitly and rely on the exhaustive match as the structural guard rather
 than claiming coverage that does not exist.
 
+While in these encoders, also settle two tag-form deviations that proposed ADR
+0074 recorded as Fact while verifying the encoding convention. Every domain tag
+in the workspace is the NUL-terminated form `b"tiler.<subject>.v<N>\0"` except
+`b"tiler.schedule.v1"` in `schedule/model.rs`'s `encode_identity`, and
+`push_numerical` writes `profile_key` NUL-terminated rather than length-prefixed
+like every other variable-length run. **Neither is ambiguous today** — the tag is
+a fixed constant followed by fixed-width fields, and `profile_key` is a
+crate-chosen `&'static str` — so this is uniformity, not a defect: adopting the
+one form means the "is this ambiguous?" reasoning does not have to be redone at
+each site. Both edits change identity bytes, so fold them into this ticket's
+deliberate re-baseline rather than making a second one.
+
 Related: `harden-public-enums-non-exhaustive` covers the separate API-stability
 concern (marking these same enums `#[non_exhaustive]`); this ticket covers
 identity completeness. They touch the same types and are best sequenced together.
+`disambiguate-presentation-label-from-semantic-key-accessors` owns the adjacent
+naming hazard ADR 0074 also left open.
