@@ -264,7 +264,7 @@ proofs.
 
 ADR 0070 accepts these dependency and verifier-ownership boundaries. They are
 not necessarily the final published-crate layout, and individual field sets
-remain experimental until their dedicated implementation tickets land.
+remain experimental until their dedicated implementation tickets land. The `tiler-metal-aot` row postdates ADR 0070 and carries no accepted ADR of its own; the packaging profile below states exactly what is and is not yet decided about that crate.
 
 | Component | Responsibility | Forbidden dependencies |
 | --- | --- | --- |
@@ -272,11 +272,13 @@ remain experimental until their dedicated implementation tickets land.
 | `tiler-reference` | Host reference values, executable semantic-operation capabilities, interpreter traversal, and conformance utilities | Optimizer, scheduler, backend, and live device APIs |
 | `tiler-compiler` | Normalization, rule engine, fusion planning, index lowering, schedule search, costing, typed explain infrastructure | Candle |
 | `tiler-artifact` | Versioned target-neutral artifact/ABI encoding, compatibility, runtime fact binding, failure classification, and backend-payload mappings | Candle, optimizer, and Metal device APIs |
-| `tiler-metal` | Pure structured-kernel-to-MSL translation and Metal target metadata | Candle and Metal device APIs |
-| `tiler-metal-aot` | Expansion-time Apple tool invocation, cross-process content cache, atomic publication, byte embedding | Candle tensor APIs |
+| `tiler-metal` | Pure structured-kernel-to-MSL translation, and the target facts emitted source declares: language standard, artifact family, deployment minimum, launch-index realization, subnormal arithmetic, and buffer binding capacity | Candle, Metal device APIs, and Apple tool discovery in its normal dependency graph |
+| `tiler-metal-aot` | Expansion-time Apple tool invocation, cross-process content cache, atomic publication, byte embedding, and the target facts a compiler invocation selects: Apple SDK, language standard, artifact family, and deployment minimum | Every workspace and third-party dependency, Candle included: its empty closure is decided, not incidental |
 | Frontend core | Translate source syntax into semantic IR and map diagnostics back to users | Backend-specific scheduling |
 | Frontend proc-macro crate | Invoke frontend/compiler/AOT pipeline and emit artifact plus runtime/fallback tokens | Candle runtime internals beyond its public adapter |
 | `tiler-candle` | Layout validation, output allocation, pipeline cache, ABI binding, dispatch, fallback | Optimizer internals |
+
+Neither Metal row subsumes the other, and their overlap is owned twice deliberately. `tiler-metal` records what emitted source declares it was written against; `tiler-metal-aot` records what a compilation is invoked with. They overlap in exactly the language standard, the artifact family, and the deployment minimum. The emitter separately owns launch-index realization, subnormal arithmetic, and binding capacity, none of which a compiler invocation uses; the driver separately owns the Apple SDK, which selects `xcrun --sdk` and builds the target triple, and which has no emitter counterpart at all. Collapsing the overlap into a shared type or a dependency edge would spend the driver's empty dependency closure on three enumerations; `crates/tiler-metal/src/target.rs` and `crates/tiler-metal-aot/src/input.rs` own that reasoning and the alternatives it rejects. What keeps the two vocabularies from drifting is not a shared type but a total map: `crates/tiler-metal/src/target_correspondence.rs` pairs every variant of each vocabulary with its counterpart through matches exhaustive over both, so a language standard or artifact family added to either crate fails `tiler-metal`'s build until the other gains it.
 
 Initially, semantic, index, schedule, and kernel IRs may be modules in one
 crate. Splitting every representation into a crate before its API stabilizes
@@ -315,19 +317,27 @@ and it does not license a differently shaped public API.
 ## Accepted prototype packaging profile
 
 ADR 0065 refines ADR 0056 after the evaluator implementation exposed a real
-consumer boundary. The prototype uses five reusable libraries and two
-non-published proof executables:
+consumer boundary. The workspace carries six reusable libraries and two non-published proof executables, whose intra-workspace edges — normal, plus development where marked — are:
 
 ```text
-tiler-ir       -> []
+tiler-ir        -> []
 tiler-reference -> [tiler-ir]
-tiler-artifact -> [tiler-ir]
-tiler-compiler -> [tiler-ir]
-tiler-metal    -> [tiler-ir, tiler-artifact]
+tiler-artifact  -> [tiler-ir]
+tiler-compiler  -> [tiler-ir]                  + development [tiler-reference]
+tiler-metal     -> [tiler-ir, tiler-artifact]  + development [tiler-metal-aot]
+tiler-metal-aot -> []
 
-prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal]
-prototype-run     -> [tiler-artifact, platform Metal bindings]
+tiler-prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal]
+tiler-prototype-run     -> [tiler-artifact] + planned platform Metal bindings
 ```
+
+`scripts/check_workspace.py` pins the exact member set, the exact `[workspace.dependencies]` table, and every package's complete normal and development dependency list including third-party crates, so these edges are a checked contract rather than a description. The runner's Metal bindings remain part of the accepted profile rather than a landed edge: `tiler-prototype-run` is still a stub.
+
+`tiler-metal-aot` is the offline Apple Metal compiler driver. Its empty dependency closure is a decided property rather than an accident of ordering: the crate spawns `xcrun metal` and `xcrun metallib`, and its whole value is that the exact compiler invocation can be read and audited without the lowering stack behind it. `crates/tiler-metal-aot/src/input.rs` records that property and what follows from it.
+
+The `tiler-metal` → `tiler-metal-aot` edge is a development dependency only, and promoting it would cost both reasons it exists. `tiler-metal` is pure source emission owning no Apple tool discovery, so a normal edge would put a process-spawning toolchain driver into every consumer's build graph to serve tests alone. And Cargo permits a cycle through a development dependency while rejecting one through normal dependencies, so keeping this edge out of the normal graph preserves the eventual `tiler-metal-aot` → `tiler-metal` production direction that the driver's consumption of emitted source implies.
+
+No accepted ADR yet records that admission. ADR 0065 is correct exactly as accepted — its count is an ordinal about the crate it adds, `tiler-reference`, not a cap on the profile — and ADR 0056's retained packaging text still places AOT invocation inside `tiler-metal`. `prototype-apple-aot-driver` admitted the crate under `implementation/workspace`, and [`record-an-adr-for-the-metal-aot-crate-admission`](../tickets/record-an-adr-for-the-metal-aot-crate-admission.md) owns superseding that clause explicitly rather than leaving this document as the sole record.
 
 This is an unstable prototype packaging profile, not the final published crate
 set. It deliberately omits frontend, proc-macro, Candle, generalized cache, and
