@@ -746,15 +746,15 @@ pub(crate) fn build_artifact_plan(
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
     verify_artifact_refinements(semantic, request, scheduled, kernels, program)?;
-    let expected_providers = match program.core.stages().len() {
-        1 => request
-            .capabilities()
-            .fused_serial_sum
-            .into_iter()
-            .collect::<Vec<_>>(),
-        2 => vec![request.capabilities().materialized_serial_sum],
-        _ => Vec::new(),
-    };
+    // Lowering provenance is re-derived from the request's own installed
+    // registry rather than trusted from the caller, so a plan cannot claim a
+    // provider the registry never resolved for this program.
+    let expected_providers =
+        crate::lowering::resolve_capabilities(semantic, request).map_err(|_| {
+            ProgramError::Structure {
+                rule: "artifact-provider-resolution",
+            }
+        })?;
     if providers.is_empty() || providers != expected_providers {
         return Err(ProgramError::Structure {
             rule: "artifact-provider-coverage",

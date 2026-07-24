@@ -168,6 +168,19 @@ impl OperationAttributes {
             .map(|index| self.0[index].value())
     }
 
+    /// Returns the collision-free canonical encoding of this attribute record.
+    ///
+    /// The encoding is the same length-prefixed field-ID-ordered form the
+    /// semantic identity uses, so an authority outside this crate can bind an
+    /// occurrence's exact attributes into its own canonical identity without
+    /// re-deriving a second encoding that could disagree with this one.
+    #[must_use]
+    pub fn canonical_encoding(&self) -> CanonicalOperationAttributes {
+        let mut bytes = Vec::with_capacity(self.encoded_len());
+        self.encode(&mut bytes);
+        CanonicalOperationAttributes(bytes)
+    }
+
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
         output.extend_from_slice(
             &u64::try_from(self.0.len())
@@ -187,6 +200,18 @@ impl OperationAttributes {
                 .map(|field| std::mem::size_of::<u32>().saturating_add(field.value().encoded_len()))
                 .fold(0_usize, usize::saturating_add),
         )
+    }
+}
+
+/// Collision-free canonical encoding of one operation's attribute record.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CanonicalOperationAttributes(Vec<u8>);
+
+impl CanonicalOperationAttributes {
+    /// Returns the canonical bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 }
 

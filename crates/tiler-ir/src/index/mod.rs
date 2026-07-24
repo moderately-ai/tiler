@@ -37,7 +37,8 @@ pub use scalar::{
     ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes,
     ScalarAuthorityEvidence, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
     ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError,
+    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError, add_f32_scalar_op,
+    constant_f32_scalar_op, multiply_f32_scalar_op,
 };
 
 /// Maximum dimensions admitted by one region.

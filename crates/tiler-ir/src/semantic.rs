@@ -28,15 +28,16 @@ pub use interface::{
     OutputSelector, ProgramInputRef, ProgramOutputRef, TypedProgramOutputRef,
 };
 pub use operation::{
-    CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalValueKind, Definition, F32_CONSTANT_BITS_ATTRIBUTE,
-    MAX_OPERATION_ATTRIBUTES, MAX_OPERATION_OPERANDS, MAX_OPERATION_RESULTS,
-    MAX_PROVIDER_DIAGNOSTIC_CODE_BYTES, MAX_PROVIDER_DIAGNOSTIC_MESSAGE_BYTES, OpKey,
-    OperationArity, OperationArityRole, OperationAttributeSchema, OperationAttributes,
-    OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
-    OperationInferenceError, OperationInferenceOutputs, OperationInferenceRequest,
-    OperationInferencer, OperationRef, OperationSchema, OperationSchemaError,
-    ProviderDiagnosticCode, ProviderDiagnosticError, REDUCTION_AXES_ATTRIBUTE, ResultIndex,
-    ValueFact, ValueRef, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalOperationAttributes, CanonicalValueKind,
+    Definition, F32_CONSTANT_BITS_ATTRIBUTE, MAX_OPERATION_ATTRIBUTES, MAX_OPERATION_OPERANDS,
+    MAX_OPERATION_RESULTS, MAX_PROVIDER_DIAGNOSTIC_CODE_BYTES,
+    MAX_PROVIDER_DIAGNOSTIC_MESSAGE_BYTES, OpKey, OperationArity, OperationArityRole,
+    OperationAttributeSchema, OperationAttributes, OperationConformance, OperationDefinition,
+    OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferenceOutputs,
+    OperationInferenceRequest, OperationInferencer, OperationRef, OperationSchema,
+    OperationSchemaError, ProviderDiagnosticCode, ProviderDiagnosticError,
+    REDUCTION_AXES_ATTRIBUTE, ResultIndex, ValueFact, ValueRef, add_f32_op, constant_f32_op,
+    multiply_f32_op, strict_serial_sum_f32_op,
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
 pub use registry::{

@@ -27,9 +27,9 @@
 //! region implements any semantic operation. Refinement independently proves the
 //! emitted region *realizes the occurrence*: the ordered operand and result
 //! interface (type, shape, arity, aliasing) agrees, the reached scalar authority
-//! equals the authority the capability was admitted to emit, the semantic type
-//! authorities of the capability and the region agree, and every ordinary write
-//! carries complete unique-ownership evidence. Matching shapes, dtypes, or
+//! stays inside the authority the capability was admitted to emit, the semantic
+//! type authorities of the capability and the region agree, and every ordinary
+//! write carries complete unique-ownership evidence. Matching shapes, dtypes, or
 //! operation names never *substitute* for that binding; they are checked as part
 //! of it.
 //!
@@ -59,12 +59,14 @@ use tiler_ir::index::{
     VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedScalarValueId, VerifiedTensorAccessId,
     VerifiedTensorId,
 };
-use tiler_ir::semantic::{OpKey, OperationEffect, ProviderIdentity, ResolvedValueType};
+use tiler_ir::semantic::{
+    OpKey, OperationAttributes, OperationEffect, ProviderIdentity, ResolvedValueType,
+};
 use tiler_ir::shape::Shape;
 
 use crate::capability::{
-    IndexAccessLoweringContext, LoweringCapabilityRevision, LoweringEmitError, LoweringFamily,
-    ResolvedLoweringCapability,
+    IndexAccessLoweringContext, LoweredOccurrence, LoweringCapabilityRevision, LoweringEmitError,
+    LoweringFamily, LoweringRegistryError, OccurrenceBoundary, ResolvedLoweringCapability,
 };
 
 /// Canonical domain-separation tag for reusable refinement content.
@@ -200,14 +202,16 @@ impl NumericalContractIdentity {
 ///
 /// It describes the occurrence independently of the region: the operation, the
 /// ordered operand values with element type and shape (operands may alias), the
-/// ordered result element types and shapes, the observable effect, the numerical
-/// contract, and the opaque semantic-source identity. Refinement then proves an
-/// emitted region realizes it rather than trusting that a provider ran.
+/// ordered result element types and shapes, the host-canonical attributes, the
+/// observable effect, the numerical contract, and the opaque semantic-source
+/// identity. Refinement then proves an emitted region realizes it rather than
+/// trusting that a provider ran.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SemanticOccurrence {
     operation: OpKey,
     operands: Vec<OccurrenceOperand>,
     results: Vec<OccurrenceResult>,
+    attributes: OperationAttributes,
     effect: OperationEffect,
     numerical_contract: NumericalContractIdentity,
     identity: SemanticOccurrenceIdentity,
@@ -220,6 +224,7 @@ impl SemanticOccurrence {
         operation: OpKey,
         operands: Vec<OccurrenceOperand>,
         results: Vec<OccurrenceResult>,
+        attributes: OperationAttributes,
         effect: OperationEffect,
         numerical_contract: NumericalContractIdentity,
         identity: SemanticOccurrenceIdentity,
@@ -228,6 +233,7 @@ impl SemanticOccurrence {
             operation,
             operands,
             results,
+            attributes,
             effect,
             numerical_contract,
             identity,
@@ -238,6 +244,12 @@ impl SemanticOccurrence {
     #[must_use]
     pub const fn operation(&self) -> &OpKey {
         &self.operation
+    }
+
+    /// Returns the occurrence's host-canonical attributes.
+    #[must_use]
+    pub const fn attributes(&self) -> &OperationAttributes {
+        &self.attributes
     }
 
     /// Returns the ordered operands, including aliased repetitions.
@@ -424,6 +436,7 @@ pub struct RefinementContent {
     operation: OpKey,
     operand_interface: Vec<(u32, ResolvedValueType, Shape)>,
     result_interface: Vec<(ResolvedValueType, Shape)>,
+    attributes: OperationAttributes,
     effect: OperationEffect,
     numerical_contract: NumericalContractIdentity,
     scalar_authority: ScalarAuthorityEvidence,
@@ -441,6 +454,12 @@ impl RefinementContent {
     #[must_use]
     pub const fn operation(&self) -> &OpKey {
         &self.operation
+    }
+
+    /// Returns the host-canonical attributes the region realizes.
+    #[must_use]
+    pub const fn attributes(&self) -> &OperationAttributes {
+        &self.attributes
     }
 
     /// Returns the observable effect the region realizes.
@@ -580,6 +599,8 @@ pub enum RefinementError {
         /// Position of the inconsistent operand.
         operand: usize,
     },
+    /// The occurrence could not be projected into provider-visible facts.
+    OccurrenceFacts(LoweringRegistryError),
     /// The occurrence effect cannot be realized as a pure index region.
     EffectNotIndexable {
         /// The rejected effect class.
@@ -663,6 +684,9 @@ impl fmt::Display for RefinementError {
                 formatter,
                 "operand {operand} aliases another value but disagrees on type or shape"
             ),
+            Self::OccurrenceFacts(source) => {
+                write!(formatter, "occurrence facts are inconsistent: {source}")
+            }
             Self::EffectNotIndexable { effect } => write!(
                 formatter,
                 "occurrence effect {effect:?} cannot be realized as a pure index region"
@@ -732,6 +756,7 @@ impl Error for RefinementError {
             Self::Emit(source) => Some(source),
             Self::ScalarAuthority(source) => Some(source.as_ref()),
             Self::Handle(source) => Some(source),
+            Self::OccurrenceFacts(source) => Some(source),
             _ => None,
         }
     }
@@ -775,7 +800,7 @@ pub fn refine_index_region(
         });
     }
 
-    let region = emit_region(capability, scalars)?;
+    let region = emit_region(capability, occurrence, scalars)?;
 
     // Registration and a successful build are not refinement evidence. Everything
     // below independently proves the emitted region realizes the occurrence.
@@ -829,15 +854,17 @@ fn bind_capability_to_occurrence(
 /// Drives the resolved provider through the canonical builder and verifies it.
 fn emit_region(
     capability: &ResolvedLoweringCapability,
+    occurrence: &SemanticOccurrence,
     scalars: &FrozenScalarRegistry,
 ) -> Result<VerifiedIndexRegion, RefinementError> {
     let provider = capability
         .index_access_provider()
         .ok_or(RefinementError::MissingIndexProvider)?;
+    let facts = lowered_occurrence(occurrence)?;
     let mut builder = tiler_ir::index::IndexRegionBuilder::new(scalars.clone())
         .map_err(LoweringEmitError::from)?;
     {
-        let mut context = IndexAccessLoweringContext::new(&mut builder);
+        let mut context = IndexAccessLoweringContext::new(&mut builder, &facts);
         provider.lower(&mut context)?;
     }
     builder
@@ -847,13 +874,52 @@ fn emit_region(
         })
 }
 
+/// Projects the occurrence into the read-only facts a provider may see.
+///
+/// The distinct-operand order is the same one [`bind_operands`] later binds the
+/// region's input boundaries in, so a provider that declares its inputs in the
+/// order it was handed cannot be rejected for an ordering the host never stated.
+fn lowered_occurrence(
+    occurrence: &SemanticOccurrence,
+) -> Result<LoweredOccurrence, RefinementError> {
+    let distinct = occurrence.distinct_operands()?;
+    let inputs = distinct
+        .iter()
+        .map(|operand| OccurrenceBoundary::new(operand.value_type.clone(), operand.shape.clone()))
+        .collect();
+    let mut operands = Vec::with_capacity(occurrence.operands.len());
+    for (position, operand) in occurrence.operands.iter().enumerate() {
+        let index = distinct
+            .iter()
+            .position(|candidate| candidate.value == operand.value)
+            .ok_or(RefinementError::OperandInterface { position })?;
+        operands.push(index);
+    }
+    let results = occurrence
+        .results
+        .iter()
+        .map(|result| OccurrenceBoundary::new(result.value_type.clone(), result.shape.clone()))
+        .collect();
+    LoweredOccurrence::new(inputs, operands, results, occurrence.attributes.clone())
+        .map_err(RefinementError::OccurrenceFacts)
+}
+
 impl From<LoweringEmitError> for RefinementError {
     fn from(source: LoweringEmitError) -> Self {
         Self::Emit(source)
     }
 }
 
-/// Proves the region reaches exactly the authority the capability may emit.
+/// Proves the region reached nothing beyond the authority the capability may emit.
+///
+/// Containment rather than equality is the exact property: one capability lowers
+/// every occurrence of its family and signature, and which declared scalar
+/// operations a given occurrence needs depends on that occurrence's shapes and
+/// attributes. A single-contributor reduction reaches no scalar operation at all
+/// and an empty one reaches only the identity constant, yet both are lowered by
+/// the same capability. Requiring equality would force a provider to be
+/// registered per shape; requiring containment still refuses every region that
+/// reached an authority the capability was never admitted to emit.
 fn check_authority_conformance(
     capability: &ResolvedLoweringCapability,
     scalar_authority: &ScalarAuthorityEvidence,
@@ -862,7 +928,12 @@ fn check_authority_conformance(
     if scalar_authority.semantic_snapshot() != authority.operation_authority().registry_snapshot() {
         return Err(RefinementError::SemanticAuthorityMismatch);
     }
-    if scalar_authority.definitions() != authority.emitted_scalar_definitions() {
+    let declared = authority.emitted_scalar_operations();
+    if scalar_authority
+        .reached_operations()
+        .iter()
+        .any(|reached| !declared.contains(reached))
+    {
         return Err(RefinementError::ScalarAuthorityConformance);
     }
     Ok(())
@@ -977,6 +1048,7 @@ fn assemble_content(
         operation: occurrence.operation.clone(),
         operand_interface,
         result_interface,
+        attributes: occurrence.attributes.clone(),
         effect: occurrence.effect,
         numerical_contract: occurrence.numerical_contract.clone(),
         scalar_authority,
@@ -1031,6 +1103,13 @@ fn encode_content_identity(
         encode_shape(&mut bytes, &result.shape);
     }
     bytes.push(effect_tag(occurrence.effect));
+    // Attributes are content: two occurrences of one family that differ only in
+    // an attribute are different reusable facts even when their emitted regions
+    // happen to coincide.
+    encode_bytes(
+        &mut bytes,
+        occurrence.attributes.canonical_encoding().as_bytes(),
+    );
     encode_bytes(&mut bytes, occurrence.numerical_contract.as_bytes());
     // Provider-independent reached authority is content; provider-attributed
     // admission provenance is deliberately withheld for the occurrence binding.
@@ -1214,6 +1293,10 @@ mod tests {
     }
 
     /// Emits `out[i] = mul(in[i], in[i])` over a parallel domain of `length`.
+    ///
+    /// The length is a registration-time constant so the fixtures can register a
+    /// provider that deliberately disagrees with the occurrence it is resolved
+    /// for; a governed provider reads its extents from the occurrence facts.
     struct PointwiseSquare {
         length: u64,
     }
@@ -1352,6 +1435,7 @@ mod tests {
                 OccurrenceOperand::new(v, f32_type(), shape.clone()),
             ],
             vec![OccurrenceResult::new(f32_type(), shape)],
+            tiler_ir::semantic::OperationAttributes::empty(),
             tiler_ir::semantic::OperationEffect::Pure,
             contract(),
             SemanticOccurrenceIdentity::from_bytes(site.to_vec()),
@@ -1562,6 +1646,7 @@ mod tests {
                 OccurrenceOperand::new(v, f32_type(), shape.clone()),
             ],
             vec![OccurrenceResult::new(f32_type(), shape)],
+            tiler_ir::semantic::OperationAttributes::empty(),
             tiler_ir::semantic::OperationEffect::Pure,
             contract(),
             SemanticOccurrenceIdentity::from_bytes(b"site".to_vec()),

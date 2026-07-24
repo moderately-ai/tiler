@@ -20,6 +20,7 @@ use crate::fusion_legality::{
     FusionLegality, FusionLegalityError, FusionLegalityProof, FusionNumericalCapabilities,
     derive_fusion_legality, verify_fusion_legality,
 };
+use crate::lowering::{LoweringError, OccurrenceEvidence, ResolvedLowering, resolve_lowering};
 use crate::normalize::{
     NORMALIZATION_SUBJECT, NormalizationOutcome, NormalizeError, normalize_semantics,
 };
@@ -341,7 +342,7 @@ pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProd
     let semantic = request.program;
     let shape_environment = request.shape_environment;
     let target_profiles = request.target_profiles.clone();
-    let capabilities = request.capabilities;
+    let capabilities = request.capabilities.clone();
     let verified = verify_request(request)?;
     verify_semantic_output_type(semantic)?;
     // `NormalizeSemantics` runs after request verification and before region
@@ -712,8 +713,7 @@ fn compile_target_with_explain(
             verified,
             plan,
             kind,
-            &plans.legality,
-            plans.numerical.clone(),
+            &plans,
             alternative_cause.as_ref(),
         )?;
         let cause = record_alternative_explain(
@@ -778,6 +778,8 @@ fn compile_target_with_explain(
 
 /// Everything the complete-plan authorities produced for one target.
 struct CompletePlans {
+    /// Every recognized occurrence's resolved capability and refinement evidence.
+    lowering: ResolvedLowering,
     portfolio: SelectedPortfolio,
     /// One replayable fusion-legality proof per multi-occurrence region, keyed by
     /// the region occurrence it was derived for.
@@ -818,14 +820,26 @@ fn enumerate_complete_plans(
 ) -> Result<CompletePlans, TargetFailure> {
     let budgets = verified.budgets();
     let contract = verified.numerical_contract();
+    // Lowering-capability resolution precedes every cover: a cover is a claim
+    // about how recognized occurrences are grouped, and grouping occurrences the
+    // installed authority cannot lower at all would be enumerating plans nothing
+    // could realize.
+    let lowering = match resolve_lowering(semantic, verified, formation) {
+        Ok(lowering) => lowering,
+        Err(source) => {
+            let cause = record_lowering_failure(explain, &source, root)?;
+            return Err(lowering_failure(&source, cause));
+        }
+    };
+    let lowering_record = record_lowering(explain, &lowering, root)?;
     let enumeration = enumerate_covers(semantic, budgets, contract).map_err(|source| {
         failure_at_source(
             source.into(),
             ExplainStage::CandidateEnumeration,
-            record_cause(root),
+            record_cause(lowering_record),
         )
     })?;
-    let cover_record = record_cover_enumeration(explain, &enumeration, root)?;
+    let cover_record = record_cover_enumeration(explain, &enumeration, lowering_record)?;
 
     let capabilities = FusionNumericalCapabilities::governed();
     let mut legality = std::collections::BTreeMap::new();
@@ -885,22 +899,26 @@ fn enumerate_complete_plans(
     // strict-`f32` numerical equivalence proof the trace cites as a sound proof.
     let mut numerical = None;
     let mut numerical_cause = legality_cause;
-    if let Some(candidate) = formation.whole_program_candidate() {
-        if verified.capabilities().fused_serial_sum.is_none() {
-            record_deferred_fusion_capability(explain, cover_record)?;
-        } else if !illegal.contains(candidate.occurrence()) {
-            let proof =
-                prove_fused_numerics(formation.graph(), verified, candidate).map_err(|error| {
-                    failure_at_source(
-                        error.into(),
-                        ExplainStage::NumericalLegality,
-                        record_cause(legality_cause),
-                    )
-                })?;
-            numerical_cause =
-                record_numerical_equivalence(explain, verified, candidate, &proof, legality_cause)?;
-            numerical = Some(Box::new(proof));
-        }
+    if let Some(candidate) = formation.whole_program_candidate()
+        && !illegal.contains(candidate.occurrence())
+    {
+        let proof =
+            prove_fused_numerics(formation.graph(), verified, candidate).map_err(|error| {
+                failure_at_source(
+                    error.into(),
+                    ExplainStage::NumericalLegality,
+                    record_cause(legality_cause),
+                )
+            })?;
+        numerical_cause = record_numerical_equivalence(
+            explain,
+            verified,
+            &lowering,
+            candidate,
+            &proof,
+            legality_cause,
+        )?;
+        numerical = Some(Box::new(proof));
     }
 
     let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
@@ -995,12 +1013,100 @@ fn enumerate_complete_plans(
     }
     let selection_record = record_plan_selection(explain, &portfolio, frontier_cause)?;
     Ok(CompletePlans {
+        lowering,
         portfolio,
         legality,
         numerical,
         rejections,
         selection_record,
     })
+}
+
+/// Records why one occurrence's lowering could not be established.
+///
+/// The three classes stay distinct. An absent capability is a deferred
+/// capability: the installed authority was never extended to this occurrence. A
+/// contended capability is a disproved checked predicate: two extensions
+/// contradict each other, which is a defect in the installed authority rather
+/// than a gap in it. A refused refinement is a disproved refinement predicate at
+/// the kernel stage: a provider was resolved, drove the canonical builder, and
+/// the emitted region does not realize the occurrence.
+fn record_lowering_failure(
+    explain: &mut ExplainWriter,
+    source: &LoweringError,
+    cause: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let key = format!("occurrence:{}", source.member().0);
+    let (stage, subject_kind) = match source {
+        LoweringError::Refine { .. } => (ExplainStage::KernelRefinement, SubjectKind::Kernel),
+        LoweringError::Occurrence { .. } | LoweringError::Resolve { .. } => {
+            (ExplainStage::CapabilityResolution, SubjectKind::Capability)
+        }
+    };
+    let reason = source.reason();
+    let missing = source.is_missing();
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(subject_kind, &key)?;
+            let event = if missing {
+                ExplainEvent::DeferredCapability {
+                    predicate: PredicateKey::new("capability.index-access-resolved")?,
+                    reason: ReasonCode::new(reason)?,
+                }
+            } else {
+                ExplainEvent::Check {
+                    stage,
+                    assessment: PredicateAssessment::disproved(
+                        match stage {
+                            ExplainStage::KernelRefinement => {
+                                "kernel.index-region-refines-occurrence"
+                            }
+                            _ => "capability.index-access-resolved",
+                        },
+                        ReasonCode::new(reason)?,
+                        EvidenceBasis::CheckedInvariant,
+                    )?,
+                    rejection: RejectionClass::IntrinsicInvalid,
+                }
+            };
+            Ok(explain.push_detail(
+                RuleRef::builtin("capability.index-access-resolution.v1")?,
+                vec![subject],
+                event,
+                optional_cause(cause),
+            )?)
+        })(),
+        stage,
+        subject_kind,
+        &key,
+        record_cause(cause),
+    )
+}
+
+/// Attributes a lowering-stage failure to its exact phase and subject.
+///
+/// Resolution failures belong to [`ExplainStage::CapabilityResolution`] and
+/// refinement refusals to [`ExplainStage::KernelRefinement`]; both are reported
+/// as unsupported capabilities rather than as target infeasibility, because the
+/// installed authority is what could not lower the program.
+fn lowering_failure(source: &LoweringError, cause: Option<ExplainRecordId>) -> TargetFailure {
+    let stage = match source {
+        LoweringError::Refine { .. } => ExplainStage::KernelRefinement,
+        LoweringError::Occurrence { .. } | LoweringError::Resolve { .. } => {
+            ExplainStage::CapabilityResolution
+        }
+    };
+    target_failure(
+        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+            phase: "lowering",
+            rule: source.reason(),
+        }),
+        stage,
+        format!("lowering-{}", source.reason()),
+        SubjectKind::Capability,
+        format!("occurrence:{}", source.member().0),
+        record_cause(cause),
+    )
 }
 
 /// Returns the planning ordinal a cover region's implementation will carry.
@@ -1026,13 +1132,15 @@ fn build_alternative(
     verified: &crate::request::VerifiedTargetRequest,
     plan: &SelectedPlan,
     kind: ProgramAlternativeKind,
-    legality: &std::collections::BTreeMap<
-        crate::region::RegionOccurrenceIdentity,
-        Box<FusionLegalityProof>,
-    >,
-    numerical: Option<Box<FusionNumericalProof>>,
+    plans: &CompletePlans,
     cause: Option<&TerminalCause>,
 ) -> Result<ProgramAlternative, TargetFailure> {
+    let CompletePlans {
+        lowering,
+        legality,
+        numerical,
+        ..
+    } = plans;
     let scheduled = plan_regions(plan);
     let kernels = scheduled
         .iter()
@@ -1058,7 +1166,7 @@ fn build_alternative(
         &scheduled,
         &kernels,
         &program,
-        plan_providers(verified, kind),
+        lowering.providers(),
     )
     .map_err(|error| {
         failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause.cloned())
@@ -1076,7 +1184,7 @@ fn build_alternative(
             })
             .collect(),
         numerical: match kind {
-            ProgramAlternativeKind::Fused => numerical,
+            ProgramAlternativeKind::Fused => numerical.clone(),
             ProgramAlternativeKind::Materialized => None,
         },
     };
@@ -1131,23 +1239,6 @@ fn build_plan_program(
         _ => Err(CompileError::from(ProgramError::Structure {
             rule: "unsupported-plan-shape",
         })),
-    }
-}
-
-/// Returns the lowering providers whose implementations the plan realizes.
-fn plan_providers(
-    verified: &crate::request::VerifiedTargetRequest,
-    kind: ProgramAlternativeKind,
-) -> Vec<crate::request::LoweringProviderIdentity> {
-    match kind {
-        ProgramAlternativeKind::Fused => verified
-            .capabilities()
-            .fused_serial_sum
-            .into_iter()
-            .collect(),
-        ProgramAlternativeKind::Materialized => {
-            vec![verified.capabilities().materialized_serial_sum]
-        }
     }
 }
 
@@ -1545,40 +1636,175 @@ fn record_fusion_legality(
     )
 }
 
-/// Records that no lowering provider is installed for the fused whole-program
-/// region, so the fused alternative is deferred rather than illegal.
-fn record_deferred_fusion_capability(
+/// Records every recognized occurrence's resolved capability and its evidence.
+///
+/// Two records per occurrence at most, and they are deliberately different
+/// classes. The [`ExplainStage::CapabilityResolution`] record is an admitted
+/// checked invariant attributed to the resolved provider: the installed registry
+/// resolved exactly one index-access capability for this occurrence. The
+/// [`ExplainStage::KernelRefinement`] record is either the exhaustive finite
+/// evidence that the provider's region realizes the occurrence, or — when the
+/// exhaustive access proof could not afford the region — a typed budget stop
+/// naming the resource, its limit, and the required amount, plus an explicit
+/// `Unknown` assessment. The budget stop is never a rejection: nothing about the
+/// region was disproved, the analysis stopped.
+fn record_lowering(
     explain: &mut ExplainWriter,
-    cause: Option<ExplainRecordId>,
-) -> Result<(), TargetFailure> {
-    explain_step(
-        (|| -> Result<_, CompileError> {
-            let subject = explain.subject(
-                SubjectKind::Capability,
-                "fused-serial-sum/provider:tiler.prototype.fused-serial-sum@1",
+    lowering: &ResolvedLowering,
+    mut cause: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    for occurrence in lowering.occurrences() {
+        let key = occurrence.subject_key();
+        cause = explain_step(
+            (|| -> Result<_, CompileError> {
+                let provider = ProviderRef::lowering(occurrence.provider())?;
+                let rule = RuleRef::provided(
+                    "capability.index-access-resolution.v1",
+                    occurrence.provider().capability_revision().get(),
+                    provider,
+                )?;
+                let subject = explain.subject(SubjectKind::Capability, &key)?;
+                Ok(explain.push_detail(
+                    rule,
+                    vec![subject],
+                    ExplainEvent::Check {
+                        stage: ExplainStage::CapabilityResolution,
+                        assessment: PredicateAssessment::proven(
+                            "capability.index-access-resolved",
+                            EvidenceBasis::CheckedInvariant,
+                        )?,
+                        rejection: RejectionClass::IntrinsicInvalid,
+                    },
+                    optional_cause(cause),
+                )?)
+            })(),
+            ExplainStage::CapabilityResolution,
+            SubjectKind::Capability,
+            &key,
+            record_cause(cause),
+        )?;
+        cause = record_refinement(explain, occurrence, cause)?;
+    }
+    Ok(cause)
+}
+
+/// Records one occurrence's refinement evidence or its recorded proof gap.
+fn record_refinement(
+    explain: &mut ExplainWriter,
+    occurrence: &crate::lowering::OccurrenceLowering,
+    mut cause: Option<ExplainRecordId>,
+) -> Result<Option<ExplainRecordId>, TargetFailure> {
+    let key = occurrence.subject_key();
+    match occurrence.evidence() {
+        OccurrenceEvidence::Refined(refinement) => {
+            let identity = refinement_label(refinement);
+            explain_step(
+                (|| -> Result<_, CompileError> {
+                    let provider = ProviderRef::lowering(occurrence.provider())?;
+                    let rule = RuleRef::provided(
+                        "kernel.index-region-refinement.v1",
+                        occurrence.provider().capability_revision().get(),
+                        provider,
+                    )?;
+                    let subject = explain.subject(SubjectKind::Kernel, &key)?;
+                    Ok(explain.push_detail(
+                        rule,
+                        vec![subject],
+                        ExplainEvent::Check {
+                            stage: ExplainStage::KernelRefinement,
+                            assessment: PredicateAssessment::proven(
+                                "kernel.index-region-refines-occurrence",
+                                EvidenceBasis::ExhaustiveFinite,
+                            )?
+                            .with_fact(ExplainFact::new(
+                                "refinement-identity",
+                                FactValue::Identity(crate::explain::SubjectKey::new(identity)?),
+                            )?)?,
+                            rejection: RejectionClass::IntrinsicInvalid,
+                        },
+                        optional_cause(cause),
+                    )?)
+                })(),
+                ExplainStage::KernelRefinement,
+                SubjectKind::Kernel,
+                &key,
+                record_cause(cause),
+            )
+        }
+        OccurrenceEvidence::BudgetStopped(stop) => {
+            cause = explain_step(
+                (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(SubjectKind::Kernel, &key)?;
+                    Ok(explain.push_detail(
+                        RuleRef::builtin("kernel.index-region-refinement.v1")?,
+                        vec![subject],
+                        ExplainEvent::BudgetStop {
+                            stage: ExplainStage::KernelRefinement,
+                            resource: crate::explain::ResourceKey::new(stop.resource_key())?,
+                            limit: stop.limit,
+                            actual: u64::try_from(stop.required).unwrap_or(u64::MAX),
+                        },
+                        optional_cause(cause),
+                    )?)
+                })(),
+                ExplainStage::KernelRefinement,
+                SubjectKind::Kernel,
+                &key,
+                record_cause(cause),
             )?;
-            explain.push_detail(
-                RuleRef::builtin("fusion.capability-resolution")?,
-                vec![subject],
-                ExplainEvent::DeferredCapability {
-                    predicate: PredicateKey::new("fusion.provider-available")?,
-                    reason: ReasonCode::new("provider-unavailable")?,
-                },
-                optional_cause(cause),
-            )?;
-            Ok(())
-        })(),
-        ExplainStage::CapabilityResolution,
-        SubjectKind::Capability,
-        "fused-serial-sum/provider:tiler.prototype.fused-serial-sum@1",
-        record_cause(cause),
-    )
+            explain_step(
+                (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(SubjectKind::Kernel, &key)?;
+                    Ok(explain.push_detail(
+                        RuleRef::builtin("kernel.index-region-refinement.v1")?,
+                        vec![subject],
+                        ExplainEvent::Check {
+                            stage: ExplainStage::KernelRefinement,
+                            assessment: PredicateAssessment::unknown(
+                                "kernel.index-region-refines-occurrence",
+                                ReasonCode::new("proof-budget-exhausted")?,
+                            )?,
+                            rejection: RejectionClass::IntrinsicInvalid,
+                        },
+                        optional_cause(cause),
+                    )?)
+                })(),
+                ExplainStage::KernelRefinement,
+                SubjectKind::Kernel,
+                &key,
+                record_cause(cause),
+            )
+        }
+    }
+}
+
+/// Returns the stable presentation label of one refinement occurrence identity.
+///
+/// The label is a presentation handle over the identity's trailing bytes, never
+/// the identity itself: the canonical bytes stay in the retained
+/// [`crate::legality::IndexRefinement`], which is what any downstream check
+/// compares.
+fn refinement_label(refinement: &crate::legality::IndexRefinement) -> String {
+    use std::fmt::Write as _;
+
+    let bytes = refinement.identity().as_bytes();
+    let tail = bytes.len().saturating_sub(8);
+    let mut label = String::from("refinement:");
+    for byte in &bytes[tail..] {
+        let _ = write!(label, "{byte:02x}");
+    }
+    label
 }
 
 /// Records the whole-program strict-`f32` numerical equivalence sound proof.
+///
+/// The proof is attributed to the provider that lowers the reduction occurrence,
+/// because that is the operation whose reassociation the proof forbids. A
+/// program with no recognized reduction has no fused equivalence claim to make.
 fn record_numerical_equivalence(
     explain: &mut ExplainWriter,
     verified: &crate::request::VerifiedTargetRequest,
+    lowering: &ResolvedLowering,
     candidate: &RegionCandidate,
     proof: &FusionNumericalProof,
     cause: Option<ExplainRecordId>,
@@ -1586,11 +1812,17 @@ fn record_numerical_equivalence(
     let key = candidate.label().to_owned();
     explain_step(
         (|| -> Result<_, CompileError> {
-            let provider = verified.capabilities().fused_serial_sum.ok_or_else(|| {
-                CompileError::from(ProgramError::Structure {
-                    rule: "fused-provider-missing",
-                })
-            })?;
+            let reduction = verified.serial_sum().members.reduction();
+            let provider = lowering
+                .occurrences()
+                .iter()
+                .find(|occurrence| reduction.contains(&occurrence.member()))
+                .map(crate::lowering::OccurrenceLowering::provider)
+                .ok_or_else(|| {
+                    CompileError::from(ProgramError::Structure {
+                        rule: "reduction-provider-missing",
+                    })
+                })?;
             let provider_ref = ProviderRef::lowering(provider)?;
             let subject = explain.subject(SubjectKind::Candidate, &key)?;
             Ok(explain.push_detail(
@@ -2109,7 +2341,19 @@ fn verify_alternative(
             cause,
         ));
     }
-    let providers = plan_providers(request, alternative.kind);
+    // The plan's own recorded provenance is checked against the request's
+    // installed registry rather than against itself, so a receipt naming a
+    // provider the registry never resolved fails closed here.
+    let providers = crate::lowering::resolve_capabilities(semantic, request).map_err(|_| {
+        failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-provider-resolution",
+            }
+            .into(),
+            ExplainStage::CapabilityResolution,
+            cause.clone(),
+        )
+    })?;
     verify_artifact_plan(
         &alternative.artifact_plan,
         semantic,
@@ -2697,16 +2941,29 @@ mod tests {
                 .structural_cost
                 .dominates(&materialized.structural_cost)
         );
+        // Lowering provenance is the set of providers the installed registry
+        // resolved for the recognized occurrences. Both plan shapes cover the
+        // same occurrences, so both name the same four governed providers: the
+        // alternatives differ in their cover, not in who lowers each operation.
+        let expected_providers: Vec<_> = [
+            "governed-index-access.add-f32",
+            "governed-index-access.constant-f32",
+            "governed-index-access.multiply-f32",
+            "governed-index-access.strict-serial-sum-f32",
+        ]
+        .into_iter()
+        .map(|name| {
+            crate::request::LoweringProviderIdentity::new(
+                tiler_ir::semantic::ProviderIdentity::new("tiler", name, 1).unwrap(),
+                crate::capability::LoweringCapabilityRevision::new(1).unwrap(),
+            )
+        })
+        .collect();
         assert_eq!(
             materialized.artifact_plan.lowering_providers(),
-            [CompilerCapabilitySnapshot::governed().materialized_serial_sum]
+            expected_providers
         );
-        assert_eq!(
-            fused.artifact_plan.lowering_providers(),
-            [CompilerCapabilitySnapshot::governed()
-                .fused_serial_sum
-                .unwrap()]
-        );
+        assert_eq!(fused.artifact_plan.lowering_providers(), expected_providers);
         assert_eq!(reduction_loop(&fused.kernels[0]), Some((1, 3)));
         assert!(target.explain.records().iter().any(|record| {
             record.rule().key().as_str() == "compile.plan.boundary"
@@ -2740,6 +2997,9 @@ mod tests {
                 ("normalize.semantics.v1", 1),
                 ("region.formation.v1", 1),
                 ("region.candidate.v1", 17),
+                // One resolution and one refinement per recognized occurrence.
+                ("capability.index-access-resolution.v1", 5),
+                ("kernel.index-region-refinement.v1", 5),
                 ("cover.enumeration.v1", 1),
                 ("fusion.legality.v1", 12),
                 ("fusion.strict-f32-equivalence", 1),
@@ -2789,6 +3049,38 @@ mod tests {
                 Some(FactValue::Count(expected)),
                 "{rule}/{fact_key}"
             );
+        }
+        // Every recognized occurrence resolved a lowering capability and carries
+        // exhaustive finite refinement evidence attributed to the same provider.
+        for (rule, stage, basis) in [
+            (
+                "capability.index-access-resolution.v1",
+                ExplainStage::CapabilityResolution,
+                EvidenceBasis::CheckedInvariant,
+            ),
+            (
+                "kernel.index-region-refinement.v1",
+                ExplainStage::KernelRefinement,
+                EvidenceBasis::ExhaustiveFinite,
+            ),
+        ] {
+            let records: Vec<_> = trace
+                .records()
+                .iter()
+                .filter(|record| record.rule().key().as_str() == rule)
+                .collect();
+            assert_eq!(records.len(), 5, "{rule}");
+            for record in records {
+                assert_eq!(record.event().disposition(), ExplainDisposition::Admitted);
+                assert_eq!(record.event().stage(), stage);
+                let ExplainEvent::Check { assessment, .. } = record.event() else {
+                    panic!("{rule} must be a checked assertion");
+                };
+                assert_eq!(assessment.basis(), &basis);
+                // Attribution is the resolved lowering provider, never the
+                // compiler: an out-of-crate provider owns this claim.
+                assert_ne!(record.rule().provider(), &ProviderRef::builtin());
+            }
         }
         // Fusion legality is attributed to the capability provider that declared
         // the member operations' roles, never to the compiler itself.
@@ -3041,22 +3333,46 @@ mod tests {
         );
     }
 
+    /// An installed authority that lowers nothing is a deferred capability, and
+    /// it stops the compilation instead of quietly producing a narrower
+    /// portfolio: an occurrence nobody can lower has no valid plan at all.
     #[test]
-    fn missing_provider_and_region_budget_retain_the_verified_baseline() {
+    fn a_registry_without_capabilities_defers_and_fails_closed() {
         let semantic = semantic(false);
-        let mut missing_provider = CompilationRequest::governed(&semantic);
-        missing_provider.capabilities.fused_serial_sum = None;
-        let product = compile(missing_provider).unwrap();
-        assert_eq!(product.targets[0].portfolio.alternatives.len(), 1);
+        let mut request = CompilationRequest::governed(&semantic);
+        request.capabilities = CompilerCapabilitySnapshot::without_capabilities();
+        let error = compile(request).unwrap_err();
+        let CompileError::Explained { source, explain } = error else {
+            panic!("target compilation failures retain their explain trace");
+        };
         assert_eq!(
-            selected_kind(&product),
-            ProgramAlternativeKind::Materialized
+            *source,
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "lowering",
+                rule: "missing-capability",
+            })
         );
-        assert!(product.targets[0].explain.records().iter().any(|record| {
-            record.rule().key().as_str() == "fusion.capability-resolution"
+        assert!(explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "capability.index-access-resolution.v1"
                 && record.event().disposition() == ExplainDisposition::DeferredUnsupported
         }));
+        let failure = explain
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
+            .expect("a terminal failure record");
+        assert!(matches!(
+            failure.event(),
+            ExplainEvent::CompilerFailure {
+                stage: ExplainStage::CapabilityResolution,
+                reason,
+            } if reason.as_str() == "lowering-missing-capability"
+        ));
+    }
 
+    #[test]
+    fn region_budget_retains_the_verified_baseline() {
+        let semantic = semantic(false);
         // A zero per-seed growth budget leaves only singleton candidates, and the
         // bounded profile implements no singleton region. Every plan therefore
         // depends on a region that was never formed, so compilation fails closed
@@ -3560,9 +3876,19 @@ mod conformance {
     use super::{
         CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind, compile,
     };
+    use crate::capability::{
+        IndexAccessLoweringContext, IndexAccessLoweringProvider, LoweringCapabilityRegistryBuilder,
+        LoweringCapabilityRevision, LoweringEmitError, LoweringSignature,
+    };
     use crate::cover::RegionCover;
+    use crate::explain::{
+        EvidenceBasis, ExplainDisposition, ExplainEvent, ExplainStage, ProviderRef,
+    };
     use crate::region::form_region_candidates;
-    use crate::request::{CompilationRequest, RequestError, verify_request};
+    use crate::request::{
+        CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_request,
+    };
+    use tiler_ir::index::{DomainRole, FrozenScalarRegistry, ScalarAttributes};
     use tiler_ir::semantic::{
         CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
         F32_CONSTANT_BITS_ATTRIBUTE, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
@@ -4112,5 +4438,313 @@ mod conformance {
                 );
             }
         }
+    }
+
+    // Externally registered *lowering* capabilities.
+    //
+    // Everything below composes a lowering-capability registry through the
+    // public `capability` surface, exactly as an out-of-crate consumer would,
+    // and drives it through the ordinary `compile()` entry point.
+
+    /// An out-of-crate index-access lowering for `tiler.multiply-f32`.
+    ///
+    /// It reads every extent and every broadcast from the occurrence facts, so
+    /// one registration covers every program shape. Nothing in it touches a
+    /// crate-internal item.
+    struct ExternalMultiplyLowering;
+
+    impl IndexAccessLoweringProvider for ExternalMultiplyLowering {
+        fn lower(
+            &self,
+            context: &mut IndexAccessLoweringContext<'_>,
+        ) -> Result<(), LoweringEmitError> {
+            let shape = context.occurrence().results()[0].shape().clone();
+            let value_type = context.occurrence().results()[0].value_type().clone();
+            let inputs = context.occurrence().inputs().to_vec();
+            let operands = context.occurrence().operands().to_vec();
+            let mut dimensions = Vec::new();
+            for extent in shape.extents() {
+                dimensions.push(context.dimension(DomainRole::Parallel, *extent)?);
+            }
+            let mut coordinates = Vec::new();
+            for dimension in &dimensions {
+                coordinates.push(context.dimension_expr(*dimension)?);
+            }
+            let mut tensors = Vec::new();
+            for input in &inputs {
+                tensors
+                    .push(context.input_tensor(input.value_type().clone(), input.shape().clone())?);
+            }
+            let mut values = Vec::new();
+            for position in &operands {
+                let value = if inputs[*position].shape().rank() == 0 {
+                    context.read(tensors[*position], &[], &[])?
+                } else {
+                    context.read(tensors[*position], &dimensions, &coordinates)?
+                };
+                values.push(value);
+            }
+            let product = context.apply(
+                tiler_ir::index::multiply_f32_scalar_op(),
+                ScalarAttributes::empty(),
+                &values,
+            )?;
+            let product = product.get(0).expect("multiply yields one result");
+            let output = context.output_tensor(value_type, shape)?;
+            let write = context.write(output, &dimensions, &coordinates)?;
+            context.output(write, product)
+        }
+    }
+
+    fn external_lowering_provider() -> ProviderIdentity {
+        ProviderIdentity::new("acme", "external-multiply-lowering", 3).unwrap()
+    }
+
+    /// Composes a registry from the governed families plus an external one.
+    ///
+    /// `substitute` replaces the governed `tiler.multiply-f32` capability;
+    /// otherwise the external capability is registered *beside* it, which is the
+    /// contended-capability case.
+    fn registry_with_external_multiply(
+        substitute: bool,
+        implementation: Arc<dyn IndexAccessLoweringProvider>,
+    ) -> CompilerCapabilitySnapshot {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let mut builder = LoweringCapabilityRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        );
+        for capability in crate::governed::governed_index_access_capabilities().unwrap() {
+            if substitute && capability.operation() == &multiply_f32_op() {
+                continue;
+            }
+            capability.register(&mut builder).unwrap();
+        }
+        builder
+            .register_index_access(
+                external_lowering_provider(),
+                multiply_f32_op(),
+                LoweringSignature::new(
+                    [F32::resolved_type(), F32::resolved_type()],
+                    [F32::resolved_type()],
+                )
+                .unwrap(),
+                &[tiler_ir::index::multiply_f32_scalar_op()],
+                LoweringCapabilityRevision::new(7).unwrap(),
+                implementation,
+            )
+            .unwrap();
+        CompilerCapabilitySnapshot::new(builder.freeze(), scalars)
+    }
+
+    /// The lowering half of the gate: an out-of-crate provider lowers a
+    /// recognized occurrence end to end, and the artifact plan names it.
+    #[test]
+    fn an_externally_registered_lowering_provider_drives_the_compile_path() {
+        let program = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+        let mut request = CompilationRequest::governed(&program);
+        request.capabilities =
+            registry_with_external_multiply(true, Arc::new(ExternalMultiplyLowering));
+        let product = compile(request).unwrap();
+        let target = &product.targets[0];
+        assert_eq!(target.portfolio.alternatives.len(), 2);
+
+        let external = crate::request::LoweringProviderIdentity::new(
+            external_lowering_provider(),
+            LoweringCapabilityRevision::new(7).unwrap(),
+        );
+        for alternative in &target.portfolio.alternatives {
+            assert!(
+                alternative
+                    .artifact_plan
+                    .lowering_providers()
+                    .contains(&external),
+                "the artifact plan records the external provider that lowered multiply"
+            );
+        }
+        // The external provider's own capability revision is what the resolution
+        // record is attributed at, not the governed one.
+        assert!(target.explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "capability.index-access-resolution.v1"
+                && record.rule().provider()
+                    == &ProviderRef::registered(&external_lowering_provider()).unwrap()
+        }));
+    }
+
+    /// Two providers claiming one occurrence is a contradiction, not a choice.
+    #[test]
+    fn contended_lowering_capabilities_fail_closed_with_a_distinct_error() {
+        let program = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+        let mut request = CompilationRequest::governed(&program);
+        request.capabilities =
+            registry_with_external_multiply(false, Arc::new(ExternalMultiplyLowering));
+        let error = compile(request).unwrap_err();
+        let CompileError::Explained { source, explain } = error else {
+            panic!("target compilation failures retain their explain trace");
+        };
+        assert_eq!(
+            *source,
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "lowering",
+                rule: "ambiguous-capability",
+            })
+        );
+        // A contradiction is a disproved check, never a deferred capability: the
+        // authority was extended, and its extensions disagree.
+        assert!(explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "capability.index-access-resolution.v1"
+                && record.event().disposition() == ExplainDisposition::RejectedIntrinsic
+        }));
+        assert!(!explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "capability.index-access-resolution.v1"
+                && record.event().disposition() == ExplainDisposition::DeferredUnsupported
+        }));
+    }
+
+    /// An out-of-crate lowering whose write the interval proof cannot settle.
+    ///
+    /// The write coordinate is a chain of `wraps` moduli, so it is neither a
+    /// coordinate permutation nor interval-provable in one step. Verification
+    /// therefore has to enumerate the access domain, at `points × plan_len`
+    /// evaluated cells — which is exactly the budget
+    /// `tiler_ir::index::MAX_EXHAUSTIVE_PROOF_CELLS` governs.
+    struct WrappedWriteMultiplyLowering {
+        wraps: usize,
+    }
+
+    impl IndexAccessLoweringProvider for WrappedWriteMultiplyLowering {
+        fn lower(
+            &self,
+            context: &mut IndexAccessLoweringContext<'_>,
+        ) -> Result<(), LoweringEmitError> {
+            let shape = context.occurrence().results()[0].shape().clone();
+            let value_type = context.occurrence().results()[0].value_type().clone();
+            let inputs = context.occurrence().inputs().to_vec();
+            let operands = context.occurrence().operands().to_vec();
+            let mut dimensions = Vec::new();
+            for extent in shape.extents() {
+                dimensions.push(context.dimension(DomainRole::Parallel, *extent)?);
+            }
+            let mut coordinates = Vec::new();
+            for dimension in &dimensions {
+                coordinates.push(context.dimension_expr(*dimension)?);
+            }
+            let mut tensors = Vec::new();
+            for input in &inputs {
+                tensors
+                    .push(context.input_tensor(input.value_type().clone(), input.shape().clone())?);
+            }
+            let mut values = Vec::new();
+            for position in &operands {
+                let value = if inputs[*position].shape().rank() == 0 {
+                    context.read(tensors[*position], &[], &[])?
+                } else {
+                    context.read(tensors[*position], &dimensions, &coordinates)?
+                };
+                values.push(value);
+            }
+            let product = context.apply(
+                tiler_ir::index::multiply_f32_scalar_op(),
+                ScalarAttributes::empty(),
+                &values,
+            )?;
+            let product = product.get(0).expect("multiply yields one result");
+            let output = context.output_tensor(value_type, shape.clone())?;
+            let mut written = coordinates.clone();
+            let leading = shape.extents()[0].get();
+            for _ in 0..self.wraps {
+                written[0] = context.modulo(written[0], leading)?;
+            }
+            let write = context.write(output, &dimensions, &written)?;
+            context.output(write, product)
+        }
+    }
+
+    /// The governed lowerings are interval-provable at any recognized size.
+    ///
+    /// Their writes are coordinate permutations and their reads are bounded by
+    /// their own dimensions, so verification never enters the exhaustive path and
+    /// the proof budget is never charged. This is the measured fact that lets
+    /// refinement be attempted for every occurrence rather than gated on size.
+    #[test]
+    fn governed_lowerings_never_charge_the_exhaustive_proof_budget() {
+        let program = external_program(1, Shape::from_dims([70_000, 2]), &[Axis::new(0)], false);
+        let product = compile(CompilationRequest::governed(&program)).unwrap();
+        assert!(!product.targets[0].explain.records().iter().any(|record| {
+            record.rule().key().as_str() == "kernel.index-region-refinement.v1"
+                && record.event().disposition() != ExplainDisposition::Admitted
+        }));
+    }
+
+    /// A refinement the proof budget cannot afford is a recorded `Unknown` gap.
+    ///
+    /// The compilation is otherwise valid and must stand: nothing about the
+    /// emitted region was disproved, the exhaustive access proof simply stopped.
+    /// Rejecting the plan here would report an exhausted analysis budget as hard
+    /// infeasibility, so the trace instead carries the typed budget stop naming
+    /// the resource, its limit, and the required amount, beside an explicit
+    /// unknown assessment of the refinement predicate.
+    #[test]
+    fn a_refinement_the_proof_budget_cannot_afford_is_recorded_not_rejected() {
+        // 65_535 domain points and an eighteen-expression evaluation plan need
+        // 1_179_630 cells, above the 1_048_576 the exhaustive proof admits.
+        let program = external_program(1, Shape::from_dims([65_535, 1]), &[Axis::new(1)], false);
+        let mut request = CompilationRequest::governed(&program);
+        request.capabilities = registry_with_external_multiply(
+            true,
+            Arc::new(WrappedWriteMultiplyLowering { wraps: 16 }),
+        );
+        let product = compile(request).unwrap();
+        let trace = &product.targets[0].explain;
+
+        let stop = trace
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::BudgetStop { .. }))
+            .expect("the stopped refinement is recorded as a typed budget stop");
+        assert!(matches!(
+            stop.event(),
+            ExplainEvent::BudgetStop {
+                stage: ExplainStage::KernelRefinement,
+                resource,
+                limit: 1_048_576,
+                actual: 1_179_630,
+            } if resource.as_str() == "index-proof-cells"
+        ));
+
+        // The unproven predicate is recorded as unknown, never as admitted.
+        let unknown = trace
+            .records()
+            .iter()
+            .find(|record| {
+                record.rule().key().as_str() == "kernel.index-region-refinement.v1"
+                    && matches!(
+                        record.event(),
+                        ExplainEvent::Check {
+                            assessment,
+                            ..
+                        } if assessment.basis() == &EvidenceBasis::Unknown
+                    )
+            })
+            .expect("the absent refinement is recorded as an unknown gap");
+        assert_eq!(
+            unknown.event().disposition(),
+            ExplainDisposition::DeferredUnsupported
+        );
+
+        // The remaining occurrences still carry exhaustive finite evidence, and
+        // the plan the budget stop applies to is still retained.
+        assert_eq!(
+            trace
+                .records()
+                .iter()
+                .filter(|record| {
+                    record.rule().key().as_str() == "kernel.index-region-refinement.v1"
+                        && record.event().disposition() == ExplainDisposition::Admitted
+                })
+                .count(),
+            4
+        );
+        assert_eq!(product.targets[0].portfolio.alternatives.len(), 2);
     }
 }

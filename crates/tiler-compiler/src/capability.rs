@@ -36,14 +36,14 @@ use std::fmt;
 use std::sync::Arc;
 
 use tiler_ir::index::{
-    CanonicalScalarDefinitionProjection, DimensionId, DomainRole, FrozenScalarRegistry,
-    IndexBuildError, IndexExprId, IndexInteger, IndexRegionBuilder, ScalarAttributes, ScalarOpKey,
-    ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId, TensorAccessId,
-    TensorId, TensorRole,
+    CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity, DimensionId,
+    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
+    IndexRegionBuilder, ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder,
+    ScalarRegistryError, ScalarResults, ScalarValueId, TensorAccessId, TensorId, TensorRole,
 };
 use tiler_ir::semantic::{
-    FrozenSemanticRegistry, OpKey, ProviderIdentity, RegistryError, ResolvedValueType,
-    SemanticCapabilityAuthority,
+    FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, RegistryError,
+    ResolvedValueType, SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity,
 };
 use tiler_ir::shape::{Extent, Shape};
 
@@ -209,6 +209,7 @@ struct LoweringSelector<'a> {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct LoweringCapabilityAuthority {
     operation_authority: SemanticCapabilityAuthority,
+    emitted_scalar_operations: Vec<ScalarOpKey>,
     emitted_scalar_definitions: CanonicalScalarDefinitionProjection,
 }
 
@@ -217,6 +218,19 @@ impl LoweringCapabilityAuthority {
     #[must_use]
     pub const fn operation_authority(&self) -> &SemanticCapabilityAuthority {
         &self.operation_authority
+    }
+
+    /// Returns the scalar operations the capability declared it may emit.
+    ///
+    /// The declaration is a *permission*, not an obligation: one capability
+    /// lowers every occurrence of its family and signature, and which of the
+    /// declared operations a particular occurrence needs depends on that
+    /// occurrence's shapes and attributes. A refinement authority therefore
+    /// checks that a region reached nothing beyond this set, never that it
+    /// reached all of it.
+    #[must_use]
+    pub fn emitted_scalar_operations(&self) -> &[ScalarOpKey] {
+        &self.emitted_scalar_operations
     }
 
     /// Returns the reached provider-independent scalar definitions the
@@ -321,6 +335,16 @@ impl ScalarLoweringResults {
 pub enum LoweringEmitError {
     /// The canonical builder rejected an emission.
     Build(IndexBuildError),
+    /// The provider refused the occurrence facts it was handed.
+    ///
+    /// A provider raises this when the occurrence is outside the exact form it
+    /// implements — an unsupported broadcast, a missing attribute, an arity it
+    /// does not lower — so an unsupported case rejects explicitly instead of
+    /// being approximated by the closest region the provider can emit.
+    Occurrence {
+        /// Stable rule identifier of the refused fact.
+        rule: &'static str,
+    },
 }
 
 impl fmt::Display for LoweringEmitError {
@@ -328,6 +352,9 @@ impl fmt::Display for LoweringEmitError {
         match self {
             Self::Build(source) => {
                 write!(formatter, "canonical builder rejected emission: {source}")
+            }
+            Self::Occurrence { rule } => {
+                write!(formatter, "provider refused occurrence fact {rule}")
             }
         }
     }
@@ -337,6 +364,7 @@ impl Error for LoweringEmitError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Build(source) => Some(source),
+            Self::Occurrence { .. } => None,
         }
     }
 }
@@ -432,21 +460,140 @@ impl<'a> ScalarLoweringContext<'a> {
     }
 }
 
+/// One ordered value boundary of the occurrence being lowered.
+///
+/// The boundary is the host's checked description of a semantic value: its
+/// resolved element type and its exact static shape. A rank-zero shape is a
+/// genuine scalar boundary, not an absent one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OccurrenceBoundary {
+    value_type: ResolvedValueType,
+    shape: Shape,
+}
+
+impl OccurrenceBoundary {
+    /// Binds one boundary element type and static shape.
+    #[must_use]
+    pub const fn new(value_type: ResolvedValueType, shape: Shape) -> Self {
+        Self { value_type, shape }
+    }
+
+    /// Returns the boundary element type.
+    #[must_use]
+    pub const fn value_type(&self) -> &ResolvedValueType {
+        &self.value_type
+    }
+
+    /// Returns the boundary static shape.
+    #[must_use]
+    pub const fn shape(&self) -> &Shape {
+        &self.shape
+    }
+}
+
+/// The checked facts about the exact occurrence a provider is lowering.
+///
+/// An index/access-lowering provider emits a whole region, so unlike a
+/// scalar-lowering provider it cannot be handed already-checked operand values.
+/// It is handed this instead: the distinct input boundaries it must declare in
+/// order, which ordered operand reads each of them, the ordered result
+/// boundaries it must write, and the occurrence's host-canonical attributes.
+/// Without them a provider could only emit one fixed region, so a governed
+/// family would need one registered provider per shape and per attribute value —
+/// and two occurrences of one family that differ only in an attribute would be
+/// an unresolvable registry ambiguity rather than two lowerings.
+///
+/// The facts are read-only and provider-independent. They confer no ability to
+/// construct provider-owned IR, and the host still proves independently that the
+/// emitted region realizes the occurrence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoweredOccurrence {
+    inputs: Vec<OccurrenceBoundary>,
+    operands: Vec<usize>,
+    results: Vec<OccurrenceBoundary>,
+    attributes: OperationAttributes,
+}
+
+impl LoweredOccurrence {
+    /// Binds the occurrence facts one index/access lowering may read.
+    ///
+    /// `inputs` are the distinct operand values in first-occurrence order, which
+    /// is the order the emitted region must declare its input boundaries in.
+    /// `operands` maps each ordered semantic operand to its position in
+    /// `inputs`, so aliased operands repeat one position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoweringRegistryError::UnboundOperand`] when an ordered operand
+    /// names a position no input boundary occupies.
+    pub fn new(
+        inputs: Vec<OccurrenceBoundary>,
+        operands: Vec<usize>,
+        results: Vec<OccurrenceBoundary>,
+        attributes: OperationAttributes,
+    ) -> Result<Self, LoweringRegistryError> {
+        if let Some(operand) = operands.iter().position(|input| *input >= inputs.len()) {
+            return Err(LoweringRegistryError::UnboundOperand { operand });
+        }
+        Ok(Self {
+            inputs,
+            operands,
+            results,
+            attributes,
+        })
+    }
+
+    /// Returns the distinct input boundaries in region-declaration order.
+    #[must_use]
+    pub fn inputs(&self) -> &[OccurrenceBoundary] {
+        &self.inputs
+    }
+
+    /// Returns, per ordered semantic operand, its input-boundary position.
+    #[must_use]
+    pub fn operands(&self) -> &[usize] {
+        &self.operands
+    }
+
+    /// Returns the ordered result boundaries.
+    #[must_use]
+    pub fn results(&self) -> &[OccurrenceBoundary] {
+        &self.results
+    }
+
+    /// Returns the occurrence's host-canonical attributes.
+    #[must_use]
+    pub const fn attributes(&self) -> &OperationAttributes {
+        &self.attributes
+    }
+}
+
 /// A narrow checked context for one index/access-lowering provider.
 ///
 /// The context delegates to the canonical [`IndexRegionBuilder`] and exposes its
 /// constructive surface — dimensions, tensor boundaries, index expressions,
-/// accesses, scalar applications, reductions, and output roots — but never the
-/// raw builder or region finalization. The host verifies the region afterwards.
+/// accesses, scalar applications, reductions, and output roots — plus the
+/// checked [`LoweredOccurrence`] facts, but never the raw builder or region
+/// finalization. The host verifies the region afterwards.
 pub struct IndexAccessLoweringContext<'a> {
     builder: &'a mut IndexRegionBuilder,
+    occurrence: &'a LoweredOccurrence,
 }
 
 impl<'a> IndexAccessLoweringContext<'a> {
     /// Binds a host-owned index/access-lowering context over a canonical builder.
     #[must_use]
-    pub fn new(builder: &'a mut IndexRegionBuilder) -> Self {
-        Self { builder }
+    pub fn new(builder: &'a mut IndexRegionBuilder, occurrence: &'a LoweredOccurrence) -> Self {
+        Self {
+            builder,
+            occurrence,
+        }
+    }
+
+    /// Returns the checked facts about the occurrence being lowered.
+    #[must_use]
+    pub const fn occurrence(&self) -> &LoweredOccurrence {
+        self.occurrence
     }
 
     /// Adds one static half-open iteration dimension.
@@ -796,8 +943,12 @@ impl LoweringCapabilityRegistryBuilder {
             .map_err(|source| LoweringRegistryError::ScalarAuthority {
                 source: Arc::new(source),
             })?;
+        let mut declared = emitted_scalar_operations.to_vec();
+        declared.sort_unstable();
+        declared.dedup();
         let authority = LoweringCapabilityAuthority {
             operation_authority,
+            emitted_scalar_operations: declared,
             emitted_scalar_definitions,
         };
         let added = capability_identity_len(&key, &authority, revision);
@@ -836,6 +987,8 @@ impl LoweringCapabilityRegistryBuilder {
         );
         FrozenLoweringCapabilityRegistry(Arc::new(FrozenLoweringCapabilityRegistryData {
             capabilities: self.capabilities,
+            semantic_snapshot: self.semantic.snapshot_identity().clone(),
+            scalar_snapshot: self.scalar.snapshot_identity().clone(),
             identity,
         }))
     }
@@ -843,6 +996,8 @@ impl LoweringCapabilityRegistryBuilder {
 
 struct FrozenLoweringCapabilityRegistryData {
     capabilities: BTreeMap<LoweringCapabilityKey, RegisteredLoweringCapability>,
+    semantic_snapshot: SemanticRegistrySnapshotIdentity,
+    scalar_snapshot: CanonicalScalarRegistrySnapshotIdentity,
     identity: CanonicalLoweringRegistryIdentity,
 }
 
@@ -870,6 +1025,38 @@ impl FrozenLoweringCapabilityRegistry {
     #[must_use]
     pub fn capability_count(&self) -> usize {
         self.0.capabilities.len()
+    }
+
+    /// Returns the exact semantic-registry snapshot capabilities were admitted
+    /// against.
+    #[must_use]
+    pub fn semantic_snapshot(&self) -> &SemanticRegistrySnapshotIdentity {
+        &self.0.semantic_snapshot
+    }
+
+    /// Returns the exact scalar-registry snapshot capabilities were admitted
+    /// against.
+    ///
+    /// A host that drives a resolved provider must build and revalidate the
+    /// emitted region under this exact snapshot; pairing a registry with any
+    /// other scalar authority is a request error rather than a lowering failure.
+    #[must_use]
+    pub fn scalar_snapshot(&self) -> &CanonicalScalarRegistrySnapshotIdentity {
+        &self.0.scalar_snapshot
+    }
+
+    /// Returns the distinct admitting providers in canonical ascending order.
+    #[must_use]
+    pub fn providers(&self) -> Vec<ProviderIdentity> {
+        let mut providers: Vec<_> = self
+            .0
+            .capabilities
+            .keys()
+            .map(|key| key.provider.clone())
+            .collect();
+        providers.sort_unstable();
+        providers.dedup();
+        providers
     }
 
     /// Resolves the scalar-lowering capability for one exact occurrence.
@@ -1068,6 +1255,11 @@ pub enum LoweringRegistryError {
         /// Declared emitted-operation count.
         actual: usize,
     },
+    /// An ordered operand named an input boundary the occurrence does not have.
+    UnboundOperand {
+        /// Ordered operand position.
+        operand: usize,
+    },
     /// The same provider already registered this exact family/operation/signature.
     DuplicateCapability {
         /// Duplicated family.
@@ -1114,6 +1306,10 @@ impl fmt::Display for LoweringRegistryError {
             Self::TooManyEmittedOperations { actual } => write!(
                 formatter,
                 "lowering capability declared {actual} emitted scalar operations, exceeding the bound"
+            ),
+            Self::UnboundOperand { operand } => write!(
+                formatter,
+                "operand {operand} names an input boundary the occurrence does not have"
             ),
             Self::DuplicateCapability {
                 family, operation, ..
@@ -1321,9 +1517,10 @@ mod tests {
 
     use super::{
         FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
-        LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
-        LoweringFamily, LoweringRegistryError, LoweringResolveError, LoweringSignature,
-        ScalarLoweringContext, ScalarLoweringProvider, ScalarLoweringResults,
+        LoweredOccurrence, LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision,
+        LoweringEmitError, LoweringFamily, LoweringRegistryError, LoweringResolveError,
+        LoweringSignature, OccurrenceBoundary, ScalarLoweringContext, ScalarLoweringProvider,
+        ScalarLoweringResults,
     };
 
     const CONSTANT_BITS: AttributeFieldId = AttributeFieldId::new(1);
@@ -1456,17 +1653,20 @@ mod tests {
         }
     }
 
-    /// Emits `out[i] = mul(in[i], in[i])` over a parallel domain of `length`.
-    struct PointwiseSquareLowering {
-        length: u64,
-    }
+    /// Emits `out[i] = mul(in[i], in[i])` over the occurrence's own extent.
+    ///
+    /// The provider reads the length from the occurrence facts rather than a
+    /// registration-time constant, so one registered capability lowers every
+    /// length instead of colliding with a sibling registered for another.
+    struct PointwiseSquareLowering;
     impl IndexAccessLoweringProvider for PointwiseSquareLowering {
         fn lower(
             &self,
             context: &mut IndexAccessLoweringContext<'_>,
         ) -> Result<(), LoweringEmitError> {
-            let shape = Shape::from_dims([self.length]);
-            let i = context.dimension(DomainRole::Parallel, Extent::new(self.length))?;
+            let shape = context.occurrence().results()[0].shape().clone();
+            let length = shape.extents()[0].get();
+            let i = context.dimension(DomainRole::Parallel, Extent::new(length))?;
             let input = context.input_tensor(f32_type(), shape.clone())?;
             let output = context.output_tensor(f32_type(), shape)?;
             let row = context.dimension_expr(i)?;
@@ -1481,6 +1681,17 @@ mod tests {
             context.output(write, squared)?;
             Ok(())
         }
+    }
+
+    fn square_occurrence(length: u64) -> LoweredOccurrence {
+        let shape = Shape::from_dims([length]);
+        LoweredOccurrence::new(
+            vec![OccurrenceBoundary::new(f32_type(), shape.clone())],
+            vec![0, 0],
+            vec![OccurrenceBoundary::new(f32_type(), shape)],
+            tiler_ir::semantic::OperationAttributes::empty(),
+        )
+        .unwrap()
     }
 
     fn squared_result(results: &ScalarResults) -> ScalarValueId {
@@ -1511,7 +1722,7 @@ mod tests {
                 binary_signature(),
                 &[scalar_key("multiply")],
                 revision(),
-                Arc::new(PointwiseSquareLowering { length: 4 }),
+                Arc::new(PointwiseSquareLowering),
             )
             .unwrap();
     }
@@ -1560,7 +1771,7 @@ mod tests {
                 binary_signature(),
                 &[scalar_key("multiply")],
                 revision(),
-                Arc::new(PointwiseSquareLowering { length: 4 }),
+                Arc::new(PointwiseSquareLowering),
             )
             .unwrap();
 
@@ -1573,7 +1784,7 @@ mod tests {
                 binary_signature(),
                 &[scalar_key("multiply")],
                 revision(),
-                Arc::new(PointwiseSquareLowering { length: 4 }),
+                Arc::new(PointwiseSquareLowering),
             )
             .unwrap();
         second
@@ -1801,8 +2012,9 @@ mod tests {
             .unwrap();
 
         let mut builder = IndexRegionBuilder::new(scalars).unwrap();
+        let occurrence = square_occurrence(4);
         {
-            let mut context = IndexAccessLoweringContext::new(&mut builder);
+            let mut context = IndexAccessLoweringContext::new(&mut builder, &occurrence);
             resolved
                 .index_access_provider()
                 .expect("index-access family")

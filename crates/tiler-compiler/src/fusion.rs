@@ -5,23 +5,21 @@
 //! strict-`f32` kernel preserves the request's numerical contract exactly.
 //!
 //! The evidence is bound to the exact region occurrence, the exact region
-//! content, the canonical request subject, and the exact materialized reference
-//! provider. A candidate label or a copied stable string is not evidence.
+//! content, and the canonical request subject — which itself binds the exact
+//! installed lowering authority the fused region's baseline is drawn from. A
+//! candidate label or a copied stable string is not evidence.
 
 use std::error::Error;
 use std::fmt;
 
 use crate::region::{RegionCandidate, RegionError, RegionGraph, verify_candidate};
-use crate::request::{
-    LoweringProviderIdentity, NumericalPermission, VerifiedRequestSubject, VerifiedTargetRequest,
-};
+use crate::request::{NumericalPermission, VerifiedRequestSubject, VerifiedTargetRequest};
 
 /// Machine-checkable evidence that one whole-program region fuses exactly.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FusionNumericalProof {
     candidate: RegionCandidate,
     request_subject: VerifiedRequestSubject,
-    materialized_reference_provider: LoweringProviderIdentity,
     atomic_operations: AtomicOperationProof,
     contributor_order: ContributorOrderProof,
     nan_boundaries: NaNBoundaryProof,
@@ -38,11 +36,6 @@ impl FusionNumericalProof {
         let mut bytes = self.request_subject.canonical_explain_subject_bytes();
         encode_evidence_bytes(&mut bytes, self.candidate.occurrence().as_bytes());
         encode_evidence_bytes(&mut bytes, self.candidate.content().as_bytes());
-        encode_evidence_bytes(
-            &mut bytes,
-            self.materialized_reference_provider.key.as_bytes(),
-        );
-        bytes.extend_from_slice(&self.materialized_reference_provider.revision.to_be_bytes());
         bytes.push(match self.atomic_operations {
             AtomicOperationProof::MultiplyThenAdd => 1,
         });
@@ -175,7 +168,6 @@ pub(crate) fn prove_fused_numerics(
     let proof = FusionNumericalProof {
         candidate: candidate.clone(),
         request_subject: request.subject(),
-        materialized_reference_provider: request.capabilities().materialized_serial_sum,
         atomic_operations: AtomicOperationProof::MultiplyThenAdd,
         contributor_order: ContributorOrderProof::OriginalAxisLexicographic,
         nan_boundaries: NaNBoundaryProof::CanonicalizeAfterEveryArithmeticOperation,
@@ -250,6 +242,14 @@ mod tests {
         verified.for_target(verified.target_profiles()[0]).unwrap()
     }
 
+    /// Returns the same request bound to a different installed lowering authority.
+    fn request_with_other_capabilities(program: &SemanticProgram) -> VerifiedTargetRequest {
+        let mut request = CompilationRequest::governed(program);
+        request.capabilities = crate::request::CompilerCapabilitySnapshot::without_capabilities();
+        let verified = verify_request(request).unwrap();
+        verified.for_target(verified.target_profiles()[0]).unwrap()
+    }
+
     #[test]
     fn only_the_whole_program_region_carries_fused_numerical_evidence() {
         let program = program();
@@ -283,10 +283,24 @@ mod tests {
         let whole = outcome.whole_program_candidate().unwrap();
         let proof = prove_fused_numerics(outcome.graph(), &request, whole).unwrap();
 
-        let mut forged = proof.clone();
-        forged.materialized_reference_provider.revision += 1;
+        // The proof binds the request subject, which binds the exact installed
+        // lowering authority, so a proof produced under another authority is not
+        // this request's evidence.
+        let other_authority = request_with_other_capabilities(&program);
+        let other_outcome = form_region_candidates(
+            &program,
+            other_authority.budgets(),
+            other_authority.numerical_contract(),
+        )
+        .unwrap();
+        let stale = prove_fused_numerics(
+            other_outcome.graph(),
+            &other_authority,
+            other_outcome.whole_program_candidate().unwrap(),
+        )
+        .unwrap();
         assert!(matches!(
-            verify_fused_numerics(outcome.graph(), &request, whole, &forged),
+            verify_fused_numerics(outcome.graph(), &request, whole, &stale),
             Err(FusionError::Invalid {
                 rule: "numerical-proof-subject",
                 ..
