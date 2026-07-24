@@ -1,7 +1,7 @@
 ---
 id: make-spike-process-group-cleanup-best-effort
 title: Make spike process-group cleanup best-effort so it cannot fail the gate
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [record-source-verification-rule-in-agent-guidance]
@@ -9,9 +9,6 @@ scopes: [research/embedding, research/extensions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, harness, gate-reliability]
-claimed_from: todo
-assignee: agent-make-spike-process-group-cleanup-best-effort
-lease_expires_at: 1784915749
 ---
 The repository gate fails intermittently on `os.killpg`, and because it is the
 **gate** that fails, every ticket on the host inherits the flakiness.
