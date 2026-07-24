@@ -1,7 +1,7 @@
 ---
 id: scope-einsum-contraction-support
 title: Scope einsum and tensor-contraction support (Milestone 6)
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, breadth, einsum]
+claimed_from: todo
+assignee: agent-scope-einsum-contraction-support
+lease_expires_at: 1784919376
 ---
 Milestone 6 (einsum contractions) has zero tickets and zero open questions. Every
 "contraction" currently in the corpus is the FMA numerical-permission sense
