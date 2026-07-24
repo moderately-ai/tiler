@@ -122,13 +122,25 @@ pub enum AvailabilityPhase {
 }
 
 impl AvailabilityPhase {
-    const fn tag(self) -> u8 {
+    pub(super) const fn tag(self) -> u8 {
         match self {
             Self::CompileProfile => 0x01,
             Self::ArtifactEvidence => 0x02,
             Self::LiveDevicePreflight => 0x03,
             Self::PreparedKernelPreflight => 0x04,
             Self::LaunchPreflight => 0x05,
+        }
+    }
+
+    /// Resolves a governed wire tag, or `None` for an unrecognized phase.
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::CompileProfile),
+            0x02 => Some(Self::ArtifactEvidence),
+            0x03 => Some(Self::LiveDevicePreflight),
+            0x04 => Some(Self::PreparedKernelPreflight),
+            0x05 => Some(Self::LaunchPreflight),
+            _ => None,
         }
     }
 }
@@ -199,7 +211,13 @@ impl AbiRoot {
         }
     }
 
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    /// Encodes this root's canonical byte form.
+    ///
+    /// The same encoding serves the content key and the artifact envelope's
+    /// wire form, so a root can never carry one spelling into identity and a
+    /// different one onto disk. `super::codec` owns the inverse and is pinned
+    /// against this function by an exhaustive round-trip test.
+    pub(super) fn encode(&self, bytes: &mut Vec<u8>) {
         match self {
             Self::UnsignedLiteral(value) => {
                 bytes.push(0x01);
@@ -235,11 +253,21 @@ pub enum AbiUnaryOp {
 }
 
 impl AbiUnaryOp {
-    const fn tag(self) -> u8 {
+    pub(super) const fn tag(self) -> u8 {
         match self {
             Self::Not => 0x01,
             Self::NarrowU16 => 0x02,
             Self::NarrowU32 => 0x03,
+        }
+    }
+
+    /// Resolves a governed wire tag, or `None` for an unrecognized operation.
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::Not),
+            0x02 => Some(Self::NarrowU16),
+            0x03 => Some(Self::NarrowU32),
+            _ => None,
         }
     }
 
@@ -290,7 +318,7 @@ pub enum AbiBinaryOp {
 }
 
 impl AbiBinaryOp {
-    const fn tag(self) -> u8 {
+    pub(super) const fn tag(self) -> u8 {
         match self {
             Self::CheckedAdd => 0x01,
             Self::CheckedSubtract => 0x02,
@@ -305,6 +333,26 @@ impl AbiBinaryOp {
             Self::LessOrEqual => 0x0b,
             Self::And => 0x0c,
             Self::Or => 0x0d,
+        }
+    }
+
+    /// Resolves a governed wire tag, or `None` for an unrecognized operation.
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::CheckedAdd),
+            0x02 => Some(Self::CheckedSubtract),
+            0x03 => Some(Self::CheckedMultiply),
+            0x04 => Some(Self::Minimum),
+            0x05 => Some(Self::Maximum),
+            0x06 => Some(Self::FloorDivide),
+            0x07 => Some(Self::CeilingDivide),
+            0x08 => Some(Self::ExactDivide),
+            0x09 => Some(Self::IsMultipleOf),
+            0x0a => Some(Self::Equal),
+            0x0b => Some(Self::LessOrEqual),
+            0x0c => Some(Self::And),
+            0x0d => Some(Self::Or),
+            _ => None,
         }
     }
 
@@ -504,6 +552,50 @@ pub(super) fn node_type(node: &ExprNode, types: &[AbiType]) -> AbiType {
         ExprNode::Unary { op, .. } => op.result_type(),
         ExprNode::Binary { op, .. } => op.result_type(),
         ExprNode::Select { if_true, .. } => types[position(*if_true)],
+    }
+}
+
+/// Returns the earliest phase at which one node's whole subtree is readable.
+///
+/// The recurrence is shared by the transactional builder and by the envelope
+/// decoder: a use site's phase check must mean the same thing whether the
+/// expression was just authored or was just read from bytes.
+pub(super) fn node_phase(node: &ExprNode, phases: &[AvailabilityPhase]) -> AvailabilityPhase {
+    match node {
+        ExprNode::Root(root) => root.available_at(),
+        ExprNode::Unary { operand, .. } => phases[position(*operand)],
+        ExprNode::Binary { left, right, .. } => {
+            phases[position(*left)].max(phases[position(*right)])
+        }
+        ExprNode::Select {
+            condition,
+            if_true,
+            if_false,
+        } => phases[position(*condition)]
+            .max(phases[position(*if_true)])
+            .max(phases[position(*if_false)]),
+    }
+}
+
+/// Returns whether one node's whole subtree reads only bound-interface facts.
+///
+/// See [`node_phase`] for why the recurrence is shared.
+pub(super) fn node_is_interface_only(node: &ExprNode, interface_only: &[bool]) -> bool {
+    match node {
+        ExprNode::Root(root) => root.is_interface_fact(),
+        ExprNode::Unary { operand, .. } => interface_only[position(*operand)],
+        ExprNode::Binary { left, right, .. } => {
+            interface_only[position(*left)] && interface_only[position(*right)]
+        }
+        ExprNode::Select {
+            condition,
+            if_true,
+            if_false,
+        } => {
+            interface_only[position(*condition)]
+                && interface_only[position(*if_true)]
+                && interface_only[position(*if_false)]
+        }
     }
 }
 

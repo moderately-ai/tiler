@@ -45,17 +45,17 @@ use super::{
     TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
 };
 
-const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
-const OTHER_SCALE_BITS: u32 = 0x4040_0000; // 3.0f32
-const BIAS_BITS: u32 = 0x3f80_0000; // 1.0f32
-const CANONICAL_NAN: u32 = 0x7fc0_0000;
-const ELEMENT_BYTES: u64 = 4;
+pub(super) const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
+pub(super) const OTHER_SCALE_BITS: u32 = 0x4040_0000; // 3.0f32
+pub(super) const BIAS_BITS: u32 = 0x3f80_0000; // 1.0f32
+pub(super) const CANONICAL_NAN: u32 = 0x7fc0_0000;
+pub(super) const ELEMENT_BYTES: u64 = 4;
 
 // -------------------------------------------------------------------------
 // Shared-IR fixtures
 // -------------------------------------------------------------------------
 
-fn strict() -> NumericalRealization {
+pub(super) fn strict() -> NumericalRealization {
     NumericalRealization::new(
         "tiler.test.strict-f32",
         CANONICAL_NAN,
@@ -66,15 +66,15 @@ fn strict() -> NumericalRealization {
     )
 }
 
-fn input_shape() -> Shape {
+pub(super) fn input_shape() -> Shape {
     Shape::from_dims([2, 3])
 }
 
-fn output_shape() -> Shape {
+pub(super) fn output_shape() -> Shape {
     Shape::from_dims([2])
 }
 
-fn build_graph(draft: SemanticProgramBuilder) -> SemanticProgram {
+pub(super) fn build_graph(draft: SemanticProgramBuilder) -> SemanticProgram {
     build_graph_scaled(draft, 2.0)
 }
 
@@ -83,7 +83,10 @@ fn build_graph(draft: SemanticProgramBuilder) -> SemanticProgram {
 /// The scale is the cheapest way to obtain a genuinely different semantic graph
 /// that keeps the same named interface: an unreached extra input would be
 /// compacted away at commit (ADR 0064) and would not change graph identity.
-fn build_graph_scaled(mut draft: SemanticProgramBuilder, scale_value: f32) -> SemanticProgram {
+pub(super) fn build_graph_scaled(
+    mut draft: SemanticProgramBuilder,
+    scale_value: f32,
+) -> SemanticProgram {
     let input = draft
         .input::<F32>(InputKey::new("input").unwrap(), input_shape())
         .unwrap();
@@ -98,12 +101,12 @@ fn build_graph_scaled(mut draft: SemanticProgramBuilder, scale_value: f32) -> Se
     draft.build().unwrap()
 }
 
-fn semantic_program() -> SemanticProgram {
+pub(super) fn semantic_program() -> SemanticProgram {
     build_graph(SemanticProgramBuilder::try_standard().unwrap())
 }
 
 /// Builds the one fused reduction kernel the packaged plans dispatch.
-fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
+pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
     let axes = vec![Axis::new(1)];
     let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
     region.iteration_shape(output_shape()).unwrap();
@@ -192,7 +195,7 @@ fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
 }
 
 /// Builds the single-stage kernel program the artifact packages.
-fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> VerifiedKernelProgram {
+pub(super) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> VerifiedKernelProgram {
     let kernel = fused_kernel(scale_bits);
     let mut plan = KernelProgramBuilder::new(semantic).unwrap();
     let external = plan
@@ -265,15 +268,15 @@ fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> VerifiedKernelP
 // Artifact fixtures
 // -------------------------------------------------------------------------
 
-fn lowering_provider(revision: u32) -> ProviderIdentity {
+pub(super) fn lowering_provider(revision: u32) -> ProviderIdentity {
     ProviderIdentity::new("tiler-test", "fused-serial-sum", revision).unwrap()
 }
 
-fn spare_provider(revision: u32) -> ProviderIdentity {
+pub(super) fn spare_provider(revision: u32) -> ProviderIdentity {
     ProviderIdentity::new("tiler-test", "never-selected", revision).unwrap()
 }
 
-fn selection(provider: ProviderIdentity) -> SelectedProvider {
+pub(super) fn selection(provider: ProviderIdentity) -> SelectedProvider {
     SelectedProvider {
         provider,
         capability: CapabilityKey::new("tiler.capability.fused-serial-sum").unwrap(),
@@ -281,7 +284,7 @@ fn selection(provider: ProviderIdentity) -> SelectedProvider {
     }
 }
 
-fn payload(tag: u8) -> BackendPayloadDescriptor {
+pub(super) fn payload(tag: u8) -> BackendPayloadDescriptor {
     BackendPayloadDescriptor {
         backend: BackendKey::new("tiler.metal").unwrap(),
         representation: RepresentationKey::new("metallib").unwrap(),
@@ -291,14 +294,14 @@ fn payload(tag: u8) -> BackendPayloadDescriptor {
     }
 }
 
-fn profile() -> TargetProfileRef {
+pub(super) fn profile() -> TargetProfileRef {
     TargetProfileRef {
         key: TargetProfileKey::new("tiler.test.baseline").unwrap(),
         descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02]).unwrap(),
     }
 }
 
-fn rules() -> FeasibilityRuleSetRef {
+pub(super) fn rules() -> FeasibilityRuleSetRef {
     FeasibilityRuleSetRef {
         key: FeasibilityRuleSetKey::new("tiler.test.feasibility").unwrap(),
         revision: 1,
@@ -306,15 +309,15 @@ fn rules() -> FeasibilityRuleSetRef {
 }
 
 /// The expression handles every fixture variant is assembled from.
-struct Formulas {
-    rows: AbiExprId,
-    input_bytes: AbiExprId,
-    output_bytes: AbiExprId,
-    one: AbiExprId,
-    always: AbiExprId,
+pub(super) struct Formulas {
+    pub(super) rows: AbiExprId,
+    pub(super) input_bytes: AbiExprId,
+    pub(super) output_bytes: AbiExprId,
+    pub(super) one: AbiExprId,
+    pub(super) always: AbiExprId,
 }
 
-fn formulas(draft: &mut ArtifactProgramBuilder) -> Formulas {
+pub(super) fn formulas(draft: &mut ArtifactProgramBuilder) -> Formulas {
     let key = InputKey::new("input").unwrap();
     let rows = draft
         .push_root(AbiRoot::InputExtent {
@@ -351,7 +354,7 @@ fn formulas(draft: &mut ArtifactProgramBuilder) -> Formulas {
     }
 }
 
-fn entry(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> EntrySpec {
+pub(super) fn entry(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> EntrySpec {
     EntrySpec {
         bindings: vec![
             BindingSpec {
@@ -376,7 +379,7 @@ fn entry(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> EntrySpec {
     }
 }
 
-fn variant(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> VariantSpec {
+pub(super) fn variant(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> VariantSpec {
     VariantSpec {
         applicability_guard: formulas.always,
         target_profile: profile(),
@@ -387,7 +390,7 @@ fn variant(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> VariantSpec {
 }
 
 /// Assembles the canonical one-variant artifact over one packaged program.
-fn build_artifact(
+pub(super) fn build_artifact(
     semantic: &SemanticProgram,
     program: &VerifiedKernelProgram,
     selected: ProviderIdentity,
@@ -404,7 +407,7 @@ fn build_artifact(
     draft.build().unwrap()
 }
 
-fn default_artifact() -> VerifiedArtifactProgram {
+pub(super) fn default_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);

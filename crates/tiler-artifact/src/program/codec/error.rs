@@ -1,0 +1,480 @@
+//! Typed, non-erasing failures of artifact envelope encoding and decoding.
+//!
+//! Every variant names the boundary that rejected, in the vocabulary
+//! `docs/artifact-abi.md` uses for it: framing and integrity, schema and
+//! feature compatibility, canonical form, structural closure, or a
+//! re-proven artifact-model obligation. A decoder never reinterprets a
+//! corrupt or unsupported envelope as an applicability miss, and never
+//! returns a partially validated model.
+//!
+//! Two variants deliberately wrap a *lower* layer's own error rather than
+//! restating it: [`ArtifactCodecError::ModelRule`] carries the exact
+//! [`ArtifactBuildError`] an insertion-time rule produced, and
+//! [`ArtifactCodecError::ModelObligation`] carries the exact
+//! [`ArtifactDiagnostic`] a whole-artifact obligation produced. Re-proving a
+//! decoded envelope against the model's own rules must report the model's own
+//! cause, or the codec would grow a second, drifting diagnostic vocabulary.
+
+use std::error::Error;
+use std::fmt;
+
+use tiler_ir::semantic::{BuildError, RegistryError};
+use tiler_ir::shape::ShapeError;
+
+use super::super::error::{ArtifactBuildError, ArtifactDiagnostic};
+use super::super::expr::AbiType;
+
+/// A governed component schema of the artifact model.
+///
+/// The component is identified by position in the manifest, so this vocabulary
+/// is the reader's name for the position that disagreed.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ComponentSchemaKind {
+    /// The artifact program schema.
+    Program,
+    /// The ABI expression language schema.
+    AbiExpression,
+    /// The guard and routing schema.
+    GuardAndRouting,
+    /// The target requirement schema.
+    TargetRequirement,
+}
+
+impl fmt::Display for ComponentSchemaKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+/// A closed enumeration this codec reads from a wire tag.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum TagSubject {
+    /// The canonical routing policy of the portfolio.
+    RoutingPolicy,
+    /// The transport category of one ABI binding.
+    BindingKind,
+    /// The execution policy of one backend payload.
+    ExecutionPolicy,
+    /// The storage element type of one interface entry or binding.
+    ElementType,
+    /// The logical address space of one binding.
+    AddressSpace,
+    /// The access mode of one binding.
+    BufferAccess,
+    /// The program role of one bound value.
+    ValueRole,
+    /// The subnormal treatment of one numerical realization.
+    SubnormalMode,
+    /// A numerical transform permission of one numerical realization.
+    NumericalPermission,
+    /// The availability phase of a root fact or deferred predicate.
+    AvailabilityPhase,
+    /// The node kind of one ABI expression arena entry.
+    ExpressionNode,
+    /// The typed root fact of one ABI expression.
+    ExpressionRoot,
+    /// One admitted unary ABI operation.
+    UnaryOperation,
+    /// One admitted binary ABI operation.
+    BinaryOperation,
+    /// The purpose of one envelope section.
+    SectionKind,
+    /// A Boolean field encoded as one byte.
+    Boolean,
+}
+
+impl fmt::Display for TagSubject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+/// A collection whose canonical wire order and distinctness are load-bearing.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum OrderedSubject {
+    /// The required-feature set.
+    Feature,
+    /// A stable key of the named program interface.
+    InterfaceKey,
+    /// The selected capability providers.
+    Provider,
+    /// The backend payload descriptors.
+    Payload,
+    /// The shared ABI expression arena.
+    Expression,
+    /// The deferred feasibility predicates of one plan variant.
+    DeferredPredicate,
+    /// The launch preconditions of one executable entry.
+    LaunchPrecondition,
+    /// The executable entries of one plan variant.
+    Entry,
+    /// The framed envelope sections.
+    Section,
+}
+
+impl fmt::Display for OrderedSubject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+/// A cross-reference one decoded row makes into another decoded table.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ReferenceSubject {
+    /// An ABI expression arena node.
+    Expression,
+    /// A backend payload descriptor.
+    Payload,
+    /// An envelope section.
+    Section,
+}
+
+impl fmt::Display for ReferenceSubject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+/// A governed parser or encoder budget of the artifact envelope.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum CodecLimitKind {
+    /// Total encoded envelope bytes.
+    EnvelopeBytes,
+    /// Canonical manifest bytes.
+    ManifestBytes,
+    /// Bytes of one framed section.
+    SectionBytes,
+    /// Framed section count.
+    Sections,
+    /// Required-feature count.
+    Features,
+    /// Named interface entries of the artifact.
+    InterfaceEntries,
+    /// Bytes of one received opaque identity subject.
+    SubjectBytes,
+    /// Plan-variant count.
+    Variants,
+    /// Executable-entry count of one plan variant.
+    Entries,
+    /// ABI binding count of one executable entry.
+    EntryBindings,
+    /// Node count of the shared ABI expression arena.
+    Expressions,
+    /// Backend payload descriptor count.
+    Payloads,
+    /// Selected capability-provider count.
+    SelectedProviders,
+    /// Deferred feasibility predicate count of one plan variant.
+    DeferredPredicates,
+    /// Launch precondition count of one executable entry.
+    LaunchPreconditions,
+    /// Rank of one declared interface shape.
+    ShapeRank,
+    /// Byte length of one encoded text run.
+    TextBytes,
+}
+
+impl fmt::Display for CodecLimitKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+/// A typed failure of artifact envelope encoding, decoding, or validation.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: this is a rejection
+/// vocabulary that a consumer forwards or partially classifies, never a
+/// vocabulary any crate maps totally, so a new boundary lands additively.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub(crate) enum ArtifactCodecError {
+    /// The encoding ran out of bytes before a field was complete.
+    Truncated {
+        /// Bytes the field required.
+        needed: usize,
+        /// Bytes that remained.
+        available: usize,
+    },
+    /// Bytes remained after the last framed section.
+    TrailingBytes {
+        /// Count of unconsumed bytes.
+        count: usize,
+    },
+    /// Bytes remained after the last canonical manifest field.
+    TrailingManifestBytes {
+        /// Count of unconsumed manifest bytes.
+        count: usize,
+    },
+    /// The fixed framing magic did not match.
+    BadMagic,
+    /// The canonical manifest did not open with its versioned domain tag.
+    BadManifestDomain,
+    /// The declared total length disagreed with the supplied byte run.
+    TotalLengthMismatch {
+        /// Length the header declared.
+        declared: u64,
+        /// Length actually supplied.
+        actual: u64,
+    },
+    /// The envelope framing format is not the one this reader implements.
+    UnsupportedEnvelopeFormat {
+        /// Encoded major version.
+        major: u16,
+        /// Encoded minor version.
+        minor: u16,
+    },
+    /// The canonical byte-encoding profile is not the one this reader implements.
+    UnsupportedCanonicalEncoding {
+        /// Encoded major version.
+        major: u16,
+        /// Encoded minor version.
+        minor: u16,
+    },
+    /// The neutral manifest schema is not the one this reader implements.
+    UnsupportedManifestSchema {
+        /// Encoded major version.
+        major: u16,
+        /// Encoded minor version.
+        minor: u16,
+    },
+    /// One governed component schema is not one this reader implements.
+    UnsupportedComponentSchema {
+        /// Component whose schema disagreed.
+        component: ComponentSchemaKind,
+        /// Encoded major version.
+        major: u16,
+        /// Encoded minor version.
+        minor: u16,
+    },
+    /// The digest algorithm tag is not one this reader implements.
+    ///
+    /// A reader never infers an algorithm from a digest width.
+    UnsupportedDigestAlgorithm {
+        /// Encoded algorithm tag.
+        tag: u8,
+    },
+    /// The envelope requires a feature this reader does not implement.
+    UnsupportedRequiredFeature {
+        /// Governed feature key that was required.
+        feature: String,
+    },
+    /// A governed parser or encoder budget was exceeded.
+    Limit {
+        /// Governed resource.
+        resource: CodecLimitKind,
+        /// Attempted quantity.
+        actual: u64,
+        /// Maximum admitted quantity.
+        limit: u64,
+    },
+    /// The manifest bytes do not match the digest the header declares.
+    ManifestDigestMismatch,
+    /// One framed section does not match the digest its descriptor declares.
+    SectionDigestMismatch {
+        /// Ordered section identifier.
+        section: u32,
+    },
+    /// One framed section length disagrees with its descriptor.
+    SectionLengthMismatch {
+        /// Ordered section identifier.
+        section: u32,
+        /// Length the descriptor declared.
+        declared: u64,
+        /// Length the framing supplied.
+        framed: u64,
+    },
+    /// The header's section count disagrees with the manifest's section table.
+    SectionCountMismatch {
+        /// Count the header declared.
+        header: usize,
+        /// Count the manifest described.
+        manifest: usize,
+    },
+    /// A framed section identifier is not its canonical position.
+    NonCanonicalSectionId {
+        /// Ordered position in the framing.
+        position: usize,
+        /// Identifier the framing declared.
+        declared: u32,
+    },
+    /// A set-meaning collection is not in canonical order.
+    NonCanonicalOrder {
+        /// Collection that was out of order.
+        subject: OrderedSubject,
+    },
+    /// A set-meaning collection repeats an item.
+    DuplicateItem {
+        /// Collection that repeated an item.
+        subject: OrderedSubject,
+    },
+    /// Re-encoding the fully understood manifest did not reproduce its bytes.
+    NonCanonicalManifest,
+    /// A framed section is referenced by no plan variant.
+    ///
+    /// An unreferenced section changes the envelope's bytes without changing
+    /// the artifact's identity, which would give one artifact two byte
+    /// identities.
+    UnreferencedSection {
+        /// Ordered section identifier.
+        section: u32,
+    },
+    /// The declared required-feature set is not the one the content implies.
+    ///
+    /// The set is derived, never asserted, so a producer cannot understate what
+    /// a reader must implement to use the artifact correctly.
+    DeclaredFeatureMismatch,
+    /// The identity the manifest declares is not the identity of its content.
+    ArtifactIdentityMismatch,
+    /// A closed enumeration presented a tag this reader does not implement.
+    UnknownTag {
+        /// Enumeration whose tag was rejected.
+        subject: TagSubject,
+        /// Rejected tag.
+        tag: u8,
+    },
+    /// A cross-reference named a row outside its table.
+    MissingReference {
+        /// Table the reference names.
+        subject: ReferenceSubject,
+        /// Rejected index.
+        index: u64,
+    },
+    /// An expression operand does not precede the node that uses it.
+    ///
+    /// The arena is acyclic by construction; an operand at or after its own
+    /// node would make it a graph a reader could not evaluate in one pass.
+    ExpressionOperandOrder {
+        /// Node whose operand was rejected.
+        node: u64,
+        /// Rejected operand position.
+        operand: u64,
+    },
+    /// An expression operand has the wrong value type for its operation.
+    ExpressionOperandType {
+        /// Node whose operand was rejected.
+        node: u64,
+        /// Value type the operation requires.
+        expected: AbiType,
+        /// Value type the operand has.
+        actual: AbiType,
+    },
+    /// A conditional selection's branches disagree on value type.
+    ExpressionSelectBranchType {
+        /// Node whose branches disagreed.
+        node: u64,
+        /// Value type of the branch taken when the predicate holds.
+        if_true: AbiType,
+        /// Value type of the branch taken otherwise.
+        if_false: AbiType,
+    },
+    /// A text run was not valid UTF-8.
+    InvalidText,
+    /// A governed artifact key was rejected by its own validating constructor.
+    InvalidGovernedKey {
+        /// Typed rejection from the key constructor.
+        cause: ArtifactBuildError,
+    },
+    /// A stable interface key was rejected by its own validating constructor.
+    InvalidInterfaceKey {
+        /// Typed rejection from the shared-IR key constructor.
+        cause: BuildError,
+    },
+    /// A provider identity was rejected by its own validating constructor.
+    InvalidProviderIdentity {
+        /// Typed rejection from the shared-IR registry.
+        cause: RegistryError,
+    },
+    /// A declared interface shape was rejected by its own constructor.
+    InvalidShape {
+        /// Typed rejection from the shared shape vocabulary.
+        cause: ShapeError,
+    },
+    /// A decoded row violates an artifact-model insertion-time rule.
+    ModelRule {
+        /// The model's own typed rejection.
+        cause: Box<ArtifactBuildError>,
+    },
+    /// A decoded envelope violates a whole-artifact obligation.
+    ModelObligation {
+        /// The model's own typed diagnostic.
+        cause: ArtifactDiagnostic,
+    },
+    /// The artifact model refused to derive an identity for the decoded content.
+    IdentityDerivation {
+        /// The model's own typed diagnostic.
+        cause: ArtifactDiagnostic,
+    },
+}
+
+impl fmt::Display for ArtifactCodecError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl Error for ArtifactCodecError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidGovernedKey { cause } => Some(cause),
+            Self::InvalidInterfaceKey { cause } => Some(cause),
+            Self::InvalidProviderIdentity { cause } => Some(cause),
+            Self::InvalidShape { cause } => Some(cause),
+            Self::ModelRule { cause } => Some(cause.as_ref()),
+            Self::ModelObligation { cause } | Self::IdentityDerivation { cause } => Some(cause),
+            Self::Truncated { .. }
+            | Self::TrailingBytes { .. }
+            | Self::TrailingManifestBytes { .. }
+            | Self::BadMagic
+            | Self::BadManifestDomain
+            | Self::TotalLengthMismatch { .. }
+            | Self::UnsupportedEnvelopeFormat { .. }
+            | Self::UnsupportedCanonicalEncoding { .. }
+            | Self::UnsupportedManifestSchema { .. }
+            | Self::UnsupportedComponentSchema { .. }
+            | Self::UnsupportedDigestAlgorithm { .. }
+            | Self::UnsupportedRequiredFeature { .. }
+            | Self::Limit { .. }
+            | Self::ManifestDigestMismatch
+            | Self::SectionDigestMismatch { .. }
+            | Self::SectionLengthMismatch { .. }
+            | Self::SectionCountMismatch { .. }
+            | Self::NonCanonicalSectionId { .. }
+            | Self::NonCanonicalOrder { .. }
+            | Self::DuplicateItem { .. }
+            | Self::NonCanonicalManifest
+            | Self::UnreferencedSection { .. }
+            | Self::DeclaredFeatureMismatch
+            | Self::ArtifactIdentityMismatch
+            | Self::UnknownTag { .. }
+            | Self::MissingReference { .. }
+            | Self::ExpressionOperandOrder { .. }
+            | Self::ExpressionOperandType { .. }
+            | Self::ExpressionSelectBranchType { .. }
+            | Self::InvalidText => None,
+        }
+    }
+}
+
+impl From<ArtifactBuildError> for ArtifactCodecError {
+    fn from(cause: ArtifactBuildError) -> Self {
+        Self::ModelRule {
+            cause: Box::new(cause),
+        }
+    }
+}
+
+/// Rejects a quantity that exceeds a governed codec budget.
+pub(super) fn codec_limit(
+    actual: usize,
+    limit: usize,
+    resource: CodecLimitKind,
+) -> Result<(), ArtifactCodecError> {
+    if actual > limit {
+        return Err(ArtifactCodecError::Limit {
+            resource,
+            actual: u64::try_from(actual).expect("supported usize fits u64"),
+            limit: u64::try_from(limit).expect("supported usize fits u64"),
+        });
+    }
+    Ok(())
+}

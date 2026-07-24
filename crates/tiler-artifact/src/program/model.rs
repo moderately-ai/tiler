@@ -28,6 +28,9 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::Shape;
 
 use super::MAX_ARTIFACT_IDENTITY_BYTES;
+use super::codec::{
+    ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, expression_keys, position as node_at,
+};
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind, ForeignEnumSubject};
 use super::expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,
@@ -66,7 +69,7 @@ fn stage_at(program: &VerifiedKernelProgram, entry: usize) -> StageRef<'_> {
         .expect("a verified entry names a stage of its own program")
 }
 
-fn push_len(bytes: &mut Vec<u8>, len: usize) {
+pub(super) fn push_len(bytes: &mut Vec<u8>, len: usize) {
     bytes.extend_from_slice(
         &u64::try_from(len)
             .expect("supported usize fits u64")
@@ -74,7 +77,7 @@ fn push_len(bytes: &mut Vec<u8>, len: usize) {
     );
 }
 
-fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
+pub(super) fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
     for extent in shape.extents() {
         bytes.extend_from_slice(&extent.get().to_be_bytes());
@@ -190,9 +193,17 @@ pub enum RoutingPolicy {
 }
 
 impl RoutingPolicy {
-    const fn tag(self) -> u8 {
+    pub(super) const fn tag(self) -> u8 {
         match self {
             Self::StablePriority => 0x01,
+        }
+    }
+
+    /// Resolves a governed wire tag, or `None` for an unrecognized policy.
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::StablePriority),
+            _ => None,
         }
     }
 }
@@ -212,10 +223,19 @@ pub enum ArtifactExecutionPolicy {
 }
 
 impl ArtifactExecutionPolicy {
-    const fn tag(self) -> u8 {
+    pub(super) const fn tag(self) -> u8 {
         match self {
             Self::NativeImage => 0x01,
             Self::RequiresDeviceTranslation => 0x02,
+        }
+    }
+
+    /// Resolves a governed wire tag, or `None` for an unrecognized policy.
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::NativeImage),
+            0x02 => Some(Self::RequiresDeviceTranslation),
+            _ => None,
         }
     }
 }
@@ -232,9 +252,17 @@ pub enum BindingKind {
 }
 
 impl BindingKind {
-    const fn tag(self) -> u8 {
+    pub(super) const fn tag(self) -> u8 {
         match self {
             Self::Buffer => 0x01,
+        }
+    }
+
+    /// Resolves a governed wire tag, or `None` for an unrecognized category.
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::Buffer),
+            _ => None,
         }
     }
 }
@@ -255,7 +283,7 @@ pub struct SelectedProvider {
 }
 
 impl SelectedProvider {
-    fn canonical_key(&self) -> Vec<u8> {
+    pub(super) fn canonical_key(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(PROVIDER_KEY_DOMAIN);
         push_slice(&mut bytes, self.provider.namespace().as_bytes());
@@ -287,7 +315,7 @@ pub struct BackendPayloadDescriptor {
 }
 
 impl BackendPayloadDescriptor {
-    fn canonical_key(&self) -> Vec<u8> {
+    pub(super) fn canonical_key(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(PAYLOAD_KEY_DOMAIN);
         push_slice(&mut bytes, self.backend.as_str().as_bytes());
@@ -998,7 +1026,12 @@ pub(super) fn stage_key(stage: StageRef<'_>) -> Vec<u8> {
     bytes
 }
 
-fn element_type_tag(element_type: KernelType) -> Result<u8, ArtifactDiagnostic> {
+// Each shared-IR vocabulary below has exactly one tag table, written as an
+// adjacent forward and inverse pair. Two tables that agreed only by inspection
+// would let an envelope decode into a plausible-but-wrong program, so the pair
+// is kept in one place and pinned by an exhaustive round-trip test.
+
+pub(super) fn element_type_tag(element_type: KernelType) -> Result<u8, ArtifactDiagnostic> {
     // `KernelType` is `#[non_exhaustive]`, so a widened variant cannot break
     // this cross-crate encoder at compile time the way ADR 0074 §3 intends.
     // Rejecting is the only remaining fail-closed behaviour: an unrecognized
@@ -1013,7 +1046,16 @@ fn element_type_tag(element_type: KernelType) -> Result<u8, ArtifactDiagnostic> 
     }
 }
 
-fn address_space_tag(address_space: AddressSpace) -> Result<u8, ArtifactDiagnostic> {
+pub(super) const fn element_type_from_tag(tag: u8) -> Option<KernelType> {
+    match tag {
+        0x01 => Some(KernelType::Bool),
+        0x02 => Some(KernelType::Index),
+        0x03 => Some(KernelType::F32),
+        _ => None,
+    }
+}
+
+pub(super) fn address_space_tag(address_space: AddressSpace) -> Result<u8, ArtifactDiagnostic> {
     match address_space {
         AddressSpace::Device => Ok(0x01),
         AddressSpace::Workgroup => Ok(0x02),
@@ -1025,7 +1067,17 @@ fn address_space_tag(address_space: AddressSpace) -> Result<u8, ArtifactDiagnost
     }
 }
 
-fn buffer_access_tag(access: BufferAccess) -> Result<u8, ArtifactDiagnostic> {
+pub(super) const fn address_space_from_tag(tag: u8) -> Option<AddressSpace> {
+    match tag {
+        0x01 => Some(AddressSpace::Device),
+        0x02 => Some(AddressSpace::Workgroup),
+        0x03 => Some(AddressSpace::InvocationPrivate),
+        0x04 => Some(AddressSpace::Constant),
+        _ => None,
+    }
+}
+
+pub(super) fn buffer_access_tag(access: BufferAccess) -> Result<u8, ArtifactDiagnostic> {
     match access {
         BufferAccess::Read => Ok(0x01),
         BufferAccess::Write => Ok(0x02),
@@ -1035,7 +1087,15 @@ fn buffer_access_tag(access: BufferAccess) -> Result<u8, ArtifactDiagnostic> {
     }
 }
 
-const fn value_role_tag(role: ValueRole) -> u8 {
+pub(super) const fn buffer_access_from_tag(tag: u8) -> Option<BufferAccess> {
+    match tag {
+        0x01 => Some(BufferAccess::Read),
+        0x02 => Some(BufferAccess::Write),
+        _ => None,
+    }
+}
+
+pub(super) const fn value_role_tag(role: ValueRole) -> u8 {
     match role {
         ValueRole::Input => 0x01,
         ValueRole::Temporary => 0x02,
@@ -1043,19 +1103,42 @@ const fn value_role_tag(role: ValueRole) -> u8 {
     }
 }
 
-const fn subnormal_tag(mode: SubnormalMode) -> u8 {
+pub(super) const fn value_role_from_tag(tag: u8) -> Option<ValueRole> {
+    match tag {
+        0x01 => Some(ValueRole::Input),
+        0x02 => Some(ValueRole::Temporary),
+        0x03 => Some(ValueRole::Output),
+        _ => None,
+    }
+}
+
+pub(super) const fn subnormal_tag(mode: SubnormalMode) -> u8 {
     match mode {
         SubnormalMode::Preserve => 0x01,
     }
 }
 
-const fn permission_tag(permission: NumericalPermission) -> u8 {
+pub(super) const fn subnormal_from_tag(tag: u8) -> Option<SubnormalMode> {
+    match tag {
+        0x01 => Some(SubnormalMode::Preserve),
+        _ => None,
+    }
+}
+
+pub(super) const fn permission_tag(permission: NumericalPermission) -> u8 {
     match permission {
         NumericalPermission::Forbidden => 0x01,
     }
 }
 
-fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
+pub(super) const fn permission_from_tag(tag: u8) -> Option<NumericalPermission> {
+    match tag {
+        0x01 => Some(NumericalPermission::Forbidden),
+        _ => None,
+    }
+}
+
+pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
     let ResourceRequirements {
         buffer_bindings,
         threads_per_workgroup,
@@ -1072,8 +1155,8 @@ fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
     bytes.push(u8::from(requires_strict_f32));
 }
 
-fn push_numerical(bytes: &mut Vec<u8>, numerical: NumericalRealization) {
-    let NumericalRealization {
+pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
+    let NumericalFacts {
         profile_key,
         canonical_arithmetic_nan_bits,
         input_subnormals,
@@ -1083,39 +1166,53 @@ fn push_numerical(bytes: &mut Vec<u8>, numerical: NumericalRealization) {
     } = numerical;
     push_slice(bytes, profile_key.as_bytes());
     bytes.extend_from_slice(&canonical_arithmetic_nan_bits.to_be_bytes());
-    bytes.push(subnormal_tag(input_subnormals));
-    bytes.push(subnormal_tag(result_subnormals));
-    bytes.push(permission_tag(contraction));
-    bytes.push(permission_tag(reassociation));
+    bytes.push(subnormal_tag(*input_subnormals));
+    bytes.push(subnormal_tag(*result_subnormals));
+    bytes.push(permission_tag(*contraction));
+    bytes.push(permission_tag(*reassociation));
 }
 
-/// Encodes the canonical identity of one verified artifact program.
+/// Encodes the canonical identity of one packaged artifact program.
+///
+/// The subject is the canonical envelope, not the builder's draft storage, so
+/// the identity a producer stamps and the identity a decoder re-derives come
+/// from one encoder rather than from two that agree by inspection.
 ///
 /// # Errors
 ///
 /// Returns [`ArtifactDiagnostic::AmbiguousCanonicalKey`] when two payloads,
-/// providers, or stages of one program produce equal keys,
+/// providers, deferred predicates, or launch preconditions produce equal keys,
 /// [`ArtifactDiagnostic::UnrecognizedForeignVariant`] for a shared-IR variant
 /// this encoder does not recognize, or
 /// [`ArtifactDiagnostic::IdentityLimit`] when the encoding exceeds its bound.
 pub(super) fn encode_identity(
-    data: &ArtifactProgramData,
+    envelope: &ArtifactEnvelope,
 ) -> Result<CanonicalArtifactProgramIdentity, ArtifactDiagnostic> {
+    let keys = expression_keys(envelope.expressions());
     let mut bytes = Vec::new();
     bytes.extend_from_slice(ARTIFACT_DOMAIN);
-    data.schema.encode(&mut bytes);
-    bytes.push(data.routing.tag());
-    push_slice(&mut bytes, data.semantic.graph().as_bytes());
-    push_slice(&mut bytes, data.semantic.reached_definitions().as_bytes());
-    push_slice(&mut bytes, data.semantic.admission_provenance().as_bytes());
-    push_interface(&mut bytes, data)?;
+    envelope.schema().encode(&mut bytes);
+    bytes.push(envelope.routing_policy().tag());
+    push_slice(&mut bytes, envelope.semantic().graph.as_bytes());
+    push_slice(
+        &mut bytes,
+        envelope.semantic().reached_definitions.as_bytes(),
+    );
+    push_slice(
+        &mut bytes,
+        envelope.semantic().admission_provenance.as_bytes(),
+    );
+    push_interface(&mut bytes, envelope)?;
     push_sorted_keys(
         &mut bytes,
-        data.providers.iter().map(SelectedProvider::canonical_key),
+        envelope
+            .providers()
+            .iter()
+            .map(SelectedProvider::canonical_key),
         ArtifactEntityKind::Provider,
     )?;
-    let payload_keys: Vec<Vec<u8>> = data
-        .payloads
+    let payload_keys: Vec<Vec<u8>> = envelope
+        .payloads()
         .iter()
         .map(BackendPayloadDescriptor::canonical_key)
         .collect();
@@ -1124,9 +1221,9 @@ pub(super) fn encode_identity(
         payload_keys.iter().cloned(),
         ArtifactEntityKind::Payload,
     )?;
-    push_len(&mut bytes, data.variants.len());
-    for variant in &data.variants {
-        push_variant(&mut bytes, data, variant, &payload_keys)?;
+    push_len(&mut bytes, envelope.variants().len());
+    for variant in envelope.variants() {
+        push_variant(&mut bytes, envelope, &keys, variant, &payload_keys)?;
     }
     if bytes.len() > MAX_ARTIFACT_IDENTITY_BYTES {
         return Err(ArtifactDiagnostic::IdentityLimit {
@@ -1139,16 +1236,16 @@ pub(super) fn encode_identity(
 
 fn push_interface(
     bytes: &mut Vec<u8>,
-    data: &ArtifactProgramData,
+    envelope: &ArtifactEnvelope,
 ) -> Result<(), ArtifactDiagnostic> {
-    push_len(bytes, data.inputs.len());
-    for input in &data.inputs {
+    push_len(bytes, envelope.inputs().len());
+    for input in envelope.inputs() {
         push_slice(bytes, input.key.as_str().as_bytes());
         push_shape(bytes, &input.shape);
         bytes.push(element_type_tag(input.element_type)?);
     }
-    push_len(bytes, data.outputs.len());
-    for output in &data.outputs {
+    push_len(bytes, envelope.outputs().len());
+    for output in envelope.outputs() {
         push_slice(bytes, output.key.as_str().as_bytes());
         push_shape(bytes, &output.shape);
         bytes.push(element_type_tag(output.element_type)?);
@@ -1180,12 +1277,16 @@ fn push_sorted_keys(
 
 fn push_variant(
     bytes: &mut Vec<u8>,
-    data: &ArtifactProgramData,
-    variant: &VariantData,
+    envelope: &ArtifactEnvelope,
+    keys: &[Vec<u8>],
+    variant: &VariantRow,
     payload_keys: &[Vec<u8>],
 ) -> Result<(), ArtifactDiagnostic> {
-    push_slice(bytes, variant.program.canonical_identity().as_bytes());
-    push_slice(bytes, &data.expression_keys[position(variant.guard)]);
+    push_slice(
+        bytes,
+        &envelope.sections()[node_at(variant.program_section)].bytes,
+    );
+    push_slice(bytes, &keys[node_at(variant.guard)]);
     push_slice(bytes, variant.profile.key.as_str().as_bytes());
     push_slice(bytes, variant.profile.descriptor.as_bytes());
     push_slice(bytes, variant.feasibility_rules.key.as_str().as_bytes());
@@ -1195,39 +1296,23 @@ fn push_variant(
         variant
             .deferred
             .iter()
-            .map(|predicate| deferred_key(data, predicate)),
+            .map(|predicate| deferred_key(keys, predicate)),
         ArtifactEntityKind::Variant,
     )?;
-    let stage_keys: Vec<Vec<u8>> = variant.program.stages().map(stage_key).collect();
-    if stage_keys.len() != variant.entries.len() {
-        return Err(ArtifactDiagnostic::AmbiguousCanonicalKey {
-            entity: ArtifactEntityKind::Entry,
-        });
-    }
-    let mut order: Vec<usize> = (0..variant.entries.len()).collect();
-    order.sort_unstable_by(|left, right| stage_keys[*left].cmp(&stage_keys[*right]));
     push_len(bytes, variant.entries.len());
-    for entry in order {
-        push_slice(bytes, &stage_keys[entry]);
-        push_entry(bytes, data, variant, entry, payload_keys)?;
+    for entry in &variant.entries {
+        push_slice(bytes, entry.stage.as_bytes());
+        push_entry(bytes, keys, entry, payload_keys)?;
     }
     Ok(())
 }
 
-fn deferred_key(data: &ArtifactProgramData, predicate: &DeferredPredicateData) -> Vec<u8> {
+/// Derives the canonical content key of one deferred feasibility predicate.
+pub(super) fn deferred_key(keys: &[Vec<u8>], predicate: &DeferredPredicateData) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(DEFERRED_KEY_DOMAIN);
-    push_slice(
-        &mut bytes,
-        &data.expression_keys[position(predicate.predicate)],
-    );
-    bytes.push(match predicate.phase {
-        AvailabilityPhase::CompileProfile => 0x01,
-        AvailabilityPhase::ArtifactEvidence => 0x02,
-        AvailabilityPhase::LiveDevicePreflight => 0x03,
-        AvailabilityPhase::PreparedKernelPreflight => 0x04,
-        AvailabilityPhase::LaunchPreflight => 0x05,
-    });
+    push_slice(&mut bytes, &keys[node_at(predicate.predicate)]);
+    bytes.push(predicate.phase.tag());
     push_slice(&mut bytes, predicate.authority.namespace().as_bytes());
     push_slice(&mut bytes, predicate.authority.name().as_bytes());
     bytes.extend_from_slice(&predicate.authority.revision().to_be_bytes());
@@ -1236,50 +1321,35 @@ fn deferred_key(data: &ArtifactProgramData, predicate: &DeferredPredicateData) -
 
 fn push_entry(
     bytes: &mut Vec<u8>,
-    data: &ArtifactProgramData,
-    variant: &VariantData,
-    entry: usize,
+    keys: &[Vec<u8>],
+    entry: &EntryRow,
     payload_keys: &[Vec<u8>],
 ) -> Result<(), ArtifactDiagnostic> {
-    let stage = stage_at(&variant.program, entry);
-    let data_entry = &variant.entries[entry];
-    push_resources(bytes, stage.kernel().requirements());
-    push_numerical(bytes, stage.kernel().numerical());
-    push_len(bytes, data_entry.bindings.len());
-    for binding in &data_entry.bindings {
+    push_resources(bytes, entry.resources);
+    push_numerical(bytes, &entry.numerical);
+    push_len(bytes, entry.bindings.len());
+    for binding in &entry.bindings {
         bytes.push(binding.kind.tag());
         bytes.push(element_type_tag(binding.element_type)?);
         bytes.push(address_space_tag(binding.address_space)?);
         bytes.push(buffer_access_tag(binding.access)?);
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());
         bytes.push(value_role_tag(binding.value_role));
-        push_slice(
-            bytes,
-            &data.expression_keys[position(binding.accessible_bytes)],
-        );
+        push_slice(bytes, &keys[node_at(binding.accessible_bytes)]);
     }
-    push_slice(
-        bytes,
-        &data.expression_keys[position(data_entry.launch.grid_threads)],
-    );
-    push_slice(
-        bytes,
-        &data.expression_keys[position(data_entry.launch.threads_per_workgroup)],
-    );
-    bytes.push(u8::from(data_entry.launch.zero_work_skips_dispatch));
+    push_slice(bytes, &keys[node_at(entry.launch.grid_threads)]);
+    push_slice(bytes, &keys[node_at(entry.launch.threads_per_workgroup)]);
+    bytes.push(u8::from(entry.launch.zero_work_skips_dispatch));
     push_sorted_keys(
         bytes,
-        data_entry
+        entry
             .launch
             .preconditions
             .iter()
-            .map(|node| data.expression_keys[position(*node)].clone()),
+            .map(|node| keys[node_at(*node)].clone()),
         ArtifactEntityKind::Expression,
     )?;
-    push_slice(
-        bytes,
-        &payload_keys[position(data_entry.implementation.payload)],
-    );
-    push_slice(bytes, data_entry.implementation.entry_key.as_bytes());
+    push_slice(bytes, &payload_keys[node_at(entry.payload)]);
+    push_slice(bytes, entry.entry_key.as_bytes());
     Ok(())
 }

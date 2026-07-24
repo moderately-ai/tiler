@@ -290,6 +290,7 @@
 //! ```
 
 mod builder;
+mod codec;
 mod error;
 mod expr;
 mod facts;
