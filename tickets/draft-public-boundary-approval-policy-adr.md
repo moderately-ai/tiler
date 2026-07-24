@@ -53,10 +53,29 @@ is what makes the no-approval half of this policy safe rather than open-ended.
   `pub(crate)` draft; additive `#[non_exhaustive]` growth; a new public error,
   provenance, or identity *record* that conforms to the conventions ADR; tests;
   documentation.
-- **Always requires Tom:** a new crate; a new public **trait** (an extension seam
-  third parties implement, so it is a durable compatibility commitment); any
-  breaking change to an existing public signature; promoting a module or type
-  from `pub(crate)` to `pub`.
+- **Always requires Tom:** a new **publicly reachable namespace** — a new crate,
+  or a new `pub mod` in a crate root or in an already-public module; a new public
+  **trait** (an extension seam something else implements); any breaking change to
+  an existing public signature; promoting a module or type from `pub(crate)` to
+  `pub`.
+
+### Amendment 2026-07-24: the namespace reformulation
+
+The first item originally read only "a new crate", which was **narrower than the
+practice it was calibrated against**: `tiler_ir::schedule` and `tiler_ir::kernel`
+were both new public *modules* with large surfaces (the latter ~4,600 lines) and
+both went to Tom under the prior judgement-based rule, yet the literal wording
+would not have required it. `AGENTS.md` already lists "module" alongside crate,
+trait, and type, so the omission was a drafting artifact rather than a considered
+narrowing.
+
+Tom was asked directly and accepted the reformulation above over the alternative
+"a new public module with a *substantial* surface" — declined because
+"substantial" reintroduces exactly the judgement term that makes `AGENTS.md`'s
+existing "key public … boundaries" ambiguous, which is the ambiguity this policy
+exists to remove. Record the accepted cost explicitly: a trivial two-item
+`pub mod` now also requires review, judged acceptable because such modules are
+expected to be rare.
 
 Record explicitly that a coordinator's terminal-merge authority is conditional on
 the objective gates that already exist — a green `scripts/check_repository.py`, a

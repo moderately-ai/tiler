@@ -3,7 +3,7 @@ id: harden-public-enums-non-exhaustive
 title: Mark growth-expecting public enums and output records non-exhaustive
 status: todo
 priority: p2
-dependencies: []
+dependencies: [resolve-non-exhaustive-recognizer-hole]
 related: [prototype-apple-aot-driver, prototype-scheduled-region-ir]
 scopes: [implementation/ir, implementation/metal-aot, implementation/compiler]
 shared_scopes: [project/tickets]
