@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0076-numerical-realizations
 title: Accept or revise ADR 0076 on target-honourable numerical realizations
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [draft-target-honourable-numerical-contract-adr, widen-numerical-vocabulary-and-complete-identity]
@@ -39,3 +39,17 @@ Read them in the ADR's own "Open questions" section before deciding; they are re
 ## What closes this ticket
 
 Either set `decision_status: accepted` with an acceptance date and unblock the four implementation tickets, or record the requested revisions here and send the record back. If accepted with modifications, amend the ADR rather than superseding it — it has never been operative.
+
+## Outcome
+
+Tom accepted ADR 0076 on 2026-07-24 without modification: "yes accept, i have no issue". `decision_status` is now `accepted` and the status line records that the decision is unchanged from the proposed text.
+
+`implementation_status` deliberately stays `not-started`. Acceptance authorizes the four ordered follow-up tickets; it does not perform them, and the record's six open questions remain open on purpose rather than being closed by acceptance.
+
+**What this unblocks, in dependency order.** `widen-numerical-vocabulary-and-complete-identity` (`tiler-ir`: grow `SubnormalMode` and `NumericalPermission`, complete `schedule::model::push_numerical`, stop `derive_requirements` collapsing the realization into one bit, and state in `docs/ir.md` where the realization sits in the identity layering) → `select-numerical-contract-and-compose-feasibility` (`tiler-compiler`: the contract becomes a required typed request input, the per-dimension honourability authority lands as a peer of `CheckedTargetProfile`, and the boolean `supports_strict_f32` axis is retired) → `declare-metal-numerical-honourability` and `record-delivered-numerical-realization` in parallel. None is independently shippable: widening the vocabulary without completing the identity encoding is a correctness defect, and widening it without the profile declaration leaves the new variant unreachable.
+
+**One of them remains Tom's separately.** `record-delivered-numerical-realization` adds the first public numerical surface to `tiler-artifact`, which ADR 0075 reserves for his approval regardless of this acceptance. Accepting the design is not accepting that boundary's shape.
+
+**Two measurement refinements landed before acceptance** and are recorded inline in the ADR rather than as amendments, since neither changes a conclusion: the fast-math flag spellings hold only at `-ffp-contract=fast`, and the emitted-operation-count account of the arithmetic-deletion trap is complete at `-O2` and incomplete at `-O0`, where two operations survive into the readable IR and still do not execute. The second strengthens the record's central inference.
+
+**One claim in the ADR is still unreproduced** and is tracked rather than hidden: the re-verification asserts an additive-path input flush that the checked-in harness does not establish, because every probe kernel that adds does so after a multiply. `extend-the-numerical-probe-to-an-additive-path-kernel` owns closing it. Separately, `measure-numerics-across-apple-artifact-families` establishes whether the subnormal flush is Apple-wide or per-family — which `declare-metal-numerical-honourability` needs before it can decide whether honourability is declared once or per artifact family.

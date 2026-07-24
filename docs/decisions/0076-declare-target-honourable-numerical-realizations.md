@@ -5,7 +5,7 @@ kind: "decision"
 title: "Declare which numerical realizations a target honours"
 topics: ["numerics", "subnormals", "feasibility", "targets", "artifacts"]
 catalog_group: "numerical-operations"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.numerical-semantics", "tiler.contract.ir", "tiler.contract.metal-backend", "tiler.contract.artifact-abi"]
 evidence: ["tiler.research.apple-targets.numerical-behaviour", "tiler.research.numerics.operation-conformance-matrix", "tiler.research.target-profiles.physical-feasibility-model", "tiler.research.apple-targets.compatibility"]
@@ -16,7 +16,7 @@ ticket: "draft-target-honourable-numerical-contract-adr"
 
 # 0076: Declare which numerical realizations a target honours
 
-**Status:** proposed. Nothing operative changes until Tom accepts it; the implementation is four follow-up tickets named under "Implementation boundary".
+**Status:** accepted on 2026-07-24. The decision is unchanged from the proposed text; nothing was amended at acceptance. `implementation_status` stays `not-started` because acceptance authorizes the four ordered follow-up tickets named under "Implementation boundary" rather than performing them, and the six open questions below remain open on purpose. Two measurement refinements landed before acceptance and are marked where they appear — the fast-math flag spellings are contraction-dependent, and the emitted-operation-count account of the trap is complete at `-O2` and not at `-O0` — and neither changes a conclusion; the second strengthens the central inference that honourability must be a stated target fact.
 
 ## Traceability
 
