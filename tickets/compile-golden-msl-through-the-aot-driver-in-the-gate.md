@@ -1,7 +1,7 @@
 ---
 id: compile-golden-msl-through-the-aot-driver-in-the-gate
 title: Compile the golden MSL through the AOT driver as part of the gate
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [prototype-metal-kir-lowering, prototype-apple-aot-driver]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/metal-aot, implementation/workspac
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, testing, verification]
+claimed_from: todo
+assignee: agent-compile-golden-msl-through-the-aot-driver-in-the-gate
+lease_expires_at: 1784915748
 ---
 `tiler-metal`'s golden fixtures prove **byte-stability and structure only**. They
 do not prove the emitted MSL compiles. That distinction is currently load-bearing

@@ -1,7 +1,7 @@
 ---
 id: disambiguate-presentation-label-from-semantic-key-accessors
 title: Disambiguate presentation-label accessors from semantic-key accessors
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [draft-public-api-conventions-adr, extend-canonical-identity-encodings-for-reserved-variants]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, api-hardening, identity]
+claimed_from: todo
+assignee: agent-disambiguate-presentation-label-from-semantic-key-accessors
+lease_expires_at: 1784915749
 ---
 Proposed ADR 0074 records that the method name `key()` is overloaded across the
 workspace with two genuinely different roles, and leaves the naming unsettled
