@@ -764,14 +764,17 @@ fn program_failure_details(error: &ProgramError) -> (String, SubjectKind, String
         ProgramError::Structure { rule } => {
             (format!("structure-{rule}"), "kernel-program".to_owned())
         }
-        ProgramError::Dependency { rule } => {
-            (format!("dependency-{rule}"), "kernel-program".to_owned())
-        }
         ProgramError::Storage { rule } => (format!("storage-{rule}"), "kernel-program".to_owned()),
         ProgramError::Abi { rule, stage } => {
             (format!("abi-{rule}"), format!("stage:{}", stage.index()))
         }
         ProgramError::Routing { rule } => (format!("routing-{rule}"), "kernel-program".to_owned()),
+        // A shared kernel-program rejection is invalid compiler output; the
+        // stable rule identifier comes from the layer that rejected it.
+        ProgramError::CoreConstruction(_) | ProgramError::CoreVerification(_) => (
+            format!("core-{}", error.rule()),
+            "kernel-program".to_owned(),
+        ),
     };
     (reason, SubjectKind::KernelProgram, subject)
 }
@@ -823,13 +826,14 @@ fn build_baseline_alternative(
             let stage = physical_error_stage(&error);
             failure_at_source(error.into(), stage, cause.clone())
         })?;
-    let baseline_program = build_kernel_program(verified, &baseline_regions).map_err(|error| {
-        failure_at_source(
-            error.into(),
-            ExplainStage::ProgramVerification,
-            cause.clone(),
-        )
-    })?;
+    let baseline_program =
+        build_kernel_program(semantic, verified, &baseline_regions).map_err(|error| {
+            failure_at_source(
+                error.into(),
+                ExplainStage::ProgramVerification,
+                cause.clone(),
+            )
+        })?;
     assert_kernels_match_program(
         verified,
         &baseline_regions,
@@ -1003,7 +1007,7 @@ fn record_baseline_explain(
                     ExplainStage::RegionFormation,
                     "boundary.materialized",
                     "dependency-count",
-                    alternative.program.dependencies().len(),
+                    alternative.program.dependency_count(),
                 )?,
                 boundary_causes,
             )?)
@@ -1056,7 +1060,7 @@ fn record_baseline_refinement(
         ExplainStage::ProgramVerification,
         "program.verified",
         "stage-count",
-        alternative.program.stages().len(),
+        alternative.program.stage_count(),
         kernel,
     )?;
     let key = format!("{}/artifact", alternative.stable_id);
@@ -1179,14 +1183,16 @@ fn consider_fused_alternative(
                                     record_cause(proof_record.or(root)),
                                 )
                             })?;
-                        let fused_program = build_fused_kernel_program(verified, &fused_region)
-                            .map_err(|error| {
-                                failure_at_source(
-                                    error.into(),
-                                    ExplainStage::ProgramVerification,
-                                    record_cause(proof_record.or(root)),
-                                )
-                            })?;
+                        let fused_program =
+                            build_fused_kernel_program(semantic, verified, &fused_region).map_err(
+                                |error| {
+                                    failure_at_source(
+                                        error.into(),
+                                        ExplainStage::ProgramVerification,
+                                        record_cause(proof_record.or(root)),
+                                    )
+                                },
+                            )?;
                         assert_kernels_match_program(
                             verified,
                             std::slice::from_ref(&fused_region),
@@ -1415,7 +1421,7 @@ fn record_fused_refinement(
         ExplainStage::ProgramVerification,
         "program.verified",
         "stage-count",
-        alternative.program.stages().len(),
+        alternative.program.stage_count(),
         kernel,
     )?;
     let key = format!("{}/artifact", alternative.stable_id);
@@ -1687,8 +1693,10 @@ fn rederive_alternative(
             failure_at_source(error.into(), stage, cause.clone())
         })?;
     let program = match kind {
-        ProgramAlternativeKind::Materialized => build_kernel_program(request, &scheduled),
-        ProgramAlternativeKind::Fused => build_fused_kernel_program(request, &scheduled[0]),
+        ProgramAlternativeKind::Materialized => build_kernel_program(semantic, request, &scheduled),
+        ProgramAlternativeKind::Fused => {
+            build_fused_kernel_program(semantic, request, &scheduled[0])
+        }
     }
     .map_err(|error| {
         failure_at_source(
@@ -1851,9 +1859,9 @@ mod tests {
     use super::*;
     use crate::explain::ExplainDisposition;
     use crate::physical::{RegionId, TensorRole};
-    use crate::program::{DependencyReason, MaterializedValueId, ValueRole};
     use std::collections::BTreeMap;
     use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView};
+    use tiler_ir::program::{DependencyReasonView, ValueRole};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -2228,15 +2236,24 @@ mod tests {
         );
         let materialized = &first.portfolio.alternatives[0];
         let fused = &first.portfolio.alternatives[1];
-        assert_eq!(materialized.program.stages().len(), 2);
-        assert_eq!(
-            materialized.program.buffer_plan().values[1].role,
-            ValueRole::Temporary
-        );
-        assert_eq!(
-            materialized.program.dependencies()[0].reason,
-            DependencyReason::Data(MaterializedValueId(1))
-        );
+        assert_eq!(materialized.program.stage_count(), 2);
+        let temporary = materialized
+            .program
+            .core()
+            .values()
+            .nth(1)
+            .expect("the cross-stage temporary");
+        assert_eq!(temporary.role(), ValueRole::Temporary);
+        assert!(matches!(
+            materialized
+                .program
+                .core()
+                .dependencies()
+                .next()
+                .expect("one data dependency")
+                .reason(),
+            DependencyReasonView::Data(value) if value == temporary
+        ));
         assert_eq!(
             materialized.kernels[0].buffers().nth(1).unwrap().tensor,
             TensorRole::Intermediate
@@ -2246,8 +2263,8 @@ mod tests {
             TensorRole::Intermediate
         );
         assert_eq!(reduction_loop(&materialized.kernels[1]), Some((1, 3)));
-        assert_eq!(fused.program.stages().len(), 1);
-        assert_eq!(fused.program.buffer_plan().values.len(), 2);
+        assert_eq!(fused.program.stage_count(), 1);
+        assert_eq!(fused.program.core().values().len(), 2);
         assert_eq!(
             materialized.structural_cost,
             StructuralCost {
