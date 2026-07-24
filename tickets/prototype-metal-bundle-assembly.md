@@ -1,7 +1,7 @@
 ---
 id: prototype-metal-bundle-assembly
-title: Assemble the Metal artifact bundle
-status: in-progress
+title: Carry a backend payload's compilation subject and object in the neutral envelope
+status: done
 priority: p0
 dependencies: [prototype-neutral-artifact-codec, prototype-metal-numerical-realization, prototype-apple-aot-driver]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/metal, implementation/metal-aot
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, artifact, aot]
-claimed_from: todo
-assignee: agent-prototype-metal-bundle-assembly
-lease_expires_at: 1784932574
 ---
 Assemble deterministic MSL, metallib sections, entry mappings, neutral program metadata, target requirements, provenance and section digests into one bounded self-validating bundle. Validate it without a live device; treat metallib reproducibility as measured evidence, not an assumed guarantee.
 
