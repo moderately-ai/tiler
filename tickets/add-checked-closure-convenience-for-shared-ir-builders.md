@@ -4,7 +4,7 @@ title: Add checked closure convenience for shared IR builders
 status: todo
 priority: p1
 dependencies: [prototype-canonical-index-region-slice]
-related: [prototype-shared-compiler-ir-ownership]
+related: [prototype-shared-compiler-ir-ownership, update-adr-0071-schedule-builder-boundary]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
