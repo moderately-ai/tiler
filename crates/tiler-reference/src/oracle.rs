@@ -22,7 +22,7 @@ use tiler_ir::index::{
     VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedIndexRegion,
     VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
     VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId, add_f32_scalar_op,
-    constant_f32_scalar_op, multiply_f32_scalar_op,
+    canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
 };
 use tiler_ir::semantic::{
     CanonicalField, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
@@ -379,10 +379,11 @@ impl ScalarReferenceRegistryBuilder {
     /// Creates the governed standard scalar reference profile.
     ///
     /// The builder is bound to [`FrozenScalarRegistry::standard`] and defines an
-    /// executable oracle for exactly the three scalar operations the governed
+    /// executable oracle for exactly the four scalar operations the governed
     /// `f32` index-access lowerings emit: `tiler.scalar::constant-f32@1`,
-    /// `multiply-f32@1`, and `add-f32@1`. An extension composes with it by
-    /// registering further capabilities on the returned builder.
+    /// `multiply-f32@1`, `add-f32@1`, and `canonicalize-nan-f32@1`. An extension
+    /// composes with it by registering further capabilities on the returned
+    /// builder.
     ///
     /// # Errors
     ///
@@ -414,11 +415,18 @@ impl ScalarReferenceRegistryBuilder {
             Arc::new(StandardScalarBinaryF32::Multiply),
         )?;
         builder.register(
-            provider,
+            provider.clone(),
             add_f32_scalar_op(),
             binary()?,
             revision,
             Arc::new(StandardScalarBinaryF32::Add),
+        )?;
+        builder.register(
+            provider,
+            canonicalize_nan_f32_scalar_op(),
+            ReferenceSignature::new([f32_type.clone()], [f32_type])?,
+            revision,
+            Arc::new(StandardScalarCanonicalizeNanF32),
         )?;
         Ok(builder)
     }
@@ -671,6 +679,36 @@ impl ScalarReferenceOperation for StandardScalarBinaryF32 {
             Self::Multiply => left * right,
             Self::Add => left + right,
         };
+        outputs.push(scalar_f32_value(canonicalize_arithmetic_f32(value))?)
+    }
+}
+
+/// Evaluates `tiler.scalar::canonicalize-nan-f32@1` as the governed conversion.
+///
+/// This is a conversion, not arithmetic: it replaces a NaN with the governed
+/// canonical arithmetic payload and reproduces every other binary32 pattern
+/// verbatim, including the sign of a zero, subnormals, and infinities. That
+/// exactness is what lets a reduction realize its result-boundary
+/// canonicalization on a lone contributor without an addition, which would
+/// otherwise turn an observable `-0.0` into `+0.0`.
+struct StandardScalarCanonicalizeNanF32;
+
+impl ScalarReferenceOperation for StandardScalarCanonicalizeNanF32 {
+    fn evaluate(
+        &self,
+        request: ScalarReferenceRequest<'_>,
+        outputs: &mut ScalarReferenceOutputs,
+    ) -> Result<(), ReferenceOperationError> {
+        let [operand] = request.operands() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        let CanonicalValueView::Record(fields) = request.attributes().value().view() else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        if !fields.is_empty() {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let value = decode_scalar_f32(operand)?;
         outputs.push(scalar_f32_value(canonicalize_arithmetic_f32(value))?)
     }
 }

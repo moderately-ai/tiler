@@ -26,6 +26,18 @@ invalid.
 Every document has a stable `id` independent of its path. Paths are presentation;
 IDs are graph identity. A document move changes links but not relationships.
 
+## Prose source form
+
+A paragraph is one source line. Do not insert a newline into a paragraph to hold it inside a column width: the renderer wraps, so a hand-wrapped paragraph fixes a presentation choice into the source, where every later edit must either reflow lines the change did not touch or leave the paragraph ragged. The rule governs the prose inside a list item, a table cell, a block quotation, and a footnote exactly as it governs a top-level paragraph. `scripts/docs.py render` already emits generated catalog entries in this form.
+
+It governs prose only, and says nothing about the newlines that carry structure. A fenced code block keeps whatever line breaks its content needs. A heading, a front-matter key, a table row, and a list marker each occupy their own line, and the newline between two list items is structure rather than a wrap — the rule never asks for two list items to be joined, only for the sentence inside one item not to be broken. A line may also pass any width because a link destination or an identifier admits no break point, which is not a violation because no wrap was available to omit.
+
+Most of the corpus predates this rule and is hard-wrapped near 78 columns. A document keeps the form it has until something other than wrapping justifies rewriting it: editing one paragraph of a hard-wrapped document neither obliges an author to reflow the file nor licenses leaving the rewritten paragraph wrapped. Write the paragraph you touch as one line and leave its neighbours alone. The file is then internally inconsistent, and that is the accepted transitional state, because reflowing a whole document in order to change a sentence buries the substantive edit in a diff nobody can review and discards the `git blame` record of every line the change never touched.
+
+The paragraph, not the file, is the unit that converts, so a paragraph that is itself half-wrapped is a defect rather than a transitional state. Do not append an unwrapped sentence to a hard-wrapped paragraph and leave the join ragged; rewrite that whole paragraph as one line, which is the convention, or match the paragraph's existing wrapping while it stands.
+
+No repository check enforces this, and none is proposed while the corpus is mixed. Of the two mechanical shapes available only one states the rule at all: a maximum-line-length check asserts the opposite convention and must never be added, whereas a check that no paragraph contains a line break states it exactly. The locked CommonMark parser makes the second one precise rather than heuristic — the predicate is a `softbreak` inside a `paragraph` token, so a wide table row or a fenced block cannot trip it. It is still not worth adding today, because it would fail on most of the corpus, and narrowing it to newly authored documents would need either a stored per-file exemption list that every conversion and every parallel branch must edit, or a diff base that a whole-tree gate does not have. Adding the check becomes correct and cheap once the corpus is uniform; until then review enforces the rule.
+
 ## Kinds and status facets
 
 Allowed `kind` values are `portal`, `contract`, `decision`, `research`,
@@ -93,14 +105,7 @@ Use only relationships whose direction has a defined meaning:
 `adopted_by` are independent predicates: evidence may support a decision without
 that decision adopting the report's proposal.
 
-Contract `governed_by` is derived from decision `applies_to`; research
-`reproduced_by` is derived from experiment `supports`. These backlink fields are
-invalid in stored v1 frontmatter.
-`related` is symmetric, stored only once on the lexicographically smaller source ID, and licensed only for the navigational kinds marked in the table below.
-A contract, decision, research report, or experiment already owns a directed predicate for every association it can make, so recording one as `related` would discard the direction that names which document supersedes, refines, or depends on the other.
-A generic `links` or `deps` field is
-invalid. Human Markdown still links the important route in prose; frontmatter
-does not replace explanation.
+Contract `governed_by` is derived from decision `applies_to`; research `reproduced_by` is derived from experiment `supports`. These backlink fields are invalid in stored v1 frontmatter. `related` is symmetric, stored only once on the lexicographically smaller source ID, and licensed only for the navigational kinds marked in the table below. A contract, decision, research report, or experiment already owns a directed predicate for every association it can make, so recording one as `related` would discard the direction that names which document supersedes, refines, or depends on the other. A generic `links` or `deps` field is invalid. Human Markdown still links the important route in prose; frontmatter does not replace explanation.
 
 ## Required common fields
 
@@ -129,12 +134,7 @@ values are `foundation-semantics-extensions`, `numerical-operations`,
 `documentation-governance`. Topics remain free faceted discovery terms;
 `catalog_group` supplies one stable coarse location in generated catalogs.
 
-All kinds may use `depends_on`, `refines`, and `supersedes` where their typed
-meaning applies.
-`related` is not among them; the optional column above is its exhaustive licence.
-Present arrays are nonempty, contain unique homogeneous scalar values, and use no empty placeholder.
-A reproducible experiment requires nonempty `entrypoints` and `evidence_classes` plus a `last_verified` date.
-Those field rules bind on every experiment record carrying the field rather than on a reproducible one alone: `last_verified` is an ISO `YYYY-MM-DD` date no later than today, and entrypoints are normalized repository-root POSIX paths to existing regular files; absolute paths, backslashes, `.`/`..`, directories, and repo escapes are invalid.
+All kinds may use `depends_on`, `refines`, and `supersedes` where their typed meaning applies. `related` is not among them; the optional column above is its exhaustive licence. Present arrays are nonempty, contain unique homogeneous scalar values, and use no empty placeholder. A reproducible experiment requires nonempty `entrypoints` and `evidence_classes` plus a `last_verified` date. Those field rules bind on every experiment record carrying the field rather than on a reproducible one alone: `last_verified` is an ISO `YYYY-MM-DD` date no later than today, and entrypoints are normalized repository-root POSIX paths to existing regular files; absolute paths, backslashes, `.`/`..`, directories, and repo escapes are invalid.
 
 An accepted decision has at least one `applies_to` contract and one `evidence`
 research record. An accepted contract has an inbound accepted decision. Every
@@ -173,6 +173,4 @@ deterministic generated-block freshness check.
 
 ## Ownership
 
-This document owns metadata shape and relationship semantics. It does not own
-the architectural content being indexed, ticketsplease's ticket schema, or the
-meaning of evidence inside a research report.
+This document owns metadata shape, relationship semantics, and the source form of governed Markdown. It does not own the architectural content being indexed, ticketsplease's ticket schema, or the meaning of evidence inside a research report.

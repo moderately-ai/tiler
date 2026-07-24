@@ -90,10 +90,13 @@ CompilationRequest {
     shape_environment,
     target_profiles,
     frozen_operation_registry_and_provider_fingerprints,
+    installed_lowering_capabilities,
     deterministic_search_and_artifact_budgets,
     compilation_options,
 }
 ```
+
+`installed_lowering_capabilities` is a request input rather than a compiler constant, and the compile path resolves every recognized occurrence through it. It carries a frozen lowering-capability registry together with the exact frozen scalar authority that registry was registered against; the two are checked to agree at the request boundary, because every resolved provider emits against that authority. Tiler's own governed lowerings are registered through the same builder any other provider uses, so the bounded profile is one composed registry rather than a privileged path.
 
 Frontends obtain that program through the ADR 0058 commitment boundary:
 
@@ -130,6 +133,8 @@ slices remain private strategy and conformance identities; they do not create
 graph-specific compiler entry points or public support-profile namespaces.
 Fixed region, stage, entry, and buffer cardinalities in a slice are not
 `CompilationRequest` or compiler-product invariants. See ADR 0069.
+
+Lowering-capability resolution is an implemented stage of that entry point rather than a description of one. It runs unconditionally, resolves exactly one index/access capability per recognized occurrence, and fails closed on an absent or a contended capability with a typed, occurrence-attributed cause. Composing a registry from outside the crate is possible through the public capability surface; *installing* one is not, because the request path is crate-private and no public compile entry point is exported. [The optimizer contract](compiler/optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns the stage's behaviour and that maturity boundary.
 
 ## Hierarchical planning with feedback
 
@@ -204,10 +209,15 @@ program identity—not a nested whole-graph digest inside every structural
 object—proves occurrence coverage and executable composition. ADR 0072 owns
 this identity layering.
 
+Selected provider provenance is derived, not declared. An artifact plan's lowering providers are re-derived from the request's own installed registry and compared against what the plan recorded, so a receipt naming an authority the registry never resolved fails closed rather than being carried into a compilation product.
+
 A locally slower implementation may provide a layout that removes a downstream
 conversion. Multi-pass reductions are `KernelSubprogram` bodies rather than one
 oversized `KernelSchedule`; opaque library calls need not invent a schedule.
 
+Lowering-capability resolution and index-region refinement precede cover
+enumeration, because grouping occurrences the installed authority cannot lower
+would enumerate plans nothing could realize.
 Complete-cover enumeration independently proves legal coverage using candidate
 regions. Per-region schedule verification and target-aware frontier formation
 independently prove local implementations; they do not depend on a globally

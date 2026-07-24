@@ -30,7 +30,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Boundary requirement | Layout/materialization/storage contract a region implementation requires of an incoming value. |
 | Buffer plan | Kernel-program mapping from logical values/views to allocation identities and verified lifetime intervals. |
 | Collective | Operation involving several hardware lanes or threads, such as a reduction. |
-| Compilation request | One semantic graph plus numerical/shape context, frozen operation registry, targets, budgets, and deterministic compiler options. |
+| Compilation request | One semantic graph plus numerical/shape context, frozen operation registry, installed lowering capabilities, targets, budgets, and deterministic compiler options. |
 | Compile guarantee | Conservative typed capability fact promised by a declared target profile before artifact generation. |
 | Element offset | Typed index into elements of a buffer view, distinct from a byte offset. |
 | Evidence class | Scope and strength of support for an implementation guarantee: proof, exhaustive, normative guarantee, empirical qualification, or unknown. |
@@ -43,6 +43,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Guard | Checked predicate with provenance: semantic input, storage, schedule, target, or dispatch safety. |
 | Implementation frontier | Bounded non-dominated region implementations returned for one candidate and target profile. |
 | Index-domain predicate | Constraint restricting the mathematical points of an index region; it is part of map truth rather than a physical fallback guard. |
+| Index-region refinement | Compiler-owned checked evidence that one emitted `IndexRegion` realizes one semantic occurrence: agreeing ordered value interface, reached scalar authority contained in what the capability declared it may emit, agreeing semantic type authority, and complete unique-write ownership. A successful structural build is not this evidence. |
 | Iteration domain | Cartesian coordinate space over which outputs are computed. |
 | Kernel ABI | Ordered buffer and scalar parameters with types, roles, access modes, and binding locations. |
 | Launch geometry | Grid and threadgroup dimensions derived from a schedule. |
