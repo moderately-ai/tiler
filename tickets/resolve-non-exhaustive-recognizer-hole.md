@@ -1,7 +1,7 @@
 ---
 id: resolve-non-exhaustive-recognizer-hole
 title: Resolve the non-exhaustive recognizer hole before applying the convention
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [harden-public-enums-non-exhaustive, extend-canonical-identity-encodings-for-reserved-variants, draft-public-api-conventions-adr, draft-public-boundary-approval-policy-adr]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, decisions, public-api, correctness]
+claimed_from: todo
+assignee: agent-resolve-non-exhaustive-recognizer-hole
+lease_expires_at: 1784912788
 ---
 Accepted ADR 0074's convention 5 says to mark public enums documented as growing
 `#[non_exhaustive]` so a later variant "lands additively rather than breaking a

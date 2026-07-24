@@ -1,7 +1,7 @@
 ---
 id: record-source-verification-rule-in-agent-guidance
 title: Record the read-the-file source-verification rule in agent guidance
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [draft-public-api-conventions-adr, draft-public-boundary-approval-policy-adr]
@@ -9,6 +9,9 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, process, research-standards]
+claimed_from: todo
+assignee: agent-record-source-verification-rule-in-agent-guidance
+lease_expires_at: 1784912789
 ---
 Three separate agents in a single session drew **false conclusions from failed
 substring searches**, each time against the same construct: a multi-line Rust
