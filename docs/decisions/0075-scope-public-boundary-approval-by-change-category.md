@@ -5,7 +5,7 @@ kind: "decision"
 title: "Scope public-boundary approval by change category"
 topics: ["governance", "api", "process", "review"]
 catalog_group: "documentation-governance"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "not-started"
 applies_to: ["tiler.contract.architecture"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv", "tiler.research.extensions.operation-extension-surface"]
@@ -15,7 +15,7 @@ ticket: "draft-public-boundary-approval-policy-adr"
 
 # 0075: Scope public-boundary approval by change category
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 

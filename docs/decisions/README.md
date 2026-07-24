@@ -109,7 +109,7 @@ accepted. Unresolved questions are collected in
 
 ### Documentation governance
 
-- [0075: Scope public-boundary approval by change category](0075-scope-public-boundary-approval-by-change-category.md) — proposed; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Operation-extension surface research](../research/extensions/operation-extension-surface.md)
+- [0075: Scope public-boundary approval by change category](0075-scope-public-boundary-approval-by-change-category.md) — accepted; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Operation-extension surface research](../research/extensions/operation-extension-surface.md)
 - [0054: Use typed documentation metadata and derived backlinks](0054-use-typed-documentation-metadata.md) — accepted; contracts: [Documentation metadata and traceability](../document-metadata.md); evidence: [Information architecture and provenance audit](../research/documentation/information-architecture-audit.md)
 <!-- END GENERATED ADR TOPICS -->
 
@@ -190,7 +190,7 @@ accepted. Unresolved questions are collected in
 - [0072: Separate semantic meaning from provider provenance](0072-separate-semantic-meaning-from-provider-provenance.md) — accepted
 - [0073: Own typed explain infrastructure in tiler-compiler](0073-own-typed-explain-in-tiler-compiler.md) — accepted
 - [0074: Use explicit conformance conventions for public Tiler APIs](0074-use-explicit-public-api-conventions.md) — accepted
-- [0075: Scope public-boundary approval by change category](0075-scope-public-boundary-approval-by-change-category.md) — proposed
+- [0075: Scope public-boundary approval by change category](0075-scope-public-boundary-approval-by-change-category.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template
