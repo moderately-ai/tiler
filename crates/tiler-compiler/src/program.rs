@@ -1,14 +1,39 @@
+//! Compiler-owned program layers over the shared target-neutral kernel program.
+//!
+//! The stage DAG, the exact selected scheduled/KIR refinements, the checked
+//! materialized values, views, allocations, lifetimes and handoffs, the typed
+//! dependencies, the named outputs, and complete semantic coverage all live in
+//! [`tiler_ir::program`] (ADR 0070), where they are constructed through the
+//! ADR 0071 checked builder and carry a canonical identity folding the ADR 0072
+//! layers. This module owns only the compiler-specific layers the shared IR
+//! deliberately excludes for now: the host preflight expression graph, the
+//! bounded entry ABI, the routing-commit contract, and the artifact
+//! construction plan that binds them to a compilation request.
+
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::kernel::KernelType;
+use tiler_ir::program::{
+    AllocationOwnership, AllocationSpec, KernelProgramBuildError, KernelProgramBuilder,
+    KernelProgramDiagnostic, MaterializedOrigin, MaterializedValueRef, MaterializedValueSpec,
+    MemorySpace, SemanticOccurrence, StageAccess, StageAccessMode, ValueRole,
+    VerifiedKernelProgram,
+};
 use tiler_ir::semantic::{F32, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
 
 use crate::physical::{
-    NumericalRealization, RegionId, ResourceRequirements, TensorRole, VerifiedKernel,
-    VerifiedScheduledRegion, lower_structured_kernel,
+    NumericalRealization, RegionId, ResourceRequirements, VerifiedKernel, VerifiedScheduledRegion,
+    lower_structured_kernel,
 };
+use crate::region::SemanticMemberId;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
+
+/// Element byte width of the bounded profile's single tensor element type.
+const ELEMENT_BYTES: u64 = 4;
+/// Byte alignment every bounded-profile value and allocation requires.
+const ELEMENT_ALIGNMENT: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct HostExprId(u8);
@@ -28,11 +53,9 @@ impl StageId {
     }
 }
 
+/// Declaration-order position of one materialized value of the shared program.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct MaterializedValueId(pub(crate) u8);
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct AllocationId(u8);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct EntryBindingId(u8);
@@ -55,77 +78,6 @@ pub(crate) struct HostExpr {
     pub(crate) id: HostExprId,
     pub(crate) value_type: HostValueType,
     pub(crate) node: HostExprNode,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MemorySpace {
-    Device,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ValueRole {
-    Input,
-    Temporary,
-    Output,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AllocationOwnership {
-    External,
-    Program,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Allocation {
-    pub(crate) id: AllocationId,
-    pub(crate) capacity_bytes: HostExprId,
-    pub(crate) alignment: u32,
-    pub(crate) memory_space: MemorySpace,
-    pub(crate) ownership: AllocationOwnership,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct MaterializedValue {
-    pub(crate) id: MaterializedValueId,
-    pub(crate) tensor: TensorRole,
-    pub(crate) role: ValueRole,
-    pub(crate) shape: Shape,
-    pub(crate) required_bytes: HostExprId,
-    pub(crate) alignment: u32,
-    pub(crate) memory_space: MemorySpace,
-    pub(crate) definition: Option<StageId>,
-    pub(crate) allocation: AllocationId,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StageAccess {
-    Read,
-    Write,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct StageValueAccess {
-    pub(crate) value: MaterializedValueId,
-    pub(crate) access: StageAccess,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProgramStage {
-    pub(crate) id: StageId,
-    pub(crate) scheduled_region: RegionId,
-    pub(crate) values: Vec<StageValueAccess>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DependencyReason {
-    Data(MaterializedValueId),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Dependency {
-    pub(crate) predecessor: StageId,
-    pub(crate) successor: StageId,
-    pub(crate) reason: DependencyReason,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,12 +113,6 @@ pub(crate) struct EntryContract {
     pub(crate) numerical: NumericalRealization,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProgramOutput {
-    pub(crate) key: String,
-    pub(crate) value: MaterializedValueId,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RoutingState {
     Preflight,
@@ -182,22 +128,15 @@ pub(crate) struct RoutingTransition {
     pub(crate) fallback_permitted: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct BufferPlan {
-    pub(crate) values: Vec<MaterializedValue>,
-    pub(crate) allocations: Vec<Allocation>,
-}
-
+/// One target-bound executable program: a verified shared kernel program plus
+/// the compiler-owned host, ABI, and routing layers that dispatch it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct KernelProgram {
     target_profile_key: &'static str,
     host_expressions: Vec<HostExpr>,
     applicability_guard: HostExprId,
-    stages: Vec<ProgramStage>,
-    dependencies: Vec<Dependency>,
-    buffer_plan: BufferPlan,
+    core: VerifiedKernelProgram,
     entries: Vec<EntryContract>,
-    outputs: Vec<ProgramOutput>,
     routing: Vec<RoutingTransition>,
 }
 
@@ -217,17 +156,22 @@ pub(crate) struct ArtifactConstructionPlan {
 }
 
 impl KernelProgram {
-    pub(crate) fn stages(&self) -> &[ProgramStage] {
-        &self.stages
-    }
-
+    /// Returns the verified target-neutral program this target binding wraps.
+    ///
+    /// The compiler reaches the shared program through its own private field;
+    /// this accessor exists for the crate's tests until a reviewed public
+    /// compiler facade exposes the compilation product.
     #[cfg(test)]
-    pub(crate) const fn buffer_plan(&self) -> &BufferPlan {
-        &self.buffer_plan
+    pub(crate) const fn core(&self) -> &VerifiedKernelProgram {
+        &self.core
     }
 
-    pub(crate) fn dependencies(&self) -> &[Dependency] {
-        &self.dependencies
+    pub(crate) fn stage_count(&self) -> usize {
+        self.core.stages().len()
+    }
+
+    pub(crate) fn dependency_count(&self) -> usize {
+        self.core.dependencies().len()
     }
 }
 
@@ -246,9 +190,6 @@ pub(crate) enum ProgramError {
     Structure {
         rule: &'static str,
     },
-    Dependency {
-        rule: &'static str,
-    },
     Storage {
         rule: &'static str,
     },
@@ -259,6 +200,25 @@ pub(crate) enum ProgramError {
     Routing {
         rule: &'static str,
     },
+    /// The shared kernel-program builder rejected a locally malformed insertion.
+    CoreConstruction(KernelProgramBuildError),
+    /// The shared whole-program verifier rejected the assembled program.
+    CoreVerification(KernelProgramDiagnostic),
+}
+
+impl ProgramError {
+    /// Returns the stable rule identifier a rejected program reports.
+    pub(crate) fn rule(&self) -> &str {
+        match self {
+            Self::HostExpression { rule, .. }
+            | Self::Structure { rule }
+            | Self::Storage { rule }
+            | Self::Abi { rule, .. }
+            | Self::Routing { rule } => rule,
+            Self::CoreConstruction(_) => "core-construction",
+            Self::CoreVerification(diagnostic) => diagnostic.rule(),
+        }
+    }
 }
 
 impl fmt::Display for ProgramError {
@@ -270,201 +230,265 @@ impl fmt::Display for ProgramError {
                 expression.0
             ),
             Self::Structure { rule } => write!(formatter, "program.structure.{rule}: rejected"),
-            Self::Dependency { rule } => write!(formatter, "program.dependency.{rule}: rejected"),
             Self::Storage { rule } => write!(formatter, "program.storage.{rule}: rejected"),
             Self::Abi { rule, stage } => {
                 write!(formatter, "program.abi.{rule}: stage {} rejected", stage.0)
             }
             Self::Routing { rule } => write!(formatter, "program.routing.{rule}: rejected"),
+            Self::CoreConstruction(_) => {
+                write!(formatter, "program.core.core-construction: rejected")
+            }
+            Self::CoreVerification(diagnostic) => {
+                write!(formatter, "program.core.{}: rejected", diagnostic.rule())
+            }
         }
     }
 }
 
-impl Error for ProgramError {}
+impl Error for ProgramError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::HostExpression { .. }
+            | Self::Structure { .. }
+            | Self::Storage { .. }
+            | Self::Abi { .. }
+            | Self::Routing { .. } => None,
+            Self::CoreConstruction(source) => Some(source),
+            Self::CoreVerification(source) => Some(source),
+        }
+    }
+}
 
+impl From<KernelProgramBuildError> for ProgramError {
+    fn from(value: KernelProgramBuildError) -> Self {
+        Self::CoreConstruction(value)
+    }
+}
+
+/// Builds the two-stage materialized serial-sum program for one request.
 pub(crate) fn build_kernel_program(
+    semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
 ) -> Result<KernelProgram, ProgramError> {
-    if scheduled.len() != 2 {
+    let [pointwise, reduction] = scheduled else {
         return Err(ProgramError::Structure {
             rule: "strategy-cardinality",
         });
-    }
-    let expressions = host_expressions(request)?;
-    let input_bytes = HostExprId(2);
-    let output_bytes = HostExprId(4);
+    };
+    let core = build_materialized_core(semantic, request, pointwise, reduction)?;
     let program = KernelProgram {
         target_profile_key: request.target_profile().key,
-        host_expressions: expressions,
+        host_expressions: host_expressions(request)?,
         applicability_guard: HostExprId(7),
-        stages: program_stages(scheduled),
-        dependencies: vec![Dependency {
-            predecessor: StageId(0),
-            successor: StageId(1),
-            reason: DependencyReason::Data(MaterializedValueId(1)),
-        }],
-        buffer_plan: BufferPlan {
-            values: materialized_values(request, input_bytes, output_bytes),
-            allocations: program_allocations(input_bytes, output_bytes),
-        },
-        entries: entry_contracts(scheduled, input_bytes, output_bytes),
-        outputs: vec![ProgramOutput {
-            key: request.serial_sum().output_key.as_str().to_owned(),
-            value: MaterializedValueId(2),
-        }],
+        core,
+        entries: entry_contracts(scheduled, HostExprId(2), HostExprId(4)),
         routing: routing_policy(),
     };
-    verify_materialized_serial_sum_program(program, request, scheduled)
+    verify_kernel_program_layers(&program, request, scheduled)?;
+    Ok(program)
 }
 
+/// Builds the single-stage fused serial-sum program for one request.
 pub(crate) fn build_fused_kernel_program(
+    semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     scheduled: &VerifiedScheduledRegion,
 ) -> Result<KernelProgram, ProgramError> {
-    let expressions = host_expressions(request)?;
-    let input_bytes = HostExprId(2);
-    let output_bytes = HostExprId(4);
-    let scheduled = std::slice::from_ref(scheduled);
+    let core = build_fused_core(semantic, request, scheduled)?;
     let program = KernelProgram {
         target_profile_key: request.target_profile().key,
-        host_expressions: expressions,
+        host_expressions: host_expressions(request)?,
         applicability_guard: HostExprId(7),
-        stages: vec![ProgramStage {
-            id: StageId(0),
-            scheduled_region: scheduled[0].region().index.id,
-            values: vec![
-                StageValueAccess {
-                    value: MaterializedValueId(0),
-                    access: StageAccess::Read,
-                },
-                StageValueAccess {
-                    value: MaterializedValueId(1),
-                    access: StageAccess::Write,
-                },
-            ],
-        }],
-        dependencies: Vec::new(),
-        buffer_plan: BufferPlan {
-            values: vec![
-                materialized(
-                    0,
-                    TensorRole::Input,
-                    ValueRole::Input,
-                    request.serial_sum().input_shape.clone(),
-                    input_bytes,
-                    None,
-                    0,
-                ),
-                materialized(
-                    1,
-                    TensorRole::Output,
-                    ValueRole::Output,
-                    request.serial_sum().output_shape.clone(),
-                    output_bytes,
-                    Some(StageId(0)),
-                    1,
-                ),
-            ],
-            allocations: vec![
-                allocation(0, input_bytes, AllocationOwnership::External),
-                allocation(1, output_bytes, AllocationOwnership::Program),
-            ],
-        },
+        core,
         entries: vec![entry(
             0,
             vec![
-                binding(0, 0, ComponentRole::Input, AbiAccess::Read, input_bytes),
-                binding(1, 1, ComponentRole::Output, AbiAccess::Write, output_bytes),
+                binding(0, 0, ComponentRole::Input, AbiAccess::Read, HostExprId(2)),
+                binding(1, 1, ComponentRole::Output, AbiAccess::Write, HostExprId(4)),
             ],
             HostExprId(6),
-            scheduled[0].requirements(),
-            scheduled[0].region().index.numerical,
+            scheduled.requirements(),
+            scheduled.region().index.numerical,
         )],
-        outputs: vec![ProgramOutput {
-            key: request.serial_sum().output_key.as_str().to_owned(),
-            value: MaterializedValueId(1),
-        }],
         routing: routing_policy(),
     };
-    verify_fused_serial_sum_program(program, request, scheduled)
+    verify_kernel_program_layers(&program, request, std::slice::from_ref(scheduled))?;
+    Ok(program)
 }
 
-fn program_stages(scheduled: &[VerifiedScheduledRegion]) -> Vec<ProgramStage> {
-    vec![
-        ProgramStage {
-            id: StageId(0),
-            scheduled_region: scheduled[0].region().index.id,
-            values: vec![
-                StageValueAccess {
-                    value: MaterializedValueId(0),
-                    access: StageAccess::Read,
-                },
-                StageValueAccess {
-                    value: MaterializedValueId(1),
-                    access: StageAccess::Write,
-                },
-            ],
-        },
-        ProgramStage {
-            id: StageId(1),
-            scheduled_region: scheduled[1].region().index.id,
-            values: vec![
-                StageValueAccess {
-                    value: MaterializedValueId(1),
-                    access: StageAccess::Read,
-                },
-                StageValueAccess {
-                    value: MaterializedValueId(2),
-                    access: StageAccess::Write,
-                },
-            ],
-        },
-    ]
-}
-
-fn materialized_values(
+/// Assembles the shared verified program of the materialized strategy.
+///
+/// Every structural obligation — complete disjoint coverage of the semantic
+/// graph, a unique writer per materialized value, the data dependency behind
+/// the cross-stage read, the aliasing contract, and named-output coverage — is
+/// proven by [`KernelProgramBuilder::build`], not re-implemented here.
+fn build_materialized_core(
+    semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    input_bytes: HostExprId,
-    output_bytes: HostExprId,
-) -> Vec<MaterializedValue> {
-    vec![
-        materialized(
-            0,
-            TensorRole::Input,
-            ValueRole::Input,
-            request.serial_sum().input_shape.clone(),
-            input_bytes,
-            None,
-            0,
-        ),
-        materialized(
-            1,
-            TensorRole::Intermediate,
-            ValueRole::Temporary,
-            request.serial_sum().input_shape.clone(),
-            input_bytes,
-            Some(StageId(0)),
-            1,
-        ),
-        materialized(
-            2,
-            TensorRole::Output,
-            ValueRole::Output,
-            request.serial_sum().output_shape.clone(),
-            output_bytes,
-            Some(StageId(1)),
-            2,
-        ),
-    ]
+    pointwise: &VerifiedScheduledRegion,
+    reduction: &VerifiedScheduledRegion,
+) -> Result<VerifiedKernelProgram, ProgramError> {
+    let subject = request.serial_sum();
+    let input_bytes = byte_count(subject.input_elements)?;
+    let output_bytes = byte_count(subject.output_elements)?;
+    let mut builder = open_core_builder(semantic, request)?;
+    let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
+    let temporary_storage =
+        builder.push_allocation(storage(input_bytes, AllocationOwnership::Program))?;
+    let output_storage =
+        builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
+    let input = builder.push_value(
+        program_input(subject.input_key.clone(), subject.input_shape.clone()),
+        external,
+    )?;
+    let temporary = builder.push_value(
+        internal(ValueRole::Temporary, subject.input_shape.clone()),
+        temporary_storage,
+    )?;
+    let output = builder.push_value(
+        internal(ValueRole::Output, subject.output_shape.clone()),
+        output_storage,
+    )?;
+    let input_view = builder.push_whole_view(input)?;
+    let temporary_view = builder.push_whole_view(temporary)?;
+    let output_view = builder.push_whole_view(output)?;
+    let map_stage = builder.push_stage(
+        &lower(pointwise)?,
+        &covered(subject.members.pointwise()),
+        &[read(input_view), write(temporary_view)],
+    )?;
+    let reduce_stage = builder.push_stage(
+        &lower(reduction)?,
+        &covered(subject.members.reduction()),
+        &[read(temporary_view), write(output_view)],
+    )?;
+    builder.push_data_dependency(map_stage, reduce_stage, temporary)?;
+    builder.push_output(subject.output_key.clone(), output)?;
+    finish_core(builder)
 }
 
-fn program_allocations(input_bytes: HostExprId, output_bytes: HostExprId) -> Vec<Allocation> {
-    vec![
-        allocation(0, input_bytes, AllocationOwnership::External),
-        allocation(1, input_bytes, AllocationOwnership::Program),
-        allocation(2, output_bytes, AllocationOwnership::Program),
-    ]
+/// Assembles the shared verified program of the fused strategy.
+fn build_fused_core(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &VerifiedScheduledRegion,
+) -> Result<VerifiedKernelProgram, ProgramError> {
+    let subject = request.serial_sum();
+    let input_bytes = byte_count(subject.input_elements)?;
+    let output_bytes = byte_count(subject.output_elements)?;
+    let mut builder = open_core_builder(semantic, request)?;
+    let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
+    let output_storage =
+        builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
+    let input = builder.push_value(
+        program_input(subject.input_key.clone(), subject.input_shape.clone()),
+        external,
+    )?;
+    let output = builder.push_value(
+        internal(ValueRole::Output, subject.output_shape.clone()),
+        output_storage,
+    )?;
+    let input_view = builder.push_whole_view(input)?;
+    let output_view = builder.push_whole_view(output)?;
+    builder.push_stage(
+        &lower(scheduled)?,
+        &covered(&subject.members.all()),
+        &[read(input_view), write(output_view)],
+    )?;
+    builder.push_output(subject.output_key.clone(), output)?;
+    finish_core(builder)
+}
+
+/// Opens a shared program builder bound to the request's exact semantic program.
+fn open_core_builder(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+) -> Result<KernelProgramBuilder, ProgramError> {
+    if semantic.semantic_identity() != request.semantic_identity() {
+        return Err(ProgramError::Structure {
+            rule: "semantic-request-binding",
+        });
+    }
+    Ok(KernelProgramBuilder::new(semantic)?)
+}
+
+fn finish_core(builder: KernelProgramBuilder) -> Result<VerifiedKernelProgram, ProgramError> {
+    builder.build().map_err(|error| {
+        error.diagnostics().first().copied().map_or(
+            ProgramError::Structure {
+                rule: "core-verification",
+            },
+            ProgramError::CoreVerification,
+        )
+    })
+}
+
+/// Lowers one verified scheduled region to the kernel its stage dispatches.
+fn lower(scheduled: &VerifiedScheduledRegion) -> Result<VerifiedKernel, ProgramError> {
+    lower_structured_kernel(scheduled).map_err(|_| ProgramError::Structure {
+        rule: "schedule-verification",
+    })
+}
+
+fn covered(members: &[SemanticMemberId]) -> Vec<SemanticOccurrence> {
+    members
+        .iter()
+        .map(|member| SemanticOccurrence::new(member.0))
+        .collect()
+}
+
+fn storage(capacity_bytes: u64, ownership: AllocationOwnership) -> AllocationSpec {
+    AllocationSpec {
+        capacity_bytes,
+        alignment: ELEMENT_ALIGNMENT,
+        memory_space: MemorySpace::Device,
+        ownership,
+    }
+}
+
+fn program_input(key: tiler_ir::semantic::InputKey, shape: Shape) -> MaterializedValueSpec {
+    MaterializedValueSpec {
+        origin: MaterializedOrigin::ProgramInput { key },
+        role: ValueRole::Input,
+        shape,
+        element_type: KernelType::F32,
+        alignment: ELEMENT_ALIGNMENT,
+        memory_space: MemorySpace::Device,
+    }
+}
+
+fn internal(role: ValueRole, shape: Shape) -> MaterializedValueSpec {
+    MaterializedValueSpec {
+        origin: MaterializedOrigin::Internal,
+        role,
+        shape,
+        element_type: KernelType::F32,
+        alignment: ELEMENT_ALIGNMENT,
+        memory_space: MemorySpace::Device,
+    }
+}
+
+const fn read(view: tiler_ir::program::ViewId) -> StageAccess {
+    StageAccess {
+        view,
+        mode: StageAccessMode::Read,
+    }
+}
+
+const fn write(view: tiler_ir::program::ViewId) -> StageAccess {
+    StageAccess {
+        view,
+        mode: StageAccessMode::Write,
+    }
+}
+
+fn byte_count(elements: u64) -> Result<u64, ProgramError> {
+    elements
+        .checked_mul(ELEMENT_BYTES)
+        .ok_or(ProgramError::Storage {
+            rule: "required-byte-overflow",
+        })
 }
 
 fn entry_contracts(
@@ -528,159 +552,25 @@ fn routing_policy() -> Vec<RoutingTransition> {
     ]
 }
 
-pub(crate) fn verify_materialized_serial_sum_program(
-    program: KernelProgram,
-    request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
-) -> Result<KernelProgram, ProgramError> {
-    if scheduled.len() != 2
-        || program.stages.len() != 2
-        || program.dependencies.len() != 1
-        || program.entries.len() != 2
-        || program.outputs.len() != 1
-        || program.buffer_plan.values.len() != 3
-        || program.buffer_plan.allocations.len() != 3
-    {
-        return Err(ProgramError::Structure {
-            rule: "strategy-cardinality",
-        });
-    }
-    let values = verify_program_structure(&program, request, scheduled)?;
-    if program.stages != program_stages(scheduled) {
-        return Err(ProgramError::Structure { rule: "stages" });
-    }
-    if program.dependencies
-        != [Dependency {
-            predecessor: StageId(0),
-            successor: StageId(1),
-            reason: DependencyReason::Data(MaterializedValueId(1)),
-        }]
-        || program.stages[0].values[1]
-            != (StageValueAccess {
-                value: MaterializedValueId(1),
-                access: StageAccess::Write,
-            })
-        || program.stages[1].values[0]
-            != (StageValueAccess {
-                value: MaterializedValueId(1),
-                access: StageAccess::Read,
-            })
-    {
-        return Err(ProgramError::Dependency {
-            rule: "initialized-cross-stage-value",
-        });
-    }
-    verify_storage(&program, &values, scheduled)?;
-    verify_entry(
-        &program,
-        &program.entries[0],
-        StageId(0),
-        &scheduled[0],
-        &values,
-    )?;
-    verify_entry(
-        &program,
-        &program.entries[1],
-        StageId(1),
-        &scheduled[1],
-        &values,
-    )?;
-    if program.outputs.len() != 1
-        || program.outputs[0].value != MaterializedValueId(2)
-        || program.outputs[0].key != request.serial_sum().output_key.as_str()
-    {
-        return Err(ProgramError::Structure {
-            rule: "semantic-output-coverage",
-        });
-    }
-    Ok(program)
-}
-
-#[cfg(test)]
-fn verify_kernel_program(
-    program: KernelProgram,
-    request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
-) -> Result<KernelProgram, ProgramError> {
-    verify_materialized_serial_sum_program(program, request, scheduled)
-}
-
-pub(crate) fn verify_fused_serial_sum_program(
-    program: KernelProgram,
-    request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
-) -> Result<KernelProgram, ProgramError> {
-    if scheduled.len() != 1
-        || program.stages.len() != 1
-        || !program.dependencies.is_empty()
-        || program.entries.len() != 1
-        || program.outputs.len() != 1
-        || program.buffer_plan.values.len() != 2
-        || program.buffer_plan.allocations.len() != 2
-    {
-        return Err(ProgramError::Structure {
-            rule: "fused-strategy-cardinality",
-        });
-    }
-    let values = verify_program_structure(&program, request, scheduled)?;
-    let expected_stage = ProgramStage {
-        id: StageId(0),
-        scheduled_region: scheduled[0].region().index.id,
-        values: vec![
-            StageValueAccess {
-                value: MaterializedValueId(0),
-                access: StageAccess::Read,
-            },
-            StageValueAccess {
-                value: MaterializedValueId(1),
-                access: StageAccess::Write,
-            },
-        ],
-    };
-    if program.stages != [expected_stage] {
-        return Err(ProgramError::Structure {
-            rule: "fused-stage",
-        });
-    }
-    verify_fused_storage(&program, &values, scheduled)?;
-    verify_entry(
-        &program,
-        &program.entries[0],
-        StageId(0),
-        &scheduled[0],
-        &values,
-    )?;
-    if program.outputs[0].value != MaterializedValueId(1)
-        || program.outputs[0].key != request.serial_sum().output_key.as_str()
-    {
-        return Err(ProgramError::Structure {
-            rule: "semantic-output-coverage",
-        });
-    }
-    Ok(program)
-}
-
-fn verify_program_structure(
+/// Verifies the compiler-owned layers of one program against its shared core.
+///
+/// The shared core is already verified by construction, so this proves only
+/// what the core deliberately does not model: the canonical host preflight
+/// graph and its budgets, the request/target binding, the entry ABI's agreement
+/// with the stages and values the core retains, and the routing contract.
+pub(crate) fn verify_kernel_program_layers(
     program: &KernelProgram,
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
-) -> Result<Vec<HostValue>, ProgramError> {
-    if program.stages.is_empty()
-        || program.stages.len() != scheduled.len()
-        || program.entries.len() != program.stages.len()
-        || program.outputs.is_empty()
-        || program.buffer_plan.values.is_empty()
-        || program.buffer_plan.allocations.is_empty()
+) -> Result<(), ProgramError> {
+    if scheduled.is_empty()
+        || program.core.stages().len() != scheduled.len()
+        || program.entries.len() != scheduled.len()
     {
         return Err(ProgramError::Structure {
             rule: "cardinality",
         });
     }
-    let Some(_first_schedule) = scheduled.first() else {
-        return Err(ProgramError::Structure {
-            rule: "cardinality",
-        });
-    };
     if scheduled
         .iter()
         .any(|region| !region.matches_request(request))
@@ -689,67 +579,34 @@ fn verify_program_structure(
             rule: "request-subject",
         });
     }
-    for region in scheduled {
-        crate::physical::lower_structured_kernel(region).map_err(|_| ProgramError::Structure {
-            rule: "schedule-verification",
-        })?;
-    }
-    let values = verify_host_contract(program, request, scheduled)?;
-    if scheduled
-        .iter()
-        .any(|region| region.target_profile_key() != program.target_profile_key)
+    if program.target_profile_key != request.target_profile().key
+        || scheduled
+            .iter()
+            .any(|region| region.target_profile_key() != program.target_profile_key)
     {
         return Err(ProgramError::Structure {
             rule: "target-profile",
         });
     }
-    for (index, stage) in program.stages.iter().enumerate() {
-        if stage.id
-            != StageId(u8::try_from(index).map_err(|_| ProgramError::Structure {
-                rule: "stage-id-overflow",
-            })?)
-            || stage.scheduled_region != scheduled[index].region().index.id
-            || stage.values.is_empty()
-        {
-            return Err(ProgramError::Structure { rule: "stage-id" });
-        }
-    }
-    for (index, value) in program.buffer_plan.values.iter().enumerate() {
-        if value.id
-            != MaterializedValueId(u8::try_from(index).map_err(|_| ProgramError::Storage {
-                rule: "value-id-overflow",
-            })?)
-            || usize::from(value.allocation.0) >= program.buffer_plan.allocations.len()
-        {
-            return Err(ProgramError::Storage { rule: "value-id" });
-        }
-    }
-    for (index, allocation) in program.buffer_plan.allocations.iter().enumerate() {
-        if allocation.id
-            != AllocationId(u8::try_from(index).map_err(|_| ProgramError::Storage {
-                rule: "allocation-id-overflow",
-            })?)
-        {
-            return Err(ProgramError::Storage {
-                rule: "allocation-id",
-            });
-        }
+    let values = verify_host_contract(program, request)?;
+    for (index, entry) in program.entries.iter().enumerate() {
+        verify_entry(program, entry, index, &scheduled[index], &values)?;
     }
     if program.routing != routing_policy() {
         return Err(ProgramError::Routing {
             rule: "fallback-after-commit",
         });
     }
-    Ok(values)
+    Ok(())
 }
 
 fn verify_host_contract(
     program: &KernelProgram,
     request: &VerifiedTargetRequest,
-    scheduled: &[VerifiedScheduledRegion],
 ) -> Result<Vec<HostValue>, ProgramError> {
-    let (input_elements, output_elements) = scheduled_element_counts(scheduled)?;
-    let expected_expressions = canonical_host_expressions(input_elements, output_elements);
+    let subject = request.serial_sum();
+    let expected_expressions =
+        canonical_host_expressions(subject.input_elements, subject.output_elements);
     if program.host_expressions != expected_expressions {
         return Err(ProgramError::HostExpression {
             rule: "canonical-graph",
@@ -767,7 +624,7 @@ fn verify_host_contract(
             rule: "host-expression-budget",
         });
     }
-    if program.buffer_plan.values.len()
+    if program.core.values().len()
         > usize::try_from(request.budgets().buffers).map_err(|_| ProgramError::Storage {
             rule: "buffer-budget",
         })?
@@ -785,6 +642,97 @@ fn verify_host_contract(
     Ok(values)
 }
 
+/// Proves one entry contract realizes the exact stage the core retains.
+fn verify_entry(
+    program: &KernelProgram,
+    entry: &EntryContract,
+    position: usize,
+    scheduled: &VerifiedScheduledRegion,
+    values: &[HostValue],
+) -> Result<(), ProgramError> {
+    let index = u8::try_from(position).map_err(|_| ProgramError::Structure {
+        rule: "stage-id-overflow",
+    })?;
+    let stage = program
+        .core
+        .stages()
+        .nth(position)
+        .ok_or(ProgramError::Abi {
+            rule: "entry-stage",
+            stage: entry.stage,
+        })?;
+    if entry.stage != StageId(index)
+        || entry.requirements != scheduled.requirements()
+        || entry.numerical != scheduled.region().index.numerical
+        || entry.threads_per_workgroup != HostExprId(8)
+        || entry.launch_threads
+            != if position == 0 && program.core.stages().len() == 2 {
+                HostExprId(5)
+            } else {
+                HostExprId(6)
+            }
+    {
+        return Err(ProgramError::Abi {
+            rule: "entry-contract",
+            stage: entry.stage,
+        });
+    }
+    if values.get(usize::from(entry.launch_threads.0))
+        != Some(&HostValue::U64(scheduled.region().schedule.work_items))
+        || values.get(usize::from(entry.threads_per_workgroup.0))
+            != Some(&HostValue::U64(u64::from(
+                scheduled.region().schedule.threads_per_workgroup,
+            )))
+    {
+        return Err(ProgramError::Abi {
+            rule: "launch-expression",
+            stage: entry.stage,
+        });
+    }
+    if entry.bindings.len() != stage.accesses().len() {
+        return Err(ProgramError::Abi {
+            rule: "binding-cardinality",
+            stage: entry.stage,
+        });
+    }
+    for (position, (binding, access)) in entry.bindings.iter().zip(stage.accesses()).enumerate() {
+        let bound = program
+            .core
+            .values()
+            .nth(usize::from(binding.value.0))
+            .ok_or(ProgramError::Abi {
+                rule: "binding-value",
+                stage: entry.stage,
+            })?;
+        let expected_access = match access.mode() {
+            StageAccessMode::Read => AbiAccess::Read,
+            StageAccessMode::Write => AbiAccess::Write,
+        };
+        let expected_bytes = HostValue::U64(bound.required_bytes());
+        if binding.id != EntryBindingId(u8::try_from(position).expect("bounded binding count"))
+            || bound != access.view().value()
+            || binding.access != expected_access
+            || binding.alignment != bound.alignment()
+            || binding.role != component_role(bound)
+            || values.get(usize::from(binding.accessible_bytes.0)) != Some(&expected_bytes)
+        {
+            return Err(ProgramError::Abi {
+                rule: "binding",
+                stage: entry.stage,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn component_role(value: MaterializedValueRef<'_>) -> ComponentRole {
+    match value.role() {
+        ValueRole::Input => ComponentRole::Input,
+        ValueRole::Temporary => ComponentRole::Intermediate,
+        ValueRole::Output => ComponentRole::Output,
+    }
+}
+
 pub(crate) fn build_artifact_plan(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
@@ -793,70 +741,8 @@ pub(crate) fn build_artifact_plan(
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
-    if semantic.semantic_identity() != request.semantic_identity() {
-        return Err(ProgramError::Structure {
-            rule: "semantic-request-binding",
-        });
-    }
-    if scheduled.is_empty()
-        || scheduled
-            .iter()
-            .any(|region| !region.matches_request(request))
-        || kernels.len() != scheduled.len()
-    {
-        return Err(ProgramError::Structure {
-            rule: "artifact-refinement-cardinality",
-        });
-    }
-    for (region, kernel) in scheduled.iter().zip(kernels) {
-        let expected = crate::physical::lower_structured_kernel(region).map_err(|_| {
-            ProgramError::Structure {
-                rule: "artifact-schedule-refinement",
-            }
-        })?;
-        if kernel != &expected {
-            return Err(ProgramError::Structure {
-                rule: "artifact-kernel-refinement",
-            });
-        }
-    }
-    let expected_program = match scheduled {
-        [single] => build_fused_kernel_program(request, single)?,
-        [_, _] => build_kernel_program(request, scheduled)?,
-        _ => {
-            return Err(ProgramError::Structure {
-                rule: "artifact-strategy-cardinality",
-            });
-        }
-    };
-    if program != &expected_program {
-        return Err(ProgramError::Structure {
-            rule: "artifact-program-refinement",
-        });
-    }
-    assert_kernels_match_program(request, scheduled, program, kernels)?;
-    let semantic_output = semantic.outputs().next().ok_or(ProgramError::Structure {
-        rule: "semantic-output-coverage",
-    })?;
-    if semantic.output_count() != 1
-        || program.outputs.len() != 1
-        || program.outputs[0].key != semantic_output.key().as_str()
-    {
-        return Err(ProgramError::Structure {
-            rule: "semantic-output-coverage",
-        });
-    }
-    if program.target_profile_key != request.target_profile().key
-        || program
-            .entries
-            .iter()
-            .any(|entry| entry.numerical != request.numerical_contract().realization())
-    {
-        return Err(ProgramError::Structure {
-            rule: "artifact-numerical-realization",
-        });
-    }
-    let expected_providers = match program.stages.len() {
+    verify_artifact_refinements(semantic, request, scheduled, kernels, program)?;
+    let expected_providers = match program.core.stages().len() {
         1 => request
             .capabilities()
             .fused_serial_sum
@@ -880,9 +766,9 @@ pub(crate) fn build_artifact_plan(
             .collect(),
         target_profile_key: program.target_profile_key,
         entry_regions: program
-            .stages
-            .iter()
-            .map(|stage| stage.scheduled_region)
+            .core
+            .stages()
+            .map(|stage| stage.kernel().scheduled_region())
             .collect(),
         routing_guard: program.applicability_guard,
         lowering_providers: providers,
@@ -891,6 +777,85 @@ pub(crate) fn build_artifact_plan(
         verified_schedules: scheduled.to_vec(),
         verified_kernels: kernels.to_vec(),
     })
+}
+
+/// Proves the artifact's inputs are the exact refinements of one request.
+fn verify_artifact_refinements(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+    kernels: &[VerifiedKernel],
+    program: &KernelProgram,
+) -> Result<(), ProgramError> {
+    if semantic.semantic_identity() != request.semantic_identity() {
+        return Err(ProgramError::Structure {
+            rule: "semantic-request-binding",
+        });
+    }
+    if scheduled.is_empty()
+        || scheduled
+            .iter()
+            .any(|region| !region.matches_request(request))
+        || kernels.len() != scheduled.len()
+    {
+        return Err(ProgramError::Structure {
+            rule: "artifact-refinement-cardinality",
+        });
+    }
+    for (region, kernel) in scheduled.iter().zip(kernels) {
+        let expected = lower(region).map_err(|_| ProgramError::Structure {
+            rule: "artifact-schedule-refinement",
+        })?;
+        if kernel != &expected {
+            return Err(ProgramError::Structure {
+                rule: "artifact-kernel-refinement",
+            });
+        }
+    }
+    let expected_program = match scheduled {
+        [single] => build_fused_kernel_program(semantic, request, single)?,
+        [_, _] => build_kernel_program(semantic, request, scheduled)?,
+        _ => {
+            return Err(ProgramError::Structure {
+                rule: "artifact-strategy-cardinality",
+            });
+        }
+    };
+    if program != &expected_program {
+        return Err(ProgramError::Structure {
+            rule: "artifact-program-refinement",
+        });
+    }
+    assert_kernels_match_program(request, scheduled, program, kernels)?;
+    let semantic_output = semantic.outputs().next().ok_or(ProgramError::Structure {
+        rule: "semantic-output-coverage",
+    })?;
+    let named = program
+        .core
+        .outputs()
+        .next()
+        .ok_or(ProgramError::Structure {
+            rule: "semantic-output-coverage",
+        })?;
+    if semantic.output_count() != 1
+        || program.core.outputs().len() != 1
+        || named.key() != semantic_output.key()
+    {
+        return Err(ProgramError::Structure {
+            rule: "semantic-output-coverage",
+        });
+    }
+    if program.target_profile_key != request.target_profile().key
+        || program
+            .entries
+            .iter()
+            .any(|entry| entry.numerical != request.numerical_contract().realization())
+    {
+        return Err(ProgramError::Structure {
+            rule: "artifact-numerical-realization",
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn verify_artifact_plan(
@@ -933,7 +898,7 @@ fn host_expressions(request: &VerifiedTargetRequest) -> Result<Vec<HostExpr>, Pr
 
 fn canonical_host_expressions(input_elements: u64, output_elements: u64) -> Vec<HostExpr> {
     vec![
-        expression(0, HostValueType::U64, HostExprNode::U64(4)),
+        expression(0, HostValueType::U64, HostExprNode::U64(ELEMENT_BYTES)),
         expression(1, HostValueType::U64, HostExprNode::U64(input_elements)),
         expression(
             2,
@@ -951,40 +916,6 @@ fn canonical_host_expressions(input_elements: u64, output_elements: u64) -> Vec<
         expression(7, HostValueType::Bool, HostExprNode::Bool(true)),
         expression(8, HostValueType::U64, HostExprNode::U64(1)),
     ]
-}
-
-fn scheduled_element_counts(
-    scheduled: &[VerifiedScheduledRegion],
-) -> Result<(u64, u64), ProgramError> {
-    let first = scheduled.first().ok_or(ProgramError::Structure {
-        rule: "cardinality",
-    })?;
-    let last = scheduled.last().ok_or(ProgramError::Structure {
-        rule: "cardinality",
-    })?;
-    let input_elements = match first
-        .region()
-        .index
-        .accesses
-        .first()
-        .map(|access| &access.map)
-    {
-        Some(crate::physical::LogicalAccess::ReductionContributor { input_shape, .. }) => {
-            shape_elements(input_shape)
-        }
-        Some(crate::physical::LogicalAccess::LinearIdentity) => {
-            shape_elements(&first.region().index.iteration_shape)
-        }
-        None => None,
-    }
-    .ok_or(ProgramError::Structure {
-        rule: "input-element-count",
-    })?;
-    let output_elements =
-        shape_elements(&last.region().index.iteration_shape).ok_or(ProgramError::Structure {
-            rule: "output-element-count",
-        })?;
-    Ok((input_elements, output_elements))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1033,289 +964,6 @@ fn evaluate_expressions(expressions: &[HostExpr]) -> Result<Vec<HostValue>, Prog
     Ok(values)
 }
 
-fn verify_storage(
-    program: &KernelProgram,
-    values: &[HostValue],
-    scheduled: &[VerifiedScheduledRegion],
-) -> Result<(), ProgramError> {
-    if scheduled.len() != 2
-        || program.buffer_plan.values.len() != 3
-        || program.buffer_plan.allocations.len() != 3
-    {
-        return Err(ProgramError::Storage {
-            rule: "strategy-cardinality",
-        });
-    }
-    let expected_shapes = [
-        &scheduled[0].region().index.iteration_shape,
-        &scheduled[0].region().index.iteration_shape,
-        &scheduled[1].region().index.iteration_shape,
-    ];
-    let expected_required_bytes = [HostExprId(2), HostExprId(2), HostExprId(4)];
-    for (position, value) in program.buffer_plan.values.iter().enumerate() {
-        if usize::from(value.id.0) != position
-            || value.tensor
-                != [
-                    TensorRole::Input,
-                    TensorRole::Intermediate,
-                    TensorRole::Output,
-                ][position]
-            || value.role != [ValueRole::Input, ValueRole::Temporary, ValueRole::Output][position]
-            || value.memory_space != MemorySpace::Device
-            || value.alignment != 4
-            || value.required_bytes != expected_required_bytes[position]
-            || value.allocation != AllocationId(u8::try_from(position).expect("three values"))
-            || value.definition != [None, Some(StageId(0)), Some(StageId(1))][position]
-            || &value.shape != expected_shapes[position]
-        {
-            return Err(ProgramError::Storage {
-                rule: "materialized-values",
-            });
-        }
-        let allocation = &program.buffer_plan.allocations[position];
-        if allocation.id != value.allocation
-            || allocation.capacity_bytes != value.required_bytes
-            || allocation.alignment != value.alignment
-            || allocation.memory_space != value.memory_space
-            || allocation.ownership
-                != if position == 0 {
-                    AllocationOwnership::External
-                } else {
-                    AllocationOwnership::Program
-                }
-            || !matches!(
-                values.get(usize::from(value.required_bytes.0)),
-                Some(HostValue::U64(_))
-            )
-        {
-            return Err(ProgramError::Storage {
-                rule: "allocation-binding",
-            });
-        }
-        let expected_bytes = shape_elements(&value.shape)
-            .and_then(|elements| elements.checked_mul(4))
-            .ok_or(ProgramError::Storage {
-                rule: "required-byte-overflow",
-            })?;
-        if values.get(usize::from(value.required_bytes.0)) != Some(&HostValue::U64(expected_bytes))
-        {
-            return Err(ProgramError::Storage {
-                rule: "required-byte-count",
-            });
-        }
-    }
-    if program.buffer_plan.values[0].shape != program.buffer_plan.values[1].shape
-        || program.buffer_plan.values[2].shape == program.buffer_plan.values[1].shape
-        || program.buffer_plan.allocations[0].id == program.buffer_plan.allocations[1].id
-        || program.buffer_plan.allocations[0].id == program.buffer_plan.allocations[2].id
-        || program.buffer_plan.allocations[1].id == program.buffer_plan.allocations[2].id
-    {
-        return Err(ProgramError::Storage {
-            rule: "forbidden-alias-or-shape",
-        });
-    }
-    Ok(())
-}
-
-fn verify_fused_storage(
-    program: &KernelProgram,
-    values: &[HostValue],
-    scheduled: &[VerifiedScheduledRegion],
-) -> Result<(), ProgramError> {
-    let [input, output] = program.buffer_plan.values.as_slice() else {
-        return Err(ProgramError::Storage {
-            rule: "fused-cardinality",
-        });
-    };
-    let [input_allocation, output_allocation] = program.buffer_plan.allocations.as_slice() else {
-        return Err(ProgramError::Storage {
-            rule: "fused-cardinality",
-        });
-    };
-    if scheduled.len() != 1
-        || input.tensor != TensorRole::Input
-        || input.role != ValueRole::Input
-        || input.definition.is_some()
-        || output.tensor != TensorRole::Output
-        || output.role != ValueRole::Output
-        || output.definition != Some(StageId(0))
-        || input.allocation != AllocationId(0)
-        || output.allocation != AllocationId(1)
-        || input.required_bytes != HostExprId(2)
-        || output.required_bytes != HostExprId(4)
-        || input_allocation.id != input.allocation
-        || output_allocation.id != output.allocation
-        || input.shape
-            != match scheduled[0]
-                .region()
-                .index
-                .accesses
-                .first()
-                .map(|access| &access.map)
-            {
-                Some(crate::physical::LogicalAccess::ReductionContributor {
-                    input_shape, ..
-                }) => input_shape.clone(),
-                Some(crate::physical::LogicalAccess::LinearIdentity) | None => {
-                    return Err(ProgramError::Storage {
-                        rule: "fused-input-map",
-                    });
-                }
-            }
-        || output.shape != scheduled[0].region().index.iteration_shape
-        || input_allocation.ownership != AllocationOwnership::External
-        || output_allocation.ownership != AllocationOwnership::Program
-        || input.allocation == output.allocation
-    {
-        return Err(ProgramError::Storage {
-            rule: "fused-values",
-        });
-    }
-    for value in [input, output] {
-        let allocation = &program.buffer_plan.allocations[usize::from(value.allocation.0)];
-        let expected_bytes = shape_elements(&value.shape)
-            .and_then(|elements| elements.checked_mul(4))
-            .ok_or(ProgramError::Storage {
-                rule: "required-byte-overflow",
-            })?;
-        if value.memory_space != MemorySpace::Device
-            || value.alignment != 4
-            || allocation.capacity_bytes != value.required_bytes
-            || allocation.memory_space != value.memory_space
-            || allocation.alignment != value.alignment
-            || values.get(usize::from(value.required_bytes.0))
-                != Some(&HostValue::U64(expected_bytes))
-        {
-            return Err(ProgramError::Storage {
-                rule: "fused-allocation-binding",
-            });
-        }
-    }
-    Ok(())
-}
-
-fn verify_entry(
-    program: &KernelProgram,
-    entry: &EntryContract,
-    expected_stage: StageId,
-    scheduled: &VerifiedScheduledRegion,
-    values: &[HostValue],
-) -> Result<(), ProgramError> {
-    let stage = usize::from(entry.stage.0);
-    if entry.stage != expected_stage
-        || stage >= program.stages.len()
-        || entry.requirements != scheduled.requirements()
-        || entry.numerical != scheduled.region().index.numerical
-        || entry.threads_per_workgroup != HostExprId(8)
-        || entry.launch_threads
-            != if expected_stage == StageId(0) && program.stages.len() == 2 {
-                HostExprId(5)
-            } else {
-                HostExprId(6)
-            }
-    {
-        return Err(ProgramError::Abi {
-            rule: "entry-contract",
-            stage: entry.stage,
-        });
-    }
-    if values.get(usize::from(entry.launch_threads.0))
-        != Some(&HostValue::U64(scheduled.region().schedule.work_items))
-        || values.get(usize::from(entry.threads_per_workgroup.0))
-            != Some(&HostValue::U64(u64::from(
-                scheduled.region().schedule.threads_per_workgroup,
-            )))
-    {
-        return Err(ProgramError::Abi {
-            rule: "launch-expression",
-            stage: entry.stage,
-        });
-    }
-    let stage_values = &program.stages[stage].values;
-    if entry.bindings.len() != stage_values.len() {
-        return Err(ProgramError::Abi {
-            rule: "binding-cardinality",
-            stage: entry.stage,
-        });
-    }
-    for (position, binding) in entry.bindings.iter().enumerate() {
-        let expected_access = match stage_values[position].access {
-            StageAccess::Read => AbiAccess::Read,
-            StageAccess::Write => AbiAccess::Write,
-        };
-        let Some(materialized_value) = program.buffer_plan.values.get(usize::from(binding.value.0))
-        else {
-            return Err(ProgramError::Abi {
-                rule: "binding-value",
-                stage: entry.stage,
-            });
-        };
-        if binding.id != EntryBindingId(u8::try_from(position).expect("bounded binding count"))
-            || binding.value != stage_values[position].value
-            || binding.access != expected_access
-            || binding.alignment != 4
-            || binding.accessible_bytes != materialized_value.required_bytes
-            || binding.role != component_role(materialized_value)
-        {
-            return Err(ProgramError::Abi {
-                rule: "binding",
-                stage: entry.stage,
-            });
-        }
-    }
-    Ok(())
-}
-
-const fn component_role(value: &MaterializedValue) -> ComponentRole {
-    match value.role {
-        ValueRole::Input => ComponentRole::Input,
-        ValueRole::Temporary => ComponentRole::Intermediate,
-        ValueRole::Output => ComponentRole::Output,
-    }
-}
-
-fn shape_elements(shape: &Shape) -> Option<u64> {
-    if shape.extents().iter().any(|extent| extent.get() == 0) {
-        return Some(0);
-    }
-    shape
-        .extents()
-        .iter()
-        .try_fold(1_u64, |count, extent| count.checked_mul(extent.get()))
-}
-
-fn materialized(
-    id: u8,
-    tensor: TensorRole,
-    role: ValueRole,
-    shape: Shape,
-    required_bytes: HostExprId,
-    definition: Option<StageId>,
-    allocation: u8,
-) -> MaterializedValue {
-    MaterializedValue {
-        id: MaterializedValueId(id),
-        tensor,
-        role,
-        shape,
-        required_bytes,
-        alignment: 4,
-        memory_space: MemorySpace::Device,
-        definition,
-        allocation: AllocationId(allocation),
-    }
-}
-
-fn allocation(id: u8, capacity_bytes: HostExprId, ownership: AllocationOwnership) -> Allocation {
-    Allocation {
-        id: AllocationId(id),
-        capacity_bytes,
-        alignment: 4,
-        memory_space: MemorySpace::Device,
-        ownership,
-    }
-}
-
 fn binding(
     id: u8,
     value: u8,
@@ -1328,7 +976,7 @@ fn binding(
         value: MaterializedValueId(value),
         role,
         access,
-        alignment: 4,
+        alignment: ELEMENT_ALIGNMENT,
         accessible_bytes: bytes,
     }
 }
@@ -1362,6 +1010,11 @@ fn host_error<T>(rule: &'static str, expression: HostExprId) -> Result<T, Progra
     Err(ProgramError::HostExpression { rule, expression })
 }
 
+/// Proves the separately retained kernels are exactly the ones the program binds.
+///
+/// The shared program already holds each stage's verified kernel, so this
+/// checks the compilation product's parallel kernel list against that binding
+/// and against the schedules it claims to refine.
 pub(crate) fn assert_kernels_match_program(
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
@@ -1369,7 +1022,7 @@ pub(crate) fn assert_kernels_match_program(
     kernels: &[VerifiedKernel],
 ) -> Result<(), ProgramError> {
     if kernels.len() != scheduled.len()
-        || kernels.len() != program.stages.len()
+        || kernels.len() != program.core.stages().len()
         || kernels.len() != program.entries.len()
         || scheduled
             .iter()
@@ -1379,48 +1032,10 @@ pub(crate) fn assert_kernels_match_program(
             rule: "kernel-entry-cardinality",
         });
     }
-    for (index, (scheduled, kernel)) in scheduled.iter().zip(kernels).enumerate() {
-        if lower_structured_kernel(scheduled).map_err(|_| ProgramError::Structure {
-            rule: "kernel-schedule-refinement",
-        })? != *kernel
-        {
+    for ((region, kernel), stage) in scheduled.iter().zip(kernels).zip(program.core.stages()) {
+        if lower(region)? != *kernel || stage.kernel() != kernel {
             return Err(ProgramError::Structure {
                 rule: "kernel-schedule-refinement",
-            });
-        }
-        let [read_buffer, write_buffer] = kernel.buffers().collect::<Vec<_>>()[..] else {
-            return Err(ProgramError::Structure {
-                rule: "kernel-buffer-cardinality",
-            });
-        };
-        let stage_values = &program.stages[index].values;
-        if stage_values.len() != 2 {
-            return Err(ProgramError::Structure {
-                rule: "kernel-stage-value-cardinality",
-            });
-        }
-        let read = program
-            .buffer_plan
-            .values
-            .get(usize::from(stage_values[0].value.0))
-            .ok_or(ProgramError::Structure {
-                rule: "kernel-stage-value",
-            })?;
-        let write = program
-            .buffer_plan
-            .values
-            .get(usize::from(stage_values[1].value.0))
-            .ok_or(ProgramError::Structure {
-                rule: "kernel-stage-value",
-            })?;
-        if kernel.scheduled_region() != program.stages[index].scheduled_region
-            || kernel.requirements() != program.entries[index].requirements
-            || kernel.numerical() != program.entries[index].numerical
-            || read_buffer.tensor != read.tensor
-            || write_buffer.tensor != write.tensor
-        {
-            return Err(ProgramError::Structure {
-                rule: "kernel-entry-refinement",
             });
         }
     }
@@ -1443,434 +1058,4 @@ pub(crate) fn verify_semantic_output_type(program: &SemanticProgram) -> Result<(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::physical::{
-        build_fused_scheduled_region, build_scheduled_regions, lower_structured_kernel,
-    };
-    use crate::request::{CompilationRequest, verify_request};
-    use tiler_ir::semantic::{
-        F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
-        StrictSerialF32Sum,
-    };
-    use tiler_ir::shape::Axis;
-
-    fn fixture() -> (
-        SemanticProgram,
-        VerifiedTargetRequest,
-        Vec<VerifiedScheduledRegion>,
-    ) {
-        fixture_with_scale(2.0_f32.to_bits())
-    }
-
-    fn fixture_with_scale(
-        scale_bits: u32,
-    ) -> (
-        SemanticProgram,
-        VerifiedTargetRequest,
-        Vec<VerifiedScheduledRegion>,
-    ) {
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
-            .unwrap();
-        let scale = F32Constant::apply(&mut builder, scale_bits).unwrap();
-        let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
-        let mapped = F32Add::apply(&mut builder, product, bias).unwrap();
-        let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).unwrap();
-        builder
-            .output(OutputKey::new("result").unwrap(), sum)
-            .unwrap();
-        let semantic = builder.build().unwrap();
-        let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
-        let request = request.for_target(request.target_profiles()[0]).unwrap();
-        let scheduled = build_scheduled_regions(&request).unwrap();
-        (semantic, request, scheduled)
-    }
-
-    #[test]
-    fn artifact_construction_rejects_a_cross_program_semantic_request_mix() {
-        let (_, request, scheduled) = fixture_with_scale(2.0_f32.to_bits());
-        let (different_semantic, _, _) = fixture_with_scale(3.0_f32.to_bits());
-        let program = build_kernel_program(&request, &scheduled).unwrap();
-
-        assert_eq!(
-            build_artifact_plan(
-                &different_semantic,
-                &request,
-                &scheduled,
-                &scheduled
-                    .iter()
-                    .map(lower_structured_kernel)
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap(),
-                &program,
-                vec![request.capabilities().materialized_serial_sum],
-            ),
-            Err(ProgramError::Structure {
-                rule: "semantic-request-binding",
-            })
-        );
-    }
-
-    #[test]
-    fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
-        let (semantic, request, scheduled) = fixture();
-        let program = build_kernel_program(&request, &scheduled).unwrap();
-        let kernels = [
-            lower_structured_kernel(&scheduled[0]).unwrap(),
-            lower_structured_kernel(&scheduled[1]).unwrap(),
-        ];
-        assert_kernels_match_program(&request, &scheduled, &program, &kernels).unwrap();
-        verify_semantic_output_type(&semantic).unwrap();
-        let artifact = build_artifact_plan(
-            &semantic,
-            &request,
-            &scheduled,
-            &kernels,
-            &program,
-            vec![request.capabilities().materialized_serial_sum],
-        )
-        .unwrap();
-
-        assert_eq!(program.buffer_plan.values[1].role, ValueRole::Temporary);
-        assert_eq!(
-            program.dependencies[0].reason,
-            DependencyReason::Data(MaterializedValueId(1))
-        );
-        assert_eq!(
-            program.buffer_plan.allocations[1].ownership,
-            AllocationOwnership::Program
-        );
-        assert_ne!(
-            program.buffer_plan.allocations[1].id,
-            program.buffer_plan.allocations[2].id
-        );
-        assert_eq!(
-            program.entries[0].bindings[1].role,
-            ComponentRole::Intermediate
-        );
-        assert_eq!(
-            program.entries[1].bindings[0].role,
-            ComponentRole::Intermediate
-        );
-        assert!(!program.routing[1].fallback_permitted);
-        assert!(!program.routing[2].fallback_permitted);
-        assert_eq!(artifact.entry_regions, [RegionId::new(0), RegionId::new(1)]);
-        assert_eq!(
-            artifact.numerical_realizations,
-            [
-                scheduled[0].region().index.numerical,
-                scheduled[1].region().index.numerical,
-            ]
-        );
-        assert!(!artifact.semantic_identity.graph().as_bytes().is_empty());
-        assert!(
-            !artifact
-                .semantic_identity
-                .reached_definitions()
-                .as_bytes()
-                .is_empty()
-        );
-        assert!(
-            !artifact
-                .semantic_identity
-                .admission_provenance()
-                .as_bytes()
-                .is_empty()
-        );
-        assert!(
-            !artifact
-                .semantic_identity
-                .registry_snapshot()
-                .as_bytes()
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn whole_program_verifier_rejects_dependency_alias_abi_and_routing_failures() {
-        let (_, request, scheduled) = fixture();
-        let valid = build_kernel_program(&request, &scheduled).unwrap();
-
-        let mut missing_dependency = valid.clone();
-        missing_dependency.dependencies[0].predecessor = StageId(1);
-        assert_eq!(
-            verify_kernel_program(missing_dependency, &request, &scheduled),
-            Err(ProgramError::Dependency {
-                rule: "initialized-cross-stage-value"
-            })
-        );
-
-        let mut aliased = valid.clone();
-        aliased.buffer_plan.values[2].allocation = AllocationId(1);
-        assert_eq!(
-            verify_kernel_program(aliased, &request, &scheduled),
-            Err(ProgramError::Storage {
-                rule: "materialized-values"
-            })
-        );
-
-        let mut invalid_abi = valid.clone();
-        invalid_abi.entries[1].bindings[0].access = AbiAccess::Write;
-        assert_eq!(
-            verify_kernel_program(invalid_abi, &request, &scheduled),
-            Err(ProgramError::Abi {
-                rule: "binding",
-                stage: StageId(1),
-            })
-        );
-
-        let mut invalid_routing = valid;
-        invalid_routing.routing[1].fallback_permitted = true;
-        assert_eq!(
-            verify_kernel_program(invalid_routing, &request, &scheduled),
-            Err(ProgramError::Routing {
-                rule: "fallback-after-commit"
-            })
-        );
-    }
-
-    #[test]
-    fn whole_program_verifier_rechecks_target_shape_bytes_launch_and_outputs() {
-        let (_, request, scheduled) = fixture();
-        let valid = build_kernel_program(&request, &scheduled).unwrap();
-
-        let mut wrong_target = valid.clone();
-        wrong_target.target_profile_key = "wrong-target";
-        assert_eq!(
-            verify_kernel_program(wrong_target, &request, &scheduled),
-            Err(ProgramError::Structure {
-                rule: "target-profile"
-            })
-        );
-
-        let mut wrong_shape = valid.clone();
-        wrong_shape.buffer_plan.values[2].shape = Shape::from_dims([1]);
-        assert_eq!(
-            verify_kernel_program(wrong_shape, &request, &scheduled),
-            Err(ProgramError::Storage {
-                rule: "materialized-values"
-            })
-        );
-
-        let mut wrong_bytes = valid.clone();
-        wrong_bytes.host_expressions[2].node = HostExprNode::U64(4);
-        assert_eq!(
-            verify_kernel_program(wrong_bytes, &request, &scheduled),
-            Err(ProgramError::HostExpression {
-                rule: "canonical-graph",
-                expression: HostExprId(0),
-            })
-        );
-
-        let mut wrong_launch = valid.clone();
-        wrong_launch.host_expressions[5].node = HostExprNode::U64(5);
-        assert_eq!(
-            verify_kernel_program(wrong_launch, &request, &scheduled),
-            Err(ProgramError::HostExpression {
-                rule: "canonical-graph",
-                expression: HostExprId(0),
-            })
-        );
-
-        let mut missing_output = valid;
-        missing_output.outputs[0].key.clear();
-        assert_eq!(
-            verify_kernel_program(missing_output, &request, &scheduled),
-            Err(ProgramError::Structure {
-                rule: "semantic-output-coverage"
-            })
-        );
-    }
-
-    #[test]
-    fn variable_length_program_collections_fail_closed_on_wrong_cardinality() {
-        let (_, request, scheduled) = fixture();
-        let valid = build_kernel_program(&request, &scheduled).unwrap();
-
-        let mut missing_stage = valid.clone();
-        missing_stage.stages.pop();
-        assert_eq!(
-            verify_kernel_program(missing_stage, &request, &scheduled),
-            Err(ProgramError::Structure {
-                rule: "strategy-cardinality"
-            })
-        );
-
-        let mut extra_binding = valid.clone();
-        let duplicate_binding = extra_binding.entries[0].bindings[0];
-        extra_binding.entries[0].bindings.push(duplicate_binding);
-        assert_eq!(
-            verify_kernel_program(extra_binding, &request, &scheduled),
-            Err(ProgramError::Abi {
-                rule: "binding-cardinality",
-                stage: StageId(0),
-            })
-        );
-
-        let kernels = [lower_structured_kernel(&scheduled[0]).unwrap()];
-        assert_eq!(
-            assert_kernels_match_program(&request, &scheduled, &valid, &kernels),
-            Err(ProgramError::Structure {
-                rule: "kernel-entry-cardinality"
-            })
-        );
-    }
-
-    #[test]
-    fn fused_program_verifier_is_cardinality_independent_and_fails_closed() {
-        let (_, request, _) = fixture();
-        let scheduled = build_fused_scheduled_region(&request).unwrap();
-        let valid = build_fused_kernel_program(&request, &scheduled).unwrap();
-        let kernel = lower_structured_kernel(&scheduled).unwrap();
-        assert_kernels_match_program(
-            &request,
-            std::slice::from_ref(&scheduled),
-            &valid,
-            std::slice::from_ref(&kernel),
-        )
-        .unwrap();
-
-        let mut malformed = valid.clone();
-        malformed.buffer_plan.values[1].definition = None;
-        assert_eq!(
-            verify_fused_serial_sum_program(malformed, &request, std::slice::from_ref(&scheduled),),
-            Err(ProgramError::Storage {
-                rule: "fused-values"
-            })
-        );
-
-        let mut malformed = valid.clone();
-        malformed.stages[0].values[1].value = MaterializedValueId(7);
-        assert_eq!(
-            verify_fused_serial_sum_program(malformed, &request, std::slice::from_ref(&scheduled),),
-            Err(ProgramError::Structure {
-                rule: "fused-stage"
-            })
-        );
-
-        let mut malformed = valid;
-        malformed.dependencies.push(Dependency {
-            predecessor: StageId(0),
-            successor: StageId(0),
-            reason: DependencyReason::Data(MaterializedValueId(1)),
-        });
-        assert_eq!(
-            verify_fused_serial_sum_program(malformed, &request, std::slice::from_ref(&scheduled),),
-            Err(ProgramError::Structure {
-                rule: "fused-strategy-cardinality"
-            })
-        );
-    }
-
-    #[test]
-    fn host_expression_overflow_is_a_hard_failure() {
-        let (_, request, scheduled) = fixture();
-        let mut program = build_kernel_program(&request, &scheduled).unwrap();
-        program.host_expressions[0].node = HostExprNode::U64(u64::MAX);
-        assert_eq!(
-            evaluate_expressions(&program.host_expressions),
-            Err(ProgramError::HostExpression {
-                rule: "overflow",
-                expression: HostExprId(2),
-            })
-        );
-
-        let mut malformed = build_kernel_program(&request, &scheduled).unwrap();
-        malformed.host_expressions[2].node =
-            HostExprNode::CheckedMultiply(HostExprId(99), HostExprId(1));
-        assert_eq!(
-            verify_kernel_program(malformed, &request, &scheduled),
-            Err(ProgramError::HostExpression {
-                rule: "canonical-graph",
-                expression: HostExprId(0),
-            })
-        );
-    }
-
-    #[test]
-    fn builders_and_verifiers_are_total_over_short_and_forged_slices() {
-        let (_, request, scheduled) = fixture();
-        assert_eq!(
-            build_kernel_program(&request, &[]),
-            Err(ProgramError::Structure {
-                rule: "strategy-cardinality",
-            })
-        );
-        assert_eq!(
-            build_kernel_program(&request, &scheduled[..1]),
-            Err(ProgramError::Structure {
-                rule: "strategy-cardinality",
-            })
-        );
-
-        let fused = build_fused_scheduled_region(&request).unwrap();
-        let program = build_fused_kernel_program(&request, &fused).unwrap();
-        assert!(
-            verify_fused_serial_sum_program(program, &request, std::slice::from_ref(&fused),)
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
-        let (semantic, request, scheduled) = fixture();
-        let program = build_kernel_program(&request, &scheduled).unwrap();
-        let kernels = scheduled
-            .iter()
-            .map(lower_structured_kernel)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let provider = request.capabilities().materialized_serial_sum;
-
-        for providers in [Vec::new(), vec![provider, provider]] {
-            assert_eq!(
-                build_artifact_plan(
-                    &semantic, &request, &scheduled, &kernels, &program, providers,
-                ),
-                Err(ProgramError::Structure {
-                    rule: "artifact-provider-coverage",
-                })
-            );
-        }
-
-        let plan = build_artifact_plan(
-            &semantic,
-            &request,
-            &scheduled,
-            &kernels,
-            &program,
-            vec![provider],
-        )
-        .unwrap();
-        let mut forged = plan.clone();
-        forged.routing_guard = HostExprId(6);
-        assert_eq!(
-            verify_artifact_plan(
-                &forged,
-                &semantic,
-                &request,
-                &scheduled,
-                &kernels,
-                &program,
-                vec![provider],
-            ),
-            Err(ProgramError::Structure {
-                rule: "artifact-receipt",
-            })
-        );
-
-        let mut swapped =
-            build_fused_kernel_program(&request, &build_fused_scheduled_region(&request).unwrap())
-                .unwrap();
-        swapped.buffer_plan.values[0].allocation = AllocationId(1);
-        swapped.buffer_plan.values[1].allocation = AllocationId(0);
-        let fused = build_fused_scheduled_region(&request).unwrap();
-        assert!(matches!(
-            verify_fused_serial_sum_program(swapped, &request, std::slice::from_ref(&fused)),
-            Err(ProgramError::Storage { .. })
-        ));
-    }
-}
+mod tests;

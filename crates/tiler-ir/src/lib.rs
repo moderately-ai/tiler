@@ -32,6 +32,8 @@ mod convenience;
 pub mod index;
 /// Public backend-consumable structured kernel IR, verifier, and identity.
 pub mod kernel;
+/// Public target-neutral kernel-program IR, verifier, and identity.
+pub mod program;
 /// Public target-neutral scheduled-region IR, verifier, and identity.
 pub mod schedule;
 /// Public semantic tensor-program vocabulary.

@@ -1,0 +1,444 @@
+//! Whole-program structural, coverage, dependency, storage, and lifetime
+//! verification.
+//!
+//! Region-local and kernel-local verification is necessary but not sufficient:
+//! it cannot see fan-out lifetimes, output completeness, cross-stage storage, or
+//! allocation reuse. This module proves the obligations that only exist at whole
+//! program scope, in a fixed phase order so a rejected program names the exact
+//! violated rule rather than a generic mismatch.
+//!
+//! What it deliberately does **not** prove: that a stage's bound kernel computes
+//! the semantic operations the stage claims to cover. Structural coverage is a
+//! completeness and disjointness obligation over one exact graph; semantic
+//! equivalence evidence is compiler-owned refinement evidence (ADR 0071), and
+//! this layer must not be read as supplying it.
+
+use std::collections::BTreeSet;
+
+use super::builder::SemanticSubject;
+use super::error::{KernelProgramDiagnostic, ProgramEntityKind};
+use super::model::{
+    CanonicalKeys, DependencyReasonData, DerivedProgramFacts, KernelProgramData, StageAccessMode,
+    ValueDefinition, ValueRole, canonical_keys,
+};
+
+/// One stage access to one materialized value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ValueAccess {
+    stage: u32,
+    mode: StageAccessMode,
+}
+
+/// Verifies one assembled program and derives the facts the product retains.
+///
+/// # Errors
+///
+/// Returns the first violated [`KernelProgramDiagnostic`] in phase order.
+pub(super) fn verify_program(
+    data: &KernelProgramData,
+    subject: &SemanticSubject,
+) -> Result<(DerivedProgramFacts, CanonicalKeys), KernelProgramDiagnostic> {
+    if data.stages.is_empty()
+        || data.values.is_empty()
+        || data.allocations.is_empty()
+        || data.outputs.is_empty()
+    {
+        return Err(KernelProgramDiagnostic::EmptyProgram);
+    }
+    let accesses = value_accesses(data);
+    let definitions = definitions(data)?;
+    verify_coverage(data, subject)?;
+
+    let keys = canonical_keys(data, &definitions);
+    verify_unambiguous(&keys)?;
+
+    // Every edge must state an obligation its two stages realize before the
+    // graph those edges induce is ordered: a cycle closed by a meaningless edge
+    // should name the meaningless edge.
+    verify_dependencies(data, &accesses, &definitions)?;
+    let successors = successor_lists(data);
+    let execution_order = canonical_execution_order(data, &keys.stages, &successors)
+        .ok_or(KernelProgramDiagnostic::DependencyCycle)?;
+
+    verify_usage(data, &accesses)?;
+    verify_storage(data)?;
+    verify_reuse(data, &accesses, &definitions, &execution_order, &successors)?;
+    verify_outputs(data, subject)?;
+
+    Ok((
+        DerivedProgramFacts {
+            definitions,
+            execution_order,
+        },
+        keys,
+    ))
+}
+
+fn position(index: u32) -> usize {
+    usize::try_from(index).expect("u32 fits every supported host usize")
+}
+
+fn ordinal(index: usize) -> u32 {
+    u32::try_from(index).expect("a bounded program arena fits u32")
+}
+
+/// Groups every stage access by the materialized value it addresses.
+fn value_accesses(data: &KernelProgramData) -> Vec<Vec<ValueAccess>> {
+    let mut accesses = vec![Vec::new(); data.values.len()];
+    for (index, stage) in data.stages.iter().enumerate() {
+        for access in &stage.accesses {
+            let value = position(data.views[position(access.view)].value);
+            accesses[value].push(ValueAccess {
+                stage: ordinal(index),
+                mode: access.mode,
+            });
+        }
+    }
+    accesses
+}
+
+/// Derives the unique defining stage and write position of every value.
+fn definitions(
+    data: &KernelProgramData,
+) -> Result<Vec<Option<ValueDefinition>>, KernelProgramDiagnostic> {
+    let mut definitions: Vec<Option<ValueDefinition>> = vec![None; data.values.len()];
+    for (index, stage) in data.stages.iter().enumerate() {
+        let mut write_position = 0_u32;
+        for access in &stage.accesses {
+            if access.mode != StageAccessMode::Write {
+                continue;
+            }
+            let value = position(data.views[position(access.view)].value);
+            if definitions[value].is_some() {
+                return Err(KernelProgramDiagnostic::MultipleWriters);
+            }
+            definitions[value] = Some(ValueDefinition {
+                stage: ordinal(index),
+                write_position,
+            });
+            write_position = write_position.saturating_add(1);
+        }
+    }
+    for (index, value) in data.values.iter().enumerate() {
+        let written = definitions[index].is_some();
+        match value.role {
+            ValueRole::Input if written => {
+                return Err(KernelProgramDiagnostic::ExternalValueWritten);
+            }
+            ValueRole::Temporary | ValueRole::Output if !written => {
+                return Err(KernelProgramDiagnostic::MissingWriter);
+            }
+            ValueRole::Input | ValueRole::Temporary | ValueRole::Output => {}
+        }
+    }
+    Ok(definitions)
+}
+
+/// Proves the stages cover exactly the operations of the bound semantic program.
+fn verify_coverage(
+    data: &KernelProgramData,
+    subject: &SemanticSubject,
+) -> Result<(), KernelProgramDiagnostic> {
+    let covered: BTreeSet<u32> = data
+        .stages
+        .iter()
+        .flat_map(|stage| stage.coverage.iter().map(|occurrence| occurrence.get()))
+        .collect();
+    let covered_count = ordinal(covered.len());
+    if covered_count != subject.operations
+        || covered
+            .last()
+            .is_some_and(|last| *last >= subject.operations)
+    {
+        return Err(KernelProgramDiagnostic::IncompleteCoverage {
+            covered: covered_count,
+            required: subject.operations,
+        });
+    }
+    Ok(())
+}
+
+/// Proves each canonical key category is pairwise distinct.
+///
+/// Identity encodes every cross-reference by content key. A collision would let
+/// two structurally different programs share bytes, so it fails closed here
+/// instead of being resolved by an arena position.
+fn verify_unambiguous(keys: &CanonicalKeys) -> Result<(), KernelProgramDiagnostic> {
+    for (entity, category) in [
+        (ProgramEntityKind::Stage, &keys.stages),
+        (ProgramEntityKind::Value, &keys.values),
+        (ProgramEntityKind::View, &keys.views),
+        (ProgramEntityKind::Allocation, &keys.allocations),
+    ] {
+        let mut sorted: Vec<&Vec<u8>> = category.iter().collect();
+        sorted.sort_unstable();
+        if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(KernelProgramDiagnostic::AmbiguousCanonicalKey { entity });
+        }
+    }
+    Ok(())
+}
+
+/// Builds the deduplicated successor list of the stage dependency graph.
+fn successor_lists(data: &KernelProgramData) -> Vec<Vec<usize>> {
+    let mut edges: Vec<(usize, usize)> = data
+        .dependencies
+        .iter()
+        .map(|dependency| {
+            (
+                position(dependency.predecessor),
+                position(dependency.successor),
+            )
+        })
+        .collect();
+    edges.sort_unstable();
+    edges.dedup();
+    let mut successors = vec![Vec::new(); data.stages.len()];
+    for (predecessor, successor) in edges {
+        successors[predecessor].push(successor);
+    }
+    successors
+}
+
+/// Returns the canonical topological stage order, or `None` for a cyclic graph.
+///
+/// Ties among ready stages are broken by canonical stage key, so the order is a
+/// function of program content and never of builder insertion.
+fn canonical_execution_order(
+    data: &KernelProgramData,
+    stage_keys: &[Vec<u8>],
+    successors: &[Vec<usize>],
+) -> Option<Vec<u32>> {
+    let count = data.stages.len();
+    let mut indegree = vec![0_usize; count];
+    for list in successors {
+        for successor in list {
+            indegree[*successor] = indegree[*successor].saturating_add(1);
+        }
+    }
+    let mut ready: Vec<usize> = (0..count).filter(|stage| indegree[*stage] == 0).collect();
+    let mut order = Vec::with_capacity(count);
+    while !ready.is_empty() {
+        let choice = ready
+            .iter()
+            .enumerate()
+            .min_by(|left, right| stage_keys[*left.1].cmp(&stage_keys[*right.1]))
+            .map(|(slot, _)| slot)?;
+        let stage = ready.swap_remove(choice);
+        order.push(ordinal(stage));
+        for successor in &successors[stage] {
+            indegree[*successor] = indegree[*successor].saturating_sub(1);
+            if indegree[*successor] == 0 {
+                ready.push(*successor);
+            }
+        }
+    }
+    (order.len() == count).then_some(order)
+}
+
+/// Proves every dependency states a real obligation and every read has one.
+fn verify_dependencies(
+    data: &KernelProgramData,
+    accesses: &[Vec<ValueAccess>],
+    definitions: &[Option<ValueDefinition>],
+) -> Result<(), KernelProgramDiagnostic> {
+    for dependency in &data.dependencies {
+        let realized = match dependency.reason {
+            DependencyReasonData::Data(value) => {
+                let value = position(value);
+                definitions[value]
+                    .is_some_and(|definition| definition.stage == dependency.predecessor)
+                    && accesses[value].iter().any(|access| {
+                        access.stage == dependency.successor && access.mode == StageAccessMode::Read
+                    })
+            }
+            DependencyReasonData::StorageHandoff(allocation) => {
+                // A handoff releases storage from one value to a *different*
+                // one; an allocation holding a single value can never carry it.
+                let bound = bound_values(data, position(allocation));
+                bound.iter().any(|old| {
+                    accesses[*old]
+                        .iter()
+                        .any(|access| access.stage == dependency.predecessor)
+                        && bound.iter().any(|new| {
+                            new != old
+                                && definitions[*new].is_some_and(|definition| {
+                                    definition.stage == dependency.successor
+                                })
+                        })
+                })
+            }
+        };
+        if !realized {
+            return Err(KernelProgramDiagnostic::MisattributedDependency);
+        }
+    }
+    for (value, definition) in definitions.iter().enumerate() {
+        let Some(definition) = definition else {
+            continue;
+        };
+        for access in &accesses[value] {
+            if access.mode != StageAccessMode::Read {
+                continue;
+            }
+            let declared = data.dependencies.iter().any(|dependency| {
+                dependency.predecessor == definition.stage
+                    && dependency.successor == access.stage
+                    && dependency.reason == DependencyReasonData::Data(ordinal(value))
+            });
+            if !declared {
+                return Err(KernelProgramDiagnostic::MissingDataDependency);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns the value positions bound to one allocation.
+fn bound_values(data: &KernelProgramData, allocation: usize) -> Vec<usize> {
+    let allocation = ordinal(allocation);
+    data.values
+        .iter()
+        .enumerate()
+        .filter(|(_, value)| value.allocation == allocation)
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Proves every declared value, view, and allocation is actually used.
+fn verify_usage(
+    data: &KernelProgramData,
+    accesses: &[Vec<ValueAccess>],
+) -> Result<(), KernelProgramDiagnostic> {
+    if accesses.iter().any(Vec::is_empty) {
+        return Err(KernelProgramDiagnostic::UnusedValue);
+    }
+    let mut used_views = vec![false; data.views.len()];
+    for stage in &data.stages {
+        for access in &stage.accesses {
+            used_views[position(access.view)] = true;
+        }
+    }
+    if used_views.iter().any(|used| !used) {
+        return Err(KernelProgramDiagnostic::UnusedView);
+    }
+    if (0..data.allocations.len()).any(|allocation| bound_values(data, allocation).is_empty()) {
+        return Err(KernelProgramDiagnostic::UnusedAllocation);
+    }
+    Ok(())
+}
+
+/// Proves the baseline aliasing contract of the first execution profile.
+///
+/// Inputs and outputs never share storage. Only internal temporaries may share
+/// one allocation, and only under the reuse obligations proven separately.
+fn verify_storage(data: &KernelProgramData) -> Result<(), KernelProgramDiagnostic> {
+    for allocation in 0..data.allocations.len() {
+        let bound = bound_values(data, allocation);
+        if bound.len() > 1
+            && bound
+                .iter()
+                .any(|value| data.values[*value].role != ValueRole::Temporary)
+        {
+            return Err(KernelProgramDiagnostic::ForbiddenAlias);
+        }
+    }
+    Ok(())
+}
+
+/// Proves every shared allocation satisfies the conservative reuse contract.
+fn verify_reuse(
+    data: &KernelProgramData,
+    accesses: &[Vec<ValueAccess>],
+    definitions: &[Option<ValueDefinition>],
+    execution_order: &[u32],
+    successors: &[Vec<usize>],
+) -> Result<(), KernelProgramDiagnostic> {
+    let mut slot = vec![0_usize; data.stages.len()];
+    for (index, stage) in execution_order.iter().enumerate() {
+        slot[position(*stage)] = index;
+    }
+    for allocation in 0..data.allocations.len() {
+        let mut bound = bound_values(data, allocation);
+        if bound.len() < 2 {
+            continue;
+        }
+        bound.sort_unstable_by_key(|value| {
+            definitions[*value].map_or(usize::MAX, |definition| slot[position(definition.stage)])
+        });
+        for pair in bound.windows(2) {
+            let (old, new) = (pair[0], pair[1]);
+            let Some(writer) = definitions[new] else {
+                return Err(KernelProgramDiagnostic::MissingWriter);
+            };
+            let writer_slot = slot[position(writer.stage)];
+            let last_user = accesses[old]
+                .iter()
+                .max_by_key(|access| slot[position(access.stage)])
+                .ok_or(KernelProgramDiagnostic::UnusedValue)?;
+            if slot[position(last_user.stage)] >= writer_slot {
+                return Err(KernelProgramDiagnostic::ReuseLifetimeOverlap);
+            }
+            let handed_off = data.dependencies.iter().any(|dependency| {
+                dependency.predecessor == last_user.stage
+                    && dependency.successor == writer.stage
+                    && dependency.reason
+                        == DependencyReasonData::StorageHandoff(ordinal(allocation))
+            });
+            if !handed_off {
+                return Err(KernelProgramDiagnostic::ReuseMissingHandoff);
+            }
+            for access in &accesses[old] {
+                if !reaches(successors, position(access.stage), position(writer.stage)) {
+                    return Err(KernelProgramDiagnostic::ReuseLiveAlias);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns whether `target` is reachable from `source` in the dependency graph.
+///
+/// Reachability, not a position in one chosen linearization, is the reuse
+/// proof: a future concurrent execution profile must preserve it.
+fn reaches(successors: &[Vec<usize>], source: usize, target: usize) -> bool {
+    let mut seen = vec![false; successors.len()];
+    let mut frontier = vec![source];
+    seen[source] = true;
+    while let Some(stage) = frontier.pop() {
+        if stage == target {
+            return true;
+        }
+        for successor in &successors[stage] {
+            if !seen[*successor] {
+                seen[*successor] = true;
+                frontier.push(*successor);
+            }
+        }
+    }
+    false
+}
+
+/// Proves every semantic output is named and every output value is published.
+fn verify_outputs(
+    data: &KernelProgramData,
+    subject: &SemanticSubject,
+) -> Result<(), KernelProgramDiagnostic> {
+    if data.outputs.len() != subject.outputs.len() {
+        return Err(KernelProgramDiagnostic::MissingNamedOutput);
+    }
+    for (index, value) in data.values.iter().enumerate() {
+        if value.role != ValueRole::Output {
+            continue;
+        }
+        if !data
+            .outputs
+            .iter()
+            .any(|output| output.value == ordinal(index))
+        {
+            return Err(KernelProgramDiagnostic::UnboundOutputValue);
+        }
+    }
+    Ok(())
+}
