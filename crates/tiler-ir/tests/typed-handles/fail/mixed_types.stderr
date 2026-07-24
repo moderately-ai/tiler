@@ -6,7 +6,7 @@ error[E0308]: mismatched types
    |             |
    |             arguments to this function are incorrect
    |
-   = note: expected struct `Value<F32>`
+   = note: expected struct `Value<tiler_ir::semantic::F32>`
               found struct `Value<External>`
 note: associated function defined here
   --> src/semantic/standard_operations.rs

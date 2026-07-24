@@ -7,4 +7,4 @@ error[E0308]: mismatched types
   |     ^^^^^ expected `Value<External>`, found `Value<F32>`
   |
   = note: expected struct `Value<External>`
-             found struct `Value<F32>`
+             found struct `Value<tiler_ir::semantic::F32>`

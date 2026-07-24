@@ -48,7 +48,7 @@
 //!
 //! This receipt is deliberately *not* the final executable-program authority. It
 //! is a selection-level receipt over verified scheduled regions, distinct from
-//! structured KIR and from [`crate::physical::VerifiedStructuredKernel`] and a
+//! structured KIR and from [`tiler_ir::kernel::VerifiedKernel`] and a
 //! `KernelProgram`. Post-KIR `KernelProgram` assembly — buffers, initialization,
 //! lifetimes, aliasing, storage handoffs, ABI/launch references, executable stage
 //! coverage, and routing — is a later authority and is neither performed nor

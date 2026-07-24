@@ -5,8 +5,8 @@ use tiler_ir::semantic::{F32, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
 
 use crate::physical::{
-    NumericalRealization, RegionId, ResourceRequirements, TensorRole, VerifiedScheduledRegion,
-    VerifiedStructuredKernel, lower_structured_kernel,
+    NumericalRealization, RegionId, ResourceRequirements, TensorRole, VerifiedKernel,
+    VerifiedScheduledRegion, lower_structured_kernel,
 };
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
@@ -213,7 +213,7 @@ pub(crate) struct ArtifactConstructionPlan {
     request_subject: crate::request::VerifiedRequestSubject,
     verified_program: KernelProgram,
     verified_schedules: Vec<VerifiedScheduledRegion>,
-    verified_kernels: Vec<VerifiedStructuredKernel>,
+    verified_kernels: Vec<VerifiedKernel>,
 }
 
 impl KernelProgram {
@@ -789,7 +789,7 @@ pub(crate) fn build_artifact_plan(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
-    kernels: &[VerifiedStructuredKernel],
+    kernels: &[VerifiedKernel],
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<ArtifactConstructionPlan, ProgramError> {
@@ -898,7 +898,7 @@ pub(crate) fn verify_artifact_plan(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
-    kernels: &[VerifiedStructuredKernel],
+    kernels: &[VerifiedKernel],
     program: &KernelProgram,
     providers: Vec<LoweringProviderIdentity>,
 ) -> Result<(), ProgramError> {
@@ -1366,7 +1366,7 @@ pub(crate) fn assert_kernels_match_program(
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
     program: &KernelProgram,
-    kernels: &[VerifiedStructuredKernel],
+    kernels: &[VerifiedKernel],
 ) -> Result<(), ProgramError> {
     if kernels.len() != scheduled.len()
         || kernels.len() != program.stages.len()
@@ -1388,11 +1388,11 @@ pub(crate) fn assert_kernels_match_program(
                 rule: "kernel-schedule-refinement",
             });
         }
-        if kernel.kernel().buffers.len() != 2 {
+        let [read_buffer, write_buffer] = kernel.buffers().collect::<Vec<_>>()[..] else {
             return Err(ProgramError::Structure {
                 rule: "kernel-buffer-cardinality",
             });
-        }
+        };
         let stage_values = &program.stages[index].values;
         if stage_values.len() != 2 {
             return Err(ProgramError::Structure {
@@ -1413,11 +1413,11 @@ pub(crate) fn assert_kernels_match_program(
             .ok_or(ProgramError::Structure {
                 rule: "kernel-stage-value",
             })?;
-        if kernel.kernel().scheduled_region != program.stages[index].scheduled_region
-            || kernel.kernel().requirements != program.entries[index].requirements
-            || kernel.kernel().numerical != program.entries[index].numerical
-            || kernel.kernel().buffers[0].tensor != read.tensor
-            || kernel.kernel().buffers[1].tensor != write.tensor
+        if kernel.scheduled_region() != program.stages[index].scheduled_region
+            || kernel.requirements() != program.entries[index].requirements
+            || kernel.numerical() != program.entries[index].numerical
+            || read_buffer.tensor != read.tensor
+            || write_buffer.tensor != write.tensor
         {
             return Err(ProgramError::Structure {
                 rule: "kernel-entry-refinement",
