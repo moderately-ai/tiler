@@ -355,12 +355,46 @@ uv run --locked python scripts/check_rust.py
 
 The Rust sub-gate checks the exact workspace/dependency/target contract,
 formatting, all targets, strict Clippy, development tests, optimized numerical
-tests, doctests, warning-free rustdoc, immutable Cargo locks, and the governed
-dependent-array shape conformance fixture. It accepts only the CI-proven macOS
+tests, doctests, warning-free rustdoc, immutable Cargo locks, and each governed
+spike workspace named below. It accepts only the CI-proven macOS
 arm64 and GNU Linux x86-64 profiles, each with a 64-bit little-endian address
 space and native 64-bit atomics. Use explicit dated-toolchain selectors in
 compiler-migration probes; never replace the repository pin with rolling
 `nightly`.
+
+**The Rust sub-gate owns every Cargo invocation the repository gate makes.** It
+is the only phase that selects the pinned toolchain explicitly, rejects rather
+than merely strips hostile Rust environment controls, validates the Cargo
+configuration visible from each workspace, snapshots the governed lockfiles,
+and gives each workspace its own `CARGO_TARGET_DIR`. A Cargo command run from
+the pytest phase, a shell script, or a research harness has none of those and
+is a weaker check wearing the same name, so add it here instead.
+
+**A spike Cargo workspace is compiled by the gate exactly when it retains a
+compiler-produced golden artifact — a `trybuild` `.stderr` — captured on the
+toolchain `rust-toolchain.toml` pins.** Such a file is a positive claim about
+what a compiler emits and it outlives whatever produced it: the claim stays on
+disk unchanged when the source beside it is edited, and only a compilation
+compares the two. Every other predicate over a spike compares a record to a
+file that a source edit silently invalidates. A spike whose evidence is
+deliberately tied to a *different* toolchain is not gate-compilable at all —
+reproducing it needs a compiler the gate has no authority to install, and
+re-recording it on the pin would destroy the claim the spike exists to make;
+it is named as an explicit off-pin exclusion instead, and its diagnostics
+remain retained evidence verified against their record rather than reproduced.
+A spike that retains no such artifact is not compiled: its conclusion is about
+whatever code is present, so there is nothing checked in that can go stale
+against it. `scripts/check_rust.py` enforces the rule in both directions —
+`GATED_SPIKE_WORKSPACES`, `OFF_PIN_SPIKE_WORKSPACES`, and a custody predicate
+that fails when a retained diagnostic appears outside both sets, so admitting a
+golden fixture without deciding its posture is not reachable. Each gated
+workspace must also name every one of its `trybuild` cases in its own run
+transcript, because a glob that stops matching reports a passing test having
+compiled nothing.
+
+**Do not add a `rust-toolchain.toml` to a spike workspace.** The repository pin
+is the sole toolchain authority for everything the gate compiles, and a
+directory-local file would silently select another compiler for the evidence.
 
 The canonical complete contributor and CI gate is:
 
