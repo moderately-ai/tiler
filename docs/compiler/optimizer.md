@@ -156,7 +156,9 @@ Examples of equivalent expressions include:
 
 - consecutive reindexes versus one composed access map;
 - a pointwise operation before or after a reindex when domains permit;
-- alternative contraction associations for future multi-input einsum.
+- alternative associations of a future multi-input einsum contraction, under a numerical policy that permits the regrouping.
+
+Logical equivalence is policy-relative, so the third example is a group only where that policy holds; the first two hold unconditionally. See [logical exploration](#logical-exploration) for the permission each rewrite consumes.
 
 Recomputation, materialization, fusion, and register residency are physical
 implementations of one logical DAG. They do not create new logical equivalence
@@ -203,8 +205,14 @@ These rules add alternatives:
 
 - push a view through a pointwise expression;
 - add contract-conforming alternatives over named pointwise operations;
-- choose alternative contraction associations;
+- choose alternative associations of a tensor contraction only when the effective reassociation permission authorizes the regrouping;
 - reassociate arithmetic or reductions only when numerical policy permits.
+
+Each rule above names the effective numerical permission it consumes, as ADR 0011 requires of every semantic rewrite, and a rule that names none consumes none. Pushing a view through a pointwise expression relocates reads without changing which scalar operations compute a value, and initial floating-point operations are value-only under ADR 0020, so adding or removing an evaluation of one is not observable. This stage's guarantee that it adds only proved contract-preserving forms checks each rule's stated precondition; it does not supply a missing one.
+
+"Contraction" in the third rule is the tensor sense — summation over indices shared by two or more operands — and its association is a numerical question before it is a search question. Regrouping a chain changes which partial sums are formed and rounded, so an effective reassociation permission is necessary. It is not established as sufficient: rewriting `(AB)C` to `A(BC)` also redistributes products across sums rather than only regrouping one reduction's contributors, while [numerical semantics](../numerical-semantics.md) defines reassociation as changing grouping with logical operand order preserved. [`settle-contraction-chain-distributivity-permission`](../../tickets/settle-contraction-chain-distributivity-permission.md) owns that residue; the rule fails closed until it is settled.
+
+`StrictF32NumericalContract::governed` in `crates/tiler-compiler/src/request.rs` is the only numerical contract the compiler registers, and its `reassociation` is `NumericalPermission::Forbidden`. Under it, contraction-order exploration is illegal rather than merely unexplored, and its rejection names that permission. The same contract's separate `contraction` field is ADR 0015's fused-multiply-add permission, which governs whether a tensor contraction's own `accumulator + a * b` step may round once; neither permission implies the other.
 
 ### Region-candidate formation
 
