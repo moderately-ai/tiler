@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, optimizer, conformance, milestone-0b]
 claimed_from: todo
 assignee: agent-prototype-optimizer-conformance-gate
-lease_expires_at: 1784917189
+lease_expires_at: 1784919751
 ---
 Exercise an externally registered operation through the ordinary compiler path,
 not a test-only shortcut. Cover at least two non-isomorphic graph shapes plus
