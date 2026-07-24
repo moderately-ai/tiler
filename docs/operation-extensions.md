@@ -11,7 +11,7 @@ evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.resea
 
 # Operation extension contract
 
-**Status:** accepted semantic registration boundary; compiler capabilities proposed
+**Status:** accepted semantic registration boundary; index/access lowering capabilities implemented and resolved on the compile path, remaining compiler capabilities proposed
 
 ## Ownership boundary
 
@@ -52,6 +52,8 @@ the consuming crate. Therefore:
 This measured limitation is accepted by ADR 0045. It does not make the
 compiler-core extension boundary consumer-specific or close the ordinary
 compiler API.
+
+**Fact — the ordinary compiler API does not exist yet, and the list above describes the intended boundary rather than a reachable one.** `tiler-compiler` exports no compile entry point, and the compilation request and its installed-capability field are crate-private, so no out-of-crate caller supplies providers to a compiler session today. What *is* reachable out of crate is composition: a lowering-capability registry can be built entirely through the public capability surface, and one so composed has been driven through the compiler's own entry point from inside the crate. Composing a registry and installing one are different claims and this contract keeps them apart; [`prototype-public-compiler-api`](../tickets/prototype-public-compiler-api.md) owns the reviewed facade that would make the second true.
 
 ## Registry lifecycle and coherence
 
@@ -118,13 +120,17 @@ providers remain owned by their own later tickets.
 This registry resolves available lowering knowledge and provenance but does not
 prove an occurrence was lowered correctly. That checked refinement — binding an
 exact occurrence, value, access, numerical, and provider selection to a resolved
-provider and proving the emitted work refines it — remains owned by the separate
-checked
+provider and proving the emitted work refines it — is implemented in
+`tiler_compiler::legality`, merged from
 [`semantic-to-index refinement`](../tickets/prototype-semantic-index-refinement.md),
-which is being implemented in parallel. The registered surface is a reviewed
-prototype boundary, not a stabilized compiler-session API; the ordinary public
-compiler session remains a later reviewed boundary these tickets must not
-silently stabilize.
+and both halves now run on the ordinary compile path: every recognized
+occurrence resolves exactly one index/access capability and is then refined
+against the region that capability's provider emitted. The registered surface is
+a reviewed prototype boundary, not a stabilized compiler-session API; the
+ordinary public compiler session remains a later reviewed boundary these tickets
+must not silently stabilize.
+
+Two consequences belong to this contract rather than to the compiler's own. First, a resolved capability's provenance reaches the artifact: a selected plan records the `{provider identity, capability revision}` pair each occurrence resolved, and the compiler re-derives that set from the installed registry rather than trusting what a plan recorded. Second, resolution for this family fails closed, so the two failing dispositions this contract already distinguishes are load-bearing rather than diagnostic preferences — an absent capability says the installed authority was never extended to the occurrence, a contended one says two extensions contradict each other, and neither is resolved by a priority order or a default provider. [The optimizer contract](compiler/optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns the stage's placement and behaviour.
 
 ## Semantic and provider identity
 
@@ -261,6 +267,8 @@ must expose typed ABI, effect, alias, placement, target, numerical, resource,
 and failure-stage boundary contracts; it is not an unrestricted callback in
 semantic IR.
 
+"Separately versioned" is two revisions, not one. The implemented access-lowering family realizes it as a capability revision carried beside, and independent of, the admitting provider's own output-affecting revision: one provider may register several capabilities that move at different rates, and both revisions are retained wherever a lowering's provenance is recorded. A provider whose emitted lowering changes must raise the capability revision, because that is the half a compiled artifact's provenance is keyed on.
+
 The bounded P0 physical frontier implements scheduled-kernel providers only.
 The reviewed
 [`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md)
@@ -282,8 +290,14 @@ mutable global state, registry order, or call order.
   behavior, reference-evaluator capability, and scoped conformance evidence.
   Its decompositions and rewrites state exactly which input contract they
   preserve and which subordinate contracts they create.
-- Missing optional knowledge is conservative.
+- Missing optional knowledge is conservative. For the one family the compile
+  path resolves today, index/access lowering, "conservative" is a fail-closed
+  compile refusal attributed to the occurrence, not a narrowed result.
 - Contradictory capability answers are hard diagnostics, not fallback misses.
+  A contradiction is a *disproved* predicate rather than a deferred one, and
+  the distinction is checked: an absent capability and a contended one reach
+  the explain trace as different dispositions, so a reader is never left to
+  infer which of the two occurred.
 
 An extension's semantic-equivalence claim remains trusted. Host verification
 can establish structural, typing, shape, memory-safety, and declared numerical

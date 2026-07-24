@@ -665,6 +665,8 @@ executable program for it and must diagnose or delegate it. Compiler/artifact
 identity must include the registered dialect's semantic and lowering
 fingerprint.
 
+"Conservative" is the *floor* on that diagnosis, not a description of every family's behaviour. The iteration/access lowering entry is the one family the compiler resolves today, and it is stricter: an occurrence for which no installed capability resolves stops the compilation with a typed, occurrence-attributed cause rather than degrading to a narrower result, because a program with an unlowerable occurrence has no valid plan to degrade to. [The optimizer contract](compiler/optimizer.md#resolution-is-unconditional-and-fails-closed) owns that stage.
+
 Semantic graph identity excludes provider revisions. Compilation-request
 provenance records the complete frozen registry, reached provider-independent
 definitions, and admission-provider revisions as distinct subjects. A selected
@@ -957,6 +959,8 @@ the reached scalar-definition and lowering-provider provenance required by
 compilation and artifact identity. Matching shapes, dtypes, or operation names
 cannot substitute for that evidence.
 
+That evidence relates the reached scalar authority to the emitting capability's declaration by **containment, not equality**: a region must reach nothing beyond the scalar operations its capability declared it may emit, and it need not reach all of them. The declaration is a bound on what a lowering can compute, and a bound is exactly what containment checks. Equality would additionally require every declared operation to be exercised, which is a claim about one occurrence rather than about the capability and which no shape-general provider can satisfy — one capability lowers every occurrence of its family and signature, while which declared operations a given occurrence needs depends on that occurrence's shapes and attributes. [The optimizer contract](compiler/optimizer.md#scalar-authority-conformance-is-containment-not-equality) owns the reasoning and the worked reduction case; this layer states only which relation the evidence carries.
+
 Before that semantic binding, a selected frozen scalar registry revalidates
 every ordinary and reducer-body scalar application in a verified structural
 region. It checks canonical attributes, operand/result arity, inferred result
@@ -1064,6 +1068,8 @@ semantic sourceability or operation equivalence. A relation such as
 `y[i] = x[0]` can be structurally valid and in bounds while being an incorrect
 lowering of semantic `y[i] = x[i]`; later legality evidence must reject that
 mismatch.
+
+The finite fallbacks above are resource-bounded, and exceeding a bound is reported as a distinct diagnostic rather than folded into a refusal. A proof-resource diagnostic names the exhausted resource, the amount the proof would have required, and the governed limit, and it means that the enumeration stopped — not that the region was disproved. Every other diagnostic in the same result *is* a refusal. A consumer must therefore distinguish the two before deciding anything: a result carrying only proof-resource diagnostics leaves its predicates open, while one carrying any other diagnostic is a rejection whatever else accompanies it. [The optimizer contract](compiler/optimizer.md#refinement-is-exhaustive-finite-evidence-with-an-explicit-gap) owns what the compiler does with each.
 
 The first access profile remains out-of-place: input boundaries may be read but
 not written, output boundaries may be written but not read, and every declared
@@ -1204,8 +1210,16 @@ output/scratch acquisition or encoding. Later allocation and launch invariants
 fail closed. Estimates may guide search and dominance but cannot prove
 feasibility.
 
-`Unknown` candidates remain explain/search state only and cannot enter an
-executable `ImplementationFrontier` or manifest.
+An `Unknown` *feasibility* verdict keeps its candidate in explain and search
+state only; such a candidate cannot enter an executable `ImplementationFrontier`
+or manifest. This rule is about this assessment and does not generalize to every
+`Unknown` in the corpus. An unproven predicate elsewhere may be an explicit gap
+recorded against a subject that remains valid — an [index-region refinement the
+proof budget could not
+afford](compiler/optimizer.md#refinement-is-exhaustive-finite-evidence-with-an-explicit-gap)
+is one, and its plan is retained. What makes the feasibility verdict different is
+that it is a *hard* predicate over a target: an implementation admitted without
+one could be dispatched to a device that cannot run it.
 
 Cross-kernel materialized buffers, dependencies, and lifetime intervals belong
 to `KernelSubprogram` or `KernelProgram`, not an individual kernel schedule.

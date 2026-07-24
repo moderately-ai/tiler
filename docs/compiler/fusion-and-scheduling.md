@@ -26,21 +26,25 @@ region's internal computation with members renumbered to region-local positions,
 while occurrence additionally pins the exact graph site in canonical
 coordinates. Five deterministic budgets (`region_members`,
 `region_boundary_outputs`, `region_live_values`, `region_candidates_per_seed`,
-`region_expansions`) bound the search, and every budget that fires is retained
+`region_expansions`) bound *this* search, and every budget that fires is retained
 as a typed explain budget-stop, so a legal alternative lost to a bound is
 reported rather than silently dropped. Enumeration is validated against an
 independent exhaustive subset oracle that agrees set-for-set without budget
 pressure.
 
+Those five are region formation's own bounds, not the compilation's. Other stages carry their own, and one of them differs in kind rather than degree: a *search* budget stops one growth path while complete coverage survives, so what it costs is an alternative, whereas the [proof budget](optimizer.md#refinement-is-exhaustive-finite-evidence-with-an-explicit-gap) that bounds an index region's exhaustive access verification costs a *proof*, leaving its subject's predicate open while the plan containing it stands. Both are typed budget stops in the trace and they must not be read as the same finding.
+
 Enumeration only proposes candidates. It selects no cover, chooses no
 implementation, lowers no index region, plans nothing physical, and costs
-nothing; those remain the later
+nothing; those are separate authorities —
 [complete-cover enumeration](../../tickets/prototype-region-cover-enumeration.md),
 [physical-implementation frontier](../../tickets/prototype-physical-implementation-frontier.md),
-and [complete physical-plan selection](../../tickets/prototype-complete-physical-plan-selection.md)
-stages. Producer duplication stays disabled in the first profile while the
+and [complete physical-plan selection](../../tickets/prototype-complete-physical-plan-selection.md).
+Producer duplication stays disabled in the first profile while the
 exhaustive tiny-DAG oracle retains it as a completeness witness. This stage is
 a candidate enumerator, not a cover selector or a public fusion API.
+
+Index-region lowering is not one of the later stages in that list. It runs *between* candidate enumeration and cover enumeration, per recognized occurrence rather than per candidate region: the compile path resolves each occurrence's index/access lowering capability and refines the region that capability's provider emits before the first cover is enumerated, because a cover grouping occurrences the installed authority cannot lower would be a claim about plans nothing could realize. Cover enumeration is therefore an independent legality authority that nonetheless runs downstream of a successful resolution. [The optimizer contract](optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns that stage.
 
 Every prototype candidate recomputes its stable identity from its exact member
 occurrences and boundaries. Numerical evidence is bound to that candidate, the
