@@ -61,6 +61,18 @@ impl VerifiedScheduledRegion {
     pub(crate) fn requirements(&self) -> ResourceRequirements {
         self.verified.requirements()
     }
+    /// Returns the canonical, transient-ordinal-independent identity of the inner
+    /// verified region.
+    ///
+    /// This is the shared-IR identity (ADR 0070) derived purely from the
+    /// normalized schedule content, so equivalent regions proposed by different
+    /// physical providers share it. The implementation frontier folds it into a
+    /// per-proposal identity that additionally distinguishes provider provenance.
+    pub(crate) fn canonical_identity(
+        &self,
+    ) -> &tiler_ir::schedule::CanonicalScheduledRegionIdentity {
+        self.verified.canonical_identity()
+    }
     pub(crate) const fn target_profile_key(&self) -> &'static str {
         self.target_profile_key
     }
@@ -262,7 +274,16 @@ pub(crate) fn build_fused_scheduled_region(
     verify_schedule(fused, members, request)
 }
 
-fn pointwise_region(request: &VerifiedTargetRequest) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+/// Builds the canonical materialized pointwise scheduled region for one request.
+///
+/// This constructs the raw, not-yet-verified region and its recognized pointwise
+/// members; it applies no intrinsic, subject-binding, or feasibility gate. The
+/// implementation frontier and its providers use it to obtain a canonical region
+/// they then re-submit through the ordinary checked verification path, including
+/// for a domain the governed profile cannot dispatch.
+pub(crate) fn pointwise_region(
+    request: &VerifiedTargetRequest,
+) -> (ScheduledRegion, Vec<SemanticMemberId>) {
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(0),
@@ -508,6 +529,27 @@ pub(crate) fn verify_schedule(
     semantic_members: Vec<SemanticMemberId>,
     request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
+    verify_schedule_with_feasibility(region, semantic_members, request)
+        .map(|(verified, _)| verified)
+}
+
+/// Verifies one scheduled region and additionally surfaces the resolved
+/// feasibility predicates that a proven target assessment carries.
+///
+/// This runs the exact checked path [`verify_schedule`] runs — the request-subject
+/// precondition, whole-region intrinsic verification, numerical-realization
+/// agreement, the request-subject binding, and the single hard-feasibility
+/// decision — and additionally returns the resolved predicates of a
+/// [`FeasibilityOutcome::Proven`](crate::feasibility::FeasibilityOutcome) verdict.
+/// The physical implementation frontier retains them as admission evidence for an
+/// enumerated proposal. A provider cannot bypass any of these checks: a
+/// [`PhysicalError::Target`] means the proposal is hard-infeasible (never a cost),
+/// and any other [`PhysicalError`] means the provider emitted invalid IR.
+pub(crate) fn verify_schedule_with_feasibility(
+    region: ScheduledRegion,
+    semantic_members: Vec<SemanticMemberId>,
+    request: &VerifiedTargetRequest,
+) -> Result<(VerifiedScheduledRegion, Vec<ResolvedPredicate>), PhysicalError> {
     let id = region.index.id;
     let subject = request.subject();
     if !request.is_authoritative()
@@ -523,18 +565,21 @@ pub(crate) fn verify_schedule(
         return intrinsic("numerical-realization", id);
     }
     verify_region_subject_binding(verified.region(), &semantic_members, &subject)?;
-    assess_target(
+    let predicates = assess_region(
         id,
         verified.requirements(),
         verified.region().schedule.work_items,
         &request.target_profile(),
     )?;
-    Ok(VerifiedScheduledRegion {
-        verified,
-        semantic_members,
-        target_profile_key: request.target_profile().key,
-        request_subject: subject,
-    })
+    Ok((
+        VerifiedScheduledRegion {
+            verified,
+            semantic_members,
+            target_profile_key: request.target_profile().key,
+            request_subject: subject,
+        },
+        predicates,
+    ))
 }
 
 /// Maps an intrinsic schedule-verification failure onto the physical-error
@@ -640,15 +685,6 @@ fn reduction_access_matches(
                 && output_shape == normalized.output_shape()
                 && axes == normalized.reduction_axes()
     )
-}
-
-fn assess_target(
-    region: RegionId,
-    requirements: ResourceRequirements,
-    work_items: u64,
-    target: &PrototypeTargetProfile,
-) -> Result<(), PhysicalError> {
-    assess_region(region, requirements, work_items, target).map(|_| ())
 }
 
 /// Assesses one scheduled region against the typed feasibility authority.

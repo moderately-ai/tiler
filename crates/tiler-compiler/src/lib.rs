@@ -6,6 +6,7 @@
 pub mod capability;
 mod explain;
 mod feasibility;
+mod frontier;
 mod fusion;
 mod fusion_legality;
 pub mod legality;
