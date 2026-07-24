@@ -1,12 +1,19 @@
-schema	tiler.apple-numerical-behaviour/v1
-probe.repository_base_revision	71713465b078710e2fb6b9c67699f2646c641ec2
-probe.harness_sha256	74aeef66a6cc8d2d96f50cb157300711b97281f779a83c4f6d8f3381715a3423
-probe.host_source_sha256	c690243b5472de1d410b400a920a476050f5db311bc26fe37f471197c3a5b466
+schema	tiler.apple-numerical-behaviour/v2
+probe.repository_base_revision	ffbfce1f44d5d23c592131a773083c9d8d5e7f58
+probe.harness_sha256	cf056d17d0b3ce65cb28d39aab08ca461f0a0f429c5a19f18608a0b5bc68092a
+probe.host_source_sha256	6ddaca0e8cecf355c9921a3a1061bc060f61397770d107aee7ef31d6429e7006
 probe.target	air64-apple-macos13.0
 probe.fixed_flags	-std=metal3.1 -fmetal-math-fp32-functions=precise
 probe.entry_point	tiler_probe
 probe.operands	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
-environment.date_utc	2026-07-24T17:52:55Z
+probe.runtime_fixed_options	fpfun=precise lang=3.1
+probe.runtime_paired_optimization	-O2
+probe.guard_layers.offline	emitted-arithmetic execution-witness
+probe.guard_layers.runtime	execution-witness
+probe.offline_flag_without_runtime_counterpart.0	-target: MTLCompileOptions has no target property; the runtime compiler targets the device and OS it is running on
+probe.offline_flag_without_runtime_counterpart.1	-ffp-contract: MTLCompileOptions has no contraction property; the source-level `#pragma METAL fp contract(...)` is accepted by this front end but changing the source would break the byte-identical pairing the comparison depends on
+probe.offline_flag_without_runtime_counterpart.2	-O0: MTLLibraryOptimizationLevel offers Default and Size only
+environment.date_utc	2026-07-24T19:32:31Z
 environment.os_version	27.0
 environment.os_build	26A5388g
 environment.machine	arm64
@@ -15,7 +22,14 @@ environment.sdk_version	26.5
 environment.sdk_build	25F70
 environment.metal_version	Apple metal version 32023.883 (metalfe-32023.883)
 environment.metallib_version	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+environment.runtime_compiler	Apple metal version 32023.921 (metalfe-32023.921)
 environment.device	Apple M4 Max
+case.contraction_pair.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair.runtime.safe.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
 case.contraction_pair.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.contraction_pair.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
 case.contraction_pair.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
@@ -25,6 +39,12 @@ case.contraction_pair.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f
 case.contraction_pair.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.contraction_pair.safe.O2.contract-on.float_operations	fmul fadd
 case.contraction_pair.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair_canonicalized.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_canonicalized.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair_canonicalized.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair_canonicalized.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_canonicalized.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair_canonicalized.runtime.safe.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
 case.contraction_pair_canonicalized.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.contraction_pair_canonicalized.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
 case.contraction_pair_canonicalized.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
@@ -40,6 +60,24 @@ case.materialize.fast.O2.contract-off.results	00000001 00400000 007fffff 0080000
 case.materialize.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.materialize.relaxed.O2.contract-off.float_operations	
 case.materialize.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.materialize.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.materialize.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.materialize.runtime.fast.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.materialize.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.materialize.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.materialize.runtime.fast.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.materialize.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.materialize.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.materialize.runtime.relaxed.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.materialize.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.materialize.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.materialize.runtime.relaxed.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.materialize.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.materialize.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.materialize.runtime.safe.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.materialize.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.materialize.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.materialize.runtime.safe.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
 case.materialize.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.materialize.safe.O2.contract-off.float_operations	
 case.materialize.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
@@ -55,6 +93,24 @@ case.multiply_half.relaxed.O0.contract-off.results	00000000 00000000 00000000 00
 case.multiply_half.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.multiply_half.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
 case.multiply_half.relaxed.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.multiply_half.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_half.runtime.fast.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.multiply_half.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_half.runtime.fast.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.multiply_half.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_half.runtime.relaxed.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.multiply_half.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_half.runtime.relaxed.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.multiply_half.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_half.runtime.safe.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.multiply_half.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_half.runtime.safe.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
 case.multiply_half.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.multiply_half.safe.O0.contract-off.float_operations	fmul
 case.multiply_half.safe.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
@@ -73,6 +129,24 @@ case.multiply_one.relaxed.O0.contract-off.results	00000001 00400000 007fffff 008
 case.multiply_one.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.multiply_one.relaxed.O2.contract-off.float_operations	
 case.multiply_one.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.multiply_one.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_one.runtime.fast.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.multiply_one.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_one.runtime.fast.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.multiply_one.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_one.runtime.relaxed.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.multiply_one.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_one.runtime.relaxed.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.multiply_one.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_one.runtime.safe.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.multiply_one.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_one.runtime.safe.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
 case.multiply_one.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.multiply_one.safe.O0.contract-off.float_operations	fmul
 case.multiply_one.safe.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
@@ -91,6 +165,24 @@ case.multiply_two.relaxed.O0.contract-off.results	00000000 00000000 00000000 010
 case.multiply_two.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.multiply_two.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
 case.multiply_two.relaxed.O2.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.multiply_two.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_two.runtime.fast.opt-default.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.multiply_two.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_two.runtime.fast.opt-size.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.multiply_two.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_two.runtime.relaxed.opt-default.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.multiply_two.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_two.runtime.relaxed.opt-size.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.multiply_two.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_two.runtime.safe.opt-default.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.multiply_two.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_two.runtime.safe.opt-size.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
 case.multiply_two.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.multiply_two.safe.O0.contract-off.float_operations	fmul
 case.multiply_two.safe.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
@@ -109,6 +201,24 @@ case.scale_one_bias_zero.relaxed.O0.contract-off.results	00000001 00400000 007ff
 case.scale_one_bias_zero.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.scale_one_bias_zero.relaxed.O2.contract-off.float_operations	
 case.scale_one_bias_zero.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.scale_one_bias_zero.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.runtime.fast.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.scale_one_bias_zero.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.runtime.fast.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.scale_one_bias_zero.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.runtime.relaxed.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.scale_one_bias_zero.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.runtime.relaxed.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.scale_one_bias_zero.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.runtime.safe.opt-default.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.scale_one_bias_zero.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.runtime.safe.opt-size.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
 case.scale_one_bias_zero.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.scale_one_bias_zero.safe.O0.contract-off.float_operations	fmul fadd
 case.scale_one_bias_zero.safe.O0.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
@@ -133,6 +243,24 @@ case.scale_two_bias_one.relaxed.O2.contract-off.results	3f800000 3f800000 3f8000
 case.scale_two_bias_one.relaxed.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.scale_two_bias_one.relaxed.O2.contract-on.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
 case.scale_two_bias_one.relaxed.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.scale_two_bias_one.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.runtime.fast.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.scale_two_bias_one.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.runtime.fast.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.scale_two_bias_one.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.runtime.relaxed.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.scale_two_bias_one.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.runtime.relaxed.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.scale_two_bias_one.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.scale_two_bias_one.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.runtime.safe.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
 case.scale_two_bias_one.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.scale_two_bias_one.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
 case.scale_two_bias_one.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
@@ -142,4 +270,44 @@ case.scale_two_bias_one.safe.O2.contract-off.results	3f800000 3f800000 3f800000 
 case.scale_two_bias_one.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.scale_two_bias_one.safe.O2.contract-on.float_operations	fmul fadd
 case.scale_two_bias_one.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+comparison.contraction_pair.runtime.safe.opt-default	agree-on-some candidates=contraction_pair.safe.O2.contract-fast,contraction_pair.safe.O2.contract-off,contraction_pair.safe.O2.contract-on matched=contraction_pair.safe.O2.contract-off,contraction_pair.safe.O2.contract-on
+comparison.contraction_pair.runtime.safe.opt-size	agree-on-some candidates=contraction_pair.safe.O2.contract-fast,contraction_pair.safe.O2.contract-off,contraction_pair.safe.O2.contract-on matched=contraction_pair.safe.O2.contract-off,contraction_pair.safe.O2.contract-on
+comparison.contraction_pair_canonicalized.runtime.safe.opt-default	agree candidates=contraction_pair_canonicalized.safe.O2.contract-fast,contraction_pair_canonicalized.safe.O2.contract-off,contraction_pair_canonicalized.safe.O2.contract-on matched=contraction_pair_canonicalized.safe.O2.contract-fast,contraction_pair_canonicalized.safe.O2.contract-off,contraction_pair_canonicalized.safe.O2.contract-on
+comparison.contraction_pair_canonicalized.runtime.safe.opt-size	agree candidates=contraction_pair_canonicalized.safe.O2.contract-fast,contraction_pair_canonicalized.safe.O2.contract-off,contraction_pair_canonicalized.safe.O2.contract-on matched=contraction_pair_canonicalized.safe.O2.contract-fast,contraction_pair_canonicalized.safe.O2.contract-off,contraction_pair_canonicalized.safe.O2.contract-on
+comparison.materialize.runtime.fast.opt-default	agree candidates=materialize.fast.O2.contract-off matched=materialize.fast.O2.contract-off
+comparison.materialize.runtime.fast.opt-size	agree candidates=materialize.fast.O2.contract-off matched=materialize.fast.O2.contract-off
+comparison.materialize.runtime.relaxed.opt-default	agree candidates=materialize.relaxed.O2.contract-off matched=materialize.relaxed.O2.contract-off
+comparison.materialize.runtime.relaxed.opt-size	agree candidates=materialize.relaxed.O2.contract-off matched=materialize.relaxed.O2.contract-off
+comparison.materialize.runtime.safe.opt-default	agree candidates=materialize.safe.O2.contract-off matched=materialize.safe.O2.contract-off
+comparison.materialize.runtime.safe.opt-size	agree candidates=materialize.safe.O2.contract-off matched=materialize.safe.O2.contract-off
+comparison.multiply_half.runtime.fast.opt-default	agree candidates=multiply_half.fast.O2.contract-off matched=multiply_half.fast.O2.contract-off
+comparison.multiply_half.runtime.fast.opt-size	agree candidates=multiply_half.fast.O2.contract-off matched=multiply_half.fast.O2.contract-off
+comparison.multiply_half.runtime.relaxed.opt-default	agree candidates=multiply_half.relaxed.O2.contract-off matched=multiply_half.relaxed.O2.contract-off
+comparison.multiply_half.runtime.relaxed.opt-size	agree candidates=multiply_half.relaxed.O2.contract-off matched=multiply_half.relaxed.O2.contract-off
+comparison.multiply_half.runtime.safe.opt-default	agree candidates=multiply_half.safe.O2.contract-off matched=multiply_half.safe.O2.contract-off
+comparison.multiply_half.runtime.safe.opt-size	agree candidates=multiply_half.safe.O2.contract-off matched=multiply_half.safe.O2.contract-off
+comparison.multiply_one.runtime.fast.opt-default	agree candidates=multiply_one.fast.O2.contract-off matched=multiply_one.fast.O2.contract-off
+comparison.multiply_one.runtime.fast.opt-size	agree candidates=multiply_one.fast.O2.contract-off matched=multiply_one.fast.O2.contract-off
+comparison.multiply_one.runtime.relaxed.opt-default	agree candidates=multiply_one.relaxed.O2.contract-off matched=multiply_one.relaxed.O2.contract-off
+comparison.multiply_one.runtime.relaxed.opt-size	agree candidates=multiply_one.relaxed.O2.contract-off matched=multiply_one.relaxed.O2.contract-off
+comparison.multiply_one.runtime.safe.opt-default	agree candidates=multiply_one.safe.O2.contract-off matched=multiply_one.safe.O2.contract-off
+comparison.multiply_one.runtime.safe.opt-size	agree candidates=multiply_one.safe.O2.contract-off matched=multiply_one.safe.O2.contract-off
+comparison.multiply_two.runtime.fast.opt-default	agree candidates=multiply_two.fast.O2.contract-off matched=multiply_two.fast.O2.contract-off
+comparison.multiply_two.runtime.fast.opt-size	agree candidates=multiply_two.fast.O2.contract-off matched=multiply_two.fast.O2.contract-off
+comparison.multiply_two.runtime.relaxed.opt-default	agree candidates=multiply_two.relaxed.O2.contract-off matched=multiply_two.relaxed.O2.contract-off
+comparison.multiply_two.runtime.relaxed.opt-size	agree candidates=multiply_two.relaxed.O2.contract-off matched=multiply_two.relaxed.O2.contract-off
+comparison.multiply_two.runtime.safe.opt-default	agree candidates=multiply_two.safe.O2.contract-off matched=multiply_two.safe.O2.contract-off
+comparison.multiply_two.runtime.safe.opt-size	agree candidates=multiply_two.safe.O2.contract-off matched=multiply_two.safe.O2.contract-off
+comparison.scale_one_bias_zero.runtime.fast.opt-default	agree candidates=scale_one_bias_zero.fast.O2.contract-off matched=scale_one_bias_zero.fast.O2.contract-off
+comparison.scale_one_bias_zero.runtime.fast.opt-size	agree candidates=scale_one_bias_zero.fast.O2.contract-off matched=scale_one_bias_zero.fast.O2.contract-off
+comparison.scale_one_bias_zero.runtime.relaxed.opt-default	agree candidates=scale_one_bias_zero.relaxed.O2.contract-off matched=scale_one_bias_zero.relaxed.O2.contract-off
+comparison.scale_one_bias_zero.runtime.relaxed.opt-size	agree candidates=scale_one_bias_zero.relaxed.O2.contract-off matched=scale_one_bias_zero.relaxed.O2.contract-off
+comparison.scale_one_bias_zero.runtime.safe.opt-default	agree candidates=scale_one_bias_zero.safe.O2.contract-off matched=scale_one_bias_zero.safe.O2.contract-off
+comparison.scale_one_bias_zero.runtime.safe.opt-size	agree candidates=scale_one_bias_zero.safe.O2.contract-off matched=scale_one_bias_zero.safe.O2.contract-off
+comparison.scale_two_bias_one.runtime.fast.opt-default	agree candidates=scale_two_bias_one.fast.O2.contract-fast,scale_two_bias_one.fast.O2.contract-off,scale_two_bias_one.fast.O2.contract-on matched=scale_two_bias_one.fast.O2.contract-fast,scale_two_bias_one.fast.O2.contract-off,scale_two_bias_one.fast.O2.contract-on
+comparison.scale_two_bias_one.runtime.fast.opt-size	agree candidates=scale_two_bias_one.fast.O2.contract-fast,scale_two_bias_one.fast.O2.contract-off,scale_two_bias_one.fast.O2.contract-on matched=scale_two_bias_one.fast.O2.contract-fast,scale_two_bias_one.fast.O2.contract-off,scale_two_bias_one.fast.O2.contract-on
+comparison.scale_two_bias_one.runtime.relaxed.opt-default	agree candidates=scale_two_bias_one.relaxed.O2.contract-fast,scale_two_bias_one.relaxed.O2.contract-off,scale_two_bias_one.relaxed.O2.contract-on matched=scale_two_bias_one.relaxed.O2.contract-fast,scale_two_bias_one.relaxed.O2.contract-off,scale_two_bias_one.relaxed.O2.contract-on
+comparison.scale_two_bias_one.runtime.relaxed.opt-size	agree candidates=scale_two_bias_one.relaxed.O2.contract-fast,scale_two_bias_one.relaxed.O2.contract-off,scale_two_bias_one.relaxed.O2.contract-on matched=scale_two_bias_one.relaxed.O2.contract-fast,scale_two_bias_one.relaxed.O2.contract-off,scale_two_bias_one.relaxed.O2.contract-on
+comparison.scale_two_bias_one.runtime.safe.opt-default	agree candidates=scale_two_bias_one.safe.O2.contract-fast,scale_two_bias_one.safe.O2.contract-off,scale_two_bias_one.safe.O2.contract-on matched=scale_two_bias_one.safe.O2.contract-fast,scale_two_bias_one.safe.O2.contract-off,scale_two_bias_one.safe.O2.contract-on
+comparison.scale_two_bias_one.runtime.safe.opt-size	agree candidates=scale_two_bias_one.safe.O2.contract-fast,scale_two_bias_one.safe.O2.contract-off,scale_two_bias_one.safe.O2.contract-on matched=scale_two_bias_one.safe.O2.contract-fast,scale_two_bias_one.safe.O2.contract-off,scale_two_bias_one.safe.O2.contract-on
 probe.status	complete

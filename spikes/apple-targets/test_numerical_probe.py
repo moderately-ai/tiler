@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -74,13 +75,30 @@ def is_subnormal(bits: int) -> bool:
 def synthetic(
     kernel: str, operations: int, results: dict[int, int], *, flags: tuple[str, ...] = ()
 ) -> PROBE.Observation:
-    """Build an observation without a toolchain, for the pure guard tests."""
+    """Build an offline observation without a toolchain, for the pure guard tests."""
     case = PROBE.Case(kernel, PROBE.Configuration("safe", "2", "off"))
     return PROBE.Observation(
         case=case,
         compile_options=("air.compile.denorms_disable",),
         operations=tuple(PROBE.FloatOperation("fadd", flags) for _ in range(operations)),
         results=tuple(results.get(operand, operand) for operand in PROBE.OPERANDS),
+        applied_options=None,
+        archived_options=None,
+    )
+
+
+def synthetic_runtime(
+    kernel: str, results: dict[int, int], *, mode: str = "safe"
+) -> PROBE.Observation:
+    """Build a runtime observation, whose compile side is unreadable rather than empty."""
+    case = PROBE.Case(kernel, PROBE.RuntimeConfiguration(mode, "default"))
+    return PROBE.Observation(
+        case=case,
+        compile_options=None,
+        operations=None,
+        results=tuple(results.get(operand, operand) for operand in PROBE.OPERANDS),
+        applied_options=f"math={mode},fpfun=precise,lang=3.1,opt=default",
+        archived_options="air.compile.denorms_disable",
     )
 
 
@@ -187,6 +205,139 @@ def test_every_generated_kernel_declares_the_entry_point_and_the_exact_constants
         assert ".0f" not in source and "e+" not in source, (
             f"{kernel.name}: a decimal float literal would put host rendering in the path"
         )
+
+
+def test_an_unreadable_module_and_a_module_with_no_arithmetic_are_never_confused() -> None:
+    """`None` and `()` must stay different, because only one of them is a measurement.
+
+    `()` says the harness read the module and found no arithmetic. `None` says
+    the compilation path gave it no module to read, which is the runtime path's
+    situation. Collapsing them would either fabricate a compile-side fact for
+    every runtime case or classify every one of them `no-emitted-arithmetic`,
+    and this is the assertion that stops a future edit doing either.
+    """
+    probe = PROBE.INPUT_FLUSH
+    witness = PROBE.BY_NAME["multiply_two"].witness
+    assert witness is not None
+    admissible = {witness.operand: witness.executed, probe.operand: probe.flushing}
+
+    measured_empty = synthetic("multiply_two", 0, admissible)
+    assert measured_empty.operations == ()
+    assert measured_empty.operation_count == 0
+    assert PROBE.subnormal_verdict(measured_empty, probe) is PROBE.Verdict.NO_EMITTED_ARITHMETIC
+
+    unreadable = synthetic_runtime("multiply_two", admissible)
+    assert unreadable.operations is None
+    assert unreadable.operation_count is None
+    assert PROBE.subnormal_verdict(unreadable, probe) is PROBE.Verdict.FLUSHED_TO_ZERO
+
+
+def test_the_runtime_path_declares_only_the_guard_layer_it_can_supply() -> None:
+    """A runtime observation must advertise one layer, and the offline one both."""
+    assert synthetic_runtime("multiply_two", {}).guard_layers == (PROBE.EXECUTION_WITNESS,)
+    assert synthetic("multiply_two", 1, {}).guard_layers == (
+        PROBE.EMITTED_ARITHMETIC,
+        PROBE.EXECUTION_WITNESS,
+    )
+
+
+def test_the_surviving_guard_layer_still_refuses_a_deleted_operation() -> None:
+    """Losing layer 1 must not cost the guard its ability to refuse.
+
+    Layer 2 is the layer that caught the trap at `-O0` where layer 1 passed, so
+    it has to keep refusing on a path that has only layer 2. The unguarded
+    reading of the same observation must still be `preserved`, or this test is
+    not exercising the trap at all.
+    """
+    probe = PROBE.IDENTITY_VALUED_FLUSH
+    witness = PROBE.BY_NAME["scale_one_bias_zero"].witness
+    assert witness is not None
+    observation = synthetic_runtime(
+        "scale_one_bias_zero",
+        {witness.operand: witness.deleted, probe.operand: probe.preserving},
+        mode="relaxed",
+    )
+    assert PROBE.subnormal_verdict(observation, probe) is PROBE.Verdict.ARITHMETIC_NOT_EXECUTED
+    assert PROBE.naive_verdict(observation, probe) is PROBE.Verdict.PRESERVED
+
+
+def test_every_runtime_case_has_an_offline_case_to_be_compared_against() -> None:
+    """A runtime case with no counterpart would be measured and never compared."""
+    offline = {
+        (case.kernel, case.configuration.math_mode)
+        for case in PROBE.cases()
+        if isinstance(case.configuration, PROBE.Configuration)
+        and case.configuration.optimization == PROBE.RUNTIME_PAIRED_OPTIMIZATION
+    }
+    for case in PROBE.runtime_cases():
+        assert isinstance(case.configuration, PROBE.RuntimeConfiguration)
+        assert (case.kernel, case.configuration.math_mode) in offline, case.key
+
+
+def test_a_runtime_result_matching_no_offline_candidate_is_the_divergence_outcome() -> None:
+    """Only `differ` may mean the two compilers disagree.
+
+    `agree-on-some` arises where the offline candidates differ from each other,
+    which happens only on an axis `MTLCompileOptions` cannot express; treating it
+    as a disagreement would report a missing flag as a compiler divergence.
+    """
+    candidates = ("k.safe.O2.contract-off", "k.safe.O2.contract-fast")
+    results = (0x3F800000,) * len(PROBE.OPERANDS)
+    everything = PROBE.PathComparison("k.runtime.safe.opt-default", candidates, candidates, results)
+    some = PROBE.PathComparison("k.runtime.safe.opt-default", candidates, candidates[:1], results)
+    nothing = PROBE.PathComparison("k.runtime.safe.opt-default", candidates, (), results)
+    assert everything.agreement is PROBE.Agreement.AGREE
+    assert some.agreement is PROBE.Agreement.AGREE_ON_SOME
+    assert nothing.agreement is PROBE.Agreement.DIFFER
+    assert not everything.agreement.is_divergence
+    assert not some.agreement.is_divergence
+    assert nothing.agreement.is_divergence
+    assert "3f800000" in nothing.render(), "a divergence must record what the runtime path returned"
+
+
+def test_the_record_omits_the_float_operations_row_for_a_runtime_case() -> None:
+    """The record must not carry an empty row where no module was read.
+
+    A reader of `case.<key>.float_operations` is entitled to treat it as a
+    measurement, so a runtime case has to have no such row rather than an empty
+    one. The comparison row has to be present for the same reason: it is what
+    makes a divergence fail the gate instead of being quietly rewritten.
+    """
+    probe = PROBE.INPUT_FLUSH
+    witness = PROBE.BY_NAME["multiply_two"].witness
+    assert witness is not None
+    results = {witness.operand: witness.executed, probe.operand: probe.flushing}
+    offline = synthetic("multiply_two", 1, results)
+    runtime = synthetic_runtime("multiply_two", results)
+    run = PROBE.Run(
+        environment={"date_utc": "unreported", "device": "synthetic"},
+        observations={offline.case.key: offline, runtime.case.key: runtime},
+    )
+    rows = dict(PROBE.record_rows(run))
+    assert f"case.{offline.case.key}.float_operations" in rows
+    assert f"case.{runtime.case.key}.float_operations" not in rows
+    assert f"case.{runtime.case.key}.compile_options" not in rows
+    assert rows[f"case.{runtime.case.key}.applied_options"] == runtime.applied_options
+    assert rows[f"comparison.{runtime.case.key}"].startswith("agree ")
+    assert rows["probe.guard_layers.runtime"] == PROBE.EXECUTION_WITNESS
+
+
+def test_the_record_comparison_detects_a_changed_cross_path_verdict() -> None:
+    """A rewritten `comparison.` row must fail the comparison, not pass silently."""
+    probe = PROBE.INPUT_FLUSH
+    witness = PROBE.BY_NAME["multiply_two"].witness
+    assert witness is not None
+    results = {witness.operand: witness.executed, probe.operand: probe.flushing}
+    offline = synthetic("multiply_two", 1, results)
+    runtime = synthetic_runtime("multiply_two", results)
+    run = PROBE.Run(
+        environment={"date_utc": "unreported"},
+        observations={offline.case.key: offline, runtime.case.key: runtime},
+    )
+    stored = dict(PROBE.record_rows(run))
+    assert not PROBE.compare_record(run, stored)
+    stored[f"comparison.{runtime.case.key}"] = "differ candidates=none"
+    assert PROBE.compare_record(run, stored)
 
 
 def test_an_absent_xcrun_is_classified_as_an_absent_toolchain() -> None:
@@ -463,6 +614,232 @@ def test_the_emitted_operation_count_alone_is_insufficient_when_a_toolchain_and_
             PROBE.subnormal_verdict(observation, PROBE.IDENTITY_VALUED_FLUSH)
             is PROBE.Verdict.ARITHMETIC_NOT_EXECUTED
         ), mode
+
+
+# --------------------------------------------------------------------------
+# Runtime-compilation measurements. The same kernels through
+# `newLibraryWithSource:options:` instead of a linked metallib.
+# --------------------------------------------------------------------------
+
+
+def test_the_two_compilation_paths_agree_case_by_case_when_a_toolchain_and_gpu_resolve() -> None:
+    """The headline. No case returns different bits through the two compilers.
+
+    A divergence here would mean an artifact's declared numerical realization
+    cannot be inferred from the offline build alone, because the compiler that
+    actually runs the kernel is a different one. It is reported case by case
+    rather than in aggregate so the failure names which kernel and which mode.
+    """
+    run = probe_run()
+    comparisons = PROBE.path_comparisons(run)
+    assert comparisons, "the probe produced no cross-path comparison at all"
+    diverging = [
+        comparison.render() for comparison in comparisons if comparison.agreement.is_divergence
+    ]
+    assert not diverging, (
+        "the offline and runtime compilation paths returned different results. This is a "
+        "load-bearing divergence, not a harness defect: report it before changing anything. "
+        f"Diverging cases: {diverging}"
+    )
+
+
+def test_the_runtime_compiler_is_identified_when_a_toolchain_and_gpu_resolve() -> None:
+    """The cross-path claim is worth nothing without naming the second compiler.
+
+    On the measured row it is not the same build as the offline one, so an
+    agreement is agreement between two compilers rather than one compiler
+    invoked twice. If the archive scan ever stops recovering the version, the
+    comparison keeps working and quietly loses that provenance, which is what
+    this asserts against.
+    """
+    run = probe_run()
+    runtime = run.environment["runtime_compiler"]
+    assert runtime != "unreported", "no runtime compiler version was recovered from any archive"
+    assert "metalfe-" in runtime, runtime
+    print(
+        f"offline compiler={run.environment['metal_version']!r} runtime compiler={runtime!r}",
+        file=sys.stderr,
+    )
+
+
+def test_runtime_input_and_result_flushing_when_a_toolchain_and_gpu_resolve() -> None:
+    """Findings 2 and 3, re-established through `newLibraryWithSource:options:`.
+
+    The execution witness carries the admissibility decision alone here, because
+    the runtime path has no readable module. It is the layer that caught the
+    trap at `-O0` where counting emitted operations did not, so what is lost is
+    the weaker layer; see the harness module documentation.
+    """
+    run = probe_run()
+    for mode in PROBE.MATH_MODES:
+        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+            doubled = run.runtime("multiply_two", mode, optimization)
+            halved = run.runtime("multiply_half", mode, optimization)
+            assert doubled.operations is None, "a runtime case must not claim a readable module"
+            assert (
+                PROBE.subnormal_verdict(doubled, PROBE.INPUT_FLUSH) is PROBE.Verdict.FLUSHED_TO_ZERO
+            ), f"{mode}/{optimization} input flush"
+            assert (
+                PROBE.subnormal_verdict(halved, PROBE.RESULT_FLUSH) is PROBE.Verdict.FLUSHED_TO_ZERO
+            ), f"{mode}/{optimization} result flush"
+            assert (
+                PROBE.subnormal_verdict(doubled, PROBE.NEGATIVE_INPUT_FLUSH)
+                is PROBE.Verdict.FLUSHED_TO_ZERO
+            ), f"{mode}/{optimization} signed zero"
+            assert doubled.result_for(PROBE.NEGATIVE_INPUT_FLUSH.operand) == 0x80000000
+
+
+def test_runtime_materialization_is_unaffected_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 4 through the runtime path, where no emitted-operation count backs it up."""
+    run = probe_run()
+    for mode in PROBE.MATH_MODES:
+        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+            observation = run.runtime("materialize", mode, optimization)
+            assert observation.results == PROBE.OPERANDS, f"{mode}/{optimization}"
+
+
+def test_the_runtime_math_mode_changes_a_result_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 5 through `MTLCompileOptions.mathMode` rather than `-fmetal-math-mode`.
+
+    IEEE-754 round-to-nearest requires `+0.0` for `(-0.0) * 1.0 + (+0.0)`, and
+    only `MTLMathModeSafe` returns it.
+    """
+    run = probe_run()
+    for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+        safe = run.runtime("scale_one_bias_zero", "safe", optimization)
+        assert safe.result_for(0x80000000) == 0x00000000, optimization
+        for mode in ("relaxed", "fast"):
+            observation = run.runtime("scale_one_bias_zero", mode, optimization)
+            assert observation.result_for(0x80000000) == 0x80000000, f"{mode}/{optimization}"
+
+
+def test_the_runtime_guard_still_discriminates_when_a_toolchain_and_gpu_resolve() -> None:
+    """The live demonstration that stands in for the layer the runtime path lacks.
+
+    A guard that never refuses anything is not a guard, and on this path only one
+    layer is left to do the refusing. So every run must show that layer both
+    refusing the trap kernel under the relaxed modes and admitting it under
+    `safe`, in the same process, on results the unguarded reading calls
+    `preserved`.
+    """
+    run = probe_run()
+    probe = PROBE.IDENTITY_VALUED_FLUSH
+    for mode in ("relaxed", "fast"):
+        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+            observation = run.runtime("scale_one_bias_zero", mode, optimization)
+            assert observation.result_for(probe.operand) == probe.preserving
+            assert PROBE.naive_verdict(observation, probe) is PROBE.Verdict.PRESERVED
+            guarded = PROBE.subnormal_verdict(observation, probe)
+            assert not guarded.is_evidence, f"{mode}/{optimization} was admitted as {guarded}"
+    admitted = PROBE.subnormal_verdict(run.runtime("scale_one_bias_zero", "safe"), probe)
+    assert admitted is PROBE.Verdict.FLUSHED_TO_ZERO, (
+        "the same kernel under safe must be admitted, or the guard simply refuses everything"
+    )
+    witnessed = PROBE.subnormal_verdict(run.runtime("multiply_two", "fast"), PROBE.INPUT_FLUSH)
+    assert witnessed is PROBE.Verdict.FLUSHED_TO_ZERO, (
+        "the guard must still admit a witnessed observation under a relaxed mode"
+    )
+    assert run.runtime("multiply_one", "safe").kernel.witness is None, (
+        "the witnessless kernel must stay witnessless, or the trap has no control"
+    )
+
+
+def test_the_runtime_path_does_not_contract_the_pair_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 6 has no `MTLCompileOptions` counterpart, so it is measured instead.
+
+    `MTLCompileOptions` exposes no `-ffp-contract`, so rather than substituting a
+    setting the comparison reports which offline contraction rows the runtime
+    default behaves like. It behaves like `off` and `on` and not like `fast`,
+    which is the separately rounded result. Recorded rather than assumed: a
+    runtime path that fused would silently break the per-statement emission
+    rule's only measured defence.
+    """
+    run = probe_run()
+    operand = 0x3EB97EF9
+    separate = run.of("contraction_pair", "safe", contract="off").result_for(operand)
+    fused = run.of("contraction_pair", "safe", contract="fast").result_for(operand)
+    assert separate != fused, "the offline control must fuse, or this test proves nothing"
+    for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+        observation = run.runtime("contraction_pair", "safe", optimization)
+        assert observation.result_for(operand) == separate, optimization
+        assert observation.result_for(operand) != fused, optimization
+
+
+def test_the_runtime_module_options_match_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 1's module-flag half, as far as the runtime path allows it to be checked.
+
+    This is corroboration, not evidence: a serialized binary archive can only be
+    tested for the presence of a byte sequence, where the offline path resolves
+    the module's `air.compile_options` node properly. The per-operation fast-math
+    flag list, which is the other half of finding 1, has no runtime counterpart
+    at all and is not checked here.
+    """
+    run = probe_run()
+    for mode in PROBE.MATH_MODES:
+        observation = run.runtime("scale_two_bias_one", mode)
+        archived = observation.archived_options
+        assert archived is not None
+        if archived.startswith("unavailable:"):
+            message = f"archive scan unavailable for {mode}: {archived}"
+            print(message, file=sys.stderr)
+            pytest.skip(message)
+        offline = run.of("scale_two_bias_one", mode).compile_options
+        assert offline is not None
+        assert set(archived.split()) == set(offline), (
+            f"{mode}: runtime archive named {archived!r}, offline module declared {offline!r}"
+        )
+        assert "air.compile.denorms_disable" in archived, mode
+
+
+def test_the_host_fails_closed_on_a_bad_option_when_a_toolchain_and_gpu_resolve() -> None:
+    """Every runtime row's meaning rests on this, so it is checked rather than assumed.
+
+    A host that ignored an unrecognized selection would leave the property at its
+    API default — `mathFloatingPointFunctions` defaults to `Fast`, not the
+    `precise` the offline row pins — and the record would then name a
+    configuration the library was not built with.
+    """
+    try:
+        toolchain = PROBE.resolve()
+    except PROBE.ProbeUnavailable as unavailable:
+        message = f"Apple numerical probe skipped: {unavailable}"
+        if os.environ.get(PROBE.REQUIRE_TOOLCHAIN) is not None:
+            raise AssertionError(
+                f"{PROBE.REQUIRE_TOOLCHAIN} is set, but {message}"
+            ) from unavailable
+        print(message, file=sys.stderr)
+        pytest.skip(message)
+    with tempfile.TemporaryDirectory(prefix="tiler-probe-options.") as directory:
+        host = Path(directory) / "numerical_probe_host"
+        toolchain.build_host(host)
+        source = Path(directory) / "probe.metal"
+        source.write_text(PROBE.BY_NAME["multiply_two"].source(), encoding="utf-8")
+        accepted = "math=safe,fpfun=precise,lang=3.1,opt=default"
+        rejected = (
+            "math=bogus,fpfun=precise,lang=3.1,opt=default",
+            "mathMode=safe,fpfun=precise,lang=3.1,opt=default",
+            "math=safe,fpfun=precise,lang=3.1",
+            "math=safe,math=fast,fpfun=precise,lang=3.1,opt=default",
+        )
+        for options in rejected:
+            result = subprocess.run(
+                [str(host), "source", str(source), PROBE.ENTRY_POINT, options, "3f800000"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 2, f"{options!r} was not rejected: {result.returncode}"
+        result = subprocess.run(
+            [str(host), "source", str(source), PROBE.ENTRY_POINT, accepted, "3f800000"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"the accepted control was refused, so the rejections above prove nothing: "
+            f"{result.stderr.strip()}"
+        )
+        assert f"applied={accepted}" in result.stdout, result.stdout
 
 
 def test_the_retained_record_still_holds_when_a_toolchain_and_gpu_resolve() -> None:
