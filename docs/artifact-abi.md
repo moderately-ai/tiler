@@ -5,22 +5,18 @@ kind: "contract"
 title: "Artifact envelope and Metal kernel ABI profile"
 topics: ["artifacts", "abi", "metal", "runtime"]
 contract_status: "accepted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 evidence: ["tiler.research.artifacts.target-neutral-envelope", "tiler.research.cache.crash-race-protocol", "tiler.research.runtime.execution-contract"]
 ticket: "synthesize-artifact-contracts"
 ---
 
 # Artifact envelope and Metal kernel ABI profile
 
-**Status:** accepted research contract; shared IR ownership established,
-artifact codec unimplemented
+**Status:** accepted research contract; shared IR ownership established, a bounded neutral envelope codec implemented behind an unaccepted crate-private facade
 
-The private compiler proof constructs provisional program portfolios and
-artifact-construction inputs. ADRs 0070 and 0071 now assign authoritative
-target-neutral executable meaning and checked construction to shared
-`tiler-ir` representations; the proof-specific structs remain private until
-replaced in dependency order. Canonical envelope serialization, backend
-payloads, integrity validation, and public artifact APIs remain unimplemented.
+The private compiler proof constructs provisional program portfolios and artifact-construction inputs. ADRs 0070 and 0071 now assign authoritative target-neutral executable meaning and checked construction to shared `tiler-ir` representations; the proof-specific structs remain private until replaced in dependency order.
+
+**Fact — canonical envelope serialization, canonical form, and integrity validation are implemented; the public artifact API and backend payloads are not.** `crates/tiler-artifact/src/program/codec/` encodes, decodes, and re-validates the envelope this document specifies, in the bounded lockstep profile recorded under "Implemented envelope profile" below. Every item in that module is `pub(crate)` behind a private `mod` under ADR 0074 convention 7, so no crate outside `tiler-artifact` can encode or decode an artifact and no consumer surface has been accepted; promoting it is Tom's decision under ADR 0075. Backend payload bytes still have no section vocabulary, and a decoded envelope still cannot reconstruct the shared-IR programs it names. The accurate statement is that a bounded lockstep codec exists behind an unaccepted facade, not that the artifact format is available.
 
 ## Ownership boundary
 
@@ -30,7 +26,9 @@ backend payload mappings. The IR contract owns program/portfolio meaning,
 canonical identity, ABI-expression semantics, and authoritative verification;
 adapters own device-specific loading, binding, and execution. A decoder must
 reconstruct shared IR through its checked builders and cannot manufacture a
-verified value or retain a second editable authority.
+verified value or retain a second editable authority. The implemented profile
+satisfies the second half and not the first, for a structural reason recorded
+under "Implemented envelope profile" below.
 
 This document describes the accepted first-backend Metal profile of Tiler's
 target-neutral artifact concepts. `MetallibBundle`, Metal binding indices, and
@@ -65,11 +63,155 @@ skipped only when their schema explicitly permits it. An external
 `EnvelopeDigest` covers the exact complete encoding and is not recursively
 stored inside itself.
 
+The implemented descriptor is narrower than that sentence and the implemented reader admits no optional section at all; both differences are named under "Where the implemented profile is narrower than this contract" below rather than weakened here.
+
 Integrity, structural validity, neutral-program validity, backend-payload
 validity, declared target compatibility, live applicability, prepared-entry
 feasibility, and launch feasibility are distinct monotonic validation stages.
 Parse success never implies executable compatibility. See the
 [target-neutral envelope research](research/artifacts/target-neutral-artifact-envelope.md).
+
+## Implemented envelope profile
+
+Everything in this section is a fact about `crates/tiler-artifact/src/program/codec/` as of commit `1f78223`. It records what one build writes and reads. It does not widen the normative contract above, and where the two differ the difference is named rather than resolved by rewriting either side.
+
+### Maturity of the implementation
+
+**Fact — the surface is crate-private and its facade is unaccepted.** `codec` is a private `mod` of `tiler_artifact::program`, every item it exports is `pub(crate)`, and the module carries the `#![allow(dead_code, reason = "…")]` that ADR 0074 convention 7 prescribes for a landed authority whose facade has not been reviewed. Encoding, decoding, `ArtifactEnvelope`, the typed rejection vocabulary, and the governed constants are all unreachable from outside the crate. Promoting the module or any of its types from `pub(crate)` to `pub` is named on ADR 0075's always-ask list and requires Tom's review before merge.
+
+**What a consumer can do today.** Build a `VerifiedArtifactProgram` through `tiler_artifact::program` — itself a reviewed *draft* boundary rather than an accepted facade — and read its canonical identity, which is now derived from the canonical envelope and is therefore exactly the identity a decoder re-derives from bytes.
+
+**What a consumer cannot do today.** Obtain an artifact's bytes, decode bytes into an artifact, name an envelope digest, or observe any typed codec rejection. There is no serialization API, no exposed file or embedding format, and no backend payload bytes in the envelope at all.
+
+Four maturity claims stay distinct here. The framing, canonical manifest, section framing, required-feature mechanism, and rejection vocabulary are **implemented**. The section-purpose vocabulary and the backend payload descriptor are **type-system reservations** for a backend assembler that does not exist yet. A `pub` codec facade is an **architectural seam** with no accepted shape. The properties labelled Measurement below are **tested guarantees over the named fixtures**, not universal claims about every artifact.
+
+### Framing header
+
+**Fact — the header is exactly 69 bytes, fixed width, big-endian, with this layout.**
+
+| Offset | Width | Field |
+| --- | --- | --- |
+| 0 | 8 | magic `TILERART` |
+| 8 | 2 + 2 | envelope format `{major, minor}`; `{1, 0}` in this build |
+| 12 | 2 + 2 | canonical encoding profile `{major, minor}`; `{1, 0}` in this build |
+| 16 | 1 | governed digest algorithm tag; `0x01` is `tiler.digest.sha-256.v1` |
+| 17 | 8 | total encoded length |
+| 25 | 8 | canonical manifest length |
+| 33 | 4 | framed section count |
+| 37 | 32 | digest of the exact canonical manifest bytes |
+
+Total length, manifest length, and section count are read and checked against their governed budgets before a byte of the body is copied, so a forged length reports truncation rather than making a reader reserve memory for content that is not there. The total length is derived from the completed encoding rather than declared by a producer, and a supplied byte run whose length disagrees with it rejects as `TotalLengthMismatch` before any digest is computed.
+
+**Fact — no in-band digest covers the header, and every header field is still pinned.** The manifest digest covers the manifest; each section descriptor's digest covers that section's bytes; nothing hashes the header itself. Each header field is nonetheless decided by a named check — magic by `BadMagic`, the two version pairs by `UnsupportedEnvelopeFormat` and `UnsupportedCanonicalEncoding`, the algorithm tag by `UnsupportedDigestAlgorithm`, total length by `TotalLengthMismatch`, section count by `SectionCountMismatch`, and manifest length and manifest digest by `Truncated` or `ManifestDigestMismatch` — with any residue caught by the re-encode equality described below.
+
+**Measurement.** Flipping each of the 69 header bytes, a prime-strided sample of the manifest, and every byte of the framed section stream of the default fixture yields a rejection in every case. Every proper prefix of that encoding is rejected, and one appended byte is rejected both before and after the declared total length is repaired.
+
+### Canonical manifest
+
+**Fact — the manifest opens with the versioned domain tag `tiler.artifact-envelope.manifest.v1\0` and its own `{major, minor}` schema**, then the four governed component schema versions — program, ABI expression, guard-and-routing, target-requirement — and then, in this order: the routing policy tag; the derived required-feature set; the three reached semantic subjects; the named inputs and outputs with declared shape and element type; the selected capability providers; the backend payload descriptors; the shared ABI expression arena; the plan variants, each with its guard, declared target profile and feasibility rule set, deferred predicates, and executable entries; the section descriptors; and the artifact's canonical identity.
+
+Each executable entry carries its stage subject, proven resource requirements, declared numerical realization, ABI bindings, launch contract, and backend entry.
+
+**Fact — every variable-length run carries a fixed-width `u64` length before its content**, so no concatenation of fields is ambiguous, and **every encoded enumeration is written through the one governed tag table its vocabulary owns**, never through a Rust discriminant, so inserting a variant cannot silently renumber a value already on disk. Each table is a forward and inverse pair kept in one place and pinned by an exhaustive round-trip test.
+
+**Fact — a well-formed but non-canonical encoding is refused rather than normalized.** Named checks reject an out-of-order or repeated feature, interface key, provider, payload, expression, deferred predicate, launch precondition, executable entry, or section. Because this reader understands every field, the decoder then re-encodes the validated envelope and requires byte equality, rejecting any residual non-canonical spelling as `NonCanonicalManifest`. One artifact therefore has exactly one byte identity.
+
+### What is meaning and what is canonical
+
+**Fact.** Variant order is routing priority, named-interface order is the semantic interface's, and ABI binding order is the kernel signature's; all three are retained. Provider, payload, deferred-predicate, launch-precondition, executable-entry, expression-arena, and section order are replaced by the canonical content order artifact identity already uses. The arena's canonical order is the unique topological order that always emits the smallest available node by canonical content key.
+
+**Measurement.** Declaring the same payloads and providers in reversed order produces byte-identical envelopes, as does minting the same formulas through two different arena assembly orders.
+
+### Identity is derived from the canonical envelope
+
+**Fact — there is one identity encoder and its subject is the envelope.** `encode_identity` is a function of `ArtifactEnvelope`, and the checked builder's terminal projects the verified draft into its envelope before deriving the identity. A decoder re-derives the identity from decoded content through that same function and compares it with the identity the manifest carries, rejecting a mismatch as `ArtifactIdentityMismatch`. There is therefore no second encoder that a decoder would have to agree with by inspection.
+
+**Inference — equal identity implies equal envelope bytes, and three closure checks are what make that true.** Identity replaces arena positions, payload positions, and section positions with canonical content keys, so it does not by itself fix the tables those positions index. An envelope carrying an expression no use site reaches, a payload no entry realizes, or a section no variant references would keep the same identity while changing the bytes, giving one artifact two byte identities. The decoder rejects all three. This closure is what lets an envelope digest serve as a cache key.
+
+**Fact — a re-proven obligation reports the artifact model's own cause.** A decoded envelope is checked again against the rules the transactional builder discharged at construction, and each rejection carries the model's own typed cause rather than a codec-local restatement: one variant wraps an insertion-time build error, another wraps a whole-artifact diagnostic. A rejection therefore reads the same whether an artifact was refused at construction or at load.
+
+**Fact — two builder obligations are not decidable from an envelope and are pinned by identity instead.** A binding's accessible byte range must equal the exact byte window its stage access addresses, and an entry's bindings must correspond one-to-one with its kernel's buffer parameters. Neither the byte windows nor the kernel signature travel in this profile, so a decoder cannot recompute them. Both are folded into the artifact's canonical identity — through the binding's expression content key and the entry's stage key — and the identity is re-derived and compared, so a forged envelope can restate them only by becoming a different artifact. Carrying the byte windows so the check could run locally was considered and rejected: the window is a value only the program establishes, so a carried copy would prove agreement between two producer-supplied fields rather than agreement with the plan.
+
+### Required features
+
+**Fact — the required-feature set is derived from content and never declared by a producer**, so it cannot understate what a reader must implement; a declared set the content does not imply rejects as `DeclaredFeatureMismatch`. This build derives four governed keys:
+
+| Governed feature key | Derived when | This reader supports it |
+| --- | --- | --- |
+| `tiler.artifact.feature.multi-variant-routing` | the portfolio carries more than one variant | yes |
+| `tiler.artifact.feature.deferred-predicates` | any variant defers a feasibility predicate | yes |
+| `tiler.artifact.feature.launch-preconditions` | any entry declares a launch precondition | yes |
+| `tiler.artifact.feature.multi-stage-program` | any variant dispatches more than one stage | no |
+
+**Fact — this build emits `tiler.artifact.feature.multi-stage-program` and refuses to read it.** The neutral program section carries a program's canonical identity rather than its dependency graph, so a reader cannot recover the order in which two stages must run; entries are ordered by canonical stage key, which is identity's order and not execution order. Emitting the feature and rejecting it on read as `UnsupportedRequiredFeature` is the fail-closed form of that gap, and treating declaration order as execution order would be the silent one. The gap between the set a producer emits and the set a reader implements is the mechanism working rather than a defect.
+
+### Sections
+
+**Fact — the section vocabulary has exactly one governed purpose in this build**: the canonical kernel-program identity of one packaged variant. Two variants that package the same program share one section, because the content is that program's identity, so the sharing is a stated property of the purpose rather than an accident of equal bytes. Sections are ordered canonically by content; duplicates, unreferenced sections, a section identifier that is not its canonical position, and an unrecognized purpose tag are each rejected by name.
+
+**Fact — a section carries canonical identity bytes, not a digest of them.** ADR 0074 convention 2 makes a canonical identity an opaque byte encoding and short digests presentation-only, so the governed bound on one section is the shared IR's own identity budget rather than a digest width.
+
+**Proposal — backend metadata and code sections are `prototype-metal-bundle-assembly`'s versioned extension.** The framing, descriptor derivation, digest checking, and cross-reference closure such a section needs already exist and are exercised; the governed purposes it adds are its own. Whether a bundle's identity is content-addressed over its compilation inputs or over the emitted payload bytes is that ticket's decision, and this contract deliberately leaves the seam open rather than pre-empting it.
+
+### The governed digest
+
+**Fact.** The envelope names its digest algorithm by an explicit header tag and a reader never infers one from a digest width. `0x01` is `tiler.digest.sha-256.v1`, the only admitted value in this build. Three domain separators are governed as fixed NUL-terminated crate constants, and a test proves no admitted domain is a prefix of another, so `H(domain || bytes)` genuinely separates its subjects rather than colliding a longer domain with a shorter one plus leading content:
+
+```text
+manifest_digest = H("tiler.artifact-envelope.manifest-digest.v1\0"
+                    || exact canonical manifest bytes)
+section_digest  = H("tiler.artifact-envelope.section-digest.v1\0"
+                    || exact section bytes)
+envelope_digest = H("tiler.artifact-envelope.envelope-digest.v1\0"
+                    || exact complete envelope bytes)
+```
+
+A section descriptor is derived from its section's position and exact bytes at encode time and re-derived and compared at decode time, never stored beside the bytes it describes, so the two cannot disagree in memory. The envelope digest is computed and never stored in band; a test asserts its bytes occur nowhere in the envelope it covers.
+
+**Fact — the section digest does not yet bind the section's purpose, and "Artifact identity" below says it should.** The implemented pre-image is the domain separator and the exact section bytes alone. The purpose is bound one level up, by the manifest descriptor that names it and the manifest digest that covers that descriptor, which is sufficient inside a complete envelope and insufficient for a section digest used as a standalone content address — which is precisely what a backend code section will want. The contract is the correct side of that disagreement and the implementation is the narrower one; `bind-section-purpose-and-schema-into-the-section-descriptor` owns the correction.
+
+**Fact — the algorithm implementation is in-crate and its selection remains an open bounded decision.** SHA-256 is implemented in the crate rather than taken from a dependency, pinned by the FIPS 180-4 published vectors and by every padding branch, because adding the workspace's first cryptographic dependency would answer that decision by accident. The wire contract commits only to the governed tag, so replacing the implementation with an audited crate leaves every encoded envelope byte identical. `select-the-governed-artifact-digest-implementation` owns the comparison.
+
+### Deliberate exclusions
+
+**Fact — the frozen registry snapshot never enters the envelope.** ADR 0072 keeps the provenance of providers a plan never used out of packaged artifact identity, and carrying the snapshot here would put it back into the envelope's bytes and therefore into its digest, letting an unused provider invalidate a cache entry. Only the three reached subjects travel: the semantic graph identity, the reached definitions, and the admission provenance. **Measurement.** An artifact built with an additional available-but-unreached provider encodes to identical bytes and an equal envelope digest, while changing a *reached* provider's revision changes the digest.
+
+**Fact — presentation-only declaration order never enters it**, under the ordering rules above. This is what makes the envelope's bytes a function of the artifact's identity rather than of the order a producer happened to declare things in.
+
+**Fact — backend payload bytes never enter it.** A payload is named by governed backend and representation keys, its own schema version, its opaque content digest, and its execution policy, and by nothing a backend would spell: no symbol names, binding indices, platform triples, or language versions occur in the neutral manifest.
+
+**Fact — a reconstructable kernel program is not carried, and the blocker is structural rather than an omission.** `tiler_ir::program::KernelProgramBuilder::new` takes a `&SemanticProgram`, which requires a frozen semantic registry holding live inferencer implementations; neither is representable as bytes. A decoded envelope therefore proves *which* program an artifact names and cannot resurrect it, and a consumer that needs a verified kernel program must hold the one it compiled. This is why the decoder half of the ownership boundary above is not yet met, and the consequence is stated rather than approximated. `carry-reconstructable-kernel-programs-in-the-neutral-envelope` owns deciding what a decoded envelope must reconstruct.
+
+### Governed budgets
+
+**Fact.** Every budget is enforced on both sides by one constant. The encoder checks a projected envelope up front, so a legally built artifact that could not be read back fails to encode rather than producing bytes no reader admits; the decoder checks each count the moment it is read and before anything is allocated for it. The envelope-level bounds are 256 MiB per complete encoding, 64 MiB per manifest, 64 MiB per section, 16 MiB per received opaque identity subject, 4 KiB per encoded text run, 64 required features, 4,096 named interface entries, and 4,096 declared shape rank. Every per-collection bound — variants, entries, bindings, expressions, payloads, providers, deferred predicates, launch preconditions — reuses the artifact model's own constant rather than introducing a second authority for the same limit that would drift from it.
+
+### Rejection vocabulary
+
+**Fact.** Failure is typed and non-erasing. A rejection names the boundary that refused and the subject it refused; a framing, schema, canonical-form, structural, or identity failure is never reinterpreted as a plan-applicability miss; and a rejection never yields a partially validated envelope.
+
+| Boundary | Typed causes |
+| --- | --- |
+| Framing and integrity | `Truncated`, `TrailingBytes`, `TrailingManifestBytes`, `BadMagic`, `BadManifestDomain`, `TotalLengthMismatch`, `ManifestDigestMismatch`, `SectionDigestMismatch`, `SectionLengthMismatch`, `SectionCountMismatch`, `NonCanonicalSectionId` |
+| Schema and feature compatibility | `UnsupportedEnvelopeFormat`, `UnsupportedCanonicalEncoding`, `UnsupportedManifestSchema`, `UnsupportedComponentSchema`, `UnsupportedDigestAlgorithm`, `UnsupportedRequiredFeature` |
+| Canonical form | `NonCanonicalOrder`, `DuplicateItem`, `NonCanonicalManifest`, `DeclaredFeatureMismatch`, `UnreferencedSection` |
+| Structure and closure | `MissingReference`, `ExpressionOperandOrder`, `ExpressionOperandType`, `ExpressionSelectBranchType`, `UnknownTag`, `InvalidText`, `InvalidGovernedKey`, `InvalidInterfaceKey`, `InvalidProviderIdentity`, `InvalidShape` |
+| Governed budgets | `Limit` |
+| Re-proven model obligations | `ModelRule`, `ModelObligation` |
+| Identity | `ArtifactIdentityMismatch`, `IdentityDerivation` |
+
+Each variant carries the structured data a caller reacts to rather than a message: which collection was out of order, which enumeration presented an unimplemented tag with the rejected tag byte, which table a reference missed with the rejected index, which resource was exhausted with its attempted and permitted quantities.
+
+**Measurement — the adversarial cases build a structurally invalid envelope and then encode it**, which stamps a correct manifest digest, correct section digests, and a correct identity for whatever the forgery now says, and require the decoder to reject it anyway by name. Corrupting bytes and watching a digest reject them proves comparatively little, because a forger recomputes digests.
+
+### Where the implemented profile is narrower than this contract
+
+**Fact.** Four normative statements elsewhere in this document describe a format wider than the one this build writes. Each is recorded rather than weakened.
+
+1. **A section descriptor carries less than "required/optional meaning, schema, exact byte length, and digest."** The implemented descriptor is an ordered identifier, a purpose tag, the exact byte length, and the content digest. There is no per-section schema version and no required/optional disposition, and the digest algorithm is named once in the header rather than per descriptor. `bind-section-purpose-and-schema-into-the-section-descriptor` owns closing it, together with the digest pre-image gap above.
+2. **There are no optional sections, so "unknown optional sections may be skipped only when their schema explicitly permits it" describes no implemented behaviour.** Every unrecognized purpose fails closed. This is the deliberate version-1 posture the envelope research records, and "Loading and validation" below already conditions the skip mechanism on exposing the format outside a lockstep release. It is an explicitly deferred question with that trigger rather than an unrecorded gap.
+3. **A decoder does not reconstruct shared IR through its checked builders**, for the structural reason under "Deliberate exclusions". It does satisfy the other two halves of that requirement: nothing in the codec manufactures a verified value, and a decoded envelope is a validated envelope rather than a second editable authority.
+4. **The backend payload descriptor carries no compatibility-contract reference.** It carries the backend key, representation key, payload schema, content digest, and execution policy. The declared target profile and feasibility rule set are carried per *variant*, which coincides with a per-payload contract only while a payload is not shared across variants that declare different profiles — and nothing in the model prevents that sharing. `carry-a-compatibility-contract-reference-on-the-payload-descriptor` owns it.
 
 ## Metal payload hierarchy
 
@@ -438,6 +580,8 @@ Evidence is not semantic identity, but changing the evidence record, target or
 toolchain scope, or classification changes manifest, bundle, and expansion-
 cache identity even when generated code bytes happen to remain equal.
 
+**Two constructs are named alike below and are not the same thing.** ADR 0074 convention 2 makes a canonical identity an opaque newtype over its exact canonical byte encoding, with short digests presentation-only, and every layered identity the workspace derives is built that way: the semantic graph, index region, scheduled region, kernel program, and artifact program identities are canonical bytes compared byte for byte, never hashes. Hashing occurs at exactly three sites, all of them envelope framing. The first five derivations below are therefore a proposal for deriving a compact key from a subject rather than a description of how those subjects are represented today, and the domain-separator spellings in this block are illustrative — each governed constant is owned by the encoder that derives it, and the three envelope-level constants this build writes are recorded verbatim under "The governed digest" above. `decide-whether-layered-subject-digests-exist-as-hashes` owns closing the question.
+
 ```text
 semantic_digest = H("tiler-semantic-v1" || canonical semantic bytes)
 index_digest = H("tiler-index-v1" || canonical index-structure bytes)
@@ -529,6 +673,8 @@ available.
 Unknown required features fail closed. Compatibility rules for optional fields
 and compiler/runtime version skew must be decided before the format is exposed
 outside a lockstep release.
+
+**Fact — the implemented reader is exactly that lockstep reader.** It supports only the versions and features this build writes: a major mismatch, a minor beyond what this build implements, an unrecognized digest algorithm, or a required feature it cannot supply is a typed rejection rather than a best-effort read. The optional-field and version-skew rules are consequently still undecided and still unimplemented, which is consistent with the sentence above rather than a gap beneath it. Of the numbered stages above, this profile discharges stage 1, the manifest and section half of stage 2, the binding-reference half of stage 6, and the static half of stage 8 — expression typing, availability phase, the guard's predicate type, and the launch formula's agreement with the entry's proven resource requirements. The rest need a device, a backend payload, or a bound runtime environment that this profile does not carry.
 
 ## Traceability
 
