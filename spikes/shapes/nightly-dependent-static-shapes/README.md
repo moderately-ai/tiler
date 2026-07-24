@@ -34,6 +34,14 @@ exact-extent array with one axis removed. The emerging `generic_const_args`
 path is not usable on either tested compiler without additional solver state
 and remains outside the governed profile.
 
+## Why this spike retains no diagnostics record
+
+Its sibling [`shape-evidence`](../shape-evidence/README.md) checks its `.stderr` files against [a record](../shape-evidence/results/2026-07-24-macos-arm64.json) because the Rust gate cannot compile them: they were captured on stable 1.89.0, so nothing else would notice them decaying. This workspace is the opposite posture. `scripts/check_rust.py` names it in `GATED_SPIKE_WORKSPACES` and compiles it on the pinned nightly on every gate invocation, then requires the run transcript to name each `trybuild` case, so a fixture edited until it no longer fails for its recorded reason already fails the gate. Reproduction is the total check, and a record would restate on the side what the compiler restates on every run — including first lines and fragments that would then have to be re-recorded by hand at each pin migration.
+
+The one thing reproduction genuinely cannot see is a case deleted from both the tree and the expectations, since the glob would simply resolve to fewer fixtures and still pass. `retained_fixture_inventory_is_complete` in [`conformance/tests/ui.rs`](conformance/tests/ui.rs) closes that directly: it names every compile-fail and compile-pass case and requires one retained diagnostic per compile-fail case, so losing evidence a governed decision cites has to be a deliberate edit to a named list.
+
+What remains open is narrower, and `record-gated-shape-spike-diagnostic-claims` tracks it. Compilation proves that a fixture and its diagnostic agree; it does not prove the agreed diagnostic is still the claim ADR 0067 relies on, so a fixture weakened in step with its `.stderr` would pass. `spikes/extensions/non-exhaustive-visibility` carries both halves for exactly that reason. Closing it here belongs with lifting that probe's gated-record verifier into a shared form rather than growing a second copy under `spikes/shapes`.
+
 The repository root `rust-toolchain.toml` is the sole governed compiler pin.
 The check entrypoint deliberately has no fallback: callers pass that canonical
 pin explicitly, while adjacent-nightly migration probes may pass another exact
