@@ -1,7 +1,7 @@
 ---
 id: compile-extension-spike-fixtures-in-the-gate
 title: Decide whether the gate should compile the extension spike fixtures
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [preserve-non-exhaustive-visibility-probe]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace, contracts/navigation, research/extensions, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, gate-reliability, harness]
-claimed_from: todo
-assignee: agent-compile-extension-spike-fixtures-in-the-gate
-lease_expires_at: 1784925959
 ---
 `preserve-non-exhaustive-visibility-probe` closed a decay gap, and left one open. The retained `#[non_exhaustive]` diagnostics are now verified by the repository gate — `scripts/tests/test_research_harnesses.py` runs `spikes/extensions/run.py --self-test`, which reads the checked-in `.stderr` files and the measurement beside them without invoking Cargo.
 
