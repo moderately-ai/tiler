@@ -1,7 +1,7 @@
 ---
 id: propagate-accepted-api-conventions-into-governed-contracts
 title: Propagate accepted ADR 0074 conventions into the contracts it governs
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [draft-public-api-conventions-adr, harden-public-enums-non-exhaustive, extend-canonical-identity-encodings-for-reserved-variants, disambiguate-presentation-label-from-semantic-key-accessors]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, public-api, contracts]
-claimed_from: todo
-assignee: agent-propagate-accepted-api-conventions-into-governed-contracts
-lease_expires_at: 1784912789
 ---
 ADR 0074 is now **accepted**, and declares
 `applies_to: ["tiler.contract.ir", "tiler.contract.architecture"]`. The typed
