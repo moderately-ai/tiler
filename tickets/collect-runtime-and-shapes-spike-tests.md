@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [finish-spike-process-group-cleanup]
-scopes: [implementation/workspace]
+scopes: [implementation/workspace, research/runtime, research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, harness, gate-reliability]

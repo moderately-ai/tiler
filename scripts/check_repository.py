@@ -26,6 +26,24 @@ EXPECTED_PYTEST_PATHS = [
     "spikes/embedding",
     "spikes/macro-environment",
     "spikes/numerics/sound_accuracy",
+    "spikes/runtime",
+    "spikes/shapes/nightly-dependent-static-shapes",
+    "spikes/shapes/shape-evidence",
+]
+# Gated spike directories that are Cargo workspace roots contain a generated
+# `target/` tree, and setting this key replaces pytest's own default list rather
+# than extending it, so the defaults are restated alongside the addition.
+EXPECTED_PYTEST_NORECURSEDIRS = [
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+    "{arch}",
 ]
 EXPECTED_RUFF_INCLUDE = ["scripts/**/*.py", "spikes/**/*.py"]
 EXPECTED_PYTHON_PACKAGES = {"markdown-it-py", "mpmath", "pytest", "ruamel-yaml", "ruff"}
@@ -164,7 +182,11 @@ def validate_python_config(project: dict[str, object]) -> list[str]:
         errors.append("uv project and exact tool-version authority changed")
     pytest = tool.get("pytest", {})
     pytest_options = pytest.get("ini_options", {}) if isinstance(pytest, dict) else {}
-    expected_pytest = {"addopts": EXPECTED_PYTEST_ADDOPTS, "testpaths": EXPECTED_PYTEST_PATHS}
+    expected_pytest = {
+        "addopts": EXPECTED_PYTEST_ADDOPTS,
+        "norecursedirs": EXPECTED_PYTEST_NORECURSEDIRS,
+        "testpaths": EXPECTED_PYTEST_PATHS,
+    }
     if pytest_options != expected_pytest or set(pytest) != {"ini_options"}:
         errors.append("pytest configuration must equal the canonical collection contract")
     ruff = tool.get("ruff", {})
