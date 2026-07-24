@@ -1,7 +1,7 @@
 ---
 id: draft-public-extension-seam-ownership-adr
 title: Draft a proposed ADR naming the intended public extension seams
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [draft-public-api-conventions-adr, draft-public-boundary-approval-policy-adr, prototype-physical-implementation-frontier, prototype-operation-capability-registry]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, decisions, extensions, public-api]
+claimed_from: todo
+assignee: agent-draft-public-extension-seam-ownership-adr
+lease_expires_at: 1784929885
 ---
 Record, as a **proposed** ADR, which surfaces are *intended* to become public
 extension seams at maturity and which are permanently internal. Today that

@@ -1,7 +1,7 @@
 ---
 id: verify-off-pin-shape-evidence-diagnostics
 title: Verify the off-pin shape-evidence diagnostics against a record
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [compile-extension-spike-fixtures-in-the-gate]
@@ -9,6 +9,9 @@ scopes: [research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, gate-reliability, harness]
+claimed_from: todo
+assignee: agent-verify-off-pin-shape-evidence-diagnostics
+lease_expires_at: 1784929885
 ---
 `compile-extension-spike-fixtures-in-the-gate` decided the rule for spike Cargo workspaces that retain compiler-produced golden artifacts: compile them in the Rust sub-gate when the artifact was captured on the toolchain `rust-toolchain.toml` pins, and record an explicit off-pin exclusion when it was not. `spikes/shapes/shape-evidence` is the sole off-pin case — `measure.py:30` sets `TOOLCHAIN = "1.89.0"`, `Cargo.toml` declares `rust-version = "1.89"`, and its README documents `cargo +1.89.0 test` — so its six retained `.stderr` files are correctly not reproduced by the gate. Reproducing them would need a toolchain `AGENTS.md` forbids installing without Tom's authorization, and re-recording them on the pin would destroy the stable-Rust claim the spike exists to make.
 

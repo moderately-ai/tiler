@@ -1,7 +1,7 @@
 ---
 id: reconcile-dtype-cast-enforcer-with-boundary-properties
 title: Reconcile the dtype-cast enforcer with the boundary-property list
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [qualify-contraction-association-reassociation-permission, implement-boundary-property-model, implement-boundary-property-enforcers]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, optimizer, numerics]
+claimed_from: todo
+assignee: agent-reconcile-dtype-cast-enforcer-with-boundary-properties
+lease_expires_at: 1784929885
 ---
 `docs/compiler/optimizer.md` lists "dtype cast" as an enforcer that "supplies a missing required property at a cost", beside contiguous materialization and layout conversion. Its own boundary-contract list two sections later does not contain dtype: the initial boundary contracts are storage layout class and contiguous axes, alignment and vectorizable width, materialized buffer / alias-view / opaque runtime value, and device and address space. The same paragraph states that logical shape, accumulation semantics, and numerical policy are semantic traits or optimization-context constraints, not properties supplied by a schedule.
 
