@@ -70,20 +70,40 @@ Old OS/GPU devices and cross-machine reproducibility remain unmeasured. See the
 
 `numerical_probe.py` generates probe kernels in the Metal emitter's output
 shape and puts each one through **both** compilation stages Tiler's Metal story
-has. Offline: to LLVM IR, to AIR, and to a linked metallib under a matrix of
-math modes, optimization levels, and contraction settings. In process: the
+has, for **each of the three artifact families** `MetalPlatform` declares —
+`MacOs`, `IOsDevice`, and `IOsSimulator` — each with its own `--sdk` and
+`-target`. Offline: to LLVM IR, to AIR, and to a linked metallib under a matrix
+of math modes, optimization levels, and contraction settings. In process: the
 byte-identical source through `[device newLibraryWithSource:options:error:]`
 with an explicit `MTLCompileOptions`, across the math modes and both
 `MTLLibraryOptimizationLevel` values. Both then take the same path to the GPU
 through `numerical_probe_host.m`, so a difference between them is a difference
 between the two compilers rather than between two dispatch procedures.
-`path_comparisons` pairs them case by case and a divergence fails the gate.
+`path_comparisons` pairs them case by case *within a family* and a divergence
+fails the gate.
 
-On the measured host those are two different compiler builds — offline
-`metalfe-32023.883` from the Xcode toolchain asset, runtime `metalfe-32023.921`
-from `/System/Library/PrivateFrameworks/MTLCompiler.framework` — which is why
-`environment.runtime_compiler` is recorded separately and is part of what makes
-two runs comparable.
+**The compile side and the device side do not reach equally far.** The compile
+side needs no GPU and runs for all three families, so a per-family difference in
+`air.compile.denorms_disable`, in the fast-math licence spellings, or in the
+surviving operation count is a first-class result. The device side runs a family
+only in *its own* execution environment: macOS on the host GPU, `IOsSimulator`
+through `simctl spawn` on a booted runtime, and `IOsDevice` nowhere, because this
+host has no iPhone or iPad attached. On the measured row the macOS GPU will load
+and run an iOS-device metallib without complaint — `hazard.cross_family_load.*`
+records that — but the GPU executing it is the Mac's, so the harness refuses to
+treat it as a device measurement: a case for a family with no attached device
+carries `Observation.results = None`, gets the `no-device-observation` verdict,
+and has no `results` row in the record.
+
+The compilers are recorded per family. The offline driver is one binary shared
+by every SDK; the runtime compiler belongs to the *execution environment*, so on
+the measured host it differs between families — macOS resolves
+`GPUCompiler.framework` build `metalfe-32023.921` (the framework carrying
+`MTLCompiler`; the offline driver is `metalfe-32023.883`), while the iOS
+Simulator runtime loads its own `metalfe-32023.830.1`. `report_compiler_images`
+in the dispatch host reports the image dyld actually loaded and
+`environment.family.<name>.runtime_compiler_build` records its build, so no
+family's runtime compiler is inherited from another's row.
 
 Print a run and rewrite the retained record with:
 
@@ -116,20 +136,26 @@ are needed: at `-O0` under `relaxed` the front end still emits both operations
 and a stage below it removes them anyway. Extend the kernel table only with
 that contract intact.
 
-**The runtime path has no readable module, and the harness says so.**
-`newLibraryWithSource:options:` returns an opaque `MTLLibrary`, so the first
-layer is unavailable there. `Observation.operations` is `None` for a runtime
-case and never `()` — `()` is a measured absence of arithmetic, `None` records a
-question that could not be asked — the record omits the `float_operations` row
-for those cases rather than writing an empty one, and portable guard tests pin
-both. The execution witness carries the decision alone, which is the layer that
-caught the trap at `-O0` where counting emitted operations did not; and because
-a guard that never refuses anything is not a guard, every run must show that
-layer refusing the trap kernel under `relaxed` and `fast` and admitting it under
-`safe`. Serializing an `MTLBinaryArchive` recovers the runtime compiler's
-version string and the presence of individual `air.compile.*` names, but the
-container has no published layout and stores its strings concatenated, so that
-scan is corroboration and feeds nothing in the guard.
+**A guard layer can be missing on either side, and neither may be defaulted.**
+The runtime path returns an opaque `MTLLibrary`, so layer 1 is unavailable there:
+`Observation.operations` is `None`, never `()` — `()` is a measured absence of
+arithmetic, `None` records a question that could not be asked — and the record
+omits the `float_operations` row rather than writing an empty one. A family with
+no attached device loses layer 2 instead: nothing was dispatched, so
+`Observation.results` is `None`, never `()`, and the record omits the `results`
+row. Losing layer 1 is cheap because layer 2 is sufficient where layer 1 is only
+necessary; losing layer 2 is the expensive direction, so a compile-side-only
+observation can never be admissible evidence and gets its own
+`no-device-observation` verdict rather than being classified by the layer it
+still has. Portable guard tests pin both `None`s on a host with no Apple
+toolchain. Where only layer 2 remains, every run must still show it refusing the
+trap kernel under `relaxed` and `fast` and admitting it under `safe`.
+Serializing an `MTLBinaryArchive` recovers the runtime compiler's version string
+and the presence of individual `air.compile.*` names, but the container has no
+published layout and stores its strings concatenated, so that scan is
+corroboration and feeds nothing in the guard — and in the iOS Simulator it
+aborts the process, so `archive_support` probes for it in a one-entry batch of
+its own before any manifest that carries measurements asks for one.
 
 **Where `MTLCompileOptions` has no counterpart.** `-target`, `-ffp-contract`,
 and `-O0` have no property to set. None is approximated: the gaps are recorded
@@ -139,29 +165,40 @@ kernel and mode rather than against one chosen row, so a kernel on which
 contraction is observable reports which offline setting the runtime path behaves
 like instead of reading as a divergence.
 
-**Self-skip.** Every measurement resolves the toolchain, SDK, and GPU first and
-skips when any is absent, following `DriverError::{ToolchainUnavailable,
-SdkUnavailable}` and adding the device axis the offline driver has no name for
-because it never dispatches. The skip reason is printed on standard error and
-appears in `pytest -ra`; setting `TILER_REQUIRE_METAL_TOOLCHAIN` — the same
-variable `crates/tiler-metal/src/golden_compilation.rs` reads — turns it into a
-failure. The guard tests over synthetic observations carry no such condition
-and run everywhere, including on a host with neither an Apple toolchain nor
+**Self-skip, and per-family self-skip.** The whole probe resolves the toolchain
+and every family's SDK first and skips when any is absent, following
+`DriverError::{ToolchainUnavailable, SdkUnavailable}` and adding the device axis
+the offline driver has no name for because it never dispatches. The skip reason
+is printed on standard error and appears in `pytest -ra`; setting
+`TILER_REQUIRE_METAL_TOOLCHAIN` — the same variable
+`crates/tiler-metal/src/golden_compilation.rs` reads — turns it into a failure.
+A family whose *own* execution environment is absent is a different thing again
+and is neither a skip nor a failure: its compile side still runs and its
+device-side assertions announce the family and skip that family alone, so the
+record never silently loses a family and never gains a device-side claim it did
+not measure. The guard tests over synthetic observations carry no condition at
+all and run everywhere, including on a host with neither an Apple toolchain nor
 `git`.
 
 **What it costs the gate.** `uv run --locked python -m pytest -c pyproject.toml
-spikes/apple-targets` takes about 11.6 s on the measured host, against 8.2 s
-before the runtime path was added; the numerical probe itself is about 10.5 s of
-one gate run, covering 44 offline cases and 40 runtime ones. On a host with no
-Apple toolchain the whole thing skips in well under a second.
+spikes/apple-targets` takes about 13–20 s on the measured host once a simulator
+is booted (about 15 s baseline before this ticket, on the same host, with the
+older single-family probe), covering 126 offline cases across three families and
+80 runtime ones across the two families that dispatch. The one-time cost of
+booting a cold simulator adds roughly 8 s to the first gate run that needs it;
+the harness leaves the device booted so subsequent runs pay only one `simctl
+spawn` per family. On a host with no Apple toolchain the whole thing skips in
+well under a second.
 
 The retained 2026-07-24 run is
-[`results/2026-07-24-numerics-xcode26.6-metal32023.883/record.tsv`](results/2026-07-24-numerics-xcode26.6-metal32023.883/record.tsv),
-schema `tiler.apple-numerical-behaviour/v2`. The directory name identifies the
-offline toolchain; `environment.runtime_compiler` names the second one. The gate
-compares a live run's `case.*` and `comparison.*` rows against it whenever the
+[`results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv`](results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv),
+schema `tiler.apple-numerical-behaviour/v3`. The directory name identifies the
+offline toolchain; the `environment.family.*` rows identify each family's SDK,
+emitted triple, execution environment, and both compilers. The gate compares a
+live run's `case.*`, `comparison.*`, and `hazard.*` rows against it whenever the
 environment row matches and announces a skip when it does not, because a
-different toolchain build legitimately produces different values. See the
+different toolchain build or simulator runtime legitimately produces different
+values. See the
 [numerical-behaviour report](../../docs/research/apple-targets/numerical-behaviour.md)
-for the findings, the disagreements with the values it reproduces, and the
-measurement boundaries.
+for the findings, whether the subnormal flush is Apple-wide or per-family, the
+disagreements with the values it reproduces, and the measurement boundaries.

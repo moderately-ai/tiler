@@ -8,15 +8,25 @@ everywhere, including a Linux runner with no Apple toolchain, and they pin the
 one rule that separates this harness from one that reads bit patterns: an
 observation whose arithmetic cannot be shown to have executed is never evidence
 about arithmetic. That rule is the thing most worth protecting from a future
-edit, so it must not be reachable only through a GPU.
+edit, so it must not be reachable only through a GPU. Its two failure modes —
+a compilation path with no readable module, and an artifact family with no
+attached device — are pinned there too, because a host with no Apple toolchain
+at all is exactly where a future edit that defaults one of them would otherwise
+go unnoticed.
 
-The **measurement** tests dispatch on the local GPU and are conditional. They
-resolve the toolchain first and skip when none is present, exactly as
+The **measurement** tests dispatch on a GPU and are conditional. They resolve
+the toolchain first and skip when none is present, exactly as
 `crates/tiler-metal/src/golden_compilation.rs` does, so the gate stays green on
 a host without Xcode. Two mechanisms keep a skip from reading as a pass: the
 skip reason is announced on standard error and appears in pytest's `-ra` summary
 under the `when_a_toolchain_and_gpu_resolve` name suffix, and setting
 `TILER_REQUIRE_METAL_TOOLCHAIN` turns the skip into a failure.
+
+A family whose own execution environment is absent is a third thing again, and
+is neither a skip nor a failure. The compile-side tests still run for it; the
+device-side ones announce the family and skip that family alone, so the record
+never silently loses a family and never gains a device-side claim it did not
+measure.
 """
 
 from __future__ import annotations
@@ -42,7 +52,10 @@ PROBE = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = PROBE
 _SPEC.loader.exec_module(PROBE)
 
-RECORD = HERE / "results" / "2026-07-24-numerics-xcode26.6-metal32023.883" / "record.tsv"
+RECORD = HERE / "results" / "2026-07-24-numerics-families-xcode26.6-metal32023.883" / "record.tsv"
+
+HOST = "macos"
+"""The family whose execution environment is the machine running the gate."""
 
 _STATE: dict[str, object] = {}
 
@@ -68,30 +81,60 @@ def probe_run() -> PROBE.Run:
     return run
 
 
+def dispatched_families(run: PROBE.Run) -> tuple[str, ...]:
+    """Every family whose own execution environment resolved on this host.
+
+    A family missing from this tuple is announced by the caller and its
+    device-side assertions are skipped for that family alone. It is not a
+    toolchain skip: the compile-side assertions still hold it to account.
+    """
+    resolved = []
+    for family in PROBE.FAMILIES:
+        execution = run.environment[f"family.{family.name}.execution"]
+        if not execution.startswith("unavailable:"):
+            resolved.append(family.name)
+        else:
+            print(f"{family.name} has no device side: {execution}", file=sys.stderr)
+    return tuple(resolved)
+
+
 def is_subnormal(bits: int) -> bool:
     return bits & 0x7F800000 == 0 and bits & 0x007FFFFF != 0
 
 
 def synthetic(
-    kernel: str, operations: int, results: dict[int, int], *, flags: tuple[str, ...] = ()
+    kernel: str,
+    operations: int,
+    results: dict[int, int] | None,
+    *,
+    flags: tuple[str, ...] = (),
+    family: str = HOST,
 ) -> PROBE.Observation:
-    """Build an offline observation without a toolchain, for the pure guard tests."""
-    case = PROBE.Case(kernel, PROBE.Configuration("safe", "2", "off"))
+    """Build an offline observation without a toolchain, for the pure guard tests.
+
+    `results=None` builds the compile-side-only shape a family with no attached
+    device produces, which is the one an unguarded reading must never classify.
+    """
+    case = PROBE.Case(family, kernel, PROBE.Configuration("safe", "2", "off"))
     return PROBE.Observation(
         case=case,
         compile_options=("air.compile.denorms_disable",),
         operations=tuple(PROBE.FloatOperation("fadd", flags) for _ in range(operations)),
-        results=tuple(results.get(operand, operand) for operand in PROBE.OPERANDS),
+        results=(
+            None
+            if results is None
+            else tuple(results.get(operand, operand) for operand in PROBE.OPERANDS)
+        ),
         applied_options=None,
         archived_options=None,
     )
 
 
 def synthetic_runtime(
-    kernel: str, results: dict[int, int], *, mode: str = "safe"
+    kernel: str, results: dict[int, int], *, mode: str = "safe", family: str = HOST
 ) -> PROBE.Observation:
     """Build a runtime observation, whose compile side is unreadable rather than empty."""
-    case = PROBE.Case(kernel, PROBE.RuntimeConfiguration(mode, "default"))
+    case = PROBE.Case(family, kernel, PROBE.RuntimeConfiguration(mode, "default"))
     return PROBE.Observation(
         case=case,
         compile_options=None,
@@ -232,6 +275,98 @@ def test_an_unreadable_module_and_a_module_with_no_arithmetic_are_never_confused
     assert PROBE.subnormal_verdict(unreadable, probe) is PROBE.Verdict.FLUSHED_TO_ZERO
 
 
+def test_an_observation_that_was_never_dispatched_is_never_evidence() -> None:
+    """The mirror of the rule above, for the layer a family with no device loses.
+
+    A compile-side-only observation has layer 1 and no layer 2, and layer 1 is
+    necessary and never sufficient — the `-O0` measurement below is the proof
+    that it passes on an observation whose arithmetic did not run. So it may
+    never yield `preserved` or `flushed-to-zero` under any operand pattern, and
+    it gets its own verdict rather than being classified by the layer it has.
+    `results` is `None` and never `()` for the same reason `operations` is:
+    `()` would assert a dispatch that returned nothing.
+    """
+    probe = PROBE.INPUT_FLUSH
+    witness = PROBE.BY_NAME["multiply_two"].witness
+    assert witness is not None
+    undispatched = synthetic("multiply_two", 1, None, family="ios-device")
+    assert undispatched.results is None
+    assert undispatched.guard_layers == (PROBE.EMITTED_ARITHMETIC,)
+    for candidate in (
+        PROBE.INPUT_FLUSH,
+        PROBE.NEGATIVE_INPUT_FLUSH,
+        PROBE.RESULT_FLUSH,
+        PROBE.IDENTITY_VALUED_FLUSH,
+    ):
+        verdict = PROBE.subnormal_verdict(undispatched, candidate)
+        assert verdict is PROBE.Verdict.NO_DEVICE_OBSERVATION, candidate
+        assert not verdict.is_evidence
+    with pytest.raises(PROBE.ProbeFailure):
+        undispatched.result_for(probe.operand)
+    with pytest.raises(PROBE.ProbeFailure):
+        PROBE.naive_verdict(undispatched, probe)
+
+
+def test_the_record_omits_the_results_row_for_a_case_that_was_never_dispatched() -> None:
+    """The record must not carry an empty row where no dispatch happened.
+
+    A reader of `case.<key>.results` is entitled to treat it as a measurement, so
+    a case from a family with no attached device has to have no such row rather
+    than an empty one. This is the same contract `float_operations` carries on
+    the runtime path, in the other direction.
+    """
+    dispatched = synthetic("multiply_two", 1, {PROBE.INPUT_FLUSH.operand: 0x00000000})
+    undispatched = synthetic("multiply_two", 1, None, family="ios-device")
+    run = PROBE.Run(
+        environment={"date_utc": "unreported"},
+        observations={
+            dispatched.case.key: dispatched,
+            undispatched.case.key: undispatched,
+        },
+        hazards={},
+    )
+    rows = dict(PROBE.record_rows(run))
+    assert f"case.{dispatched.case.key}.results" in rows
+    assert f"case.{undispatched.case.key}.results" not in rows
+    assert f"case.{undispatched.case.key}.float_operations" in rows
+    assert rows["probe.guard_layers.offline_without_device"] == PROBE.EMITTED_ARITHMETIC
+
+
+def test_every_family_metal_platform_declares_a_distinct_target_and_sdk() -> None:
+    """The three families must be three different compilations, not one relabelled.
+
+    A family that shared another's `--sdk` and `-target` would produce identical
+    rows for a reason that has nothing to do with Apple's toolchain, and the
+    record's headline result — that the families agree — would be a tautology.
+    """
+    assert len(PROBE.FAMILIES) == 3
+    for attribute in ("name", "metal_platform", "target"):
+        values = [getattr(family, attribute) for family in PROBE.FAMILIES]
+        assert len(set(values)) == len(values), attribute
+    assert {family.sdk for family in PROBE.FAMILIES} == {
+        "macosx",
+        "iphoneos",
+        "iphonesimulator",
+    }
+    assert [family.name for family in PROBE.FAMILIES] == list(PROBE.FAMILY_BY_NAME)
+
+
+def test_every_family_is_offered_exactly_the_same_case_set() -> None:
+    """A per-family difference must be in what the toolchain did, never in what was asked."""
+    shapes = {
+        family.name: sorted(
+            (case.kernel, case.configuration.key) for case in PROBE.cases(family.name)
+        )
+        for family in PROBE.FAMILIES
+    }
+    reference = shapes[HOST]
+    for name, shape in shapes.items():
+        assert shape == reference, name
+    for family in PROBE.FAMILIES:
+        for case in PROBE.cases(family.name):
+            assert case.key.startswith(f"{family.name}."), case.key
+
+
 def test_the_runtime_path_declares_only_the_guard_layer_it_can_supply() -> None:
     """A runtime observation must advertise one layer, and the offline one both."""
     assert synthetic_runtime("multiply_two", {}).guard_layers == (PROBE.EXECUTION_WITNESS,)
@@ -263,15 +398,46 @@ def test_the_surviving_guard_layer_still_refuses_a_deleted_operation() -> None:
 
 def test_every_runtime_case_has_an_offline_case_to_be_compared_against() -> None:
     """A runtime case with no counterpart would be measured and never compared."""
-    offline = {
-        (case.kernel, case.configuration.math_mode)
-        for case in PROBE.cases()
-        if isinstance(case.configuration, PROBE.Configuration)
-        and case.configuration.optimization == PROBE.RUNTIME_PAIRED_OPTIMIZATION
-    }
-    for case in PROBE.runtime_cases():
-        assert isinstance(case.configuration, PROBE.RuntimeConfiguration)
-        assert (case.kernel, case.configuration.math_mode) in offline, case.key
+    for family in PROBE.FAMILIES:
+        offline = {
+            (case.kernel, case.configuration.math_mode)
+            for case in PROBE.cases(family.name)
+            if isinstance(case.configuration, PROBE.Configuration)
+            and case.configuration.optimization == PROBE.RUNTIME_PAIRED_OPTIMIZATION
+        }
+        for case in PROBE.runtime_cases(family.name):
+            assert isinstance(case.configuration, PROBE.RuntimeConfiguration)
+            assert (case.kernel, case.configuration.math_mode) in offline, case.key
+
+
+def test_a_runtime_case_is_never_compared_against_another_family() -> None:
+    """A cross-family difference must not be able to read as a cross-path divergence.
+
+    The two comparisons answer different questions, and only one of them is
+    about the two compilers. Pairing a runtime case against another family's
+    offline row would report a target difference as a compiler disagreement.
+    """
+    probe = PROBE.INPUT_FLUSH
+    witness = PROBE.BY_NAME["multiply_two"].witness
+    assert witness is not None
+    flushing = {witness.operand: witness.executed, probe.operand: probe.flushing}
+    preserving = {witness.operand: witness.executed, probe.operand: probe.preserving}
+    here = synthetic("multiply_two", 1, flushing, family="macos")
+    elsewhere = synthetic("multiply_two", 1, preserving, family="ios-simulator")
+    runtime_here = synthetic_runtime("multiply_two", flushing, family="macos")
+    run = PROBE.Run(
+        environment={"date_utc": "unreported"},
+        observations={
+            here.case.key: here,
+            elsewhere.case.key: elsewhere,
+            runtime_here.case.key: runtime_here,
+        },
+        hazards={},
+    )
+    comparisons = PROBE.path_comparisons(run)
+    assert len(comparisons) == 1
+    assert comparisons[0].candidates == (here.case.key,)
+    assert comparisons[0].agreement is PROBE.Agreement.AGREE
 
 
 def test_a_runtime_result_matching_no_offline_candidate_is_the_divergence_outcome() -> None:
@@ -281,11 +447,12 @@ def test_a_runtime_result_matching_no_offline_candidate_is_the_divergence_outcom
     which happens only on an axis `MTLCompileOptions` cannot express; treating it
     as a disagreement would report a missing flag as a compiler divergence.
     """
-    candidates = ("k.safe.O2.contract-off", "k.safe.O2.contract-fast")
+    candidates = ("f.k.safe.O2.contract-off", "f.k.safe.O2.contract-fast")
     results = (0x3F800000,) * len(PROBE.OPERANDS)
-    everything = PROBE.PathComparison("k.runtime.safe.opt-default", candidates, candidates, results)
-    some = PROBE.PathComparison("k.runtime.safe.opt-default", candidates, candidates[:1], results)
-    nothing = PROBE.PathComparison("k.runtime.safe.opt-default", candidates, (), results)
+    key = "f.k.runtime.safe.opt-default"
+    everything = PROBE.PathComparison(key, candidates, candidates, results)
+    some = PROBE.PathComparison(key, candidates, candidates[:1], results)
+    nothing = PROBE.PathComparison(key, candidates, (), results)
     assert everything.agreement is PROBE.Agreement.AGREE
     assert some.agreement is PROBE.Agreement.AGREE_ON_SOME
     assert nothing.agreement is PROBE.Agreement.DIFFER
@@ -310,8 +477,9 @@ def test_the_record_omits_the_float_operations_row_for_a_runtime_case() -> None:
     offline = synthetic("multiply_two", 1, results)
     runtime = synthetic_runtime("multiply_two", results)
     run = PROBE.Run(
-        environment={"date_utc": "unreported", "device": "synthetic"},
+        environment={"date_utc": "unreported", "family.macos.device": "synthetic"},
         observations={offline.case.key: offline, runtime.case.key: runtime},
+        hazards={},
     )
     rows = dict(PROBE.record_rows(run))
     assert f"case.{offline.case.key}.float_operations" in rows
@@ -322,8 +490,26 @@ def test_the_record_omits_the_float_operations_row_for_a_runtime_case() -> None:
     assert rows["probe.guard_layers.runtime"] == PROBE.EXECUTION_WITNESS
 
 
+def test_a_record_row_may_not_carry_a_tab_or_a_newline() -> None:
+    """The record's one-line-per-row format is enforced, not assumed.
+
+    Several rows carry captured tool diagnostics, and one of them on the measured
+    row is an abort message from inside the iOS Simulator. A diagnostic with a
+    newline in it would split into two rows that `read_record` then rejects, so
+    the format is checked where the rows are built.
+    """
+    observation = synthetic("multiply_two", 1, {})
+    run = PROBE.Run(
+        environment={"date_utc": "unreported"},
+        observations={observation.case.key: observation},
+        hazards={"cross_family_load.example": "refused: line one\nline two"},
+    )
+    with pytest.raises(PROBE.ProbeFailure):
+        PROBE.record_rows(run)
+
+
 def test_the_record_comparison_detects_a_changed_cross_path_verdict() -> None:
-    """A rewritten `comparison.` row must fail the comparison, not pass silently."""
+    """A rewritten `comparison.` or `hazard.` row must fail the comparison, not pass silently."""
     probe = PROBE.INPUT_FLUSH
     witness = PROBE.BY_NAME["multiply_two"].witness
     assert witness is not None
@@ -333,11 +519,18 @@ def test_the_record_comparison_detects_a_changed_cross_path_verdict() -> None:
     run = PROBE.Run(
         environment={"date_utc": "unreported"},
         observations={offline.case.key: offline, runtime.case.key: runtime},
+        hazards={"cross_family_load.example": "loaded and ran; results 00000000"},
     )
     stored = dict(PROBE.record_rows(run))
     assert not PROBE.compare_record(run, stored)
-    stored[f"comparison.{runtime.case.key}"] = "differ candidates=none"
-    assert PROBE.compare_record(run, stored)
+    changed = dict(stored)
+    changed[f"comparison.{runtime.case.key}"] = "differ candidates=none"
+    assert PROBE.compare_record(run, changed)
+    changed = dict(stored)
+    changed["hazard.cross_family_load.example"] = "refused: the module was rejected"
+    assert PROBE.compare_record(run, changed), (
+        "a change in what the cross-family load does must be a finding, not a silent rewrite"
+    )
 
 
 def test_an_absent_xcrun_is_classified_as_an_absent_toolchain() -> None:
@@ -353,6 +546,20 @@ def test_an_absent_xcrun_is_classified_as_an_absent_toolchain() -> None:
     assert caught.value.reason is PROBE.Reason.TOOLCHAIN
 
 
+def fake_host(directory: str, script: str) -> tuple[Path, PROBE.Attachment, Path]:
+    """Write an executable stand-in for the dispatch host and a one-entry manifest."""
+    host = Path(directory) / "host"
+    host.write_text(script, encoding="utf-8")
+    host.chmod(0o755)
+    manifest = Path(directory) / "manifest.tsv"
+    manifest.write_text(
+        "k\tlibrary\t/absent.metallib\ttiler_probe\n",
+        encoding="utf-8",
+    )
+    attachment = PROBE.Attachment(PROBE.FAMILY_BY_NAME[HOST], True, "", (), "macosx", (), ())
+    return host, attachment, manifest
+
+
 def test_a_host_reporting_no_metal_device_is_classified_as_an_absent_device() -> None:
     """The one skip axis the offline driver's classification has no name for.
 
@@ -361,32 +568,65 @@ def test_a_host_reporting_no_metal_device_is_classified_as_an_absent_device() ->
     and that outcome must be a skip rather than a failure.
     """
     with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
-        host = Path(directory) / "host"
-        host.write_text("#!/bin/sh\necho no device >&2\nexit 3\n", encoding="utf-8")
-        host.chmod(0o755)
+        host, attachment, manifest = fake_host(directory, "#!/bin/sh\necho no device >&2\nexit 3\n")
         with pytest.raises(PROBE.ProbeUnavailable) as caught:
-            PROBE.dispatch(host, Path(directory) / "absent.metallib")
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
     assert caught.value.reason is PROBE.Reason.DEVICE
 
 
 def test_a_host_that_fails_for_any_other_reason_is_a_defect_not_a_skip() -> None:
     """A dispatch that reaches the GPU and fails must never be mistaken for a skip."""
     with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
-        host = Path(directory) / "host"
-        host.write_text("#!/bin/sh\necho pipeline exploded >&2\nexit 4\n", encoding="utf-8")
-        host.chmod(0o755)
+        host, attachment, manifest = fake_host(
+            directory, "#!/bin/sh\necho pipeline exploded >&2\nexit 4\n"
+        )
         with pytest.raises(PROBE.ProbeFailure):
-            PROBE.dispatch(host, Path(directory) / "absent.metallib")
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
 
 
 def test_a_truncated_dispatch_is_a_defect() -> None:
     """A host that returns fewer results than operands must not be silently accepted."""
     with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
-        host = Path(directory) / "host"
-        host.write_text("#!/bin/sh\necho device=fake\necho result=00000000\n", encoding="utf-8")
-        host.chmod(0o755)
+        host, attachment, manifest = fake_host(
+            directory, "#!/bin/sh\necho device=fake\necho case=k\necho result=00000000\n"
+        )
         with pytest.raises(PROBE.ProbeFailure):
-            PROBE.dispatch(host, Path(directory) / "absent.metallib")
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
+
+
+def test_a_dispatch_that_reports_no_case_is_a_defect() -> None:
+    """A batch that printed a device and nothing else must not read as an empty success."""
+    with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
+        host, attachment, manifest = fake_host(directory, "#!/bin/sh\necho device=fake\n")
+        with pytest.raises(PROBE.ProbeFailure):
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
+
+
+def test_a_batch_reports_every_case_separately() -> None:
+    """Amortizing the process launch must not amortize the results.
+
+    One launch dispatches a whole manifest, so the parser has to keep each
+    entry's results attached to its own case key. A parser that ran two entries
+    together would report one case's bit patterns under another's name.
+    """
+    with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
+        results_a = "\n".join(f"echo result={value:08x}" for value in PROBE.OPERANDS)
+        results_b = "\n".join("echo result=00000000" for _ in PROBE.OPERANDS)
+        host, attachment, manifest = fake_host(
+            directory,
+            "#!/bin/sh\necho device=fake\necho registry-id=7\n"
+            f"echo case=a\n{results_a}\n"
+            f"echo case=b\necho applied=math=safe\n{results_b}\n"
+            "echo runtime-compiler-image=/x/GPUCompiler.framework/y\n",
+        )
+        reported = PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
+    assert reported.device == "fake"
+    assert reported.registry_id == "7"
+    assert reported.entries["a"].results == PROBE.OPERANDS
+    assert reported.entries["b"].results == (0,) * len(PROBE.OPERANDS)
+    assert reported.entries["a"].applied_options is None
+    assert reported.entries["b"].applied_options == "math=safe"
+    assert reported.compiler_images == ("/x/GPUCompiler.framework/y",)
 
 
 # --------------------------------------------------------------------------
@@ -394,33 +634,147 @@ def test_a_truncated_dispatch_is_a_defect() -> None:
 # --------------------------------------------------------------------------
 
 
+def test_every_family_compiles_its_own_target_when_a_toolchain_and_gpu_resolve() -> None:
+    """Each family must have produced a distinct module, or nothing below separates them.
+
+    The requested target is not the emitted one — `-std=metal3.1` raises the
+    deployment floor — so the emitted triple is what proves three different
+    compilations happened rather than one repeated.
+    """
+    run = probe_run()
+    triples = {
+        family.name: run.environment[f"family.{family.name}.emitted_triple"]
+        for family in PROBE.FAMILIES
+    }
+    assert len(set(triples.values())) == len(triples), triples
+    for family in PROBE.FAMILIES:
+        assert triples[family.name].startswith("air64"), triples[family.name]
+        assert run.environment[f"family.{family.name}.requested_target"] == family.target
+        for case in PROBE.cases(family.name):
+            observation = run.observations[case.key]
+            assert observation.compile_options is not None, case.key
+            assert observation.operations is not None, case.key
+
+
 def test_the_safe_math_mode_still_disables_denormals_when_a_toolchain_and_gpu_resolve() -> None:
-    """Finding 1. `air.compile.denorms_disable` is emitted under every math mode.
+    """Finding 1, for every family. `air.compile.denorms_disable` under every math mode.
 
     Under `safe` it appears beside `air.compile.fast_math_disable` and no
     emitted operation carries a fast-math flag, so the strictest selection the
     driver offers declares fast math disabled and denormals disabled together.
+    This is the compile-side half, so it holds a family with no attached device
+    to exactly the same account as one with a GPU.
     """
     run = probe_run()
-    for mode in PROBE.MATH_MODES:
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            for contract in PROBE.FP_CONTRACTS:
+                observation = run.of(family.name, "scale_two_bias_one", mode, contract=contract)
+                assert "air.compile.denorms_disable" in observation.compile_options, (
+                    f"{family.name}/{mode}/{contract} did not declare denorms_disable"
+                )
         for contract in PROBE.FP_CONTRACTS:
-            observation = run.of("scale_two_bias_one", mode, contract=contract)
-            assert "air.compile.denorms_disable" in observation.compile_options, (
-                f"{mode}/{contract} did not declare denorms_disable"
+            safe = run.of(family.name, "scale_two_bias_one", "safe", contract=contract)
+            assert "air.compile.fast_math_disable" in safe.compile_options, family.name
+            assert "air.compile.fast_math_enable" not in safe.compile_options, family.name
+            expected = () if contract != "fast" else ("contract",)
+            for operation in safe.operations:
+                assert operation.flags == expected, (
+                    f"{family.name}/safe/{contract} attached {operation.flags} to "
+                    f"a {operation.opcode}"
+                )
+            fast = run.of(family.name, "scale_two_bias_one", "fast", contract=contract)
+            assert "air.compile.fast_math_enable" in fast.compile_options, family.name
+            for operation in fast.operations:
+                assert "nnan" in operation.flags or operation.flags == ("fast",), family.name
+
+
+def test_the_families_agree_on_every_compile_side_row_when_a_toolchain_and_gpu_resolve() -> None:
+    """The headline compile-side result, stated as one assertion over all three families.
+
+    If the subnormal flush were a per-family property this is where it would show
+    up first: `air.compile.denorms_disable` emitted for one family and not
+    another, or a different fast-math licence set, or a different surviving
+    operation count. A failure here is a finding about Apple's toolchain, not a
+    harness defect, and it would mean `MetalSubnormalArithmetic` has to vary by
+    family rather than being one declared constant.
+    """
+    run = probe_run()
+    reference = PROBE.FAMILIES[0].name
+    for family in PROBE.FAMILIES[1:]:
+        for case in PROBE.cases(reference):
+            here = run.observations[case.key]
+            there = run.of(
+                family.name,
+                case.kernel,
+                case.configuration.math_mode,
+                case.configuration.optimization,
+                case.configuration.fp_contract,
             )
-    for contract in PROBE.FP_CONTRACTS:
-        safe = run.of("scale_two_bias_one", "safe", contract=contract)
-        assert "air.compile.fast_math_disable" in safe.compile_options
-        assert "air.compile.fast_math_enable" not in safe.compile_options
-        expected = () if contract != "fast" else ("contract",)
-        for operation in safe.operations:
-            assert operation.flags == expected, (
-                f"safe/{contract} attached {operation.flags} to a {operation.opcode}"
+            assert there.compile_options == here.compile_options, (
+                f"{family.name} declared {there.compile_options} where {reference} declared "
+                f"{here.compile_options} for {case.key}"
             )
-        fast = run.of("scale_two_bias_one", "fast", contract=contract)
-        assert "air.compile.fast_math_enable" in fast.compile_options
-        for operation in fast.operations:
-            assert "nnan" in operation.flags or operation.flags == ("fast",)
+            assert there.operations == here.operations, (
+                f"{family.name} emitted {there.operations} where {reference} emitted "
+                f"{here.operations} for {case.key}"
+            )
+
+
+def test_a_family_with_no_device_yields_no_device_side_row_when_a_toolchain_resolves() -> None:
+    """The refusal that makes the compile-side-only rows safe to keep.
+
+    Every case of a family with no attached device must carry no results and no
+    admissible verdict, in the live run and in the rendered record alike. The
+    hazard row is what makes this non-obvious: on this host the macOS GPU loads
+    and runs that family's metallib, so the refusal is structural rather than a
+    consequence of the substitute being impossible.
+    """
+    run = probe_run()
+    absent = [
+        family
+        for family in PROBE.FAMILIES
+        if run.environment[f"family.{family.name}.execution"].startswith("unavailable:")
+    ]
+    if not absent:
+        pytest.skip("every declared family resolved a device on this host")
+    rows = dict(PROBE.record_rows(run))
+    for family in absent:
+        detail = run.environment[f"family.{family.name}.execution"]
+        assert detail.removeprefix("unavailable:").strip(), family.name
+        for case in PROBE.cases(family.name):
+            observation = run.observations[case.key]
+            assert observation.results is None, case.key
+            assert observation.guard_layers == (PROBE.EMITTED_ARITHMETIC,), case.key
+            assert f"case.{case.key}.results" not in rows, case.key
+            for probe in (PROBE.INPUT_FLUSH, PROBE.RESULT_FLUSH, PROBE.IDENTITY_VALUED_FLUSH):
+                verdict = PROBE.subnormal_verdict(observation, probe)
+                assert verdict is PROBE.Verdict.NO_DEVICE_OBSERVATION, case.key
+        assert not PROBE.runtime_cases(family.name) or all(
+            PROBE.Case(family.name, case.kernel, case.configuration).key not in run.observations
+            for case in PROBE.runtime_cases(family.name)
+        ), f"{family.name} has runtime observations without an execution environment"
+
+
+def test_the_host_gpu_runs_a_foreign_family_module_when_a_toolchain_and_gpu_resolve() -> None:
+    """The convenient substitute for a missing device works, which is why it is refused.
+
+    A reader is entitled to ask why the device gap cannot be closed by loading
+    the iOS module on this Mac. The answer is not that the load fails; it is that
+    the GPU and driver executing it are the Mac's. Recording the outcome under
+    `hazard.` keeps that reasoning checkable, and would notice if Apple ever
+    started refusing the load.
+    """
+    run = probe_run()
+    if not run.hazards:
+        pytest.skip("every declared family resolved a device, so there is no substitute to refuse")
+    for name, outcome in sorted(run.hazards.items()):
+        print(f"hazard.{name}: {outcome}", file=sys.stderr)
+        assert outcome.startswith(("loaded and ran; results ", "refused: ")), outcome
+        assert f"hazard.{name}" in dict(PROBE.record_rows(run))
+        assert not any(name.startswith("case.") for name in run.hazards), (
+            "a hazard must never be recorded as a case"
+        )
 
 
 def test_the_module_flag_is_not_a_summary_of_the_licences_when_a_toolchain_and_gpu_resolve() -> (
@@ -430,18 +784,19 @@ def test_the_module_flag_is_not_a_summary_of_the_licences_when_a_toolchain_and_g
 
     ADR 0076 item 4 depends on this: an artifact-side reader that inferred the
     delivered realization from the module flag would read the opposite of the
-    licences actually applied.
+    licences actually applied. It holds for every family.
     """
     run = probe_run()
-    for contract in PROBE.FP_CONTRACTS:
-        relaxed = run.of("scale_two_bias_one", "relaxed", contract=contract)
-        assert "air.compile.fast_math_disable" in relaxed.compile_options
-        assert relaxed.operations, "the relaxed module must retain operations to carry flags"
-        for operation in relaxed.operations:
-            assert {"reassoc", "nsz", "arcp", "afn"} <= set(operation.flags), operation.flags
-            assert ("contract" in operation.flags) == (contract == "fast"), (
-                f"relaxed/{contract} attached {operation.flags}"
-            )
+    for family in PROBE.FAMILIES:
+        for contract in PROBE.FP_CONTRACTS:
+            relaxed = run.of(family.name, "scale_two_bias_one", "relaxed", contract=contract)
+            assert "air.compile.fast_math_disable" in relaxed.compile_options, family.name
+            assert relaxed.operations, "the relaxed module must retain operations to carry flags"
+            for operation in relaxed.operations:
+                assert {"reassoc", "nsz", "arcp", "afn"} <= set(operation.flags), operation.flags
+                assert ("contract" in operation.flags) == (contract == "fast"), (
+                    f"{family.name}/relaxed/{contract} attached {operation.flags}"
+                )
 
 
 def test_input_and_result_flushing_are_separable_when_a_toolchain_and_gpu_resolve() -> None:
@@ -450,23 +805,24 @@ def test_input_and_result_flushing_are_separable_when_a_toolchain_and_gpu_resolv
     `multiply_two` doubles a subnormal whose exact result is *normal*, so a
     returned zero can only come from flushing the operand. `multiply_half`
     halves the smallest normal, so a returned zero can only come from flushing
-    the result.
+    the result. Asserted for every family whose own GPU answered.
     """
     run = probe_run()
     assert not is_subnormal(PROBE.INPUT_FLUSH.preserving), "the input probe must isolate the input"
     assert not is_subnormal(PROBE.RESULT_FLUSH.operand), "the result probe must isolate the result"
-    for mode in PROBE.MATH_MODES:
-        for optimization in ("0", "2"):
-            doubled = run.of("multiply_two", mode, optimization)
-            halved = run.of("multiply_half", mode, optimization)
-            assert PROBE.subnormal_verdict(doubled, PROBE.INPUT_FLUSH) is PROBE.Verdict(
-                "flushed-to-zero"
-            ), f"{mode}/O{optimization} input flush"
-            assert doubled.result_for(PROBE.INPUT_FLUSH.operand) == 0x00000000
-            assert PROBE.subnormal_verdict(halved, PROBE.RESULT_FLUSH) is PROBE.Verdict(
-                "flushed-to-zero"
-            ), f"{mode}/O{optimization} result flush"
-            assert halved.result_for(PROBE.RESULT_FLUSH.operand) == 0x00000000
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for optimization in ("0", "2"):
+                doubled = run.of(family, "multiply_two", mode, optimization)
+                halved = run.of(family, "multiply_half", mode, optimization)
+                assert PROBE.subnormal_verdict(doubled, PROBE.INPUT_FLUSH) is PROBE.Verdict(
+                    "flushed-to-zero"
+                ), f"{family}/{mode}/O{optimization} input flush"
+                assert doubled.result_for(PROBE.INPUT_FLUSH.operand) == 0x00000000
+                assert PROBE.subnormal_verdict(halved, PROBE.RESULT_FLUSH) is PROBE.Verdict(
+                    "flushed-to-zero"
+                ), f"{family}/{mode}/O{optimization} result flush"
+                assert halved.result_for(PROBE.RESULT_FLUSH.operand) == 0x00000000
 
 
 def test_the_flush_preserves_the_sign_of_zero_when_a_toolchain_and_gpu_resolve() -> None:
@@ -476,13 +832,14 @@ def test_the_flush_preserves_the_sign_of_zero_when_a_toolchain_and_gpu_resolve()
     state which zero it produces is under-specified against measured hardware.
     """
     run = probe_run()
-    for mode in PROBE.MATH_MODES:
-        for optimization in ("0", "2"):
-            observation = run.of("multiply_two", mode, optimization)
-            verdict = PROBE.subnormal_verdict(observation, PROBE.NEGATIVE_INPUT_FLUSH)
-            assert verdict is PROBE.Verdict.FLUSHED_TO_ZERO, f"{mode}/O{optimization}"
-            result = observation.result_for(PROBE.NEGATIVE_INPUT_FLUSH.operand)
-            assert result == 0x80000000, f"{mode}/O{optimization} returned {result:08x}"
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for optimization in ("0", "2"):
+                observation = run.of(family, "multiply_two", mode, optimization)
+                verdict = PROBE.subnormal_verdict(observation, PROBE.NEGATIVE_INPUT_FLUSH)
+                assert verdict is PROBE.Verdict.FLUSHED_TO_ZERO, f"{family}/{mode}/O{optimization}"
+                result = observation.result_for(PROBE.NEGATIVE_INPUT_FLUSH.operand)
+                assert result == 0x80000000, f"{family}/{mode}/O{optimization} gave {result:08x}"
 
 
 def test_materialization_is_unaffected_when_a_toolchain_and_gpu_resolve() -> None:
@@ -493,10 +850,12 @@ def test_materialization_is_unaffected_when_a_toolchain_and_gpu_resolve() -> Non
     per kernel.
     """
     run = probe_run()
-    for mode in PROBE.MATH_MODES:
-        observation = run.of("materialize", mode)
-        assert observation.operation_count == 0, mode
-        assert observation.results == PROBE.OPERANDS, mode
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family.name, "materialize", mode).operation_count == 0, family.name
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family, "materialize", mode).results == PROBE.OPERANDS, f"{family}/{mode}"
 
 
 def test_the_math_mode_changes_a_conforming_result_when_a_toolchain_and_gpu_resolve() -> None:
@@ -505,12 +864,15 @@ def test_the_math_mode_changes_a_conforming_result_when_a_toolchain_and_gpu_reso
     IEEE-754 round-to-nearest requires `+0.0`, which only `safe` returns.
     """
     run = probe_run()
-    for optimization in ("0", "2"):
-        safe = run.of("scale_one_bias_zero", "safe", optimization)
-        assert safe.result_for(0x80000000) == 0x00000000, optimization
-        for mode in ("relaxed", "fast"):
-            observation = run.of("scale_one_bias_zero", mode, optimization)
-            assert observation.result_for(0x80000000) == 0x80000000, f"{mode}/O{optimization}"
+    for family in dispatched_families(run):
+        for optimization in ("0", "2"):
+            safe = run.of(family, "scale_one_bias_zero", "safe", optimization)
+            assert safe.result_for(0x80000000) == 0x00000000, f"{family}/O{optimization}"
+            for mode in ("relaxed", "fast"):
+                observation = run.of(family, "scale_one_bias_zero", mode, optimization)
+                assert observation.result_for(0x80000000) == 0x80000000, (
+                    f"{family}/{mode}/O{optimization}"
+                )
 
 
 def test_contraction_changes_a_conforming_result_when_a_toolchain_and_gpu_resolve() -> None:
@@ -521,11 +883,12 @@ def test_contraction_changes_a_conforming_result_when_a_toolchain_and_gpu_resolv
     """
     run = probe_run()
     operand = 0x3EB97EF9
-    for contract in ("off", "on"):
-        observation = run.of("contraction_pair", "safe", contract=contract)
-        assert observation.result_for(operand) == 0x3FC58F9E, contract
-    fused = run.of("contraction_pair", "safe", contract="fast")
-    assert fused.result_for(operand) == 0x3FC58F9D
+    for family in dispatched_families(run):
+        for contract in ("off", "on"):
+            observation = run.of(family, "contraction_pair", "safe", contract=contract)
+            assert observation.result_for(operand) == 0x3FC58F9E, f"{family}/{contract}"
+        fused = run.of(family, "contraction_pair", "safe", contract="fast")
+        assert fused.result_for(operand) == 0x3FC58F9D, family
 
 
 def test_the_canonicalization_is_not_a_contraction_barrier_when_a_toolchain_and_gpu_resolve() -> (
@@ -540,12 +903,16 @@ def test_the_canonicalization_is_not_a_contraction_barrier_when_a_toolchain_and_
     """
     run = probe_run()
     operand = 0x3EB97EF9
-    for contract in PROBE.FP_CONTRACTS:
-        observation = run.of("contraction_pair_canonicalized", "safe", contract=contract)
-        assert observation.result_for(operand) == 0x3FC58F9E, contract
-    assert run.of("contraction_pair", "safe", contract="fast").result_for(operand) == 0x3FC58F9D, (
-        "the control must fuse, or this test proves nothing about sensitivity"
-    )
+    for family in dispatched_families(run):
+        for contract in PROBE.FP_CONTRACTS:
+            observation = run.of(
+                family, "contraction_pair_canonicalized", "safe", contract=contract
+            )
+            assert observation.result_for(operand) == 0x3FC58F9E, f"{family}/{contract}"
+        control = run.of(family, "contraction_pair", "safe", contract="fast")
+        assert control.result_for(operand) == 0x3FC58F9D, (
+            "the control must fuse, or this test proves nothing about sensitivity"
+        )
 
 
 def test_a_relaxed_mode_deletes_the_arithmetic_when_a_toolchain_and_gpu_resolve() -> None:
@@ -555,16 +922,22 @@ def test_a_relaxed_mode_deletes_the_arithmetic_when_a_toolchain_and_gpu_resolve(
     The `scale 1.0, bias +0.0` kernel retains exactly one operation under `safe`
     — the `+0.0` add, unremovable without `nsz` — and none under `relaxed`. The
     surviving add is what flushes, so the identical licence that breaks signed
-    zero also deletes the operation that would have flushed.
+    zero also deletes the operation that would have flushed. Compile-side, so
+    every family answers.
     """
     run = probe_run()
-    for mode in PROBE.MATH_MODES:
-        assert run.of("multiply_one", mode).operation_count == 0, f"{mode}: x * 1.0 must fold"
-    safe = run.of("scale_one_bias_zero", "safe")
-    assert safe.operation_count == 1
-    assert safe.operations[0].opcode == "fadd"
-    for mode in ("relaxed", "fast"):
-        assert run.of("scale_one_bias_zero", mode).operation_count == 0, mode
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family.name, "multiply_one", mode).operation_count == 0, (
+                f"{family.name}/{mode}: x * 1.0 must fold"
+            )
+        safe = run.of(family.name, "scale_one_bias_zero", "safe")
+        assert safe.operation_count == 1, family.name
+        assert safe.operations[0].opcode == "fadd", family.name
+        for mode in ("relaxed", "fast"):
+            assert run.of(family.name, "scale_one_bias_zero", mode).operation_count == 0, (
+                f"{family.name}/{mode}"
+            )
 
 
 def test_a_deleted_operation_never_reads_as_preservation_when_a_toolchain_and_gpu_resolve() -> None:
@@ -576,21 +949,26 @@ def test_a_deleted_operation_never_reads_as_preservation_when_a_toolchain_and_gp
     """
     run = probe_run()
     probe = PROBE.IDENTITY_VALUED_FLUSH
-    for mode in ("relaxed", "fast"):
-        for optimization in ("0", "2"):
-            observation = run.of("scale_one_bias_zero", mode, optimization)
-            assert observation.result_for(probe.operand) == probe.preserving
-            assert PROBE.naive_verdict(observation, probe) is PROBE.Verdict.PRESERVED
-            guarded = PROBE.subnormal_verdict(observation, probe)
-            assert not guarded.is_evidence, f"{mode}/O{optimization} was admitted as {guarded}"
-    safe = run.of("scale_one_bias_zero", "safe")
-    assert PROBE.subnormal_verdict(safe, probe) is PROBE.Verdict.FLUSHED_TO_ZERO, (
-        "the same kernel under safe must be admitted, or the guard simply refuses everything"
-    )
-    admitted = PROBE.subnormal_verdict(run.of("multiply_two", "fast"), PROBE.INPUT_FLUSH)
-    assert admitted is PROBE.Verdict.FLUSHED_TO_ZERO, (
-        "the guard must still admit a witnessed observation under a relaxed mode"
-    )
+    for family in dispatched_families(run):
+        for mode in ("relaxed", "fast"):
+            for optimization in ("0", "2"):
+                observation = run.of(family, "scale_one_bias_zero", mode, optimization)
+                assert observation.result_for(probe.operand) == probe.preserving
+                assert PROBE.naive_verdict(observation, probe) is PROBE.Verdict.PRESERVED
+                guarded = PROBE.subnormal_verdict(observation, probe)
+                assert not guarded.is_evidence, (
+                    f"{family}/{mode}/O{optimization} was admitted as {guarded}"
+                )
+        safe = run.of(family, "scale_one_bias_zero", "safe")
+        assert PROBE.subnormal_verdict(safe, probe) is PROBE.Verdict.FLUSHED_TO_ZERO, (
+            "the same kernel under safe must be admitted, or the guard simply refuses everything"
+        )
+        admitted = PROBE.subnormal_verdict(
+            run.of(family, "multiply_two", "fast"), PROBE.INPUT_FLUSH
+        )
+        assert admitted is PROBE.Verdict.FLUSHED_TO_ZERO, (
+            "the guard must still admit a witnessed observation under a relaxed mode"
+        )
 
 
 def test_the_emitted_operation_count_alone_is_insufficient_when_a_toolchain_and_gpu_resolve() -> (
@@ -601,19 +979,26 @@ def test_the_emitted_operation_count_alone_is_insufficient_when_a_toolchain_and_
     At `-O0` under `relaxed` the front end still emits both operations and the
     GPU returns every operand unchanged, including negative zero. Only the
     execution witness catches that, which is why the guard has two layers rather
-    than one.
+    than one — and why a family that can supply only the first layer can support
+    no verdict at all.
     """
     run = probe_run()
-    for mode in ("relaxed", "fast"):
-        observation = run.of("scale_one_bias_zero", mode, "0")
-        assert observation.operation_count == 2, f"{mode}: the front end must still emit both"
-        witness = observation.kernel.witness
-        assert witness is not None
-        assert observation.result_for(witness.operand) == witness.deleted, mode
-        assert (
-            PROBE.subnormal_verdict(observation, PROBE.IDENTITY_VALUED_FLUSH)
-            is PROBE.Verdict.ARITHMETIC_NOT_EXECUTED
-        ), mode
+    for family in PROBE.FAMILIES:
+        for mode in ("relaxed", "fast"):
+            observation = run.of(family.name, "scale_one_bias_zero", mode, "0")
+            assert observation.operation_count == 2, (
+                f"{family.name}/{mode}: the front end must still emit both"
+            )
+    for family in dispatched_families(run):
+        for mode in ("relaxed", "fast"):
+            observation = run.of(family, "scale_one_bias_zero", mode, "0")
+            witness = observation.kernel.witness
+            assert witness is not None
+            assert observation.result_for(witness.operand) == witness.deleted, f"{family}/{mode}"
+            assert (
+                PROBE.subnormal_verdict(observation, PROBE.IDENTITY_VALUED_FLUSH)
+                is PROBE.Verdict.ARITHMETIC_NOT_EXECUTED
+            ), f"{family}/{mode}"
 
 
 # --------------------------------------------------------------------------
@@ -628,7 +1013,7 @@ def test_the_two_compilation_paths_agree_case_by_case_when_a_toolchain_and_gpu_r
     A divergence here would mean an artifact's declared numerical realization
     cannot be inferred from the offline build alone, because the compiler that
     actually runs the kernel is a different one. It is reported case by case
-    rather than in aggregate so the failure names which kernel and which mode.
+    rather than in aggregate so the failure names which family, kernel, and mode.
     """
     run = probe_run()
     comparisons = PROBE.path_comparisons(run)
@@ -643,23 +1028,38 @@ def test_the_two_compilation_paths_agree_case_by_case_when_a_toolchain_and_gpu_r
     )
 
 
-def test_the_runtime_compiler_is_identified_when_a_toolchain_and_gpu_resolve() -> None:
-    """The cross-path claim is worth nothing without naming the second compiler.
+def test_each_family_identifies_both_of_its_compilers_when_a_toolchain_and_gpu_resolve() -> None:
+    """A per-family claim is worth nothing without naming both compilers behind it.
 
-    On the measured row it is not the same build as the offline one, so an
-    agreement is agreement between two compilers rather than one compiler
-    invoked twice. If the archive scan ever stops recovering the version, the
-    comparison keeps working and quietly loses that provenance, which is what
-    this asserts against.
+    The offline driver and the runtime compiler are separately versioned, and on
+    the measured row the runtime one belongs to the *execution environment*, so
+    it differs between the macOS family and the simulator family. A family whose
+    runtime compiler went unidentified would let one family's provenance be read
+    onto another's numbers, which is exactly the confusion these rows exist to
+    prevent.
     """
     run = probe_run()
-    runtime = run.environment["runtime_compiler"]
-    assert runtime != "unreported", "no runtime compiler version was recovered from any archive"
-    assert "metalfe-" in runtime, runtime
-    print(
-        f"offline compiler={run.environment['metal_version']!r} runtime compiler={runtime!r}",
-        file=sys.stderr,
-    )
+    for family in PROBE.FAMILIES:
+        offline = run.environment[f"family.{family.name}.metal_version"]
+        assert "metalfe-" in offline, f"{family.name}: {offline}"
+    identified = set()
+    for family in dispatched_families(run):
+        prefix = f"family.{family}"
+        build = run.environment[f"{prefix}.runtime_compiler_build"]
+        images = run.environment[f"{prefix}.runtime_compiler_images"]
+        assert images != "unreported", (
+            f"{family} loaded no image matching {PROBE.COMPILER_IMAGE_MARKERS}, so its runtime "
+            f"compiler is unidentified"
+        )
+        assert "metalfe-" in build, f"{family}: {build}"
+        identified.add(build)
+        print(
+            f"{family}: offline={run.environment[f'{prefix}.metal_version']!r} "
+            f"runtime={run.environment[f'{prefix}.runtime_compiler']!r} build={build!r} "
+            f"images={images!r}",
+            file=sys.stderr,
+        )
+    assert identified, "no dispatched family identified a runtime compiler"
 
 
 def test_runtime_input_and_result_flushing_when_a_toolchain_and_gpu_resolve() -> None:
@@ -671,31 +1071,35 @@ def test_runtime_input_and_result_flushing_when_a_toolchain_and_gpu_resolve() ->
     the weaker layer; see the harness module documentation.
     """
     run = probe_run()
-    for mode in PROBE.MATH_MODES:
-        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
-            doubled = run.runtime("multiply_two", mode, optimization)
-            halved = run.runtime("multiply_half", mode, optimization)
-            assert doubled.operations is None, "a runtime case must not claim a readable module"
-            assert (
-                PROBE.subnormal_verdict(doubled, PROBE.INPUT_FLUSH) is PROBE.Verdict.FLUSHED_TO_ZERO
-            ), f"{mode}/{optimization} input flush"
-            assert (
-                PROBE.subnormal_verdict(halved, PROBE.RESULT_FLUSH) is PROBE.Verdict.FLUSHED_TO_ZERO
-            ), f"{mode}/{optimization} result flush"
-            assert (
-                PROBE.subnormal_verdict(doubled, PROBE.NEGATIVE_INPUT_FLUSH)
-                is PROBE.Verdict.FLUSHED_TO_ZERO
-            ), f"{mode}/{optimization} signed zero"
-            assert doubled.result_for(PROBE.NEGATIVE_INPUT_FLUSH.operand) == 0x80000000
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+                doubled = run.runtime(family, "multiply_two", mode, optimization)
+                halved = run.runtime(family, "multiply_half", mode, optimization)
+                assert doubled.operations is None, "a runtime case must not claim a readable module"
+                assert (
+                    PROBE.subnormal_verdict(doubled, PROBE.INPUT_FLUSH)
+                    is PROBE.Verdict.FLUSHED_TO_ZERO
+                ), f"{family}/{mode}/{optimization} input flush"
+                assert (
+                    PROBE.subnormal_verdict(halved, PROBE.RESULT_FLUSH)
+                    is PROBE.Verdict.FLUSHED_TO_ZERO
+                ), f"{family}/{mode}/{optimization} result flush"
+                assert (
+                    PROBE.subnormal_verdict(doubled, PROBE.NEGATIVE_INPUT_FLUSH)
+                    is PROBE.Verdict.FLUSHED_TO_ZERO
+                ), f"{family}/{mode}/{optimization} signed zero"
+                assert doubled.result_for(PROBE.NEGATIVE_INPUT_FLUSH.operand) == 0x80000000
 
 
 def test_runtime_materialization_is_unaffected_when_a_toolchain_and_gpu_resolve() -> None:
     """Finding 4 through the runtime path, where no emitted-operation count backs it up."""
     run = probe_run()
-    for mode in PROBE.MATH_MODES:
-        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
-            observation = run.runtime("materialize", mode, optimization)
-            assert observation.results == PROBE.OPERANDS, f"{mode}/{optimization}"
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+                observation = run.runtime(family, "materialize", mode, optimization)
+                assert observation.results == PROBE.OPERANDS, f"{family}/{mode}/{optimization}"
 
 
 def test_the_runtime_math_mode_changes_a_result_when_a_toolchain_and_gpu_resolve() -> None:
@@ -705,12 +1109,15 @@ def test_the_runtime_math_mode_changes_a_result_when_a_toolchain_and_gpu_resolve
     only `MTLMathModeSafe` returns it.
     """
     run = probe_run()
-    for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
-        safe = run.runtime("scale_one_bias_zero", "safe", optimization)
-        assert safe.result_for(0x80000000) == 0x00000000, optimization
-        for mode in ("relaxed", "fast"):
-            observation = run.runtime("scale_one_bias_zero", mode, optimization)
-            assert observation.result_for(0x80000000) == 0x80000000, f"{mode}/{optimization}"
+    for family in dispatched_families(run):
+        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+            safe = run.runtime(family, "scale_one_bias_zero", "safe", optimization)
+            assert safe.result_for(0x80000000) == 0x00000000, f"{family}/{optimization}"
+            for mode in ("relaxed", "fast"):
+                observation = run.runtime(family, "scale_one_bias_zero", mode, optimization)
+                assert observation.result_for(0x80000000) == 0x80000000, (
+                    f"{family}/{mode}/{optimization}"
+                )
 
 
 def test_the_runtime_guard_still_discriminates_when_a_toolchain_and_gpu_resolve() -> None:
@@ -720,28 +1127,35 @@ def test_the_runtime_guard_still_discriminates_when_a_toolchain_and_gpu_resolve(
     layer is left to do the refusing. So every run must show that layer both
     refusing the trap kernel under the relaxed modes and admitting it under
     `safe`, in the same process, on results the unguarded reading calls
-    `preserved`.
+    `preserved` — and it must do so in every family that has a device.
     """
     run = probe_run()
     probe = PROBE.IDENTITY_VALUED_FLUSH
-    for mode in ("relaxed", "fast"):
-        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
-            observation = run.runtime("scale_one_bias_zero", mode, optimization)
-            assert observation.result_for(probe.operand) == probe.preserving
-            assert PROBE.naive_verdict(observation, probe) is PROBE.Verdict.PRESERVED
-            guarded = PROBE.subnormal_verdict(observation, probe)
-            assert not guarded.is_evidence, f"{mode}/{optimization} was admitted as {guarded}"
-    admitted = PROBE.subnormal_verdict(run.runtime("scale_one_bias_zero", "safe"), probe)
-    assert admitted is PROBE.Verdict.FLUSHED_TO_ZERO, (
-        "the same kernel under safe must be admitted, or the guard simply refuses everything"
-    )
-    witnessed = PROBE.subnormal_verdict(run.runtime("multiply_two", "fast"), PROBE.INPUT_FLUSH)
-    assert witnessed is PROBE.Verdict.FLUSHED_TO_ZERO, (
-        "the guard must still admit a witnessed observation under a relaxed mode"
-    )
-    assert run.runtime("multiply_one", "safe").kernel.witness is None, (
-        "the witnessless kernel must stay witnessless, or the trap has no control"
-    )
+    for family in dispatched_families(run):
+        for mode in ("relaxed", "fast"):
+            for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+                observation = run.runtime(family, "scale_one_bias_zero", mode, optimization)
+                assert observation.result_for(probe.operand) == probe.preserving
+                assert PROBE.naive_verdict(observation, probe) is PROBE.Verdict.PRESERVED
+                guarded = PROBE.subnormal_verdict(observation, probe)
+                assert not guarded.is_evidence, (
+                    f"{family}/{mode}/{optimization} was admitted as {guarded}"
+                )
+        admitted = PROBE.subnormal_verdict(
+            run.runtime(family, "scale_one_bias_zero", "safe"), probe
+        )
+        assert admitted is PROBE.Verdict.FLUSHED_TO_ZERO, (
+            "the same kernel under safe must be admitted, or the guard simply refuses everything"
+        )
+        witnessed = PROBE.subnormal_verdict(
+            run.runtime(family, "multiply_two", "fast"), PROBE.INPUT_FLUSH
+        )
+        assert witnessed is PROBE.Verdict.FLUSHED_TO_ZERO, (
+            "the guard must still admit a witnessed observation under a relaxed mode"
+        )
+        assert run.runtime(family, "multiply_one", "safe").kernel.witness is None, (
+            "the witnessless kernel must stay witnessless, or the trap has no control"
+        )
 
 
 def test_the_runtime_path_does_not_contract_the_pair_when_a_toolchain_and_gpu_resolve() -> None:
@@ -756,13 +1170,14 @@ def test_the_runtime_path_does_not_contract_the_pair_when_a_toolchain_and_gpu_re
     """
     run = probe_run()
     operand = 0x3EB97EF9
-    separate = run.of("contraction_pair", "safe", contract="off").result_for(operand)
-    fused = run.of("contraction_pair", "safe", contract="fast").result_for(operand)
-    assert separate != fused, "the offline control must fuse, or this test proves nothing"
-    for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
-        observation = run.runtime("contraction_pair", "safe", optimization)
-        assert observation.result_for(operand) == separate, optimization
-        assert observation.result_for(operand) != fused, optimization
+    for family in dispatched_families(run):
+        separate = run.of(family, "contraction_pair", "safe", contract="off").result_for(operand)
+        fused = run.of(family, "contraction_pair", "safe", contract="fast").result_for(operand)
+        assert separate != fused, "the offline control must fuse, or this test proves nothing"
+        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+            observation = run.runtime(family, "contraction_pair", "safe", optimization)
+            assert observation.result_for(operand) == separate, f"{family}/{optimization}"
+            assert observation.result_for(operand) != fused, f"{family}/{optimization}"
 
 
 def test_the_runtime_module_options_match_when_a_toolchain_and_gpu_resolve() -> None:
@@ -772,23 +1187,29 @@ def test_the_runtime_module_options_match_when_a_toolchain_and_gpu_resolve() -> 
     tested for the presence of a byte sequence, where the offline path resolves
     the module's `air.compile_options` node properly. The per-operation fast-math
     flag list, which is the other half of finding 1, has no runtime counterpart
-    at all and is not checked here.
+    at all and is not checked here. In the iOS Simulator the archive cannot be
+    written at all, and the announced reason is what stands in its place.
     """
     run = probe_run()
-    for mode in PROBE.MATH_MODES:
-        observation = run.runtime("scale_two_bias_one", mode)
-        archived = observation.archived_options
-        assert archived is not None
-        if archived.startswith("unavailable:"):
-            message = f"archive scan unavailable for {mode}: {archived}"
-            print(message, file=sys.stderr)
-            pytest.skip(message)
-        offline = run.of("scale_two_bias_one", mode).compile_options
-        assert offline is not None
-        assert set(archived.split()) == set(offline), (
-            f"{mode}: runtime archive named {archived!r}, offline module declared {offline!r}"
-        )
-        assert "air.compile.denorms_disable" in archived, mode
+    checked = 0
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            observation = run.runtime(family, "scale_two_bias_one", mode)
+            archived = observation.archived_options
+            assert archived is not None
+            if archived.startswith("unavailable:"):
+                print(f"archive scan unavailable for {family}/{mode}: {archived}", file=sys.stderr)
+                continue
+            offline = run.of(family, "scale_two_bias_one", mode).compile_options
+            assert offline is not None
+            assert set(archived.split()) == set(offline), (
+                f"{family}/{mode}: runtime archive named {archived!r}, offline module declared "
+                f"{offline!r}"
+            )
+            assert "air.compile.denorms_disable" in archived, f"{family}/{mode}"
+            checked += 1
+    if checked == 0:
+        pytest.skip("no execution environment on this host could serialize a binary archive")
 
 
 def test_the_host_fails_closed_on_a_bad_option_when_a_toolchain_and_gpu_resolve() -> None:
@@ -797,7 +1218,9 @@ def test_the_host_fails_closed_on_a_bad_option_when_a_toolchain_and_gpu_resolve(
     A host that ignored an unrecognized selection would leave the property at its
     API default — `mathFloatingPointFunctions` defaults to `Fast`, not the
     `precise` the offline row pins — and the record would then name a
-    configuration the library was not built with.
+    configuration the library was not built with. A malformed manifest is
+    rejected for the same reason: an entry that lost a field would dispatch
+    something nobody asked for.
     """
     try:
         toolchain = PROBE.resolve()
@@ -811,26 +1234,39 @@ def test_the_host_fails_closed_on_a_bad_option_when_a_toolchain_and_gpu_resolve(
         pytest.skip(message)
     with tempfile.TemporaryDirectory(prefix="tiler-probe-options.") as directory:
         host = Path(directory) / "numerical_probe_host"
-        toolchain.build_host(host)
+        toolchain.build_host(host, "macosx")
         source = Path(directory) / "probe.metal"
         source.write_text(PROBE.BY_NAME["multiply_two"].source(), encoding="utf-8")
         accepted = "math=safe,fpfun=precise,lang=3.1,opt=default"
         rejected = (
-            "math=bogus,fpfun=precise,lang=3.1,opt=default",
-            "mathMode=safe,fpfun=precise,lang=3.1,opt=default",
-            "math=safe,fpfun=precise,lang=3.1",
-            "math=safe,math=fast,fpfun=precise,lang=3.1,opt=default",
+            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\tmath=bogus,fpfun=precise,lang=3.1,"
+            "opt=default",
+            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\tmathMode=safe,fpfun=precise,lang=3.1,"
+            "opt=default",
+            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\tmath=safe,fpfun=precise,lang=3.1",
+            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\tmath=safe,math=fast,fpfun=precise,"
+            "lang=3.1,opt=default",
+            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}",
+            f"k\tlibrary\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}",
+            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}\n"
+            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}",
+            "",
         )
-        for options in rejected:
+        manifest = Path(directory) / "manifest.tsv"
+        for body in rejected:
+            manifest.write_text(f"{body}\n" if body else "", encoding="utf-8")
             result = subprocess.run(
-                [str(host), "source", str(source), PROBE.ENTRY_POINT, options, "3f800000"],
+                [str(host), "batch", str(manifest), "3f800000"],
                 check=False,
                 capture_output=True,
                 text=True,
             )
-            assert result.returncode == 2, f"{options!r} was not rejected: {result.returncode}"
+            assert result.returncode == 2, f"{body!r} was not rejected: {result.returncode}"
+        manifest.write_text(
+            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}\n", encoding="utf-8"
+        )
         result = subprocess.run(
-            [str(host), "source", str(source), PROBE.ENTRY_POINT, accepted, "3f800000"],
+            [str(host), "batch", str(manifest), "3f800000"],
             check=False,
             capture_output=True,
             text=True,
@@ -850,13 +1286,15 @@ def test_the_retained_record_still_holds_when_a_toolchain_and_gpu_resolve() -> N
     source, and nothing noticed. When the live environment row differs from the
     record's the comparison is announced and skipped, because a different
     toolchain build legitimately produces different values and silently
-    accepting them would defeat the point.
+    accepting them would defeat the point. Every per-family field is part of that
+    row, so a host with a different simulator runtime, or none at all, announces
+    the difference instead of comparing across it.
     """
     run = probe_run()
     stored = PROBE.read_record(RECORD)
     differing = {
         key: (stored.get(f"environment.{key}"), run.environment[key])
-        for key in PROBE.QUALIFYING
+        for key in PROBE.qualifying_keys(run.environment)
         if stored.get(f"environment.{key}") != run.environment[key]
     }
     if differing:
