@@ -79,6 +79,8 @@ pub(crate) enum TagSubject {
     BinaryOperation,
     /// The purpose of one envelope section.
     SectionKind,
+    /// Whether one backend payload carries its content in this envelope.
+    PayloadContent,
     /// A Boolean field encoded as one byte.
     Boolean,
 }
@@ -236,16 +238,21 @@ pub(crate) enum ArtifactCodecError {
         /// Encoded minor version.
         minor: u16,
     },
-    /// A carried payload names a section whose governed purpose is wrong.
+    /// A section reference names a section whose governed purpose is wrong.
     ///
-    /// A payload's compilation subject and its object bytes are separate
-    /// governed purposes; reading one as the other would digest a subject that
-    /// no compilation established.
-    PayloadSectionPurpose {
-        /// Ordered payload identifier.
-        payload: u32,
-        /// Ordered section identifier.
+    /// Resolving a reference to an existing section is not enough. A payload's
+    /// compilation subject, its object bytes, and a variant's kernel-program
+    /// subject are three governed purposes, and each is a well-formed section
+    /// with a verifying digest. Reading one as another would load an artifact
+    /// whose executable half had been replaced by another section of its own
+    /// envelope, with no framing or integrity check failing.
+    SectionPurposeMismatch {
+        /// Ordered section identifier the reference named.
         section: u32,
+        /// Governed purpose tag the reference requires.
+        expected: u8,
+        /// Governed purpose tag the named section carries.
+        actual: u8,
     },
     /// A carried payload's declared digest is not the identity of its subject.
     ///
@@ -475,7 +482,7 @@ impl Error for ArtifactCodecError {
             | Self::BadManifestDomain
             | Self::BadPayloadMetadataDomain
             | Self::UnsupportedPayloadMetadataSchema { .. }
-            | Self::PayloadSectionPurpose { .. }
+            | Self::SectionPurposeMismatch { .. }
             | Self::PayloadIdentityMismatch { .. }
             | Self::TotalLengthMismatch { .. }
             | Self::UnsupportedEnvelopeFormat { .. }

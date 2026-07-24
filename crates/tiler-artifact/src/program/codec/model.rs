@@ -35,7 +35,7 @@ use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRe
 use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, LaunchData,
-    RoutingPolicy, SelectedProvider, deferred_key, encode_identity, stage_key,
+    RoutingPolicy, SelectedProvider, VariantData, deferred_key, encode_identity, stage_key,
 };
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::payload::{PayloadContent, encode_metadata};
@@ -339,8 +339,13 @@ impl ArtifactEnvelope {
     /// [`ArtifactDiagnostic::IdentityLimit`] when a received subject exceeds the
     /// governed envelope bound.
     pub(crate) fn project(data: &ArtifactProgramData) -> Result<Self, ArtifactDiagnostic> {
-        let (payloads, payload_of, carried) = project_payloads(data);
-        let (sections, section_of, payload_content) = project_sections(data, &carried);
+        let ProjectedTables {
+            payloads,
+            payload_of,
+            sections,
+            section_of,
+            payload_content,
+        } = project_carried(data);
         let (expressions, expression_of) = project_expressions(data);
         let keys = expression_keys(&expressions);
         let mut providers = data.providers.clone();
@@ -365,51 +370,8 @@ impl ArtifactEnvelope {
                     entity: ArtifactEntityKind::Entry,
                 });
             }
-            let mut order: Vec<usize> = (0..variant.entries.len()).collect();
-            order.sort_unstable_by(|left, right| stage_keys[*left].cmp(&stage_keys[*right]));
-            let mut entries = Vec::with_capacity(order.len());
-            for entry in order {
-                let stage = variant
-                    .program
-                    .stages()
-                    .nth(entry)
-                    .expect("a verified entry names a stage of its own program");
-                let source = &variant.entries[entry];
-                let mut preconditions: Vec<u32> = source
-                    .launch
-                    .preconditions
-                    .iter()
-                    .map(|node| expression_of[position(*node)])
-                    .collect();
-                preconditions.sort_unstable_by_key(|node| keys[position(*node)].clone());
-                entries.push(EntryRow {
-                    stage: StageSubject::from_bytes(&stage_keys[entry]).map_err(|_| {
-                        ArtifactDiagnostic::IdentityLimit {
-                            bytes: stage_keys[entry].len(),
-                            limit: MAX_SUBJECT_BYTES,
-                        }
-                    })?,
-                    resources: stage.kernel().requirements(),
-                    numerical: NumericalFacts::project(stage.kernel().numerical()),
-                    bindings: source
-                        .bindings
-                        .iter()
-                        .map(|binding| BindingData {
-                            accessible_bytes: expression_of[position(binding.accessible_bytes)],
-                            ..binding.clone()
-                        })
-                        .collect(),
-                    launch: LaunchData {
-                        grid_threads: expression_of[position(source.launch.grid_threads)],
-                        threads_per_workgroup: expression_of
-                            [position(source.launch.threads_per_workgroup)],
-                        zero_work_skips_dispatch: source.launch.zero_work_skips_dispatch,
-                        preconditions,
-                    },
-                    payload: payload_of[position(source.implementation.payload)],
-                    entry_key: source.implementation.entry_key.clone(),
-                });
-            }
+            let entries =
+                project_entries(variant, &stage_keys, &expression_of, &keys, &payload_of)?;
 
             let content = variant.program.canonical_identity().as_bytes();
             variants.push(VariantRow {
@@ -725,11 +687,7 @@ fn project_semantic(data: &ArtifactProgramData) -> Result<SemanticSubjects, Arti
 fn project_sections(
     data: &ArtifactProgramData,
     carried: &[Option<PayloadContent>],
-) -> (
-    Vec<Section>,
-    BTreeMap<Vec<u8>, u32>,
-    Vec<Option<PayloadSections>>,
-) {
+) -> ProjectedSections {
     let mut contents: Vec<(u8, Vec<u8>)> = data
         .variants
         .iter()
@@ -780,7 +738,122 @@ fn project_sections(
             bytes,
         })
         .collect();
-    (sections, programs, payload_content)
+    ProjectedSections {
+        sections,
+        programs,
+        payload_content,
+    }
+}
+
+/// Projects one variant's executable entries into canonical stage-key order.
+///
+/// Entry order is canonical rather than declared: the ordinal a producer
+/// happened to push an entry at is presentation, while the stage it realizes is
+/// identity. Every expression reference is remapped to the canonical arena at
+/// the same time, so a row never mixes a declared ordinal with a canonical one.
+///
+/// # Errors
+///
+/// Returns [`ArtifactDiagnostic::IdentityLimit`] when a stage key exceeds the
+/// governed opaque-subject bound.
+fn project_entries(
+    variant: &VariantData,
+    stage_keys: &[Vec<u8>],
+    expression_of: &[u32],
+    keys: &[Vec<u8>],
+    payload_of: &[u32],
+) -> Result<Vec<EntryRow>, ArtifactDiagnostic> {
+    let mut order: Vec<usize> = (0..variant.entries.len()).collect();
+    order.sort_unstable_by(|left, right| stage_keys[*left].cmp(&stage_keys[*right]));
+    let mut entries = Vec::with_capacity(order.len());
+    for entry in order {
+        let stage = variant
+            .program
+            .stages()
+            .nth(entry)
+            .expect("a verified entry names a stage of its own program");
+        let source = &variant.entries[entry];
+        let mut preconditions: Vec<u32> = source
+            .launch
+            .preconditions
+            .iter()
+            .map(|node| expression_of[position(*node)])
+            .collect();
+        preconditions.sort_unstable_by_key(|node| keys[position(*node)].clone());
+        entries.push(EntryRow {
+            stage: StageSubject::from_bytes(&stage_keys[entry]).map_err(|_| {
+                ArtifactDiagnostic::IdentityLimit {
+                    bytes: stage_keys[entry].len(),
+                    limit: MAX_SUBJECT_BYTES,
+                }
+            })?,
+            resources: stage.kernel().requirements(),
+            numerical: NumericalFacts::project(stage.kernel().numerical()),
+            bindings: source
+                .bindings
+                .iter()
+                .map(|binding| BindingData {
+                    accessible_bytes: expression_of[position(binding.accessible_bytes)],
+                    ..binding.clone()
+                })
+                .collect(),
+            launch: LaunchData {
+                grid_threads: expression_of[position(source.launch.grid_threads)],
+                threads_per_workgroup: expression_of[position(source.launch.threads_per_workgroup)],
+                zero_work_skips_dispatch: source.launch.zero_work_skips_dispatch,
+                preconditions,
+            },
+            payload: payload_of[position(source.implementation.payload)],
+            entry_key: source.implementation.entry_key.clone(),
+        });
+    }
+    Ok(entries)
+}
+
+/// Projects the payload table and the section table, which are interdependent.
+///
+/// A carried payload's content becomes two sections, and a section reference is
+/// only meaningful against the *canonical* payload order, so the two tables
+/// cannot be derived independently: payloads are ordered first, and the section
+/// table is built from that order.
+fn project_carried(data: &ArtifactProgramData) -> ProjectedTables {
+    let (payloads, payload_of, carried) = project_payloads(data);
+    let ProjectedSections {
+        sections,
+        programs,
+        payload_content,
+    } = project_sections(data, &carried);
+    ProjectedTables {
+        payloads,
+        payload_of,
+        sections,
+        section_of: programs,
+        payload_content,
+    }
+}
+
+/// The payload and section tables, in canonical order, with their remappings.
+struct ProjectedTables {
+    /// Backend payload descriptors in canonical content order.
+    payloads: Vec<BackendPayloadDescriptor>,
+    /// Declared payload position to canonical payload position.
+    payload_of: Vec<u32>,
+    /// The content-addressed section table in canonical order.
+    sections: Vec<Section>,
+    /// Kernel-program identity bytes to the section carrying them.
+    section_of: BTreeMap<Vec<u8>, u32>,
+    /// Section references of each canonically ordered payload.
+    payload_content: Vec<Option<PayloadSections>>,
+}
+
+/// The section table and the two lookups a projection derives with it.
+struct ProjectedSections {
+    /// The content-addressed section table in canonical order.
+    sections: Vec<Section>,
+    /// Kernel-program identity bytes to the section carrying them.
+    programs: BTreeMap<Vec<u8>, u32>,
+    /// Section references of each canonically ordered payload.
+    payload_content: Vec<Option<PayloadSections>>,
 }
 
 /// Sorts payload descriptors canonically and returns the declaration remapping.

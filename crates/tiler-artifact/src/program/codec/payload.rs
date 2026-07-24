@@ -67,8 +67,7 @@ use super::error::{ArtifactCodecError, CodecLimitKind, OrderedSubject, codec_lim
 /// Versioned domain tag opening the canonical payload-metadata bytes.
 pub(super) const PAYLOAD_METADATA_DOMAIN: &[u8] = b"tiler.artifact-envelope.payload-metadata.v1\0";
 /// Domain separator of one carried payload's compilation identity.
-pub(super) const PAYLOAD_IDENTITY_DOMAIN: &[u8] =
-    b"tiler.artifact-envelope.payload-identity.v1\0";
+pub(super) const PAYLOAD_IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-envelope.payload-identity.v1\0";
 /// Payload-metadata schema version this build writes and reads.
 pub(super) const PAYLOAD_METADATA_SCHEMA: (u16, u16) = (1, 0);
 
@@ -313,38 +312,7 @@ pub(crate) fn decode_metadata(bytes: &[u8]) -> Result<PayloadMetadata, ArtifactC
     )?;
     let source = source.to_vec();
 
-    let toolchain = cursor.text()?;
-    let target = cursor.text()?;
-    let family = cursor.text()?;
-    let language = cursor.text()?;
-    let deployment_major = cursor.u16()?;
-    let deployment_minor = cursor.u16()?;
-    let components = cursor.vec(
-        MAX_PROVENANCE_COMPONENTS,
-        CodecLimitKind::ProvenanceComponents,
-        |cursor| {
-            Ok(ToolComponent {
-                role: cursor.text()?,
-                version: cursor.text()?,
-            })
-        },
-    )?;
-    require_canonical(&components, OrderedSubject::ProvenanceComponent)?;
-    let sdk = PayloadSdkIdentity {
-        name: cursor.text()?,
-        version: cursor.text()?,
-        build: cursor.text()?,
-    };
-    let compile_flags = cursor.vec(
-        MAX_PROVENANCE_FLAGS,
-        CodecLimitKind::ProvenanceFlags,
-        Cursor::text,
-    )?;
-    let link_flags = cursor.vec(
-        MAX_PROVENANCE_FLAGS,
-        CodecLimitKind::ProvenanceFlags,
-        Cursor::text,
-    )?;
+    let provenance = decode_provenance(&mut cursor)?;
 
     let entries = cursor.vec(
         MAX_PAYLOAD_ENTRY_MAPPINGS,
@@ -390,20 +358,73 @@ pub(crate) fn decode_metadata(bytes: &[u8]) -> Result<PayloadMetadata, ArtifactC
     Ok(PayloadMetadata {
         source_representation,
         source,
-        provenance: PayloadProvenance {
-            toolchain,
-            target,
-            family,
-            language,
-            deployment_major,
-            deployment_minor,
-            components,
-            sdk,
-            compile_flags,
-            link_flags,
-        },
+        provenance,
         entries,
         obligations,
+    })
+}
+
+/// Decodes the provenance half of one payload's compilation subject.
+///
+/// Split from [`decode_metadata`] because provenance is the one part of the
+/// subject whose fields are heterogeneous rather than a repeated shape, so it
+/// reads as a block on its own and would otherwise dominate its caller.
+///
+/// The two flag lists are read *without* a canonical-order requirement, unlike
+/// every other collection here. A compiler resolves repeated or conflicting
+/// flags positionally, so their order is meaning; sorting them would name a
+/// different invocation, and rejecting an unsorted list would reject every real
+/// one.
+///
+/// # Errors
+///
+/// Returns the typed [`ArtifactCodecError`] naming the first boundary that
+/// rejected: an exhausted governed budget, invalid text, or a non-canonical or
+/// repeated tool-component list.
+fn decode_provenance(cursor: &mut Cursor<'_>) -> Result<PayloadProvenance, ArtifactCodecError> {
+    let toolchain = cursor.text()?;
+    let target = cursor.text()?;
+    let family = cursor.text()?;
+    let language = cursor.text()?;
+    let deployment_major = cursor.u16()?;
+    let deployment_minor = cursor.u16()?;
+    let components = cursor.vec(
+        MAX_PROVENANCE_COMPONENTS,
+        CodecLimitKind::ProvenanceComponents,
+        |cursor| {
+            Ok(ToolComponent {
+                role: cursor.text()?,
+                version: cursor.text()?,
+            })
+        },
+    )?;
+    require_canonical(&components, OrderedSubject::ProvenanceComponent)?;
+    let sdk = PayloadSdkIdentity {
+        name: cursor.text()?,
+        version: cursor.text()?,
+        build: cursor.text()?,
+    };
+    let compile_flags = cursor.vec(
+        MAX_PROVENANCE_FLAGS,
+        CodecLimitKind::ProvenanceFlags,
+        Cursor::text,
+    )?;
+    let link_flags = cursor.vec(
+        MAX_PROVENANCE_FLAGS,
+        CodecLimitKind::ProvenanceFlags,
+        Cursor::text,
+    )?;
+    Ok(PayloadProvenance {
+        toolchain,
+        target,
+        family,
+        language,
+        deployment_major,
+        deployment_minor,
+        components,
+        sdk,
+        compile_flags,
+        link_flags,
     })
 }
 

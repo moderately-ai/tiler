@@ -1,6 +1,7 @@
 #![allow(
     dead_code,
-    reason = "the neutral artifact codec is a crate-private draft authority (ADR 0074 convention 7). It reserves the envelope framing, canonical manifest encoding, section digests, governed feature and schema compatibility, and the decoder's re-proven obligations. Its first consumer is `prototype-metal-bundle-assembly`, which needs the section table to carry backend metadata and code; promoting the surface to `pub` is Tom's call under ADR 0075 and has not been made."
+    unused_imports,
+    reason = "the neutral artifact codec is a crate-private draft authority (ADR 0074 convention 7). It reserves the envelope framing, canonical manifest encoding, section digests, governed feature and schema compatibility, the decoder's re-proven obligations, and the carried-payload compilation subject. `unused_imports` covers the same reservation one level up: the payload vocabulary is re-exported to the crate so a backend assembler can name it, and until that assembler exists the re-export has no non-test consumer. Promoting the surface to `pub` is Tom's call under ADR 0075 and has not been made."
 )]
 
 //! The bounded canonical lockstep codec for the target-neutral artifact envelope.

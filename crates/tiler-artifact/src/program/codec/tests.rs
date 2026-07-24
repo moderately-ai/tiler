@@ -23,11 +23,12 @@ use tiler_ir::shape::Axis;
 
 use super::super::error::{AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind};
 use super::super::expr::{AbiBinaryOp, AbiRoot, AbiType, AvailabilityPhase, ExprNode};
-use super::super::keys::BackendEntryKey;
+use super::super::keys::{BackendEntryKey, BackendKey, PayloadDigest, RepresentationKey};
 use super::super::model::{
-    RoutingPolicy, address_space_from_tag, address_space_tag, buffer_access_from_tag,
-    buffer_access_tag, element_type_from_tag, element_type_tag, permission_from_tag,
-    permission_tag, subnormal_from_tag, subnormal_tag, value_role_from_tag, value_role_tag,
+    ArtifactExecutionPolicy, RoutingPolicy, SchemaVersion, address_space_from_tag,
+    address_space_tag, buffer_access_from_tag, buffer_access_tag, element_type_from_tag,
+    element_type_tag, permission_from_tag, permission_tag, subnormal_from_tag, subnormal_tag,
+    value_role_from_tag, value_role_tag,
 };
 use super::super::tests::{
     Formulas, OTHER_SCALE_BITS, SCALE_BITS, build_artifact, default_artifact, formulas,
@@ -44,7 +45,11 @@ use super::encode::{
 use super::error::{ArtifactCodecError, OrderedSubject, ReferenceSubject, TagSubject};
 use super::model::{
     ArtifactEnvelope, FEATURE_MULTI_STAGE_PROGRAM, FEATURE_MULTI_VARIANT_ROUTING, Section,
-    SectionKind,
+    SectionKind, position,
+};
+use super::payload::{
+    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
+    PayloadTargetObligation, ToolComponent, decode_metadata,
 };
 
 // -------------------------------------------------------------------------
@@ -1140,5 +1145,242 @@ fn an_expression_reference_outside_the_arena_is_rejected() {
             subject: ReferenceSubject::Expression,
             index: u64::from(beyond),
         }),
+    );
+}
+
+// -------------------------------------------------------------------------
+// Carried backend payloads
+// -------------------------------------------------------------------------
+
+/// Builds one carried payload's compilation subject.
+///
+/// The provenance is deliberately not Metal-shaped beyond its values: the same
+/// record shape holds a CUDA payload's `nvcc`, `ptxas`, and `sm_90`.
+fn payload_metadata(source: &[u8]) -> PayloadMetadata {
+    PayloadMetadata {
+        source_representation: RepresentationKey::new("metal-source").unwrap(),
+        source: source.to_vec(),
+        provenance: PayloadProvenance {
+            toolchain: "tiler.toolchain.apple-metal".to_owned(),
+            target: "air64-apple-macosx26.0".to_owned(),
+            family: "apple-macos".to_owned(),
+            language: "metal3.2".to_owned(),
+            deployment_major: 26,
+            deployment_minor: 0,
+            components: vec![
+                ToolComponent {
+                    role: "compiler".to_owned(),
+                    version: "32023.883".to_owned(),
+                },
+                ToolComponent {
+                    role: "linker".to_owned(),
+                    version: "32023.883".to_owned(),
+                },
+            ],
+            sdk: PayloadSdkIdentity {
+                name: "macosx".to_owned(),
+                version: "26.0".to_owned(),
+                build: "26A5388g".to_owned(),
+            },
+            compile_flags: vec![
+                "-fmetal-math-mode=safe".to_owned(),
+                "-ffp-contract=off".to_owned(),
+            ],
+            link_flags: Vec::new(),
+        },
+        entries: vec![PayloadEntryMapping {
+            entry_key: BackendEntryKey::from_bytes(b"fused").unwrap(),
+            symbol: "tiler_fused_0".to_owned(),
+            transports: vec![0, 1],
+        }],
+        obligations: vec![PayloadTargetObligation {
+            key: "tiler.target.subnormal-arithmetic".to_owned(),
+            value: "flushes-to-zero".to_owned(),
+        }],
+    }
+}
+
+fn payload_content(source: &[u8], code: &[u8]) -> PayloadContent {
+    PayloadContent {
+        metadata: payload_metadata(source),
+        code: code.to_vec(),
+    }
+}
+
+/// Assembles a one-variant artifact whose single payload carries its object.
+fn carried_artifact(source: &[u8], code: &[u8]) -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft
+        .push_carried_payload(
+            BackendKey::new("tiler.metal").unwrap(),
+            RepresentationKey::new("metallib").unwrap(),
+            SchemaVersion::new(1, 0),
+            ArtifactExecutionPolicy::RequiresDeviceTranslation,
+            payload_content(source, code),
+        )
+        .unwrap();
+    let formulas = formulas(&mut draft);
+    draft
+        .push_variant(&program, variant(&formulas, descriptor, b"fused"))
+        .unwrap();
+    draft.build().unwrap()
+}
+
+#[test]
+fn a_carried_payload_round_trips_with_its_object_and_its_subject() {
+    let artifact = carried_artifact(b"kernel void fused() {}", b"\x00metallib\xff");
+    let bytes = encoded(&artifact);
+    let decoded = decode(&bytes).expect("a carried envelope decodes");
+    assert_eq!(decoded, envelope_of(&artifact));
+    assert_eq!(decoded.payload_content().len(), 1);
+    let sections = decoded.payload_content()[0].expect("the payload is carried");
+    assert_eq!(
+        decoded.sections()[position(sections.code)].kind,
+        SectionKind::BackendPayloadCode,
+    );
+    assert_eq!(
+        decoded.sections()[position(sections.code)].bytes,
+        b"\x00metallib\xff",
+    );
+    assert_eq!(
+        decode_metadata(&decoded.sections()[position(sections.metadata)].bytes)
+            .expect("the carried subject decodes"),
+        payload_metadata(b"kernel void fused() {}"),
+    );
+}
+
+/// The descriptor's digest is the identity of the subject, not of the object.
+///
+/// This is the identity decision stated as a test: changing a compilation input
+/// is a different artifact, and changing only the emitted bytes is not.
+#[test]
+fn payload_identity_follows_the_compilation_subject_and_not_the_object() {
+    let baseline = carried_artifact(b"kernel void fused() {}", b"first-link");
+    let relinked = carried_artifact(b"kernel void fused() {}", b"second-link");
+    let recompiled = carried_artifact(b"kernel void other() {}", b"first-link");
+
+    assert_eq!(
+        baseline.canonical_identity(),
+        relinked.canonical_identity(),
+        "a non-reproducible linker must not change what artifact this is",
+    );
+    assert_ne!(
+        encoded(&baseline),
+        encoded(&relinked),
+        "the object still travels, so the two encodings differ",
+    );
+    assert_ne!(
+        baseline.canonical_identity(),
+        recompiled.canonical_identity(),
+        "a different compilation subject is a different artifact",
+    );
+}
+
+#[test]
+fn carrying_a_payload_requires_the_governed_feature() {
+    let carried = carried_artifact(b"kernel void fused() {}", b"link");
+    assert!(
+        envelope_of(&carried)
+            .features()
+            .contains(&"tiler.artifact.feature.embedded-payload-code".to_owned()),
+    );
+    assert!(
+        !envelope_of(&default_artifact())
+            .features()
+            .contains(&"tiler.artifact.feature.embedded-payload-code".to_owned()),
+        "a descriptor-only artifact must not require a reader to implement carrying",
+    );
+}
+
+/// A code reference pointed at a compilation subject must be refused by name.
+///
+/// Both sections exist, both digests verify, and the manifest digest is
+/// restamped by the encoder, so nothing in framing or integrity can catch this.
+/// Only the purpose check can, which is why the reference carries one.
+#[test]
+fn a_payload_section_reference_of_the_wrong_purpose_is_rejected() {
+    let artifact = carried_artifact(b"kernel void fused() {}", b"link");
+    let mut envelope = envelope_of(&artifact);
+    let sections = envelope.payload_content()[0].expect("the payload is carried");
+    envelope.payload_content[0] = Some(super::model::PayloadSections {
+        metadata: sections.metadata,
+        code: sections.metadata,
+    });
+    let bytes = encode(&envelope).expect("a forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::SectionPurposeMismatch {
+            section: sections.metadata,
+            expected: SectionKind::BackendPayloadCode.tag(),
+            actual: SectionKind::BackendPayloadMetadata.tag(),
+        }),
+    );
+}
+
+/// A descriptor that claims a subject it does not carry must be refused.
+#[test]
+fn a_payload_digest_that_is_not_its_carried_subject_is_rejected() {
+    let artifact = carried_artifact(b"kernel void fused() {}", b"link");
+    let mut envelope = envelope_of(&artifact);
+    envelope.payloads[0].digest = PayloadDigest::from_bytes([0x01, 0x02, 0x03]).unwrap();
+    let bytes = encode(&envelope).expect("a forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::PayloadIdentityMismatch { payload: 0 }),
+    );
+}
+
+/// A carried subject that does not parse is refused, not carried opaquely.
+#[test]
+fn a_carried_subject_that_is_not_payload_metadata_is_rejected() {
+    let artifact = carried_artifact(b"kernel void fused() {}", b"link");
+    let mut envelope = envelope_of(&artifact);
+    let sections = envelope.payload_content()[0].expect("the payload is carried");
+    // At least as long as the versioned domain tag, so the case decides on the
+    // tag rather than being pre-empted by a truncation.
+    envelope.sections[position(sections.metadata)].bytes = vec![b'x'; 512];
+    let bytes = encode(&envelope).expect("a forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::BadPayloadMetadataDomain),
+    );
+}
+
+/// A non-canonical collection inside a carried subject is refused.
+#[test]
+fn a_non_canonical_carried_subject_collection_is_rejected() {
+    let mut metadata = payload_metadata(b"kernel void fused() {}");
+    metadata.provenance.components.reverse();
+    assert_eq!(
+        decode_metadata(&super::payload::encode_metadata(&metadata)),
+        Err(ArtifactCodecError::NonCanonicalOrder {
+            subject: OrderedSubject::ProvenanceComponent,
+        }),
+    );
+}
+
+/// Compiler flag order is meaning and must survive a round trip unsorted.
+#[test]
+fn carried_flag_order_is_retained_rather_than_canonicalized() {
+    let mut metadata = payload_metadata(b"kernel void fused() {}");
+    metadata.provenance.compile_flags = vec![
+        "-O2".to_owned(),
+        "-ffast-math".to_owned(),
+        "-fno-fast-math".to_owned(),
+    ];
+    let decoded = decode_metadata(&super::payload::encode_metadata(&metadata))
+        .expect("declared flag order decodes");
+    assert_eq!(
+        decoded.provenance.compile_flags,
+        [
+            "-O2".to_owned(),
+            "-ffast-math".to_owned(),
+            "-fno-fast-math".to_owned(),
+        ]
     );
 }

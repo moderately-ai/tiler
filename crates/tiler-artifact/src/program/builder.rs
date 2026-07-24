@@ -27,7 +27,7 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::Shape;
 
-use super::codec::ArtifactEnvelope;
+use super::codec::{ArtifactEnvelope, PayloadContent};
 use super::error::{
     AbiExprUse, ArtifactBuildError, ArtifactEntityKind, ArtifactLimitKind,
     ArtifactVerificationError, invalid_handle, limit,
@@ -41,11 +41,12 @@ use super::facts::AbiFactBinder;
 use super::handles::{
     AbiExprId, ArtifactBuilderId, PayloadId, VariantId, next_artifact_builder_id,
 };
-use super::keys::{FeasibilityRuleSetRef, TargetProfileRef};
+use super::keys::{BackendKey, FeasibilityRuleSetRef, RepresentationKey, TargetProfileRef};
 use super::model::{
-    ArtifactProgramData, ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingData,
-    BindingKind, DeferredPredicateData, EntryData, InterfaceEntryData, LaunchData, RoutingPolicy,
-    SelectedProvider, StoredBackendEntry, VariantData, VerifiedArtifactProgram, encode_identity,
+    ArtifactExecutionPolicy, ArtifactProgramData, ArtifactSchema, BackendEntryRef,
+    BackendPayloadDescriptor, BindingData, BindingKind, DeferredPredicateData, EntryData,
+    InterfaceEntryData, LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider,
+    StoredBackendEntry, VariantData, VerifiedArtifactProgram, encode_identity,
 };
 use super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
@@ -188,6 +189,7 @@ pub struct ArtifactProgramBuilder {
     environment: CompilationEnvironment,
     providers: Vec<SelectedProvider>,
     payloads: Vec<BackendPayloadDescriptor>,
+    payload_content: Vec<Option<PayloadContent>>,
     expressions: Vec<ExprNode>,
     expression_keys: Vec<Vec<u8>>,
     expression_types: Vec<AbiType>,
@@ -218,6 +220,7 @@ impl ArtifactProgramBuilder {
             environment,
             providers: Vec::new(),
             payloads: Vec::new(),
+            payload_content: Vec::new(),
             expressions: Vec::new(),
             expression_keys: Vec::new(),
             expression_types: Vec::new(),
@@ -286,6 +289,46 @@ impl ArtifactProgramBuilder {
             },
         )?;
         self.payloads.push(descriptor);
+        self.payload_content.push(None);
+        Ok(id)
+    }
+
+    /// Declares one backend payload and carries its content in the artifact.
+    ///
+    /// The descriptor's content digest is not supplied: it is *derived* from
+    /// the exact canonical payload-metadata bytes, so a carried payload cannot
+    /// claim a compilation subject other than the one it carries. That is the
+    /// identity decision this layer encodes — a payload is content-addressed
+    /// over its compilation inputs, and the emitted object travels opaquely
+    /// under an integrity digest that artifact identity deliberately excludes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactBuildError::DuplicatePayload`] for a descriptor this
+    /// artifact already declares, a structural-limit error, or the identity
+    /// error the digest constructor produced.
+    #[allow(
+        dead_code,
+        reason = "the carried-payload entry point is the crate-private draft half of `prototype-metal-bundle-assembly` (ADR 0074 convention 7). It reserves the invariant that a carried payload's descriptor digest is derived from its subject rather than supplied; its first non-test consumer is the backend assembler that does not exist yet."
+    )]
+    pub(crate) fn push_carried_payload(
+        &mut self,
+        backend: BackendKey,
+        representation: RepresentationKey,
+        payload_schema: SchemaVersion,
+        execution_policy: ArtifactExecutionPolicy,
+        content: PayloadContent,
+    ) -> Result<PayloadId, ArtifactBuildError> {
+        let descriptor = BackendPayloadDescriptor {
+            backend,
+            representation,
+            payload_schema,
+            digest: content.identity()?,
+            execution_policy,
+        };
+        let id = self.push_payload(descriptor)?;
+        let position = self.payloads.len() - 1;
+        self.payload_content[position] = Some(content);
         Ok(id)
     }
 
@@ -482,6 +525,7 @@ impl ArtifactProgramBuilder {
             outputs,
             providers: self.providers.clone(),
             payloads: self.payloads.clone(),
+            payload_content: self.payload_content.clone(),
             expressions: self.expressions.clone(),
             expression_keys: self.expression_keys.clone(),
             expression_types: self.expression_types.clone(),

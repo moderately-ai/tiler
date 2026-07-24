@@ -185,7 +185,17 @@ fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
         bytes.extend_from_slice(&provider.capability_api_version.to_be_bytes());
     }
     push_len(bytes, envelope.payloads().len());
-    for (payload, content) in envelope.payloads().iter().zip(envelope.payload_content()) {
+    // Indexed rather than zipped: a zip would silently stop at the shorter of
+    // the two vectors while the count above already said how many rows follow,
+    // so a descriptor table and a content table that disagreed in length would
+    // produce a manifest whose declared count outran its rows. Reading each
+    // content slot independently keeps the row count and the declared count the
+    // same number by construction, and a payload with no content slot encodes
+    // as the descriptor-only form the model already admits — which the unused
+    // payload and unreferenced section obligations then decide on their own
+    // terms rather than being pre-empted by a framing desync.
+    for (position, payload) in envelope.payloads().iter().enumerate() {
+        let content = envelope.payload_content().get(position).copied().flatten();
         push_slice(bytes, payload.backend.as_str().as_bytes());
         push_slice(bytes, payload.representation.as_str().as_bytes());
         bytes.extend_from_slice(&payload.payload_schema.major().to_be_bytes());
