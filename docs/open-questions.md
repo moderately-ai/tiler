@@ -100,6 +100,11 @@ The implementation graph now maps these contracts to bounded coding tickets:
 - Close: family/source/destination/rounding allowlist with exceptional and
   boundary tests.
 
+### Q-SEM-014 — Operation-family breadth
+
+- Owner/tracking: the [operation-family support matrix](roadmap.md#operation-family-support-matrix), [`own-operation-family-support-matrix`](../tickets/own-operation-family-support-matrix.md). The dtype axis is owned by [`enumerate-the-mature-tensor-dtype-taxonomy`](../tickets/enumerate-the-mature-tensor-dtype-taxonomy.md) and tensor contraction by [`scope-einsum-contraction-support`](../tickets/scope-einsum-contraction-support.md). Q-SEM-003 covers the admitted tuples; this question covers the families that are not admitted.
+- Close: every operation family the corpus names appears in that matrix at a rung justified by inspected source or an accepted decision, and carries a live reconsideration trigger. This closes when breadth is tracked, not when it is delivered; widening any family remains separate, explicitly scheduled work.
+
 ### Q-SEM-007 — Concrete transactional rewrite API
 
 - Owner/track: [Operation extensions](operation-extensions.md),

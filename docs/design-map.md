@@ -30,6 +30,7 @@ planning; target capabilities never redefine tensor semantics.
 | --- | --- | --- |
 | What does a tensor program mean? | [IR](ir.md), [numerical semantics](numerical-semantics.md) | [semantic, shape, and numerical research](research/README.md) |
 | How may operations extend? | [Operation extensions](operation-extensions.md) | extension/API research in the [catalog](research/README.md) |
+| Which operation families are actually supported? | [Roadmap](roadmap.md) owns the maturity matrix; [numerical semantics](numerical-semantics.md) owns each family's contract | registrations in `tiler-ir`, `tiler-reference`, `tiler-compiler`, and `tiler-metal` |
 | Which alternatives are legal and chosen? | [Optimizer](compiler/optimizer.md), [fusion and scheduling](compiler/fusion-and-scheduling.md) | optimizer and schedule research in the [catalog](research/README.md) |
 | What is target feasibility? | [IR](ir.md) owns normalized requirements; backend contracts own device realization | target-profile and placement research |
 | What owns kernel programs and buffers? | [IR](ir.md) owns the compiler model; [Artifact ABI](artifact-abi.md) owns serialization | program-planning research |
