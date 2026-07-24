@@ -43,6 +43,7 @@ EXPECTED_WORKSPACE_DEPENDENCIES: dict[str, object] = {
     "tiler-compiler": {"path": "crates/tiler-compiler"},
     "tiler-ir": {"path": "crates/tiler-ir"},
     "tiler-metal": {"path": "crates/tiler-metal"},
+    "tiler-metal-aot": {"path": "crates/tiler-metal-aot"},
     "tiler-reference": {"path": "crates/tiler-reference"},
     "trybuild": "1.0.114",
 }
@@ -112,9 +113,14 @@ EXPECTED_DEPENDENCIES = {
         dependency("num-traits", requirement="^0.2.19", source=CRATES_IO),
         dependency("trybuild", kind="dev", requirement="^1.0.114", source=CRATES_IO),
     ],
+    # The offline driver edge is deliberately development-only: `tiler-metal`
+    # emits source and must not acquire Apple tool discovery at build time, and
+    # keeping the edge out of the normal graph leaves the eventual
+    # `tiler-metal-aot` -> `tiler-metal` direction available.
     "tiler-metal": [
         dependency("tiler-artifact", path="crates/tiler-artifact"),
         dependency("tiler-ir", path="crates/tiler-ir"),
+        dependency("tiler-metal-aot", kind="dev", path="crates/tiler-metal-aot"),
     ],
     "tiler-metal-aot": [],
     "tiler-reference": [dependency("tiler-ir", path="crates/tiler-ir")],

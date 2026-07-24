@@ -304,11 +304,12 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
     /// imported.
     ///
     /// This crate does not depend on `tiler-metal`, so this is a copy of the
-    /// shape under test, not the generator's own output. Compiling the real
-    /// golden fixtures through this driver is owned by
-    /// `compile-golden-msl-through-the-aot-driver-in-the-gate`. What this text
-    /// pins here is that the integer NaN predicate is accepted MSL under every
-    /// governed math mode, which is the property that made it preferable to a
+    /// shape under test, not the generator's own output. `tiler-metal`'s
+    /// `golden_compilation` module compiles the real golden fixtures through
+    /// this driver, under the strict baseline realization those fixtures
+    /// require. What this text pins here is the complementary fact: the integer
+    /// NaN predicate is accepted MSL under *every* governed math mode and
+    /// contraction setting, which is the property that made it preferable to a
     /// floating-point predicate in the first place.
     const CANONICALIZING_MSL: &str = "#include <metal_stdlib>\n\
 using namespace metal;\n\

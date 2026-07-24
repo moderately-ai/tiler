@@ -48,8 +48,10 @@
 //!
 //! Launch geometry, pipeline limits, occupancy, fusion, reduction order, and
 //! numerical policy are owned elsewhere. Compiling the emitted source is owned
-//! by `tiler-metal-aot`; passing this crate's tests is not evidence that the
-//! Metal compiler accepts the source.
+//! by `tiler-metal-aot`, which this crate uses as a development dependency to
+//! compile its golden fixtures through the real offline toolchain. Those tests
+//! self-skip where no qualified Apple toolchain resolves, so a green run is
+//! compiler evidence only on a host that has one.
 //!
 //! # Boundary status
 //!
@@ -180,5 +182,7 @@ pub mod record;
 /// Explicit Metal target facts consumed by emission.
 pub mod target;
 
+#[cfg(test)]
+mod golden_compilation;
 #[cfg(test)]
 mod tests;
