@@ -26,7 +26,9 @@ This keeps the crate's public surface modular so later layer work can proceed
 without one monolith as a shared merge point; it is architecture ADR 0070
 already mandates, not extra scope.
 
-## Outcome (2026-07-24)
+## Outcome
+
+Recorded 2026-07-24.
 
 **Fact — what exists.** `tiler_ir::kernel` is a new public module in `tiler-ir` (`handles.rs`, `error.rs`, `model.rs`, `builder.rs`, `verify.rs`, `lower.rs`, `tests.rs`). It owns the backend-consumable structured kernel IR, its transactional `KernelBuilder`, whole-kernel verification, the canonical lowering `lower_scheduled_region`, and a canonical `CanonicalKernelIdentity`. A `KernelBuilder` can only be opened against a `tiler_ir::schedule::VerifiedScheduledRegion`, and `VerifiedKernel`'s fields are module-private, so no consumer can forge or thaw one.
 
