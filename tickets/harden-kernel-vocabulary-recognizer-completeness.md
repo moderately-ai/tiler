@@ -50,3 +50,13 @@ for these enums live in `tiler-ir` alongside the definitions and already match
 exhaustively, which the amendment's measurement confirms is unaffected by the
 attribute either way. If a per-variant behaviour genuinely changes, say so
 explicitly in the Outcome rather than folding it in.
+
+## Upgrade 2026-07-24: three of these are clause 5b, not 5c
+
+`prototype-artifact-program-model` found a second, stronger reason to remove the attribute from `KernelType`, `AddressSpace`, and `BufferAccess`, and it changes this ticket's priority rather than merely adding detail.
+
+`tiler-artifact` encodes all three into `CanonicalArtifactProgramIdentity`. That is a cross-crate **total map** — every variant must yield its own distinct encoding — which amended convention **5b** makes *mandatory*, not phase-scoped like 5c. The two clauses fail differently: a 5c failure is silently *incomplete* (a supported capability never reaches a backend), while a 5b failure is silently *wrong* (two structurally different subjects sharing identity bytes, which is the hazard convention 3 names). So for these three the attribute is not a judgement call about pre-alpha tolerance — it must go.
+
+Note also that the artifact encoder is a **direct counterexample to the same-crate exemption** recorded on `extend-canonical-identity-encodings-for-reserved-variants`. That exemption is real for the schedule encoders, which sit in the enums' own crate — but it does not generalise, and it stops holding the moment any encoder crosses a crate boundary.
+
+Its interim behaviour, which this ticket should retire: rather than emit a sentinel tag (which would cause exactly the identity collision above), the encoder rejects with `ArtifactDiagnostic::UnrecognizedForeignVariant { subject }`. That is sound but strictly weaker than a compile error — a widened `KernelType` would silently make previously packageable artifacts *unpackageable* instead of failing the build at the site that must decide. Once the attribute is removed, delete that variant and its rejection path; it exists only to compensate for the attribute.
