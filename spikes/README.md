@@ -39,7 +39,7 @@ mean dependency-free, hermetic, portable to every host, or rerun by CI.
 
 ### Artifacts, build, and toolchains
 
-- [Apple Metal target compatibility spikes](apple-targets/README.md) — reproducible; bounded-measurement; supports: [Apple Metal artifact compatibility](../docs/research/apple-targets/artifact-compatibility.md)
+- [Apple Metal target compatibility and numerical spikes](apple-targets/README.md) — reproducible; bounded-measurement; supports: [Apple Metal artifact compatibility](../docs/research/apple-targets/artifact-compatibility.md), [Apple GPU f32 numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md)
 - [Artifact envelope spike](artifacts/README.md) — reproducible; executable-model; supports: [Target-neutral artifact and backend payload envelope](../docs/research/artifacts/target-neutral-artifact-envelope.md)
 - [Embedded-artifact cost probe](embedding/README.md) — reproducible; bounded-measurement; supports: [Direct embedded-artifact costs across Rust crates](../docs/research/embedding/embedded-artifact-costs.md)
 - [Expansion cache crash and race spike](cache/README.md) — reproducible; executable-model, bounded-measurement; supports: [Expansion cache crash and race protocol](../docs/research/cache/crash-and-race-protocol.md)

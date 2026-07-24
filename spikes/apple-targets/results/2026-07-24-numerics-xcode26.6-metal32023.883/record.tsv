@@ -1,0 +1,145 @@
+schema	tiler.apple-numerical-behaviour/v1
+probe.repository_base_revision	71713465b078710e2fb6b9c67699f2646c641ec2
+probe.harness_sha256	74aeef66a6cc8d2d96f50cb157300711b97281f779a83c4f6d8f3381715a3423
+probe.host_source_sha256	c690243b5472de1d410b400a920a476050f5db311bc26fe37f471197c3a5b466
+probe.target	air64-apple-macos13.0
+probe.fixed_flags	-std=metal3.1 -fmetal-math-fp32-functions=precise
+probe.entry_point	tiler_probe
+probe.operands	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+environment.date_utc	2026-07-24T17:52:55Z
+environment.os_version	27.0
+environment.os_build	26A5388g
+environment.machine	arm64
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.sdk_version	26.5
+environment.sdk_build	25F70
+environment.metal_version	Apple metal version 32023.883 (metalfe-32023.883)
+environment.metallib_version	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+environment.device	Apple M4 Max
+case.contraction_pair.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
+case.contraction_pair.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.contraction_pair.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair.safe.O2.contract-off.float_operations	fmul fadd
+case.contraction_pair.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair.safe.O2.contract-on.float_operations	fmul fadd
+case.contraction_pair.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair_canonicalized.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair_canonicalized.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
+case.contraction_pair_canonicalized.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair_canonicalized.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair_canonicalized.safe.O2.contract-off.float_operations	fmul fadd
+case.contraction_pair_canonicalized.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair_canonicalized.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.contraction_pair_canonicalized.safe.O2.contract-on.float_operations	fmul fadd
+case.contraction_pair_canonicalized.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.materialize.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.materialize.fast.O2.contract-off.float_operations	
+case.materialize.fast.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.materialize.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.materialize.relaxed.O2.contract-off.float_operations	
+case.materialize.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.materialize.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.materialize.safe.O2.contract-off.float_operations	
+case.materialize.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_half.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_half.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.multiply_half.fast.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_half.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.multiply_half.fast.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_half.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.multiply_half.relaxed.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_half.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.multiply_half.relaxed.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_half.safe.O0.contract-off.float_operations	fmul
+case.multiply_half.safe.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_half.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_half.safe.O2.contract-off.float_operations	fmul
+case.multiply_half.safe.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.multiply_one.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_one.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.multiply_one.fast.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_one.fast.O2.contract-off.float_operations	
+case.multiply_one.fast.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_one.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.multiply_one.relaxed.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_one.relaxed.O2.contract-off.float_operations	
+case.multiply_one.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_one.safe.O0.contract-off.float_operations	fmul
+case.multiply_one.safe.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_one.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_one.safe.O2.contract-off.float_operations	
+case.multiply_one.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.multiply_two.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_two.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.multiply_two.fast.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.multiply_two.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.multiply_two.fast.O2.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_two.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.multiply_two.relaxed.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_two.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.multiply_two.relaxed.O2.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_two.safe.O0.contract-off.float_operations	fmul
+case.multiply_two.safe.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.multiply_two.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.multiply_two.safe.O2.contract-off.float_operations	fmul
+case.multiply_two.safe.O2.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.scale_one_bias_zero.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.scale_one_bias_zero.fast.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.fast.O2.contract-off.float_operations	
+case.scale_one_bias_zero.fast.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.scale_one_bias_zero.relaxed.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.relaxed.O2.contract-off.float_operations	
+case.scale_one_bias_zero.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.safe.O0.contract-off.float_operations	fmul fadd
+case.scale_one_bias_zero.safe.O0.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.scale_one_bias_zero.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_one_bias_zero.safe.O2.contract-off.float_operations	fadd
+case.scale_one_bias_zero.safe.O2.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.scale_two_bias_one.fast.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.fast.O2.contract-fast.float_operations	fmul+fast fadd+fast
+case.scale_two_bias_one.fast.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.scale_two_bias_one.fast.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.fast.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.fast.O2.contract-on.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.scale_two_bias_one.fast.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.relaxed.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.relaxed.O2.contract-fast.float_operations	fmul+reassoc+nsz+arcp+contract+afn fadd+reassoc+nsz+arcp+contract+afn
+case.scale_two_bias_one.relaxed.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.scale_two_bias_one.relaxed.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.relaxed.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.relaxed.O2.contract-on.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.scale_two_bias_one.relaxed.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
+case.scale_two_bias_one.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.safe.O2.contract-off.float_operations	fmul fadd
+case.scale_two_bias_one.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.scale_two_bias_one.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.scale_two_bias_one.safe.O2.contract-on.float_operations	fmul fadd
+case.scale_two_bias_one.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+probe.status	complete

@@ -1,0 +1,5 @@
+# Regenerable run products from `numerical_probe.py --work-dir`: generated probe
+# sources, emitted LLVM IR, AIR, linked libraries, and the compiled dispatch
+# host. The harness reconstructs all of it, and the retained records under
+# `results/` are the evidence that must stay tracked.
+/local-work/
