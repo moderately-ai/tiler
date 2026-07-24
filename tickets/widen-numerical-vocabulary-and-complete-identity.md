@@ -1,7 +1,7 @@
 ---
 id: widen-numerical-vocabulary-and-complete-identity
 title: Widen the numerical vocabulary and complete its identity encoding
-status: in-progress
+status: done
 priority: p1
 dependencies: [accept-adr-0076-numerical-realizations]
 related: [draft-target-honourable-numerical-contract-adr, extend-canonical-identity-encodings-for-reserved-variants]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, contracts/foundation, implementation/metal, implemen
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, identity]
-claimed_from: todo
-assignee: agent-widen-numerical-vocabulary-and-complete-identity
-lease_expires_at: 1784929884
 ---
 ADR 0076 items 1 and 6. This is the first of four ordered tickets and the only one that carries a latent correctness defect, so the two halves must land in one change.
 
