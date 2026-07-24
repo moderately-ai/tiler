@@ -4,7 +4,7 @@ title: Probe Metal runtime-compilation numerics in the checked-in harness
 status: in-progress
 priority: p2
 dependencies: []
-related: [check-in-apple-numerical-behaviour-probe]
+related: [check-in-apple-numerical-behaviour-probe, record-metal-runtime-compiler-provenance-gap]
 scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
@@ -40,3 +40,5 @@ Note that `MTLCompileOptions` exposes no `-ffp-contract` equivalent, so the cont
 **Fact — cost and skip behaviour.** `pytest spikes/apple-targets` goes from 8.2 s to 11.6 s on the measured host, adding 16 tests (25 to 41). On a host with no Apple toolchain, 21 tests skip with a visible reason in well under a second, 18 portable guard tests still run, and `TILER_REQUIRE_METAL_TOOLCHAIN` turns every skip into a failure. The record schema is bumped to `tiler.apple-numerical-behaviour/v2` because `case.*.compile_options` and `case.*.float_operations` became conditional rather than universal.
 
 **Proposal — what the contracts should now say, for whoever holds them.** `docs/backends/metal.md` (`contracts/artifacts`) should state that the AOT backend's toolchain provenance identifies the offline compiler only, that a runtime-compiled kernel is compiled by a separate and separately versioned compiler outside that provenance, and that finding 9's agreement is a bounded measurement on one host row rather than a property of Metal. ADR 0076 needs no change to its conclusion — finding 9 supports it and finding 8 strengthens its central argument — but if it gains a sentence it should be that a versioned target numerical fact must identify *which* compiler the realization was measured on, because a Metal host resolves two. `repoint-adr-0076-evidence-at-the-numerical-record` holds `contracts/decisions`.
+
+**Follow-up filed.** [record-metal-runtime-compiler-provenance-gap](record-metal-runtime-compiler-provenance-gap.md) owns the provenance half of that contract edit, which no existing ticket covered: `declare-metal-numerical-honourability` already holds `contracts/artifacts` and owns the *subnormal* half of the same `docs/backends/metal.md` numerics text, but predates finding 8 and says nothing about the second compiler. No divergence ticket was needed, because the paths agree.
