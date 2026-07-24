@@ -53,9 +53,9 @@ use super::error::{
 use super::model::{
     AdmissionProvenanceSubject, ArtifactEnvelope, EntryRow, MAX_FEATURES, MAX_INTERFACE_ENTRIES,
     MAX_INTERFACE_SHAPE_RANK, MAX_SECTION_BYTES, MAX_SECTIONS, MAX_TEXT_BYTES, NumericalFacts,
-    ReachedDefinitionsSubject, SUPPORTED_FEATURES, Section, SectionKind, SemanticGraphSubject,
-    SemanticSubjects, StageSubject, VariantRow, canonical_expression_order, expression_keys,
-    ordinal, position,
+    PayloadSections, ReachedDefinitionsSubject, SUPPORTED_FEATURES, Section, SectionKind,
+    SemanticGraphSubject, SemanticSubjects, StageSubject, VariantRow, canonical_expression_order,
+    expression_keys, ordinal, position,
 };
 use super::validate::validate;
 
@@ -239,6 +239,8 @@ pub(super) struct DecodedBody {
     pub(super) outputs: Vec<InterfaceEntryData<OutputKey>>,
     pub(super) providers: Vec<SelectedProvider>,
     pub(super) payloads: Vec<BackendPayloadDescriptor>,
+    /// Each payload's carried sections, aligned with `payloads`.
+    pub(super) payload_content: Vec<Option<PayloadSections>>,
     pub(super) expressions: Vec<ExprNode>,
     pub(super) variants: Vec<VariantRow>,
 }
@@ -281,7 +283,7 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
     let inputs = read_inputs(&mut cursor)?;
     let outputs = read_outputs(&mut cursor)?;
     let providers = read_providers(&mut cursor)?;
-    let payloads = read_payloads(&mut cursor)?;
+    let (payloads, payload_content) = read_payloads(&mut cursor)?;
 
     let expressions = parse_expressions(&mut cursor)?;
     let variants = parse_variants(&mut cursor, expressions.len(), payloads.len())?;
@@ -307,12 +309,24 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
     }
 
     for variant in &variants {
-        if position(variant.program_section) >= sections.len() {
-            return Err(ArtifactCodecError::MissingReference {
-                subject: ReferenceSubject::Section,
-                index: u64::from(variant.program_section),
-            });
-        }
+        section_of_kind(
+            &sections,
+            variant.program_section,
+            SectionKind::KernelProgramSubject,
+        )?;
+    }
+    // A carried payload names its two sections, and each must exist *and* carry
+    // the purpose the reference claims. Resolving the index alone would let a
+    // forged manifest point a code reference at a compilation subject: both
+    // sections are well formed, both digests verify, and the artifact would
+    // load with its object bytes silently replaced by its own metadata.
+    for content in payload_content.iter().flatten() {
+        section_of_kind(
+            &sections,
+            content.metadata,
+            SectionKind::BackendPayloadMetadata,
+        )?;
+        section_of_kind(&sections, content.code, SectionKind::BackendPayloadCode)?;
     }
 
     Ok(ParsedManifest {
@@ -325,6 +339,7 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
             outputs,
             providers,
             payloads,
+            payload_content,
             expressions,
             variants,
         },
@@ -394,11 +409,16 @@ fn read_providers(cursor: &mut Cursor<'_>) -> Result<Vec<SelectedProvider>, Arti
 }
 
 /// Reads the backend payload descriptors and proves their canonical order.
+///
+/// Each descriptor is followed by its content reference, so a descriptor and
+/// the object it names cannot be separated by a table edit that leaves both
+/// individually well formed. The returned content vector is aligned with the
+/// descriptors.
 fn read_payloads(
     cursor: &mut Cursor<'_>,
-) -> Result<Vec<BackendPayloadDescriptor>, ArtifactCodecError> {
-    let payloads = cursor.vec(MAX_ARTIFACT_PAYLOADS, CodecLimitKind::Payloads, |cursor| {
-        Ok(BackendPayloadDescriptor {
+) -> Result<(Vec<BackendPayloadDescriptor>, Vec<Option<PayloadSections>>), ArtifactCodecError> {
+    let rows = cursor.vec(MAX_ARTIFACT_PAYLOADS, CodecLimitKind::Payloads, |cursor| {
+        let descriptor = BackendPayloadDescriptor {
             backend: BackendKey::from_owned(cursor.text()?)
                 .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
             representation: RepresentationKey::from_owned(cursor.text()?)
@@ -407,8 +427,23 @@ fn read_payloads(
             digest: PayloadDigest::from_bytes(cursor.slice()?)
                 .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
             execution_policy: cursor.execution_policy()?,
-        })
+        };
+        let content = match cursor.u8()? {
+            0x00 => None,
+            0x01 => Some(PayloadSections {
+                metadata: cursor.u32()?,
+                code: cursor.u32()?,
+            }),
+            tag => {
+                return Err(ArtifactCodecError::UnknownTag {
+                    subject: TagSubject::PayloadContent,
+                    tag,
+                });
+            }
+        };
+        Ok((descriptor, content))
     })?;
+    let (payloads, payload_content): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
     require_sorted_and_distinct(
         &payloads
             .iter()
@@ -416,7 +451,29 @@ fn read_payloads(
             .collect::<Vec<_>>(),
         OrderedSubject::Payload,
     )?;
-    Ok(payloads)
+    Ok((payloads, payload_content))
+}
+
+/// Resolves one section reference and proves it names the purpose it claims.
+fn section_of_kind(
+    sections: &[SectionDescriptor],
+    reference: u32,
+    kind: SectionKind,
+) -> Result<(), ArtifactCodecError> {
+    let Some(section) = sections.get(position(reference)) else {
+        return Err(ArtifactCodecError::MissingReference {
+            subject: ReferenceSubject::Section,
+            index: u64::from(reference),
+        });
+    };
+    if section.kind != kind {
+        return Err(ArtifactCodecError::SectionPurposeMismatch {
+            section: reference,
+            expected: kind.tag(),
+            actual: section.kind.tag(),
+        });
+    }
+    Ok(())
 }
 
 fn parse_component_schemas(cursor: &mut Cursor<'_>) -> Result<ArtifactSchema, ArtifactCodecError> {
@@ -689,21 +746,21 @@ fn require_sorted_and_distinct<T: Ord>(
 /// Every read is length-checked against the remaining bytes before it consumes
 /// anything, and every count is checked against its governed budget before a
 /// collection is reserved for it.
-struct Cursor<'a> {
+pub(super) struct Cursor<'a> {
     bytes: &'a [u8],
     position: usize,
 }
 
 impl<'a> Cursor<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
+    pub(super) const fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, position: 0 }
     }
 
-    const fn remaining(&self) -> usize {
+    pub(super) const fn remaining(&self) -> usize {
         self.bytes.len() - self.position
     }
 
-    fn take(&mut self, len: usize) -> Result<&'a [u8], ArtifactCodecError> {
+    pub(super) fn take(&mut self, len: usize) -> Result<&'a [u8], ArtifactCodecError> {
         let end = self
             .position
             .checked_add(len)
@@ -733,11 +790,11 @@ impl<'a> Cursor<'a> {
         Ok(self.array::<1>()?[0])
     }
 
-    fn u16(&mut self) -> Result<u16, ArtifactCodecError> {
+    pub(super) fn u16(&mut self) -> Result<u16, ArtifactCodecError> {
         Ok(u16::from_be_bytes(self.array()?))
     }
 
-    fn u32(&mut self) -> Result<u32, ArtifactCodecError> {
+    pub(super) fn u32(&mut self) -> Result<u32, ArtifactCodecError> {
         Ok(u32::from_be_bytes(self.array()?))
     }
 
@@ -767,7 +824,7 @@ impl<'a> Cursor<'a> {
     /// consumed, so a forged length reports truncation rather than reserving
     /// memory for content that is not there. The semantic bound on each such
     /// run belongs to the constructor that wraps it.
-    fn slice(&mut self) -> Result<&'a [u8], ArtifactCodecError> {
+    pub(super) fn slice(&mut self) -> Result<&'a [u8], ArtifactCodecError> {
         let declared = self.u64()?;
         let available = self.remaining();
         let len = usize::try_from(declared).map_err(|_| ArtifactCodecError::Truncated {
@@ -777,7 +834,7 @@ impl<'a> Cursor<'a> {
         self.take(len)
     }
 
-    fn text(&mut self) -> Result<String, ArtifactCodecError> {
+    pub(super) fn text(&mut self) -> Result<String, ArtifactCodecError> {
         let len = self.count(MAX_TEXT_BYTES, CodecLimitKind::TextBytes)?;
         let bytes = self.take(len)?;
         String::from_utf8(bytes.to_vec()).map_err(|_| ArtifactCodecError::InvalidText)
@@ -822,7 +879,7 @@ impl<'a> Cursor<'a> {
         Ok(node)
     }
 
-    fn vec<T>(
+    pub(super) fn vec<T>(
         &mut self,
         limit: usize,
         resource: CodecLimitKind,

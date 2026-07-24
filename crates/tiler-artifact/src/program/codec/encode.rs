@@ -185,13 +185,34 @@ fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
         bytes.extend_from_slice(&provider.capability_api_version.to_be_bytes());
     }
     push_len(bytes, envelope.payloads().len());
-    for payload in envelope.payloads() {
+    // Indexed rather than zipped: a zip would silently stop at the shorter of
+    // the two vectors while the count above already said how many rows follow,
+    // so a descriptor table and a content table that disagreed in length would
+    // produce a manifest whose declared count outran its rows. Reading each
+    // content slot independently keeps the row count and the declared count the
+    // same number by construction, and a payload with no content slot encodes
+    // as the descriptor-only form the model already admits — which the unused
+    // payload and unreferenced section obligations then decide on their own
+    // terms rather than being pre-empted by a framing desync.
+    for (position, payload) in envelope.payloads().iter().enumerate() {
+        let content = envelope.payload_content().get(position).copied().flatten();
         push_slice(bytes, payload.backend.as_str().as_bytes());
         push_slice(bytes, payload.representation.as_str().as_bytes());
         bytes.extend_from_slice(&payload.payload_schema.major().to_be_bytes());
         bytes.extend_from_slice(&payload.payload_schema.minor().to_be_bytes());
         push_slice(bytes, payload.digest.as_bytes());
         bytes.push(payload.execution_policy.tag());
+        // A carried payload names its two sections here rather than in the
+        // section table, so a descriptor and the object it names cannot be
+        // separated by a table edit that leaves both individually well formed.
+        match content {
+            Some(sections) => {
+                bytes.push(0x01);
+                bytes.extend_from_slice(&sections.metadata.to_be_bytes());
+                bytes.extend_from_slice(&sections.code.to_be_bytes());
+            }
+            None => bytes.push(0x00),
+        }
     }
 }
 

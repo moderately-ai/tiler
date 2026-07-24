@@ -44,6 +44,7 @@ use super::error::{ArtifactCodecError, OrderedSubject};
 use super::model::{
     ArtifactEnvelope, EntryRow, VariantRow, expression_keys, node_operands, position,
 };
+use super::payload::{decode_metadata, payload_identity};
 
 /// Proves every artifact-model obligation a decoded envelope can discharge.
 ///
@@ -64,6 +65,7 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     }
     check_interface(envelope)?;
     check_sections(envelope)?;
+    check_payload_identity(envelope)?;
     let facts = ExpressionFacts::derive(envelope.expressions());
     let keys = expression_keys(envelope.expressions());
     check_expression_closure(envelope)?;
@@ -182,8 +184,12 @@ fn check_interface(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError
 }
 
 fn check_sections(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    // Purpose precedes content in the order, so two sections carrying equal
+    // bytes under different purposes are distinct and adjacent rather than a
+    // duplicate. Comparing bytes alone would report a legitimate pair as
+    // non-canonical, and would call a genuine duplicate ordered.
     for pair in envelope.sections().windows(2) {
-        match pair[0].bytes.cmp(&pair[1].bytes) {
+        match pair[0].canonical_key().cmp(&pair[1].canonical_key()) {
             std::cmp::Ordering::Less => {}
             std::cmp::Ordering::Equal => {
                 return Err(ArtifactCodecError::DuplicateItem {
@@ -197,11 +203,15 @@ fn check_sections(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError>
             }
         }
     }
-    let referenced: BTreeSet<u32> = envelope
+    let mut referenced: BTreeSet<u32> = envelope
         .variants()
         .iter()
         .map(|variant| variant.program_section)
         .collect();
+    for content in envelope.payload_content().iter().flatten() {
+        referenced.insert(content.metadata);
+        referenced.insert(content.code);
+    }
     for section in 0..envelope.sections().len() {
         let section = u32::try_from(section).expect("a bounded section table fits u32");
         if !referenced.contains(&section) {
@@ -210,6 +220,33 @@ fn check_sections(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError>
             // two byte identities. That is the same hazard the model rejects
             // for an unreachable expression node.
             return Err(ArtifactCodecError::UnreferencedSection { section });
+        }
+    }
+    Ok(())
+}
+
+/// Re-derives each carried payload's identity from the subject it carries.
+///
+/// The descriptor's digest is what artifact identity folds, and the metadata
+/// section is what a consumer would read to learn how the object was built. A
+/// forged envelope that pairs one descriptor with another payload's subject
+/// keeps both sections well formed and both digests verifying, so this is the
+/// check that binds the two together. It also proves the carried subject parses
+/// under this reader's schema, which the section digest cannot.
+fn check_payload_identity(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    for (payload, content) in envelope.payload_content().iter().enumerate() {
+        let Some(content) = content else {
+            continue;
+        };
+        let bytes = &envelope.sections()[position(content.metadata)].bytes;
+        decode_metadata(bytes)?;
+        let derived = payload_identity(bytes).map_err(|cause| ArtifactCodecError::ModelRule {
+            cause: Box::new(cause),
+        })?;
+        if envelope.payloads()[payload].digest != derived {
+            return Err(ArtifactCodecError::PayloadIdentityMismatch {
+                payload: u32::try_from(payload).expect("a bounded payload table fits u32"),
+            });
         }
     }
     Ok(())

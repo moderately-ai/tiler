@@ -29,7 +29,8 @@ use tiler_ir::shape::Shape;
 
 use super::MAX_ARTIFACT_IDENTITY_BYTES;
 use super::codec::{
-    ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, expression_keys, position as node_at,
+    ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow, expression_keys,
+    position as node_at,
 };
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind, ForeignEnumSubject};
 use super::expr::{
@@ -401,6 +402,12 @@ pub(super) struct ArtifactProgramData {
     pub(super) outputs: Vec<InterfaceEntryData<OutputKey>>,
     pub(super) providers: Vec<SelectedProvider>,
     pub(super) payloads: Vec<BackendPayloadDescriptor>,
+    /// Carried content of each payload, aligned with `payloads`.
+    ///
+    /// `None` is the descriptor-only payload this model always admitted: the
+    /// artifact names a backend object it does not carry. `Some` carries the
+    /// compilation subject and the emitted bytes.
+    pub(super) payload_content: Vec<Option<PayloadContent>>,
     pub(super) expressions: Vec<ExprNode>,
     pub(super) expression_keys: Vec<Vec<u8>>,
     pub(super) expression_types: Vec<AbiType>,

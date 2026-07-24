@@ -79,6 +79,8 @@ pub(crate) enum TagSubject {
     BinaryOperation,
     /// The purpose of one envelope section.
     SectionKind,
+    /// Whether one backend payload carries its content in this envelope.
+    PayloadContent,
     /// A Boolean field encoded as one byte.
     Boolean,
 }
@@ -110,6 +112,12 @@ pub(crate) enum OrderedSubject {
     Entry,
     /// The framed envelope sections.
     Section,
+    /// The entry mappings of one carried backend payload.
+    PayloadEntryMapping,
+    /// The versioned tool components of one payload provenance record.
+    ProvenanceComponent,
+    /// The recorded target obligations of one carried backend payload.
+    TargetObligation,
 }
 
 impl fmt::Display for OrderedSubject {
@@ -172,6 +180,18 @@ pub(crate) enum CodecLimitKind {
     ShapeRank,
     /// Byte length of one encoded text run.
     TextBytes,
+    /// Byte length of one carried payload's exact compiled source.
+    PayloadSourceBytes,
+    /// Entry-mapping count of one carried backend payload.
+    PayloadEntryMappings,
+    /// Transport-slot count of one entry mapping.
+    EntryTransports,
+    /// Versioned tool-component count of one payload provenance record.
+    ProvenanceComponents,
+    /// Compiler or linker flag count of one payload provenance record.
+    ProvenanceFlags,
+    /// Recorded target-obligation count of one carried backend payload.
+    TargetObligations,
 }
 
 impl fmt::Display for CodecLimitKind {
@@ -209,6 +229,40 @@ pub(crate) enum ArtifactCodecError {
     BadMagic,
     /// The canonical manifest did not open with its versioned domain tag.
     BadManifestDomain,
+    /// A carried payload's metadata did not open with its versioned domain tag.
+    BadPayloadMetadataDomain,
+    /// The payload-metadata schema is not the one this reader implements.
+    UnsupportedPayloadMetadataSchema {
+        /// Encoded major version.
+        major: u16,
+        /// Encoded minor version.
+        minor: u16,
+    },
+    /// A section reference names a section whose governed purpose is wrong.
+    ///
+    /// Resolving a reference to an existing section is not enough. A payload's
+    /// compilation subject, its object bytes, and a variant's kernel-program
+    /// subject are three governed purposes, and each is a well-formed section
+    /// with a verifying digest. Reading one as another would load an artifact
+    /// whose executable half had been replaced by another section of its own
+    /// envelope, with no framing or integrity check failing.
+    SectionPurposeMismatch {
+        /// Ordered section identifier the reference named.
+        section: u32,
+        /// Governed purpose tag the reference requires.
+        expected: u8,
+        /// Governed purpose tag the named section carries.
+        actual: u8,
+    },
+    /// A carried payload's declared digest is not the identity of its subject.
+    ///
+    /// The descriptor's content digest is re-derived from the exact
+    /// payload-metadata bytes on every decode, so a payload cannot claim a
+    /// compilation subject it does not carry.
+    PayloadIdentityMismatch {
+        /// Ordered payload identifier.
+        payload: u32,
+    },
     /// The declared total length disagreed with the supplied byte run.
     TotalLengthMismatch {
         /// Length the header declared.
@@ -426,6 +480,10 @@ impl Error for ArtifactCodecError {
             | Self::TrailingManifestBytes { .. }
             | Self::BadMagic
             | Self::BadManifestDomain
+            | Self::BadPayloadMetadataDomain
+            | Self::UnsupportedPayloadMetadataSchema { .. }
+            | Self::SectionPurposeMismatch { .. }
+            | Self::PayloadIdentityMismatch { .. }
             | Self::TotalLengthMismatch { .. }
             | Self::UnsupportedEnvelopeFormat { .. }
             | Self::UnsupportedCanonicalEncoding { .. }
