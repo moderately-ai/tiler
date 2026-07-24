@@ -1,7 +1,7 @@
 ---
 id: register-governed-scalar-reference-evaluation
 title: Register reference evaluation for the governed scalar profile
-status: in-progress
+status: done
 priority: p1
 dependencies: [wire-capability-and-refinement-into-compile-path]
 related: [reconcile-single-contributor-strict-sum-nan-canonicalization, declare-governed-scalar-numerical-facts, execute-governed-refined-regions-against-the-oracle]
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, reference, milestone-0b]
-claimed_from: todo
-assignee: agent-register-governed-scalar-reference-evaluation
-lease_expires_at: 1784929884
 ---
 `FrozenScalarRegistry::standard()` now defines `tiler.scalar::constant-f32@1`, `multiply-f32@1`, and `add-f32@1`, and the governed index-access lowerings emit regions over them. No `tiler_reference::ScalarReferenceRegistryBuilder` registration exists for those keys, so the regions the compile path now refines cannot be executed by the independent `IndexRegionEvaluator` oracle.
 
