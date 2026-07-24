@@ -4,6 +4,7 @@
 //! not depend on Metal emission, live runtime APIs, Candle, or frontend syntax.
 
 pub mod capability;
+mod cover;
 mod explain;
 mod feasibility;
 mod frontier;
