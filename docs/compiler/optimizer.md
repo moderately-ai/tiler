@@ -271,8 +271,13 @@ rewrite semantic identity.
 An enforcer supplies a missing required property at a cost:
 
 - contiguous materialization;
-- layout conversion;
-- dtype cast;
+- layout conversion.
+
+An enforcer may change only how a boundary value is stored, addressed, placed, or delivered, never which values that boundary carries. ADR 0001's separation of semantic planning from physical scheduling holds only because several physical schedules implement one semantic group identically, so a schedule-level step that altered a value would make one semantic program mean different things under different plans. Every entry above is value-preserving in that sense, and so is every property the [boundary-property list](#boundary-requirements-and-guarantees) admits.
+
+A dtype cast is therefore not an enforcer, and resolved value dtype is absent from that list by construction rather than by omission. [Numerical semantics](../numerical-semantics.md#casts) makes casts semantic operations carrying resolved typed conversion contracts, and ADR 0010 forbids a later phase substituting a different conversion or letting fusion erase one that an unfused program happened to realize through a store and reload. A conversion the graph already contains is realized by ordinary lowering of that operation and supplies no missing property; a conversion the graph does not contain may not be introduced by a schedule at all. Admitting dtype to the property list would also break that list's ordering relation, because satisfaction there is subsumption and the dtype analogue of "16-byte alignment satisfies a 4-byte requirement" is a producer keeping `f32` where the boundary calls for `f16` — precisely the erased narrowing ADR 0009 and ADR 0010 forbid.
+
+Choosing wider computation or accumulator precision inside a region is a different mechanism under a different gate: the implementation rules above already require each candidate's machine-checkable numerical guarantee to refine every effective operation contract. That is numerical conformance checked on an implementation, not a missing property supplied at a boundary.
 
 Scalar alignment-safe execution and bounds masking are schedule alternatives or
 proof obligations, not enforcers. A partial buffer plus second pass is a
@@ -298,8 +303,9 @@ contracts include:
 - materialized buffer, alias/view, or opaque runtime value;
 - device and address space.
 
-Logical shape, accumulation semantics, and numerical policy are semantic traits
-or optimization-context constraints, not properties supplied by a schedule.
+Logical shape, resolved value dtype, accumulation semantics, and numerical
+policy are semantic traits or optimization-context constraints, not properties
+supplied by a schedule.
 Target capabilities, runtime guards, resource use, schedule invariants, and
 cost estimates are also distinct concepts rather than entries in one universal
 property bag. Iteration order and register residency are region-internal unless
