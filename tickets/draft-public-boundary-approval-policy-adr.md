@@ -1,7 +1,7 @@
 ---
 id: draft-public-boundary-approval-policy-adr
 title: Draft a proposed ADR for the public-boundary approval policy
-status: in-progress
+status: done
 priority: p1
 dependencies: [draft-public-api-conventions-adr]
 related: [draft-public-extension-seam-ownership-adr]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, decisions, governance, process]
-claimed_from: todo
-assignee: agent-draft-public-boundary-approval-policy-adr
-lease_expires_at: 1784908598
 ---
 Record, as a **proposed** ADR, which changes require Tom's explicit review before
 merge and which a coordinator may merge autonomously. `AGENTS.md` today says Tom
