@@ -1,7 +1,7 @@
 ---
 id: prototype-complete-physical-plan-selection
 title: Select and verify complete physical plans
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-region-cover-enumeration, prototype-physical-implementation-frontier]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, program-selection]
+claimed_from: todo
+assignee: agent-prototype-complete-physical-plan-selection
+lease_expires_at: 1784861489
 ---
 Join independently verified legal covers with compatible per-region physical
 frontiers. Verify complete occurrence/output coverage, boundary agreement,
