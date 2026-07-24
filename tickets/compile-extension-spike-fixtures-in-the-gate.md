@@ -76,6 +76,10 @@ Before this ticket, `run.py --self-test` claimed exactly: *a record exists attri
 
 **Fact — ADR 0074 did not overclaim and needs no qualification.** Its evidence paragraph already said the self-test runs "without invoking Cargo" and that "the fixtures themselves compile only when the suite is run by hand", which was accurate. That clause is now false in the other direction, so it was updated in place — an evidence refresh, not an amendment: no convention changed, and the record cites the same measurement, now checked in both directions. `spikes/extensions/README.md`'s matching sentence was corrected the same way, and `preserve-non-exhaustive-visibility-probe`'s outcome gained a **Closed.** note rather than being rewritten.
 
+### Follow-up
+
+`verify-off-pin-shape-evidence-diagnostics` owns the one gap this ticket found and deliberately did not close. Excluding a spike from *reproduction* is not the same as leaving its evidence unchecked, and the off-pin `spikes/shapes/shape-evidence` currently has neither: the gate correctly does not compile its six stable-1.89 diagnostics, and no record verifies them either — its gated pytest module tests the measurement harness's deadline and process-group cleanup and reads none of them. The visibility probe has both halves. Giving the off-pin spike the record half is `research/shapes` work and a distinct decision from this ticket's admission rule, so it is a follow-up rather than a fourth scope here.
+
 ### Scope note
 
 `contracts/navigation` was added before editing `scripts/tests/test_rust_gate_integrity.py`, whose command-plan assertion is exact equality and cannot pass otherwise. `research/extensions` was added for `spikes/extensions/README.md` and `contracts/decisions` for the one clause in ADR 0074 that this change falsifies. Both of the latter are single-paragraph corrections to statements this ticket made untrue; leaving them stale would have violated the documentation-coherence contract. `contracts/navigation` and `contracts/decisions` overlap the concurrently open `record-an-adr-for-the-metal-aot-crate-admission`, in different files.
