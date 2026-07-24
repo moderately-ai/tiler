@@ -8,10 +8,33 @@ shape, compiles them offline through `xcrun metal` and `xcrun metallib`, reads
 the emitted LLVM IR, dispatches the linked library on the local GPU through
 `numerical_probe_host.m`, and classifies what came back.
 
-Scope note. Every value this module produces is qualified by one host, one
-toolchain build, and one GPU. `environment()` captures that row and
-`write_record` stores it beside the observations, because none of these
+Scope note. Every value this module produces is qualified by one host, one GPU,
+and the two compiler builds that host resolves. `environment()` captures that row
+and `write_record` stores it beside the observations, because none of these
 observations is a portable guarantee about Metal.
+
+# Two compilation paths, compared case by case
+
+Tiler's Metal story has two compilation stages: `xcrun metal` at build time and
+runtime pipeline creation through a command stream. An artifact's declared
+numerical realization has to be true of whichever one actually runs, so the same
+generated source bytes go through both here — offline through `xcrun`, and in
+process through `newLibraryWithSource:options:` with an explicit
+`MTLCompileOptions` — and `path_comparisons` pairs the two case by case rather
+than in aggregate.
+
+These are not the same compiler. On the measured row the offline driver reports
+`metalfe-32023.883` and the library the runtime path compiles embeds
+`metalfe-32023.921`; `environment()` records the latter so the pair is never
+mistaken for one compiler invoked twice.
+
+`MTLCompileOptions` also exposes a different surface from the offline flag set.
+`OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART` names every offline selection with
+no property to set, and the harness records the gap rather than substituting the
+nearest thing: `RUNTIME_PAIRED_OPTIMIZATION` explains which offline row a runtime
+case is paired against, and a runtime result that matches only some of its
+offline candidates is reported as a *measurement of the missing axis* rather
+than as a disagreement between the paths.
 
 # The reason a returned bit pattern is not, by itself, evidence
 
@@ -40,6 +63,39 @@ can never support a preservation claim from this harness at all, and
 `Kernel.witness` is `None` for exactly those kernels. Whether such a kernel's
 operations were deleted or special-cased in hardware is not distinguished here,
 and does not need to be: neither supports a claim about what arithmetic does.
+
+## What replaces layer 1 on the runtime path, which has no readable IR
+
+`newLibraryWithSource:options:` returns an opaque `MTLLibrary`. There is no
+emitted module to read, so layer 1 is **unavailable** on that path and the
+harness says so rather than substituting something for it:
+
+- `Observation.operations` is `None`, never `()`, for a runtime observation.
+  `()` would assert a measured absence of arithmetic; `None` records that the
+  question was never asked. `subnormal_verdict` skips layer 1 only for `None`,
+  and `record_rows` omits the `float_operations` row entirely instead of writing
+  an empty one, so no reader of the record can mistake the two.
+- Layer 2 carries the admissibility decision alone, which is sound because layer
+  2 is device-side and *sufficient* where layer 1 is compile-side and merely
+  *necessary*: an observation layer 1 would reject emitted no arithmetic, so
+  nothing ran, so the kernel returns its operands, so layer 2 rejects it as
+  `arithmetic-not-executed`. The converse fails, and this harness measured it
+  failing — at `-O0` layer 1 passed with two emitted operations and layer 2 was
+  the layer that caught the deletion. The layer being lost is the one that
+  demonstrably did not catch the hard case.
+- A guard that never refuses anything is not a guard, so the runtime path must
+  keep demonstrating that layer 2 still discriminates *on that path*: the trap
+  kernel is admitted under `safe` and refused under `relaxed` and `fast` in the
+  same run. That live discrimination is what stands in for layer 1's assurance.
+
+`scan_archive` recovers what little does survive the runtime path, and is
+deliberately not part of the guard. A serialized `MTLBinaryArchive` embeds the
+runtime compiler's version string and the module's `air.compile.*` option names,
+but the container has no published layout and its string table is stored
+concatenated without separators, so the harness can only test it for the
+presence of a byte sequence. Presence is decidable; the option *set* is not, and
+neither is attachment to the module's `air.compile_options` node, which the
+offline path resolves properly. It is corroboration, not evidence.
 """
 
 from __future__ import annotations
@@ -61,8 +117,15 @@ HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parents[1]
 HOST_SOURCE = HERE / "numerical_probe_host.m"
 
-SCHEMA = "tiler.apple-numerical-behaviour/v1"
-"""Record format identity. Bump this whenever a key's meaning changes."""
+SCHEMA = "tiler.apple-numerical-behaviour/v2"
+"""Record format identity. Bump this whenever a key's meaning changes.
+
+v2 adds the runtime-compilation path. `case.*.float_operations` and
+`case.*.compile_options` became conditional rather than universal — a case
+compiled at runtime has neither, because nothing readable survives that path —
+and `comparison.*`, `environment.runtime_compiler`, `case.*.applied_options`,
+and `case.*.archived_options` are new.
+"""
 
 REQUIRE_TOOLCHAIN = "TILER_REQUIRE_METAL_TOOLCHAIN"
 """Turns an absent toolchain, SDK, or GPU from a skip into a failure.
@@ -92,6 +155,69 @@ OPERANDS: tuple[int, ...] = (
 
 MATH_MODES = ("safe", "relaxed", "fast")
 FP_CONTRACTS = ("off", "on", "fast")
+
+RUNTIME_LANGUAGE = "3.1"
+"""`MTLLanguageVersion3_1`, the exact counterpart of the offline `-std=metal3.1`."""
+
+RUNTIME_OPTIMIZATIONS = ("default", "size")
+"""`MTLLibraryOptimizationLevel`, which is the whole optimization surface here.
+
+Neither value is `-O0`. The offline `-O0` cases therefore have no runtime
+counterpart at all, which is why the `-O0` refinement of finding 7 stays an
+offline-only measurement.
+"""
+
+OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART = (
+    "-target: MTLCompileOptions has no target property; the runtime compiler "
+    "targets the device and OS it is running on",
+    "-ffp-contract: MTLCompileOptions has no contraction property; the source-level "
+    "`#pragma METAL fp contract(...)` is accepted by this front end but changing the "
+    "source would break the byte-identical pairing the comparison depends on",
+    "-O0: MTLLibraryOptimizationLevel offers Default and Size only",
+)
+"""Every offline selection with no `MTLCompileOptions` property, and what is there instead.
+
+Enumerated by reading the complete `@interface MTLCompileOptions` in
+`Metal.framework/Headers/MTLLibrary.h` of macOS SDK 26.5, not by searching it.
+`mathMode`, `mathFloatingPointFunctions`, and `languageVersion` are exact
+counterparts of `-fmetal-math-mode`, `-fmetal-math-fp32-functions`, and `-std`;
+`preprocessorMacros` has no offline selection in use here to correspond to.
+"""
+
+RUNTIME_PAIRED_OPTIMIZATION = "2"
+"""The offline optimization level a runtime case is compared against.
+
+`MTLLibraryOptimizationLevelDefault` is documented as "optimize for program
+performance", so `-O2` is the offline row whose selection the runtime path can
+express. The contraction axis is not narrowed the same way: a runtime case is
+compared against *every* offline contraction setting recorded for its kernel,
+mode, and this level, so a kernel on which contraction is unobservable yields a
+plain agreement and a kernel on which it is observable reports which offline
+setting the runtime default behaves like, instead of a spurious disagreement
+against an arbitrarily chosen one.
+"""
+
+ARCHIVE_COMPILER = re.compile(rb"Apple metal version [0-9.]+ \(metalfe-[0-9.]+\)")
+"""The runtime compiler's own version string, delimited by a literal prefix and `)`.
+
+Unlike the option names below, this one is unambiguously bounded in the
+container, so scanning for it yields the exact string and not a prefix of it.
+"""
+
+ARCHIVE_OPTION_PROBES = (
+    "air.compile.denorms_disable",
+    "air.compile.denorms_enable",
+    "air.compile.fast_math_disable",
+    "air.compile.fast_math_enable",
+    "air.compile.framebuffer_fetch_enable",
+)
+"""The `air.compile.*` names a serialized binary archive is tested for, one by one.
+
+A containment test is the strongest thing available: the container stores its
+strings concatenated with no separator, so `air.compile.denorms_disable` is
+immediately followed by the next name and no pattern can recover the *set*. Each
+name here is therefore probed individually and the result reports presence only.
+"""
 
 FLOAT_FLAGS = ("nnan", "ninf", "nsz", "arcp", "contract", "afn", "reassoc", "fast")
 _FLAG_GROUP = "|".join(FLOAT_FLAGS)
@@ -374,13 +500,47 @@ class Configuration:
 
 
 @dataclass(frozen=True)
+class RuntimeConfiguration:
+    """One in-process `MTLCompileOptions` selection.
+
+    The two properties that have no offline counterpart in the harness's fixed
+    flags — `languageVersion` and `mathFloatingPointFunctions` — are pinned to
+    the counterparts of `MSL_VERSION` and `FP32_FUNCTIONS` rather than left at
+    their API defaults, because `mathFloatingPointFunctions` defaults to `Fast`
+    and an unpinned runtime case would not be comparable to any offline row.
+    """
+
+    math_mode: str
+    optimization: str
+
+    @property
+    def key(self) -> str:
+        return f"runtime.{self.math_mode}.opt-{self.optimization}"
+
+    def options(self, archive: Path | None = None) -> str:
+        selections = [
+            f"math={self.math_mode}",
+            f"fpfun={FP32_FUNCTIONS}",
+            f"lang={RUNTIME_LANGUAGE}",
+            f"opt={self.optimization}",
+        ]
+        if archive is not None:
+            selections.append(f"archive={archive}")
+        return ",".join(selections)
+
+
+@dataclass(frozen=True)
 class Case:
     kernel: str
-    configuration: Configuration
+    configuration: Configuration | RuntimeConfiguration
 
     @property
     def key(self) -> str:
         return f"{self.kernel}.{self.configuration.key}"
+
+    @property
+    def is_runtime(self) -> bool:
+        return isinstance(self.configuration, RuntimeConfiguration)
 
 
 def cases() -> tuple[Case, ...]:
@@ -428,6 +588,27 @@ def cases() -> tuple[Case, ...]:
     return tuple(unique.values())
 
 
+def runtime_cases() -> tuple[Case, ...]:
+    """Every runtime-compilation case, derived from the offline set rather than listed.
+
+    Deriving it is what keeps the two paths comparable. A runtime case exists for
+    each kernel and math mode the offline probe already covers, so no runtime
+    case can be added that has nothing to be compared against and no offline case
+    can be dropped while its runtime partner survives. Both optimization levels
+    the runtime surface offers are swept, so an optimization-dependent runtime
+    divergence has somewhere to show up.
+    """
+    pairs: dict[tuple[str, str], None] = {}
+    for case in cases():
+        assert isinstance(case.configuration, Configuration)
+        pairs.setdefault((case.kernel, case.configuration.math_mode), None)
+    return tuple(
+        Case(kernel, RuntimeConfiguration(mode, optimization))
+        for kernel, mode in pairs
+        for optimization in RUNTIME_OPTIMIZATIONS
+    )
+
+
 @dataclass(frozen=True)
 class FloatOperation:
     opcode: str
@@ -437,27 +618,55 @@ class FloatOperation:
         return self.opcode if not self.flags else f"{self.opcode}+{'+'.join(self.flags)}"
 
 
+EMITTED_ARITHMETIC = "emitted-arithmetic"
+EXECUTION_WITNESS = "execution-witness"
+
+
 @dataclass(frozen=True)
 class Observation:
-    """One case's compile-side and device-side facts."""
+    """One case's compile-side and device-side facts.
+
+    `compile_options` and `operations` are `None` exactly when the compilation
+    path gave the harness no readable module — never `()`. An empty tuple is a
+    measured absence of arithmetic; `None` records that the question could not be
+    asked, and only the second of those is true of the runtime path. Everything
+    that consumes them must distinguish the two, which is why neither field has a
+    default: a construction site has to state which it means.
+
+    `archived_options` and `applied_options` are the runtime path's own
+    compile-side facts, and both are `None` on the offline path. See
+    `scan_archive` for why `archived_options` is corroboration and not evidence.
+    """
 
     case: Case
-    compile_options: tuple[str, ...]
-    operations: tuple[FloatOperation, ...]
+    compile_options: tuple[str, ...] | None
+    operations: tuple[FloatOperation, ...] | None
     results: tuple[int, ...]
+    applied_options: str | None
+    archived_options: str | None
 
     @property
     def kernel(self) -> Kernel:
         return BY_NAME[self.case.kernel]
 
     @property
-    def operation_count(self) -> int:
-        return len(self.operations)
+    def operation_count(self) -> int | None:
+        """How many floating-point operations the module emitted, or `None` if unreadable."""
+        return None if self.operations is None else len(self.operations)
+
+    @property
+    def guard_layers(self) -> tuple[str, ...]:
+        """Which layers of the admissibility guard this observation's path can supply."""
+        if self.operations is None:
+            return (EXECUTION_WITNESS,)
+        return (EMITTED_ARITHMETIC, EXECUTION_WITNESS)
 
     def result_for(self, operand: int) -> int:
         return self.results[OPERANDS.index(operand)]
 
     def flags_for(self, opcode: str) -> tuple[tuple[str, ...], ...]:
+        if self.operations is None:
+            raise ProbeFailure(f"{self.case.key} has no readable module to take flags from")
         return tuple(op.flags for op in self.operations if op.opcode == opcode)
 
 
@@ -466,9 +675,10 @@ def subnormal_verdict(observation: Observation, probe: SubnormalProbe) -> Verdic
 
     The two guard layers run before the returned pattern is even consulted; see
     the module documentation for why the emitted operation count alone is not
-    enough on this toolchain row.
+    enough on this toolchain row, and for why layer 1 is skipped rather than
+    assumed when the path could not supply it.
     """
-    if observation.operation_count == 0:
+    if observation.operations is not None and not observation.operations:
         return Verdict.NO_EMITTED_ARITHMETIC
     witness = observation.kernel.witness
     if witness is None:
@@ -502,7 +712,20 @@ def naive_verdict(observation: Observation, probe: SubnormalProbe) -> Verdict:
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, check=False, capture_output=True, text=True)
+    """Run one command, reporting an absent executable as a failed run, not an exception.
+
+    `record_rows` and `environment` fall back to `unreported` for a tool that does
+    not answer, and that fallback is only reachable if a missing executable
+    arrives here as a return code. A host with no `git` is the case that proves
+    it: the portable guard tests render a record on one, and every caller here
+    already inspects `returncode`.
+    """
+    try:
+        return subprocess.run(command, check=False, capture_output=True, text=True)
+    except OSError as unavailable:
+        return subprocess.CompletedProcess(
+            command, returncode=127, stdout="", stderr=str(unavailable)
+        )
 
 
 def _first_line(text: str) -> str:
@@ -651,23 +874,92 @@ def float_operations(ir: str) -> tuple[FloatOperation, ...]:
     return tuple(found)
 
 
-def dispatch(host: Path, library: Path) -> tuple[str, tuple[int, ...]]:
-    """Run one linked library on the local GPU and return the device and results."""
-    result = _run([str(host), str(library), ENTRY_POINT, *(f"{value:08x}" for value in OPERANDS)])
+@dataclass(frozen=True)
+class Dispatch:
+    """What one run of the dispatch host reported."""
+
+    device: str
+    results: tuple[int, ...]
+    applied_options: str
+    archive: str
+
+
+def _dispatch(host: Path, arguments: list[str], subject: str) -> Dispatch:
+    """Run the dispatch host once and parse its `key=value` lines.
+
+    Both compilation modes come through here, so the device-side procedure is
+    literally the same code for the offline and runtime paths and a difference
+    between them cannot be an artefact of dispatching them differently.
+    """
+    result = _run([str(host), *arguments, *(f"{value:08x}" for value in OPERANDS)])
     if result.returncode == 3:
         raise ProbeUnavailable(Reason.DEVICE, result.stderr.strip() or "no default Metal device")
     if result.returncode != 0:
-        raise ProbeFailure(f"dispatch of {library.name} failed: {result.stderr.strip()}")
-    device, values = "", []
+        raise ProbeFailure(f"dispatch of {subject} failed: {result.stderr.strip()}")
+    device, applied, archive, values = "", "", "", []
     for line in result.stdout.splitlines():
         key, _, value = line.partition("=")
         if key == "device":
             device = value
+        elif key == "applied":
+            applied = value
+        elif key == "archive":
+            archive = value
+        elif key == "archive-unavailable":
+            archive = f"unavailable:{value}"
         elif key == "result":
             values.append(int(value, 16))
     if len(values) != len(OPERANDS):
         raise ProbeFailure(f"dispatch returned {len(values)} results, expected {len(OPERANDS)}")
-    return device, tuple(values)
+    return Dispatch(device, tuple(values), applied, archive)
+
+
+def dispatch(host: Path, library: Path) -> tuple[str, tuple[int, ...]]:
+    """Run one offline-linked library on the local GPU and return the device and results."""
+    reported = _dispatch(host, ["library", str(library), ENTRY_POINT], library.name)
+    return reported.device, reported.results
+
+
+def dispatch_source(
+    host: Path, source: Path, configuration: RuntimeConfiguration, archive: Path
+) -> Dispatch:
+    """Compile one source file in the host process and dispatch what came out.
+
+    The source is the byte-identical file the offline path compiles, so the only
+    difference between the two observations is which compiler produced the
+    library.
+    """
+    return _dispatch(
+        host,
+        ["source", str(source), ENTRY_POINT, configuration.options(archive)],
+        f"{source.name} at {configuration.key}",
+    )
+
+
+@dataclass(frozen=True)
+class Archive:
+    """What a scan of a serialized binary archive found, and nothing more."""
+
+    compiler: str
+    present: tuple[str, ...]
+
+
+def scan_archive(path: Path) -> Archive:
+    """Test a serialized `MTLBinaryArchive` for the byte sequences it may contain.
+
+    This is a containment test over a container with no published layout, and it
+    is the only compile-side artefact the runtime path leaves behind. It reports
+    which of `ARCHIVE_OPTION_PROBES` are present and never that the ones absent
+    from the list are absent from the module, because the strings are stored
+    concatenated and the set is not recoverable. Nothing in the admissibility
+    guard consults it; see the module documentation.
+    """
+    blob = path.read_bytes()
+    found = ARCHIVE_COMPILER.search(blob)
+    return Archive(
+        compiler=found.group(0).decode("ascii") if found else "unreported",
+        present=tuple(name for name in ARCHIVE_OPTION_PROBES if name.encode("ascii") in blob),
+    )
 
 
 @dataclass(frozen=True)
@@ -678,15 +970,112 @@ class Run:
     observations: dict[str, Observation]
 
     def of(self, kernel: str, mode: str, optimization: str = "2", contract: str = "off"):
-        """Return one observation by its case coordinates, failing loudly if absent."""
-        key = Case(kernel, Configuration(mode, optimization, contract)).key
+        """Return one offline observation by its case coordinates, failing loudly if absent."""
+        return self._at(Case(kernel, Configuration(mode, optimization, contract)).key)
+
+    def runtime(self, kernel: str, mode: str, optimization: str = "default"):
+        """Return one runtime-compilation observation by its case coordinates."""
+        return self._at(Case(kernel, RuntimeConfiguration(mode, optimization)).key)
+
+    def _at(self, key: str) -> Observation:
         if key not in self.observations:
             raise KeyError(f"the probe did not run case {key}")
         return self.observations[key]
 
 
-def environment(toolchain: Toolchain, device: str) -> dict[str, str]:
-    """Capture the exact host row every measurement below is qualified by."""
+class Agreement(enum.Enum):
+    """How one runtime case's results relate to its offline candidates.
+
+    `AGREE_ON_SOME` is deliberately not a disagreement. It arises only where the
+    offline candidates differ from each other, which means the axis separating
+    them is one `MTLCompileOptions` cannot express; the runtime path then behaves
+    like one of them and the comparison reports which, rather than pretending the
+    two paths were asked the same question.
+    """
+
+    AGREE = "agree"
+    AGREE_ON_SOME = "agree-on-some"
+    DIFFER = "differ"
+
+    @property
+    def is_divergence(self) -> bool:
+        """Whether this is the outcome that means the two compilers disagree."""
+        return self is Agreement.DIFFER
+
+
+@dataclass(frozen=True)
+class PathComparison:
+    """One runtime case set against every offline case it can be compared with."""
+
+    runtime_case: str
+    candidates: tuple[str, ...]
+    matched: tuple[str, ...]
+    runtime_results: tuple[int, ...]
+
+    @property
+    def agreement(self) -> Agreement:
+        if not self.matched:
+            return Agreement.DIFFER
+        if len(self.matched) == len(self.candidates):
+            return Agreement.AGREE
+        return Agreement.AGREE_ON_SOME
+
+    def render(self) -> str:
+        """One record row's worth of the comparison, complete enough to act on."""
+        summary = f"{self.agreement.value} candidates={','.join(self.candidates)}"
+        if self.agreement is Agreement.DIFFER:
+            return f"{summary} runtime={' '.join(f'{v:08x}' for v in self.runtime_results)}"
+        return f"{summary} matched={','.join(self.matched)}"
+
+
+def path_comparisons(run: Run) -> tuple[PathComparison, ...]:
+    """Pair every runtime case with the offline cases it can legitimately be compared to.
+
+    The candidate set is every offline case for the same kernel and math mode at
+    `RUNTIME_PAIRED_OPTIMIZATION`, across whatever contraction settings the
+    offline probe recorded. Deriving the set instead of naming one row is what
+    keeps a kernel that becomes contraction-sensitive from reading as a
+    divergence between the two compilers when it is nothing of the kind.
+    """
+    compared: list[PathComparison] = []
+    for key in sorted(run.observations):
+        observation = run.observations[key]
+        configuration = observation.case.configuration
+        if not isinstance(configuration, RuntimeConfiguration):
+            continue
+        candidates = {
+            other: run.observations[other].results
+            for other in sorted(run.observations)
+            for offline in [run.observations[other].case.configuration]
+            if isinstance(offline, Configuration)
+            and run.observations[other].case.kernel == observation.case.kernel
+            and offline.math_mode == configuration.math_mode
+            and offline.optimization == RUNTIME_PAIRED_OPTIMIZATION
+        }
+        if not candidates:
+            raise ProbeFailure(f"{key} has no offline case to be compared against")
+        compared.append(
+            PathComparison(
+                runtime_case=key,
+                candidates=tuple(candidates),
+                matched=tuple(
+                    name for name, results in candidates.items() if results == observation.results
+                ),
+                runtime_results=observation.results,
+            )
+        )
+    return tuple(compared)
+
+
+def environment(toolchain: Toolchain, device: str, runtime_compiler: str) -> dict[str, str]:
+    """Capture the exact host row every measurement below is qualified by.
+
+    `metal_version` and `runtime_compiler` are two different compilers and are
+    recorded separately for that reason. On the measured row they are different
+    builds, so collapsing them would make a cross-path agreement look like a
+    tautology and would hide the toolchain whose numerics a runtime-compiled
+    kernel actually delivers.
+    """
     xcode = _run(["xcodebuild", "-version"])
     return {
         "date_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -698,6 +1087,7 @@ def environment(toolchain: Toolchain, device: str) -> dict[str, str]:
         "sdk_build": toolchain.sdk_build,
         "metal_version": toolchain.metal_version,
         "metallib_version": toolchain.metallib_version,
+        "runtime_compiler": runtime_compiler,
         "device": device,
     }
 
@@ -711,6 +1101,7 @@ QUALIFYING = (
     "sdk_build",
     "metal_version",
     "metallib_version",
+    "runtime_compiler",
     "device",
 )
 """The environment fields that make two runs comparable.
@@ -720,7 +1111,7 @@ QUALIFYING = (
 
 
 def probe(work_directory: Path) -> Run:
-    """Compile, link, dispatch, and classify every case.
+    """Compile, link, dispatch, and classify every case on both compilation paths.
 
     Raises `ProbeUnavailable` when no toolchain, SDK, or GPU resolves, and
     `ProbeFailure` for anything that goes wrong after they do.
@@ -731,9 +1122,18 @@ def probe(work_directory: Path) -> Run:
     toolchain.build_host(host)
 
     device = ""
+    runtime_compiler = ""
     observations: dict[str, Observation] = {}
+
+    def observe_device(observed: str) -> None:
+        nonlocal device
+        if device and observed != device:
+            raise ProbeFailure(f"the GPU changed mid-run: {device} then {observed}")
+        device = observed
+
     for case in cases():
         kernel = BY_NAME[case.kernel]
+        assert isinstance(case.configuration, Configuration)
         stem = case.key.replace(".", "_")
         source = work_directory / f"{stem}.metal"
         source.write_text(kernel.source(), encoding="utf-8")
@@ -745,16 +1145,49 @@ def probe(work_directory: Path) -> Run:
         toolchain.link(air_path, library)
         ir = ir_path.read_text(encoding="utf-8")
         observed_device, results = dispatch(host, library)
-        if device and observed_device != device:
-            raise ProbeFailure(f"the GPU changed mid-run: {device} then {observed_device}")
-        device = observed_device
+        observe_device(observed_device)
         observations[case.key] = Observation(
             case=case,
             compile_options=compile_options(ir),
             operations=float_operations(ir),
             results=results,
+            applied_options=None,
+            archived_options=None,
         )
-    return Run(environment(toolchain, device), observations)
+
+    for case in runtime_cases():
+        kernel = BY_NAME[case.kernel]
+        assert isinstance(case.configuration, RuntimeConfiguration)
+        stem = case.key.replace(".", "_")
+        # The runtime path compiles the same bytes the offline path compiled, so
+        # the file is written once per case rather than shared: a case that
+        # generated different source would otherwise be invisible here.
+        source = work_directory / f"{stem}.metal"
+        source.write_text(kernel.source(), encoding="utf-8")
+        archive_path = work_directory / f"{stem}.archive.metallib"
+        reported = dispatch_source(host, source, case.configuration, archive_path)
+        observe_device(reported.device)
+        if reported.archive.startswith("unavailable:") or not reported.archive:
+            archived = reported.archive or "unavailable:the host reported no archive"
+        else:
+            archive = scan_archive(Path(reported.archive))
+            archived = " ".join(archive.present)
+            if runtime_compiler and archive.compiler != runtime_compiler:
+                raise ProbeFailure(
+                    f"the runtime compiler changed mid-run: "
+                    f"{runtime_compiler} then {archive.compiler}"
+                )
+            runtime_compiler = archive.compiler
+        observations[case.key] = Observation(
+            case=case,
+            compile_options=None,
+            operations=None,
+            results=reported.results,
+            applied_options=reported.applied_options,
+            archived_options=archived,
+        )
+
+    return Run(environment(toolchain, device, runtime_compiler or "unreported"), observations)
 
 
 def digest(path: Path) -> str:
@@ -776,17 +1209,39 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
         ),
         ("probe.entry_point", ENTRY_POINT),
         ("probe.operands", " ".join(f"{value:08x}" for value in OPERANDS)),
+        (
+            "probe.runtime_fixed_options",
+            f"fpfun={FP32_FUNCTIONS} lang={RUNTIME_LANGUAGE}",
+        ),
+        ("probe.runtime_paired_optimization", f"-O{RUNTIME_PAIRED_OPTIMIZATION}"),
+        ("probe.guard_layers.offline", f"{EMITTED_ARITHMETIC} {EXECUTION_WITNESS}"),
+        ("probe.guard_layers.runtime", EXECUTION_WITNESS),
+    ]
+    rows += [
+        (f"probe.offline_flag_without_runtime_counterpart.{index}", gap)
+        for index, gap in enumerate(OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART)
     ]
     rows += [(f"environment.{key}", value) for key, value in run.environment.items()]
     for key in sorted(run.observations):
         observation = run.observations[key]
-        rows.append((f"case.{key}.compile_options", " ".join(observation.compile_options)))
-        rows.append(
-            (f"case.{key}.float_operations", " ".join(str(op) for op in observation.operations))
-        )
+        # A runtime case gets no `float_operations` row at all. Writing an empty
+        # one would read as a module measured to contain no arithmetic, which is
+        # the single reading this harness must never let a record support.
+        if observation.compile_options is not None:
+            rows.append((f"case.{key}.compile_options", " ".join(observation.compile_options)))
+        if observation.operations is not None:
+            rows.append(
+                (f"case.{key}.float_operations", " ".join(str(op) for op in observation.operations))
+            )
+        if observation.applied_options is not None:
+            rows.append((f"case.{key}.applied_options", observation.applied_options))
+        if observation.archived_options is not None:
+            rows.append((f"case.{key}.archived_options", observation.archived_options))
         rows.append(
             (f"case.{key}.results", " ".join(f"{value:08x}" for value in observation.results))
         )
+    for comparison in path_comparisons(run):
+        rows.append((f"comparison.{comparison.runtime_case}", comparison.render()))
     rows.append(("probe.status", "complete"))
     return rows
 
@@ -795,6 +1250,15 @@ def write_record(run: Run, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(f"{key}\t{value}\n" for key, value in record_rows(run))
     destination.write_text(body, encoding="utf-8")
+
+
+COMPARED_PREFIXES = ("case.", "comparison.")
+"""The record rows a live run must reproduce exactly on the same environment row.
+
+`comparison.` is included so a divergence between the two compilation paths, or
+a change in which offline contraction setting the runtime path behaves like,
+fails the gate rather than merely being rewritten into the record.
+"""
 
 
 def compare_record(run: Run, stored: dict[str, str]) -> list[str]:
@@ -806,8 +1270,10 @@ def compare_record(run: Run, stored: dict[str, str]) -> list[str]:
     difference in a case row a finding.
     """
     live = dict(record_rows(run))
-    stored_cases = {key: value for key, value in stored.items() if key.startswith("case.")}
-    live_cases = {key: value for key, value in live.items() if key.startswith("case.")}
+    stored_cases = {
+        key: value for key, value in stored.items() if key.startswith(COMPARED_PREFIXES)
+    }
+    live_cases = {key: value for key, value in live.items() if key.startswith(COMPARED_PREFIXES)}
     differences: list[str] = []
     for key in sorted(set(stored_cases) | set(live_cases)):
         if key not in stored_cases:
@@ -854,7 +1320,10 @@ def main(arguments: list[str] | None = None) -> int:
     for key in sorted(run.observations):
         observation = run.observations[key]
         results = " ".join(f"{value:08x}" for value in observation.results)
-        print(f"{key}\tfp-ops={observation.operation_count}\t{results}")
+        count = observation.operation_count
+        print(f"{key}\tfp-ops={'unreadable' if count is None else count}\t{results}")
+    for comparison in path_comparisons(run):
+        print(f"comparison.{comparison.runtime_case}\t{comparison.render()}")
     if parsed.record is not None:
         write_record(run, parsed.record)
         print(f"record={parsed.record}")
