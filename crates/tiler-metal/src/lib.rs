@@ -24,10 +24,25 @@
 //!   realization is a typed [`diagnostic::MetalEmitError`] naming the rejected
 //!   entity and a stable rule identifier, never best-effort source.
 //! - **Explicit numerics.** `f32` immediates are emitted as exact bit patterns,
-//!   NaN canonicalization is an emitted helper call rather than a target
-//!   default, each arithmetic operation is its own statement so contraction
-//!   cannot form across operations, and the compiler flags the source depends on
-//!   are reported as [`record::MetalNumericalRequirement`]s.
+//!   NaN canonicalization is an emitted helper whose predicate is an integer
+//!   test over reinterpreted bits rather than a floating-point one, and each
+//!   arithmetic operation is its own statement. Those three hold under every
+//!   math mode. What the operations cannot carry is reported instead of
+//!   assumed: compiler selections as [`record::MetalNumericalRequirement`]s,
+//!   and obligations no selection realizes as [`record::MetalNumericalGap`]s.
+//!
+//! # Emitting is not claiming conformance
+//!
+//! [`emit::emit_translation_unit`] returning a unit means the structured
+//! kernels translated. It does not mean the target can honour their declared
+//! numerical contract. [`record::MetalTranslationUnit::require_declared_realization`]
+//! is the conformance claim and fails closed.
+//!
+//! On every governed Apple family this currently rejects any kernel that
+//! performs `f32` arithmetic under a subnormal-preserving realization, because
+//! Apple GPU `f32` arithmetic flushes subnormals to zero in every math mode.
+//! That is a measured hard feasibility limit, recorded rather than hidden
+//! behind a flag that would not deliver it.
 //!
 //! # What it does not decide
 //!
@@ -52,10 +67,10 @@
 //! };
 //! use tiler_ir::shape::Shape;
 //! use tiler_metal::emit::emit_translation_unit;
-//! use tiler_metal::record::MetalNumericalRequirement;
+//! use tiler_metal::record::{MetalNumericalGap, MetalNumericalRequirement};
 //! use tiler_metal::target::{
-//!     LaunchIndexRealization, MetalDeploymentMinimum, MetalPlatform, MetalTargetFacts,
-//!     MslLanguageVersion,
+//!     LaunchIndexRealization, MetalDeploymentMinimum, MetalPlatform, MetalSubnormalArithmetic,
+//!     MetalTargetFacts, MslLanguageVersion,
 //! };
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -124,6 +139,7 @@
 //!     MetalPlatform::MacOs,
 //!     MetalDeploymentMinimum::new(13, 0),
 //!     LaunchIndexRealization::ThreadPositionInGridUInt,
+//!     MetalSubnormalArithmetic::FlushesToZero,
 //!     31,
 //! );
 //! let unit = emit_translation_unit(&[&kernel], &target)?;
@@ -133,8 +149,10 @@
 //! let entry = &unit.entry_points()[0];
 //! assert!(unit.source().contains(&format!("kernel void {}(", entry.symbol())));
 //! assert_eq!(entry.buffers().len(), 2);
-//! // The canonical NaN is emitted, never inherited from a compiler default.
+//! // The canonical NaN is emitted, never inherited from a compiler default,
+//! // and its predicate is an integer test no math mode can relax.
 //! assert!(unit.source().contains("as_type<float>(0x7fc00000u)"));
+//! assert!(!unit.source().contains("isnan"));
 //! assert_eq!(
 //!     unit.numerical_requirements(),
 //!     [
@@ -142,6 +160,13 @@
 //!         MetalNumericalRequirement::NoFloatingPointContraction,
 //!     ],
 //! );
+//! // Emitting is not claiming conformance: Apple GPU f32 arithmetic flushes
+//! // subnormals, so this strict realization is not fully realizable.
+//! assert_eq!(
+//!     unit.numerical_gaps(),
+//!     [MetalNumericalGap::SubnormalFlushInArithmetic],
+//! );
+//! assert!(unit.require_declared_realization().is_err());
 //! # Ok(())
 //! # }
 //! ```

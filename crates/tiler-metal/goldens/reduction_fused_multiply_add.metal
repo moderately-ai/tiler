@@ -5,17 +5,27 @@
 // Artifact family: macos (deployment minimum 13.0)
 // Launch index: [[thread_position_in_grid]] declared as uint
 // Launch precondition: no invocation index may exceed 4294967295.
+// f32 arithmetic subnormals: flushes-to-zero
 //
-// Every f32 immediate is emitted as its exact bit pattern, and every
-// arithmetic operation is emitted as one statement, so neither literal
-// parsing nor contraction across operations can change a result.
+// Carried by these operations under every math mode: every f32 immediate
+// is its exact bit pattern, every arithmetic operation is one statement,
+// and every NaN test is an integer test over reinterpreted bits.
+//
+// Declared numerical obligations this profile cannot realize:
+//   subnormal-flush-in-arithmetic
 
 #include <metal_stdlib>
 using namespace metal;
 
 // Replaces an arithmetic NaN with the canonical pattern 0x7fc00000.
+//
+// The predicate is an integer test over the reinterpreted bit pattern rather
+// than a floating-point one, so no math-mode relaxation licence reaches it.
 static inline float tiler_canonicalize_nan_f32_7fc00000(float value) {
-    return isnan(value) ? as_type<float>(0x7fc00000u) : value;
+    uint pattern = as_type<uint>(value);
+    bool nan = (pattern & 0x7f800000u) == 0x7f800000u
+        && (pattern & 0x007fffffu) != 0x00000000u;
+    return nan ? as_type<float>(0x7fc00000u) : value;
 }
 
 // Entry point tiler_kernel_4e75d6dcce52e254
