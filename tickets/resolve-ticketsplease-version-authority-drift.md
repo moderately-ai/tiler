@@ -1,7 +1,7 @@
 ---
 id: resolve-ticketsplease-version-authority-drift
 title: Resolve the ticketsplease version-authority drift blocking the gate
-status: todo
+status: done
 priority: p0
 dependencies: []
 related: [make-spike-process-group-cleanup-best-effort]
@@ -53,3 +53,17 @@ will do this again, and the failure mode — a gate that stops running rather th
 reporting a real problem — is one that tempts a worker to bypass the check. If
 `deps.sh` is the intended installer, it may be the right place to pin rather than
 merely verify.
+
+## Outcome
+
+Resolved by **removing the check**, not by reconciling versions — a third option neither listed in this ticket.
+
+**What was removed** from `scripts/check_repository.py`: `ticketsplease_policy()` (which read the pinned version and revision out of `tool-versions.toml` and validated their shapes), `validate_ticketsplease_receipt()` (which required a bootstrap-written receipt file to equal the pinned revision), the `ticketsplease --version` invocation and its equality assertion, and the now-dead `TOOL_VERSIONS` constant. The stale monkeypatches and `--version` stub in `scripts/tests/test_repository_gate.py` went with them, along with `test_ticketsplease_revision_receipt_is_exact`.
+
+**What was kept**: the gate still resolves the binary and still runs `ticketsplease lint`. That is the part that actually validates something about this repository.
+
+**Why.** The enforcement made a background auto-update of a ticket-tracking CLI halt the entire gate — including the Rust build, the test suite, and the documentation validation, none of which depend on the tool's patch version. The failure mode was the worst kind: a gate that stops running rather than reporting a real problem, which trains a worker to bypass it. Tom's judgement was that this was over-engineered, and on inspection that is right — the pin was protecting nothing proportional to the cost of enforcing it.
+
+**Note.** `tool-versions.toml` still carries the `ticketsplease` and `ticketsplease_rev` entries, and `deps.sh` and `scripts/check_ci.py` still use them to *install* a known version. That is fine and was left alone: installing a known tool is useful, whereas failing the gate when it drifts is not. `deps.sh --check` will still report drift, which is appropriate for a bootstrap diagnostic and blocks nothing.
+
+Gate green after the removal.

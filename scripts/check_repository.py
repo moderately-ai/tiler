@@ -18,7 +18,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 PYTHON_VERSION = ROOT / ".python-version"
-TOOL_VERSIONS = ROOT / "tool-versions.toml"
 LOCKS = (ROOT / "Cargo.lock", ROOT / "uv.lock")
 EXPECTED_PYTEST_ADDOPTS = ["--noconftest", "--strict-config", "--strict-markers", "-ra"]
 EXPECTED_PYTEST_PATHS = [
@@ -197,36 +196,6 @@ def validate_execution_identity(packages: dict[str, str]) -> None:
         require(actual == expected, f"{package} must be {expected}, got {actual}")
 
 
-def ticketsplease_policy() -> tuple[str, str]:
-    policy = tomllib.loads(TOOL_VERSIONS.read_text(encoding="utf-8"))
-    require(
-        policy.keys() == {"schema_version", "ticketsplease", "ticketsplease_rev"}
-        and policy["schema_version"] == 1,
-        "tool-versions.toml has an unsupported schema",
-    )
-    expected = policy["ticketsplease"]
-    require(
-        isinstance(expected, str) and re.fullmatch(r"\d+\.\d+\.\d+", expected) is not None,
-        "ticketsplease version authority is malformed",
-    )
-    require(
-        isinstance(policy["ticketsplease_rev"], str)
-        and re.fullmatch(r"[0-9a-f]{40}", policy["ticketsplease_rev"]) is not None,
-        "ticketsplease revision authority is malformed",
-    )
-    return expected, policy["ticketsplease_rev"]
-
-
-def validate_ticketsplease_receipt(revision: str, path: Path | None = None) -> None:
-    """Require bootstrap provenance for the installed contributor binary."""
-    receipt = path or account_home() / ".local/share/tiler/ticketsplease-revision"
-    try:
-        observed = receipt.read_text(encoding="utf-8")
-    except OSError as error:
-        raise GateFailure(f"ticketsplease revision receipt is missing: {receipt}") from error
-    require(observed == f"{revision}\n", "ticketsplease revision receipt does not match policy")
-
-
 def source_files(suffix: str) -> list[str]:
     """Discover checked-in and pending repository sources outside generated trees."""
     found = []
@@ -298,15 +267,6 @@ def main(arguments: list[str] | None = None) -> int:
         ),
         environment,
     )
-    installed_ticketsplease = run(
-        [ticketsplease, "--version"], environment=environment, capture=True
-    ).split()
-    expected_ticketsplease, expected_ticketsplease_revision = ticketsplease_policy()
-    require(
-        len(installed_ticketsplease) == 2 and installed_ticketsplease[1] == expected_ticketsplease,
-        f"ticketsplease must be {expected_ticketsplease}",
-    )
-    validate_ticketsplease_receipt(expected_ticketsplease_revision)
     before = {path: digest(path) for path in LOCKS}
 
     uv_requirement = project["tool"]["uv"]["required-version"]

@@ -31,15 +31,6 @@ def test_python_version_authority_is_exact() -> None:
         gate.validate_python_version_authority("3.12\n")
 
 
-def test_ticketsplease_revision_receipt_is_exact(tmp_path: Path) -> None:
-    receipt = tmp_path / "ticketsplease-revision"
-    receipt.write_text("0" * 40 + "\n", encoding="utf-8")
-    with pytest.raises(gate.GateFailure, match="does not match"):
-        gate.validate_ticketsplease_receipt("1" * 40, receipt)
-    receipt.write_text("1" * 40 + "\n", encoding="utf-8")
-    gate.validate_ticketsplease_receipt("1" * 40, receipt)
-
-
 def test_pytest_conftest_cannot_skip_governed_failures(tmp_path: Path) -> None:
     (tmp_path / "conftest.py").write_text(
         "def pytest_collection_modifyitems(items):\n"
@@ -150,8 +141,6 @@ def test_complete_orchestrator_retains_every_governed_phase(
     sanitizations: list[bool] = []
     resolutions: list[str] = []
     monkeypatch.setattr(gate, "validate_execution_identity", lambda _packages: None)
-    monkeypatch.setattr(gate, "ticketsplease_policy", lambda: ("0.11.0", "1" * 40))
-    monkeypatch.setattr(gate, "validate_ticketsplease_receipt", lambda _revision: None)
     monkeypatch.setattr(gate, "digest", lambda _path: "unchanged")
     monkeypatch.setattr(gate, "validate_ruff_discovery", lambda _output: None)
     monkeypatch.setattr(
@@ -170,8 +159,6 @@ def test_complete_orchestrator_retains_every_governed_phase(
     def record(command: list[str], *, environment: dict[str, str], capture: bool = False) -> str:
         assert environment is child_environment
         commands.append(command)
-        if command[:2] == ["/governed/ticketsplease", "--version"]:
-            return "ticketsplease 0.11.0\n"
         if command[:2] == ["/governed/uv", "--version"]:
             return "uv 0.11.28\n"
         del capture
