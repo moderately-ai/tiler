@@ -4,13 +4,24 @@
 //! `pub` fields and offers no constructor: only
 //! [`crate::emit::emit_translation_unit`] produces one. Its readers yield the
 //! emitted source, the ordered entry points with their complete binding tables,
-//! and the numerical compiler realization the source requires.
+//! the numerical compiler selections the source requires, and the declared
+//! numerical obligations the target cannot realize at all.
+//!
+//! The last two are deliberately different kinds. A
+//! [`crate::record::MetalNumericalRequirement`] names a compiler selection that
+//! *does* deliver an obligation; a [`crate::record::MetalNumericalGap`] says no
+//! selection does. Keeping hard feasibility apart from a flag choice is what
+//! lets [`crate::record::MetalTranslationUnit::require_declared_realization`]
+//! fail closed with an explainable reason instead of naming a flag that would
+//! not honour the contract.
 //!
 //! Every public item here is a reviewed *draft* boundary (ADR 0074 §7).
 
 use core::fmt;
 
 use tiler_ir::kernel::{BufferParameter, CanonicalKernelIdentity};
+
+use crate::diagnostic::MetalEmitError;
 
 /// One numerical compiler flag this emitted source requires to be correct.
 ///
@@ -21,16 +32,36 @@ use tiler_ir::kernel::{BufferParameter, CanonicalKernelIdentity};
 ///
 /// A permission the realization grants is deliberately not a requirement: this
 /// set says what the source cannot tolerate, not what a caller must choose.
+///
+/// A requirement here is an obligation emission could **not** discharge in the
+/// generated operations. Everything emission *can* carry — exact `f32`
+/// immediates, one arithmetic operation per statement, and an integer-only NaN
+/// predicate — is deliberately absent from this set, because it holds under
+/// every math mode.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MetalNumericalRequirement {
     /// `-fmetal-math-mode=safe`.
     ///
-    /// Required whenever a realization forbids reduction reassociation,
-    /// preserves subnormals, or the source contains a NaN-canonicalizing
-    /// conversion. A relaxed or fast math mode may reassociate, flush
-    /// subnormals, and assume the absence of NaNs, and that last assumption
-    /// would let the compiler delete the canonicalization test entirely.
+    /// Required whenever a realization forbids reduction reassociation, and
+    /// whenever the source performs `f32` arithmetic whose signed-zero result
+    /// or NaN operand is observable. `relaxed` and `fast` both apply LLVM's
+    /// `reassoc`, `nsz`, `arcp`, and `afn` licences to every emitted `f32`
+    /// operation, and `fast` adds `nnan` and `ninf`. `nsz` makes signed zero
+    /// unreliable; `reassoc` licenses reordering a serial reduction; `nnan`
+    /// makes an arithmetic result that is a NaN undefined, so there is no
+    /// defined value left for a canonicalization to map.
+    ///
+    /// No emitted operation can discharge any of those, which is why this is a
+    /// requirement rather than something the source carries.
+    ///
+    /// **Measurement.** On an Apple M4 Max under macOS 27.0 (build 26A5388g)
+    /// with Metal 32023.883, the emitted scale-then-bias kernel for
+    /// `scale = 1.0`, `bias = +0.0` returns `0x00000000` for the operand
+    /// `0x80000000` under `-fmetal-math-mode=safe` and `0x80000000` under both
+    /// `relaxed` and `fast`. IEEE-754 round-to-nearest requires `0x00000000`.
+    /// The divergence holds at every `-O` level (`0`, `1`, `2`, `3`, `s`) and
+    /// is independent of `-fmetal-math-fp32-functions`.
     SafeMathMode,
     /// `-ffp-contract=off`.
     ///
@@ -38,6 +69,13 @@ pub enum MetalNumericalRequirement {
     /// additionally writes every arithmetic operation as its own statement, so
     /// no contraction can form across two structured operations even under
     /// `-ffp-contract=on`; the flag closes the `fast` case.
+    ///
+    /// **Measurement.** On the environment above, a multiply and an add in two
+    /// separate statements over `scale = 1.5`, `bias = 1.0` return the
+    /// separately rounded `0x3fc58f9e` for the operand `0x3eb97ef9` under both
+    /// `-ffp-contract=off` and `-ffp-contract=on`, and the fused `0x3fc58f9d`
+    /// under `-ffp-contract=fast`. The per-statement emission is therefore a
+    /// measured defence against `on` and not against `fast`.
     NoFloatingPointContraction,
 }
 
@@ -64,6 +102,50 @@ impl MetalNumericalRequirement {
 impl fmt::Display for MetalNumericalRequirement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.flag())
+    }
+}
+
+/// One declared numerical obligation this Metal profile cannot realize at all.
+///
+/// A gap is not a requirement. A requirement names a compiler selection that
+/// *does* deliver the obligation; a gap says no selection does, because the
+/// limit is a hard target feasibility fact. Recording it separately keeps
+/// feasibility distinct from cost and stops emission from naming a flag that
+/// would not actually honour the contract.
+///
+/// Emission reports gaps rather than rejecting, because a gap is observable
+/// only when a value that reaches the limit actually occurs, which emission
+/// cannot know. [`MetalTranslationUnit::require_declared_realization`] is the
+/// fail-closed step: a caller that needs the declared realization exactly must
+/// call it, and it rejects with the naming gap.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum MetalNumericalGap {
+    /// The realization preserves subnormals, but the target's `f32` arithmetic
+    /// flushes subnormal operands and subnormal results to zero.
+    ///
+    /// No `-fmetal-math-mode`, `-ffp-contract`, `-fmetal-math-fp32-functions`,
+    /// or `-O` selection changes this; see
+    /// [`MetalSubnormalArithmetic`](crate::target::MetalSubnormalArithmetic)
+    /// for the measurement. A kernel that only materializes values is not
+    /// affected, so this gap is recorded only when the kernel performs `f32`
+    /// arithmetic.
+    SubnormalFlushInArithmetic,
+}
+
+impl MetalNumericalGap {
+    /// Returns the stable rule identifier for this gap.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::SubnormalFlushInArithmetic => "subnormal-flush-in-arithmetic",
+        }
+    }
+}
+
+impl fmt::Display for MetalNumericalGap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.rule())
     }
 }
 
@@ -143,6 +225,7 @@ pub struct MetalTranslationUnit {
     source: String,
     entry_points: Vec<MetalEntryPoint>,
     numerical: Vec<MetalNumericalRequirement>,
+    gaps: Vec<MetalNumericalGap>,
 }
 
 impl MetalTranslationUnit {
@@ -150,11 +233,13 @@ impl MetalTranslationUnit {
         source: String,
         entry_points: Vec<MetalEntryPoint>,
         numerical: Vec<MetalNumericalRequirement>,
+        gaps: Vec<MetalNumericalGap>,
     ) -> Self {
         Self {
             source,
             entry_points,
             numerical,
+            gaps,
         }
     }
 
@@ -180,5 +265,36 @@ impl MetalTranslationUnit {
     #[must_use]
     pub fn numerical_requirements(&self) -> &[MetalNumericalRequirement] {
         &self.numerical
+    }
+
+    /// Returns the declared numerical obligations this Metal profile cannot
+    /// realize, in ascending governed order.
+    ///
+    /// An empty slice means every declared obligation is either carried by the
+    /// emitted operations or reachable through
+    /// [`Self::numerical_requirements`]. A non-empty slice means no compiler
+    /// selection honours the contract; see [`MetalNumericalGap`].
+    #[must_use]
+    pub fn numerical_gaps(&self) -> &[MetalNumericalGap] {
+        &self.gaps
+    }
+
+    /// Fails closed unless this unit realizes every declared numerical
+    /// obligation.
+    ///
+    /// Emitting a translation unit is not a conformance claim: it says the
+    /// structured kernels translated, not that the target can honour their
+    /// numerical contract. This is the conformance claim, and a caller that
+    /// needs the declared realization exactly must make it before compiling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MetalEmitError::UnrealizableNumericalObligation`] naming the
+    /// first gap in ascending governed order.
+    pub fn require_declared_realization(&self) -> Result<(), MetalEmitError> {
+        match self.gaps.first() {
+            Some(gap) => Err(MetalEmitError::UnrealizableNumericalObligation { gap: *gap }),
+            None => Ok(()),
+        }
     }
 }

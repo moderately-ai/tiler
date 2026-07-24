@@ -29,15 +29,32 @@
 //!
 //! # Numerics
 //!
-//! `f32` immediates are emitted as exact bit patterns through `as_type`, never
-//! as decimal text, so no rounding can be introduced by the emitter or by the
-//! Metal compiler's literal parsing. Every arithmetic operation is emitted as
-//! its own statement, so no contraction can form across two structured
-//! operations. NaN canonicalization is emitted as an explicit call to a helper
-//! realizing the kernel's own canonical pattern; it is never left to a target
-//! default. The compiler flags this source depends on are reported as
-//! [`MetalNumericalRequirement`](crate::record::MetalNumericalRequirement)s
-//! rather than assumed.
+//! The dividing question for every numerical obligation is whether the emitted
+//! *operations* carry it or whether it depends on a compiler selection. The two
+//! are kept apart deliberately, because a flag can be flipped by a caller and
+//! an operation cannot.
+//!
+//! Carried by the emitted operations, under every math mode:
+//!
+//! - `f32` immediates are emitted as exact bit patterns through `as_type`,
+//!   never as decimal text, so no rounding can be introduced by the emitter or
+//!   by the Metal compiler's literal parsing.
+//! - Every arithmetic operation is emitted as its own statement, so no
+//!   contraction can form across two structured operations under
+//!   `-ffp-contract=on`.
+//! - NaN canonicalization is emitted as a helper whose predicate is an integer
+//!   test over the reinterpreted bit pattern, so no floating-point relaxation
+//!   licence reaches it.
+//! - Reduction order is the IR's own bounded loop with a loop-carried
+//!   dependence, never a backend topology choice.
+//!
+//! Not carried by any emitted operation, and therefore reported rather than
+//! assumed: signed-zero results, NaN-valued arithmetic, reassociation, and
+//! contraction across statements each depend on a compiler selection, reported
+//! as [`MetalNumericalRequirement`](crate::record::MetalNumericalRequirement)s.
+//! Subnormal preservation is not reachable by *any* selection on a flushing
+//! target and is reported as a
+//! [`MetalNumericalGap`](crate::record::MetalNumericalGap).
 //!
 //! Every public item here is a reviewed *draft* boundary (ADR 0074 §7).
 
@@ -53,9 +70,10 @@ use tiler_ir::schedule::{NumericalPermission, NumericalRealization, SubnormalMod
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError, MetalOperationFamily};
 use crate::record::{
-    MetalBufferBinding, MetalEntryPoint, MetalNumericalRequirement, MetalTranslationUnit,
+    MetalBufferBinding, MetalEntryPoint, MetalNumericalGap, MetalNumericalRequirement,
+    MetalTranslationUnit,
 };
-use crate::target::MetalTargetFacts;
+use crate::target::{MetalSubnormalArithmetic, MetalTargetFacts};
 
 /// One level of emitted indentation.
 const INDENT: &str = "    ";
@@ -65,6 +83,17 @@ const ENTRY_PREFIX: &str = "tiler_kernel_";
 
 /// Prefix of every emitted NaN-canonicalization helper symbol.
 const CANONICALIZE_PREFIX: &str = "tiler_canonicalize_nan_f32_";
+
+/// The IEEE-754 binary32 biased-exponent field.
+///
+/// This constant and [`F32_SIGNIFICAND_MASK`] are used both by the Rust
+/// predicate [`is_f32_nan`] and by the emitted MSL predicate in
+/// [`canonicalize_helper`], so the host-side check and the device-side check
+/// cannot drift apart.
+const F32_EXPONENT_MASK: u32 = 0x7f80_0000;
+
+/// The IEEE-754 binary32 significand field.
+const F32_SIGNIFICAND_MASK: u32 = 0x007f_ffff;
 
 /// Appends formatted text to an emitted buffer.
 ///
@@ -99,12 +128,13 @@ pub fn emit_translation_unit(
     let ordered = order_kernels(kernels);
     let mut helpers = BTreeSet::new();
     let mut numerical = BTreeSet::new();
+    let mut gaps = BTreeSet::new();
     let mut symbols: BTreeMap<String, &[u8]> = BTreeMap::new();
     let mut entry_points = Vec::with_capacity(ordered.len());
     let mut bodies = Vec::with_capacity(ordered.len());
 
     for kernel in ordered {
-        let emitted = emit_entry_point(kernel, target, &mut helpers, &mut numerical)?;
+        let emitted = emit_entry_point(kernel, target, &mut helpers, &mut numerical, &mut gaps)?;
         reserve_symbol(
             &mut symbols,
             emitted.entry.symbol(),
@@ -114,11 +144,12 @@ pub fn emit_translation_unit(
         bodies.push(emitted.text);
     }
 
-    let source = assemble(target, &helpers, &bodies);
+    let source = assemble(target, &helpers, &gaps, &bodies);
     Ok(MetalTranslationUnit::new(
         source,
         entry_points,
         numerical.into_iter().collect(),
+        gaps.into_iter().collect(),
     ))
 }
 
@@ -157,7 +188,12 @@ pub(crate) fn reserve_symbol<'a>(
 }
 
 /// Assembles the provenance header, the required helpers, and the entry points.
-fn assemble(target: &MetalTargetFacts, helpers: &BTreeSet<u32>, bodies: &[String]) -> String {
+fn assemble(
+    target: &MetalTargetFacts,
+    helpers: &BTreeSet<u32>,
+    gaps: &BTreeSet<MetalNumericalGap>,
+    bodies: &[String],
+) -> String {
     let mut source = String::new();
     source.push_str("// Generated by tiler-metal from verified structured kernel IR.\n");
     source.push_str("// Deterministic output: do not edit.\n");
@@ -184,10 +220,24 @@ fn assemble(target: &MetalTargetFacts, helpers: &BTreeSet<u32>, bodies: &[String
         "// Launch precondition: no invocation index may exceed {}.\n",
         target.launch_index.maximum_index()
     );
+    emit!(
+        source,
+        "// f32 arithmetic subnormals: {}\n",
+        target.subnormal_arithmetic
+    );
     source.push_str("//\n");
-    source.push_str("// Every f32 immediate is emitted as its exact bit pattern, and every\n");
-    source.push_str("// arithmetic operation is emitted as one statement, so neither literal\n");
-    source.push_str("// parsing nor contraction across operations can change a result.\n");
+    source.push_str("// Carried by these operations under every math mode: every f32 immediate\n");
+    source.push_str("// is its exact bit pattern, every arithmetic operation is one statement,\n");
+    source.push_str("// and every NaN test is an integer test over reinterpreted bits.\n");
+    source.push_str("//\n");
+    if gaps.is_empty() {
+        source.push_str("// Declared numerical obligations this profile cannot realize: none.\n");
+    } else {
+        source.push_str("// Declared numerical obligations this profile cannot realize:\n");
+        for gap in gaps {
+            emit!(source, "//   {gap}\n");
+        }
+    }
     source.push('\n');
     source.push_str("#include <metal_stdlib>\n");
     source.push_str("using namespace metal;\n");
@@ -205,15 +255,47 @@ fn assemble(target: &MetalTargetFacts, helpers: &BTreeSet<u32>, bodies: &[String
 
 /// Returns the NaN-canonicalization helper for one exact canonical pattern.
 ///
-/// The helper is correct only under a math mode that does not assume the
-/// absence of NaNs; emission records that as a
-/// [`MetalNumericalRequirement::SafeMathMode`] rather than leaving it implicit.
+/// # Why the predicate is an integer test and not `isnan`
+///
+/// The obligation this ticket carries is that canonicalization is realized by
+/// the emitted *operations*, so that flipping a math-mode flag cannot silently
+/// change a conforming result. `isnan` is a floating-point predicate: under
+/// `-fmetal-math-mode=fast` the Metal Shading Language does not define its
+/// behaviour, and LLVM's `nnan` licence permits folding an `fcmp uno` to
+/// `false`. Whether a given front end exercises that licence is a property of
+/// that front end, not of this source.
+///
+/// Reinterpreting the value and testing the IEEE-754 fields is not a
+/// floating-point operation, so no floating-point relaxation licence reaches
+/// it under any math mode. The guarantee becomes a language-level property of
+/// the emitted text rather than a measured property of one toolchain build.
+///
+/// **Measurement.** On Metal 32023.883 the two forms are observationally
+/// identical: the front end lowers `isnan` to `bitcast`, `and 0x7fffffff`, and
+/// `icmp ugt 0x7f800000` at `-O0` and under `safe`, `relaxed`, and `fast`
+/// alike, and the shipped AIR contains no floating-point NaN predicate. Both
+/// forms canonicalize `0x7fabcdef`, `0xffc00001`, and `0x7f800001` to
+/// `0x7fc00000` on an Apple M4 Max across all fifteen combinations of `-O0`,
+/// `-O1`, `-O2`, `-O3`, `-Os` with `safe`, `relaxed`, `fast`. The integer form
+/// is emitted because it is guaranteed rather than because the other one was
+/// observed to fail.
+///
+/// This does not make the helper sufficient on its own. Under `nnan` the
+/// arithmetic *producing* a NaN has no defined result, so there is nothing left
+/// for a canonicalization to map, which is why emission still records
+/// [`MetalNumericalRequirement::SafeMathMode`].
 fn canonicalize_helper(bits: u32) -> String {
     let symbol = canonicalize_symbol(bits);
     format!(
         "// Replaces an arithmetic NaN with the canonical pattern {bits:#010x}.\n\
+         //\n\
+         // The predicate is an integer test over the reinterpreted bit pattern rather\n\
+         // than a floating-point one, so no math-mode relaxation licence reaches it.\n\
          static inline float {symbol}(float value) {{\n\
-         {INDENT}return isnan(value) ? as_type<float>({bits:#010x}u) : value;\n\
+         {INDENT}uint pattern = as_type<uint>(value);\n\
+         {INDENT}bool nan = (pattern & {F32_EXPONENT_MASK:#010x}u) == {F32_EXPONENT_MASK:#010x}u\n\
+         {INDENT}{INDENT}&& (pattern & {F32_SIGNIFICAND_MASK:#010x}u) != 0x00000000u;\n\
+         {INDENT}return nan ? as_type<float>({bits:#010x}u) : value;\n\
          }}\n"
     )
 }
@@ -226,9 +308,10 @@ fn canonicalize_symbol(bits: u32) -> String {
 /// Returns whether a bit pattern encodes an IEEE-754 binary32 NaN.
 ///
 /// Quietness is the numerical contract's rule, not this backend's; emission
-/// only refuses a "canonical NaN" that is not a NaN at all.
+/// only refuses a "canonical NaN" that is not a NaN at all. This is the same
+/// predicate [`canonicalize_helper`] emits, over the same two constants.
 pub(crate) const fn is_f32_nan(bits: u32) -> bool {
-    bits & 0x7f80_0000 == 0x7f80_0000 && bits & 0x007f_ffff != 0
+    bits & F32_EXPONENT_MASK == F32_EXPONENT_MASK && bits & F32_SIGNIFICAND_MASK != 0
 }
 
 /// Returns the bounded presentation digest of canonical identity bytes.
@@ -254,6 +337,7 @@ fn emit_entry_point(
     target: &MetalTargetFacts,
     helpers: &mut BTreeSet<u32>,
     numerical: &mut BTreeSet<MetalNumericalRequirement>,
+    gaps: &mut BTreeSet<MetalNumericalGap>,
 ) -> Result<EmittedEntryPoint, MetalEmitError> {
     let declared = kernel.buffers().len();
     if u64::try_from(declared).unwrap_or(u64::MAX) > u64::from(target.buffer_binding_limit) {
@@ -273,6 +357,7 @@ fn emit_entry_point(
         target,
         helpers,
         numerical,
+        gaps,
         names: BTreeMap::new(),
         next: 0,
         buffers: BTreeMap::new(),
@@ -432,6 +517,14 @@ pub(crate) fn msl_type(value_type: KernelType) -> Result<&'static str, MetalEmit
 /// Each vocabulary matched here is *not* `#[non_exhaustive]`, so widening the
 /// numerical contract is a compile error at this site rather than a silently
 /// dropped requirement.
+///
+/// Subnormal treatment deliberately produces no requirement. It is checked
+/// exhaustively so a widened [`SubnormalMode`] stops the build, but no
+/// `-fmetal-math-mode` selection preserves subnormals through `f32` arithmetic
+/// on a flushing target, so naming one here would assert a guarantee the flag
+/// does not deliver. That obligation is routed to
+/// [`KernelEmitter::record_subnormal_obligation`] as a
+/// [`MetalNumericalGap`] instead.
 fn realization_requirements(
     realization: NumericalRealization,
 ) -> BTreeSet<MetalNumericalRequirement> {
@@ -447,11 +540,7 @@ fn realization_requirements(
         }
     }
     for mode in [realization.input_subnormals, realization.result_subnormals] {
-        match mode {
-            SubnormalMode::Preserve => {
-                requirements.insert(MetalNumericalRequirement::SafeMathMode);
-            }
-        }
+        let SubnormalMode::Preserve = mode;
     }
     requirements
 }
@@ -462,6 +551,7 @@ struct KernelEmitter<'a> {
     target: &'a MetalTargetFacts,
     helpers: &'a mut BTreeSet<u32>,
     numerical: &'a mut BTreeSet<MetalNumericalRequirement>,
+    gaps: &'a mut BTreeSet<MetalNumericalGap>,
     names: BTreeMap<VerifiedValueId, String>,
     next: u32,
     buffers: BTreeMap<VerifiedBufferId, u32>,
@@ -681,17 +771,25 @@ impl KernelEmitter<'_> {
         let [result] = results else {
             return Err(arity("binary-result"));
         };
-        let operator = match op {
-            BinaryOp::IndexAdd | BinaryOp::F32Add => "+",
-            BinaryOp::IndexMultiply | BinaryOp::F32Multiply => "*",
-            BinaryOp::IndexDivide => "/",
-            BinaryOp::IndexModulo => "%",
+        // Whether the operation is f32 arithmetic is an operation-vocabulary
+        // fact, not a recognized shape: it decides which numerical obligations
+        // this statement can expose, and nothing about how it is emitted.
+        let (operator, f32_arithmetic) = match op {
+            BinaryOp::IndexAdd => ("+", false),
+            BinaryOp::IndexMultiply => ("*", false),
+            BinaryOp::IndexDivide => ("/", false),
+            BinaryOp::IndexModulo => ("%", false),
+            BinaryOp::F32Add => ("+", true),
+            BinaryOp::F32Multiply => ("*", true),
             _ => {
                 return Err(MetalEmitError::UnsupportedOperation {
                     family: MetalOperationFamily::Binary,
                 });
             }
         };
+        if f32_arithmetic {
+            self.record_subnormal_obligation();
+        }
         // Defence in depth on an invariant the kernel builder already proves: a
         // zero divisor would be emitted as undefined behaviour on device.
         if op.requires_constant_divisor() {
@@ -711,6 +809,27 @@ impl KernelEmitter<'_> {
         let name = self.bind(*result)?;
         self.line(&format!("{value_type} {name} = {lhs} {operator} {rhs};"));
         Ok(())
+    }
+
+    /// Records the subnormal obligation this target cannot realize.
+    ///
+    /// Called once per emitted `f32` arithmetic statement. A kernel that only
+    /// materializes values never reaches here, which matches the measurement:
+    /// a load/store round trip returns every subnormal bit pattern unchanged,
+    /// while `f32` arithmetic flushes subnormal operands and results to zero
+    /// under every governed compiler selection. The target states which
+    /// behaviour it has, so the fact is checked rather than assumed.
+    fn record_subnormal_obligation(&mut self) {
+        match self.target.subnormal_arithmetic {
+            MetalSubnormalArithmetic::PreservesSubnormals => return,
+            MetalSubnormalArithmetic::FlushesToZero => {}
+        }
+        let realization = self.kernel.numerical();
+        for mode in [realization.input_subnormals, realization.result_subnormals] {
+            let SubnormalMode::Preserve = mode;
+            self.gaps
+                .insert(MetalNumericalGap::SubnormalFlushInArithmetic);
+        }
     }
 
     /// Emits one predicate-producing comparison.
@@ -759,6 +878,10 @@ impl KernelEmitter<'_> {
                     return Err(MetalEmitError::InvalidCanonicalNan { bits });
                 }
                 self.helpers.insert(bits);
+                // The emitted predicate itself is integer-only and survives any
+                // math mode, but `nnan` leaves the arithmetic that produced a
+                // NaN with no defined result to canonicalize. The requirement is
+                // about the operand, not about the test.
                 self.numerical
                     .insert(MetalNumericalRequirement::SafeMathMode);
                 canonicalize_symbol(bits)

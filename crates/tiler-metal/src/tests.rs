@@ -3,7 +3,16 @@
 //! Golden fixtures pin the exact emitted bytes for the bounded proof profile's
 //! kernels. They are **not** compiler validation: nothing in this crate or in
 //! the repository gate invokes `xcrun metal`, so a passing golden test proves
-//! only that emission is stable and structured as intended.
+//! only that emission is stable and structured as intended. Compiling the
+//! fixtures through the offline driver is owned by
+//! `compile-golden-msl-through-the-aot-driver-in-the-gate`.
+//!
+//! The numerical tests here therefore pin *structure*: that the NaN predicate
+//! contains no floating-point operation, and that an obligation the target
+//! cannot realize is recorded rather than mapped to a flag. What those
+//! structures buy at run time is a device measurement, recorded in the
+//! `prototype-metal-numerical-realization` ticket outcome with its exact
+//! toolchain and commands.
 //!
 //! To regenerate a stale fixture, run the failing test and copy the actual
 //! source from the assertion output; the assertion prints both sides in full.
@@ -28,22 +37,24 @@ use crate::emit::{
     address_space_declaration, barrier_call, emit_translation_unit, is_f32_nan, msl_type,
     reserve_symbol,
 };
-use crate::record::MetalNumericalRequirement;
+use crate::record::{MetalNumericalGap, MetalNumericalRequirement};
 use crate::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalPlatform, MetalTargetFacts,
-    MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalPlatform, MetalSubnormalArithmetic,
+    MetalTargetFacts, MslLanguageVersion,
 };
 
 const NAN_BITS: u32 = 0x7fc0_0000;
 const SCALE_BITS: u32 = 0x4000_0000;
 const BIAS_BITS: u32 = 0x3f80_0000;
 
+/// The measured Apple profile: `f32` arithmetic flushes subnormals to zero.
 fn target() -> MetalTargetFacts {
     MetalTargetFacts::new(
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(13, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
+        MetalSubnormalArithmetic::FlushesToZero,
         31,
     )
 }
@@ -357,6 +368,14 @@ fn an_empty_portfolio_emits_a_declaration_free_translation_unit() {
     assert!(unit.numerical_requirements().is_empty());
     assert!(!unit.source().contains("kernel void "));
     assert!(unit.source().contains("#include <metal_stdlib>"));
+    // No emitted f32 arithmetic means no obligation the target cannot realize,
+    // so a unit with nothing to compute conforms vacuously.
+    assert!(unit.numerical_gaps().is_empty());
+    unit.require_declared_realization().unwrap();
+    assert!(
+        unit.source()
+            .contains("// Declared numerical obligations this profile cannot realize: none.")
+    );
 }
 
 #[test]
@@ -488,6 +507,134 @@ fn strict_numerics_require_safe_math_and_no_contraction() {
         MetalNumericalRequirement::NoFloatingPointContraction.flag(),
         "-ffp-contract=off"
     );
+}
+
+/// Pins the ticket's central obligation on the one operation that can carry it.
+///
+/// The canonicalization predicate must be realized by the emitted operations,
+/// not inherited from how a particular front end lowers `isnan` under a
+/// particular math mode. Integer operations carry no floating-point relaxation
+/// licence, so this predicate means the same thing under `safe`, `relaxed`, and
+/// `fast`; a floating-point predicate would not.
+#[test]
+fn the_nan_predicate_is_an_integer_test_no_math_mode_can_relax() {
+    let source = emit_one(&pointwise_kernel());
+    assert!(
+        !source.contains("isnan"),
+        "a floating-point NaN predicate would depend on the selected math mode"
+    );
+    assert!(source.contains("uint pattern = as_type<uint>(value);"));
+    assert!(source.contains("bool nan = (pattern & 0x7f800000u) == 0x7f800000u"));
+    assert!(source.contains("&& (pattern & 0x007fffffu) != 0x00000000u;"));
+    assert!(source.contains("return nan ? as_type<float>(0x7fc00000u) : value;"));
+}
+
+/// The emitted predicate and the host predicate must agree on every pattern.
+///
+/// They are written from the same two constants, so this walks the exponent and
+/// significand boundaries the masks separate rather than trusting the sharing.
+#[test]
+fn the_emitted_and_host_nan_predicates_agree() {
+    for bits in [
+        0x0000_0000, // +0
+        0x8000_0000, // -0
+        0x0000_0001, // smallest subnormal
+        0x007f_ffff, // largest subnormal
+        0x0080_0000, // smallest normal
+        0x7f7f_ffff, // largest finite
+        0x7f80_0000, // +inf
+        0xff80_0000, // -inf
+        0x7f80_0001, // smallest signalling NaN
+        0x7fbf_ffff, // largest signalling NaN
+        0x7fc0_0000, // canonical quiet NaN
+        0xffff_ffff, // negative quiet NaN, all significand bits set
+    ] {
+        let exponent_all_ones = bits & 0x7f80_0000 == 0x7f80_0000;
+        let significand_nonzero = bits & 0x007f_ffff != 0;
+        assert_eq!(
+            is_f32_nan(bits),
+            exponent_all_ones && significand_nonzero,
+            "{bits:#010x}"
+        );
+    }
+}
+
+/// Subnormal preservation has no realization on the measured Apple profile.
+///
+/// The emitter must not name a compiler flag for it: measurement shows every
+/// `-fmetal-math-mode` flushes subnormal operands and results through `f32`
+/// arithmetic. Recording it as a gap keeps hard feasibility separate from a
+/// flag selection, and the conformance step fails closed.
+#[test]
+fn subnormal_preservation_is_recorded_as_an_unrealizable_gap() {
+    let unit = emit_translation_unit(&[&pointwise_kernel()], &target()).unwrap();
+    assert_eq!(
+        unit.numerical_gaps(),
+        [MetalNumericalGap::SubnormalFlushInArithmetic],
+    );
+    let error = unit.require_declared_realization().unwrap_err();
+    assert_eq!(
+        error,
+        MetalEmitError::UnrealizableNumericalObligation {
+            gap: MetalNumericalGap::SubnormalFlushInArithmetic,
+        }
+    );
+    assert_eq!(error.rule(), "unrealizable-numerical-obligation");
+    assert_eq!(
+        MetalNumericalGap::SubnormalFlushInArithmetic.rule(),
+        "subnormal-flush-in-arithmetic"
+    );
+    // The generated source states the gap too, so it cannot be lost by a caller
+    // that only keeps the text.
+    assert!(
+        unit.source()
+            .contains("// Declared numerical obligations this profile cannot realize:")
+    );
+    assert!(unit.source().contains("//   subnormal-flush-in-arithmetic"));
+    assert!(
+        unit.source()
+            .contains("// f32 arithmetic subnormals: flushes-to-zero")
+    );
+}
+
+/// The gap is a stated target fact, not an assumption compiled into emission.
+#[test]
+fn a_subnormal_preserving_target_has_no_gap() {
+    let mut facts = target();
+    facts.subnormal_arithmetic = MetalSubnormalArithmetic::PreservesSubnormals;
+    let unit = emit_translation_unit(&[&pointwise_kernel()], &facts).unwrap();
+    assert!(unit.numerical_gaps().is_empty());
+    unit.require_declared_realization().unwrap();
+    // The requirement set is unchanged: a target that preserves subnormals still
+    // relaxes signed zero and reassociation under a non-safe math mode.
+    assert_eq!(
+        unit.numerical_requirements(),
+        [
+            MetalNumericalRequirement::SafeMathMode,
+            MetalNumericalRequirement::NoFloatingPointContraction,
+        ],
+    );
+}
+
+/// Every kernel of the bounded proof profile carries the same gap.
+///
+/// The reduction kernels reach `f32` arithmetic through a loop body rather than
+/// a straight-line prologue, so this checks the obligation is recorded from the
+/// operation vocabulary and not from one emission path.
+#[test]
+fn every_arithmetic_kernel_records_the_subnormal_gap() {
+    for kernel in [
+        pointwise_kernel(),
+        single_axis_reduction_kernel(),
+        multi_axis_reduction_kernel(),
+        fused_reduction_kernel(),
+    ] {
+        let unit = emit_translation_unit(&[&kernel], &target()).unwrap();
+        assert_eq!(
+            unit.numerical_gaps(),
+            [MetalNumericalGap::SubnormalFlushInArithmetic],
+        );
+    }
 }
 
 /// Pins the ticket's central property mechanically.

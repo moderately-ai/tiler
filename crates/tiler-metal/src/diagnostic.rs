@@ -20,6 +20,8 @@ use tiler_ir::kernel::{
     VerifiedKernelHandleError,
 };
 
+use crate::record::MetalNumericalGap;
+
 /// The governed operation family whose member has no Metal realization.
 ///
 /// Each family in the structured kernel IR is a bounded vocabulary that will
@@ -173,6 +175,18 @@ pub enum MetalEmitError {
         /// The rejected bit pattern.
         bits: u32,
     },
+    /// The target cannot realize a declared numerical obligation at all.
+    ///
+    /// This is a hard feasibility rejection, not a cost: no compiler flag
+    /// selection honours the obligation on this target. It is returned by
+    /// [`MetalTranslationUnit::require_declared_realization`](crate::record::MetalTranslationUnit::require_declared_realization),
+    /// the step at which a caller claims conformance, rather than by emission,
+    /// because whether the limit is observable depends on the values a dispatch
+    /// actually sees.
+    UnrealizableNumericalObligation {
+        /// The obligation no compiler selection realizes.
+        gap: MetalNumericalGap,
+    },
     /// The kernel signature needs more buffer bindings than the target admits.
     BufferBindingLimit {
         /// Bindings the signature requires.
@@ -217,6 +231,7 @@ impl MetalEmitError {
             Self::UnrecognizedOperation => "unrecognized-operation",
             Self::UnsupportedBarrier { .. } => "unsupported-barrier",
             Self::InvalidCanonicalNan { .. } => "invalid-canonical-nan",
+            Self::UnrealizableNumericalObligation { .. } => "unrealizable-numerical-obligation",
             Self::BufferBindingLimit { .. } => "buffer-binding-limit",
             Self::MalformedKernel { .. } => "malformed-kernel",
             Self::UnresolvedValue => "unresolved-value",
@@ -241,6 +256,7 @@ impl fmt::Display for MetalEmitError {
             Self::UnsupportedOperation { family } => write!(f, "{}: {family}", self.rule()),
             Self::UnsupportedBarrier { reason } => write!(f, "{}: {reason}", self.rule()),
             Self::InvalidCanonicalNan { bits } => write!(f, "{}: {bits:#010x}", self.rule()),
+            Self::UnrealizableNumericalObligation { gap } => write!(f, "{}: {gap}", self.rule()),
             Self::BufferBindingLimit { required, limit } => {
                 write!(f, "{}: {required} of {limit}", self.rule())
             }

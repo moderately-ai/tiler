@@ -288,8 +288,8 @@ mod tests {
     use super::Toolchain;
     use crate::diagnostic::{CompileStage, DriverError};
     use crate::input::{
-        AppleSdk, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion, NumericalRealization,
-        OptimizationLevel,
+        AppleSdk, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract, MathMode,
+        MetalTarget, MslVersion, NumericalRealization, OptimizationLevel,
     };
 
     const TRIVIAL_MSL: &str = "#include <metal_stdlib>\n\
@@ -300,7 +300,35 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
     out[gid] = in[gid];\n\
 }\n";
 
-    fn macos_request(source: &str) -> CompileRequest {
+    /// The NaN-canonicalizing form `tiler-metal` emits, embedded rather than
+    /// imported.
+    ///
+    /// This crate does not depend on `tiler-metal`, so this is a copy of the
+    /// shape under test, not the generator's own output. Compiling the real
+    /// golden fixtures through this driver is owned by
+    /// `compile-golden-msl-through-the-aot-driver-in-the-gate`. What this text
+    /// pins here is that the integer NaN predicate is accepted MSL under every
+    /// governed math mode, which is the property that made it preferable to a
+    /// floating-point predicate in the first place.
+    const CANONICALIZING_MSL: &str = "#include <metal_stdlib>\n\
+using namespace metal;\n\
+static inline float tiler_canonicalize_nan_f32_7fc00000(float value) {\n\
+    uint pattern = as_type<uint>(value);\n\
+    bool nan = (pattern & 0x7f800000u) == 0x7f800000u\n\
+        && (pattern & 0x007fffffu) != 0x00000000u;\n\
+    return nan ? as_type<float>(0x7fc00000u) : value;\n\
+}\n\
+kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
+                                device float* out [[buffer(1)]],\n\
+                                uint gid [[thread_position_in_grid]]) {\n\
+    float v0 = in[gid];\n\
+    float v1 = as_type<float>(0x40000000u);\n\
+    float v2 = v0 * v1;\n\
+    float v3 = tiler_canonicalize_nan_f32_7fc00000(v2);\n\
+    out[gid] = v3;\n\
+}\n";
+
+    fn request(source: &str, numerical: NumericalRealization) -> CompileRequest {
         CompileRequest::new(
             source,
             MetalTarget::new(
@@ -309,8 +337,12 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
                 MslVersion::Metal3_1,
             ),
             OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
+            numerical,
         )
+    }
+
+    fn macos_request(source: &str) -> CompileRequest {
+        request(source, NumericalRealization::strict_baseline())
     }
 
     #[test]
@@ -362,6 +394,44 @@ kernel void copy_kernel(device const float* in [[buffer(0)]],\n\
                 .first()
                 .map(String::as_str),
             Some("-target")
+        );
+    }
+
+    /// The integer NaN predicate must survive every governed numerical
+    /// realization, not only the strict one.
+    ///
+    /// A source whose conformance depended on the math mode would be exactly
+    /// the failure this realization is meant to remove, so every combination is
+    /// compiled rather than the baseline alone. This proves acceptance and
+    /// records that the flags reach the compiler; it does not prove the
+    /// computed values agree, which needs a device and is recorded as a
+    /// measurement in the ticket outcome.
+    #[test]
+    fn the_integer_nan_predicate_compiles_under_every_realization() {
+        let toolchain = Toolchain::system();
+        if toolchain.resolve(AppleSdk::MacOs).is_err() {
+            return;
+        }
+        let mut artifacts = Vec::new();
+        for mode in [MathMode::Safe, MathMode::Relaxed, MathMode::Fast] {
+            for contract in [FpContract::Off, FpContract::On, FpContract::Fast] {
+                let numerical = NumericalRealization::new(mode, Fp32Functions::Precise, contract);
+                let artifact = toolchain
+                    .compile(&request(CANONICALIZING_MSL, numerical))
+                    .unwrap_or_else(|error| {
+                        panic!("{mode:?}/{contract:?} should compile, got {error:?}")
+                    });
+                assert_eq!(&artifact.metallib[..4], b"MTLB");
+                assert_eq!(artifact.provenance.numerical, numerical);
+                artifacts.push((numerical, artifact.metallib));
+            }
+        }
+        // The realization must actually reach the compiler: if every selection
+        // produced identical bytes the matrix above would prove nothing.
+        let strict = &artifacts[0].1;
+        assert!(
+            artifacts.iter().any(|(_, bytes)| bytes != strict),
+            "no realization changed the compiled artifact, so the flags are not reaching `metal`"
         );
     }
 

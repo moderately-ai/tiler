@@ -171,6 +171,57 @@ impl LaunchIndexRealization {
     }
 }
 
+/// How the target's `f32` arithmetic treats subnormal operands and results.
+///
+/// This is a hard feasibility fact about the target, not a compiler-flag
+/// choice, so it belongs beside the binding capacity rather than in the
+/// numerical requirement set. A realization that demands subnormal preservation
+/// is unrealizable on a flushing target for any kernel that performs `f32`
+/// arithmetic, and emission reports that as a
+/// [`MetalNumericalGap`](crate::record::MetalNumericalGap) instead of quietly
+/// naming a compiler flag that does not deliver it.
+///
+/// **Measurement.** On an Apple M4 Max under macOS 27.0 (build 26A5388g) with
+/// Metal 32023.883, an emitted `x * 1.0` returns `0x00000000` for the operand
+/// `0x00000001`, and an emitted `x * 0.5` returns `0x00000000` for the operand
+/// `0x00800000`. Both hold for every `-fmetal-math-mode` (`safe`, `relaxed`,
+/// `fast`), every `-O` level (`0`, `1`, `2`, `3`, `s`), and through both the
+/// offline `xcrun metal` driver and runtime `MTLCompileOptions` compilation. A
+/// load/store round trip with no arithmetic returns every subnormal input
+/// unchanged, so the flush is a property of arithmetic, not of materialization.
+/// The front end emits `air.compile.denorms_disable` under every one of those
+/// flag combinations, and no `metal` driver flag was found that clears it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum MetalSubnormalArithmetic {
+    /// `f32` arithmetic flushes subnormal operands and subnormal results to
+    /// zero. This is the measured behaviour of every governed Apple family.
+    FlushesToZero,
+    /// `f32` arithmetic preserves subnormal operands and results exactly.
+    ///
+    /// No governed Apple family has been measured to do this. The variant
+    /// exists so the flushing fact is a stated target property that emission
+    /// checks, rather than an assumption compiled into the backend.
+    PreservesSubnormals,
+}
+
+impl MetalSubnormalArithmetic {
+    /// Returns a stable lowercase identifier for this behaviour.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FlushesToZero => "flushes-to-zero",
+            Self::PreservesSubnormals => "preserves-subnormals",
+        }
+    }
+}
+
+impl fmt::Display for MetalSubnormalArithmetic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The complete set of Metal target facts one translation unit is emitted for.
 ///
 /// This is a caller-constructed input record, so it exposes `pub` fields and is
@@ -186,6 +237,8 @@ pub struct MetalTargetFacts {
     pub deployment_minimum: MetalDeploymentMinimum,
     /// How the target delivers the governed global launch index.
     pub launch_index: LaunchIndexRealization,
+    /// How the target's `f32` arithmetic treats subnormals.
+    pub subnormal_arithmetic: MetalSubnormalArithmetic,
     /// Buffer argument-table entries this emission may address.
     ///
     /// Apple's feature tables state 31 entries per compute function for every
@@ -204,6 +257,7 @@ impl MetalTargetFacts {
         platform: MetalPlatform,
         deployment_minimum: MetalDeploymentMinimum,
         launch_index: LaunchIndexRealization,
+        subnormal_arithmetic: MetalSubnormalArithmetic,
         buffer_binding_limit: u32,
     ) -> Self {
         Self {
@@ -211,6 +265,7 @@ impl MetalTargetFacts {
             platform,
             deployment_minimum,
             launch_index,
+            subnormal_arithmetic,
             buffer_binding_limit,
         }
     }

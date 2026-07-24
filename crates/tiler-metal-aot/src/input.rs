@@ -177,6 +177,18 @@ impl OptimizationLevel {
 }
 
 /// The `-fmetal-math-mode` selection.
+///
+/// **Measurement.** `xcrun --sdk macosx metal --help` on Metal 32023.883 states
+/// "Default is 'fast'". Omitting the flag therefore selects the most relaxed
+/// mode, which is why this is a required input with no `Default` rather than
+/// something the driver may leave unstated.
+///
+/// **Measurement.** Compiling with `-S -emit-llvm` on that toolchain shows the
+/// licences each mode applies to every emitted `f32` operation: `safe` applies
+/// none, `relaxed` applies `reassoc nsz arcp afn`, and `fast` applies
+/// `reassoc nnan ninf nsz arcp afn`. `relaxed` and `fast` also differ in the
+/// recorded `air.compile_options`: `fast_math_disable` against
+/// `fast_math_enable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MathMode {
     /// `safe`: no numerically unsafe relaxations.
@@ -195,6 +207,31 @@ impl MathMode {
             Self::Safe => "safe",
             Self::Relaxed => "relaxed",
             Self::Fast => "fast",
+        }
+    }
+
+    /// Returns whether this mode applies LLVM's `reassoc`, `nsz`, `arcp`, and
+    /// `afn` licences to emitted `f32` operations.
+    #[must_use]
+    pub const fn relaxes_floating_point(self) -> bool {
+        match self {
+            Self::Safe => false,
+            Self::Relaxed | Self::Fast => true,
+        }
+    }
+
+    /// Returns whether this mode additionally assumes operands and results are
+    /// neither NaN nor infinite (`nnan` and `ninf`).
+    ///
+    /// Under that assumption an arithmetic result that is a NaN has no defined
+    /// value, so no emitted operation can canonicalize it. The driver's
+    /// documented `relaxed` behaviour — "preserves infs and nans" — is why this
+    /// is a narrower question than [`Self::relaxes_floating_point`].
+    #[must_use]
+    pub const fn assumes_finite(self) -> bool {
+        match self {
+            Self::Safe | Self::Relaxed => false,
+            Self::Fast => true,
         }
     }
 }
@@ -240,6 +277,26 @@ impl FpContract {
             Self::Fast => "fast",
         }
     }
+
+    /// Returns whether this selection may fuse a multiply and an add that are
+    /// written as two separate statements.
+    ///
+    /// This is the question a source emitter can act on: writing every
+    /// arithmetic operation as its own statement defends against `on` but not
+    /// against `fast`.
+    ///
+    /// **Measurement.** On an Apple M4 Max under macOS 27.0 (build 26A5388g)
+    /// with Metal 32023.883, `v5 = v3 * 1.5f; v8 = v5 + 1.0f;` written as two
+    /// statements returns the separately rounded `0x3fc58f9e` for the operand
+    /// `0x3eb97ef9` under `off` and `on`, and the fused `0x3fc58f9d` under
+    /// `fast`.
+    #[must_use]
+    pub const fn contracts_across_statements(self) -> bool {
+        match self {
+            Self::Off | Self::On => false,
+            Self::Fast => true,
+        }
+    }
 }
 
 /// The explicit numerical realization flags for one compilation.
@@ -277,10 +334,73 @@ impl NumericalRealization {
     /// The strict baseline governed for the local Metal 32023.883 toolchain row:
     /// `safe` math mode, `precise` 32-bit functions, and disabled contraction.
     ///
-    /// This is a named explicit choice, not an inherited default.
+    /// This is a named explicit choice, not an inherited default: the compiler's
+    /// own defaults are `fast` math mode and statement-scoped contraction.
+    ///
+    /// It is the strictest realization the offline driver can select. It is not
+    /// full IEEE-754 binary32 conformance; see [`Self::preserves_subnormals`].
     #[must_use]
     pub const fn strict_baseline() -> Self {
         Self::new(MathMode::Safe, Fp32Functions::Precise, FpContract::Off)
+    }
+
+    /// Returns whether this realization preserves the sign of a zero result.
+    ///
+    /// **Measurement.** On an Apple M4 Max under macOS 27.0 (build 26A5388g)
+    /// with Metal 32023.883, an emitted `x * 1.0f` followed by `+ 0.0f` returns
+    /// `0x00000000` for the operand `0x80000000` under `-fmetal-math-mode=safe`
+    /// and `0x80000000` under both `relaxed` and `fast`. IEEE-754
+    /// round-to-nearest requires `0x00000000`. The divergence holds at `-O0`,
+    /// `-O1`, `-O2`, `-O3`, and `-Os`, and is independent of
+    /// `-fmetal-math-fp32-functions`.
+    #[must_use]
+    pub const fn preserves_signed_zero(self) -> bool {
+        !self.math_mode.relaxes_floating_point()
+    }
+
+    /// Returns whether this realization permits reordering a reduction.
+    ///
+    /// Kept separate from [`Self::preserves_signed_zero`] even though today's
+    /// three modes answer both with one bit: `nsz` and `reassoc` are distinct
+    /// LLVM licences that a future mode could select independently, and the
+    /// numerical contract asks the two questions separately.
+    #[must_use]
+    pub const fn permits_reassociation(self) -> bool {
+        self.math_mode.relaxes_floating_point()
+    }
+
+    /// Returns whether an arithmetic NaN keeps a defined value under this
+    /// realization.
+    ///
+    /// When it does not, a NaN-canonicalizing operation has nothing well
+    /// defined to map, however the source spells the NaN test.
+    #[must_use]
+    pub const fn preserves_nan_results(self) -> bool {
+        !self.math_mode.assumes_finite()
+    }
+
+    /// Returns whether this realization preserves subnormal `f32` operands and
+    /// results through arithmetic. It never does.
+    ///
+    /// This is a hard feasibility limit of the Apple GPU families, not a flag
+    /// choice, so no selection makes it true. It is stated as a method rather
+    /// than left implicit so a caller checking a declared numerical contract
+    /// against this realization gets a definite answer instead of assuming the
+    /// strictest flags imply IEEE-754 subnormal behaviour.
+    ///
+    /// **Measurement.** On an Apple M4 Max under macOS 27.0 (build 26A5388g)
+    /// with Metal 32023.883, `x * 1.0f` returns `0x00000000` for the operand
+    /// `0x00000001` and `x * 0.5f` returns `0x00000000` for the operand
+    /// `0x00800000`, under every `-fmetal-math-mode`, every `-O` level, and
+    /// through both this offline driver and runtime `MTLCompileOptions`
+    /// compilation. The front end records `air.compile.denorms_disable` under
+    /// every one of those combinations, and neither `-fdenormal-fp-math=ieee`
+    /// nor any other `metal` driver flag was found to clear it. A load/store
+    /// round trip with no arithmetic returns every subnormal bit pattern
+    /// unchanged, so materialization is unaffected.
+    #[must_use]
+    pub const fn preserves_subnormals(self) -> bool {
+        false
     }
 
     /// Returns the exact ordered numerical compiler flags for this realization.
@@ -486,6 +606,60 @@ mod tests {
                 "-fmetal-math-fp32-functions=fast",
                 "-ffp-contract=fast",
             ],
+        );
+    }
+
+    /// Pins the measured semantics each math mode actually delivers.
+    ///
+    /// These predicates are what a caller checks a declared numerical contract
+    /// against. Getting one wrong would silently approve a realization that
+    /// changes results, so each is asserted for every mode rather than only for
+    /// the strict baseline.
+    #[test]
+    fn each_math_mode_states_the_licences_it_applies() {
+        for (mode, relaxes, finite) in [
+            (MathMode::Safe, false, false),
+            (MathMode::Relaxed, true, false),
+            (MathMode::Fast, true, true),
+        ] {
+            assert_eq!(mode.relaxes_floating_point(), relaxes, "{mode:?}");
+            assert_eq!(mode.assumes_finite(), finite, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn only_fast_contraction_fuses_across_statements() {
+        assert!(!FpContract::Off.contracts_across_statements());
+        assert!(!FpContract::On.contracts_across_statements());
+        assert!(FpContract::Fast.contracts_across_statements());
+    }
+
+    /// The strictest selectable realization is still not IEEE-754 binary32.
+    ///
+    /// Signed zero, reassociation, and NaN results are all recovered by the
+    /// strict baseline. Subnormal preservation is not recoverable by any
+    /// selection, so a caller must not read "strict flags" as "conforming".
+    #[test]
+    fn the_strict_baseline_recovers_everything_except_subnormals() {
+        let strict = NumericalRealization::strict_baseline();
+        assert!(strict.preserves_signed_zero());
+        assert!(!strict.permits_reassociation());
+        assert!(strict.preserves_nan_results());
+        assert!(!strict.preserves_subnormals());
+
+        for mode in [MathMode::Relaxed, MathMode::Fast] {
+            let relaxed = NumericalRealization::new(mode, Fp32Functions::Precise, FpContract::Off);
+            assert!(!relaxed.preserves_signed_zero(), "{mode:?}");
+            assert!(relaxed.permits_reassociation(), "{mode:?}");
+            assert!(!relaxed.preserves_subnormals(), "{mode:?}");
+        }
+        assert!(
+            NumericalRealization::new(MathMode::Relaxed, Fp32Functions::Precise, FpContract::Off)
+                .preserves_nan_results()
+        );
+        assert!(
+            !NumericalRealization::new(MathMode::Fast, Fp32Functions::Precise, FpContract::Off)
+                .preserves_nan_results()
         );
     }
 
