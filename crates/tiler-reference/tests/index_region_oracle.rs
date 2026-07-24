@@ -779,7 +779,7 @@ mod governed {
     use tiler_ir::index::{
         DimensionId, DomainRole, FrozenScalarRegistry, IndexInteger, IndexRegionBuilder,
         ScalarAttributes, ScalarValueId, TensorRole, VerifiedIndexRegion, add_f32_scalar_op,
-        constant_f32_scalar_op, multiply_f32_scalar_op,
+        canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
     };
     use tiler_ir::semantic::{
         CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalField, CanonicalValue, F32,
@@ -1014,10 +1014,20 @@ mod governed {
             let zero = builder.constant(IndexInteger::from_u64(0))?;
             let seed = builder.read(input, &[], &[zero])?;
             if length == 1 {
-                // `GovernedStrictSerialSumF32` writes the seed unchanged: a
-                // single contributor is the whole strict-serial result, and no
-                // arithmetic operation is performed.
-                seed
+                // `GovernedStrictSerialSumF32` canonicalizes the lone
+                // contributor at the reduction's result boundary. No combine has
+                // run, so this is the only path on which the boundary rule has
+                // work to do, and it is a conversion rather than an addition
+                // because adding the `+0.0` identity would turn an observable
+                // `-0.0` into `+0.0`.
+                builder
+                    .apply(
+                        canonicalize_nan_f32_scalar_op(),
+                        ScalarAttributes::empty(),
+                        &[seed],
+                    )?
+                    .get(0)
+                    .ok_or("the governed canonicalization produces one result")?
             } else {
                 let tail = builder.dimension(DomainRole::Reduction, Extent::new(length - 1))?;
                 let induction = builder.dimension_expr(tail)?;
@@ -1352,28 +1362,32 @@ mod governed {
         }
     }
 
-    /// **Measured divergence.** A lone non-canonical NaN contributor is
-    /// canonicalized by the semantic oracle and passed through by the governed
-    /// region.
+    /// A lone non-canonical NaN contributor is canonicalized by both oracles.
     ///
-    /// `strict_sum` canonicalizes its accumulator unconditionally before writing
-    /// it, so a fold that performed *zero* additions still reports the canonical
-    /// arithmetic payload. The governed index-access lowering and
-    /// `tiler_ir::kernel::lower` both write the seed unchanged in that case, and
-    /// the latter says so in a comment. Two of the three implementations agree
-    /// with each other and disagree with the normative oracle.
+    /// This case was a pinned *divergence*: `strict_sum` canonicalized its
+    /// accumulator before writing it, so a fold performing zero additions still
+    /// reported the canonical payload, while the governed lowering and
+    /// `tiler_ir::kernel::lower` both wrote the seed unchanged. Two of the three
+    /// implementations agreed with each other and disagreed with the normative
+    /// oracle.
     ///
-    /// The existing conformance vector cannot see this: it reduces a `[4, 1]`
-    /// input containing `f32::NAN`, and `f32::NAN` is already
-    /// `CANONICAL_F32_ARITHMETIC_NAN_BITS`, so canonicalizing it is a no-op.
+    /// The contract decides which side was wrong, and it is not the oracle.
+    /// `docs/numerical-semantics.md` requires strict `f32` Sum to apply the
+    /// canonicalization "at its result boundary even when the contributor
+    /// sequence is a singleton", and states the reason: "The redundant
+    /// result-boundary rule prevents an uncombined input payload from leaking
+    /// through an arithmetic reduction." ADR 0055 says the same, "including
+    /// singleton results". A lone contributor is precisely an uncombined input
+    /// payload, so the two lowerings were realizing a rule the contract does not
+    /// state, and the oracle was already correct.
     ///
-    /// This case pins the disagreement rather than hiding it.
-    /// `reconcile-single-contributor-strict-sum-nan-canonicalization` owns
-    /// deciding which side moves; until it does, a change to either side must
-    /// fail here instead of silently re-aligning the oracles at some unreviewed
-    /// payload.
+    /// Both now emit `tiler.scalar::canonicalize-nan-f32@1` on that path — a
+    /// conversion rather than an addition, because adding the `+0.0` identity
+    /// would turn an observable `-0.0` into `+0.0`, which
+    /// `a_single_contributor_agrees_on_every_payload_but_a_non_canonical_nan`
+    /// pins in the other direction.
     #[test]
-    fn a_lone_non_canonical_nan_contributor_diverges_between_the_two_oracles() {
+    fn a_lone_non_canonical_nan_contributor_canonicalizes_in_both_oracles() {
         for bits in [NONCANONICAL_QUIET_NAN, NEGATIVE_QUIET_NAN, SIGNALLING_NAN] {
             let region = serial_sum_region(1).expect("the region verifies");
             let input = bit_tensor(Shape::from_dims([1]), &[bits]);
@@ -1381,18 +1395,18 @@ mod governed {
 
             assert_eq!(
                 evaluate_region(&region, &[&input]),
-                [bits],
-                "the governed region performs no arithmetic and keeps {bits:#010x}"
+                [CANONICAL_F32_ARITHMETIC_NAN_BITS],
+                "the governed region canonicalizes a lone {bits:#010x} at its result boundary"
             );
             assert_eq!(
                 evaluate_program(&program, Some((&key, &input))),
                 [CANONICAL_F32_ARITHMETIC_NAN_BITS],
                 "the semantic oracle canonicalizes a zero-step fold"
             );
-            assert_ne!(
+            assert_eq!(
                 evaluate_region(&region, &[&input]),
                 evaluate_program(&program, Some((&key, &input))),
-                "the divergence is real and this case exists to keep it visible"
+                "the two oracles agree on a lone {bits:#010x}"
             );
         }
     }

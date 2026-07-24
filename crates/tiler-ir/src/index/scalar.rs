@@ -40,6 +40,24 @@ pub fn add_f32_scalar_op() -> ScalarOpKey {
     governed_scalar_op("add-f32")
 }
 
+/// Returns the governed per-point `f32` NaN-canonicalization scalar key.
+///
+/// This is the index-region counterpart of the structured kernel's
+/// `ConvertOp::CanonicalizeF32Nan`: a named typed conversion, deliberately not
+/// arithmetic. It exists because the numerical contract places a
+/// canonicalization at a reduction's *result boundary* — where no combine has
+/// necessarily run — so a lowering needs to apply the governed canonical
+/// arithmetic-NaN payload without performing an addition that would perturb an
+/// observable signed zero.
+///
+/// The operation identity fixes the payload, matching the versioned
+/// `tiler::canonical-arithmetic-nan-f32@1` profile; it carries no attribute
+/// selecting a different pattern.
+#[must_use]
+pub fn canonicalize_nan_f32_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("canonicalize-nan-f32")
+}
+
 fn governed_scalar_op(name: &str) -> ScalarOpKey {
     ScalarOpKey::new("tiler.scalar", name, 1).expect("the governed scalar key is valid")
 }
@@ -881,15 +899,16 @@ impl ScalarOperationInferencer for StandardF32Constant {
     }
 }
 
-/// Infers the shared operand type of a governed binary `f32` scalar operation.
+/// Infers the shared operand type of a governed homogeneous `f32` scalar.
 ///
-/// The operand types are required to be identical rather than merely both
-/// numeric: a governed binary `f32` operation has no defined mixed-type
-/// behaviour, so an application that would need one is rejected instead of
-/// silently resolving to the first operand.
-struct StandardF32Binary;
+/// The operand types are required to be `f32` rather than merely numeric: a
+/// governed `f32` operation has no defined mixed-type behaviour, so an
+/// application that would need one is rejected instead of silently resolving to
+/// the first operand. The rule is arity independent, so the binary arithmetic
+/// operations and the unary NaN canonicalization share it.
+struct StandardF32Homogeneous;
 
-impl ScalarOperationInferencer for StandardF32Binary {
+impl ScalarOperationInferencer for StandardF32Homogeneous {
     fn infer(
         &self,
         request: ScalarInferenceRequest<'_>,
@@ -904,7 +923,7 @@ impl ScalarOperationInferencer for StandardF32Binary {
             return Err(ScalarInferenceError::new(
                 ProviderDiagnosticCode::new("tiler.scalar.operand-type")
                     .expect("the governed diagnostic code is valid"),
-                "governed binary f32 scalars require f32 operands",
+                "governed f32 scalars require f32 operands",
             )
             .expect("the governed diagnostic message is bounded"));
         }
@@ -1074,9 +1093,12 @@ impl ScalarRegistryBuilder {
     ///
     /// It is composed with [`FrozenSemanticRegistry::standard`] and defines the
     /// exact per-point scalar operations the governed `f32` semantic families
-    /// lower to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`], and
-    /// [`add_f32_scalar_op`]. An extension composes with it by registering
-    /// further definitions on the returned builder.
+    /// lower to: [`constant_f32_scalar_op`], [`multiply_f32_scalar_op`],
+    /// [`add_f32_scalar_op`], and [`canonicalize_nan_f32_scalar_op`]. The last
+    /// is a conversion rather than arithmetic, and exists because a reduction's
+    /// result boundary must canonicalize even when no combine ran. An extension
+    /// composes with it by registering further definitions on the returned
+    /// builder.
     ///
     /// # Errors
     ///
@@ -1106,17 +1128,28 @@ impl ScalarRegistryBuilder {
                 "IEEE 754-2019 binary32 multiplication; tiler.scalar::multiply-f32@1",
                 ScalarAttributeSchema::empty(),
                 ScalarArity::exact(2)?,
-                Arc::new(StandardF32Binary),
+                Arc::new(StandardF32Homogeneous),
             )?,
         )?;
         builder.register(
-            provider,
+            provider.clone(),
             standard_definition(
                 add_f32_scalar_op(),
                 "IEEE 754-2019 binary32 addition; tiler.scalar::add-f32@1",
                 ScalarAttributeSchema::empty(),
                 ScalarArity::exact(2)?,
-                Arc::new(StandardF32Binary),
+                Arc::new(StandardF32Homogeneous),
+            )?,
+        )?;
+        builder.register(
+            provider,
+            standard_definition(
+                canonicalize_nan_f32_scalar_op(),
+                "governed canonical arithmetic-NaN conversion; \
+                 tiler.scalar::canonicalize-nan-f32@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(1)?,
+                Arc::new(StandardF32Homogeneous),
             )?,
         )?;
         Ok(builder)
