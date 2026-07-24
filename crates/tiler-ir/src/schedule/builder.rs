@@ -458,10 +458,28 @@ fn bounds_proof_refines_access(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
+
     use crate::schedule::handles::{BoundsWitnessId, OwnershipWitnessId};
     use crate::schedule::model::{ContributorOrder, LaunchPlan};
-    use crate::schedule::numerics::{NumericalPermission, SubnormalMode};
+    use crate::schedule::numerics::{FlushedZeroSign, NumericalPermission, SubnormalMode};
     use crate::shape::{Axis, Shape};
+
+    /// Recorded canonical identity of the strict-`f32` pointwise test region.
+    ///
+    /// 194 bytes. The encoding this replaced was 192 bytes and ended
+    /// `…007fc0000000000100000000000000060000000101000000003100000000000000060000000101`,
+    /// carrying neither subnormal dimension and both permissions as derived
+    /// booleans.
+    const STRICT_F32_REGION_IDENTITY_HEX: &str = concat!(
+        "74696c65722e7363686564756c652e7631000000000000000200000000000000",
+        "0200000000000000030000000000000002010101000000000002020100000001",
+        "0100000000000000000000000200000000011100000000000000060000000102",
+        "1100000000000000060000000002000000000000000621400000003f8000007f",
+        "c000000074696c65722e746573742e7374726963742d663332007fc000000101",
+        "0101010000000000000006000000010100000000310000000000000006000000",
+        "0101",
+    );
 
     fn strict_numerical() -> NumericalRealization {
         NumericalRealization::new(
@@ -556,8 +574,140 @@ mod tests {
             .unwrap();
         assert_eq!(verified.region().schedule.work_items, 6);
         assert_eq!(verified.requirements().buffer_bindings, 2);
-        assert!(verified.requirements().requires_strict_f32);
         assert!(verified.requirements().requires_device_memory);
+        // The realization reaches the requirements record per dimension rather
+        // than as a predicate, so a feasibility authority can name the exact
+        // dimension a target failed to honour (ADR 0076 item 3).
+        let requirements = verified.requirements();
+        assert_eq!(requirements.input_subnormals, SubnormalMode::Preserve);
+        assert_eq!(requirements.result_subnormals, SubnormalMode::Preserve);
+        assert_eq!(requirements.contraction, NumericalPermission::Forbidden);
+        assert_eq!(requirements.reassociation, NumericalPermission::Forbidden);
+    }
+
+    /// A contract that permits both transforms still carries its subnormal
+    /// obligation into the requirements record.
+    ///
+    /// The `requires_strict_f32` predicate this replaced read contraction and
+    /// reassociation only, so exactly this realization derived `false` and
+    /// would have been admitted on a target declaring no strict-`f32` support
+    /// while still demanding preserved subnormals.
+    #[test]
+    fn a_relaxed_transform_contract_still_carries_its_subnormal_obligation() {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        builder.scalar_program = Some(ScalarProgram::MultiplyThenAdd {
+            scale_bits: 2.0_f32.to_bits(),
+            bias_bits: 1.0_f32.to_bits(),
+            canonical_nan_bits: 0x7fc0_0000,
+            contraction: true,
+        });
+        builder.numerical = Some(NumericalRealization::new(
+            "tiler.test.relaxed-transforms-preserved-subnormals",
+            0x7fc0_0000,
+            SubnormalMode::Preserve,
+            SubnormalMode::Preserve,
+            NumericalPermission::Permitted,
+            NumericalPermission::Permitted,
+        ));
+        let carried = builder.build().unwrap().requirements();
+        assert_eq!(carried.contraction, NumericalPermission::Permitted);
+        assert_eq!(carried.reassociation, NumericalPermission::Permitted);
+        assert_eq!(carried.input_subnormals, SubnormalMode::Preserve);
+        assert_eq!(carried.result_subnormals, SubnormalMode::Preserve);
+    }
+
+    /// Every numerical dimension separates canonical scheduled-region identity.
+    ///
+    /// The encoder previously wrote `profile_key`, the NaN bits, and two
+    /// derived permission booleans, so two regions differing only in a
+    /// subnormal dimension collided. Each realization below holds `profile_key`
+    /// fixed precisely so the key cannot stand in for the field values it names
+    /// (ADR 0076 item 6). The subject is `encode_identity` rather than the
+    /// builder because the schedule verifier separately constrains the scalar
+    /// program to agree with the contraction permission, and varying both would
+    /// stop isolating the numerical field.
+    #[test]
+    fn every_numerical_dimension_separates_scheduled_region_identity() {
+        let region = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6)
+            .build()
+            .unwrap()
+            .region()
+            .clone();
+        let baseline = NumericalRealization::new(
+            "tiler.test.identity-probe",
+            0x7fc0_0000,
+            SubnormalMode::Preserve,
+            SubnormalMode::Preserve,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+        );
+        let preserving_sign = SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        };
+        let always_positive = SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        };
+        let realizations = [
+            baseline,
+            NumericalRealization {
+                input_subnormals: preserving_sign,
+                ..baseline
+            },
+            NumericalRealization {
+                result_subnormals: preserving_sign,
+                ..baseline
+            },
+            // The flushed zero's sign is part of the behaviour, so two flushes
+            // producing different zeros are different realizations.
+            NumericalRealization {
+                input_subnormals: always_positive,
+                ..baseline
+            },
+            NumericalRealization {
+                contraction: NumericalPermission::Permitted,
+                ..baseline
+            },
+            NumericalRealization {
+                reassociation: NumericalPermission::Permitted,
+                ..baseline
+            },
+        ];
+
+        let mut seen: Vec<CanonicalScheduledRegionIdentity> = Vec::new();
+        for realization in realizations {
+            let mut candidate = region.clone();
+            candidate.index.numerical = realization;
+            let identity = encode_identity(&candidate);
+            assert!(
+                !seen.contains(&identity),
+                "{realization:?} collided with an earlier realization"
+            );
+            seen.push(identity);
+        }
+    }
+
+    /// The exact canonical identity of the governed strict-`f32` test region.
+    ///
+    /// Completing the encoding over both subnormal dimensions and re-encoding
+    /// each permission as a tagged value changed these bytes. Pinning them
+    /// keeps a later reordering or omission from slipping past the distinctness
+    /// test above, which only proves that the six realizations differ from each
+    /// other.
+    #[test]
+    fn the_strict_f32_region_has_its_recorded_canonical_identity() {
+        let verified = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6)
+            .build()
+            .unwrap();
+        let hex =
+            verified
+                .canonical_identity()
+                .as_bytes()
+                .iter()
+                .fold(String::new(), |mut hex, byte| {
+                    let _ = write!(hex, "{byte:02x}");
+                    hex
+                });
+        assert_eq!(hex, STRICT_F32_REGION_IDENTITY_HEX);
     }
 
     #[test]

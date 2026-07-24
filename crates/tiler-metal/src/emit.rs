@@ -518,13 +518,21 @@ pub(crate) fn msl_type(value_type: KernelType) -> Result<&'static str, MetalEmit
 /// numerical contract is a compile error at this site rather than a silently
 /// dropped requirement.
 ///
-/// Subnormal treatment deliberately produces no requirement. It is checked
-/// exhaustively so a widened [`SubnormalMode`] stops the build, but no
-/// `-fmetal-math-mode` selection preserves subnormals through `f32` arithmetic
-/// on a flushing target, so naming one here would assert a guarantee the flag
-/// does not deliver. That obligation is routed to
-/// [`KernelEmitter::record_subnormal_obligation`] as a
-/// [`MetalNumericalGap`] instead.
+/// A permission the realization *grants* names no flag. This set says what the
+/// emitted source cannot tolerate, and a granted freedom is tolerated under
+/// every selection, so the caller stays free to compile more strictly than the
+/// contract demands.
+///
+/// **Neither subnormal behaviour names a compiler selection, and the two
+/// reasons differ.** Preservation names none because no `-fmetal-math-mode`,
+/// `-ffp-contract`, `-fmetal-math-fp32-functions`, or `-O` selection preserves
+/// subnormals through `f32` arithmetic on a flushing target — the front end
+/// emits `air.compile.denorms_disable` under all of them — so naming a flag
+/// would assert a guarantee it does not deliver. Flushing names none because
+/// that same measurement makes the flush unconditional: no selection has to be
+/// made to obtain it. Whether the target actually honours the declared
+/// behaviour is a target fact, not a flag choice, and is routed to
+/// [`KernelEmitter::record_subnormal_obligation`] as a [`MetalNumericalGap`].
 fn realization_requirements(
     realization: NumericalRealization,
 ) -> BTreeSet<MetalNumericalRequirement> {
@@ -533,16 +541,56 @@ fn realization_requirements(
         NumericalPermission::Forbidden => {
             requirements.insert(MetalNumericalRequirement::NoFloatingPointContraction);
         }
+        NumericalPermission::Permitted => {}
     }
     match realization.reassociation {
         NumericalPermission::Forbidden => {
             requirements.insert(MetalNumericalRequirement::SafeMathMode);
         }
+        NumericalPermission::Permitted => {}
     }
     for mode in [realization.input_subnormals, realization.result_subnormals] {
-        let SubnormalMode::Preserve = mode;
+        match mode {
+            SubnormalMode::Preserve | SubnormalMode::FlushToZero { zero_sign: _ } => {}
+        }
     }
     requirements
+}
+
+/// Returns the gap one declared subnormal behaviour has against a target fact.
+///
+/// The comparison is total in both arguments and every arm is a decision the
+/// measurement supports, so a widened contract vocabulary or a widened target
+/// vocabulary stops the build here. `MetalSubnormalArithmetic` is
+/// `#[non_exhaustive]`, which constrains matches outside this crate but not
+/// this one, so the match stays wildcard-free.
+///
+/// **Deferred.** `MetalSubnormalArithmetic::FlushesToZero` states *that* the
+/// target flushes and not *which zero* it produces, even though the measured
+/// Apple flush is sign-preserving (`0x80400000 * 2.0f` returns `0x80000000`).
+/// A declared flush is therefore not established by the target fact and fails
+/// closed as [`MetalNumericalGap::UndeclaredFlushedZeroSign`].
+/// `declare-metal-numerical-honourability` owns replacing this backend-local
+/// fact with a per-dimension honourability declaration that names the zero, at
+/// which point a sign-matching flush becomes a positive conformance claim and
+/// only a sign *mismatch* remains a gap.
+const fn subnormal_gap(
+    declared: SubnormalMode,
+    target: MetalSubnormalArithmetic,
+) -> Option<MetalNumericalGap> {
+    match (declared, target) {
+        (SubnormalMode::Preserve, MetalSubnormalArithmetic::PreservesSubnormals) => None,
+        (SubnormalMode::Preserve, MetalSubnormalArithmetic::FlushesToZero) => {
+            Some(MetalNumericalGap::SubnormalFlushInArithmetic)
+        }
+        (
+            SubnormalMode::FlushToZero { zero_sign: _ },
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        ) => Some(MetalNumericalGap::SubnormalPreservationInArithmetic),
+        (SubnormalMode::FlushToZero { zero_sign: _ }, MetalSubnormalArithmetic::FlushesToZero) => {
+            Some(MetalNumericalGap::UndeclaredFlushedZeroSign)
+        }
+    }
 }
 
 /// Per-kernel emission state.
@@ -811,7 +859,7 @@ impl KernelEmitter<'_> {
         Ok(())
     }
 
-    /// Records the subnormal obligation this target cannot realize.
+    /// Records any subnormal obligation this target cannot realize.
     ///
     /// Called once per emitted `f32` arithmetic statement. A kernel that only
     /// materializes values never reaches here, which matches the measurement:
@@ -819,16 +867,18 @@ impl KernelEmitter<'_> {
     /// while `f32` arithmetic flushes subnormal operands and results to zero
     /// under every governed compiler selection. The target states which
     /// behaviour it has, so the fact is checked rather than assumed.
+    ///
+    /// Each dimension is compared independently. A target that couples input
+    /// and result flushing in one execution mode does not couple the contract's
+    /// semantic dimensions (ADR 0019), so a divergence on either is recorded on
+    /// its own.
     fn record_subnormal_obligation(&mut self) {
-        match self.target.subnormal_arithmetic {
-            MetalSubnormalArithmetic::PreservesSubnormals => return,
-            MetalSubnormalArithmetic::FlushesToZero => {}
-        }
+        let target = self.target.subnormal_arithmetic;
         let realization = self.kernel.numerical();
         for mode in [realization.input_subnormals, realization.result_subnormals] {
-            let SubnormalMode::Preserve = mode;
-            self.gaps
-                .insert(MetalNumericalGap::SubnormalFlushInArithmetic);
+            if let Some(gap) = subnormal_gap(mode, target) {
+                self.gaps.insert(gap);
+            }
         }
     }
 

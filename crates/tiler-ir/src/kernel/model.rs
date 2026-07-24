@@ -14,8 +14,8 @@
 
 use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
-    CanonicalScheduledRegionIdentity, NumericalPermission, NumericalRealization, RegionId,
-    ResourceRequirements, SubnormalMode, TensorRole,
+    CanonicalScheduledRegionIdentity, FlushedZeroSign, NumericalPermission, NumericalRealization,
+    RegionId, ResourceRequirements, SubnormalMode, TensorRole,
 };
 
 use super::MAX_KERNEL_IDENTITY_BYTES;
@@ -939,12 +939,19 @@ fn push_tensor_role(bytes: &mut Vec<u8>, role: TensorRole) {
 fn push_subnormal(bytes: &mut Vec<u8>, mode: SubnormalMode) {
     bytes.push(match mode {
         SubnormalMode::Preserve => 0x01,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        } => 0x02,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        } => 0x03,
     });
 }
 
 fn push_permission(bytes: &mut Vec<u8>, permission: NumericalPermission) {
     bytes.push(match permission {
         NumericalPermission::Forbidden => 0x01,
+        NumericalPermission::Permitted => 0x02,
     });
 }
 
@@ -963,7 +970,10 @@ fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
     bytes.extend_from_slice(&requirements.local_memory_bytes.to_be_bytes());
     bytes.extend_from_slice(&requirements.barriers.to_be_bytes());
     bytes.push(u8::from(requirements.requires_device_memory));
-    bytes.push(u8::from(requirements.requires_strict_f32));
+    push_subnormal(bytes, requirements.input_subnormals);
+    push_subnormal(bytes, requirements.result_subnormals);
+    push_permission(bytes, requirements.contraction);
+    push_permission(bytes, requirements.reassociation);
 }
 
 fn push_buffer(bytes: &mut Vec<u8>, buffer: &BufferParameter) {

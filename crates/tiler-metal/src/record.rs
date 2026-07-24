@@ -131,6 +131,28 @@ pub enum MetalNumericalGap {
     /// affected, so this gap is recorded only when the kernel performs `f32`
     /// arithmetic.
     SubnormalFlushInArithmetic,
+    /// The realization flushes subnormals to zero, but the target's `f32`
+    /// arithmetic preserves them.
+    ///
+    /// This is the converse of
+    /// [`MetalNumericalGap::SubnormalFlushInArithmetic`] and it is a gap for
+    /// the same reason: emission never narrows, widens, or substitutes the
+    /// declared contract to fit a target. Honouring a flush on a preserving
+    /// target would require emitting an explicit flush, which is emulation and
+    /// is not something this backend expresses today.
+    SubnormalPreservationInArithmetic,
+    /// The realization flushes subnormals to a stated zero, and the target
+    /// declares only *that* its `f32` arithmetic flushes, not which zero it
+    /// produces.
+    ///
+    /// The measured Apple flush preserves the sign of the flushed value
+    /// (`0x80400000 * 2.0f` returns `0x80000000`, not `0x00000000`), so the two
+    /// zeros are observably different results and a target fact naming neither
+    /// establishes neither. Recording a gap is the fail-closed reading.
+    /// `declare-metal-numerical-honourability` closes it by replacing the
+    /// backend-local fact with a per-dimension honourability declaration that
+    /// names the zero, after which only a sign *mismatch* remains a gap.
+    UndeclaredFlushedZeroSign,
 }
 
 impl MetalNumericalGap {
@@ -139,6 +161,8 @@ impl MetalNumericalGap {
     pub const fn rule(self) -> &'static str {
         match self {
             Self::SubnormalFlushInArithmetic => "subnormal-flush-in-arithmetic",
+            Self::SubnormalPreservationInArithmetic => "subnormal-preservation-in-arithmetic",
+            Self::UndeclaredFlushedZeroSign => "undeclared-flushed-zero-sign",
         }
     }
 }

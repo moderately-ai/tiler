@@ -28,7 +28,7 @@ use crate::feasibility::{
 };
 use crate::region::SemanticMemberId;
 use crate::request::{
-    NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract,
+    NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract, SubnormalMode,
     VerifiedRequestSubject, VerifiedTargetRequest,
 };
 
@@ -732,7 +732,7 @@ fn region_proposal(
             ),
             AxisRequirement::new(
                 CapabilityAxis::StrictF32Arithmetic,
-                u64::from(requirements.requires_strict_f32),
+                u64::from(requires_strict_f32(requirements)),
             ),
             AxisRequirement::new(
                 CapabilityAxis::LocalMemoryBytes,
@@ -741,6 +741,40 @@ fn region_proposal(
             AxisRequirement::new(CapabilityAxis::Barriers, u64::from(requirements.barriers)),
         ],
     )
+}
+
+/// Returns whether a region's numerical requirements demand strict IEEE-754
+/// binary32 arithmetic of its target.
+///
+/// This is the interim summary the single `StrictF32Arithmetic` axis still
+/// needs, and it is computed here rather than inside intrinsic verification
+/// because the collapse is a property of this axis, not of the region. ADR 0076
+/// item 3 retires the axis for a per-dimension honourability authority that can
+/// name the failing dimension and express emulation; until then the summary is
+/// a **disjunction**, because any one strict dimension is enough to make a
+/// relaxing target infeasible. The predicate this replaced was a conjunction
+/// over contraction and reassociation alone, so a subnormal-preserving contract
+/// that permitted both transforms required nothing at all.
+///
+/// Each dimension is matched exhaustively, so a widened vocabulary stops the
+/// build here instead of falling into the non-strict arm.
+fn requires_strict_f32(requirements: ResourceRequirements) -> bool {
+    let strict_subnormals = [
+        requirements.input_subnormals,
+        requirements.result_subnormals,
+    ]
+    .into_iter()
+    .any(|mode| match mode {
+        SubnormalMode::Preserve => true,
+        SubnormalMode::FlushToZero { zero_sign: _ } => false,
+    });
+    let strict_transforms = [requirements.contraction, requirements.reassociation]
+        .into_iter()
+        .any(|permission| match permission {
+            NumericalPermission::Forbidden => true,
+            NumericalPermission::Permitted => false,
+        });
+    strict_subnormals || strict_transforms
 }
 
 /// Maps a feasibility intrinsic error onto the physical-error contract.

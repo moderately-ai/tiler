@@ -19,7 +19,7 @@ use tiler_ir::program::{
     ByteWindow, MaterializedValueRef, StageRef, ValueRole, VerifiedKernelProgram,
 };
 use tiler_ir::schedule::{
-    NumericalPermission, NumericalRealization, ResourceRequirements, SubnormalMode,
+    FlushedZeroSign, NumericalPermission, NumericalRealization, ResourceRequirements, SubnormalMode,
 };
 use tiler_ir::semantic::{
     InputKey, OutputKey, ProviderIdentity, SemanticAdmissionProvenanceIdentity,
@@ -1112,15 +1112,33 @@ pub(super) const fn value_role_from_tag(tag: u8) -> Option<ValueRole> {
     }
 }
 
+/// Encodes one subnormal dimension.
+///
+/// A flush names the zero it produces, so the two flush behaviours receive
+/// distinct tags: they are different values, and collapsing them here would
+/// encode an artifact that a decoder could not distinguish from one delivering
+/// the other zero.
 pub(super) const fn subnormal_tag(mode: SubnormalMode) -> u8 {
     match mode {
         SubnormalMode::Preserve => 0x01,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        } => 0x02,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        } => 0x03,
     }
 }
 
 pub(super) const fn subnormal_from_tag(tag: u8) -> Option<SubnormalMode> {
     match tag {
         0x01 => Some(SubnormalMode::Preserve),
+        0x02 => Some(SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        }),
+        0x03 => Some(SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        }),
         _ => None,
     }
 }
@@ -1128,12 +1146,14 @@ pub(super) const fn subnormal_from_tag(tag: u8) -> Option<SubnormalMode> {
 pub(super) const fn permission_tag(permission: NumericalPermission) -> u8 {
     match permission {
         NumericalPermission::Forbidden => 0x01,
+        NumericalPermission::Permitted => 0x02,
     }
 }
 
 pub(super) const fn permission_from_tag(tag: u8) -> Option<NumericalPermission> {
     match tag {
         0x01 => Some(NumericalPermission::Forbidden),
+        0x02 => Some(NumericalPermission::Permitted),
         _ => None,
     }
 }
@@ -1145,14 +1165,20 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         local_memory_bytes,
         barriers,
         requires_device_memory,
-        requires_strict_f32,
+        input_subnormals,
+        result_subnormals,
+        contraction,
+        reassociation,
     } = resources;
     bytes.extend_from_slice(&buffer_bindings.to_be_bytes());
     bytes.extend_from_slice(&threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&local_memory_bytes.to_be_bytes());
     bytes.extend_from_slice(&barriers.to_be_bytes());
     bytes.push(u8::from(requires_device_memory));
-    bytes.push(u8::from(requires_strict_f32));
+    bytes.push(subnormal_tag(input_subnormals));
+    bytes.push(subnormal_tag(result_subnormals));
+    bytes.push(permission_tag(contraction));
+    bytes.push(permission_tag(reassociation));
 }
 
 pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {

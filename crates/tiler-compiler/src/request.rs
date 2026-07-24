@@ -12,7 +12,7 @@ use tiler_ir::shape::{Axis, Shape};
 
 // The numerical-realization vocabulary is target-neutral and owned by the shared
 // IR (ADR 0070); the compiler contract references it rather than duplicating it.
-pub(crate) use tiler_ir::schedule::{NumericalPermission, SubnormalMode};
+pub(crate) use tiler_ir::schedule::{FlushedZeroSign, NumericalPermission, SubnormalMode};
 
 use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
@@ -577,10 +577,10 @@ impl VerifiedRequestSubject {
                 .canonical_arithmetic_nan_bits
                 .to_be_bytes(),
         );
-        bytes.push(self.numerical_contract.input_subnormals as u8);
-        bytes.push(self.numerical_contract.result_subnormals as u8);
-        bytes.push(self.numerical_contract.contraction as u8);
-        bytes.push(self.numerical_contract.reassociation as u8);
+        bytes.push(subnormal_tag(self.numerical_contract.input_subnormals));
+        bytes.push(subnormal_tag(self.numerical_contract.result_subnormals));
+        bytes.push(permission_tag(self.numerical_contract.contraction));
+        bytes.push(permission_tag(self.numerical_contract.reassociation));
         for budget in [
             self.budgets.semantic_values,
             self.budgets.semantic_operations,
@@ -618,6 +618,34 @@ impl VerifiedRequestSubject {
         bytes.extend_from_slice(&self.capability_schema_version.to_be_bytes());
         encode_explain_bytes(&mut bytes, self.lowering_registry.as_bytes());
         bytes
+    }
+}
+
+/// Returns the canonical tag of one subnormal dimension.
+///
+/// The mapping is an exhaustive match rather than an `as` discriminant cast.
+/// A cast reads whatever ordinal position a variant happens to occupy, so
+/// adding or reordering a variant would silently change every encoded request
+/// subject; a match stops the build instead (ADR 0074 convention 5b). It also
+/// gives the two flush behaviours distinct tags, which a cast over a struct
+/// variant cannot express at all.
+pub(crate) const fn subnormal_tag(mode: SubnormalMode) -> u8 {
+    match mode {
+        SubnormalMode::Preserve => 0x01,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        } => 0x02,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        } => 0x03,
+    }
+}
+
+/// Returns the canonical tag of one transform permission.
+pub(crate) const fn permission_tag(permission: NumericalPermission) -> u8 {
+    match permission {
+        NumericalPermission::Forbidden => 0x01,
+        NumericalPermission::Permitted => 0x02,
     }
 }
 

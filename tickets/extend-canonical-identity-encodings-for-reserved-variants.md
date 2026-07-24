@@ -90,3 +90,11 @@ concern (marking these same enums `#[non_exhaustive]`); this ticket covers
 identity completeness. They touch the same types and are best sequenced together.
 `disambiguate-presentation-label-from-semantic-key-accessors` owns the adjacent
 naming hazard ADR 0074 also left open.
+
+## Correction: the schedule-encoder half is closed
+
+`widen-numerical-vocabulary-and-complete-identity` implemented ADR 0076 items 1 and 6 and closed the first bullet of this ticket. `crates/tiler-ir/src/schedule/model.rs`'s `push_numerical` now encodes both subnormal dimensions and both permissions, each through an exhaustive `match` (`push_subnormal`, `push_permission`) over enums that are deliberately not `#[non_exhaustive]`, and the derived `permits_*` booleans it used to encode are gone from the encoding. The variants that made the omission observable exist: `SubnormalMode::FlushToZero { zero_sign }` and `NumericalPermission::Permitted`. `crates/tiler-ir/src/schedule/builder.rs` carries the regression test this ticket asked for, over every dimension including the flushed zero's sign, plus a pinned 194-byte identity for the strict-`f32` fixture.
+
+**What remains here.** The `fusion_legality::effect_tag` bullet is untouched and still two-step behind `resolve-non-exhaustive-recognizer-hole`. The two tag-form deviations also remain: `b"tiler.schedule.v1"` is still the one domain tag in the workspace that is not NUL-terminated, and `push_numerical` still writes `profile_key` NUL-terminated rather than length-prefixed. Both were deliberately left out of that change so it would not absorb this ticket's scope.
+
+**One re-baseline has already happened**, so this ticket's remaining edits are a *second* deliberate re-baseline rather than the first. Recorded shifts, so the next one can be told apart from drift: scheduled-region identity for the strict-`f32` pointwise fixture went 192 -> 194 bytes (`sha256 d900fe4a…` -> `d221e1a3…`, pinned as exact hex in `builder.rs`), kernel identity 607 -> 612 bytes (`sha256 39804fc0…` -> `75181a5c…`), artifact-program identity 12833 -> 12866 bytes (`sha256 3a622133…` -> `271e9e35…`), and the four `crates/tiler-metal/goldens/*.metal` digests moved with them.
