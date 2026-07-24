@@ -1,7 +1,7 @@
 ---
 id: measure-numerics-across-apple-artifact-families
 title: Measure Apple numerical behaviour across all three artifact families
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [check-in-apple-numerical-behaviour-probe, probe-metal-runtime-compilation-numerics, declare-metal-numerical-honourability]
@@ -9,9 +9,6 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, measurement]
-claimed_from: todo
-assignee: agent-measure-numerics-across-apple-artifact-families
-lease_expires_at: 1784925958
 ---
 `tiler_metal::target::MetalPlatform` declares three artifact families — `MacOs`, `IOsDevice`, `IOsSimulator` — and `MetalTargetFacts::new` requires a caller to state `subnormal_arithmetic` for whichever one it is emitting for. The evidence behind that requirement covers **one**.
 
@@ -40,3 +37,25 @@ Record the runtime `MTLCompiler` build alongside the offline one. `probe-metal-r
 ## What closes this
 
 Every compile-side finding measured for all three families with its exact triple and SDK; the simulator dispatch measured or its unreachability recorded precisely; the device gap stated with the hardware that would close it; and a clear statement of whether the subnormal flush is an Apple-wide property or a per-family one — because `declare-metal-numerical-honourability` needs that answer to decide whether honourability is declared once or per family.
+
+## Outcome
+
+The single-family probe now covers all three `MetalPlatform` families, split by reach exactly as the ticket required, and every case runs in the gate. I verified independently: 53 tests pass with zero skips on this host, so the simulator dispatch is a real measurement rather than an inherited record.
+
+**The answer: the subnormal flush is Apple-wide on this bounded row, so `MetalSubnormalArithmetic` can be one declared constant rather than a per-family field.** All 42 compiled cases are byte-identical across `MacOs`, `IOsSimulator`, and `IOsDevice` in both `compile_options` and `float_operations` — `air.compile.denorms_disable` under every math mode, the finding-1 licence table, the `x*1.0` fold. The two dispatchable families return identical bit patterns for all 82 dispatched cases. The physical-iOS-device leg is explicitly an Inference, not a Fact: its device side was not reached. `declare-metal-numerical-honourability` should declare the flush once and record the physical-iOS-device dispatch as the trigger to reopen it.
+
+**Per family.** `MacOs`: compile side and device side fully measured on the host GPU (Apple M4 Max). `IOsSimulator`: compile side fully measured; device side measured on a booted iOS 26.0 (23A8464) runtime via `simctl spawn`. `IOsDevice`: compile side fully measured (emitted module read for all 42 cases); device side unreachable **precisely because no physical iPhone or iPad is attached** — recorded as `Execution.NONE` with no `results` rows and the reason stated in the record, not inferred.
+
+**What installed: nothing.** Confirmed against `xcodebuild -showsdks` and `xcrun simctl list runtimes` that every needed SDK and the iOS 26.0 simulator runtime were already present.
+
+**The execution guard carried forward, encoded not prose.** A family with no attached device supplies layer 1 (emitted arithmetic) and not layer 2 (execution witness). Mirroring the runtime path's `operations=None`, `Observation.results` is `None` (never `()`), and a new `no-device-observation` verdict returns before any classification, so a compile-side-only observation can never yield `preserved` or `flushed-to-zero`. Sound because layer 2 is the *sufficient* layer — it caught the `-O0` deletion layer 1 passed — so losing it must forfeit admissibility rather than fall through to the weaker layer. Pinned by portable guard tests that run on a host with no Apple toolchain.
+
+**A first-class per-family finding: three distinct compilers.** The runtime compiler belongs to the execution environment, so it differs by family — macOS loads `GPUCompiler.framework` build `metalfe-32023.921`, the iOS Simulator loads `metalfe-32023.830.1`, and the offline driver shared by all SDKs is `metalfe-32023.883`. The simulator's build was recovered from the loaded dyld image path because `MTLBinaryArchive` serialization aborts the process there (probed in a one-entry batch before any measurement manifest). `registryID` is identical for the Mac and the simulator, which is exactly why a simulator result is not evidence about a device.
+
+**Gate cost.** `spikes/apple-targets` warm rose from ~15 s to ~13–20 s; the cold simulator boot adds a one-time ~8 s to the first run needing it, and the device is left booted so later runs pay only one `simctl spawn` per family. Skips in under a second with no Apple toolchain.
+
+**Routing (scopes this ticket does not hold).** `docs/backends/metal.md`: AOT toolchain provenance identifies the offline compiler only; the runtime compiler belongs to the execution environment and differs between macOS and the simulator on one machine; carry findings 11 and 13 as bounded one-host measurements. ADR 0076: conclusion unchanged, findings 9/11/12 support it; a versioned target fact should identify which compiler and which execution environment the realization was measured on — `repoint-adr-0076-evidence-at-the-numerical-record` (already merged) may want a follow-up citation.
+
+**Record note.** New v3 record at `results/2026-07-24-numerics-families-…/record.tsv`. The prior v2 macOS-only record is kept because two `todo` tickets (`supersede-the-multiply-by-one-subnormal-claim`, `record-metal-runtime-compiler-provenance-gap`) cite it with v2-specific keys; repointing those at the v3 `case.macos.*` keys is left to whoever holds them.
+
+**Follow-up:** `measure-apple-numerics-on-physical-ios-device` (blocked, p3) — the one boundary this ticket named and could not close, hardware-gated.
