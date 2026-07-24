@@ -10,20 +10,29 @@ import json
 import os
 import selectors
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parents[1]
 TRACE = ROOT / "proc-macro-visibility" / "target" / "extensions-probe-trace.log"
+TOOLCHAIN_MANIFEST = REPOSITORY / "rust-toolchain.toml"
+VISIBILITY_ROOT = ROOT / "non-exhaustive-visibility"
+VISIBILITY_SCHEMA = "tiler-non-exhaustive-visibility/v1"
+VISIBILITY_FAIL_DIR = "consuming/tests/ui/fail"
+VISIBILITY_PASS_DIR = "consuming/tests/ui/pass"
 MAX_OUTPUT_BYTES = 4 << 20
 MAX_INPUT_FILES = 256
 MAX_INPUT_BYTES = 16 << 20
+MAX_RECORD_BYTES = 256 << 10
 CLEANUP_REAP_SECONDS = 5.0
 
 
@@ -191,6 +200,164 @@ def input_identity(deadline: float) -> dict[str, object]:
     return {"files": records, "total_bytes": total}
 
 
+def pinned_toolchain_channel(manifest: Path = TOOLCHAIN_MANIFEST) -> str:
+    """Read the repository's sole Rust toolchain authority."""
+    try:
+        toolchain = tomllib.loads(manifest.read_text(encoding="utf-8"))["toolchain"]
+        channel = toolchain["channel"]
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        raise ProbeFailure(f"cannot read the pinned toolchain channel: {error}") from error
+    if not isinstance(channel, str) or not channel:
+        raise ProbeFailure(f"pinned toolchain channel is not a string: {channel!r}")
+    return channel
+
+
+def read_measurement(path: Path) -> dict[str, object]:
+    """Load one retained non-exhaustive measurement under a fixed size budget."""
+    try:
+        if path.stat().st_size > MAX_RECORD_BYTES:
+            raise ProbeFailure(f"{path.name} exceeds {MAX_RECORD_BYTES} bytes")
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ProbeFailure(f"{path.name} is not a readable JSON record: {error}") from error
+    if not isinstance(record, dict) or record.get("schema") != VISIBILITY_SCHEMA:
+        raise ProbeFailure(f"{path.name} is not a {VISIBILITY_SCHEMA} record")
+    return record
+
+
+def claim_cases(label: str, claim: dict[str, object]) -> list[str]:
+    """Return the fixture paths one claim names, in either singular or plural form."""
+    raw = claim["case"] if "case" in claim else claim.get("cases")
+    cases = [raw] if isinstance(raw, str) else raw
+    if not isinstance(cases, list) or not cases or not all(isinstance(c, str) and c for c in cases):
+        raise ProbeFailure(f"{label}: claim {claim.get('id')!r} names no fixture")
+    return [str(case) for case in cases]
+
+
+def verify_failing_case(root: Path, label: str, claim: dict[str, object], case: str) -> None:
+    """Require one compile-fail fixture to still produce its recorded diagnostic."""
+    source = root / case
+    if not source.is_file():
+        raise ProbeFailure(f"{label}: recorded fixture is missing: {case}")
+    retained = source.with_suffix(".stderr")
+    if not retained.is_file():
+        raise ProbeFailure(f"{label}: fixture retains no diagnostic: {case}")
+    try:
+        text = retained.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ProbeFailure(f"{label}: cannot read {retained.name}: {error}") from error
+    lines = text.splitlines()
+    first = lines[0] if lines else ""
+    if first != claim.get("first_line"):
+        raise ProbeFailure(
+            f"{label}: {case} now reports {first!r}, recorded {claim.get('first_line')!r}"
+        )
+    code = claim.get("diagnostic_code")
+    if code is not None and f"error[{code}]" not in first:
+        raise ProbeFailure(f"{label}: {case} no longer reports {code} on its first line")
+    for fragment in claim.get("required_fragments", []):
+        if str(fragment) not in text:
+            raise ProbeFailure(f"{label}: {case} no longer reports {fragment!r}")
+    for fragment in claim.get("forbidden_fragments", []):
+        if str(fragment) in text:
+            raise ProbeFailure(f"{label}: {case} now reports {fragment!r}, which it must not")
+
+
+def verify_compiling_case(root: Path, label: str, case: str) -> None:
+    """Require one compiling fixture to exist and to claim no expected failure."""
+    source = root / case
+    if not source.is_file():
+        raise ProbeFailure(f"{label}: recorded fixture is missing: {case}")
+    if source.with_suffix(".stderr").exists():
+        raise ProbeFailure(f"{label}: a compiling fixture must retain no diagnostic: {case}")
+
+
+def fixture_names(root: Path, directory: str) -> set[str]:
+    """Enumerate the trybuild fixtures actually present in one case directory."""
+    return {f"{directory}/{path.name}" for path in (root / directory).glob("*.rs")}
+
+
+def verify_visibility_evidence(root: Path, channel: str) -> dict[str, object]:
+    """Check the retained `#[non_exhaustive]` diagnostics against their record.
+
+    The `.stderr` files under the compile-fail directory *are* the measurement,
+    and one `TRYBUILD=overwrite` run rewrites every one of them. This predicate
+    is what stops that from silently restating a claim as whatever the current
+    compiler happens to say: each recorded diagnostic must still be present,
+    the inertness case must still report nothing about the omitted variant, and
+    the fixture set on disk must equal the recorded set in both directions so
+    that neither a deleted case nor an unrecorded one passes unnoticed.
+
+    The channel comparison is deliberately fail-closed. `non_exhaustive_omitted_patterns`
+    is an unstable lint, so a measurement is only evidence for the compiler that
+    produced it; moving the pin must demand a fresh run rather than inherit the
+    old conclusion.
+    """
+    measurements = sorted((root / "results").glob("*.json"))
+    if not measurements:
+        raise ProbeFailure("no retained non-exhaustive measurement is checked in")
+    summaries: list[dict[str, object]] = []
+    channels: set[str] = set()
+    for path in measurements:
+        label = path.name
+        record = read_measurement(path)
+        toolchain = record.get("toolchain")
+        if not isinstance(toolchain, dict) or not isinstance(toolchain.get("channel"), str):
+            raise ProbeFailure(f"{label} records no toolchain channel")
+        channels.add(str(toolchain["channel"]))
+        claims = record.get("claims")
+        if not isinstance(claims, list) or not claims:
+            raise ProbeFailure(f"{label} records no claims")
+        recorded_fail: set[str] = set()
+        recorded_pass: set[str] = set()
+        for claim in claims:
+            if not isinstance(claim, dict):
+                raise ProbeFailure(f"{label} contains a malformed claim")
+            cases = claim_cases(label, claim)
+            outcome = claim.get("outcome")
+            if outcome == "fails":
+                if len(cases) != 1:
+                    raise ProbeFailure(f"{label}: a failing claim names exactly one fixture")
+                verify_failing_case(root, label, claim, cases[0])
+                recorded_fail.add(cases[0])
+            elif outcome == "compiles":
+                for case in cases:
+                    verify_compiling_case(root, label, case)
+                    if case.startswith(f"{VISIBILITY_PASS_DIR}/"):
+                        recorded_pass.add(case)
+            else:
+                raise ProbeFailure(f"{label}: unknown claim outcome {outcome!r}")
+        for directory, recorded in (
+            (VISIBILITY_FAIL_DIR, recorded_fail),
+            (VISIBILITY_PASS_DIR, recorded_pass),
+        ):
+            present = fixture_names(root, directory)
+            if present != recorded:
+                raise ProbeFailure(
+                    f"{label}: {directory} fixtures {sorted(present ^ recorded)} are present "
+                    "without a record or recorded without a fixture"
+                )
+        for retained in (root / VISIBILITY_FAIL_DIR).glob("*.stderr"):
+            if not retained.with_suffix(".rs").is_file():
+                raise ProbeFailure(f"{label}: orphaned retained diagnostic {retained.name}")
+        summaries.append(
+            {
+                "measurement": label,
+                "channel": toolchain["channel"],
+                "rustc_version": toolchain.get("rustc_version"),
+                "rustc_commit_hash": toolchain.get("rustc_commit_hash"),
+                "compile_fail_cases": sorted(recorded_fail),
+                "compile_pass_cases": sorted(recorded_pass),
+            }
+        )
+    if channel not in channels:
+        raise ProbeFailure(
+            f"retained measurements were taken on {sorted(channels)}, but rust-toolchain.toml "
+            f"now pins {channel}; re-run the probe and re-record before reusing the conclusion"
+        )
+    return {"pinned_channel": channel, "measurements": summaries}
+
+
 def run_provenance(deadline: float, records: list[CommandResult]) -> None:
     for label, command in (
         ("source revision", ["git", "rev-parse", "HEAD"]),
@@ -257,6 +424,64 @@ def run_proc_macro_visibility(deadline: float, records: list[CommandResult]) -> 
     require_cycle_rejection(cycle)
 
 
+def captured_rustc_commit(records: list[CommandResult]) -> str:
+    """Read the rustc commit hash the provenance step already captured."""
+    for result in records:
+        if result.label != "rustc provenance":
+            continue
+        for line in result.output.splitlines():
+            if line.startswith("commit-hash:"):
+                return line.split(":", 1)[1].strip()
+    raise ProbeFailure("no rustc commit hash was captured before the visibility suite")
+
+
+def run_non_exhaustive_visibility(deadline: float, records: list[CommandResult]) -> None:
+    channel = pinned_toolchain_channel()
+    summary = verify_visibility_evidence(VISIBILITY_ROOT, channel)
+    records.append(
+        CommandResult(
+            "non-exhaustive retained evidence",
+            ("internal:verify-non-exhaustive-evidence",),
+            0,
+            json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        )
+    )
+    # `rust-toolchain.toml` names the channel; this compares the compiler that
+    # actually ran, so a run under an overriding toolchain cannot be reported as
+    # evidence for the toolchain the record names.
+    measurements = summary["measurements"]
+    recorded = {entry.get("rustc_commit_hash") for entry in measurements if isinstance(entry, dict)}
+    running = captured_rustc_commit(records)
+    if running not in recorded:
+        raise ProbeFailure(
+            f"the running rustc is {running}, but the retained diagnostics were captured on "
+            f"{sorted(str(value) for value in recorded)}; re-record before reusing the conclusion"
+        )
+    result = run_command(
+        "non-exhaustive visibility tests",
+        [
+            "cargo",
+            "test",
+            "--locked",
+            "--manifest-path",
+            str(VISIBILITY_ROOT / "Cargo.toml"),
+        ],
+        deadline,
+    )
+    records.append(result)
+    require_success(result)
+    # Naming each compile-fail case rejects a run whose trybuild glob silently
+    # matched nothing, which would otherwise report success having compiled the
+    # passing direction alone.
+    require_output(
+        result,
+        "tests/ui/fail/cross_crate_total_map.rs",
+        "tests/ui/fail/omitted_patterns_denied.rs",
+        "tests/ui/fail/omitted_patterns_inert_without_feature.rs",
+        "test result: ok",
+    )
+
+
 def run_semantic_foundation(deadline: float, records: list[CommandResult]) -> None:
     manifest = ROOT / "semantic-foundation-api-v2" / "Cargo.toml"
     check = run_command(
@@ -307,7 +532,132 @@ def render_trace(records: list[CommandResult], verdict: str) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def sole_measurement(root: Path) -> Path:
+    """Return the first retained measurement, for a self-test that mutates one."""
+    measurements = sorted((root / "results").glob("*.json"))
+    if not measurements:
+        raise ProbeFailure("self-test found no retained measurement to mutate")
+    return measurements[0]
+
+
+def rewrite_once(path: Path, old: str, new: str) -> None:
+    """Replace one occurrence, failing if the text a mutation targets has moved."""
+    text = path.read_text(encoding="utf-8")
+    if old not in text:
+        raise ProbeFailure(f"self-test cannot rewrite absent text {old!r} in {path.name}")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def append_text(path: Path, text: str) -> None:
+    """Append to an existing retained file, failing if it is absent."""
+    if not path.is_file():
+        raise ProbeFailure(f"self-test cannot append to absent {path.name}")
+    path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
+
+
+def rename_recorded_diagnostic_code(root: Path) -> None:
+    """Re-record a fixture's message text while leaving its recorded code behind.
+
+    This is the mutation the `diagnostic_code` field exists for: the message and
+    its recording agree, so only the separately recorded code still says which
+    error the claim is about.
+    """
+    rewrite_once(sole_measurement(root), "error[E0004]", "error[E0091]")
+    rewrite_once(
+        root / VISIBILITY_FAIL_DIR / "cross_crate_total_map.stderr",
+        "error[E0004]",
+        "error[E0091]",
+    )
+
+
+def visibility_self_test() -> None:
+    """Check the retained non-exhaustive evidence and that tampering is rejected.
+
+    The first call is the assertion the repository gate actually runs: it reads
+    the checked-in `.stderr` files and the measurement beside them, so a silent
+    `TRYBUILD=overwrite` refresh or a moved toolchain pin fails here without any
+    Cargo invocation. The mutations that follow keep that assertion honest by
+    proving each rejection path still fires.
+    """
+    channel = pinned_toolchain_channel()
+    verify_visibility_evidence(VISIBILITY_ROOT, channel)
+    try:
+        verify_visibility_evidence(VISIBILITY_ROOT, f"{channel}-moved")
+    except ProbeFailure as error:
+        if "re-run the probe and re-record" not in str(error):
+            raise
+    else:
+        raise ProbeFailure("moved-toolchain-pin self-test unexpectedly succeeded")
+    tampers: tuple[tuple[str, Callable[[Path], object]], ...] = (
+        ("missing measurement", lambda root: shutil.rmtree(root / "results")),
+        (
+            "wrong record schema",
+            lambda root: rewrite_once(sole_measurement(root), VISIBILITY_SCHEMA, "wrong/v1"),
+        ),
+        (
+            "dropped required diagnostic note",
+            lambda root: rewrite_once(
+                root / VISIBILITY_FAIL_DIR / "cross_crate_total_map.stderr",
+                "is marked as non-exhaustive",
+                "is marked as something else",
+            ),
+        ),
+        (
+            "changed diagnostic first line",
+            lambda root: rewrite_once(
+                root / VISIBILITY_FAIL_DIR / "cross_crate_total_map.stderr",
+                "error[E0004]",
+                "error[E0005]",
+            ),
+        ),
+        ("re-recorded message text under a different code", rename_recorded_diagnostic_code),
+        (
+            "inertness case reporting the omitted variant",
+            lambda root: append_text(
+                root / VISIBILITY_FAIL_DIR / "omitted_patterns_inert_without_feature.stderr",
+                "some variants are not matched explicitly\n",
+            ),
+        ),
+        (
+            "deleted retained diagnostic",
+            lambda root: (root / VISIBILITY_FAIL_DIR / "omitted_patterns_denied.stderr").unlink(),
+        ),
+        (
+            "unrecorded compile-fail fixture",
+            lambda root: (root / VISIBILITY_FAIL_DIR / "unrecorded.rs").write_text(
+                "fn main() {}\n", encoding="utf-8"
+            ),
+        ),
+        (
+            "compiling fixture claiming a failure",
+            lambda root: (root / VISIBILITY_PASS_DIR / "cross_crate_wildcard.stderr").write_text(
+                "error: invented\n", encoding="utf-8"
+            ),
+        ),
+        (
+            "orphaned retained diagnostic",
+            lambda root: (root / VISIBILITY_FAIL_DIR / "orphan.stderr").write_text(
+                "error: invented\n", encoding="utf-8"
+            ),
+        ),
+    )
+    for name, mutate in tampers:
+        with tempfile.TemporaryDirectory(prefix="tiler-non-exhaustive-") as scratch:
+            copy = Path(scratch) / "non-exhaustive-visibility"
+            shutil.copytree(VISIBILITY_ROOT, copy, ignore=shutil.ignore_patterns("target"))
+            mutate(copy)
+            try:
+                verify_visibility_evidence(copy, channel)
+            except ProbeFailure:
+                continue
+            raise ProbeFailure(f"retained-evidence self-test accepted tampering: {name}")
+
+
 def self_test() -> None:
+    # Run before the timing-sensitive checks below: this one reads the retained
+    # non-exhaustive evidence rather than driving subprocesses, and it is the
+    # part the repository gate depends on.
+    visibility_self_test()
     good = CommandResult("good", ("probe",), 0, "test result: ok")
     require_success(good)
     require_output(good, "test result: ok")
@@ -420,7 +770,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--suite",
-        choices=("all", "proc-macro-visibility", "semantic-foundation"),
+        choices=(
+            "all",
+            "non-exhaustive-visibility",
+            "proc-macro-visibility",
+            "semantic-foundation",
+        ),
         default="all",
     )
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
@@ -444,6 +799,8 @@ def main() -> int:
             run_operation_api(deadline, records)
         if args.suite in {"all", "proc-macro-visibility"}:
             run_proc_macro_visibility(deadline, records)
+        if args.suite in {"all", "non-exhaustive-visibility"}:
+            run_non_exhaustive_visibility(deadline, records)
         if args.suite in {"all", "semantic-foundation"}:
             run_semantic_foundation(deadline, records)
         verdict = "passed"

@@ -1,0 +1,105 @@
+{
+  "schema": "tiler-non-exhaustive-visibility/v1",
+  "recorded": "2026-07-24",
+  "procedure": "cargo test --locked --manifest-path spikes/extensions/non-exhaustive-visibility/Cargo.toml",
+  "toolchain": {
+    "channel": "nightly-2026-07-19",
+    "rustc_version": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)",
+    "rustc_commit_hash": "eff8269f797067c30555e77f160ec84c0ed15cd9",
+    "cargo_version": "cargo 1.99.0-nightly (3efb1f477 2026-07-17)",
+    "edition": "2024",
+    "host": "aarch64-apple-darwin",
+    "operating_system": "macOS 27.0 (26A5388g)"
+  },
+  "unstable_surface": {
+    "lint": "non_exhaustive_omitted_patterns",
+    "feature_gate": "non_exhaustive_omitted_patterns_lint",
+    "tracking_issue": "https://github.com/rust-lang/rust/issues/89554"
+  },
+  "claims": [
+    {
+      "id": "same-crate-total-map-needs-no-wildcard",
+      "adr": "ADR-0074 amendment, measurement 1",
+      "statement": "A total map over a #[non_exhaustive] enum inside the defining crate compiles with no wildcard arm.",
+      "outcome": "compiles",
+      "cases": [
+        "consuming/tests/ui/pass/same_crate_total_map.rs",
+        "defining/src/lib.rs"
+      ]
+    },
+    {
+      "id": "cross-crate-total-map-fails-e0004",
+      "adr": "ADR-0074 amendment, measurement 1",
+      "statement": "The same total map in a consuming crate fails E0004 because the attribute makes a wildcard arm mandatory.",
+      "outcome": "fails",
+      "case": "consuming/tests/ui/fail/cross_crate_total_map.rs",
+      "diagnostic_code": "E0004",
+      "first_line": "error[E0004]: non-exhaustive patterns: `&_` not covered",
+      "required_fragments": [
+        "`Growing` is marked as non-exhaustive, so a wildcard `_` is necessary to match exhaustively"
+      ],
+      "forbidden_fragments": []
+    },
+    {
+      "id": "omitted-patterns-denied-restores-the-error",
+      "adr": "ADR-0074 amendment, measurement 2",
+      "statement": "With #![feature(non_exhaustive_omitted_patterns_lint)], #[deny(non_exhaustive_omitted_patterns)] turns an omitted known variant back into a hard cross-crate compile error.",
+      "outcome": "fails",
+      "case": "consuming/tests/ui/fail/omitted_patterns_denied.rs",
+      "diagnostic_code": null,
+      "first_line": "error: some variants are not matched explicitly",
+      "required_fragments": [
+        "pattern `&Growing::B` not covered",
+        "the `non_exhaustive_omitted_patterns` attribute was found"
+      ],
+      "forbidden_fragments": [
+        "unknown lint"
+      ]
+    },
+    {
+      "id": "omitted-patterns-is-inert-without-the-feature-gate",
+      "adr": "ADR-0074 amendment, measurement 2",
+      "statement": "Without the feature gate the lint name is unknown, so the attribute constrains nothing and the omitted variant is never reported; only unknown_lints fires.",
+      "outcome": "fails",
+      "case": "consuming/tests/ui/fail/omitted_patterns_inert_without_feature.rs",
+      "diagnostic_code": null,
+      "first_line": "error: unknown lint: `non_exhaustive_omitted_patterns`",
+      "required_fragments": [
+        "the `non_exhaustive_omitted_patterns` lint is unstable",
+        "see issue #89554",
+        "add `#![feature(non_exhaustive_omitted_patterns_lint)]` to the crate attributes to enable"
+      ],
+      "forbidden_fragments": [
+        "some variants are not matched explicitly",
+        "not covered"
+      ]
+    },
+    {
+      "id": "omitted-patterns-is-a-warning-not-an-error-without-the-gate",
+      "adr": "ADR-0074 amendment, measurement 2",
+      "statement": "The unknown lint is warning level by default: the same omission compiles when unknown_lints is not denied. The sibling fail case denies it, which is what the repository gate's -D warnings does.",
+      "outcome": "compiles",
+      "cases": [
+        "consuming/tests/ui/pass/omitted_patterns_warns_without_feature.rs"
+      ]
+    },
+    {
+      "id": "cross-crate-wildcard-recognizer-compiles-silently",
+      "adr": "ADR-0074 convention 5c",
+      "statement": "A cross-crate recognizer that carries the mandatory wildcard compiles, and nothing reports the variant it never named.",
+      "outcome": "compiles",
+      "cases": [
+        "consuming/tests/ui/pass/cross_crate_wildcard.rs"
+      ]
+    },
+    {
+      "id": "omitted-patterns-accepts-a-fully-listed-match",
+      "adr": "ADR-0074 amendment, measurement 2",
+      "statement": "The denied lint accepts a match that keeps its wildcard and also names every variant; that is the form a consumer would have to maintain.",
+      "outcome": "compiles",
+      "cases": [
+        "consuming/tests/ui/pass/omitted_patterns_all_variants_listed.rs"
+      ]
+    }
+  ]
+}

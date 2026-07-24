@@ -1,0 +1,13 @@
+error: some variants are not matched explicitly
+  --> tests/ui/fail/omitted_patterns_denied.rs:14:11
+   |
+14 |     match value {
+   |           ^^^^^ pattern `&Growing::B` not covered
+   |
+   = help: ensure that all variants are matched explicitly by adding the suggested match arms
+   = note: the matched value is of type `&Growing` and the `non_exhaustive_omitted_patterns` attribute was found
+note: the lint level is defined here
+  --> tests/ui/fail/omitted_patterns_denied.rs:13:12
+   |
+13 |     #[deny(non_exhaustive_omitted_patterns)]
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
