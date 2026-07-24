@@ -2275,7 +2275,12 @@ mod tests {
         assert_eq!(
             trace.render(),
             concat!(
-                "tiler-explain-v2 request=be70237691f8f507\n",
+                // Rebaselined when the governed scalar profile admitted
+                // `tiler.scalar::canonicalize-nan-f32@1`. The request subject
+                // covers the frozen scalar and lowering-capability authorities,
+                // so growing the governed profile must move this digest; a
+                // value that survived would mean the subject was incomplete.
+                "tiler-explain-v2 request=315e14544407d942\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

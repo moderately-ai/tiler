@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
-    ScalarRegistryError, ScalarValueId, add_f32_scalar_op, constant_f32_scalar_op,
-    multiply_f32_scalar_op,
+    ScalarRegistryError, ScalarValueId, add_f32_scalar_op, canonicalize_nan_f32_scalar_op,
+    constant_f32_scalar_op, multiply_f32_scalar_op,
 };
 use tiler_ir::semantic::{
     CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, F32,
@@ -200,7 +200,17 @@ pub(crate) fn governed_index_access_capabilities()
             provider: governed_provider("strict-serial-sum-f32"),
             operation: strict_serial_sum_f32_op(),
             signature: LoweringSignature::new([f32_type.clone()], [f32_type])?,
-            emitted: vec![constant_f32_scalar_op(), add_f32_scalar_op()],
+            // One capability lowers every shape of the family, so the declared
+            // set is the union over shapes, not what any one occurrence reaches:
+            // an empty reduced domain reaches only the identity constant, a lone
+            // contributor only the result-boundary canonicalization, and a
+            // longer one the add. Refinement checks containment, which is what
+            // makes that union the right declaration.
+            emitted: vec![
+                constant_f32_scalar_op(),
+                add_f32_scalar_op(),
+                canonicalize_nan_f32_scalar_op(),
+            ],
             implementation: Arc::new(GovernedStrictSerialSumF32),
         },
     ])
@@ -319,6 +329,14 @@ impl IndexAccessLoweringProvider for GovernedPointwiseF32 {
 /// would be observably wrong: `0.0 + (-0.0)` is `+0.0`, so a single-element
 /// reduction over `-0.0` would lose its sign. An empty reduced domain is the one
 /// case whose result is the `+0.0` identity, and it is emitted as such.
+///
+/// The reduction also canonicalizes at its result boundary, which ADR 0055 and
+/// the numerical contract require "even when the contributor sequence is a
+/// singleton". A lone contributor is exactly where that rule bites: no combine
+/// has run, so nothing else has replaced a non-canonical NaN payload. It is
+/// applied as the `canonicalize-nan-f32` conversion rather than an arithmetic
+/// step, because every arithmetic realization available here — adding the
+/// `+0.0` identity in particular — would perturb a signed zero.
 struct GovernedStrictSerialSumF32;
 
 impl IndexAccessLoweringProvider for GovernedStrictSerialSumF32 {
@@ -334,7 +352,17 @@ impl IndexAccessLoweringProvider for GovernedStrictSerialSumF32 {
         } else {
             let seed = plan.read_contributor(context, input, &kept, &kept_coordinates, None)?;
             if plan.reduced_points == 1 {
-                seed
+                // The lone contributor is the whole strict-serial value, and it
+                // is the one boundary value no combine has canonicalized. Every
+                // other path ends in the governed add, which canonicalizes its
+                // own result, so this is the only place the boundary rule has
+                // work to do.
+                let canonical = context.apply(
+                    canonicalize_nan_f32_scalar_op(),
+                    ScalarAttributes::empty(),
+                    &[seed],
+                )?;
+                single_result(&canonical, "reduction-result-canonicalization")?
             } else {
                 plan.fold_tail(context, input, &kept, &kept_coordinates, seed)?
             }

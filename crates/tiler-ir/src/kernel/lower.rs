@@ -356,11 +356,26 @@ fn emit_reduction(
         Some((scale_bits, bias_bits)) => emit_scale_bias(builder, first, scale_bits, bias_bits)?,
         None => first,
     };
-    // A single contributor is the whole strict-serial result: emitting a loop
-    // would need an empty iteration range, and combining with the reduction
-    // identity would change the observable sign of a negative zero.
+    // A single contributor supplies the whole strict-serial value, but the
+    // reduction still canonicalizes at its result boundary: ADR 0055 and the
+    // numerical contract both require that boundary rule "even when the
+    // contributor sequence is a singleton", so an uncombined input payload
+    // cannot leak its NaN bits through an arithmetic reduction.
+    //
+    // The conversion is what realizes the rule here. Emitting a loop would need
+    // an empty iteration range, and combining with the reduction identity would
+    // change the observable sign of a negative zero, whereas canonicalization
+    // rewrites a NaN and leaves every other payload — including `-0.0` — alone.
+    //
+    // It is emitted exactly where the boundary value is an uncombined input,
+    // which is the leak the rule names. The fold already applies the conversion
+    // after each combine, and a prologue already applies it to the scaled seed,
+    // so those boundaries are canonical without a second one.
     let total = if plan.contributors == 1 {
-        seed
+        match prologue {
+            Some(_) => seed,
+            None => builder.convert(ConvertOp::CanonicalizeF32Nan, seed)?,
+        }
     } else {
         let results = builder.serial_loop(
             SerialLoopSpec {
