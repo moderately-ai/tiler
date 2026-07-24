@@ -30,6 +30,7 @@ from pathlib import Path
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 600
 DEFAULT_OVERALL_TIMEOUT_SECONDS = 3600
 METADATA_COMMAND_TIMEOUT_SECONDS = 30
+CLEANUP_REAP_SECONDS = 5.0
 MAX_CAPTURE_BYTES = 16 << 20
 HARNESS_SCHEMA_VERSION = 2
 HARNESS_DEADLINE: float | None = None
@@ -319,6 +320,27 @@ def read_bounded(path: Path, label: str) -> str:
         raise MeasurementFailure(f"cannot decode {label}: {path}: {error}") from error
 
 
+def kill_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Stop a command tree and reap its leader on a best-effort basis.
+
+    Signalling a group can fail for reasons that are not measurement failures: a
+    group whose only member is an exited-but-unreaped child answers `EPERM`, and
+    a sandboxed execution context can refuse the syscall outright. A harness must
+    not fail the run it is tidying up after, so tolerate both and fall back to the
+    child this process directly owns. Bound the reap as well, so an undeliverable
+    signal cannot turn a bounded failure into an unbounded wait, and so a caller
+    asserting that a limit was enforced observes the child's own state rather than
+    the harness having waited out its natural exit.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            process.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=CLEANUP_REAP_SECONDS)
+
+
 def run_logged(
     command: list[str],
     stdout_path: Path,
@@ -355,9 +377,7 @@ def run_logged(
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
+                    kill_process_group(process)
                     raise MeasurementFailure(
                         f"command exceeded {timeout_seconds}s after "
                         f"{time.monotonic() - started:.3f}s: {command!r}"
@@ -369,9 +389,7 @@ def run_logged(
                         selector.unregister(stream)
                         continue
                     if total + len(chunk) > MAX_CAPTURE_BYTES:
-                        with contextlib.suppress(ProcessLookupError):
-                            os.killpg(process.pid, signal.SIGKILL)
-                        process.wait()
+                        kill_process_group(process)
                         raise MeasurementFailure(
                             f"command output exceeded {MAX_CAPTURE_BYTES} bytes: {command!r}"
                         )
@@ -382,18 +400,14 @@ def run_logged(
                 raise subprocess.TimeoutExpired(command, timeout_seconds)
             returncode = process.wait(timeout=remaining)
         except subprocess.TimeoutExpired as error:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            kill_process_group(process)
             raise MeasurementFailure(
                 f"command exceeded {timeout_seconds}s after {time.monotonic() - started:.3f}s: "
                 f"{command!r}"
             ) from error
         finally:
             if process.poll() is None:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+                kill_process_group(process)
             selector.close()
             process.stdout.close()
             process.stderr.close()
