@@ -1,0 +1,20 @@
+[workspace]
+members = ["consuming", "defining"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+non-exhaustive-defining = { path = "defining" }
+trybuild = "1.0.114"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
