@@ -18,6 +18,7 @@ accepted. Unresolved questions are collected in
 <!-- BEGIN GENERATED ADR TOPICS -->
 ### Foundation, semantics, and extensions
 
+- [0077: Admit tiler-metal-aot as a dependency-free offline driver](0077-admit-tiler-metal-aot-as-a-dependency-free-driver.md) — proposed; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Apple Metal artifact compatibility](../research/apple-targets/artifact-compatibility.md)
 - [0062: Bind Rust markers to complete resolved value types](0062-bind-markers-to-resolved-value-types.md) — accepted; contracts: [IR stack and invariants](../ir.md), [Numerical semantics](../numerical-semantics.md), [Operation extension contract](../operation-extensions.md); evidence: [Dtype identity admission policy](../research/numerics/dtype-identity-admission-policy.md), [Quantized value and transformation contract](../research/numerics/quantized-value-and-transform-contract.md), [Mature tensor dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md)
 - [0060: Bind Rust type markers through the explicit registry](0060-bind-rust-type-markers-through-the-registry.md) — accepted; contracts: [IR stack and invariants](../ir.md), [Operation extension contract](../operation-extensions.md), [Numerical semantics](../numerical-semantics.md); evidence: [Operation-extension surface research](../research/extensions/operation-extension-surface.md), [Experimental operation API sketch](../research/extensions/operation-extension-api.md), [Dtype identity admission policy](../research/numerics/dtype-identity-admission-policy.md)
 - [0045: Bound inline proc-macro providers to host dependencies](0045-bound-proc-macro-providers-to-host-dependencies.md) — accepted; contracts: [Operation extension contract](../operation-extensions.md); evidence: [Proc-macro visibility of operation extensions](../research/extensions/proc-macro-extension-visibility.md)
@@ -193,6 +194,7 @@ accepted. Unresolved questions are collected in
 - [0074: Use explicit conformance conventions for public Tiler APIs](0074-use-explicit-public-api-conventions.md) — accepted
 - [0075: Scope public-boundary approval by change category](0075-scope-public-boundary-approval-by-change-category.md) — accepted
 - [0076: Declare which numerical realizations a target honours](0076-declare-target-honourable-numerical-realizations.md) — accepted
+- [0077: Admit tiler-metal-aot as a dependency-free offline driver](0077-admit-tiler-metal-aot-as-a-dependency-free-driver.md) — proposed
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template

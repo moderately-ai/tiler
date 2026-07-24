@@ -17,7 +17,9 @@ ticket: "prototype-foundation-contract"
 **Status:** superseded by ADR 0065 for the reusable-crate count and reference
 evaluator placement and by ADR 0070 for the compiler-to-artifact dependency
 edge; ADRs 0070 and 0071 additionally retire its lockstep artifact/IR
-consequence; the remaining packaging boundaries are retained
+consequence; ADR 0077 proposes superseding its AOT-invocation clause and is not
+accepted, so that clause is retained text the workspace has already departed
+from; the remaining packaging boundaries are retained
 
 ## Context
 
