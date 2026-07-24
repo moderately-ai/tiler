@@ -29,9 +29,11 @@ Two consequences to carry, not rediscover:
 - **The translation must be total, and it must live where a dependency permits it.** Do not write a `match` with a wildcard arm that maps an unrecognized emitter family or language standard onto a default; a wildcard there can only invent an `AppleSdk` or a `-std` token, and the resulting artifact's provenance header and its actual compilation would disagree about what it is.
 - **Writing that translation makes `tiler_metal::target::{MslLanguageVersion, MetalPlatform}` ADR 0074 convention 5b types**, because the map is then out of crate. Both currently carry `#[non_exhaustive]`, which is correct only while the sole total map is inside `tiler-metal`. This ticket owns removing the attribute from both; per ADR 0074 it is explicitly *not* free to add a wildcard arm instead. The types say so in their own doc comments.
 
-## Progress — the neutral carrier landed; the Metal half did not
+## Outcome
 
-**Status: not done.** The envelope can now *carry* a backend payload and decides its identity; nothing yet fills that shape from a real MSL emission and a real `metallib`. The remaining half is `assemble-the-metal-payload-from-emission-and-compilation`, split out rather than hidden because it crosses `implementation/metal` and `implementation/metal-aot`, which this ticket does not hold, and carries a public-surface change ADR 0075 routes to Tom.
+**This ticket was rescoped to the half it delivered, and retitled to say so.** As originally written it owned both the neutral carrier and the Metal assembly; only the carrier landed. The envelope can now *carry* a backend payload and decides its identity, but nothing yet fills that shape from a real MSL emission and a real `metallib`. Everything above the line — filling the payload from an emission and a compilation, the `MetalTargetFacts` → `MetalTarget` total translation, and removing `#[non_exhaustive]` from the two `tiler-metal` target types — moved intact to [`assemble-the-metal-payload-from-emission-and-compilation`](assemble-the-metal-payload-from-emission-and-compilation.md), which depends on this one.
+
+The split is recorded rather than hidden because the remaining half crosses `implementation/metal` and `implementation/metal-aot`, which this ticket did not hold, and carries a source-breaking public-surface change that ADR 0075 routes to Tom. Closing this ticket as a carrier rather than leaving it open is what keeps the follow-up dispatchable; reversing that judgement costs one `tkt set`.
 
 ### The identity decision this ticket owned is made, and implemented
 
