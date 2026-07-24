@@ -1,7 +1,7 @@
 ---
 id: probe-metal-runtime-compilation-numerics
 title: Probe Metal runtime-compilation numerics in the checked-in harness
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [check-in-apple-numerical-behaviour-probe, record-metal-runtime-compiler-provenance-gap]
@@ -9,9 +9,6 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, metal, measurement]
-claimed_from: todo
-assignee: agent-probe-metal-runtime-compilation-numerics
-lease_expires_at: 1784923183
 ---
 `spikes/apple-targets/numerical_probe.py` compiles every probe offline through `xcrun metal` and `xcrun metallib`. The outcome of `prototype-metal-numerical-realization` additionally reported that the subnormal flush is identical through runtime compilation — `newLibraryWithSource:options:` with `MTLCompileOptions.mathMode` set to `MTLMathModeSafe`/`Relaxed`/`Fast` — on the same device. That observation is not re-established by the checked-in harness and `docs/research/apple-targets/numerical-behaviour.md` records it as an explicit measurement boundary rather than a claim.
 
