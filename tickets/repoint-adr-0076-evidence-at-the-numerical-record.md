@@ -1,7 +1,7 @@
 ---
 id: repoint-adr-0076-evidence-at-the-numerical-record
 title: Repoint ADR 0076 evidence at the Apple numerical record
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [check-in-apple-numerical-behaviour-probe]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [docs, numerics, adr]
+claimed_from: todo
+assignee: agent-repoint-adr-0076-evidence-at-the-numerical-record
+lease_expires_at: 1784923183
 ---
 `check-in-apple-numerical-behaviour-probe` created `docs/research/apple-targets/numerical-behaviour.md` (id `tiler.research.apple-targets.numerical-behaviour`), which owns the Apple GPU `f32` measurements ADR 0076 rests on, links the checked-in harness, and is re-established by the repository gate. That ticket holds `research/apple-targets` and cannot edit the ADR.
 

@@ -1,7 +1,7 @@
 ---
 id: qualify-contraction-association-reassociation-permission
 title: Qualify contraction-order exploration with a reassociation permission
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [scope-einsum-contraction-support]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, optimizer, numerics]
+claimed_from: todo
+assignee: agent-qualify-contraction-association-reassociation-permission
+lease_expires_at: 1784923183
 ---
 The `ExploreLogicalAlternatives` stage in `docs/compiler/optimizer.md` "adds only proved
 contract-preserving forms". Its logical-exploration rule list contains "choose

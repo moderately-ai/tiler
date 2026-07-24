@@ -1,7 +1,7 @@
 ---
 id: wire-capability-and-refinement-into-compile-path
 title: Wire lowering-capability resolution and index-region refinement into the compile path
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-optimizer-conformance-gate]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir]
 shared_scopes: []
 paths: []
 tags: [implementation, optimizer, capability, milestone-0b]
+claimed_from: todo
+assignee: agent-wire-capability-and-refinement-into-compile-path
+lease_expires_at: 1784923182
 ---
 Wire `capability` (lowering-capability resolution) and `legality` (checked index-region refinement) into the ordinary `compile()` path, so an externally registered *lowering* provider — not only an externally registered *semantic* provider — drives compilation end to end.
 

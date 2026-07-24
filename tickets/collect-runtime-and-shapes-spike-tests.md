@@ -1,7 +1,7 @@
 ---
 id: collect-runtime-and-shapes-spike-tests
 title: Collect the runtime and shapes spike tests in the repository gate
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [finish-spike-process-group-cleanup]
@@ -9,6 +9,9 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, harness, gate-reliability]
+claimed_from: todo
+assignee: agent-collect-runtime-and-shapes-spike-tests
+lease_expires_at: 1784923183
 ---
 `finish-spike-process-group-cleanup` added process-group cleanup regression tests to four spike areas. Two of them are collected by the gate and two are not, because `spikes/runtime` and `spikes/shapes` are outside the canonical pytest `testpaths`:
 
