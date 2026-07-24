@@ -1,7 +1,7 @@
 ---
 id: finish-spike-process-group-cleanup
 title: Finish best-effort process-group cleanup across the remaining spike harnesses
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [make-spike-process-group-cleanup-best-effort]
@@ -9,9 +9,6 @@ scopes: [research/macro-environment, research/numerics, research/runtime, resear
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, harness, gate-reliability]
-claimed_from: todo
-assignee: agent-finish-spike-process-group-cleanup
-lease_expires_at: 1784919183
 ---
 `make-spike-process-group-cleanup-best-effort` fixed `spikes/embedding` and `spikes/extensions` and, in doing so, established that **its own scope was insufficient for its stated goal**. The gate is still intermittently red. This ticket finishes the job.
 
