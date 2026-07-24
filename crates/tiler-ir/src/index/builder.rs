@@ -6,6 +6,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
 
+use crate::convenience::{CheckedBuildError, build_checked};
 use crate::semantic::ResolvedValueType;
 use crate::shape::{Extent, Shape};
 
@@ -1510,6 +1511,61 @@ impl IndexRegionBuilder {
             value: value.index,
         });
         Ok(())
+    }
+
+    /// Constructs, authors, verifies, and canonicalizes one region in a single
+    /// scoped step, delegating to the same transactional builder and consuming
+    /// [`IndexRegionBuilder::build`] verifier as manual construction.
+    ///
+    /// The mutable draft is confined to `assemble`; only the immutable verified
+    /// product escapes on success. Because `assemble` receives the draft by
+    /// mutable reference it cannot itself reach the consuming verifier, so the
+    /// opaque [`VerifiedIndexRegion`] is only ever produced by the checked path.
+    ///
+    /// The convenience is exactly equivalent to the ordinary transactional call
+    /// site — the manual and closure forms below produce the identical verified
+    /// region:
+    ///
+    /// ```ignore
+    /// // Ordinary transactional call site.
+    /// let mut builder = IndexRegionBuilder::new(registry)?;
+    /// let value = builder
+    ///     .apply(constant_key, ScalarAttributes::empty(), &[])?
+    ///     .get(0)
+    ///     .expect("the constant operation yields one result");
+    /// let output = builder.tensor(TensorRole::Output, pixel, Shape::from_dims([]))?;
+    /// let write = builder.write(output, &[], &[])?;
+    /// builder.output(write, value)?;
+    /// let region = builder.build()?;
+    ///
+    /// // Equivalent closure call site producing the identical verified region.
+    /// let region = IndexRegionBuilder::build_with(registry, |builder| {
+    ///     let value = builder
+    ///         .apply(constant_key, ScalarAttributes::empty(), &[])?
+    ///         .get(0)
+    ///         .expect("the constant operation yields one result");
+    ///     let output = builder.tensor(TensorRole::Output, pixel, Shape::from_dims([]))?;
+    ///     let write = builder.write(output, &[], &[])?;
+    ///     builder.output(write, value)?;
+    ///     Ok(())
+    /// })?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CheckedBuildError::Admission`] when builder construction or any
+    /// closure insertion is rejected, or [`CheckedBuildError::Verification`]
+    /// carrying every deterministic diagnostic and the recoverable builder when
+    /// whole-region verification rejects the assembled draft.
+    pub fn build_with<F>(
+        registry: FrozenScalarRegistry,
+        assemble: F,
+    ) -> Result<VerifiedIndexRegion, CheckedBuildError<IndexBuildError, IndexRegionBuildError>>
+    where
+        F: FnOnce(&mut Self) -> Result<(), IndexBuildError>,
+    {
+        let builder = Self::new(registry).map_err(CheckedBuildError::Admission)?;
+        build_checked(builder, assemble, Self::build)
     }
 
     /// Consumes, verifies, reachability-compacts, and canonicalizes this region.

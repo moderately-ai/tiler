@@ -26,6 +26,8 @@
 //! # }
 //! ```
 
+mod convenience;
+
 /// Public target-independent iteration, access, and scalar-region vocabulary.
 pub mod index;
 /// Public target-neutral scheduled-region IR, verifier, and identity.
@@ -34,3 +36,5 @@ pub mod schedule;
 pub mod semantic;
 /// Target-independent fixed shape vocabulary.
 pub mod shape;
+
+pub use convenience::CheckedBuildError;

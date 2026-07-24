@@ -4,6 +4,7 @@ use std::error::Error as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use tiler_ir::CheckedBuildError;
 use tiler_ir::index::{
     BoundsProofView, DomainRole, IndexBuildError, IndexInteger, IndexIntegerSign, IndexLimitKind,
     IndexRegionBuilder, IndexRegionDiagnostic, MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_INTEGER_BYTES,
@@ -2023,4 +2024,103 @@ fn scalar_authority_closes_type_and_float_bits_dependencies_in_definition_values
         .unwrap();
     assert_eq!(evidence.type_definitions(), expected.reached_definitions());
     assert_eq!(evidence.type_admission(), expected.admission_provenance());
+}
+
+/// Authors the same minimal single-constant output region used to compare the
+/// manual and closure call sites. Returning `Result` lets both the ordinary
+/// call site and the `build_with` closure share one identical authoring body.
+fn author_constant_region(builder: &mut IndexRegionBuilder) -> Result<(), IndexBuildError> {
+    let value = builder
+        .apply(
+            ScalarOpKey::new("example", "constant", 1).unwrap(),
+            ScalarAttributes::empty(),
+            &[],
+        )?
+        .get(0)
+        .expect("the constant operation yields one result");
+    let output = builder.tensor(TensorRole::Output, test_type(), Shape::from_dims([]))?;
+    let write = builder.write(output, &[], &[])?;
+    builder.output(write, value)?;
+    Ok(())
+}
+
+#[test]
+fn closure_convenience_matches_manual_construction() {
+    let (_, registry) = registries();
+
+    let mut manual = IndexRegionBuilder::new(registry.clone()).unwrap();
+    author_constant_region(&mut manual).unwrap();
+    let manual = manual.build().unwrap();
+
+    let via_closure = IndexRegionBuilder::build_with(registry, author_constant_region).unwrap();
+
+    // Canonical identity is owner-independent, so equal bytes prove the closure
+    // path yields the same canonical region as manual construction plus build().
+    assert_eq!(
+        via_closure.canonical_identity().as_bytes(),
+        manual.canonical_identity().as_bytes()
+    );
+    assert_eq!(via_closure.scalar_values().count(), 1);
+    assert_eq!(via_closure.outputs().count(), 1);
+}
+
+#[test]
+fn closure_admission_failure_surfaces_typed_error_without_verification() {
+    let (_, registry) = registries();
+
+    let error = IndexRegionBuilder::build_with(registry, |builder| {
+        // Writing to an input boundary is an insertion-time admission failure;
+        // whole-region verification is never reached.
+        let input = builder.tensor(TensorRole::Input, test_type(), Shape::from_dims([]))?;
+        builder.write(input, &[], &[])?;
+        Ok(())
+    })
+    .unwrap_err();
+
+    match error {
+        CheckedBuildError::Admission(IndexBuildError::WriteToInput) => {}
+        other => panic!("expected a WriteToInput admission failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn closure_verification_failure_preserves_recoverable_diagnostic() {
+    let (_, registry) = registries();
+
+    // A region that authors a value but declares no output root fails whole-region
+    // verification with the same recoverable diagnostic as the manual path.
+    let error = IndexRegionBuilder::build_with(registry, |builder| {
+        builder
+            .apply(
+                ScalarOpKey::new("example", "constant", 1).unwrap(),
+                ScalarAttributes::empty(),
+                &[],
+            )
+            .map(|_| ())
+    })
+    .unwrap_err();
+
+    let CheckedBuildError::Verification(verification) = error else {
+        panic!("expected a whole-region verification failure, got {error:?}");
+    };
+    assert_eq!(
+        verification.diagnostics(),
+        [IndexRegionDiagnostic::NoOutputs]
+    );
+
+    // The recoverable builder is intact and can be amended and rebuilt, proving
+    // the verification variant erases neither the diagnostic nor the draft.
+    let (mut recovered, diagnostics) = verification.into_parts();
+    assert_eq!(diagnostics, [IndexRegionDiagnostic::NoOutputs]);
+    let value = recovered
+        .apply(
+            ScalarOpKey::new("example", "constant", 1).unwrap(),
+            ScalarAttributes::empty(),
+            &[],
+        )
+        .unwrap()
+        .get(0)
+        .unwrap();
+    scalar_output(&mut recovered, value);
+    assert_eq!(recovered.build().unwrap().outputs().count(), 1);
 }
