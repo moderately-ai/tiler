@@ -13,7 +13,9 @@ use std::error::Error;
 use std::fmt;
 
 use crate::region::{RegionCandidate, RegionError, RegionGraph, verify_candidate};
-use crate::request::{NumericalPermission, VerifiedRequestSubject, VerifiedTargetRequest};
+use crate::request::{
+    NumericalPermission, VerifiedRequestSubject, VerifiedTargetRequest, permission_tag,
+};
 
 /// Machine-checkable evidence that one whole-program region fuses exactly.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,9 +55,7 @@ impl FusionNumericalProof {
             self.forbidden_transforms.reassociation,
             self.forbidden_transforms.permutation,
         ] {
-            bytes.push(match permission {
-                NumericalPermission::Forbidden => 1,
-            });
+            bytes.push(permission_tag(permission));
         }
         bytes
     }

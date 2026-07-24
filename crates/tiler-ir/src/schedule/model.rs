@@ -9,7 +9,7 @@ use crate::shape::{Axis, Shape};
 
 use super::error::{ContributorError, ElementCountOverflow};
 use super::handles::{BoundsWitnessId, OwnershipWitnessId, RegionId};
-use super::numerics::NumericalRealization;
+use super::numerics::{FlushedZeroSign, NumericalPermission, NumericalRealization, SubnormalMode};
 
 /// The role a boundary tensor plays for one scheduled region.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -267,6 +267,20 @@ pub struct ScheduledRegion {
 ///
 /// These feed a separate phased target-feasibility assessment; deriving them is
 /// part of intrinsic verification and never a target decision (ADR 0007).
+///
+/// The four numerical fields carry the region's declared realization forward
+/// per dimension rather than as one summary bit. A single `requires_strict_f32`
+/// boolean cannot name which dimension a target failed to honour, and the
+/// boolean these replaced was derived from contraction and reassociation alone
+/// — so a subnormal-preserving contract that permitted both transforms reported
+/// no strict-`f32` requirement at all (ADR 0076 item 3). A feasibility
+/// authority composes each dimension against what a target profile declares it
+/// honours.
+///
+/// The realization's `profile_key` and canonical NaN bits are deliberately not
+/// repeated here: they name the governing contract and a produced value rather
+/// than a behaviour a target profile declares honourability for, and they
+/// remain on the region's [`NumericalRealization`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResourceRequirements {
     /// Distinct buffer bindings required at the entry point.
@@ -279,8 +293,14 @@ pub struct ResourceRequirements {
     pub barriers: u32,
     /// Whether the region requires a device address space.
     pub requires_device_memory: bool,
-    /// Whether the region requires strict f32 arithmetic.
-    pub requires_strict_f32: bool,
+    /// Subnormal input handling the region's declared realization requires.
+    pub input_subnormals: SubnormalMode,
+    /// Subnormal result handling the region's declared realization requires.
+    pub result_subnormals: SubnormalMode,
+    /// Whether the region's declared realization permits contraction.
+    pub contraction: NumericalPermission,
+    /// Whether the region's declared realization permits reassociation.
+    pub reassociation: NumericalPermission,
 }
 
 /// Opaque canonical bytes identifying one verified scheduled region.
@@ -410,8 +430,11 @@ pub fn contributor_count(axes: &[Axis], access: &LogicalAccess) -> Result<u64, C
 /// Derives the resource requirements of a verified region.
 ///
 /// Bindings follow the region's access count; the launch fixes the thread
-/// count; the numerical realization fixes strict-f32 and device-memory needs.
-/// The bounded profile stages no local memory or barriers.
+/// count; the bounded profile stages no local memory or barriers. The numerical
+/// realization is carried forward whole rather than reduced to a predicate:
+/// deriving one bit here would decide, inside intrinsic verification, which
+/// dimensions a target is allowed to be asked about, and that decision belongs
+/// to the feasibility authority that knows what the target declares.
 pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequirements {
     let buffer_bindings = u32::try_from(region.index.accesses.len()).unwrap_or(u32::MAX);
     ResourceRequirements {
@@ -420,8 +443,10 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
         local_memory_bytes: 0,
         barriers: 0,
         requires_device_memory: true,
-        requires_strict_f32: !region.index.numerical.permits_reassociation()
-            && !region.index.numerical.permits_contraction(),
+        input_subnormals: region.index.numerical.input_subnormals,
+        result_subnormals: region.index.numerical.result_subnormals,
+        contraction: region.index.numerical.contraction,
+        reassociation: region.index.numerical.reassociation,
     }
 }
 
@@ -480,12 +505,51 @@ fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
     }
 }
 
+/// Encodes one subnormal dimension.
+///
+/// The match is exhaustive over a non-`#[non_exhaustive]` enum, so widening the
+/// vocabulary is a build error here rather than an identity collision between
+/// two regions that differ only in subnormal treatment (ADR 0076 item 6). The
+/// flush arm encodes its zero sign, because the sign is part of the behaviour
+/// and two flushes producing different zeros are different realizations.
+fn push_subnormal(bytes: &mut Vec<u8>, mode: SubnormalMode) {
+    bytes.push(match mode {
+        SubnormalMode::Preserve => 0x01,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        } => 0x02,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        } => 0x03,
+    });
+}
+
+/// Encodes one transform permission.
+///
+/// Encoded as a tagged value rather than as the derived `permits_*` boolean it
+/// used to be: a boolean is a projection, and a projection cannot fail closed
+/// when the projected enum grows.
+fn push_permission(bytes: &mut Vec<u8>, permission: NumericalPermission) {
+    bytes.push(match permission {
+        NumericalPermission::Forbidden => 0x01,
+        NumericalPermission::Permitted => 0x02,
+    });
+}
+
+/// Encodes the complete numerical realization a region declares.
+///
+/// Every field is encoded, including both subnormal dimensions. `profile_key`
+/// is encoded alongside them and never in place of them: a key names a contract
+/// but does not carry its field values, so relying on the key to distinguish
+/// two realizations would be an unstated invariant (ADR 0076 item 6).
 fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
     bytes.extend_from_slice(numerical.profile_key.as_bytes());
     bytes.push(0x00);
     bytes.extend_from_slice(&numerical.canonical_arithmetic_nan_bits.to_be_bytes());
-    bytes.push(u8::from(numerical.permits_contraction()));
-    bytes.push(u8::from(numerical.permits_reassociation()));
+    push_subnormal(bytes, numerical.input_subnormals);
+    push_subnormal(bytes, numerical.result_subnormals);
+    push_permission(bytes, numerical.contraction);
+    push_permission(bytes, numerical.reassociation);
 }
 
 fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {

@@ -608,7 +608,10 @@ fn parse_entry(
         local_memory_bytes: cursor.u64()?,
         barriers: cursor.u32()?,
         requires_device_memory: cursor.boolean()?,
-        requires_strict_f32: cursor.boolean()?,
+        input_subnormals: cursor.subnormal()?,
+        result_subnormals: cursor.subnormal()?,
+        contraction: cursor.permission()?,
+        reassociation: cursor.permission()?,
     };
     let numerical = NumericalFacts {
         profile_key: cursor.text()?,

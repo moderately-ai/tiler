@@ -44,3 +44,16 @@ ADR 0076 leaves as an open question whether the profile *declaration mechanism* 
 `crates/tiler-metal/src/emit.rs` carries irrefutable `let SubnormalMode::Preserve = mode;` bindings in `realization_requirements` and `record_subnormal_obligation`. Those become compile errors the moment `widen-numerical-vocabulary-and-complete-identity` lands, which is the guard working as designed. Handling the new variant is part of this ticket.
 
 The four golden fixtures can then carry a contract the hardware actually honours instead of one it cannot — check whether their compilation through `golden_compilation` should move to the flush-tolerant contract, and say which contract they are governed under either way.
+
+## Inherited from `widen-numerical-vocabulary-and-complete-identity`
+
+That ticket widened `SubnormalMode` to `Preserve | FlushToZero { zero_sign }` and `NumericalPermission` to `Forbidden | Permitted`, which broke both irrefutable `let SubnormalMode::Preserve = mode;` guards in `crates/tiler-metal/src/emit.rs`. They were repaired without a wildcard, and two decisions there are yours to supersede.
+
+**The flag question is answered and needs no further work.** Neither subnormal behaviour names a `MetalNumericalRequirement`, and the two reasons differ: preservation names none because no `-fmetal-math-mode`, `-ffp-contract`, `-fmetal-math-fp32-functions`, or `-O` selection preserves subnormals through `f32` arithmetic — the front end emits `air.compile.denorms_disable` under all of them — and flushing names none because that same measurement makes the flush unconditional, so no selection has to be made to obtain it. `realization_requirements` records both reasons.
+
+**The declaration question was deferred to you and currently fails closed.** `MetalSubnormalArithmetic::FlushesToZero` states *that* the target flushes and not *which zero* it produces, even though the measured Apple flush is sign-preserving (`0x80400000 * 2.0f` returns `0x80000000`). A declared flush is therefore not established by the target fact. `emit::subnormal_gap` is a total comparison of the declared mode against the target fact and yields two new `MetalNumericalGap` variants for the newly expressible cases:
+
+- `SubnormalPreservationInArithmetic` — the contract flushes and the target preserves. Honouring it would mean emitting an explicit flush, which is emulation, which this backend does not express.
+- `UndeclaredFlushedZeroSign` — the contract flushes to a stated zero and the target names no zero. This is a placeholder for exactly this ticket: once the profile declares honourability per dimension including the sign, a sign-matching flush becomes a positive conformance claim and only a sign *mismatch* stays a gap. Retire the variant rather than keeping it alongside the declaration.
+
+Behaviour on the governed path is unchanged: the registered contract is still `Preserve`/`Preserve`, so the four `crates/tiler-metal/goldens/*.metal` still record `subnormal-flush-in-arithmetic` and only that. Their identity digests moved, because the scheduled-region and kernel identities were re-baselined; the emitted bodies did not.

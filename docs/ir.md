@@ -919,15 +919,36 @@ checked arithmetic, and other multi-operation, multi-result reductions.
 
 `IndexRegion` identity commits only to the canonical structural program:
 iteration and reduction domains, typed tensor boundaries, access maps, scalar
-operations and values, constraints, and ordered outputs. Ordinary scalar
-operation identity includes the key, normalized attributes, ordered operand
-identities, and ordered resolved result types. Reduction identity additionally
-includes its traversal, bound-dimension order, init/contributor identities,
-nested body, and yields. Multi-result sharing is preserved by identifying one
-operation occurrence and deriving each result identity from its result position.
-Ownership tokens, arena indices, insertion order, provider addresses,
-executable callbacks, proof caches, targets, and any semantic-region identity
-are excluded.
+operations and values, constraints, ordered outputs, and the region's declared
+numerical realization. Ordinary scalar operation identity includes the key,
+normalized attributes, ordered operand identities, and ordered resolved result
+types. Reduction identity additionally includes its traversal, bound-dimension
+order, init/contributor identities, nested body, and yields. Multi-result
+sharing is preserved by identifying one operation occurrence and deriving each
+result identity from its result position. Ownership tokens, arena indices,
+insertion order, provider addresses, executable callbacks, proof caches,
+targets, and any semantic-region identity are excluded.
+
+The declared numerical realization is inside that structural program, not
+attached beside it, because it says what the region's scalar operations *mean*
+rather than how a device executes them: two regions with identical domains,
+accesses, and scalar content but different subnormal, contraction, or
+reassociation resolutions compute different values, so they must not share
+identity. Its encoding is **complete over every dimension and exhaustive per
+dimension** — every field is encoded, each through a total match over a
+vocabulary that is deliberately not `#[non_exhaustive]`, so widening the
+vocabulary is a build error at the encoder rather than a silent identity
+collision. No layer may encode the realization's contract key in place of the
+field values that key names, and no layer may substitute a derived predicate
+for the field it was derived from; a key and a predicate are both projections,
+and a projection cannot fail closed when its source grows.
+
+The region-level realization and the numerical fields a scalar operation
+carries in its own right — a canonical NaN bit pattern, a contraction flag —
+are both encoded, and they are not two authorities. The region-level
+declaration is the contract; a scalar operation's fields are a refinement the
+structural verifier requires to agree with it, so the agreement is checked
+rather than assumed and encoding both cannot admit a disagreement.
 
 The structural index verifier does not establish that an `IndexRegion`
 implements any semantic operation or region. Compiler-owned legality evidence
@@ -1264,7 +1285,8 @@ editable program authority.
 
 Identity is layered:
 
-1. `IndexRegion` commits to canonical iteration/scalar/access content.
+1. `IndexRegion` commits to canonical iteration/scalar/access content and to
+   its declared numerical realization, complete over every dimension.
 2. `ScheduledRegion` commits to its `IndexRegion` plus normalized schedule.
 3. `RegionImplementation` commits to its body, boundary contracts,
    applicability predicates, target requirements, and exact/proven resource
@@ -1295,6 +1317,8 @@ Numerical behavior is part of IR meaning. At minimum the policy must address:
 - reduction order and determinism;
 - NaN and signed-zero behavior for min/max;
 - empty-reduction identities;
+- subnormal input and result handling as independent dimensions, each stating
+  which zero a flush produces;
 - fast math, reassociation, and fused multiply-add permission.
 
 An optimization that changes reduction order is not an exact rewrite merely

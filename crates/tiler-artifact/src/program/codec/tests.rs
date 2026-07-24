@@ -378,7 +378,7 @@ fn the_derived_feature_set_names_what_a_reader_must_implement() {
 fn every_governed_tag_table_round_trips() {
     use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
     use tiler_ir::program::ValueRole;
-    use tiler_ir::schedule::SubnormalMode;
+    use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
 
     for value in [KernelType::Bool, KernelType::Index, KernelType::F32] {
         assert_eq!(
@@ -406,14 +406,25 @@ fn every_governed_tag_table_round_trips() {
     for value in [ValueRole::Input, ValueRole::Temporary, ValueRole::Output] {
         assert_eq!(value_role_from_tag(value_role_tag(value)), Some(value));
     }
-    assert_eq!(
-        subnormal_from_tag(subnormal_tag(SubnormalMode::Preserve)),
-        Some(SubnormalMode::Preserve),
-    );
-    assert_eq!(
-        permission_from_tag(permission_tag(NumericalPermission::Forbidden)),
-        Some(NumericalPermission::Forbidden),
-    );
+    // Both flush behaviours are enumerated: they name different zeros, so a
+    // shared tag would decode one as the other.
+    for value in [
+        SubnormalMode::Preserve,
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        },
+        SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        },
+    ] {
+        assert_eq!(subnormal_from_tag(subnormal_tag(value)), Some(value));
+    }
+    for value in [
+        NumericalPermission::Forbidden,
+        NumericalPermission::Permitted,
+    ] {
+        assert_eq!(permission_from_tag(permission_tag(value)), Some(value));
+    }
     assert_eq!(
         RoutingPolicy::from_tag(RoutingPolicy::StablePriority.tag()),
         Some(RoutingPolicy::StablePriority),

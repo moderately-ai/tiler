@@ -106,7 +106,7 @@ pub use model::{
     ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion, axes_are_canonical,
     contributor_count, element_count,
 };
-pub use numerics::{NumericalPermission, NumericalRealization, SubnormalMode};
+pub use numerics::{FlushedZeroSign, NumericalPermission, NumericalRealization, SubnormalMode};
 
 /// Maximum logical accesses admitted by one scheduled region.
 pub const MAX_SCHEDULE_ACCESSES: usize = 4_096;

@@ -1172,7 +1172,7 @@ mod tests {
     };
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
     use crate::request::{CompilationRequest, VerifiedTargetRequest, verify_request};
-    use tiler_ir::schedule::{ScheduledRegion, TensorRole};
+    use tiler_ir::schedule::{NumericalPermission, ScheduledRegion, SubnormalMode, TensorRole};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -1298,7 +1298,14 @@ mod tests {
         );
         // Exact feasibility resources are derived from the verified region.
         assert_eq!(admitted.resources().buffer_bindings, 2);
-        assert!(admitted.resources().requires_strict_f32);
+        assert_eq!(
+            admitted.resources().input_subnormals,
+            SubnormalMode::Preserve
+        );
+        assert_eq!(
+            admitted.resources().contraction,
+            NumericalPermission::Forbidden
+        );
         // The feasibility admission carries resolved predicates as evidence.
         assert!(!admitted.feasibility().is_empty());
         // The fused region reads an Input boundary and produces the Output boundary.
