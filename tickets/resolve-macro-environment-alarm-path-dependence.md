@@ -1,7 +1,7 @@
 ---
 id: resolve-macro-environment-alarm-path-dependence
 title: Make the macro-environment overall-alarm test independent of ambient PATH
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [collect-runtime-and-shapes-spike-tests, finish-spike-process-group-cleanup, make-spike-process-group-cleanup-best-effort]
@@ -9,9 +9,6 @@ scopes: [research/macro-environment]
 shared_scopes: [project/tickets]
 paths: []
 tags: [testing, gate-reliability, harness]
-claimed_from: todo
-assignee: agent-resolve-macro-environment-alarm-path-dependence
-lease_expires_at: 1784925959
 ---
 `collect-runtime-and-shapes-spike-tests` found this while widening the gate's pytest `testpaths`. It is not caused by that change and is not fixed by it: the test is already collected by the gate today.
 
