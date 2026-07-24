@@ -24,6 +24,7 @@ TRACE = ROOT / "proc-macro-visibility" / "target" / "extensions-probe-trace.log"
 MAX_OUTPUT_BYTES = 4 << 20
 MAX_INPUT_FILES = 256
 MAX_INPUT_BYTES = 16 << 20
+CLEANUP_REAP_SECONDS = 5.0
 
 
 class ProbeFailure(RuntimeError):
@@ -50,10 +51,24 @@ class CommandResult:
 
 
 def kill_process_group(process: subprocess.Popen[bytes]) -> None:
-    """Terminate a command tree and reap its leader."""
-    with contextlib.suppress(ProcessLookupError):
+    """Terminate a command tree and reap its leader on a best-effort basis.
+
+    Signalling a group can fail for reasons that are not probe failures: a group
+    whose only member is an exited-but-unreaped child answers `EPERM`, and a
+    sandboxed execution context can refuse the syscall outright. A harness must
+    not fail the run it is tidying up after, so tolerate both and fall back to the
+    child this process directly owns. Bound the reap as well, so an undeliverable
+    signal cannot turn a bounded failure into an unbounded wait, and so a caller
+    asserting that a bound was enforced observes the child's own state rather than
+    the harness having waited out its natural exit.
+    """
+    try:
         os.killpg(process.pid, signal.SIGKILL)
-    process.wait()
+    except (ProcessLookupError, PermissionError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            process.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=CLEANUP_REAP_SECONDS)
 
 
 def run_command(
@@ -376,6 +391,29 @@ def self_test() -> None:
             pass
         else:
             raise ProbeFailure("process-alarm child survived timeout cleanup")
+    # A refused group signal is otherwise only reachable inside a sandbox that
+    # denies the syscall, so inject the refusal to check that cleanup tolerates
+    # it and still stops the child this harness owns.
+    refused = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    original_killpg = os.killpg
+
+    def refuse_group_signal(_group: int, _number: int) -> None:
+        raise PermissionError("group signalling refused")
+
+    os.killpg = refuse_group_signal
+    try:
+        kill_process_group(refused)
+    finally:
+        os.killpg = original_killpg
+    if refused.returncode != -signal.SIGKILL:
+        raise ProbeFailure(
+            f"refused group signal left the child unstopped: returncode {refused.returncode}"
+        )
 
 
 def main() -> int:
