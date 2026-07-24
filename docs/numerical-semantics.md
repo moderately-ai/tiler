@@ -230,6 +230,8 @@ Relaxed policies may permit:
 Every rule declares which permission it requires. The optimizer cannot infer a
 relaxed policy from a backend's default compiler flags.
 
+Each name in that list means the dimension this document defines, not a broader vendor reading of the same word. `reassociation` in particular is the regrouping of one reduction's contributor sequence defined under [Reductions](#reductions); it does not extend to rewrites that change which products are formed, which consume the separate [distributivity](#distributivity-is-outside-the-order-contract) dimension and are not admitted.
+
 ## Initial arithmetic rounding
 
 Initial ordinary floating-point `Add`, `Subtract`, `Multiply`, and `Divide`
@@ -264,6 +266,8 @@ contraction permission may authorize a rewrite or physical implementation using
 FMA. Contraction is independent of reassociation: permission to contract the
 existing pattern does not authorize algebraic regrouping to manufacture a new
 pattern.
+
+"Contraction" in this section is only ADR 0015's fused-multiply-add permission. A *tensor* contraction — summation over indices shared by two or more operands — is a reduction, and this permission governs exactly one thing about it: whether its per-contributor `accumulator + a * b` step may round once instead of twice. It says nothing about that reduction's order, and regrouping a chain of tensor contractions consumes the separate [distributivity](#distributivity-is-outside-the-order-contract) dimension, which no permission in this document grants.
 
 ## Transcendental accuracy
 
@@ -361,6 +365,16 @@ choose it only when it satisfies the semantic order contract.
 Changing from a serial reduction to a SIMD or threadgroup tree is a physical
 alternative only when the numerical policy permits its evaluation order. F16
 or BF16 inputs do not imply low-precision accumulation; promotion is explicit.
+
+### Distributivity is outside the order contract
+
+Reassociation and permutation both act on one reduction's contributor sequence: they hold the contributor values fixed and vary only how those same values are grouped or ordered. A rewrite that changes *which* products are formed is outside both, and outside the order contract entirely, because it leaves no single contributor sequence for the contract to speak about.
+
+Rewriting a tensor-contraction chain is the motivating case. For output `[i, l]`, `(AB)C` forms the rounded partials `T[i, k] = sum over j of A[i, j] * B[j, k]` and then sums the contributors `T[i, k] * C[k, l]` over `k`; `A(BC)` forms `U[j, l] = sum over k of B[j, k] * C[k, l]` and then sums the contributors `A[i, j] * U[j, l]` over `j`. The two contributor sequences share no value, are indexed by different axes, and neither is a grouping of the other; no common sequence exists of which both are groupings. The identity relating them is distributivity of multiplication over addition, `(x + y) * c = x * c + y * c`, which round-to-nearest floating-point multiplication does not satisfy. The conclusion does not depend on whether a contraction chain is a chain of binary operations or one multi-operand node: were such a node defined as the flat sum over `(j, k)` of `A[i, j] * B[j, k] * C[k, l]`, its contributors would be triple products that neither association ever computes, and factoring `C[k, l]` out of the `j`-sum would again be distributivity.
+
+**Distributivity** is therefore a third numerical dimension, independent of the two order-contract dimensions above. It authorizes exchanging a product of a sum for a sum of products in either direction, so it changes which values are multiplied and where roundings fall. It is additional to reassociation and permutation rather than a substitute for either: routed through the flat form, a chain regroup also changes the nesting order over the flat reduction domain, and grouping the canonical lexicographic contributor order by the outer axis combines non-contiguous intervals — so this document's rule that reassociation without permutation may combine only contiguous contributor intervals in order makes permutation necessary too. Consuming distributivity would require both an operation capability declaring the algebraic property and an effective numerical permission to use it, as ADR 0014 requires of the other two. Granting reassociation does not grant it, and granting it does not grant reassociation or permutation; ADR 0011 already holds that one permission never implies another, and ADR 0015 settles the same shape of question for fused multiply-add by ruling that a permission over an existing pattern does not authorize manufacturing a new one.
+
+No distributivity permission is admitted. The canonical policy sketched above has no such field, and `NumericalPermission` in `crates/tiler-ir/src/schedule/numerics.rs` has exactly one variant, `Forbidden`, so no contract Tiler can currently express permits reassociation either. A rewrite that consumes distributivity is therefore rejected under every registrable contract, and its rejection names the missing distributivity dimension rather than reporting a forbidden reassociation — the two are different explanations, and only the first avoids implying that a reassociation-permitting contract would admit the rewrite. Whether to admit the dimension at all, and whether one permission covers both directions of the identity or the factoring and expanding directions are cut apart, is a product choice that does not follow from these definitions. It is reserved for the accepted decision that admits a tensor-contraction family under [Q-SEM-015](open-questions.md) and tracked by [`decide-whether-to-admit-a-distributivity-permission`](../tickets/decide-whether-to-admit-a-distributivity-permission.md).
 
 ### Empty domains and initial values
 
