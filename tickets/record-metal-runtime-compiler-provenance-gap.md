@@ -1,7 +1,7 @@
 ---
 id: record-metal-runtime-compiler-provenance-gap
 title: Record that Metal artifact toolchain provenance names only the offline compiler
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [probe-metal-runtime-compilation-numerics, declare-metal-numerical-honourability, repoint-adr-0076-evidence-at-the-numerical-record, prototype-metal-bundle-assembly]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, metal, numerics, provenance]
-claimed_from: todo
-assignee: agent-record-metal-runtime-compiler-provenance-gap
-lease_expires_at: 1784929884
 ---
 [probe-metal-runtime-compilation-numerics](probe-metal-runtime-compilation-numerics.md) measured something the Metal contracts do not yet say, and it is about identity rather than about numbers.
 
