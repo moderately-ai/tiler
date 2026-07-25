@@ -1,14 +1,16 @@
 ---
 id: share-the-serial-sum-artifact-assembler
 title: Make the serial-sum artifact assembler reachable from the runner
-status: todo
+status: closed
 priority: p0
 dependencies: []
 related: [route-the-runtime-proof-through-the-artifact-envelope]
 scopes: [implementation/metal-aot, implementation/runtime, implementation/workspace]
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
-tags: [implementation, workspace, runtime, needs-tom]
+tags: [implementation, workspace, runtime]
+closed_reason: obsolete
+closed_note: the dispatch record made the cold handoff work; the runner never needed the assembler
 ---
 `route-the-runtime-proof-through-the-artifact-envelope` cannot be done because the only artifact assembler in the workspace is private to a binary crate. This ticket makes it reachable. It is filed rather than decided because both ways of doing it cross a boundary a worker should not choose alone.
 
@@ -37,3 +39,19 @@ Writing the envelope to a file from the producer and reading it in the runner re
 ## What closes this
 
 The assembler is reachable from `prototypes/serial-sum-run` without a second copy, `scripts/check_workspace.py` pins whatever new shape results, and `route-the-runtime-proof-through-the-artifact-envelope` is unblocked. If (b) is chosen, this ticket also owns the admitting ADR.
+
+## Closed 2026-07-25 — the premise is refuted; the runner never needed the assembler
+
+Re-evaluated from `implementation/runtime` at `96fe032`, by reading rather than by assuming this ticket was either right or wrong. Two of its three "Fact" sections still hold. The third is the one everything else rests on, and half of it is now false.
+
+**Retracted — "it still could not obtain the entry symbol, because the payload-metadata section has no public parser."** The cited fact is true and no longer decides anything. `decode_metadata` is still `pub(crate)` (`crates/tiler-artifact/src/program/codec/payload.rs:298`), but `decode_artifact` now *calls* it eagerly for every carried payload and stores the result on the view (`codec/view.rs:148-161`), and `DecodedEntry::backend_symbol` and `DecodedEntry::transport_slots` publish what it parsed. A consumer holding only bytes reads the symbol and the per-slot transport mapping without naming a producer type. `expose-the-dispatch-record-on-a-decoded-artifact` landed that after this ticket was written, and its test `a_decoded_artifact_carries_everything_one_dispatch_needs` (`codec/tests.rs:1325`) asserts exactly this end to end from `decode_artifact`, holding no `VerifiedArtifactProgram`, no semantic program, and no registry.
+
+**Retracted — "the runner would have no `expected` identity to bind against except the one re-derived from the same bytes, which is vacuous."** True of a consumer given only an envelope, and it does not follow that the identity must come from an assembler. `DecodedProgram::preflight` documents two sources: an identity obtained by *building* the artifact, and one *recorded when the bytes were cached*. This ticket considered only the first. The second is a sidecar written by the producer beside the envelope, derived from the `VerifiedArtifactProgram` it built rather than from the encoded bytes, and it catches exactly the class it exists for — a stale artifact, a mixed-up path, a producer run that did not complete. It does not resist an adversary who rewrites both files, and nothing in an unsigned sidecar could; the check is worth what whatever wrote it is worth, which is stated rather than overclaimed.
+
+**Standing — the assembler exists once, and is private to a binary crate.** Unchanged and still true. It is simply not on the runner's path.
+
+## What replaced it
+
+`route-the-runtime-proof-through-the-artifact-envelope` does the handoff this ticket called impossible: `prototypes/serial-sum-compile` writes the envelope and its identity sidecar to a path, and `prototypes/serial-sum-run` reads that file and dispatches from it, holding no producer module. Option (a) — a `[lib]` on `tiler-prototype-compile` — would have created a public namespace on a package that has none and relaxed two `scripts/check_workspace.py` pins, and it would have left the runner holding a `CompiledArtifact` it could load instead of the envelope's. **The cheaper option was the one that kept the bypass reachable**, which is the shape this ticket's own reasoning was set up to catch and did not.
+
+`needs-tom` is dropped with it: no boundary is crossed, no ADR is needed, and nothing here is Tom's to decide.

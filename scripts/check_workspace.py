@@ -198,6 +198,14 @@ EXPECTED_DEPENDENCIES = {
         dependency("tiler-metal", path="crates/tiler-metal"),
         dependency("tiler-metal-aot", path="crates/tiler-metal-aot"),
         dependency("tiler-reference", path="crates/tiler-reference"),
+        # The runtime proof dispatches twice: once from bytes this process
+        # compiled, and once from an artifact envelope the producer wrote to a
+        # file. The second path is the whole point of the edge, and the first is
+        # retained as the control that tells an envelope defect from a compiler
+        # defect. Only this member has both a device and a loader, which is why
+        # the edge lands here rather than widening `tiler-runtime`'s own closure
+        # — that closure stays exactly `tiler-artifact` (ADR 0081).
+        dependency("tiler-runtime", path="crates/tiler-runtime"),
     ],
 }
 

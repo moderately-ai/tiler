@@ -1,12 +1,12 @@
 ---
 id: route-the-runtime-proof-through-the-artifact-envelope
 title: Route the runtime proof through the artifact envelope
-status: blocked
+status: done
 priority: p0
-dependencies: [prototype-runtime-artifact-validation, share-the-serial-sum-artifact-assembler, expose-the-dispatch-record-on-a-decoded-artifact]
+dependencies: [prototype-runtime-artifact-validation, expose-the-dispatch-record-on-a-decoded-artifact]
 related: [prototype-metal-runtime-proof, prototype-metal-aot-slice, assemble-the-metal-payload-from-emission-and-compilation]
-scopes: [implementation/runtime, implementation/artifact]
-shared_scopes: [project/tickets]
+scopes: [implementation/runtime, implementation/metal-aot, implementation/workspace]
+shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, runtime, artifact]
 ---
@@ -65,3 +65,57 @@ The reference alternative is the materialized plan. The proof's independent orac
 ## What must still be true when this lands
 
 Unchanged by the block, and restated because the enabling ticket must not quietly relax it: the device must load the bytes `RoutedDispatch::object()` returns and nothing the process held before, the bit comparison must still pass, and the direct-dispatch path must be retained beside the envelope path as the diagnostic that separates an envelope defect from a compiler defect.
+
+## Outcome
+
+**The envelope path dispatches on hardware; one governed bound keeps it off the proof's own program.** Landed on `tkt/route-the-runtime-proof-through-the-artifact-envelope`, over `tkt/route-the-runtime-loader-through-the-dispatch-record`.
+
+### The blocking dependency was refuted, not satisfied
+
+`share-the-serial-sum-artifact-assembler` is **closed as obsolete**. Its own "Fact — a cold handoff does not avoid this" made two claims and both are retracted on that ticket with the evidence. In short: `decode_metadata` being `pub(crate)` stopped mattering when `decode_artifact` began parsing it eagerly and publishing the result through `DecodedEntry::backend_symbol` and `transport_slots`; and `preflight` documents a second source for the expected identity — one *recorded* beside cached bytes — which that ticket did not consider. The runner needs no assembler and no producer module. The producer writes a file; the runner reads it. Nothing else crosses.
+
+The rejected option (a), a `[lib]` on `tiler-prototype-compile`, would also have left a `CompiledArtifact` in the runner's process that could be loaded instead of the envelope's. **The cheaper option was the one that kept the bypass reachable.**
+
+### What supplies the expected identity
+
+A sidecar. `--out <path>` writes `<path>` and `<path>.identity`, the latter from `VerifiedArtifactProgram::canonical_identity()` — derived from the program the producer *built*, not re-read from the encoding. That is `preflight`'s "recorded when it cached these bytes" case, and it is not vacuous: **measured**, flipping one byte of the sidecar yields `runtime.program-mismatch: expected an artifact of 12655 identity bytes, loaded one of 12655, and they differ`. It is worth exactly what the sidecar is worth and resists no adversary who rewrites both files; nothing unsigned could, and that is stated in the source rather than glossed.
+
+`CanonicalArtifactProgramIdentity` turned out to have **no public constructor**, so a cold consumer could not state one at all. `preflight` now takes `expected: &[u8]`. Split to [`state-an-expected-artifact-identity-from-recorded-bytes`](state-an-expected-artifact-identity-from-recorded-bytes.md).
+
+### Measurement — the run
+
+Apple M4 Max, this checkout. `cargo run -p tiler-prototype-compile -- --out <p>` then `cargo run -p tiler-prototype-run -- --artifact <p>`:
+
+```text
+device: Apple M4 Max
+compiled 3843 bytes of metallib
+artifact: …/serial-sum.tiler (32329 bytes), expected identity 12655 bytes
+decoded: 1 variant(s), required features ["tiler.artifact.feature.embedded-payload-code"]
+the artifact declares a 4 by 1 input
+routed: symbol "tiler_kernel_cca3c1e98be4e752", 3667 object byte(s), 4 thread(s) in groups of 1
+  abi slot 0 -> transport 0, 16 byte(s), ProgramInput(InputKey("input"))
+  abi slot 1 -> transport 1, 16 byte(s), ProgramOutput([OutputKey("result")])
+direct    4x3: [40c00000, 3f800000, 7fc00000, 7f800000] against [40c00000, 3f800000, 7fc00000, 7f800000]
+envelope  4x1: [3f800000, 00000000, 7fc00000, 7f800000] against [3f800000, 00000000, 7fc00000, 7f800000]
+bit-for-bit agreement: direct on 4 element(s), envelope on 4 element(s)
+```
+
+**The 3,667 against 3,843 is the proof the bypass is gone on that path.** They are different byte counts because they are different objects from different processes: the envelope path loaded what the producer packaged, and the direct path loaded what this process compiled. A runner still bypassing the envelope would have shown one number twice. The symbol, both transport indices, both byte ranges, and the launch geometry are all read from the decoded record.
+
+Every refusal was exercised rather than assumed: a missing artifact, a missing argument, a flipped sidecar byte (`program-mismatch`), and a flipped envelope byte (`artifact.integrity: SectionDigestMismatch { section: 0 }`). All four exit non-zero.
+
+### The limit that remains, and it is not the one this ticket predicted
+
+The ticket planned around the multi-stage refusal. That was correct and irrelevant — the fused plan round-trips as expected. The actual blocker is different and was found by running: **the producer cannot package the program the proof dispatches.** A `BackendEntryKey` is bounded at `MAX_OPAQUE_IDENTITY_BYTES` = 1,024 and a non-degenerate serial sum's canonical kernel identity measures 1,113 bytes — 728 at one contributor, then flat at 1,113 for two, three, four, and eight. It is the reduction *structure* that crosses the bound. Split to [`bound-the-backend-entry-key-by-the-identity-it-carries`](bound-the-backend-entry-key-by-the-identity-it-carries.md) with the full table and three options; it is not applied here because every option changes a governed contract and one of them changes what a backend entry key means.
+
+**What was refused rather than done.** Reducing the runner's program to the degenerate shape so the envelope could carry it would have silently weakened a landed numerical proof — the three-contributor row is what makes serial ordering, subnormal flushing and NaN canonicalization observable together. Raising the bound would have guessed a governed value. Digesting the identity in the producer would have minted an identity for a subject the artifact layer says it is not the authority for. All three are the shortcut this ticket exists to avoid.
+
+**What was done instead.** The runner's envelope path takes its shape from whatever the artifact declares rather than fixing one, so the delivery mechanism is proven on hardware today and the numerical claim stays on its own three-column program, each compared against the oracle's evaluation of the program that path ran. When the bound ticket closes, the producer's `COLUMNS` returns to 3 and the two paths run one program **with no change to the runner** — the convergence is already in the code, not a follow-up edit.
+
+### Honest scope of the claim
+
+The delivery mechanism — encode, decode, digest and identity validation, feature negotiation, target classification of both the variant's and the payload's declared profiles, one-way routing commit, dispatch from carried bytes — is **proven end to end on hardware**. It is proven for the single-contributor program, which is the only one the envelope currently admits. The three-contributor program is still delivered by the direct path alone, so for *that* program the envelope is not yet load-bearing. Those are two different claims and the ticket is done against the first, with the second tracked.
+
+### What must still be true, restated and held
+
+The device loads the bytes `RoutedDispatch::object()` returns and nothing the process held before — held. The bit comparison passes — held, on both paths. The direct path is retained beside the envelope path as the diagnostic — held, and its program is unchanged.
