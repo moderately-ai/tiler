@@ -198,6 +198,7 @@ import argparse
 import enum
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -216,7 +217,7 @@ HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parents[1]
 HOST_SOURCE = HERE / "numerical_probe_host.m"
 
-SCHEMA = "tiler.apple-numerical-behaviour/v5"
+SCHEMA = "tiler.apple-numerical-behaviour/v6"
 """Record format identity. Bump this whenever a key's meaning changes.
 
 v2 added the runtime-compilation path. `case.*.float_operations` and
@@ -250,6 +251,17 @@ row is rendered at its kernel's own width — four hex digits for `f16`, eight f
 `probe.dtypes` names every dtype measured and `probe.default_dtype` names the one
 a kernel carries when its name has no dtype suffix, so every v4 case key keeps its
 exact meaning and only the `_f16` kernels are new keys.
+
+v6 adds the third dtype and the one row kind a third dtype turned out to need.
+`case.*.refusal` is present exactly when a family's device was asked to run a
+kernel and declined — on the measured row the iOS Simulator fails pipeline
+creation for every `bfloat` module it has itself compiled and linked — and
+`environment.family.<name>.device_bfloat_support` carries the per-family answer.
+Without it, "no device to ask" and "a device that answered no" would both be a
+missing `case.*.results` row, and those are different measurements. Two dtypes
+now share a width, so a four-digit `results` row no longer identifies the format
+and only the kernel name in the key does. Every v5 key keeps its exact meaning
+and only the `_bf16` kernels are new keys.
 """
 
 REQUIRE_TOOLCHAIN = "TILER_REQUIRE_METAL_TOOLCHAIN"
@@ -471,6 +483,7 @@ class Verdict(enum.Enum):
     LEFT_TO_RIGHT = "left-to-right"
     REASSOCIATED = "reassociated"
     NO_DEVICE_OBSERVATION = "no-device-observation"
+    DEVICE_REFUSED_DTYPE = "device-refused-dtype"
     NO_EMITTED_ARITHMETIC = "no-emitted-arithmetic"
     ARITHMETIC_NOT_EXECUTED = "arithmetic-not-executed"
     NO_EXECUTION_WITNESS = "no-execution-witness"
@@ -608,6 +621,48 @@ class Dtype:
         return int(struct.unpack(self.unsigned_struct_format, narrowed)[0])
 
 
+@dataclass(frozen=True)
+class BrainFloat(Dtype):
+    """A dtype `struct` cannot pack, converted through the `f32` it is the high half of.
+
+    `struct` offers `<e` for `f16` and nothing for `bfloat16`, so the two
+    conversions are the one part of `Dtype` this format cannot inherit. It needs
+    no separate arithmetic model: a `bfloat16` is exactly an `f32` whose low 16
+    mantissa bits are zero, so `struct_format` and `unsigned_struct_format`
+    name the `f32` **carrier** the conversion passes through rather than a
+    packing of this width, and the widening direction is exact by construction.
+
+    The narrowing direction is the one that needs care, and it is a single
+    round-to-nearest-even on the discarded half. Rounding a double to `f32` and
+    then to `bfloat16` agrees with rounding it directly to `bfloat16`, by the
+    same 2p+2 argument `evaluate` states: `f32`'s 24-bit significand exceeds the
+    18 bits that make the second rounding innocuous for this format's 8-bit one.
+    """
+
+    def as_float(self, bits: int) -> float:
+        return float(struct.unpack(self.struct_format, struct.pack("<I", bits << 16))[0])
+
+    def as_bits(self, value: float) -> int:
+        try:
+            carrier = struct.pack(self.struct_format, value)
+        except OverflowError as overflowed:
+            raise ProbeFailure(
+                f"{value!r} is not representable as {self.name}: {overflowed}"
+            ) from overflowed
+        word = int(struct.unpack(self.unsigned_struct_format, carrier)[0])
+        upper, lower = word >> 16, word & 0xFFFF
+        # Round to nearest, ties to even, on the half this format discards.
+        if lower > 0x8000 or (lower == 0x8000 and upper & 1):
+            upper += 1
+        # `f32`'s range exceeds this format's, so a value `struct` accepted can
+        # still round up past the largest finite `bfloat16`. `struct` raises for
+        # the wider format and cannot raise for this one, so the refusal the
+        # base class gets from `pack` has to be re-derived here.
+        if math.isfinite(value) and upper & self.exponent_mask == self.exponent_mask:
+            raise ProbeFailure(f"{value!r} is not representable as {self.name}: it rounds to ±inf")
+        return upper & self.mask
+
+
 F32 = Dtype(
     name="f32",
     metal_type="float",
@@ -669,7 +724,46 @@ result-flush probe uses `0400` and not this operand — a returned zero there is
 correct rounding and not a flush.
 """
 
-DTYPES: tuple[Dtype, ...] = (F32, F16)
+BF16 = BrainFloat(
+    name="bf16",
+    metal_type="bfloat",
+    unsigned_type="ushort",
+    narrowing_cast="ushort",
+    struct_format="<f",
+    unsigned_struct_format="<I",
+    bits=16,
+    exponent_mask=0x7F80,
+    mantissa_mask=0x007F,
+    quiet_nan=0x7FC0,
+    sentinel=0xDEAD,
+    operands=(
+        0x0001,  # smallest positive subnormal
+        0x0040,  # mid subnormal; doubling it is the smallest normal
+        0x007F,  # largest subnormal
+        0x0080,  # smallest positive normal; halving it is subnormal
+        0x8040,  # negative mid subnormal, for the sign of the flushed zero
+        0x8000,  # negative zero, which is not subnormal
+        0x3EAB,  # an ordinary normal, so a kernel is exercised away from its boundaries
+        0x3F80,  # 1.0, the execution witness for the scaling kernels
+    ),
+)
+"""`bfloat16`'s operand vector, entry for entry in the same roles as `f32`'s.
+
+**Why this dtype and not another.** `f16` preserving what `f32` flushes has two
+explanations that finding 21 could not separate: native narrow-format subnormal
+support, or evaluation at a wider internal precision. `f16`'s subnormals are all
+`f32` **normals**, so wider-precision evaluation predicts preservation there for
+free. This format is the one where the two predictions come apart, because it
+carries `f32`'s exponent field width: every `bfloat16` subnormal here is also an
+`f32` subnormal, so an `f32`-precision evaluation would meet the very flush
+finding 2 measures.
+
+`struct_format` is `f32`'s and `bits` is 16 on purpose — see `BrainFloat`. The
+two format fields name the carrier the conversion passes through, not a packing
+of this width.
+"""
+
+DTYPES: tuple[Dtype, ...] = (F32, F16, BF16)
 DTYPE_BY_NAME = {dtype.name: dtype for dtype in DTYPES}
 
 DEFAULT_DTYPE = F32
@@ -910,6 +1004,51 @@ ADDITIVE_INPUT_FLUSH_F16 = SubnormalProbe(operand=0x8200, preserving=0x0200, flu
 *normal* `0400` when it is flushed to a signed zero first. As in `f32`, neither
 candidate is a zero, so this is the probe that would catch a reader assuming a
 flush always shows up as one.
+"""
+
+NEGATIVE_ZERO_BF16 = 0x8000
+
+INPUT_FLUSH_BF16 = SubnormalProbe(operand=0x0040, preserving=0x0080, flushing=POSITIVE_ZERO)
+"""`INPUT_FLUSH`'s isolation at `bfloat16`'s boundaries.
+
+Doubling this subnormal is exactly the smallest normal `0080`, so a returned zero
+can only come from flushing the operand. Unlike the `f16` pair, **both** patterns
+here are `f32` subnormals as well: `0040` is `00400000` widened and `0080` is
+`00800000` widened, which is the property that makes this dtype discriminating.
+"""
+
+NEGATIVE_INPUT_FLUSH_BF16 = SubnormalProbe(
+    operand=0x8040, preserving=0x8080, flushing=NEGATIVE_ZERO_BF16
+)
+"""The same isolation with a negative operand, so the flushed zero's sign shows."""
+
+RESULT_FLUSH_BF16 = SubnormalProbe(operand=0x0080, preserving=0x0040, flushing=POSITIVE_ZERO)
+"""Halving the smallest normal has an exactly representable *subnormal* result."""
+
+IDENTITY_VALUED_FLUSH_BF16 = SubnormalProbe(
+    operand=0x0040, preserving=0x0040, flushing=POSITIVE_ZERO
+)
+"""The `bfloat16` probe for a kernel whose exact result is the operand itself."""
+
+DIVIDED_INPUT_FLUSH_BF16 = SubnormalProbe(operand=0x0040, preserving=0x00AB, flushing=POSITIVE_ZERO)
+"""Dividing this subnormal by `0.375` has a *normal* result, isolating the input."""
+
+DIVIDED_NEGATIVE_INPUT_FLUSH_BF16 = SubnormalProbe(
+    operand=0x8040, preserving=0x80AB, flushing=NEGATIVE_ZERO_BF16
+)
+"""The same isolation with a negative operand, so the flushed zero's sign shows."""
+
+DIVIDED_RESULT_FLUSH_BF16 = SubnormalProbe(
+    operand=0x0080, preserving=0x002B, flushing=POSITIVE_ZERO
+)
+"""Dividing the smallest normal by `3.0` has a subnormal result, isolating the result."""
+
+ADDITIVE_INPUT_FLUSH_BF16 = SubnormalProbe(operand=0x8040, preserving=0x0040, flushing=0x0080)
+"""`ADDITIVE_INPUT_FLUSH`'s isolation at `bfloat16`'s boundaries.
+
+`-2**-127 + 2**-126` is the subnormal `0040` when the operand is preserved and
+the *normal* `0080` when it is flushed to a signed zero first. These are the same
+two exponents as the `f32` probe, spelled at this format's mantissa width.
 """
 
 REASSOCIATION = OrderProbe(operand=0x3F800000, ordered=0x3F800000, reassociated=0x3F800001)
@@ -1229,11 +1368,104 @@ KERNELS: tuple[Kernel, ...] = (
         subnormal_probes=(DIVIDED_RESULT_FLUSH_F16,),
         dtype=F16,
     ),
+    # The third dtype, and the one the second could not stand in for. Each kernel
+    # below is its `f32` twin with the constants respelled at `bfloat16`'s
+    # boundaries and nothing else changed. The operation vocabulary matches the
+    # `f16` set exactly — multiply, add, and a surviving division — so a
+    # difference between the two narrow formats is a difference in the format.
+    # A source-level `fma` is deliberately absent and is a measured limitation
+    # rather than a choice: see `FUSED_INTRINSIC` and the record's boundaries.
+    Kernel(
+        name="materialize_bf16",
+        purpose="a load and a store with no arithmetic at all",
+        steps=(),
+        canonicalized=False,
+        witness=None,
+        dtype=BF16,
+    ),
+    Kernel(
+        name="multiply_two_bf16",
+        purpose="isolates input flushing: a subnormal operand whose exact result is normal",
+        steps=times(0x4000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F80, executed=0x4000, deleted=0x3F80),
+        subnormal_probes=(INPUT_FLUSH_BF16, NEGATIVE_INPUT_FLUSH_BF16),
+        dtype=BF16,
+    ),
+    Kernel(
+        name="multiply_half_bf16",
+        purpose="isolates result flushing: a normal operand whose exact result is subnormal",
+        steps=times(0x3F00),
+        canonicalized=True,
+        witness=Witness(operand=0x3F80, executed=0x3F00, deleted=0x3F80),
+        subnormal_probes=(RESULT_FLUSH_BF16,),
+        dtype=BF16,
+    ),
+    Kernel(
+        name="add_smallest_normal_bf16",
+        purpose="the only bf16 kernel whose add takes a subnormal operand straight from the buffer",
+        steps=(Step(0x0080, "+"),),
+        canonicalized=True,
+        witness=Witness(operand=0x0080, executed=0x0100, deleted=0x0080),
+        subnormal_probes=(ADDITIVE_INPUT_FLUSH_BF16,),
+        dtype=BF16,
+    ),
+    Kernel(
+        name="multiply_one_bf16",
+        purpose="the identity multiply: no witness exists, so it can prove nothing",
+        steps=times(0x3F80),
+        canonicalized=True,
+        witness=None,
+        subnormal_probes=(IDENTITY_VALUED_FLUSH_BF16,),
+        dtype=BF16,
+    ),
+    Kernel(
+        name="scale_one_bias_zero_bf16",
+        purpose="the emitter's MultiplyThenAdd shape whose relaxed form deletes its arithmetic",
+        steps=scale_then_bias(0x3F80, POSITIVE_ZERO),
+        canonicalized=True,
+        witness=Witness(
+            operand=NEGATIVE_ZERO_BF16, executed=POSITIVE_ZERO, deleted=NEGATIVE_ZERO_BF16
+        ),
+        subnormal_probes=(IDENTITY_VALUED_FLUSH_BF16,),
+        dtype=BF16,
+    ),
+    Kernel(
+        name="divide_by_three_eighths_bf16",
+        purpose="input flushing through a division the driver keeps: a subnormal whose result "
+        "is normal",
+        steps=over(0x3EC0),
+        canonicalized=True,
+        witness=Witness(operand=0x3F80, executed=0x402B, deleted=0x3F80),
+        subnormal_probes=(DIVIDED_INPUT_FLUSH_BF16, DIVIDED_NEGATIVE_INPUT_FLUSH_BF16),
+        dtype=BF16,
+    ),
+    Kernel(
+        name="divide_by_three_bf16",
+        purpose="result flushing through a division the driver keeps: a normal whose result "
+        "is subnormal",
+        steps=over(0x4040),
+        canonicalized=True,
+        witness=Witness(operand=0x3F80, executed=0x3EAB, deleted=0x3F80),
+        subnormal_probes=(DIVIDED_RESULT_FLUSH_BF16,),
+        dtype=BF16,
+    ),
 )
 BY_NAME = {kernel.name: kernel for kernel in KERNELS}
 
 F16_KERNELS = tuple(kernel.name for kernel in KERNELS if kernel.dtype is F16)
 """Every `f16` kernel, in declaration order, so `cases` cannot silently drop one."""
+
+BF16_KERNELS = tuple(kernel.name for kernel in KERNELS if kernel.dtype is BF16)
+"""Every `bfloat16` kernel, in declaration order, so `cases` cannot silently drop one."""
+
+NARROW_KERNELS = {F16.name: F16_KERNELS, BF16.name: BF16_KERNELS}
+"""The narrow dtypes' kernel lists, so `cases` sweeps them by one rule rather than two.
+
+Keyed by dtype name and not by `Dtype`, because the covering set names the two
+load-bearing kernels per dtype by their suffixed spelling and a reader checking
+that the sweep reached a dtype should not have to resolve an object identity.
+"""
 
 
 def evaluate(kernel: Kernel, operand: int, *, flushes: bool) -> int:
@@ -1508,23 +1740,26 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     else:
         for optimization in ("1", "3", "s"):
             add("scale_one_bias_zero", "safe", optimization, "off")
-    # The second dtype, in every math mode, because a flush that depended on the
-    # dtype could depend on the mode too and the `f32` rows this is compared
+    # The narrow dtypes, in every math mode, because a flush that depended on the
+    # dtype could depend on the mode too and the `f32` rows these are compared
     # against are measured in all three. `-O0` is kept in the covering set for
-    # the two kernels where the level is load-bearing — the trap kernel, whose
-    # surviving operation count moves there, and the input-flush kernel, which
-    # carries the headline claim — and the exhaustive sweep takes the rest.
-    for mode in MATH_MODES:
-        for kernel in F16_KERNELS:
-            add(kernel, mode, "2", "off")
-        for kernel in ("multiply_two_f16", "scale_one_bias_zero_f16"):
-            add(kernel, mode, "0", "off")
-    if exhaustive:
+    # the two kernels per dtype where the level is load-bearing — the trap
+    # kernel, whose surviving operation count moves there, and the input-flush
+    # kernel, which carries the headline claim — and the exhaustive sweep takes
+    # the rest. Both narrow dtypes are swept by the same rule, so neither can
+    # gain coverage the other silently lacks.
+    for name, narrow in NARROW_KERNELS.items():
         for mode in MATH_MODES:
-            for kernel in F16_KERNELS:
+            for kernel in narrow:
+                add(kernel, mode, "2", "off")
+            for kernel in (f"multiply_two_{name}", f"scale_one_bias_zero_{name}"):
                 add(kernel, mode, "0", "off")
-            for optimization in ("1", "3", "s"):
-                add("scale_one_bias_zero_f16", mode, optimization, "off")
+        if exhaustive:
+            for mode in MATH_MODES:
+                for kernel in narrow:
+                    add(kernel, mode, "0", "off")
+                for optimization in ("1", "3", "s"):
+                    add(f"scale_one_bias_zero_{name}", mode, optimization, "off")
 
     unique: dict[str, Case] = {}
     for case in selected:
@@ -1585,14 +1820,21 @@ class Observation:
     - `compile_options` and `operations` are `None` exactly when the compilation
       path gave the harness no readable module, which is the runtime path's
       situation. `()` would be a *measured* absence of arithmetic.
-    - `results` is `None` exactly when the family has no attached device, so
-      nothing was dispatched. `()` would be a measured empty dispatch, which no
-      dispatch this harness performs can produce.
+    - `results` is `None` exactly when nothing was dispatched. `()` would be a
+      measured empty dispatch, which no dispatch this harness performs can
+      produce.
 
     None of the three has a default: a construction site has to state which it
     means. `archived_options` and `applied_options` are the runtime path's own
     compile-side facts and are `None` on the offline path; see `scan_archive` for
     why `archived_options` is corroboration and not evidence.
+
+    `refusal` separates the two reasons `results` can be `None`, which are
+    different measurements and must not collapse into one word. An absent
+    device asked the question of nothing; a device that **refused this kernel's
+    dtype** answered it, with a refusal. The second is a positive fact about a
+    real GPU and is the stronger statement, so it carries the exact diagnostic
+    the environment reported rather than being inferred from a missing row.
     """
 
     case: Case
@@ -1601,6 +1843,7 @@ class Observation:
     results: tuple[int, ...] | None
     applied_options: str | None
     archived_options: str | None
+    refusal: str = ""
 
     @property
     def kernel(self) -> Kernel:
@@ -1656,7 +1899,9 @@ def inadmissible(observation: Observation) -> Verdict | None:
     for why a missing layer is refused rather than assumed in either direction.
     """
     if observation.results is None:
-        return Verdict.NO_DEVICE_OBSERVATION
+        return (
+            Verdict.DEVICE_REFUSED_DTYPE if observation.refusal else Verdict.NO_DEVICE_OBSERVATION
+        )
     if observation.operations is not None and not observation.operations:
         return Verdict.NO_EMITTED_ARITHMETIC
     witness = observation.kernel.witness
@@ -2252,6 +2497,11 @@ def path_comparisons(run: Run) -> tuple[PathComparison, ...]:
         configuration = observation.case.configuration
         if not isinstance(configuration, RuntimeConfiguration):
             continue
+        if observation.refusal:
+            # Neither path ran, so there is nothing to compare and no divergence
+            # to hide: the refusal is recorded on both this case and its offline
+            # candidates, and the environment row names the family it covers.
+            continue
         candidates = {
             other: run.observations[other].results
             for other in sorted(run.observations)
@@ -2427,6 +2677,7 @@ def attachments() -> dict[str, Attachment]:
 
 
 ARCHIVE_PROBE_CASE = "archive-support"
+BFLOAT_PROBE_CASE = "bfloat-support"
 
 
 def archive_support(host: Path, attachment: Attachment, work: Path) -> str:
@@ -2462,6 +2713,61 @@ def archive_support(host: Path, attachment: Attachment, work: Path) -> str:
         return "the dispatch host reported no archive"
     if archive.startswith("unavailable:"):
         return archive.removeprefix("unavailable:")
+    return ""
+
+
+def bfloat_support(toolchain: Toolchain, host: Path, attachment: Attachment, work: Path) -> str:
+    """Decide whether this execution environment will run a `bfloat` kernel at all.
+
+    Returns the empty string when it will, or the exact reason it will not. Like
+    `archive_support` this needs its own one-entry manifest, and for a stronger
+    version of the same reason: on the measured row the iOS Simulator compiles a
+    `bfloat` module and links it without complaint, then fails **pipeline
+    creation** with `XPC_ERROR_CONNECTION_INTERRUPTED`, and `dispatch_batch`
+    treats a nonzero exit as a `ProbeFailure` that takes the whole run with it.
+    Asking first is what turns that into a recorded per-family boundary instead
+    of an aborted measurement of every other dtype.
+
+    **This is a capability question, not a fallback.** A family that answers yes
+    dispatches its `bfloat` cases normally and a failure there is still a hard
+    `ProbeFailure`, because a device that accepted the probe and then refused a
+    real case is a defect and not a boundary. Nothing here is retried, softened,
+    or substituted: the only thing a "no" buys is a `refusal` string on the
+    cases it covers.
+
+    The probe kernel is `multiply_two_bf16` and not `materialize_bf16`
+    deliberately. It is the kernel carrying the headline claim, so a family this
+    returns "" for is one where the load-bearing case is known to reach the GPU;
+    probing with the arithmetic-free kernel could pass on an environment that
+    supports the *type* in a signature and not the arithmetic, which is the one
+    outcome that would make this probe worse than useless.
+    """
+    kernel = BY_NAME["multiply_two_bf16"]
+    source = work / "bfloat_probe.metal"
+    source.write_text(kernel.source(), encoding="utf-8")
+    case = Case(attachment.family.name, kernel.name, Configuration("safe", "2", "off"))
+    air_path = work / "bfloat_probe.air"
+    library = work / "bfloat_probe.metallib"
+    try:
+        toolchain.compile_air(source, air_path, case)
+        toolchain.link(air_path, library, attachment.family)
+    except ProbeFailure as failed:
+        return _normalized(str(failed))
+    manifest = work / "bfloat_probe.manifest.tsv"
+    manifest.write_text(
+        _manifest_line(BFLOAT_PROBE_CASE, kernel.dtype, library, ENTRY_POINT, None) + "\n",
+        encoding="utf-8",
+    )
+    try:
+        dispatch_batch(
+            host,
+            attachment,
+            manifest,
+            "the bfloat-support probe",
+            {BFLOAT_PROBE_CASE: kernel.dtype},
+        )
+    except ProbeFailure as failed:
+        return _normalized(str(failed))
     return ""
 
 
@@ -2561,6 +2867,7 @@ def probe(work_directory: Path) -> Run:
     runtime_compilers: dict[str, str] = {}
     runtime_images: dict[str, str] = {}
     runtime_builds: dict[str, str] = {}
+    bfloat_reasons: dict[str, str] = {}
     hosts: dict[str, Path] = {}
 
     for family in FAMILIES:
@@ -2591,20 +2898,37 @@ def probe(work_directory: Path) -> Run:
             runtime_compilers[family.name] = unavailable
             runtime_images[family.name] = unavailable
             runtime_builds[family.name] = unavailable
+            # Not "unsupported": this family has no device to ask, which is a
+            # different fact from a device that answered no.
+            bfloat_reasons[family.name] = unavailable
             continue
 
         host = hosts[family.name]
         archive_reason = archive_support(host, attachment, work)
+        # Asked once per family, before any measured case is dispatched. A
+        # family that refuses gets its `bf16` cases left out of the manifest and
+        # recorded as refused; every other dtype in the same family is measured
+        # exactly as before, which is the whole point of asking separately.
+        bfloat_reason = bfloat_support(toolchain, host, attachment, work)
+        bfloat_reasons[family.name] = bfloat_reason or "supported"
+
+        def refused(case: Case, reason: str = bfloat_reason) -> bool:
+            return bool(reason) and BY_NAME[case.kernel].dtype is BF16
+
         runtime_sources: dict[str, Path] = {}
         archives: dict[str, Path] = {}
         manifest_dtypes: dict[str, Dtype] = {}
         lines: list[str] = []
         for case in cases(family.name):
+            if refused(case):
+                continue
             dtype = BY_NAME[case.kernel].dtype
             manifest_dtypes[case.key] = dtype
             lines.append(_manifest_line(case.key, dtype, libraries[case.key], ENTRY_POINT, None))
         for case in runtime_cases(family.name):
             assert isinstance(case.configuration, RuntimeConfiguration)
+            if refused(case):
+                continue
             kernel = BY_NAME[case.kernel]
             manifest_dtypes[case.key] = kernel.dtype
             stem = case.key.replace(".", "_")
@@ -2639,6 +2963,21 @@ def probe(work_directory: Path) -> Run:
 
         compiler = ""
         for case in cases(family.name):
+            if refused(case):
+                # The compile side already ran and is kept: `bfloat` compiles and
+                # links for this family, and that a module the device will not
+                # accept still declares `air.compile.denorms_disable` is a
+                # measurement in its own right.
+                observations[case.key] = Observation(
+                    case=case,
+                    compile_options=observations[case.key].compile_options,
+                    operations=observations[case.key].operations,
+                    results=None,
+                    applied_options=None,
+                    archived_options=None,
+                    refusal=bfloat_reason,
+                )
+                continue
             entry = reported.entries[case.key]
             observations[case.key] = Observation(
                 case=case,
@@ -2649,6 +2988,17 @@ def probe(work_directory: Path) -> Run:
                 archived_options=None,
             )
         for case in runtime_cases(family.name):
+            if refused(case):
+                observations[case.key] = Observation(
+                    case=case,
+                    compile_options=None,
+                    operations=None,
+                    results=None,
+                    applied_options=None,
+                    archived_options=None,
+                    refusal=bfloat_reason,
+                )
+                continue
             entry = reported.entries[case.key]
             if archive_reason:
                 archived = f"unavailable:{archive_reason}"
@@ -2683,6 +3033,7 @@ def probe(work_directory: Path) -> Run:
         "runtime_compiler": runtime_compilers,
         "runtime_compiler_images": runtime_images,
         "runtime_compiler_build": runtime_builds,
+        "device_bfloat_support": bfloat_reasons,
     }
     return Run(environment(toolchain, attached, measured), observations, hazards)
 
@@ -2778,6 +3129,13 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
             rows.append(
                 (f"case.{key}.float_operations", " ".join(str(op) for op in observation.operations))
             )
+        if observation.refusal:
+            # A missing `results` row means "not dispatched" and nothing more, so
+            # the one case where a real device answered with a refusal says so
+            # explicitly. Without this the simulator's `bfloat` rows would be
+            # indistinguishable from the iOS-device family's, which was never
+            # asked at all.
+            rows.append((f"case.{key}.refusal", observation.refusal))
         if observation.applied_options is not None:
             rows.append((f"case.{key}.applied_options", observation.applied_options))
         if observation.archived_options is not None:

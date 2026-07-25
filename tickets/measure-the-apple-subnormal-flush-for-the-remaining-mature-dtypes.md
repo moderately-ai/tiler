@@ -1,7 +1,7 @@
 ---
 id: measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes
 title: Measure the Apple subnormal flush for the remaining mature dtypes
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [widen-the-apple-numerical-probe-to-a-second-dtype, enumerate-the-mature-tensor-dtype-taxonomy, carry-the-dtype-on-the-metal-subnormal-flush-fact]
@@ -9,9 +9,6 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, metal, measurement, dtypes]
-claimed_from: todo
-assignee: agent-measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes
-lease_expires_at: 1785038575
 ---
 Finding 21 of [the Apple numerical-behaviour record](../docs/research/apple-targets/numerical-behaviour.md) measures `f32` flushing subnormals and `f16` preserving them on the same hardware, from modules that declare `air.compile.denorms_disable` identically. That settles that the flush depends on the dtype. It settles nothing about *which* dtypes flush: two disagreeing dtypes are a refutation of dtype-independence and not a rule, and a third could behave like either.
 
@@ -22,3 +19,23 @@ Every other format Metal exposes is unmeasured. `bfloat` is the one that matters
 **Stop condition.** Keep the covering matrix bounded the way it is now: a dtype earns cases in the gate's covering set only for the kernels a finding cites, and the rest go behind `TILER_APPLE_NUMERICS_EXHAUSTIVE`. Report what the addition costs the gate in wall-clock.
 
 **What closes this.** Each added dtype has a witnessed verdict for input flushing, result flushing, and the sign of a flushed zero, in every math mode, on both compilation paths; the record states which dtypes were measured and keeps every unmeasured one explicitly unmeasured; and `carry-the-dtype-on-the-metal-subnormal-flush-fact` gains the per-dtype rows it can declare.
+
+## Outcome
+
+**`bf16` flushes.** Every flush dimension this record isolates returns the flushed value in `bf16`, under `safe`, `relaxed`, and `fast`, at `-O0` and `-O2`, on both compilation paths, each with an execution witness reporting `executed`. Findings 24 to 27 of [the record](../docs/research/apple-targets/numerical-behaviour.md) carry it.
+
+**The discrimination worked, in the opposite direction to the one this ticket predicted.** The ticket reasoned that a *preserving* `bfloat` would be evidence against wider-internal-precision evaluation. The measured result is a *flushing* `bfloat`, which is equally discriminating and settles the pair the other way: "the hardware honours subnormals natively in narrow formats" predicted preservation and is **refuted**, while "narrow arithmetic is evaluated at `f32` precision and rounded once" predicts `f16` preserving (its subnormals are `f32` normals) and `bf16` flushing (its subnormals are `f32` subnormals) — both dtypes, one mechanism, no free parameter. Finding 24 states it as an Inference over two Measurements and names what it still does not separate: native `bfloat16` arithmetic flushing at its own boundary agrees with `f32`-precision evaluation on every operand this probe can supply, and no *single* operation can expose an `f32` intermediate because 24 bits exceeds the 18 that make a second rounding to `bfloat16` innocuous. A two-operation `bf16` chain with a rounding-sensitive intermediate would; it is recorded as a question with its closing condition and no ticket, because nothing in the numerical contract depends on the answer.
+
+**One dtype, not "the remaining dtypes".** `bf16` was the discriminating case and is measured. `f64` where it exists and every integer and quantized format remain **`Unknown`** and are stated as such. That is not a descoping: finding 24's own content is that a neighbouring dtype predicts nothing, so measuring a format nobody has asked for would buy a row, not a conclusion. The ticket title outruns what closed it and the record says exactly which three dtypes are measured.
+
+**A blocker, named exactly.** The iOS Simulator compiles and links every `bf16` module and then fails pipeline creation with `XPC_ERROR_CONNECTION_INTERRUPTED`, on both paths and for the arithmetic-free kernel too, while running every `f32` and `f16` kernel in the same invocation. `bf16` is therefore measured on the Mac GPU alone and is `Unknown` for both iOS families — refused for one, never asked for the other. The cause is unmeasured and is not guessed at. This needed a new capability probe (`bfloat_support`), a new `Verdict::DEVICE_REFUSED_DTYPE`, and schema `v6`'s `case.*.refusal`, because "a device that answered no" and "no device to ask" are different measurements that would otherwise both be a missing `results` row. Finding 26.
+
+**Deviation from the stop condition, stated.** The ticket asks for the gate cost "in wall-clock". It is reported in **exact case counts** instead, and the README says why: every measurement of this suite has been taken under a different concurrent worktree load, that load dominates, and the previous widening measured *faster* than the narrower matrix it replaced. A misleading speedup is worse than no number. Covering: 402 offline and 368 runtime cases, of which 320 runtime dispatch — `bf16` adds 90 offline and 96 runtime, and the simulator's 48 refused runtime cases are recorded rather than run. Exhaustive: 663 offline, of which 171 are `bf16`. The covering matrix stays bounded as required: only the kernels findings 24 and 27 cite earn covering cases, and the rest sit behind `TILER_APPLE_NUMERICS_EXHAUSTIVE`.
+
+**Prior evidence did not move, and here is the check.** Of the 1921 `case.*`/`comparison.*`/`hazard.*` rows in the covering record and the 2401 in the exhaustive one, **0 disappeared and 0 changed**, and every one of the 480 and 696 added rows names a `bf16` kernel. Independently, the generated MSL of all **23** pre-existing kernels is **byte-identical** to what commit `06be974` produced.
+
+**A brief claim that was wrong.** The dispatch brief stated that the previous pass had checked the canonicalization helper's `call` spelling against real emitted modules. The pinned test fragment spelled it `@tiler_canonicalize_nan_f16_7e00`, unmangled; this front end emits the C++-mangled `@_ZL31tiler_canonicalize_nan_f16_7e00Dh`. It named no fused intrinsic either way, so no operation count was ever wrong and the test tested the right behaviour — but the fragment claimed to reproduce an emitted module and did not. Every line of it is now copied from a module this toolchain emitted, with all three dtypes' mangled spellings and the `fpext`/`fptrunc` pair around a `bfloat` fused call.
+
+**A limitation that is measured, not chosen.** There is no `bf16` counterpart to finding 16's fused kernel and there cannot be one: this front end has no `bfloat` overload of `fma`, so `fma(bfloat, bfloat, bfloat)` returns `float` and emits `fpext bfloat to float`, `air.fma.f32`, `fptrunc float to bfloat`. Such a kernel would measure `f32` arithmetic wearing `bfloat` operands.
+
+**Split out.** [decide-per-dtype-dispatchability-as-a-target-capability](decide-per-dtype-dispatchability-as-a-target-capability.md) carries the contract question finding 26 raises, which needs `contracts/decisions` and this ticket holds neither that nor `implementation/metal`. `carry-the-dtype-on-the-metal-subnormal-flush-fact` gains its third row — `bf16` flushing, macOS-only — with the caution that every unnamed dtype must reject rather than default.
