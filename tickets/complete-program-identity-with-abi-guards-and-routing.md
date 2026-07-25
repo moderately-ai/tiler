@@ -1,7 +1,7 @@
 ---
 id: complete-program-identity-with-abi-guards-and-routing
 title: Complete program identity with ABI expressions, guards, and routing
-status: in-progress
+status: done
 priority: p1
 dependencies: [relocate-abi-expressions-into-tiler-ir]
 related: [prototype-kernel-program-ir, prototype-artifact-program-model]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, identity, contracts]
-claimed_from: todo
-assignee: agent-identity
-lease_expires_at: 1785013830
 ---
 `tiler_ir::program::CanonicalKernelProgramIdentity` is **not** the complete
 program identity ADR 0072 describes, and the divergence is between an accepted
