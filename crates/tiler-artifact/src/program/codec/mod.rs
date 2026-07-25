@@ -84,6 +84,7 @@ mod error;
 mod model;
 mod payload;
 mod validate;
+mod view;
 
 // Only the identity encoder in `super::model` and the builder's terminal reach
 // into this module today; everything else stays behind its own module path so
@@ -101,6 +102,16 @@ pub(crate) use model::{
 pub use payload::{
     PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
     PayloadTargetObligation, ToolComponent,
+};
+// The codec's *capability* — encode an artifact, decode bytes back — is public
+// as of `carry-the-metal-payload-in-an-artifact-envelope`, so an out-of-crate
+// assembler can prove what it packaged survives a round trip. The envelope, the
+// encoder, the decoder, and the section vocabulary all stay `pub(crate)`:
+// `view` exposes accessors over them rather than the types themselves.
+//
+// Promoted on Tom's review, 2026-07-25.
+pub use view::{
+    ArtifactCodecFailure, DecodedArtifact, SectionPurpose, SectionView, decode_artifact,
 };
 
 #[cfg(test)]

@@ -311,8 +311,9 @@ pub use builder::{
     LaunchSpec, VariantSpec,
 };
 pub use codec::{
-    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
-    PayloadTargetObligation, ToolComponent,
+    ArtifactCodecFailure, DecodedArtifact, PayloadContent, PayloadEntryMapping, PayloadMetadata,
+    PayloadProvenance, PayloadSdkIdentity, PayloadTargetObligation, SectionPurpose, SectionView,
+    ToolComponent, decode_artifact,
 };
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
