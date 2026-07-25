@@ -25,8 +25,13 @@ A placement transfer/enforcer makes one authoritative logical value version
 accessible at a destination affinity. The family is not reducible to byte
 copies: its separately typed variants include direct movement, same-device
 logical materialization, peer copy or peer access, two host-staged legs,
-managed migration, and import/alias of shared backing. Dtype conversion and
-encoding-changing repacking remain separate enforcers.
+managed migration, and import/alias of shared backing. Encoding-changing
+repacking is a separate enforcer of that family. Dtype conversion is a
+separately typed stage and is deliberately **not** a member of it: it changes
+which values the boundary carries, so no planner may select it to satisfy a
+placement obligation. "Enforcer, excluded neighbour, and the asymmetry between
+repacking and conversion" below derives that split from the accepted definition
+rather than from this memo's own preference.
 
 Every executable transfer names both endpoint placements and allocation
 regions, the chosen mechanism, source-producer and destination-consumer
@@ -160,9 +165,14 @@ PlacementEnforcer =
   | PeerAccess(PeerAccessStage)
   | MaterializeLayout(MaterializeStage)
   | RepackEncoding(RepackStage)
-  | ConvertDtype(ConversionStage)
   | Migrate(MigrationStage)
   | Recompute(RecomputeStage)
+
+// Not a member. `ConvertDtype(ConversionStage)` is the realization of a cast
+// the semantic graph already contains, named here so a transfer can be checked
+// against it and never confused with it.
+ExcludedNeighbour =
+    ConvertDtype(ConversionStage)
 
 TransferStage {
   stage_id,
@@ -228,7 +238,13 @@ range, device/context, allocator/pool, and imported ownership evidence.
 | `PeerAccess` | no destination copy; source backing is remotely addressable | same authoritative backing/version | directional peer enablement plus complete alias, hazard, synchronization, and retention proofs |
 | `ManagedMigration` | backing identity may remain while residence/authority changes | same version and encoding | provider migration/coherence protocol; forbidden concurrent accesses |
 | `MaterializeLayout` | new destination | same logical value and dtype; addressing/layout may change | verified logical access relation and kernel/copy schedule |
-| `RepackEncoding` | new destination | explicitly changes storage encoding | governed encoding transform and downstream ABI compatibility |
+| `RepackEncoding` | new destination | explicitly changes storage encoding; the represented values are unchanged | governed encoding transform and downstream ABI compatibility |
+
+The excluded neighbour, listed separately because every row above is
+value-preserving and this one is not:
+
+| Excluded neighbour | Allocation result | Value/encoding effect | Required special evidence |
+| --- | --- | --- | --- |
 | `ConvertDtype` | new destination | explicitly changes represented values/dtype | ADR 0010 conversion family and numerical contract |
 
 `TransferStage` is the encoding-preserving movement variant of the broader
@@ -237,6 +253,81 @@ enforcer family. `AliasImport`, `PeerAccess`, `ManagedMigration`, and
 fuse a layout materialization with other computation only if the selected
 physical program still discharges the same delivered-placement, dependency,
 hazard, and retention obligations.
+
+### Enforcer, excluded neighbour, and the asymmetry between repacking and conversion
+
+This section exists because an earlier version of this memo applied the word
+"enforcer" to both `RepackEncoding` and `ConvertDtype`. The intent behind that
+was never in dispute — verifier invariant 3 exists precisely to stop a transfer
+folding a conversion into a copy, and ADR 0047 already requires that a transfer
+not silently convert encoding. Only the label was wrong, and correcting it turns
+out to split the two rather than to rename them together.
+
+**Fact — the accepted definition of an enforcer.** [The optimizer
+contract](../../compiler/optimizer.md#enforcers) states that "an enforcer
+supplies a missing required property at a cost" and "may change only how a
+boundary value is stored, addressed, placed, or delivered, never which values
+that boundary carries". It derives that from ADR 0001: several physical
+schedules must implement one semantic group identically, so a schedule-level
+step that altered a value would make one semantic program mean different things
+under different plans. It then draws the consequence directly — "a dtype cast is
+therefore not an enforcer" — and keeps resolved value dtype off the
+boundary-property list by construction rather than by omission.
+
+**Fact — `RepackEncoding` meets that definition and the property it supplies is
+now named.** The same contract admits storage encoding to the boundary-property
+list, states that "its enforcer is repacking", and cites this memo's own
+separation of `MaterializeLayout` from `RepackEncoding` as the reason the
+enforcer was accepted before the property was named. Encoding passes the
+admission test that dtype fails: a producer can realize one semantic value
+either packed or unpacked and the choice is unobservable in the value.
+
+**Inference — so the two do not resolve the same way, and this memo keeps both
+words.** `RepackEncoding` stays a `PlacementEnforcer` variant; nothing about it
+needed correcting. `ConvertDtype` leaves the family. Its membership was not
+merely a mislabel but a structural claim: a sum type a planner selects from,
+containing a conversion, says a planner may introduce a conversion to satisfy a
+boundary — which ADR 0010 forbids, and which the optimizer contract restates as
+"a conversion the graph does not contain may not be introduced by a schedule at
+all".
+
+**Inference — no second umbrella term is needed, and adding one would be
+harmful.** The alternative was a second family, something like
+`ValueProducingStage`, with `ConvertDtype` as its member. It is rejected:
+`ConvertDtype` already has an owner. [Numerical
+semantics](../../numerical-semantics.md#casts) makes a cast a semantic operation
+carrying a resolved typed conversion contract, and its realization is ordinary
+lowering of the operation the graph already contains. A second family here would
+be a second authority for something ADR 0010 owns, and naming it beside the
+enforcer family would reintroduce exactly the reading the split removes — that
+the placement layer may pick one. It is listed as an excluded neighbour instead,
+because the verifier still has to name it: invariant 3 is what stops a transfer
+absorbing a conversion, and it cannot check against a stage the taxonomy does
+not name.
+
+**Fact — the other seven rows were checked against the same definition, and one
+is not settled by it.** `DirectCopy`, `PeerDirectCopy`, `HostStaged`,
+`AliasImport`, `PeerAccess`, and `ManagedMigration` each declare the same value
+version, and `MaterializeLayout` declares "same logical value and dtype". All
+seven are value-preserving in the required sense. `Recompute` is the one
+`PlacementEnforcer` variant this taxonomy table never described, and it is the
+one the definition does not settle: it does not move an authoritative version,
+it re-derives one, so it is value-preserving only if the recomputation is proved
+to produce the same values under the effective numerical contract. ADR 0047
+accepted recomputation as an enforcer and that acceptance is preserved here; what
+is recorded is that its value-preservation is a proof obligation this memo has
+not stated, where every other row's is discharged by the mechanism itself.
+[`qualify-recompute-value-preservation-in-the-transfer-taxonomy`](../../../tickets/qualify-recompute-value-preservation-in-the-transfer-taxonomy.md)
+owns closing it.
+
+**Fact — the reach of this reconciliation.** This memo is a proposal that no
+accepted ADR and no normative contract has incorporated, so this is terminology
+brought into line ahead of incorporation and not a correction to an accepted
+contract. Nothing outside this file spells `ConvertDtype` except the optimizer
+contract's citation of this taxonomy, which says it "keeps both distinct from
+`ConvertDtype`" and stays exactly true under the split. The exact check:
+`grep -rn ConvertDtype docs spikes crates` returns this file and
+`docs/compiler/optimizer.md` and nothing else.
 
 ### Dependencies, synchronization, and completion
 
@@ -525,7 +616,9 @@ bound items 9–15 against live capabilities:
    its view's admitted allocation range;
 2. transfer source and destination name the same logical value version and
    storage encoding;
-3. encoding or dtype changes use their separately typed enforcers;
+3. an encoding change uses the separately typed `RepackEncoding` enforcer and a
+   dtype change uses the separately typed `ConvertDtype` stage, which is not an
+   enforcer; neither may be absorbed into a transfer;
 4. every source producer reaches the transfer, every internal leg is ordered,
    and every destination consumer depends on destination readiness;
 5. the dependency graph is acyclic and every token has one governed meaning;

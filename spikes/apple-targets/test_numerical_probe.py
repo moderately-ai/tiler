@@ -52,7 +52,20 @@ PROBE = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = PROBE
 _SPEC.loader.exec_module(PROBE)
 
-RECORD = HERE / "results" / "2026-07-24-numerics-families-xcode26.6-metal32023.883" / "record.tsv"
+RESULTS = HERE / "results"
+RECORD = RESULTS / "2026-07-25-numerics-covering-xcode26.6-metal32023.883" / "record.tsv"
+EXHAUSTIVE_RECORD = (
+    RESULTS / "2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883" / "record.tsv"
+)
+RECORDS = {PROBE.COVERING: RECORD, PROBE.EXHAUSTIVE_MATRIX: EXHAUSTIVE_RECORD}
+"""The retained record for each case matrix, because a run measures exactly one of them.
+
+The gate runs the covering matrix, so `RECORD` is the one it holds itself to. The
+exhaustive record is retained evidence for the rows only that sweep produces and
+is compared when `TILER_APPLE_NUMERICS_EXHAUSTIVE` selects it; a run of one
+matrix is never compared against the other's record, because every case the two
+sets do not share would read as decay.
+"""
 
 HOST = "macos"
 """The family whose execution environment is the machine running the gate."""
@@ -155,7 +168,11 @@ def test_every_kernel_states_a_witness_that_could_prove_its_arithmetic_ran() -> 
 
     Without this, a kernel could ship a witness whose executed and deleted
     results coincide, and every observation from it would read as admissible
-    while proving nothing.
+    while proving nothing. The witness's `executed` value is derived from the
+    kernel under *both* flush hypotheses rather than trusted: a witness whose
+    result depends on flushing would make the guard depend on the behaviour under
+    test, and a witness whose intermediate is subnormal does that without any of
+    its three stated values being subnormal.
     """
     for kernel in PROBE.KERNELS:
         witness = kernel.witness
@@ -167,21 +184,70 @@ def test_every_kernel_states_a_witness_that_could_prove_its_arithmetic_ran() -> 
                 f"{kernel.name}: a witness value may not be subnormal, or the witness would "
                 f"depend on the behaviour under test"
             )
+        assert witness.deleted == witness.operand, (
+            f"{kernel.name}: every kernel here stores its loaded value when its operations are "
+            f"removed, so a `deleted` that is not the operand is a mis-stated witness"
+        )
+        for flushes in (False, True):
+            assert PROBE.evaluate(kernel, witness.operand, flushes=flushes) == witness.executed, (
+                f"{kernel.name}: the witness must give the same result whether or not subnormals "
+                f"are flushed, and {'flushing' if flushes else 'exact'} arithmetic disagrees"
+            )
 
 
 def test_a_subnormal_probe_separates_flushing_from_preserving() -> None:
-    """Each probe's two candidate results must be distinguishable and correctly typed."""
-    for probe in (
-        PROBE.INPUT_FLUSH,
-        PROBE.NEGATIVE_INPUT_FLUSH,
-        PROBE.RESULT_FLUSH,
-        PROBE.IDENTITY_VALUED_FLUSH,
-    ):
-        assert probe.preserving != probe.flushing
-        assert probe.flushing in {0x00000000, 0x80000000}
-        assert is_subnormal(probe.operand) or is_subnormal(probe.preserving), (
-            "a subnormal probe must have a subnormal operand or a subnormal exact result"
-        )
+    """Each probe's two candidate results must be distinguishable and derived, not asserted.
+
+    Both are computed from the kernel the probe is read with, under exact
+    arithmetic and under the sign-preserving flush this hardware was measured to
+    perform. That is stronger than checking that `flushing` is a zero, which was
+    true only while every kernel was a bare multiply: an additive kernel whose
+    bias dominates flushes its operand to zero and still returns a normal value.
+    """
+    seen = 0
+    for kernel in PROBE.KERNELS:
+        for probe in kernel.subnormal_probes:
+            seen += 1
+            assert probe.preserving != probe.flushing, f"{kernel.name}/{probe.operand:08x}"
+            assert is_subnormal(probe.operand) or is_subnormal(probe.preserving), (
+                "a subnormal probe must have a subnormal operand or a subnormal exact result"
+            )
+            assert PROBE.evaluate(kernel, probe.operand, flushes=False) == probe.preserving, (
+                f"{kernel.name}/{probe.operand:08x}: declared preserving result "
+                f"{probe.preserving:08x} is not the exact one"
+            )
+            assert PROBE.evaluate(kernel, probe.operand, flushes=True) == probe.flushing, (
+                f"{kernel.name}/{probe.operand:08x}: declared flushing result "
+                f"{probe.flushing:08x} is not what substituting a signed zero gives"
+            )
+            assert probe.operand in PROBE.OPERANDS, f"{kernel.name}: {probe.operand:08x}"
+    assert seen >= 4, "the probe table lost its kernels"
+
+
+def test_an_order_probe_separates_two_evaluation_orders() -> None:
+    """The reassociation probe's two candidates must both be derivable and distinct.
+
+    `ordered` is the left-to-right value the source spells, so it is derived the
+    same way every other candidate is. `reassociated` is what summing the two
+    small terms first gives, and it is stated rather than derived because the
+    harness models one evaluation order and not every legal one — which is
+    exactly why the kernel needs a witness on a different operand, since here
+    `ordered` and the operand coincide.
+    """
+    probe = PROBE.REASSOCIATION
+    kernel = PROBE.BY_NAME["reassociation_chain"]
+    assert probe.ordered != probe.reassociated
+    assert probe.operand in PROBE.OPERANDS
+    assert PROBE.evaluate(kernel, probe.operand, flushes=False) == probe.ordered
+    assert PROBE.evaluate(kernel, probe.operand, flushes=True) == probe.ordered, (
+        "the order probe must not depend on flushing, or it would measure two things at once"
+    )
+    assert probe.ordered == probe.operand, (
+        "this chain returns its operand when it is not reassociated, which is the reason its "
+        "witness has to live on another operand"
+    )
+    witness = kernel.witness
+    assert witness is not None and witness.operand != probe.operand
 
 
 def test_an_observation_with_no_emitted_arithmetic_is_never_evidence() -> None:
@@ -242,9 +308,14 @@ def test_every_generated_kernel_declares_the_entry_point_and_the_exact_constants
         source = kernel.source()
         assert f"kernel void {PROBE.ENTRY_POINT}(" in source, kernel.name
         assert f"ulong v1 = {len(PROBE.OPERANDS)}ul;" in source, kernel.name
-        for constant in (kernel.scale_bits, kernel.bias_bits):
-            if constant is not None:
-                assert f"as_type<float>(0x{constant:08x}u)" in source, kernel.name
+        for step in kernel.steps:
+            assert f"as_type<float>(0x{step.constant:08x}u)" in source, kernel.name
+        assert source.count("= fma(") == (1 if kernel.fused else 0), kernel.name
+        for operator in (" * ", " + ", " / "):
+            spelled = sum(1 for step in kernel.steps if step.operator == operator.strip())
+            assert source.count(operator) == (0 if kernel.fused else spelled), (
+                f"{kernel.name}: the emitted statements must be exactly the declared steps"
+            )
         assert ".0f" not in source and "e+" not in source, (
             f"{kernel.name}: a decimal float literal would put host rendering in the path"
         )
@@ -399,15 +470,64 @@ def test_the_surviving_guard_layer_still_refuses_a_deleted_operation() -> None:
 def test_every_runtime_case_has_an_offline_case_to_be_compared_against() -> None:
     """A runtime case with no counterpart would be measured and never compared."""
     for family in PROBE.FAMILIES:
-        offline = {
-            (case.kernel, case.configuration.math_mode)
-            for case in PROBE.cases(family.name)
-            if isinstance(case.configuration, PROBE.Configuration)
-            and case.configuration.optimization == PROBE.RUNTIME_PAIRED_OPTIMIZATION
+        for selection in (PROBE.COVERING, PROBE.EXHAUSTIVE_MATRIX):
+            offline = {
+                (
+                    case.kernel,
+                    case.configuration.math_mode,
+                    case.configuration.fp32_functions,
+                )
+                for case in PROBE.cases(family.name, selection)
+                if isinstance(case.configuration, PROBE.Configuration)
+                and case.configuration.optimization == PROBE.RUNTIME_PAIRED_OPTIMIZATION
+            }
+            for case in PROBE.runtime_cases(family.name, selection):
+                assert isinstance(case.configuration, PROBE.RuntimeConfiguration)
+                coordinates = (
+                    case.kernel,
+                    case.configuration.math_mode,
+                    case.configuration.fp32_functions,
+                )
+                assert coordinates in offline, case.key
+
+
+def test_the_covering_matrix_reaches_every_axis_the_exhaustive_one_sweeps() -> None:
+    """The set the gate runs must not quietly stop covering an axis.
+
+    The exhaustive sweep is behind an environment switch, so the covering set is
+    what almost every run measures. It is allowed to be smaller; it is not
+    allowed to lose a kernel, a math mode, an optimization level, a contraction
+    setting, or an fp32-functions value, because a value nothing measures on an
+    ordinary run is a value the retained record stops protecting.
+    """
+    covering = PROBE.cases(HOST, PROBE.COVERING)
+    exhaustive = PROBE.cases(HOST, PROBE.EXHAUSTIVE_MATRIX)
+    assert len(covering) < len(exhaustive), "the switch must select a genuinely larger sweep"
+    assert {case.key for case in covering} <= {case.key for case in exhaustive}, (
+        "the covering set must be a subset, or the record it pins is not a subset of the other"
+    )
+    for attribute, expected in (
+        ("kernel", {kernel.name for kernel in PROBE.KERNELS}),
+        ("math_mode", set(PROBE.MATH_MODES)),
+        ("optimization", set(PROBE.OPTIMIZATIONS)),
+        ("fp_contract", set(PROBE.FP_CONTRACTS)),
+        ("fp32_functions", set(PROBE.FP32_FUNCTION_MODES)),
+    ):
+        found = {
+            case.kernel if attribute == "kernel" else getattr(case.configuration, attribute)
+            for case in covering
         }
-        for case in PROBE.runtime_cases(family.name):
-            assert isinstance(case.configuration, PROBE.RuntimeConfiguration)
-            assert (case.kernel, case.configuration.math_mode) in offline, case.key
+        assert found == expected, f"the covering set reaches {found} of {expected} for {attribute}"
+
+
+def test_a_record_from_one_matrix_is_never_compared_against_a_run_of_the_other() -> None:
+    """The two case sets differ, so comparing across them would report decay that is not there."""
+    assert PROBE.matrix_mismatch({"probe.matrix": PROBE.matrix()}) == ""
+    other = PROBE.EXHAUSTIVE_MATRIX if PROBE.matrix() == PROBE.COVERING else PROBE.COVERING
+    assert PROBE.matrix_mismatch({"probe.matrix": other})
+    assert PROBE.matrix_mismatch({}), "a record with no matrix row states nothing and is refused"
+    for selection, path in RECORDS.items():
+        assert PROBE.read_record(path)["probe.matrix"] == selection, path
 
 
 def test_a_runtime_case_is_never_compared_against_another_family() -> None:
@@ -710,6 +830,7 @@ def test_the_families_agree_on_every_compile_side_row_when_a_toolchain_and_gpu_r
                 case.configuration.math_mode,
                 case.configuration.optimization,
                 case.configuration.fp_contract,
+                case.configuration.fp32_functions,
             )
             assert there.compile_options == here.compile_options, (
                 f"{family.name} declared {there.compile_options} where {reference} declared "
@@ -999,6 +1120,263 @@ def test_the_emitted_operation_count_alone_is_insufficient_when_a_toolchain_and_
                 PROBE.subnormal_verdict(observation, PROBE.IDENTITY_VALUED_FLUSH)
                 is PROBE.Verdict.ARITHMETIC_NOT_EXECUTED
             ), f"{family}/{mode}"
+
+
+def test_the_additive_path_flushes_its_input_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 20. An add whose subnormal operand comes straight from the buffer flushes it.
+
+    Every other adding kernel here adds *after* a multiply, so an additive-path
+    input flush was asserted by ADR 0076 and re-established by nothing. This
+    kernel adds `2**-126` to the operand and nothing else, so the operand reaching
+    the add is the one the buffer supplied.
+
+    The three outcomes are distinct and only one of them is this flush.
+    `00800000` is the operand flushed to a signed zero before the add, leaving
+    the bias standing alone. `00400000` is the operand preserved, giving a
+    subnormal sum. `00000000` would be the operand preserved and the subnormal
+    *result* flushed instead, which is a different mechanism and lands on
+    `unexpected-result` rather than being read as agreement.
+    """
+    run = probe_run()
+    probe = PROBE.ADDITIVE_INPUT_FLUSH
+    assert probe.flushing not in {0x00000000, 0x80000000}, (
+        "this probe exists because a flush does not have to show up as a returned zero"
+    )
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            for optimization in ("0", "2"):
+                operations = run.of(
+                    family.name, "add_smallest_normal", mode, optimization
+                ).operations
+                assert operations is not None
+                assert [operation.opcode for operation in operations] == ["fadd"], (
+                    f"{family.name}/{mode}/O{optimization}: adding a nonzero constant is an "
+                    f"identity on no operand, so the add must survive: {operations}"
+                )
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for optimization in ("0", "2"):
+                observation = run.of(family, "add_smallest_normal", mode, optimization)
+                verdict = PROBE.subnormal_verdict(observation, probe)
+                assert verdict is PROBE.Verdict.FLUSHED_TO_ZERO, (
+                    f"{family}/{mode}/O{optimization} additive input flush: {verdict}"
+                )
+                assert verdict.is_evidence
+                assert observation.result_for(probe.operand) == 0x00800000
+            for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+                assert (
+                    PROBE.subnormal_verdict(
+                        run.runtime(family, "add_smallest_normal", mode, optimization), probe
+                    )
+                    is PROBE.Verdict.FLUSHED_TO_ZERO
+                ), f"{family}/{mode}/{optimization} runtime additive input flush"
+
+
+def test_a_power_of_two_division_is_not_a_division_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 15's compile-side half, and the reason the flush is measured on other divisors.
+
+    `x / 2.0f` and `x / 0.5f` are emitted as a single `fmul` under
+    `-fmetal-math-mode=safe` with `-ffp-contract=off`, which is the strictest
+    selection the offline driver offers and the one where a rewrite is least
+    expected. A probe that isolated the flush on those divisors would therefore
+    be measuring the multiplier a second time under a division's name.
+    """
+    run = probe_run()
+    for family in PROBE.FAMILIES:
+        for kernel in ("divide_by_half", "divide_by_two"):
+            operations = run.of(family.name, kernel, "safe").operations
+            assert operations is not None
+            assert [operation.opcode for operation in operations] == ["fmul"], (
+                f"{family.name}/{kernel} emitted {operations}, so the rewrite this finding "
+                f"records did not happen and the divisor choice below needs revisiting"
+            )
+
+
+def test_division_flushes_both_dimensions_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 15. A surviving `fdiv` flushes its subnormal input and its subnormal result.
+
+    `divide_by_three_eighths` divides a subnormal by `0.375`, whose exact result
+    is *normal*, so a returned zero can only come from flushing the operand.
+    `divide_by_three` divides the smallest normal by `3.0`, whose exact result is
+    subnormal, so a returned zero can only come from flushing the result. Neither
+    divisor is a power of two, so neither is rewritten into the multiply the test
+    above measures.
+    """
+    run = probe_run()
+    for family in PROBE.FAMILIES:
+        operations = run.of(family.name, "divide_by_three_eighths", "safe").operations
+        assert operations is not None
+        assert [operation.opcode for operation in operations] == ["fdiv"], (
+            f"{family.name}: the divisor must survive as a division under safe, or this "
+            f"measures something else: {operations}"
+        )
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            divided = run.of(family, "divide_by_three_eighths", mode)
+            halved = run.of(family, "divide_by_three", mode)
+            assert (
+                PROBE.subnormal_verdict(divided, PROBE.DIVIDED_INPUT_FLUSH)
+                is PROBE.Verdict.FLUSHED_TO_ZERO
+            ), f"{family}/{mode} division input flush"
+            assert (
+                PROBE.subnormal_verdict(divided, PROBE.DIVIDED_NEGATIVE_INPUT_FLUSH)
+                is PROBE.Verdict.FLUSHED_TO_ZERO
+            ), f"{family}/{mode} division signed zero"
+            assert divided.result_for(PROBE.DIVIDED_NEGATIVE_INPUT_FLUSH.operand) == 0x80000000
+            assert (
+                PROBE.subnormal_verdict(halved, PROBE.DIVIDED_RESULT_FLUSH)
+                is PROBE.Verdict.FLUSHED_TO_ZERO
+            ), f"{family}/{mode} division result flush"
+
+
+def test_a_source_level_fma_fuses_whatever_contraction_says_when_a_toolchain_gpu_resolve() -> None:
+    """Finding 16. `-ffp-contract=off` is not a defence against an `fma` written in the source.
+
+    The fused kernel carries the identical constants as `contraction_pair`, so
+    the two differ in exactly one thing. The pair returns the separately rounded
+    result at `off` and `on`; the `fma` returns the fused one at every setting
+    including `off`. The per-statement emission rule finding 6 records is
+    therefore a rule about what the *emitter* may write, not something the
+    contraction flag can enforce on its behalf.
+    """
+    run = probe_run()
+    operand = 0x3EB97EF9
+    for family in PROBE.FAMILIES:
+        for contract in PROBE.FP_CONTRACTS:
+            operations = run.of(family.name, "fused_pair", "safe", contract=contract).operations
+            assert operations is not None
+            assert [operation.opcode for operation in operations] == ["air.fma.f32"], (
+                f"{family.name}/{contract}: the fused call must be visible to the operation "
+                f"count, or a surviving operation reads as a deleted one: {operations}"
+            )
+    for family in dispatched_families(run):
+        separate = run.of(family, "contraction_pair", "safe", contract="off").result_for(operand)
+        fused = run.of(family, "contraction_pair", "safe", contract="fast").result_for(operand)
+        assert separate != fused, "the offline control must fuse, or this test proves nothing"
+        for contract in PROBE.FP_CONTRACTS:
+            observation = run.of(family, "fused_pair", "safe", contract=contract)
+            assert observation.result_for(operand) == fused, f"{family}/{contract}"
+
+
+def test_the_relaxed_modes_reassociate_a_chain_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 17. Reassociation is observable here, and the earlier negative result is bounded.
+
+    `(x + 2**-24) + 2**-24` returns `x` for `x = 1.0` when the parentheses are
+    honoured, because each add is a tie that rounds to even, and `1.0 + 2**-23`
+    when the two small terms are summed first. Under `safe` the module keeps two
+    `fadd`s and the device returns the ordered value; under `relaxed` and `fast`
+    the module keeps **one** and the device returns the reassociated one. The
+    admissibility guard carries this exactly as it carries a subnormal claim: the
+    ordered result is the operand, so only the witness on another operand
+    separates an unreassociated chain from a deleted one.
+    """
+    run = probe_run()
+    probe = PROBE.REASSOCIATION
+    for family in PROBE.FAMILIES:
+        ordered = run.of(family.name, "reassociation_chain", "safe").operations
+        assert ordered is not None
+        assert [operation.opcode for operation in ordered] == ["fadd", "fadd"], family.name
+        for mode in ("relaxed", "fast"):
+            relaxed = run.of(family.name, "reassociation_chain", mode).operations
+            assert relaxed is not None
+            assert len(relaxed) == 1 and "reassoc" in relaxed[0].flags, (
+                f"{family.name}/{mode}: the two adds must fold into one carrying reassoc"
+            )
+    for family in dispatched_families(run):
+        assert (
+            PROBE.order_verdict(run.of(family, "reassociation_chain", "safe"), probe)
+            is PROBE.Verdict.LEFT_TO_RIGHT
+        ), family
+        for mode in ("relaxed", "fast"):
+            verdict = PROBE.order_verdict(run.of(family, "reassociation_chain", mode), probe)
+            assert verdict is PROBE.Verdict.REASSOCIATED, f"{family}/{mode}: {verdict}"
+            assert verdict.is_evidence
+        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+            assert (
+                PROBE.order_verdict(
+                    run.runtime(family, "reassociation_chain", "safe", optimization), probe
+                )
+                is PROBE.Verdict.LEFT_TO_RIGHT
+            ), f"{family}/{optimization}"
+            for mode in ("relaxed", "fast"):
+                assert (
+                    PROBE.order_verdict(
+                        run.runtime(family, "reassociation_chain", mode, optimization), probe
+                    )
+                    is PROBE.Verdict.REASSOCIATED
+                ), f"{family}/{mode}/{optimization}"
+
+
+def test_the_fp32_function_mode_moves_no_measured_value_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 18. `-fmetal-math-fp32-functions=fast` changes nothing measured here.
+
+    This closes the boundary the record carried: `prototype-metal-numerical-realization`
+    reported that the signed-zero divergence also reproduces under `=fast`, and
+    nothing re-established it while the flag was pinned to `precise`. It does,
+    identically, on both compilation paths — and so do both flush dimensions.
+    """
+    run = probe_run()
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            for kernel in ("multiply_two", "multiply_half", "scale_one_bias_zero"):
+                precise = run.of(family.name, kernel, mode)
+                relaxed_functions = run.of(family.name, kernel, mode, fp32_functions="fast")
+                assert relaxed_functions.operations == precise.operations, (
+                    f"{family.name}/{kernel}/{mode}: the fp32-functions selection changed the "
+                    f"emitted arithmetic, which finding 18 says it does not"
+                )
+                assert relaxed_functions.compile_options == precise.compile_options, family.name
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for kernel in ("multiply_two", "multiply_half", "scale_one_bias_zero"):
+                assert (
+                    run.of(family, kernel, mode, fp32_functions="fast").results
+                    == run.of(family, kernel, mode).results
+                ), f"{family}/{kernel}/{mode}"
+                for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+                    assert (
+                        run.runtime(family, kernel, mode, optimization, "fast").results
+                        == run.runtime(family, kernel, mode, optimization).results
+                    ), f"{family}/{kernel}/{mode}/{optimization} runtime"
+        safe = run.of(family, "scale_one_bias_zero", "safe", fp32_functions="fast")
+        assert safe.result_for(0x80000000) == 0x00000000, family
+        for mode in ("relaxed", "fast"):
+            observation = run.of(family, "scale_one_bias_zero", mode, fp32_functions="fast")
+            assert observation.result_for(0x80000000) == 0x80000000, f"{family}/{mode}"
+
+
+def test_the_further_optimization_levels_behave_like_o2_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 19. `-O1`, `-O3`, and `-Os` behave like `-O2`, and `-O0` remains the outlier.
+
+    The covering set carries `scale_one_bias_zero` under `safe`, which is the
+    kernel and mode where the level is known to move the surviving operation
+    count; the exhaustive sweep carries all three levels across all three modes
+    and the four kernels whose counts or results a level could change. That
+    `-O0` is the one level at which the front end keeps arithmetic a later stage
+    then removes is therefore a statement about `-O0` and not about "low
+    optimization levels".
+    """
+    run = probe_run()
+    levels = [level for level in PROBE.OPTIMIZATIONS if level not in {"0", "2"}]
+    assert levels, "the widened optimization axis disappeared"
+    for family in PROBE.FAMILIES:
+        reference = run.of(family.name, "scale_one_bias_zero", "safe", "2")
+        for level in levels:
+            observation = run.of(family.name, "scale_one_bias_zero", "safe", level)
+            assert observation.operations == reference.operations, f"{family.name}/O{level}"
+            assert observation.compile_options == reference.compile_options, (
+                f"{family.name}/{level}"
+            )
+        assert run.of(family.name, "scale_one_bias_zero", "safe", "0").operation_count == 2, (
+            f"{family.name}: -O0 must remain the level at which both operations survive, or "
+            f"finding 19 is stating a contrast that no longer exists"
+        )
+    for family in dispatched_families(run):
+        reference = run.of(family, "scale_one_bias_zero", "safe", "2").results
+        for level in levels:
+            assert run.of(family, "scale_one_bias_zero", "safe", level).results == reference, (
+                f"{family}/O{level}"
+            )
 
 
 # --------------------------------------------------------------------------
@@ -1291,7 +1669,7 @@ def test_the_retained_record_still_holds_when_a_toolchain_and_gpu_resolve() -> N
     the difference instead of comparing across it.
     """
     run = probe_run()
-    stored = PROBE.read_record(RECORD)
+    stored = PROBE.read_record(RECORDS[PROBE.matrix()])
     differing = {
         key: (stored.get(f"environment.{key}"), run.environment[key])
         for key in PROBE.qualifying_keys(run.environment)
@@ -1301,11 +1679,13 @@ def test_the_retained_record_still_holds_when_a_toolchain_and_gpu_resolve() -> N
         message = f"retained record comparison skipped, environment row differs: {differing}"
         print(message, file=sys.stderr)
         pytest.skip(message)
+    assert not PROBE.matrix_mismatch(stored), "the wrong retained record was selected for this run"
     differences = PROBE.compare_record(run, stored)
     assert not differences, (
         "the retained record no longer describes this toolchain row. If the change is intended, "
         "regenerate it with `uv run --locked python spikes/apple-targets/numerical_probe.py "
-        f"--record {RECORD}` and say in the research record what moved. Differences: {differences}"
+        f"--record {RECORDS[PROBE.matrix()]}` and say in the research record what moved. "
+        f"Differences: {differences}"
     )
     mutated = dict(stored)
     corrupted = next(key for key in sorted(mutated) if key.endswith(".results"))
