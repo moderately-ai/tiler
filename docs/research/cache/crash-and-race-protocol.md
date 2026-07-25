@@ -77,6 +77,9 @@ These facts do not establish equivalent behavior for every network filesystem,
 Windows filesystem, container mount, or cache directory supplied by a user.
 The production cache needs a platform adapter and an explicit supported-
 filesystem contract; this spike establishes the first Apple-host protocol.
+[The supported-filesystem note](supported-filesystems.md) now states that
+contract and measures it; the platform adapter remains `lock.rs` naming the
+primitive in one place, because no supported platform has yet needed a second.
 
 ## Cache namespace
 
@@ -226,7 +229,10 @@ contended key is better selection as well as bounded latency.
 
 Windows cannot inherit the open-unlinked-reader conclusion. Its sharing flags,
 replacement API, and deletion semantics need their own spike before the cache
-core claims Windows support.
+core claims Windows support. That condition is unmet and no such spike is owed:
+`AGENTS.md` supports macOS and Debian-family Linux only, and the Rust sub-gate
+accepts only the macOS arm64 and GNU Linux x86-64 profiles. The sentence stands
+as the obligation that would revive if the support decision ever changed.
 
 ## Rust version consequence
 
@@ -314,7 +320,19 @@ of scope for this ticket.
 4. Measure cache latency and survival for `process-crash` versus `fsync`; only
    then decide the default in an ADR.
 5. Define supported local filesystems and add platform-specific Windows and
-   network-filesystem feasibility gates before claiming portability.
+   network-filesystem feasibility gates before claiming portability. **Closed**
+   by [the supported-filesystem note](supported-filesystems.md), with one part
+   dissolved rather than answered. It states the six properties the protocol
+   rests on, measures them with `spikes/cache/filesystem_probe.rs` on local APFS
+   and local exFAT, derives the Debian-family Linux members from POSIX and the
+   Linux manual pages without measuring them, and excludes network filesystems —
+   both platforms document a mount mode under which an advisory lock reports
+   success while excluding only the local client, and no single host can detect
+   it. That failure costs compile-once suppression and not correctness, which is
+   why the note refuses an unrecognized filesystem nowhere and reports every
+   locally decidable failure instead. The **Windows** half is dissolved: this
+   note's Windows sentence below is conditional on the cache core claiming
+   Windows support, and the repository does not claim it.
 6. Design bounded GC/accounting separately and stress eviction with active
    writers/readers at 1, 8, and 32 processes. **Closed** by
    [the collection note](bounded-collection.md):

@@ -796,6 +796,39 @@ Rust's standard `File::lock` requires an MSRV of at least 1.89. Choosing an
 older MSRV requires a separately audited lock adapter. See the
 [crash/race protocol and harness](research/cache/crash-and-race-protocol.md).
 
+### Supported filesystems
+
+The protocol requires six properties of the filesystem holding a cache root: the
+temporary and final trees share one filesystem; `rename` replaces the final path
+atomically; `create_new` refuses an existing path; a descriptor opened before an
+unlink keeps reading; an exclusive advisory lock on the per-key file excludes
+every contender; and a modification time is reported. A root is supported when
+all six hold. `spikes/cache/filesystem_probe.rs` measures them against a
+candidate directory and exits non-zero when one is refuted.
+
+Local APFS and local exFAT on macOS are measured. Local ext4, btrfs, and xfs on
+Debian-family Linux are derived from POSIX and the Linux manual pages and remain
+unmeasured. **Network filesystems are not supported**, because both platforms
+document a mount mode under which an advisory lock excludes only processes on
+the same client while still reporting success.
+
+Only the lock property can fail invisibly, and it costs duplicate compiler work
+rather than correctness: complete identity, immutable final entries, validation
+on every hit, and atomic publication do not rest on the filesystem, so every
+filesystem failure resolves to a miss, a reported unavailability, an unpublished
+result, or repeated work. The cache therefore states this contract and does not
+refuse an unrecognized filesystem — a refusal would make an optional accelerator
+a correctness dependency, would fail closed on every filesystem nobody
+enumerated, and would still not detect the one case that motivates it. Every
+locally decidable failure is already reported: a cross-filesystem rename as
+`CrossesFilesystems`, an unsupported lock as an `AcquireLock` unavailability.
+
+Access time is **not** used to order eviction. On both measured filesystems it is
+maintained under a `relatime`-like predicate or not at all, so an immutable
+entry's access time advances at most once — at its first read after publication —
+which cannot distinguish an entry used on every build from one used once. See
+[the supported-filesystem contract](research/cache/supported-filesystems.md).
+
 ## Loading and validation
 
 Before execution, the runtime validates:

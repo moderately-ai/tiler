@@ -7,8 +7,8 @@ topics: ["cache", "concurrency", "durability"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
-supports: ["tiler.research.cache.crash-race-protocol", "tiler.research.cache.bounded-collection"]
-entrypoints: ["spikes/cache/cache_harness.rs", "crates/tiler-cache/src/expansion/harness.rs"]
+supports: ["tiler.research.cache.crash-race-protocol", "tiler.research.cache.bounded-collection", "tiler.research.cache.supported-filesystems"]
+entrypoints: ["spikes/cache/cache_harness.rs", "spikes/cache/filesystem_probe.rs", "crates/tiler-cache/src/expansion/harness.rs"]
 last_verified: "2026-07-25"
 ticket: "port-the-cache-harness-to-the-production-bundle"
 ---
@@ -106,3 +106,34 @@ delimited, so it changes how long the pre-rename window is and not what a killed
 writer leaves at a content path. A positive end-to-end hit carrying a real
 compiled artifact is therefore still unmeasured and belongs to the orchestrator
 holding both crates.
+
+## Deciding whether a directory can hold a cache
+
+Everything above assumes the filesystem provides what the protocol asks of it.
+`filesystem_probe.rs` is what asks:
+
+```sh
+rustc --edition 2021 spikes/cache/filesystem_probe.rs -o /tmp/tiler-fs-probe
+/tmp/tiler-fs-probe ~/Library/Caches \
+  --across /Volumes/OtherFilesystem/scratch \
+  --evidence /tmp/tiler-fs-evidence.tsv
+```
+
+It measures the six properties the cache rests on — one filesystem under the
+root, `rename` replacing without ever exposing a missing name, `create_new`
+refusing an existing path, a descriptor still readable after its file is
+unlinked, an exclusive advisory lock excluding a *separate process* and released
+when that process is killed, and a reportable modification time — plus how the
+host maintains access time. One tab-separated row per property, and a non-zero
+exit when a required one is refuted.
+
+Two details keep a pass from being vacuous. The lock checks re-execute the probe
+so the contenders are real processes that handshake over a pipe rather than
+sleeping, and `--across` reports `skipped` rather than passing when the directory
+it names turns out to share the root's device.
+
+The tracked
+[2026-07-25 result](results/filesystem-probe-macos-27.0-2026-07-25.tsv) covers
+local APFS and a formatted exFAT RAM disk on one macOS host. No Linux filesystem
+has been measured. See
+[the supported-filesystem contract](../../docs/research/cache/supported-filesystems.md).

@@ -1,0 +1,34 @@
+# tiler-fs-probe, macOS 27.0 build 26A5388g, Darwin 27.0.0 arm64, rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+# APFS root: /Users/<user>/Library/Caches on /System/Volumes/Data (apfs, journaled, no noatime).
+# exFAT root: 64 MB RAM disk, `hdiutil attach -nomount ram://131072` then `diskutil eraseVolume ExFAT TILERFS`,
+#   mounted (exfat, local, nodev, nosuid, noowners, noatime, fskit). Detached after the run.
+# Each run passed --across pointing at the other filesystem, so the cross-device rename check is not vacuous.
+# epoch	root	property	verdict	detail
+1785020953	/Users/<user>/Library/Caches	host	observed	Darwin 27.0.0 arm64
+1785020953	/Users/<user>/Library/Caches	same-device	holds	entries/tmp/locks st_dev=16777231
+1785020953	/Users/<user>/Library/Caches	create-new-excludes	holds	AlreadyExists
+1785020953	/Users/<user>/Library/Caches	rename-replaces	holds	target reads "second"
+1785020953	/Users/<user>/Library/Caches	rename-preserves-open-descriptor	holds	descriptor opened before the rename reads "first"
+1785020953	/Users/<user>/Library/Caches	rename-never-missing	holds	400 publications, 2245 reads, 0 absent, 0 malformed
+1785020953	/Users/<user>/Library/Caches	open-unlinked-reader	holds	256 bytes read after unlink, identical=true
+1785020953	/Users/<user>/Library/Caches	lock-excludes-processes	holds	a second process was refused the held lock
+1785020953	/Users/<user>/Library/Caches	lock-released-on-kill	holds	child held=true, survivor acquired=true
+1785020953	/Users/<user>/Library/Caches	mtime-granularity-ns	observed	48583
+1785020953	/Users/<user>/Library/Caches	atime-class	observed	relatime (created=1785020947584495843 read1=1785020949589657921 read2=1785020949589657921 after-mtime-bump=1785020953598050695)
+1785020953	/Users/<user>/Library/Caches	atime-usable-as-use-recency	observed	no
+1785020953	/Users/<user>/Library/Caches	rename-across-filesystems-refused	holds	st_dev 16777231 -> 16777248: Some(CrossesDevices)
+1785020953	/Users/<user>/Library/Caches	rename-across-filesystems-kind	observed	Some(CrossesDevices) (the store classifies CrossesDevices)
+1785020960	/Volumes/TILERFS	host	observed	Darwin 27.0.0 arm64
+1785020960	/Volumes/TILERFS	same-device	holds	entries/tmp/locks st_dev=16777248
+1785020960	/Volumes/TILERFS	create-new-excludes	holds	AlreadyExists
+1785020960	/Volumes/TILERFS	rename-replaces	holds	target reads "second"
+1785020960	/Volumes/TILERFS	rename-preserves-open-descriptor	holds	descriptor opened before the rename reads "first"
+1785020960	/Volumes/TILERFS	rename-never-missing	holds	400 publications, 24468 reads, 0 absent, 0 malformed
+1785020960	/Volumes/TILERFS	open-unlinked-reader	holds	256 bytes read after unlink, identical=true
+1785020960	/Volumes/TILERFS	lock-excludes-processes	holds	a second process was refused the held lock
+1785020960	/Volumes/TILERFS	lock-released-on-kill	holds	child held=true, survivor acquired=true
+1785020960	/Volumes/TILERFS	mtime-granularity-ns	observed	10000000
+1785020960	/Volumes/TILERFS	atime-class	observed	none (created=1785020954000000000 read1=1785020954000000000 read2=1785020954000000000 after-mtime-bump=1785020954000000000)
+1785020960	/Volumes/TILERFS	atime-usable-as-use-recency	observed	no
+1785020960	/Volumes/TILERFS	rename-across-filesystems-refused	holds	st_dev 16777248 -> 16777231: Some(CrossesDevices)
+1785020960	/Volumes/TILERFS	rename-across-filesystems-kind	observed	Some(CrossesDevices) (the store classifies CrossesDevices)
