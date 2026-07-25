@@ -776,8 +776,19 @@ impl OperationConformance {
 }
 
 /// Observable effect class of an atomic semantic operation.
+///
+/// Deliberately **not** `#[non_exhaustive]`, under ADR 0074's amended
+/// convention 5b: three encoders outside this crate map this vocabulary
+/// *totally* onto a canonical identity tag — `tiler_compiler::legality`'s and
+/// `tiler_compiler::fusion_legality`'s `effect_tag`, alongside this crate's own
+/// registry encoder — and no wildcard value is derivable from the variant it
+/// would cover. Convention 3 requires those matches to be exhaustive with no
+/// wildcard arm, which `#[non_exhaustive]` makes uncompilable across a crate
+/// boundary, so where 3 and 5 meet, 3 wins. The failure the attribute would
+/// buy back is one in-workspace source edit that `cargo check` enumerates; the
+/// failure it would cost is two structurally distinct occurrences sharing
+/// identity bytes.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum OperationEffect {
     /// Deterministic and free of externally observable side effects.
     Pure,

@@ -565,3 +565,23 @@ unsupported case rather than a licence to copy the vocabulary.
 Canonical trace content is data and the renderer is presentation. Nothing in this
 contract requires an explain trace to be serialized into an artifact envelope,
 and the artifact contract does not carry one.
+
+### What the public compiler boundary exposes of a trace
+
+*Added 2026-07-25 by `prototype-public-compiler-api`, which settled the seven public-surface questions the typed-explain work deferred. Each statement below is derived from a contract or a measured property rather than chosen, and each names what would reopen it.*
+
+**A trace is complete or absent, never partial, and a failed compilation returns the one it has.** A detail record that would exceed the retained-trace ceiling fails the compilation closed with a typed capacity error rather than being dropped, so a sealed trace is complete by construction and no truncated form exists to describe. A refusal that happens *before* a verified per-target request exists — request verification, semantic output typing, numerical-contract resolution, normalization, target selection — has no trace to seal, and reports that absence as a distinct state. Discarding a sealed trace on the failure path is not an option this contract leaves open: a rejection reported with no stage, reason code, rule, or predicate is the collapse the paragraph above forbids.
+
+**Rendering is deterministic and total; its spelling is not a contract.** One trace renders to one string, and every retained record appears — the renderer has no filter and no bound. The rendered text is a diagnostic for a human reader and is not a parse target, and its leading `tiler-explain-v<N>` names the renderer version so a change to the rendering is visible. Committing to the text would create a second description of a trace that has to be kept in agreement with its canonical bytes, which is the duplicate-derivation hazard the data/presentation split exists to prevent.
+
+**The renderer header's request qualifier is a correlation label, not an identity.** It is a short non-cryptographic fold of the canonical request subject, so two distinct requests may share one. ADR 0074 convention 2 governs it as a presentation label: it is never an equality, dedup, or cache-key input. Redacting it protects nothing — it is derived from the caller's own request — and removing it would leave two rendered traces in one log indistinguishable.
+
+**Nothing in a trace is redacted.** Every provider key and revision a trace attributes is either minted by Tiler or installed by the caller's own request, because the writer refuses a rule attributed to any other provider. There is no third party's detail present to withhold, and withholding one would make a rejection unexplainable, which this contract forbids. Reconsider when a registry the caller does not control can install rules.
+
+**There is no retention control to expose.** The configurable detail budget is gone; exceeding the ceiling is a typed compile failure. Re-introducing a control would re-introduce a trace that is silently incomplete.
+
+**Only the compiler mints an evidence receipt, and only from a proof it derived.** A receipt carries the `SoundProof` evidence class, and this repository keeps `SoundProof`, exhaustive finite evidence, empirical evidence, normative guarantees, and `Unknown` as distinct classes. A receipt supplied by an external provider is a *claim*; recording it as `SoundProof` would convert an assertion into a proof at the boundary, and a fusion legality proof is what admits a rewrite. A provider's contribution is its identity and revision, which the compiler attributes and bounds against the request's installed registry — that is provenance, not evidence. This does not change if a provider can one day ship a machine-checkable proof: the compiler would still mint the receipt, from its own re-check.
+
+**Every identity the boundary emits is canonical bytes, never a digest, and never both.** ADR 0074 convention 2 states the rule; a digest here would be a second identity over the same subject, requiring a stated hash and a collision argument, and the production digest implementation is not yet chosen. Two published values a consumer can disagree about is strictly worse than one.
+
+**Public enums follow ADR 0074 convention 5's clause test, and never a parallel versioned schema view.** Such a view is a second, hand-maintained description of an enum that nothing keeps in agreement, which is convention 3's argument against encoding a projection instead of its source; and it buys compatibility, which ADR 0075 records as a rejected premise while no crate is publishable.

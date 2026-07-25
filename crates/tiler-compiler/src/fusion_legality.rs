@@ -1236,12 +1236,17 @@ fn encode_occurrence_identity(
     FusionLegalityIdentity(bytes)
 }
 
+/// Encodes one observable effect class into fusion-legality identity.
+///
+/// Exhaustive with no wildcard arm (ADR 0074 convention 3): a second effect
+/// must choose its own tag at this site as a compile error, because a wildcard
+/// would give two structurally distinct occurrences the same identity bytes.
+/// That is only expressible because `OperationEffect` deliberately carries no
+/// `#[non_exhaustive]`, which is what convention 5b decides for a vocabulary an
+/// out-of-crate encoder maps totally.
 const fn effect_tag(effect: OperationEffect) -> u8 {
     match effect {
         OperationEffect::Pure => 1,
-        // Reserved: a future non-pure effect must choose its own distinct tag
-        // rather than silently sharing the pure encoding.
-        _ => u8::MAX,
     }
 }
 

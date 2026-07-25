@@ -27,3 +27,19 @@ Changing the stage coverage type is a public-boundary change in `tiler_ir::progr
 ## Closes when
 
 A verified kernel program names the refinement identity behind each covered occurrence, program identity separates two programs that differ only in which verified index region proves a stage, a recorded proof gap stays distinguishable from a refinement, and `uv run --locked python scripts/check_repository.py` passes.
+
+## Scope finding 2026-07-25: this is not landable inside `implementation/ir` + `implementation/compiler`
+
+Claimed by `agent-api` on base `6fae4f3`, scoped, **not implemented**, and released with what the scoping established. Nothing below is a measurement of an attempted change — no code was written for this ticket — so treat the blast radius as enumerated rather than compiled.
+
+**Fact — a second encoder outside both declared scopes folds stage coverage into a different identity.** `crates/tiler-artifact/src/program/model.rs::stage_key` builds an artifact-program stage key from exactly the same two ingredients as `tiler_ir::program::model.rs::stage_key` — the bound kernel's canonical identity, then the covered occurrences — under its own domain tag. The exact check is `grep -n "STAGE_KEY_DOMAIN" crates/tiler-artifact/src/program/model.rs crates/tiler-ir/src/program/model.rs`, which shows `b"tiler.artifact-program.stage.v1\0"` beside `b"tiler.kernel-program.stage.v1\0"`.
+
+The tags differ, so these are two deliberately separated subjects and **not** a duplicated-authority defect. That is precisely why they matter here: they are independent encoders that happen to agree today about what a stage *is*. Adding refinement evidence to coverage in `tiler-ir` alone changes one of them and not the other, and the consequence is not cosmetic — the artifact's stage key would stop distinguishing two stages the shared IR now distinguishes, at the layer where dedup and caching actually happen. Whether refinement evidence enters artifact-program stage identity is therefore a decision this ticket forces and cannot defer, and it belongs to `implementation/artifact`.
+
+**Fact — the builder signature change breaks three sites outside both declared scopes.** Changing `KernelProgramBuilder::push_stage`'s coverage parameter breaks `crates/tiler-artifact/src/program/mod.rs:208` (a doctest, so a compile failure in the Rust gate's doctest phase rather than in `cargo check`) and `crates/tiler-artifact/src/program/tests.rs:186` and `:347`. The exact check is `grep -rn "push_stage" crates/ prototypes/ spikes/`.
+
+**Note for whoever reads that grep.** It also matches `ArtifactProgramBuilder::push_stage`, a different builder on a different type with the same method name. The three sites above are the ones that construct a `tiler_ir` kernel program as a fixture; do not conclude from the method name alone which builder a hit belongs to.
+
+**Consequence for scheduling.** Add `implementation/artifact` to this ticket's scopes before dispatching it, and give it to a worker holding all three. At the time of this finding `implementation/artifact` was held by `prototype-artifact-family-delivery` (in-progress) and `carry-the-metal-payload-in-an-artifact-envelope` (review), so the scope was contended; check `tkt guard` again rather than trusting that snapshot.
+
+**Unverified.** Whether the change also moves any `tiler-metal` golden was not established. `crates/tiler-metal/goldens/*.metal` embed the *kernel* identity digest and the *scheduled region* identity digest, neither of which folds program stage coverage, so the expectation is that it does not — but that is an inference from what the goldens contain, not a compiled result.
