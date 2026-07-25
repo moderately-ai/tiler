@@ -3,7 +3,7 @@ id: carry-the-metal-payload-in-an-artifact-envelope
 title: Carry the Metal payload in an artifact envelope and round-trip it
 status: in-progress
 priority: p0
-dependencies: [assemble-the-metal-payload-from-emission-and-compilation, relocate-abi-expressions-into-tiler-ir]
+dependencies: [assemble-the-metal-payload-from-emission-and-compilation, relocate-abi-expressions-into-tiler-ir, name-the-resolved-lowering-capability]
 related: [route-the-runtime-proof-through-the-artifact-envelope, prototype-public-compiler-api]
 scopes: [implementation/metal-aot, implementation/artifact, implementation/compiler]
 shared_scopes: [project/tickets]
@@ -74,3 +74,23 @@ That is directly on point and more specific than the `docs/artifact-abi.md` "con
 The scalar truths to lift into expression form already exist and should not be re-derived: grid threads = iteration-shape product (`crates/tiler-compiler/src/physical.rs:424`, invariant at `crates/tiler-ir/src/schedule/builder.rs:286`), bytes = elements x element width (`crates/tiler-compiler/src/program.rs:490`), window length = required bytes (`crates/tiler-ir/src/program/builder.rs:276`).
 
 **Blocked on `relocate-abi-expressions-into-tiler-ir`.** Building either option now would build on a divergence from an accepted decision.
+
+## Unblocked, and the dilemma dissolved rather than decided
+
+`relocate-abi-expressions-into-tiler-ir` landed, and with `AbiExpr` in `tiler-ir` the choice this ticket agonized over stops existing. Both recorded options — hand out the plan record, or add `tiler-compiler → tiler-artifact` — were consequences of the type being in the wrong crate, exactly as the retraction predicted. Neither is taken.
+
+**What landed (commit `d6a69bf`).** `PlanAlternative::abi() -> AbiConstruction<'_>` exposes the applicability guard, per-binding accessible byte ranges, and per-entry launch geometry **as arena positions into a `Vec<ExprNode>`**, plus `kernel_program() -> &VerifiedKernelProgram`. The vocabulary is `tiler_ir::program::abi`, which both crates already depend on, so no compiler-internal identifier crosses and no new dependency edge is needed. The compiler derives (ADR 0068); the orchestrator replays onto the builder's own arena. The replay is mechanical and introduces no second derivation, because the decision about what each expression *says* was made in the compiler.
+
+`KernelProgram::core()` lost its `#[cfg(test)]`; its own doc comment had been deferring to "a reviewed public compiler facade", which `session` now is.
+
+## Two findings from reading the verifier, both of which shape the assembler
+
+**1. The replay must be reachability-pruned, not wholesale.** `crates/tiler-artifact/src/program/verify.rs:29` raises `ArtifactDiagnostic::UnusedExpression` when any expression in the arena is unreachable from a use site. The compiler's canonical graph is nine nodes serving *both* alternatives: position 5 (input elements) is the materialized plan's stage-0 launch count and is referenced by nothing in the fused variant. Replaying the arena wholesale therefore fails whole-artifact verification for the fused plan. The assembler must walk the sub-DAG reachable from that variant's own roots. This is straightforward — operands always precede their nodes, so a single forward pass that skips unreachable positions preserves the ordering invariant, and `push_node` dedupes by content key anyway.
+
+This is a case where the codec was right and the naive assembly was wrong, which is the outcome the **Do not** section above asks for.
+
+**2. Blocked on a real gap: the compiler cannot name the capability a provider supplied.** `verify.rs:26-28` requires at least one `SelectedProvider`, and `SelectedProvider` needs a governed `CapabilityKey`. The compiler's `LoweringProviderIdentity` (`crates/tiler-compiler/src/request.rs:201-204`) carries only `provider: ProviderIdentity` and `capability_revision: LoweringCapabilityRevision`. There is **no capability key or family on it** — `LoweringFamily` exists at `crates/tiler-compiler/src/capability.rs:68` and is recorded on `RegisteredLoweringCapability` (`capability.rs:259-263`), but it is not propagated into the plan's `lowering_providers`.
+
+So an assembler outside `tiler-compiler` has no faithful value for `SelectedProvider::capability`. Inventing a plausible key would put a capability into artifact identity that is not tied to the lowering that actually ran — `AGENTS.md` requires unsupported cases to "reject explicitly rather than silently approximating them", and ADR 0072 makes selected providers part of complete program identity, so an invented key is a wrong identity rather than a cosmetic placeholder.
+
+**This is not a reason to stop; it is one more thing to build.** The fix is to carry the resolved capability's governed key alongside its revision from capability resolution into `LoweringProviderIdentity`, and expose it on the session view beside the provider. That is a `tiler-compiler` change in `capability.rs`/`request.rs`, in this ticket's declared scopes. Split out as `name-the-resolved-lowering-capability` only because it is independently testable and has its own closing condition, not to defer it — this ticket depends on it and cannot close first.
