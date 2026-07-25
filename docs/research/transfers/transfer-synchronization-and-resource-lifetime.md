@@ -33,6 +33,8 @@ placement obligation. "Enforcer, excluded neighbour, and the asymmetry between
 repacking and conversion" below derives that split from the accepted definition
 rather than from this memo's own preference.
 
+Recomputation is a member and is the one variant that does not move an existing version — it re-derives one, so it is the only enforcer whose value preservation its mechanism cannot discharge. "The recompute obligation" below states what it must carry instead: bit-identity with the version it stands in for, discharged structurally by four conditions that are decidable from identities and stated facts rather than from a value model, and a typed pre-commit rejection when any of them fails.
+
 Every executable transfer names both endpoint placements and allocation
 regions, the chosen mechanism, source-producer and destination-consumer
 dependencies, completion and coherence obligations, possible hazards, and the
@@ -189,6 +191,43 @@ TransferStage {
   failure_contract,
 }
 
+// The one enforcer with no `source: TransferEndpoint`. It reads the recomputed
+// region's operands and writes a destination; `reference_placement` describes
+// the version it must agree with, which a plan that kept the producer's result
+// would have delivered and which this plan need not materialize anywhere.
+RecomputeStage {
+  stage_id,
+  logical_value_id,
+  authoritative_version,
+  destination: TransferEndpoint,
+  reference_placement: TransferEndpoint,
+  operands: [TransferEndpoint],
+  value_preservation: RecomputeValuePreservation,
+  dependencies: TransferDependencies,
+  hazard_contract,
+  retention_obligations,
+  failure_contract,
+}
+
+// All four are decidable from identities and stated facts. None requires a
+// value model, and none may be replaced by an estimate or a cost.
+RecomputeValuePreservation {
+  implementation_identity: RegionImplementationId,     // equals the reference's
+  reference_implementation_identity: RegionImplementationId,
+  delivered_realization: DeliveredNumericalRealization, // equals the reference's
+  reference_delivered_realization: DeliveredNumericalRealization,
+  determinism_level: PlanDeterministic,
+  operand_closure: [OperandDelivery],                   // one per operand
+}
+
+OperandDelivery {
+  operand_index,
+  logical_value_id,
+  authoritative_version,
+  delivered_placement,
+  discharging_enforcer,
+}
+
 ExecutionLeg {
   leg_id,
   symbolic_affinity,
@@ -239,6 +278,12 @@ range, device/context, allocator/pool, and imported ownership evidence.
 | `ManagedMigration` | backing identity may remain while residence/authority changes | same version and encoding | provider migration/coherence protocol; forbidden concurrent accesses |
 | `MaterializeLayout` | new destination | same logical value and dtype; addressing/layout may change | verified logical access relation and kernel/copy schedule |
 | `RepackEncoding` | new destination | explicitly changes storage encoding; the represented values are unchanged | governed encoding transform and downstream ABI compatibility |
+| `Recompute` | new destination; no source version is read, and none need exist | same logical value version and same bits, re-derived rather than moved; encoding and addressing are the recomputing implementation's declared output contract | complete `RecomputeValuePreservation` record: equal `RegionImplementation` identity, equal delivered numerical realization, plan determinism at the executing scope, and an operand-closure entry for every operand |
+
+Every row above is value-preserving, and the last one is the only row whose
+mechanism does not discharge that by itself — its fourth column is a required
+proof record rather than a capability or a protocol. "The recompute obligation"
+below derives it.
 
 The excluded neighbour, listed separately because every row above is
 value-preserving and this one is not:
@@ -248,8 +293,8 @@ value-preserving and this one is not:
 | `ConvertDtype` | new destination | explicitly changes represented values/dtype | ADR 0010 conversion family and numerical contract |
 
 `TransferStage` is the encoding-preserving movement variant of the broader
-enforcer family. `AliasImport`, `PeerAccess`, `ManagedMigration`, and
-`MaterializeLayout` are not mislabeled as raw byte copies. A backend may
+enforcer family. `AliasImport`, `PeerAccess`, `ManagedMigration`,
+`MaterializeLayout`, and `Recompute` are not mislabeled as raw byte copies. A backend may
 fuse a layout materialization with other computation only if the selected
 physical program still discharges the same delivered-placement, dependency,
 hazard, and retention obligations.
@@ -315,10 +360,11 @@ one the definition does not settle: it does not move an authoritative version,
 it re-derives one, so it is value-preserving only if the recomputation is proved
 to produce the same values under the effective numerical contract. ADR 0047
 accepted recomputation as an enforcer and that acceptance is preserved here; what
-is recorded is that its value-preservation is a proof obligation this memo has
-not stated, where every other row's is discharged by the mechanism itself.
-[`qualify-recompute-value-preservation-in-the-transfer-taxonomy`](../../../tickets/qualify-recompute-value-preservation-in-the-transfer-taxonomy.md)
-owns closing it.
+this section originally recorded is that its value-preservation was a proof
+obligation this memo had not stated, where every other row's is discharged by the
+mechanism itself.
+
+**Fact — that obligation is now stated, and the row exists.** [`qualify-recompute-value-preservation-in-the-transfer-taxonomy`](../../../tickets/qualify-recompute-value-preservation-in-the-transfer-taxonomy.md) closed it. `Recompute` has a taxonomy row above, a `RecomputeStage` shape, a structural item in the portable verifier, a typed pre-commit failure kind, a worked profile, and spike coverage. "The recompute obligation" immediately below is the derivation; nothing about the variant's acceptance changed, and the eight-of-nine reading in this section is preserved as the finding that produced it.
 
 **Fact — the reach of this reconciliation.** This memo is a proposal that no
 accepted ADR and no normative contract has incorporated, so this is terminology
@@ -328,6 +374,55 @@ contract's citation of this taxonomy, which says it "keeps both distinct from
 `ConvertDtype`" and stays exactly true under the split. The exact check:
 `grep -rn ConvertDtype docs spikes crates` returns this file and
 `docs/compiler/optimizer.md` and nothing else.
+
+### The recompute obligation
+
+**Fact — `Recompute` is the one enforcer with no source endpoint, and that, not only the missing row, is why the gap survived a table built to make this comparison.** Every other variant names a `source: TransferEndpoint` holding an authoritative version that already exists, and the portable verifier's structural items are written over that pair: one compares the source's and destination's value version and storage encoding, and the next stops a repack or a conversion being absorbed into the movement between them. A recomputation has no source endpoint. It reads the recomputed region's operands and writes a destination, and the version it must agree with need not be materialized anywhere in the plan. Four of the eight structural items still apply to it unchanged — range arithmetic, two-sided dependencies, acyclicity, and retention roles — and the four that carry the value-preservation weight are exactly the four with no subject: the version-and-encoding comparison, the absorbed-repack-or-conversion check, the copy-overlap rejection, and the alias proof. None was false about a recomputation, so none failed; each had nothing to speak about. The row alone would therefore not have closed the gap, and the verifier gains an item of its own below.
+
+**Fact — the accepted decisions admit recomputation without saying what makes one legal.** [ADR 0047](../../decisions/0047-model-placement-as-physical-properties.md) lists "legal recomputation" among the enforcers the optimizer may use. The [device-placement and memory-domain research](../placement/device-placement-and-memory-domains.md) it takes its evidence from states the condition as "recomputation at the destination when the producer is pure and the numerical contract permits the same result". Purity is a checkable property of the producer. The second clause names the obligation and does not say what discharges it; the rest of this section says.
+
+#### The relation is bit-identity, and a requester-declared weaker relation is not available
+
+**Proposal.** The delivered value must be bit-identical, element for element over the delivered logical view, to the version the enforcer stands in for — the version a plan that retained the producer's result and moved it would have delivered. Storage encoding and addressing may differ exactly as they may under any other enforcer; a boundary that requires a different one composes a `RepackEncoding` or `MaterializeLayout` after the recomputation rather than absorbing it, which is the same rule the two movement rows already carry.
+
+**Inference — a weaker relation the boundary's requester declared acceptable is eliminated, and by derivation rather than by preference.** Three checks remove it and each is independently sufficient.
+
+First, the comparison is between two plans of one program, not between a program and a reference. Enforcer legality rests on the [optimizer contract](../../compiler/optimizer.md#enforcers)'s reading of ADR 0001, that "several physical schedules implement one semantic group identically, so a schedule-level step that altered a value would make one semantic program mean different things under different plans". A tolerance attached to the boundary would make two plans deliver different values by construction. That is the conclusion the argument exists to forbid, not a parameter of it.
+
+Second, a per-boundary tolerance is a second numerical authority scoped below the program. [ADR 0076](../../decisions/0076-declare-target-honourable-numerical-realizations.md) states that "no authority may narrow, weaken, or substitute the caller's stated numerical contract in order to make a target feasible", and its stated consequence is that a caller's resolved contract "does not become a per-region choice, and two regions of one program never honour different contracts". A tolerance introduced at a placement boundary is exactly a per-region choice, arriving through the placement layer instead of the request.
+
+Third, and decisively, a tolerance would price meaning. A planner reaches `Recompute` by comparing it against a transfer on cost, so if the recomputation may deliver a value merely within a declared tolerance, the cheaper plan is cheaper partly because it delivers a different value. That is the mistake [ADR 0076](../../decisions/0076-declare-target-honourable-numerical-realizations.md) names as "treating a flush-tolerant plan as a cheaper alternative to a preserving one", and it is the hard-feasibility-versus-cost separation being crossed rather than traded.
+
+The future region/output accuracy layer does not rescue it. [Numerical semantics](../../numerical-semantics.md) requires such a goal to identify an observable output and states that "No region goal silently overrides a local operation contract." A recompute boundary is an internal placement obligation and not an observable output, so even that additive layer would not reach it.
+
+#### The discharge is structural, one identity layer above the obvious candidate
+
+**Fact — `ScheduledRegion` identity excludes the two facts this turns on.** The [IR contract](../../ir.md) layers identity: `IndexRegion` "commits to canonical iteration/scalar/access content and to its declared numerical realization, complete over every dimension"; `ScheduledRegion` "commits to its `IndexRegion` plus normalized schedule"; and `RegionImplementation` commits to its body, boundary contracts, applicability predicates, target requirements, and resource requirements, "including the selected numerical realization/provider". The same contract adds that "The selected realization/provider and every output-affecting helper and flag remain physical-plan and artifact identity", puts "Output-affecting backend/compiler configuration and selected target identity" in artifact identity, and excludes targets from `IndexRegion` identity outright.
+
+**Inference — so "the same `ScheduledRegion` identity with the same numerical realization" is not sufficient, and the case that breaks it is this enforcer's ordinary case rather than an exotic one.** A recomputation exists to run where the retained version is not, so it is selected against the destination's requirements, and a different implementation over the same scheduled region is the expected outcome rather than bad luck. Two implementations refining one declared realization need not agree bit for bit: the [optimizer contract](../../compiler/optimizer.md#physical-implementation) admits that "A stronger implementation may satisfy a weaker requested result set", and a stated accuracy envelope under [ADR 0042](../../decisions/0042-use-typed-transcendental-accuracy-contracts.md) is satisfied by more than one bit pattern. Committing only to the scheduled region admits exactly that pair, silently.
+
+**Proposal — the obligation is discharged structurally by four conditions, and none needs a value model.**
+
+1. **Equal implementation identity.** The recomputing stage's `RegionImplementation` identity equals the identity of the implementation the reference placement was, or would have been, produced by. This subsumes the scheduled region, hence the canonical iteration/scalar/access content and the declared numerical realization complete over every dimension, and adds the selected realization/provider that `ScheduledRegion` identity excludes.
+2. **Equal delivered numerical realization.** The realization delivered at the recomputation's execution site equals the one delivered at the reference's, as a stated record rather than an inference from a target name, a flag set, or a module-level declaration. That record reaches the compiler as well as the contract: ADR 0076 item 3 requires a declared behaviour's validity scope to identify "which compiler build and which execution environment" it was measured on, and item 4 makes the artifact record inherit that requirement, so comparing two delivered realizations compares the output-affecting configuration and the compiler build behind each. Within one artifact, one target, and one compiler this is equality by construction and ADR 0076's honesty rule keeps declared and delivered together. Across two of any of those it is a comparison of two records, and the record it needs does not exist yet — see the deferred question below.
+3. **Plan determinism at the executing scope.** The selected plan must hold the [plan-deterministic](../../numerical-semantics.md#reductions) guarantee, that "identical input bits and runtime bindings, executed through the same artifact digest and selected plan variant in the same declared target environment, produce identical output bits". That contract already places the burden on the plan rather than on an assumption: "The physical plan must reject timing-dependent atomics or other execution choices that can violate this promise." A recomputation of an implementation that cannot carry that guarantee is not value-preserving even against itself, so this condition is what excludes recomputing a timing-dependent atomic reduction and expecting the bits to match.
+4. **Operand closure.** Every operand the recomputation reads is delivered at its affinity as the same authoritative value version, each under its own discharged enforcer obligation. The condition is recursive and terminates, because the operand graph is finite and a program input is a delivered placement with no producer. Without it the first three conditions prove only that the same function was applied, which says nothing about the result when the arguments differ.
+
+**Inference — condition 1 must be identity and not conformance-equivalence, on the fail-closed test.** The weaker rule — admit any implementation whose numerical guarantee fixes the same evaluation exactly, which under a strict contract several schedules do — is the attractive one, because it would let a recomputation choose a cheaper schedule. It is rejected because it cannot fail closed as contracts widen. Its correctness depends on the effective permissions leaving no freedom: [ADR 0011](../../decisions/0011-per-operation-numerical-permissions.md) makes each permission independent, so a contract that moves a reassociation permission from forbidden to permitted converts a discharging recomputation into a non-discharging one with no build error, no gate signal, and no change at the recompute site. That is the hazard [the IR contract](../../ir.md) states as a rule for exactly this shape of reasoning: "a key and a predicate are both projections, and a projection cannot fail closed when its source grows." Identity is not a projection, so it survives the widening that the equivalence test does not.
+
+**Measurement — owned by the [Apple GPU numerical behaviour record](../apple-targets/numerical-behaviour.md), and cited here only for what it establishes about condition 2.** Two of its findings bear directly. Its finding 8 measures the offline and runtime Metal compilers on one host to be separately built — `32023.883` from the Xcode toolchain asset and `32023.921` shipped with the OS — and its finding 9 measures all forty macOS runtime cases agreeing bit for bit with their offline counterparts while stating the boundary of that agreement: it "does not make the offline build's declared realization *transferable* to a runtime-compiled kernel; it makes the two happen to coincide here". Its findings 21 and 22 measure `f16` arithmetic preserving subnormals that `f32` arithmetic flushes, from modules that declare the identical `air.compile_options` set including `air.compile.denorms_disable`, and conclude that "An artifact-side reader that inferred the delivered realization from the module's `air.compile.*` names would be wrong about `f16` on this row". That pair differs in dtype rather than being one operation recompiled, so it is not itself an instance of condition 2 failing; what it establishes is the premise condition 2 rests on — that a compile-side declaration is not a report of delivered arithmetic, so equality of declarations is not equality of deliveries, and condition 2 has to compare delivered records.
+
+**Inference — a numerical proof of the kind `FusionNumericalProof` carries is not the alternative, and no available evidence class supplies one.** The alternative to conditions 1 and 2 would be admitting a recomputation by a *different* implementation and proving the values equal anyway. That is a universal claim over an unbounded floating-point input domain. `FusionNumericalProof` in `crates/tiler-compiler/src/fusion.rs` is not a precedent for it: it binds a rederived candidate, the request subject, and the forbidden-transform permissions, and its four proof components assert that the fusion removed no observable materialization boundary and consumed no forbidden transform. It is a structural proof about one transformation, not a value model comparing two programs, and it has no machinery that would extend to one. The remaining candidate evidence is empirical agreement over sampled inputs, which is a strictly weaker class than the guarantee needed. The honest outcome is therefore that a cross-implementation recomputation is inadmissible rather than provable, which is what makes conditions 1 and 2 requirements rather than a conservative shortcut.
+
+**Fact — retention and hazards follow from having reads without a source version.** A recomputation retains its operand allocations and views through its own final device use, plus the destination, the command object, and the synchronization objects. It retains no staging allocation and no imported backing owner. For this variant the `SourceAllocation` and `SourceView` roles denote the recomputed region's operands rather than a moved version's source. Its destination write must not overlap an operand it still reads, which is the same class of rejection the taxonomy already applies to an overlapping copy and is not weakened by the write being produced rather than copied.
+
+#### A recomputation that cannot discharge the obligation is a typed rejection, never a cost
+
+**Proposal.** Failure of any of the four conditions makes the `Recompute` candidate inapplicable at preflight, with the typed failure `MechanismPreflight`/`RecomputeValuePreservationUnproved` naming which condition failed and against which reference implementation, delivered realization, determinism level, or operand. Because the failure is proved before commit and before any program work, it preserves fallback authority in the same sense `NotApplicable` and `UnsupportedCapability` do: the planner selects another complete enforcer — a transfer, an alias, a materialization — or the placement requirement is rejected with an explainable reason. It is never an infinite or arbitrary cost, never a lower-ranked alternative, and never a delivery of whatever the recomputation happened to produce.
+
+**Inference — this direction is not open, and it is worth saying which rule closes it rather than only that it is closed.** Two do, independently. Hard feasibility is separate from estimated cost, so an infeasible plan is rejected with a reason and never hidden behind a cost; and a plan whose delivered values differ from the boundary's is not a slower or cheaper plan but a wrong one, so it fails the correctness rule that no incorrect tensor may be returned to preserve a fast path. The first alone would still permit ranking; the second is what makes the rejection unconditional.
+
+**Fact — no architectural question survives this section.** Each of the four alternatives tested above was eliminated by a check rather than by a preference: the requester-declared tolerance by three independent contract rules, the scheduled-region discharge by the identity layering, the conformance-equivalence relaxation of condition 1 by the fail-closed test, and the cross-implementation numerical proof by the absence of any evidence class that could carry it. One candidate survives in each case, so there is nothing here to escalate.
 
 ### Dependencies, synchronization, and completion
 
@@ -497,6 +592,7 @@ TransferFailureStage =
 
 TransferFailureKind =
     NotApplicable | UnsupportedCapability
+  | RecomputeValuePreservationUnproved
   | StalePreparedTransfer | InvalidRange | AliasProofFailure
   | AllocationFailure | ImportFailure | EncodingFailure
   | SubmissionFailure | DeviceExecutionFailure
@@ -504,9 +600,17 @@ TransferFailureKind =
   | PublicationFailure | AdapterContractViolation
 ```
 
-Only `NotApplicable` and `UnsupportedCapability` before commit preserve
-fallback. After commit, failure is terminal for the high-level operation.
-Cleanup may proceed asynchronously but cannot authorize another implementation.
+Only `NotApplicable`, `UnsupportedCapability`, and
+`RecomputeValuePreservationUnproved` before commit preserve fallback. After
+commit, failure is terminal for the high-level operation. Cleanup may proceed
+asynchronously but cannot authorize another implementation.
+
+`RecomputeValuePreservationUnproved` is reachable only at `MechanismPreflight`,
+because every condition it reports is a property of stated identities and stated
+target facts rather than of an executed stage. It names which of the four
+conditions failed. It is a rejection of one candidate mechanism and never a cost,
+a ranking, or a delivery of a differently realized value; the same recomputation
+never becomes admissible later in the same plan.
 
 Cancellation before commit abandons a candidate without program work.
 Cancellation after commit is best effort: it records intent, stops encoding or
@@ -599,6 +703,30 @@ destination device. The destination consumer waits on leg 2. Failure after leg
 1 does not permit fallback, and source/staging/destination resources follow
 their individual exact safe-release conditions.
 
+### Recomputation instead of a transfer
+
+A pointwise producer `p` runs at affinity `A` and a consumer at affinity `B`
+needs its result. One candidate transfers `p`'s retained result from `A` to `B`.
+A second recomputes `p` at `B`, which is cheaper whenever `p`'s operands are
+already delivered at `B` and its arithmetic costs less than the movement.
+
+The second candidate is admitted only with a complete
+`RecomputeValuePreservation` record. Its implementation identity must equal the
+one that produced the retained result at `A`, so a cheaper schedule for `B` is a
+different candidate and not this one; the delivered numerical realizations at the
+two sites must be equal as stated records; the selected plan must carry the
+plan-deterministic guarantee at `B`'s execution scope; and every operand of `p`
+must be an operand-closure entry naming the same authoritative version and the
+enforcer that delivered it. `p`'s own retained result is never read, so the stage
+has no source endpoint and no source-side dependency on it — its dependencies are
+its operands' deliveries.
+
+If `B` binds a different target, a different compiler build, or a different
+output-affecting configuration from `A`, the second condition is what fails, and
+it fails as `MechanismPreflight`/`RecomputeValuePreservationUnproved` before any
+program work. The planner then selects the transfer. It does not recompute at a
+lower cost and deliver whatever `B` produces.
+
 ### Managed migration
 
 The backing allocation may retain identity while the provider changes its
@@ -609,8 +737,8 @@ treated as proof that migration or visibility completed.
 
 ## Verifier invariants
 
-The portable verifier proves structural items 1–8; runtime preflight re-proves
-bound items 9–15 against live capabilities:
+The portable verifier proves structural items 1–9; runtime preflight re-proves
+bound items 10–16 against live capabilities:
 
 1. all endpoint range arithmetic is checked and every touched range lies in
    its view's admitted allocation range;
@@ -625,18 +753,22 @@ bound items 9–15 against live capabilities:
 6. required resource roles exist and each has a final-use release condition;
 7. copy overlap is rejected unless explicit overlap-safe semantics are proved;
 8. alias elimination carries every required proof component;
-9. concrete endpoints match symbolic affinities, domains, allocations,
-   generations, ranges, encodings, access modes, and alignment;
-10. the chosen mechanism is admitted for the directed endpoint pair and exact
+9. a `Recompute` carries a complete `RecomputeValuePreservation` record — equal
+    implementation identity, equal delivered numerical realization, the
+    plan-deterministic guarantee at its executing scope, and one operand-closure
+    entry per operand — and its destination write overlaps no operand it reads;
+10. concrete endpoints match symbolic affinities, domains, allocations,
+    generations, ranges, encodings, access modes, and alignment;
+11. the chosen mechanism is admitted for the directed endpoint pair and exact
     ranges, including every staged leg;
-11. synchronization objects cover all participating queue/device scopes and
+12. synchronization objects cover all participating queue/device scopes and
     establish the promised visibility/coherence;
-12. overlapping access uses are read/read or ordered by a sufficient hazard
+13. overlapping access uses are read/read or ordered by a sufficient hazard
     protocol;
-13. staging allocation capacity, alignment, accessibility, and coherence hold;
-14. the adapter can retain every resource and exact receipt across all success,
+14. staging allocation capacity, alignment, accessibility, and coherence hold;
+15. the adapter can retain every resource and exact receipt across all success,
     failure, cancellation, and partial-submission paths; and
-15. no allocation/import/encoding begins until commit has consumed fallback
+16. no allocation/import/encoding begins until commit has consumed fallback
     authority.
 
 Failing an invariant produces a typed, explainable rejection or postcommit
@@ -647,17 +779,32 @@ failure. It never becomes infinite cost or an implicit copy.
 [`spikes/transfers/transfer_contract.rs`](../../../spikes/transfers/transfer_contract.rs)
 implements checked view/backing ranges, preserved encoding/version,
 two-sided dependencies, staged-leg ordering, role-based retention, alias-proof
-requirements, overlapping-access hazards, copy-overlap rejection, and the
-commit/cancellation/release state machine.
+requirements, the recompute value-preservation record, overlapping-access
+hazards, copy-overlap rejection, and the commit/cancellation/release state
+machine.
 
-Seventeen tests pass. The positive examples cover CPU-to-accelerator,
+Twenty-one tests pass. The positive examples cover CPU-to-accelerator,
 accelerator-to-CPU, same-device materialization, peer direct copy, peer access,
-shared-backing alias, managed migration, and host-staged transfer. Negative
+shared-backing alias, managed migration, host-staged transfer, and a
+recomputation carrying a complete value-preservation record. Negative
 tests cover hidden conversion, invalid ranges,
 missing source or consumer dependencies, incomplete alias proof, missing
-staging retention/order, unordered write hazards, overlapping copy, fallback
-after commit, cancellation before terminal release, and failure after staged
-work has begun.
+staging retention/order, a recomputation missing each one of the four
+conditions, a recomputation naming no operand to close over, a recomputation
+whose destination overwrites an operand it reads, unordered write hazards,
+overlapping copy, fallback after commit, cancellation before terminal release,
+and failure after staged work has begun.
+
+The recompute model is deliberately narrow in one way worth naming: it takes the
+four conditions as stated booleans and checks that all four are present, rather
+than deriving any of them. Deriving them needs an implementation-identity
+encoding, a delivered-realization record, and a determinism level that live in
+`tiler-ir`, `tiler-artifact`, and the physical planner respectively, none of
+which this dependency-free file can reach. What it does establish is that the
+verifier's structural item is expressible over the same plan shape as the other
+mechanisms, that a recomputation is checked against its operands rather than
+against a source version, and that a missing condition fails closed as one typed
+rejection rather than degrading the delivery.
 
 The spike is dependency-free and synchronous. It does not bind real queues,
 events, allocators, devices, pageable/pinned memory, managed residency, or
@@ -665,6 +812,8 @@ provider errors. Passing tests demonstrate consistency of the proposed
 invariants over the modeled traces, not backend conformance or performance.
 
 ## Scope boundary and follow-on evidence
+
+**Deferred question, with its trigger — how condition 2 is checked across two execution sites that do not share a delivered-realization record.** Within one artifact, one target, and one compiler build, the recomputation and its reference share a delivered realization by construction, and ADR 0076's honesty rule keeps declared and delivered together for any artifact that exists. Across two of any of those, condition 2 becomes a comparison of two stated records, and the record it must compare does not exist: [ADR 0076](../../decisions/0076-declare-target-honourable-numerical-realizations.md) item 4 requires a produced artifact to carry a readable record of "the numerical realization actually delivered", and its `implementation_status` is `partial` with that item unstarted. This memo therefore states the condition and does not state its check. The trigger for closing it is whichever comes first: [`record-delivered-numerical-realization`](../../../tickets/record-delivered-numerical-realization.md) landing, which supplies the record to compare; or a second symbolic affinity becoming executable, which is when a recomputation can first reach a site that does not share the reference's compiler. Until then the executable profile's one affinity, one live device, and one ordered stream make the comparison vacuous, and a recomputation to any other site fails condition 2 closed.
 
 This contract intentionally does not choose devices, schedule distributed
 graphs, define sharding/collectives, or optimize communication topology. A
