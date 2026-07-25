@@ -26,6 +26,7 @@ use super::super::facts::AbiFactBinder;
 
 use super::super::error::{AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind};
 use super::super::expr::{AbiBinaryOp, AbiRoot, AbiType, AbiValue, AvailabilityPhase, ExprNode};
+use super::super::handles::PayloadId;
 use super::super::keys::{
     BackendEntryKey, BackendKey, PayloadDigest, RepresentationKey, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef,
@@ -1243,16 +1244,33 @@ fn payload_content(source: &[u8], code: &[u8]) -> PayloadContent {
     }
 }
 
-/// Assembles a one-variant artifact whose single payload carries its object.
-fn carried_artifact(source: &[u8], code: &[u8]) -> VerifiedArtifactProgram {
+/// Assembles the one-variant fixture around a payload the closure declares.
+///
+/// Everything but the payload declaration is shared rather than duplicated,
+/// which is what makes [`a_pending_payload_identifies_the_artifact_its_compilation_will_produce`]
+/// mean something: the two artifacts it compares can differ only in the one
+/// call under test.
+fn artifact_with(
+    declare: impl FnOnce(&mut ArtifactProgramBuilder) -> Result<PayloadId, ArtifactBuildError>,
+) -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
     let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_provider(selection(provider)).unwrap();
-    let descriptor = draft
-        .push_carried_payload(
+    let descriptor = declare(&mut draft).unwrap();
+    let formulas = formulas(&mut draft);
+    draft
+        .push_variant(&program, variant(&formulas, descriptor, b"fused"))
+        .unwrap();
+    draft.build().unwrap()
+}
+
+/// Assembles a one-variant artifact whose single payload carries its object.
+fn carried_artifact(source: &[u8], code: &[u8]) -> VerifiedArtifactProgram {
+    artifact_with(|draft| {
+        draft.push_carried_payload(
             BackendKey::new("tiler.metal").unwrap(),
             RepresentationKey::new("metallib").unwrap(),
             SchemaVersion::new(1, 0),
@@ -1260,12 +1278,76 @@ fn carried_artifact(source: &[u8], code: &[u8]) -> VerifiedArtifactProgram {
             ArtifactExecutionPolicy::RequiresDeviceTranslation,
             payload_content(source, code),
         )
-        .unwrap();
-    let formulas = formulas(&mut draft);
-    draft
-        .push_variant(&program, variant(&formulas, descriptor, b"fused"))
-        .unwrap();
-    draft.build().unwrap()
+    })
+}
+
+/// Assembles the same artifact from a payload nothing has compiled yet.
+fn pending_artifact(source: &[u8]) -> VerifiedArtifactProgram {
+    artifact_with(|draft| {
+        draft.push_pending_payload(
+            BackendKey::new("tiler.metal").unwrap(),
+            RepresentationKey::new("metallib").unwrap(),
+            SchemaVersion::new(1, 0),
+            profile(),
+            ArtifactExecutionPolicy::RequiresDeviceTranslation,
+            &payload_metadata(source),
+        )
+    })
+}
+
+/// A payload can be named before it is built, and names the same artifact.
+///
+/// This is the property an expansion cache key rests on, asserted as a byte
+/// equality rather than argued in prose. A cache needs its key on a *miss*, so
+/// the subject it composes there is derived from a portfolio whose payloads
+/// have not been compiled; the entry it later publishes carries the compiled
+/// artifact. If those two identities could differ, the cache would file a
+/// result under a key no lookup produces — and once
+/// `bind-the-cache-subject-to-the-carried-payload-provenance` ties a bundle to
+/// its subject, the same gap becomes an entry served for a subject that is not
+/// its own.
+///
+/// The equality holds for *any* emitted object, which is the second assertion:
+/// identity follows the compilation subject, so a linker that is not
+/// byte-reproducible cannot move it.
+#[test]
+fn a_pending_payload_identifies_the_artifact_its_compilation_will_produce() {
+    let source = b"kernel void fused() {}";
+    let pending = pending_artifact(source);
+    for code in [b"first-link".as_slice(), b"second-link".as_slice()] {
+        assert_eq!(
+            pending.canonical_identity(),
+            carried_artifact(source, code).canonical_identity(),
+            "the identity derived before compiling must be the identity the \
+             compiled artifact carries, whatever the linker emitted",
+        );
+    }
+    assert_ne!(
+        pending.canonical_identity(),
+        pending_artifact(b"kernel void other() {}").canonical_identity(),
+        "a different compilation subject is still a different artifact",
+    );
+}
+
+/// The digest is a function of the subject, so the object is not needed to ask.
+#[test]
+fn a_payload_subject_yields_its_identity_without_its_object() {
+    let metadata = payload_metadata(b"kernel void fused() {}");
+    let identity = metadata
+        .identity()
+        .expect("a bounded subject has an identity");
+    assert_eq!(
+        identity,
+        payload_content(b"kernel void fused() {}", b"link")
+            .identity()
+            .expect("a bounded subject has an identity"),
+    );
+    assert_ne!(
+        identity,
+        payload_metadata(b"kernel void other() {}")
+            .identity()
+            .expect("a bounded subject has an identity"),
+    );
 }
 
 #[test]

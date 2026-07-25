@@ -22,6 +22,21 @@
 //! library is rejected — but as a corrupted encoding of this artifact, not as a
 //! different artifact.
 //!
+//! **Consequence: a payload is named before it is built.** Every field of
+//! [`PayloadMetadata`] is a compilation *input*, so [`PayloadMetadata::identity`]
+//! is derivable as soon as the source, the flags, and the resolved toolchain are
+//! known — which is before the backend compiler runs, not after it returns. A
+//! caller can therefore name the exact descriptor the compiled artifact will
+//! carry, and since artifact identity folds the descriptor and the descriptor
+//! folds this digest, the *whole* canonical artifact-program identity is
+//! available on a cache miss.
+//! [`ArtifactProgramBuilder::push_pending_payload`](super::super::ArtifactProgramBuilder::push_pending_payload)
+//! is that path and
+//! [`push_carried_payload`](super::super::ArtifactProgramBuilder::push_carried_payload)
+//! is the same construction once the object has arrived; one function builds the
+//! descriptor for both, so the two cannot name different payloads for one
+//! compilation.
+//!
 //! The alternative — content-addressing the payload over the emitted bytes —
 //! was rejected because it makes artifact identity a function of compiler
 //! output reproducibility. `docs/artifact-abi.md` already refuses that promise:
@@ -198,6 +213,31 @@ pub struct PayloadMetadata {
     pub obligations: Vec<PayloadTargetObligation>,
 }
 
+impl PayloadMetadata {
+    /// Returns the payload identity this compilation subject establishes.
+    ///
+    /// **Derivable before the compilation it describes has run.** Every field
+    /// of this record is an input the caller already holds when it decides
+    /// whether to compile at all, and the module documentation above states why
+    /// no emitted byte joins them. That is the property an expansion cache
+    /// rests on: the key is needed on a *miss*, and a digest that could only be
+    /// taken once the object existed would name the answer rather than the
+    /// question.
+    ///
+    /// It is the *same* derivation [`PayloadContent::identity`] performs, not a
+    /// parallel one — that method delegates here — so a payload named before
+    /// its compilation and the same payload named after it cannot disagree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactBuildError`] when the canonical metadata bytes exceed
+    /// the governed opaque-identity bound, which the fixed digest width makes
+    /// unreachable and which is propagated rather than asserted.
+    pub fn identity(&self) -> Result<PayloadDigest, ArtifactBuildError> {
+        payload_identity(&encode_metadata(self))
+    }
+}
+
 /// One carried backend payload: its compilation subject and its object bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PayloadContent {
@@ -210,13 +250,15 @@ pub struct PayloadContent {
 impl PayloadContent {
     /// Returns the payload identity this content establishes.
     ///
+    /// The object is not consulted, so this equals
+    /// [`PayloadMetadata::identity`] of the subject alone. It delegates rather
+    /// than repeating the derivation.
+    ///
     /// # Errors
     ///
-    /// Returns [`ArtifactBuildError`] when the canonical metadata bytes exceed
-    /// the governed opaque-identity bound, which the fixed digest width makes
-    /// unreachable and which is propagated rather than asserted.
+    /// Returns the errors [`PayloadMetadata::identity`] returns.
     pub fn identity(&self) -> Result<PayloadDigest, ArtifactBuildError> {
-        payload_identity(&encode_metadata(&self.metadata))
+        self.metadata.identity()
     }
 }
 
@@ -243,55 +285,89 @@ pub fn payload_identity(metadata: &[u8]) -> Result<PayloadDigest, ArtifactBuildE
 /// and every set-meaning collection is written in the canonical order the
 /// decoder proves. Flag lists are the deliberate exception and keep their
 /// declared order, which is meaning.
+///
+/// Every record below is destructured irrefutably rather than read field by
+/// field, so a field added to any of them fails to compile here instead of
+/// silently leaving the subject. That mechanism is worth more on this record
+/// than on most: these bytes are the payload's identity, artifact identity
+/// folds that identity, and an expansion cache keys on artifact identity — so
+/// an input that quietly missed the encoding would not be a weaker digest, it
+/// would be two compilations sharing one cache entry.
 pub(crate) fn encode_metadata(metadata: &PayloadMetadata) -> Vec<u8> {
+    let PayloadMetadata {
+        source_representation,
+        source,
+        provenance,
+        entries,
+        obligations,
+    } = metadata;
+    let PayloadProvenance {
+        toolchain,
+        target,
+        family,
+        language,
+        deployment_major,
+        deployment_minor,
+        components,
+        sdk,
+        compile_flags,
+        link_flags,
+    } = provenance;
+    let PayloadSdkIdentity {
+        name: sdk_name,
+        version: sdk_version,
+        build: sdk_build,
+    } = sdk;
+
     let mut bytes = Vec::new();
     bytes.extend_from_slice(PAYLOAD_METADATA_DOMAIN);
     bytes.extend_from_slice(&PAYLOAD_METADATA_SCHEMA.0.to_be_bytes());
     bytes.extend_from_slice(&PAYLOAD_METADATA_SCHEMA.1.to_be_bytes());
-    push_slice(
-        &mut bytes,
-        metadata.source_representation.as_str().as_bytes(),
-    );
-    push_slice(&mut bytes, &metadata.source);
+    push_slice(&mut bytes, source_representation.as_str().as_bytes());
+    push_slice(&mut bytes, source);
 
-    let provenance = &metadata.provenance;
-    push_slice(&mut bytes, provenance.toolchain.as_bytes());
-    push_slice(&mut bytes, provenance.target.as_bytes());
-    push_slice(&mut bytes, provenance.family.as_bytes());
-    push_slice(&mut bytes, provenance.language.as_bytes());
-    bytes.extend_from_slice(&provenance.deployment_major.to_be_bytes());
-    bytes.extend_from_slice(&provenance.deployment_minor.to_be_bytes());
-    push_len(&mut bytes, provenance.components.len());
-    for component in &provenance.components {
-        push_slice(&mut bytes, component.role.as_bytes());
-        push_slice(&mut bytes, component.version.as_bytes());
+    push_slice(&mut bytes, toolchain.as_bytes());
+    push_slice(&mut bytes, target.as_bytes());
+    push_slice(&mut bytes, family.as_bytes());
+    push_slice(&mut bytes, language.as_bytes());
+    bytes.extend_from_slice(&deployment_major.to_be_bytes());
+    bytes.extend_from_slice(&deployment_minor.to_be_bytes());
+    push_len(&mut bytes, components.len());
+    for ToolComponent { role, version } in components {
+        push_slice(&mut bytes, role.as_bytes());
+        push_slice(&mut bytes, version.as_bytes());
     }
-    push_slice(&mut bytes, provenance.sdk.name.as_bytes());
-    push_slice(&mut bytes, provenance.sdk.version.as_bytes());
-    push_slice(&mut bytes, provenance.sdk.build.as_bytes());
-    push_len(&mut bytes, provenance.compile_flags.len());
-    for flag in &provenance.compile_flags {
+    push_slice(&mut bytes, sdk_name.as_bytes());
+    push_slice(&mut bytes, sdk_version.as_bytes());
+    push_slice(&mut bytes, sdk_build.as_bytes());
+    push_len(&mut bytes, compile_flags.len());
+    for flag in compile_flags {
         push_slice(&mut bytes, flag.as_bytes());
     }
-    push_len(&mut bytes, provenance.link_flags.len());
-    for flag in &provenance.link_flags {
+    push_len(&mut bytes, link_flags.len());
+    for flag in link_flags {
         push_slice(&mut bytes, flag.as_bytes());
     }
 
-    push_len(&mut bytes, metadata.entries.len());
-    for entry in &metadata.entries {
-        push_slice(&mut bytes, entry.entry_key.as_bytes());
-        push_slice(&mut bytes, entry.symbol.as_bytes());
-        push_len(&mut bytes, entry.transports.len());
-        for transport in &entry.transports {
+    push_len(&mut bytes, entries.len());
+    for PayloadEntryMapping {
+        entry_key,
+        symbol,
+        transports,
+    } in entries
+    {
+        push_slice(&mut bytes, entry_key.as_bytes());
+        push_slice(&mut bytes, symbol.as_bytes());
+        push_len(&mut bytes, transports.len());
+        for transport in transports {
             bytes.extend_from_slice(&transport.to_be_bytes());
         }
     }
 
-    push_len(&mut bytes, metadata.obligations.len());
-    for obligation in &metadata.obligations {
-        push_slice(&mut bytes, obligation.key.as_bytes());
-        push_slice(&mut bytes, obligation.value.as_bytes());
+    push_len(&mut bytes, obligations.len());
+    for PayloadTargetObligation { key, value } in obligations {
+        push_slice(&mut bytes, key.as_bytes());
+        push_slice(&mut bytes, value.as_bytes());
     }
     bytes
 }
