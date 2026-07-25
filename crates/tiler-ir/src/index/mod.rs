@@ -6,6 +6,10 @@ mod handles;
 mod integer;
 mod model;
 mod scalar;
+// Draft under ADR 0074 convention 7: `implement-shapeenv-index-bindings` keeps any
+// consequential boundary a draft until it is reviewed, so the index layer's
+// consumption of the shape-symbol authority is crate-internal.
+pub(crate) mod sourced;
 
 pub use builder::{
     IndexRegionBuilder, ReducerScalarResults, ReducerScalarValueId, ScalarReducerBodyBuilder,

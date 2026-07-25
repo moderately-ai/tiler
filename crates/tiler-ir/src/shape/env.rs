@@ -62,7 +62,7 @@
 //! read by every later stage.
 //!
 //! **Root bindings participate in that decision.** A symbol bound to
-//! [`BindingSource::StaticValue`] enters the constraint system as a constant, so
+//! [`BindingSource::Static`] enters the constraint system as a constant, so
 //! a constraint contradicting a statically bound extent is rejected here rather
 //! than surviving into index lowering. Bindings whose value is not known until a
 //! later phase contribute no value and constrain nothing.
@@ -70,23 +70,28 @@
 use core::fmt;
 use std::error::Error;
 
+use super::{Axis, Extent};
 use crate::identity::{push_len, push_slice};
-use crate::program::abi::AvailabilityPhase;
+use crate::program::abi::{AvailabilityPhase, TargetPropertyKey};
+use crate::semantic::InputKey;
 
 pub(crate) mod constraint;
 
 use constraint::{
-    ConstraintConflict, ExtentRelation, FragmentViolation, SemanticInputConstraint, VariantGuard,
+    ConstraintConflict, ExtentInterval, ExtentRelation, FragmentViolation, SemanticInputConstraint,
+    VariantGuard,
 };
 
 /// Domain separator of a canonical shape-environment encoding.
 ///
-/// `v2` rather than `v1`: the encoding now covers the semantic constraints as
-/// well as the declarations and bindings, so it is a different function of a
-/// larger subject. No durable artifact, cache, or cross-process reader ever
-/// observed `v1` — the module is `pub(crate)` and unreachable outside
-/// `tiler-ir` — so this states the change rather than migrating anything.
-const SHAPE_ENV_DOMAIN: &[u8] = b"tiler.shape-env.v2\0";
+/// `v3` rather than `v2`: a [`BindingSource::TargetProperty`] no longer carries
+/// a version field beside its already-versioned key, so a binding encodes to
+/// different bytes than it did. Bumping states that rather than letting two
+/// encodings share one domain. As with the `v1` to `v2` change, no durable
+/// artifact, cache, or cross-process reader ever observed an earlier version —
+/// the module is `pub(crate)` and unreachable outside `tiler-ir` — so this
+/// records the change rather than migrating anything.
+const SHAPE_ENV_DOMAIN: &[u8] = b"tiler.shape-env.v3\0";
 
 /// Largest number of bytes a symbol name may occupy.
 const MAX_SYMBOL_NAME_BYTES: usize = 128;
@@ -164,9 +169,19 @@ impl ShapeSymbol {
         &self.name
     }
 
-    fn encode(&self, bytes: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, bytes: &mut Vec<u8>) {
         push_slice(bytes, self.scope.as_bytes());
         push_slice(bytes, self.name.as_bytes());
+    }
+
+    /// Returns the exact byte length [`Self::encode`] appends.
+    ///
+    /// Derived from the same two length-prefixed runs the encoder writes, so a
+    /// consumer that must size a buffer before encoding cannot disagree with it
+    /// about what a symbol costs.
+    pub(crate) fn encoded_len(&self) -> usize {
+        const PREFIX: usize = size_of::<u64>();
+        PREFIX + self.scope.as_bytes().len() + PREFIX + self.name.len()
     }
 }
 
@@ -176,39 +191,98 @@ impl fmt::Display for ShapeSymbol {
     }
 }
 
+/// Largest number of bytes an interface-parameter key may occupy.
+const MAX_INTERFACE_PARAMETER_KEY_BYTES: usize = 1_024;
+
+/// A stable key of one declared host interface parameter.
+///
+/// A newtype rather than a bare `String` because the accepted shape-environment
+/// contract makes that a correctness requirement, not a style preference:
+/// "extent values, signed shape intermediates, symbol IDs, axis indices, input
+/// indices, interface-parameter indices, target property keys, binding phases,
+/// and physical index widths must not be accidentally mixed merely because
+/// their representations are primitive types."
+///
+/// This is the crate's first definition of the concept rather than a second
+/// one; an input tensor's interface key is [`InputKey`] and a governed device
+/// property is [`TargetPropertyKey`], and the contract keeps all three apart.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct InterfaceParameterKey(String);
+
+impl InterfaceParameterKey {
+    /// Creates a nonempty stable interface-parameter key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShapeEnvError::EmptyInterfaceParameterKey`] for an empty key,
+    /// or [`ShapeEnvError::InterfaceParameterKeyTooLong`] past the governed
+    /// bound.
+    pub(crate) fn new(value: impl AsRef<str>) -> Result<Self, ShapeEnvError> {
+        let value = value.as_ref();
+        if value.is_empty() {
+            return Err(ShapeEnvError::EmptyInterfaceParameterKey);
+        }
+        if value.len() > MAX_INTERFACE_PARAMETER_KEY_BYTES {
+            return Err(ShapeEnvError::InterfaceParameterKeyTooLong {
+                actual: value.len(),
+                limit: MAX_INTERFACE_PARAMETER_KEY_BYTES,
+            });
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    /// Returns the exact key text.
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for InterfaceParameterKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
 /// Where a root binding's value comes from.
 ///
-/// `docs/ir.md` names the admitted sources: "static values, input metadata,
-/// caller parameters, or admitted versioned target properties". The class is
-/// recorded rather than inferred from the value, because two bindings can carry
-/// the same number for different reasons and only one of them may be legal for
-/// a given consumer.
+/// These are the four classes [ADR 0008](../../../../docs/decisions/0008-typed-root-bindings.md)
+/// names, spelled as it spells them — `Static`, `InputDimension`,
+/// `InterfaceParameter`, `TargetProperty`. The class is recorded rather than
+/// inferred from the value, because two bindings can carry the same number for
+/// different reasons and only one of them may be legal for a given consumer.
+///
+/// Each field is the governed type the crate already defines for that concept
+/// rather than a primitive standing in for it, per the contract's newtype
+/// mandate. That is what lets a consumer check an `InputDimension` binding
+/// against the input a region actually declares instead of comparing strings.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum BindingSource {
-    /// A value fixed at graph construction.
-    StaticValue(u64),
-    /// An extent read from a bound program input's metadata.
-    InputMetadata {
-        /// Interface key of the input the extent is read from.
-        input: String,
-        /// Axis position within that input's shape.
-        axis: u32,
-    },
-    /// A value supplied by the caller at compilation or launch.
-    CallerParameter {
-        /// Stable parameter key.
-        key: String,
-    },
-    /// An admitted versioned target property.
+    /// An extent fixed at graph construction.
+    Static(Extent),
+    /// One axis extent of a bound program input's shape metadata.
     ///
-    /// The contract requires that these "use stable versioned keys and cannot
-    /// depend on a selected or prepared physical pipeline in the initial
-    /// execution model", which is why the version travels with the key.
+    /// Metadata, never element data: the contract models a runtime integer as
+    /// an explicit interface parameter rather than encoding it in a tensor's
+    /// contents.
+    InputDimension {
+        /// Interface key of the input the extent is read from.
+        input: InputKey,
+        /// Axis position within that input's shape.
+        axis: Axis,
+    },
+    /// An immutable host integer declared by the program interface.
+    InterfaceParameter {
+        /// Stable parameter key.
+        key: InterfaceParameterKey,
+    },
+    /// An admitted governed target property.
+    ///
+    /// [`TargetPropertyKey`] is already the crate's stable *versioned* key, so
+    /// the version travels inside it. A second version field beside the key
+    /// would be a second authority over the same fact.
     TargetProperty {
-        /// Stable governed property key.
-        key: String,
-        /// Version of the property's definition.
-        version: u32,
+        /// Governed property key.
+        key: TargetPropertyKey,
     },
 }
 
@@ -220,45 +294,56 @@ impl BindingSource {
     /// environment ever identified (ADR 0074 convention 3).
     const fn tag(&self) -> u8 {
         match self {
-            Self::StaticValue(_) => 0x01,
-            Self::InputMetadata { .. } => 0x02,
-            Self::CallerParameter { .. } => 0x03,
+            Self::Static(_) => 0x01,
+            Self::InputDimension { .. } => 0x02,
+            Self::InterfaceParameter { .. } => 0x03,
             Self::TargetProperty { .. } => 0x04,
         }
     }
 
     /// Returns the earliest phase this source can be read at.
     ///
-    /// A static value is known from the compile profile; every other class
+    /// A static extent is known from the compile profile; every other class
     /// depends on something the compiler does not have until later. This is the
     /// *floor*: a binding may declare a later phase than its class requires,
     /// which [`RootBinding::new`] checks, but never an earlier one.
     const fn earliest_phase(&self) -> AvailabilityPhase {
         match self {
-            Self::StaticValue(_) => AvailabilityPhase::CompileProfile,
-            // An interface extent and a caller parameter are both known once a
+            Self::Static(_) => AvailabilityPhase::CompileProfile,
+            // An input extent and an interface parameter are both known once a
             // concrete invocation exists, which is no earlier than a bound
             // device and context.
-            Self::InputMetadata { .. } | Self::CallerParameter { .. } => {
+            Self::InputDimension { .. } | Self::InterfaceParameter { .. } => {
                 AvailabilityPhase::LiveDevicePreflight
             }
             Self::TargetProperty { .. } => AvailabilityPhase::LiveDevicePreflight,
         }
     }
 
+    /// Returns the extent this source fixes, when it fixes one statically.
+    ///
+    /// Only [`Self::Static`] does. Every other class names a value the compiler
+    /// does not hold, which is the distinction a consumer needs before it can
+    /// treat a symbol as a literal.
+    pub(crate) const fn static_extent(&self) -> Option<Extent> {
+        match self {
+            Self::Static(extent) => Some(*extent),
+            Self::InputDimension { .. }
+            | Self::InterfaceParameter { .. }
+            | Self::TargetProperty { .. } => None,
+        }
+    }
+
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.tag());
         match self {
-            Self::StaticValue(value) => bytes.extend_from_slice(&value.to_be_bytes()),
-            Self::InputMetadata { input, axis } => {
-                push_slice(bytes, input.as_bytes());
-                bytes.extend_from_slice(&axis.to_be_bytes());
+            Self::Static(extent) => bytes.extend_from_slice(&extent.get().to_be_bytes()),
+            Self::InputDimension { input, axis } => {
+                push_slice(bytes, input.as_str().as_bytes());
+                bytes.extend_from_slice(&axis.get().to_be_bytes());
             }
-            Self::CallerParameter { key } => push_slice(bytes, key.as_bytes()),
-            Self::TargetProperty { key, version } => {
-                push_slice(bytes, key.as_bytes());
-                bytes.extend_from_slice(&version.to_be_bytes());
-            }
+            Self::InterfaceParameter { key } => push_slice(bytes, key.as_str().as_bytes()),
+            Self::TargetProperty { key } => push_slice(bytes, key.as_str().as_bytes()),
         }
     }
 }
@@ -365,6 +450,15 @@ pub(crate) enum ShapeEnvError {
         /// Governed limit.
         limit: usize,
     },
+    /// An interface-parameter key was empty.
+    EmptyInterfaceParameterKey,
+    /// An interface-parameter key exceeded the governed bound.
+    InterfaceParameterKeyTooLong {
+        /// Bytes the rejected key occupied.
+        actual: usize,
+        /// Governed limit.
+        limit: usize,
+    },
     /// A symbol was declared twice in one scope.
     DuplicateDeclaration {
         /// The symbol whose second declaration was rejected.
@@ -446,6 +540,13 @@ impl fmt::Display for ShapeEnvError {
             Self::SymbolNameTooLong { actual, limit } => write!(
                 formatter,
                 "shape-env.symbol-name-too-long: {actual} bytes exceeds {limit}"
+            ),
+            Self::EmptyInterfaceParameterKey => {
+                formatter.write_str("shape-env.empty-interface-parameter-key: rejected")
+            }
+            Self::InterfaceParameterKeyTooLong { actual, limit } => write!(
+                formatter,
+                "shape-env.interface-parameter-key-too-long: {actual} bytes exceeds {limit}"
             ),
             Self::DuplicateDeclaration { symbol } => {
                 write!(formatter, "shape-env.duplicate-declaration: {symbol}")
@@ -797,6 +898,38 @@ impl ShapeEnv {
             .map(|(_, binding)| binding.phase())
             .max()
     }
+
+    /// Returns the interval every model of this environment confines `symbol` to.
+    ///
+    /// This is the query a consumer needs to prove a bound over a symbolic
+    /// extent: the interval contains every admissible value, so a fact proved
+    /// against it holds for every binding the environment admits. It is not a
+    /// claim that every value inside it is admissible — a divisibility
+    /// constraint can exclude interior values — so it may be used to prove a
+    /// bound and never to enumerate a domain.
+    ///
+    /// Recomputed rather than stored, like [`Self::unsatisfiable_guards`]: the
+    /// contract excludes derived solver caches from canonical identity, and
+    /// storing nothing derived is how this module holds that.
+    ///
+    /// Returns `None` for an undeclared symbol, and for a class whose bound
+    /// left the extent domain, which carries nothing a consumer can prove
+    /// against.
+    pub(crate) fn extent_interval(&self, symbol: &ShapeSymbol) -> Option<ExtentInterval> {
+        let slot = self.entries.iter().position(|(held, _)| held == symbol)?;
+        let relations: Vec<&ExtentRelation> = self
+            .constraints
+            .iter()
+            .map(SemanticInputConstraint::relation)
+            .collect();
+        // `build` already decided this exact set, so the solve cannot fail. It
+        // is still propagated as `None` rather than unwrapped: a panic here
+        // would convert a future refactor's mistake into a crash instead of a
+        // consumer-visible refusal.
+        constraint::solve(&self.entries, &relations)
+            .ok()?
+            .interval(slot)
+    }
 }
 
 /// Encodes one bound environment canonically.
@@ -829,11 +962,11 @@ mod tests {
 
     use super::constraint::{ExtentTerm, GuardApplicability};
     use super::{
-        BindingSource, ConstraintConflict, ExtentRelation, FactProvenance, FragmentViolation,
-        RootBinding, SemanticInputConstraint, ShapeEnvBuilder, ShapeEnvError, ShapeSymbol,
-        SymbolScope, VariantGuard,
+        BindingSource, ConstraintConflict, Extent, ExtentRelation, FactProvenance,
+        FragmentViolation, InterfaceParameterKey, RootBinding, SemanticInputConstraint,
+        ShapeEnvBuilder, ShapeEnvError, ShapeSymbol, SymbolScope, VariantGuard,
     };
-    use crate::program::abi::AvailabilityPhase;
+    use crate::program::abi::{AvailabilityPhase, TargetPropertyKey};
 
     fn symbol(scope: &str, name: &str) -> ShapeSymbol {
         ShapeSymbol::new(SymbolScope::new(scope).unwrap(), name).unwrap()
@@ -841,7 +974,7 @@ mod tests {
 
     fn static_binding(value: u64) -> RootBinding {
         RootBinding::new(
-            BindingSource::StaticValue(value),
+            BindingSource::Static(Extent::new(value)),
             AvailabilityPhase::CompileProfile,
             FactProvenance::StaticallyProven,
         )
@@ -851,8 +984,8 @@ mod tests {
     /// A binding whose value no compile-time reasoning can read.
     fn dynamic_binding(key: &str) -> RootBinding {
         RootBinding::new(
-            BindingSource::CallerParameter {
-                key: key.to_owned(),
+            BindingSource::InterfaceParameter {
+                key: InterfaceParameterKey::new(key).unwrap(),
             },
             AvailabilityPhase::LaunchPreflight,
             FactProvenance::RuntimeValidated,
@@ -906,11 +1039,11 @@ mod tests {
         assert_eq!(env.bindings().len(), 2);
         assert_eq!(
             env.binding(&left).unwrap().source(),
-            &BindingSource::StaticValue(2)
+            &BindingSource::Static(Extent::new(2))
         );
         assert_eq!(
             env.binding(&right).unwrap().source(),
-            &BindingSource::StaticValue(3)
+            &BindingSource::Static(Extent::new(3))
         );
     }
 
@@ -937,7 +1070,7 @@ mod tests {
         let env = draft.build().unwrap();
         assert_eq!(
             env.binding(&n).unwrap().source(),
-            &BindingSource::StaticValue(4)
+            &BindingSource::Static(Extent::new(4))
         );
 
         let undeclared = symbol("region/9", "m");
@@ -961,8 +1094,7 @@ mod tests {
     #[test]
     fn a_binding_may_not_precede_its_source_class() {
         let device = BindingSource::TargetProperty {
-            key: "tiler.target.max-threads".to_owned(),
-            version: 1,
+            key: TargetPropertyKey::new("tiler.target.max-threads@1").unwrap(),
         };
         assert_eq!(
             RootBinding::new(
@@ -1030,7 +1162,7 @@ mod tests {
             .bind(
                 &b,
                 RootBinding::new(
-                    BindingSource::StaticValue(7),
+                    BindingSource::Static(Extent::new(7)),
                     AvailabilityPhase::CompileProfile,
                     // Same value, different reason for believing it.
                     FactProvenance::FrontendRequired,
@@ -1073,8 +1205,8 @@ mod tests {
             .bind(
                 &m,
                 RootBinding::new(
-                    BindingSource::CallerParameter {
-                        key: "batch".to_owned(),
+                    BindingSource::InterfaceParameter {
+                        key: InterfaceParameterKey::new("batch").unwrap(),
                     },
                     AvailabilityPhase::LaunchPreflight,
                     FactProvenance::RuntimeValidated,
