@@ -41,11 +41,22 @@ impl KeyLock {
 
     /// Takes the lock if it is free, without blocking.
     ///
-    /// `Ok(None)` means another holder has it — which is the observation a test
-    /// of mutual exclusion needs, and which the blocking form cannot report.
-    /// The protocol itself always blocks: a writer that gave up on a contended
-    /// key would rebuild exactly what the holder is about to publish.
-    #[cfg(test)]
+    /// `Ok(None)` means another holder has it, which the blocking form cannot
+    /// report. Two callers want exactly that answer and want it for opposite
+    /// reasons.
+    ///
+    /// A test of mutual exclusion needs it because "a second holder is refused"
+    /// is unobservable if the second holder waits. The **collector** needs it
+    /// because a held key lock is positive evidence that some process is
+    /// publishing or evicting that key right now — which makes the entry live,
+    /// the opposite of a collection candidate. Skipping a contended key is
+    /// therefore better selection *and* what removes any need for a collection
+    /// work budget: a collector that never blocks has a latency bounded by its
+    /// scan, so there is no unbounded wait to cap.
+    ///
+    /// The publication protocol itself always blocks, because a writer that gave
+    /// up on a contended key would rebuild exactly what the holder is about to
+    /// publish.
     pub(crate) fn try_acquire(path: &Path) -> io::Result<Option<Self>> {
         use std::fs::TryLockError;
 

@@ -56,6 +56,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tiler_artifact::program::ArtifactCodecFailure;
 
+use super::collect::CollectionBound;
 use super::fault::{self, Phase};
 use super::key::CacheKey;
 use super::store::{Durability, ExpansionCache, ProtocolOutcome};
@@ -87,8 +88,19 @@ const CONCURRENCY_VARIABLE: &str = "TILER_CACHE_HARNESS_CONCURRENCY";
 /// File each case appends one evidence row to, during a measurement run.
 const EVIDENCE_VARIABLE: &str = "TILER_CACHE_HARNESS_EVIDENCE";
 
+/// Cache root a collecting child operates on. Its presence arms that child.
+const COLLECT_ROOT_VARIABLE: &str = "TILER_CACHE_HARNESS_COLLECT_ROOT";
+/// Maximum entries a collecting child leaves behind on each round.
+const COLLECT_MAX_ENTRIES_VARIABLE: &str = "TILER_CACHE_HARNESS_COLLECT_MAX_ENTRIES";
+/// Collections one collecting child performs before exiting.
+const COLLECT_ROUNDS_VARIABLE: &str = "TILER_CACHE_HARNESS_COLLECT_ROUNDS";
+/// File a collecting child appends one line per collection to.
+const COLLECT_LOG_VARIABLE: &str = "TILER_CACHE_HARNESS_COLLECT_LOG";
+
 /// Libtest path of the child entry point, as the re-executed binary names it.
 const CHILD_ENTRY: &str = "expansion::harness::harness_child";
+/// Libtest path of the collecting child entry point.
+const COLLECTOR_ENTRY: &str = "expansion::harness::harness_collector_child";
 
 /// How long a child may run before it is killed and reported.
 const CHILD_DEADLINE: Duration = Duration::from_secs(30);
@@ -172,6 +184,70 @@ fn harness_child() {
     };
     if let Ok(path) = env::var(OUTCOME_VARIABLE) {
         fs::write(path, label).expect("the outcome file is writable");
+    }
+}
+
+/// The collecting child entry point, re-executed as its own process.
+///
+/// Inert unless armed, on the same guard as [`harness_child`]: without
+/// [`COLLECT_ROOT_VARIABLE`] it returns immediately.
+///
+/// It runs the production [`ExpansionCache::collect`] against a cache other real
+/// processes are publishing into, and writes one self-describing line per round.
+/// The parent never learns anything from this process except those lines and its
+/// exit status, so a collector that lied about what it removed would still be
+/// caught by the parent's own reader, which validates what survived.
+#[test]
+fn harness_collector_child() {
+    let Ok(root) = env::var(COLLECT_ROOT_VARIABLE) else {
+        return;
+    };
+    let max_entries: u64 = env::var(COLLECT_MAX_ENTRIES_VARIABLE)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let rounds: u32 = env::var(COLLECT_ROUNDS_VARIABLE)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let log = env::var(COLLECT_LOG_VARIABLE).ok().map(PathBuf::from);
+
+    let cache = ExpansionCache::open(&root);
+    let bound = CollectionBound {
+        max_total_bytes: None,
+        max_entries: Some(max_entries),
+    };
+    for _ in 0..rounds {
+        let line = match cache.collect(&bound) {
+            Ok(report) => {
+                // The disposition partition is asserted *inside* the collecting
+                // process, on every round, so a collection that lost track of a
+                // selected entry fails where it happened rather than being
+                // inferred later from a total.
+                assert!(
+                    report.accounts_for_every_entry(),
+                    "a collection must account for every entry it selected",
+                );
+                format!(
+                    "ok\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    report.selected(),
+                    report.removed().len(),
+                    report.reclaimed_bytes(),
+                    report.contended(),
+                    report.superseded(),
+                    report.already_absent(),
+                    report.failed().len(),
+                )
+            }
+            // A scan that cannot proceed is recorded rather than panicked on, so
+            // the parent reports which round failed and why instead of only
+            // seeing a dead child.
+            Err(unavailable) => format!("error\t{unavailable}"),
+        };
+        if let Some(path) = &log {
+            append_line(path, &line);
+        }
+        thread::sleep(Duration::from_millis(5));
     }
 }
 
@@ -1006,6 +1082,234 @@ fn a_reader_holding_a_descriptor_reads_across_eviction() {
     let view = super::bundle::decode(&bytes, &key, &super::limits::Limits::default())
         .expect("the bytes an open descriptor yields are still a valid bundle");
     assert_eq!(view.envelope, b"envelope-before-eviction");
+}
+
+// -------------------------------------------------------------------------
+// Collection under load
+// -------------------------------------------------------------------------
+
+/// Builds the command that re-executes this binary as a collecting child.
+fn collector_command(root: &Path, max_entries: u64, rounds: u32, log: &Path) -> Command {
+    let exe = env::current_exe().expect("a test binary knows its own path");
+    let mut command = Command::new(exe);
+    command
+        .args(["--exact", COLLECTOR_ENTRY])
+        .env(COLLECT_ROOT_VARIABLE, root)
+        .env(COLLECT_MAX_ENTRIES_VARIABLE, max_entries.to_string())
+        .env(COLLECT_ROUNDS_VARIABLE, rounds.to_string())
+        .env(COLLECT_LOG_VARIABLE, log)
+        // A collecting child must never inherit a publication fault phase from a
+        // parent that is itself an armed child under a repeated run.
+        .env_remove(fault::PHASE_VARIABLE)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
+/// Reads back every entry the namespace currently holds, through the production
+/// reader.
+///
+/// Returns the number validated, or `None` as soon as one fails. Walking the
+/// namespace rather than a list of known subjects is what makes this a statement
+/// about *whatever collection left behind* instead of about the keys the test
+/// happened to remember.
+fn every_surviving_entry_validates(root: &Path) -> Option<usize> {
+    let cache = ExpansionCache::open(root);
+    let accounting = cache.account().expect("a scan of a live cache succeeds");
+    let mut validated = 0;
+    for fact in accounting.entries() {
+        match cache.read_entry(&fact.key, &any_payload) {
+            Ok(_) => validated += 1,
+            // Removed by the collector between the scan and this read, which is
+            // the ordinary race and not a failure: an absence is what a reader
+            // is entitled to see.
+            Err(super::report::MissReason::Absent) => {}
+            Err(_) => return None,
+        }
+    }
+    Some(validated)
+}
+
+/// Checks every round a collecting child logged, returning the entries it
+/// removed and the candidates it deliberately left alone.
+///
+/// Every round must be present and must have succeeded: a collector that stopped
+/// early, or that reported a per-key failure, is a result the ladder must not
+/// absorb into a passing total.
+fn audit_collection_log(log: &Path, rounds: u32, scale: usize) -> (u64, u64) {
+    let text = fs::read_to_string(log).expect("the collecting child logged its rounds");
+    let rows: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        rows.len(),
+        rounds as usize,
+        "{scale}: every collection round is recorded",
+    );
+
+    let mut removed = 0_u64;
+    let mut deferred = 0_u64;
+    for row in rows {
+        assert!(
+            row.starts_with("ok\t"),
+            "{scale}: a collection failed: {row}"
+        );
+        // `ok`, selected, removed, reclaimed, contended, superseded,
+        // already-absent, failed. The width is checked rather than assumed, so a
+        // change to the row shape fails here instead of silently reading the
+        // wrong column.
+        let fields: Vec<&str> = row.split('\t').collect();
+        assert_eq!(fields.len(), 8, "{scale}: unexpected row shape: {row}");
+        removed += fields[2].parse::<u64>().expect("a removal count parses");
+        // Contended, superseded, and already-absent: candidates a collection
+        // deliberately left alone. Summed for the evidence row rather than
+        // asserted on, because how often the race is entered is a property of
+        // the host's scheduling and asserting it would make the gate flaky. Each
+        // disposition has deterministic coverage in `super::tests`, which holds
+        // the lock and replaces the entry itself rather than waiting for luck.
+        for field in &fields[4..7] {
+            deferred += field.parse::<u64>().expect("a disposition count parses");
+        }
+        assert_eq!(
+            fields[7].parse::<u64>().expect("a failure count parses"),
+            0,
+            "{scale}: a collection reported a per-key failure: {row}",
+        );
+    }
+    (removed, deferred)
+}
+
+/// Collection racing active writers and readers, at 1, 8, and 32 processes.
+///
+/// The research note's sixth gate asks for exactly this ladder. Every scale runs
+/// the same shape: real publishing processes on distinct keys, a real collecting
+/// process holding a bound tight enough that it is always removing something, and
+/// this process reading throughout.
+///
+/// Four things are asserted, and each excludes a different failure:
+///
+/// 1. **Every child completes.** A child killed at its deadline would mean a
+///    collector and a writer deadlocked on a key. This is what
+///    [`KeyLock::try_acquire`](super::lock::KeyLock::try_acquire) buys: a
+///    collector never waits for a lock, so it cannot be part of a cycle.
+/// 2. **Every collection accounted for its whole selection**, asserted inside the
+///    collecting process on every round and re-checked here from its log.
+/// 3. **Something was actually removed.** Without this the case would pass
+///    vacuously if the bound never selected anything, which is the shape of a
+///    stress test that measures nothing.
+/// 4. **Everything that survived still validates.** The correctness claim: a
+///    collection concurrent with publication must never leave a reader something
+///    it accepts and should not have.
+#[test]
+fn collection_races_active_processes_at_one_eight_and_thirty_two() {
+    /// Entries seeded before the race, so a bound always has candidates.
+    const SEEDS: usize = 8;
+    /// Collections one collecting child performs per scale.
+    const ROUNDS: u32 = 12;
+
+    let started = Instant::now();
+    let mut children = 0_u32;
+    for writers in [1_usize, 8, 32] {
+        let scratch = Scratch::new(&format!("collect-race-{writers}"));
+        let root = scratch.root();
+        let log = scratch.file("collections");
+
+        let seed_subjects: Vec<String> = (0..SEEDS).map(|index| format!("seed-{index}")).collect();
+        let seeds: Vec<Run<'_>> = seed_subjects
+            .iter()
+            .map(|subject| Run::new(&root, subject, "seed-envelope"))
+            .collect();
+        for (index, death) in run_all(&seeds).into_iter().enumerate() {
+            children += 1;
+            assert_eq!(death, Death::Completed, "{writers}: seed {index} failed");
+        }
+
+        // A reader that opened an entry *before* the collector started and has
+        // not finished with it. This is the position the design has to defend:
+        // the descriptor is open, the bytes have not all been read, and another
+        // process is about to unlink the file.
+        let held_subject = &seed_subjects[0];
+        let held_key = CacheKey::derive(&subject_of(held_subject));
+        let mut held = File::open(entry_path(&root, held_subject)).expect("a seed entry opens");
+
+        // Half the writers share one key and half take their own, because the
+        // two arrangements stress different halves of the design. A shared key
+        // keeps its lock held almost continuously, which is what makes a
+        // collector meet a *contended* candidate; distinct keys keep publishing
+        // new entries under the collector's feet, which is what makes it meet a
+        // *superseded* or already-absent one.
+        let racing_subjects: Vec<String> = (0..writers)
+            .map(|index| {
+                if index % 2 == 0 {
+                    "racing-shared".to_owned()
+                } else {
+                    format!("racing-{index}")
+                }
+            })
+            .collect();
+        let racing: Vec<Run<'_>> = racing_subjects
+            .iter()
+            .map(|subject| {
+                Run::new(&root, subject, "envelope-under-collection")
+                    .with_build_delay(Duration::from_millis(30))
+            })
+            .collect();
+        let mut spawned: Vec<Child> = racing
+            .iter()
+            .map(|run| run.command().spawn().expect("a child process spawns"))
+            .collect();
+        spawned.push(
+            collector_command(&root, 2, ROUNDS, &log)
+                .spawn()
+                .expect("a collecting child spawns"),
+        );
+
+        // This process is the active reader for the duration.
+        let deadline = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < deadline {
+            assert!(
+                every_surviving_entry_validates(&root).is_some(),
+                "{writers}: a surviving entry failed validation during collection",
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        for (index, child) in spawned.iter_mut().enumerate() {
+            children += 1;
+            assert_eq!(
+                wait_bounded(child, CHILD_DEADLINE),
+                Death::Completed,
+                "{writers}: child {index} did not complete — a collector must never \
+                 block on a key lock, so nothing here may deadlock",
+            );
+        }
+
+        // The reader that has been holding a descriptor since before the race
+        // still gets exactly the bytes that were published, whether or not the
+        // collector unlinked the file underneath it.
+        let mut bytes = Vec::new();
+        held.read_to_end(&mut bytes)
+            .expect("an open descriptor survives a collector's unlink");
+        let view = super::bundle::decode(&bytes, &held_key, &super::limits::Limits::default())
+            .expect("a descriptor opened before collection still yields a valid bundle");
+        assert_eq!(view.envelope, b"seed-envelope");
+
+        let (removed_total, deferred_total) = audit_collection_log(&log, ROUNDS, writers);
+        assert!(
+            removed_total > 0,
+            "{writers}: the bound never removed anything, so this case measured nothing",
+        );
+
+        assert!(
+            every_surviving_entry_validates(&root).is_some(),
+            "{writers}: an entry surviving the race failed validation",
+        );
+        record(
+            "collection-under-load",
+            u32::try_from(writers).expect("a bounded writer count fits u32"),
+            &format!("rounds={ROUNDS} removed={removed_total} deferred={deferred_total}"),
+            started,
+        );
+    }
+    record("collection-ladder", children, "scales=1,8,32", started);
 }
 
 // -------------------------------------------------------------------------

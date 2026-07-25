@@ -59,6 +59,19 @@
 //! guarantee. What the harness substitutes, and why that substitution does not
 //! reach these properties, is stated in its own module documentation.
 //!
+//! # Collection is present, and not yet reachable
+//!
+//! The private `collect` module implements whole-cache accounting, a bounded
+//! collection, and an out-of-service purge. Every one of its types is
+//! `pub(crate)` under ADR 0074 convention 7 and none is re-exported here, so
+//! **no consumer can collect anything today**. The review that would promote it
+//! is `accept-the-tiler-cache-public-boundary`.
+//!
+//! Its bound defaults to removing nothing, it never blocks on a key lock, and it
+//! names every entry it removes. What it preserves of the five properties above,
+//! and by which mechanism, is stated in its own module documentation and in
+//! [`docs/research/cache/bounded-collection.md`](https://github.com/moderately-ai/tiler/blob/main/docs/research/cache/bounded-collection.md).
+//!
 //! Likewise, no in-crate test here builds a *real* artifact envelope. Doing so
 //! needs a `SemanticProgram`, which needs a frozen registry holding live
 //! inferencer implementations, and this crate deliberately does not depend on
@@ -70,6 +83,7 @@
 //! that holds both crates.
 
 mod bundle;
+mod collect;
 #[cfg(test)]
 mod fault;
 #[cfg(test)]

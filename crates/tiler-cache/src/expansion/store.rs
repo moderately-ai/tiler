@@ -844,6 +844,15 @@ impl ExpansionCache {
         Ok(())
     }
 
+    /// The namespace this cache is laid out under.
+    ///
+    /// Reached by [`super::collect`], which walks the whole namespace rather
+    /// than one key's paths and so needs the tree roots the per-key accessors do
+    /// not name.
+    pub(crate) const fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
     pub(crate) fn acquire_lock(&self, key: &CacheKey) -> Result<KeyLock, CacheUnavailable> {
         let path = self.layout.lock_path(key);
         KeyLock::acquire(&path)
