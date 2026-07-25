@@ -1,7 +1,7 @@
 ---
 id: promote-the-proof-sidecar-facade
 title: Promote the proof-sidecar facade
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-proof-case-sidecar]
 related: [prototype-metal-aot-slice, prototype-metal-runtime-proof]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, api, review]
+claimed_from: todo
+assignee: agent-promote-the-proof-sidecar-facade
+lease_expires_at: 1785038575
 ---
 The proof-case evidence sidecar landed as a crate-private draft authority in `crates/tiler-artifact/src/proof/` under ADR 0074 convention 7. Its two intended consumers are out-of-crate binaries — the producer `prototypes/serial-sum-compile` and the runner `prototypes/serial-sum-run` — and neither can reach a crate-private module, so the capability exists and is unreachable until its facade is accepted.
 

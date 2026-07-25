@@ -1,7 +1,7 @@
 ---
 id: measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes
 title: Measure the Apple subnormal flush for the remaining mature dtypes
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [widen-the-apple-numerical-probe-to-a-second-dtype, enumerate-the-mature-tensor-dtype-taxonomy, carry-the-dtype-on-the-metal-subnormal-flush-fact]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, metal, measurement, dtypes]
+claimed_from: todo
+assignee: agent-measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes
+lease_expires_at: 1785038575
 ---
 Finding 21 of [the Apple numerical-behaviour record](../docs/research/apple-targets/numerical-behaviour.md) measures `f32` flushing subnormals and `f16` preserving them on the same hardware, from modules that declare `air.compile.denorms_disable` identically. That settles that the flush depends on the dtype. It settles nothing about *which* dtypes flush: two disagreeing dtypes are a refutation of dtype-independence and not a rule, and a third could behave like either.
 

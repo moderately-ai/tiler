@@ -1,7 +1,7 @@
 ---
 id: carry-the-dtype-on-the-metal-subnormal-flush-fact
 title: Carry the dtype on the Metal subnormal-flush fact
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [widen-the-apple-numerical-probe-to-a-second-dtype, declare-metal-numerical-honourability, accept-adr-0076-numerical-realizations]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, metal, dtypes, correctness]
+claimed_from: todo
+assignee: agent-carry-the-dtype-on-the-metal-subnormal-flush-fact
+lease_expires_at: 1785038575
 ---
 `MetalSubnormalArithmetic::FlushesToZero` is stated once, with no dtype, and `MetalTargetFacts::new` requires a caller to supply it. Every measurement behind it was `f32`, and finding 21 of [the Apple numerical-behaviour record](../docs/research/apple-targets/numerical-behaviour.md) now measures the same hardware **not** flushing in `f16`: a subnormal `half` operand comes back exactly doubled from a witnessed `fmul`, and the same holds for the result direction, for a bare add, and for a surviving `fdiv`, in all three math modes, on both compilation paths and both dispatchable families. The emitted modules are indistinguishable — `air.compile.denorms_disable` is declared for both dtypes — so nothing on the compile side would have caught this.
 

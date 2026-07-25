@@ -1,7 +1,7 @@
 ---
 id: design-bounded-expansion-cache-garbage-collection
 title: Design bounded expansion cache garbage collection
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [implement-the-expansion-cache-protocol]
@@ -9,6 +9,9 @@ scopes: [research/cache, implementation/cache]
 shared_scopes: []
 paths: []
 tags: [cache, durability, concurrency]
+claimed_from: todo
+assignee: agent-design-bounded-expansion-cache-garbage-collection
+lease_expires_at: 1785038575
 ---
 The research note's sixth follow-up gate: design bounded garbage collection and accounting separately, and stress eviction with active writers and readers at 1, 8, and 32 processes.
 

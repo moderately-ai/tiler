@@ -1,7 +1,7 @@
 ---
 id: implement-boundary-property-model
 title: Implement the physical boundary-property model
-status: todo
+status: in-progress
 priority: p1
 dependencies: [prototype-optimizer-conformance-gate]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, physical-planning]
+claimed_from: todo
+assignee: agent-implement-boundary-property-model
+lease_expires_at: 1785038575
 ---
 Generalize typed physical boundary requirements, guarantees, satisfaction,
 subsumption, child requirement derivation, dominance, identity, and explain for
