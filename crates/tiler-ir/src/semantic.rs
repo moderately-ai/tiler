@@ -40,6 +40,7 @@ pub use operation::{
     multiply_f32_op, strict_serial_sum_f32_op,
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
+pub(crate) use registry::canonical_f32_bits;
 pub use registry::{
     DefinitionValueSubject, F32, FrozenSemanticRegistry, NormativeDefinitionRef,
     OperationApplicationRejection, ProviderIdentity, RegistryError, RegistryLookupError,

@@ -2034,7 +2034,12 @@ fn arithmetic_f32_facts() -> CanonicalValue {
 
 struct ConstantF32;
 
-fn canonical_f32_bits(bits: u32) -> CanonicalValue {
+/// Encodes one exact binary32 payload as a canonical value.
+///
+/// The governed scalar authority states the same canonical NaN payload as this
+/// layer does, so both build it here: sharing the constructor is what makes the
+/// format key and the big-endian byte order impossible to disagree on.
+pub(crate) fn canonical_f32_bits(bits: u32) -> CanonicalValue {
     CanonicalValue::float_bits(
         TypeKey::new("tiler", "f32", 1).expect("the governed F32 key is valid"),
         bits.to_be_bytes(),
