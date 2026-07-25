@@ -351,6 +351,14 @@ with a CI/sandbox override, rather than consumer `OUT_DIR`. Stable Cargo cannot
 be assumed to track arbitrary proc-macro filesystem/environment side effects,
 so complete identity and explicit invalidation live in Tiler.
 
+The cache root must be on a supported filesystem: local APFS and exFAT are
+measured on macOS, and network filesystems are unsupported because an advisory
+lock there can report success while excluding only the local client. That failure
+costs duplicate Metal compiler invocations and not correctness, so an
+unrecognized filesystem is not refused; every locally decidable failure is
+reported instead. Eviction orders by publication time and never by access time.
+See the [supported-filesystem contract](../research/cache/supported-filesystems.md).
+
 The cache key includes the Metal compiler fingerprint. Tool failures retain MSL
 and diagnostics when requested and become macro compilation errors rather than
 runtime fallback.

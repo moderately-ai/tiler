@@ -57,7 +57,7 @@ Status: the sixth follow-up gate of the [crash and race protocol note](crash-and
 - **Least recently used**, maintained by a sidecar the reader updates. Eliminated for now: it puts a write on the deliberately lock-free hit path, adds a failure mode to the operation the cache exists to make fast, and creates a partial-sidecar crash surface, all to improve a metric whose worst case is a recompilation.
 - **Largest first.** Eliminated: the cost of a wrong eviction is one recompilation regardless of the entry's size, so ordering by size optimizes a metric nobody pays.
 
-**Deferred question.** Whether the filesystem's *access* time can supply use recency for free is not this ticket's to answer, because whether `atime` is maintained at all depends on the mount and the filesystem. It is deferred to `define-supported-expansion-cache-filesystems`. **Trigger for reconsideration:** that ticket naming a supported filesystem set on which `atime` is maintained with useful granularity. **What this design assumes meanwhile:** insertion recency only, with the pathology stated above rather than hidden.
+**Deferred question, now closed negatively.** Whether the filesystem's *access* time can supply use recency for free was deferred to `define-supported-expansion-cache-filesystems`, on the trigger of that ticket naming a supported set on which `atime` is maintained with useful granularity. [The supported-filesystem note](supported-filesystems.md) answers no, and for a reason stronger than the `noatime` mount that motivated the deferral: on both measured filesystems `atime` is maintained under a `relatime`-like predicate or not at all, and a cache entry's modification time never changes after publication, so **its access time advances at most once in its whole life — at its first read — and never again.** It is a boolean "read at least once since published", which is precisely the distinction least-recently-used ordering exists *not* to be. `OldestPublicationFirst` therefore stands as the only order, and the pathology above stands with it rather than being hidden.
 
 ## No work budget, because the collector never blocks
 
@@ -137,7 +137,7 @@ There is no fourth position and no window in which a reader observes a partially
 ## What this design does not settle
 
 - **The default durability policy** is unchanged and still `measure-expansion-cache-durability-policies`'s. Collection is orthogonal to it: no ordering or flushing decision changes what a removal does.
-- **Supported filesystems**, and with them whether `atime` could supply use recency, belong to `define-supported-expansion-cache-filesystems`.
+- **Supported filesystems**, and with them whether `atime` could supply use recency, are settled by [the supported-filesystem note](supported-filesystems.md); the access-time answer is no, and the ordering above is unchanged by it.
 - **Framing fuzzing** and **deterministic I/O fault injection** remain `fuzz-the-expansion-cache-framing-paths` and `inject-deterministic-expansion-cache-io-failures`. The collector reads no entry bytes, so the framing paths it touches are the scan's `stat` calls rather than the decoder.
 - **The public facade.** Every type here is `pub(crate)` under ADR 0074 convention 7. Promoting it is `accept-the-tiler-cache-public-boundary`, and until that happens no consumer can collect anything.
 
