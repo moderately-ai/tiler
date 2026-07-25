@@ -1,7 +1,7 @@
 ---
 id: correct-artifact-abi-reconstruction-ownership
 title: Correct the artifact ABI's stale reconstruction-ownership sentences
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [carry-reconstructable-kernel-programs-in-the-neutral-envelope, correct-adr-0078-public-module-and-entry-point-facts]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contracts, artifacts]
+claimed_from: todo
+assignee: agent-abi-reconstruction
+lease_expires_at: 1785043640
 ---
 Two sentences in `docs/artifact-abi.md` describe the reconstruction question as open. [`carry-reconstructable-kernel-programs-in-the-neutral-envelope`](carry-reconstructable-kernel-programs-in-the-neutral-envelope.md) is `done`, so it has decided rather than owns deciding, and the contract has not caught up.
 

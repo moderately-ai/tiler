@@ -1,7 +1,7 @@
 ---
 id: record-delivered-numerical-realization
 title: Record the delivered numerical realization in the artifact
-status: todo
+status: in-progress
 priority: p1
 dependencies: [select-numerical-contract-and-compose-feasibility, declare-metal-numerical-honourability]
 related: [draft-target-honourable-numerical-contract-adr, prototype-artifact-program-model]
@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, numerics, needs-tom]
 claimed_from: todo
-assignee: agent-runtime
-lease_expires_at: 1784997340
+assignee: agent-delivered-realization
+lease_expires_at: 1785043640
 ---
 ADR 0076 item 4. A produced artifact carries a first-class, **readable** record of the numerical realization actually delivered: the resolved contract complete over every dimension, each dimension's means of honouring it, the target facts relied on, and the identity of the profile that declared them.
 
@@ -64,5 +64,19 @@ The same applies with more force to "the target facts relied on": no target-neut
 **Fact — it is not reachable from `tiler-artifact`, twice over.** `HonouringMeans` is `pub(crate)` (`honourability.rs:179`), so nothing outside `tiler-compiler` can name it; and `grep -n tiler-artifact crates/tiler-compiler/Cargo.toml` is empty while `tiler-artifact` does not and must not depend on `tiler-compiler`, so the dependency direction forbids reaching it even if it were public. The vocabulary landed in a crate the artifact layer cannot see.
 
 **Inference — the blocked note's reasoning survives with a new subject.** Projecting the record into `tiler-artifact` today would still mean *restating* the four means there, which is the second authority ADR 0076 line 58 forbids, only now the first authority demonstrably exists rather than being pending. What changed is that the question is answerable: either the vocabulary is promoted out of `tiler-compiler` into a crate both depend on (`tiler-ir`), or the artifact layer receives it as an opaque governed key the way it receives every other identity it is not the authority for — and `HonouringMeans::key` already mints exactly such a key (`"supported-exactly"`, `"supported-with-exact-emulation"`, …). That is a real atomic decision with two live options and a dependency direction that decides it, rather than a gap.
+
+## Decision — auto-resolved, because the first option does not survive
+
+Recorded rather than escalated: exactly one of the two options above survives the architectural guardrails, so there is no choice left to put to Tom. The elimination is stated so it can be refuted rather than only the conclusion.
+
+**Option A — move the vocabulary into `tiler-ir` — is eliminated by what `tiler-ir` is for.** `AGENTS.md` fixes it as the crate describing *what tensor operations mean, not how a device executes them*, and requires semantic/logical IR to stay distinct from physical schedules and target-aware choices. `HonouringMeans` says how a *target* delivers a numerical behaviour — whether a dimension is supported exactly, by exact emulation, and so on. It is target-honourability, which the same document places in "typed target profiles, physical properties, schedule alternatives, feasibility predicates, and cost models". Relocating it into the semantic IR to solve a visibility problem would densify a physical choice into the layer that must not carry one, and it would do so for the convenience of a sibling crate rather than for any semantic reason.
+
+**Option B is what this workspace already does everywhere else, and the precedent is not an analogy — it is the same mechanism.** `crates/tiler-artifact/src/program/keys.rs:147-176` gives every opaque identity a `from_bytes` over the doc "the bytes are treated as opaque: this crate compares and encodes them, and never re-derives them locally." That ignorance is exactly what keeps the artifact layer consumer-agnostic, and it is why `TargetProfileDescriptorDigest`, the capability key, and the feasibility rule set key all arrive as bytes minted elsewhere. A delivered numerical realization is one more identity the artifact layer is not the authority for.
+
+**It also satisfies the constraint that motivated the block.** ADR 0076 forbids a second authority restating the four means. An opaque key restates nothing: `tiler-artifact` can compare two keys for equality — which is the whole of what identity validation needs — without being able to interpret either. The means stay in the one crate that decides them.
+
+**What this does not license.** The key must be minted by `HonouringMeans::key` and carried, never reconstructed, defaulted, or inferred from a neighbouring field. An artifact holding no realization key is `Unknown` and must reject rather than assume — the same third-class treatment `carry-the-dtype-on-the-metal-subnormal-flush-fact` established for an unstated dtype, and for the same reason: an absent fact that reads as a permissive one is how a wrong tensor gets delivered quietly.
+
+**What would reopen this.** A consumer of the artifact that must *reason over* the means rather than compare them — for example, choosing between two artifacts by how each honours a dimension. That consumer would need the vocabulary, and the right response would be to give the artifact layer a typed view of a key it still does not mint, not to relocate the authority.
 
 **Not attempted.** This ticket adds a public numerical surface to `tiler-artifact`, which its own "Boundary — this needs Tom" section reserves under ADR 0075, and no such approval exists. The homing decision above should be presented as the atomic question when it is picked up.
