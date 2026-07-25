@@ -1,7 +1,7 @@
 ---
 id: revisit-kernel-body-single-spelling-gate
 title: Revisit the single-spelling kernel body refinement gate when the profile widens
-status: todo
+status: deferred
 priority: p2
 dependencies: []
 related: [prototype-structured-kir-slice, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, verification]
+claimed_from: todo
+assignee: agent-ir2
+lease_expires_at: 1784999607
 ---
 The kernel verifier's final check is **derive-and-compare**: after the specific
 rules run (so diagnostics stay precise), it re-derives the canonical body from
@@ -38,3 +41,39 @@ trigger**, and specifically do not replace structural equality with a
 looser structural heuristic that admits more bodies without proving they mean the
 same thing; a fail-closed rejection of a valid kernel is recoverable, an accepted
 wrong kernel is not.
+
+## Outcome
+
+**The trigger has not fired. The gate is unchanged, deliberately, and the ticket stays deferred — but the trigger is now detectable instead of depending on someone remembering this ticket exists.**
+
+This ticket's charter is a conditional: revisit *when* the profile widens, and "do not weaken this gate before the trigger". The work was therefore to check the condition, not to change the verifier. No behaviour changed.
+
+### Trigger check (inspected source, base `f286289`)
+
+**Neither trigger condition holds.**
+
+*Condition (a) — more than one legal body for one scheduled region.* `crates/tiler-ir/src/kernel/verify.rs::verify_kernel` calls `super::lower::derive_canonical(schedule, schedule_identity, derived)` and rejects on inequality. `derive_canonical` is a deterministic function of the `ScheduledRegion`, so the profile admits one body per region by construction. What decides whether that is still *correct* is whether the vocabularies shaping a body leave a producer any legal degree of freedom. They do not:
+
+- `ExecutionBinding` — one variant, `GlobalLinearInvocation`.
+- `TailPolicy` — one variant, `Exact`.
+- `LogicalAccess` — `LinearIdentity`, `ReductionContributor`.
+- `ReductionTopology` — `None`, `Serial`.
+- `ScalarProgram` — `MultiplyThenAdd`, `StrictSerialSum`, `FusedMultiplyAddSerialSum`.
+
+A single execution binding with no tail is the substance of it: there is one way to map invocations to coordinates and no remainder to handle, so a region's body has no alternative legal shape. The numerical contract closes the remaining freedom — `StrictF32NumericalContract::governed` forbids reassociation, so the fused program's combine order is not a choice either.
+
+*Condition (b) — an external producer needing its own spelling.* No such producer exists. `KernelBuilder` is public and `crates/tiler-ir/src/kernel/tests.rs` uses it to hand-build a producer kernel, but that test's purpose is the opposite of the trigger: it proves the hand-built kernel reaches the *same* verified product and identity as the canonical lowering. It is evidence the single spelling is currently sufficient, not that it is constraining.
+
+*Breadth work has not moved this.* `own-operation-family-support-matrix` is `done`, but it is a `contracts/navigation` ticket that added a maturity-tracking owner; it enumerates recognized-versus-supported state and explicitly records that the first profile is four strict-`f32` operations. Documenting the breadth gap did not widen the implemented surface.
+
+### What landed: the trigger is now a compile error
+
+The risk this ticket carries is not that the gate is wrong today — it is that the profile widens later and nobody connects the resulting `BodyRefinement` rejections to a deliberate bounded decision recorded in a ticket. A deferral whose trigger depends on recall is a deferral that fires late, after someone has debugged a valid kernel being rejected.
+
+`crates/tiler-ir/src/kernel/tests.rs::body_shaping_vocabulary_is_closed` matches all five vocabularies above exhaustively with no wildcard arm, so adding a variant to any of them is a **compile error in that function**, carrying a comment naming this ticket and telling the author to read it before adding an arm — because the right response may be to widen the gate rather than the match. `the_single_spelling_profile_is_still_narrow_enough_for_derive_and_compare` exercises it against the canonical pointwise region.
+
+This is a spelling check, not a semantic one, and is documented as such: it cannot tell that a widened vocabulary admits two bodies, only that the vocabulary widened — which is exactly the point at which a human has to make the judgement this ticket reserves for them. It weakens nothing; it makes the existing decision loud.
+
+### Status
+
+Left `deferred` rather than `done`. The stated work — replacing derive-and-compare with a normalizer or a checked equivalence relation carrying its own soundness argument — remains undone and correctly so. Reconsider on the compile error above, or when an external producer genuinely needs its own spelling accepted.
