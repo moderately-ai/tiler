@@ -1,7 +1,7 @@
 ---
 id: carry-the-metal-payload-in-an-artifact-envelope
 title: Carry the Metal payload in an artifact envelope and round-trip it
-status: in-progress
+status: review
 priority: p0
 dependencies: [assemble-the-metal-payload-from-emission-and-compilation, relocate-abi-expressions-into-tiler-ir, name-the-resolved-lowering-capability, carry-the-target-profile-descriptor-identity-into-the-plan, split-profile-and-feasibility-rule-identity]
 related: [route-the-runtime-proof-through-the-artifact-envelope, prototype-public-compiler-api]
@@ -110,3 +110,34 @@ The ticket says to "encode the envelope, and then **decode the bytes back** and 
 **What this does not block.** Everything up to `ArtifactProgramBuilder::build()` needs no promotion: the compilation environment, selected providers, `push_carried_payload`, the pruned arena replay, entry and launch specs, `push_variant`, and whole-artifact verification. That is the larger half and it is being built now. Only the encode → decode → re-encode assertions are gated.
 
 **Consequence for this ticket's closing condition.** It cannot close on the assembler alone, because "a payload that assembles but does not survive a round trip is not carried" is its own stated bar. The promotion question is with Tom.
+
+## The hard blocker above is RETRACTED — the codec's capability was promoted
+
+**Fact — `crates/tiler-artifact/src/program/codec/mod.rs:118-127`,** re-exported one level up at `program/mod.rs:313-317`: `pub use view::{ArtifactCodecFailure, DecodedArtifact, SectionPurpose, SectionView, decode_artifact};`, with the comment "The codec's *capability* — encode an artifact, decode bytes back — is public as of `carry-the-metal-payload-in-an-artifact-envelope` ... Promoted on Tom's review, 2026-07-25." `crates/tiler-artifact/src/program/codec/view.rs:83` adds `impl VerifiedArtifactProgram { pub fn encode(&self) -> Result<Vec<u8>, ArtifactCodecFailure> }`.
+
+The blocker read `encode`/`decode` as `pub(crate)` and concluded the capability was unreachable. It missed that a `view` module had been added exposing the capability *without* the envelope: accessors rather than fields, exactly to avoid committing the boundary to the codec's internal layout. So the round trip was reachable and this ticket was not blocked.
+
+## Outcome
+
+**Done. A real compilation and a real `metallib` are carried in the envelope and survive an encode, a decode, and a byte-identical re-encode.**
+
+**Measured, on this host.** Running `cargo run -p tiler-prototype-compile`: the `[4, 1]` proof program compiles to the fused alternative `selected-plan:070999f334e69d51`, emits 1 entry point and 2,291 bytes of MSL, links to 3,667 bytes of `metallib`, and packages into a **32,259-byte envelope with 3 sections, 1 variant, and a 12,620-byte canonical identity**. Sizes are recorded as observations of this toolchain and are not identities — `assemble-the-metal-payload-from-emission-and-compilation` recorded what happens when a byte count is treated as one.
+
+**What landed.** `prototypes/serial-sum-compile/src/bundle.rs` is the first artifact assembler in the workspace. It lives in the producer because that is the only component holding both halves: the compiler owns the plan and its ABI expressions (ADR 0068), the artifact crate owns the envelope, and neither may depend on the other. No new crate dependency edge and no new `pub` item in any library crate.
+
+**Nothing is derived twice.** The target profile key and its exact descriptor, the feasibility rule set key and revision, each capability's provider and governed key, the guard, and every accessible-byte and launch formula are read whole from `tiler_compiler::session`. `push_carried_payload` derives the descriptor digest from the metadata bytes rather than taking one. The only thing the assembler computes is the transliteration of the compiler's arena onto the builder's, and the decision about what each expression *says* was made in the compiler.
+
+**Asserted, in `bundle::tests::a_real_compilation_round_trips_through_the_neutral_envelope`.** Decode succeeds — which *is* the identity proof, since `decode_artifact` re-derives the identity from decoded content and refuses on mismatch (`codec/decode.rs:99-103`); the re-encode is byte-identical; the sections carry `BackendPayloadMetadata` and `BackendPayloadCode` by purpose rather than by position; the descriptor's digest equals `PayloadContent::identity()` of the content handed over, which decode independently re-derived from the metadata *section* (`codec/validate.rs:236-253`), so the two cannot agree by both being wrong; the derived feature set contains `tiler.artifact.feature.embedded-payload-code`; and the payload's compatibility contract is the compiler's profile key and descriptor bytes exactly.
+
+**No codec check was weakened, and none refused a well-formed bundle.** Two boundaries were met and both are the codec being right.
+
+**Retraction — the wholesale arena replay does not fail, and the reason matters.** The ticket predicted that replaying the compiler's arena whole fails whole-artifact verification with `UnusedExpression`, because the canonical graph serves both alternatives. The premise holds — the fused variant's roots reach 8 of 9 positions, leaving position 5 unreachable — but the conclusion is false. `ArtifactProgramBuilder::push_node` deduplicates by content key, and position 5 is `UnsignedLiteral(input_elements)`, byte-for-byte the node at position 1 that the input binding's byte range already multiplies. Replaying it returns the handle already minted, so no unreferenced node ever enters the builder's arena. `bundle::tests::the_pruned_and_wholesale_arena_replays_agree_because_the_builder_dedupes` measures this: it proves the unreachable set is non-empty, proves every node in it duplicates the content of a reachable one, and asserts the two replays encode to identical bytes. The assembler still prunes, because the safety is a property of *this* nine-node graph and not of the discipline — a node with unique content and no use site would fail, and nothing promises one never appears.
+
+**A measured boundary of the envelope, found by packaging the other alternative.** The materialized plan assembles and verifies, encodes, and is then refused on decode as `ArtifactCodecFailure::Unsupported`. Its two stages make the projector derive `tiler.artifact.feature.multi-stage-program` (`codec/model.rs:608-614`), which is deliberately absent from `SUPPORTED_FEATURES` (`codec/model.rs:98-103`) because the neutral program section carries a program's canonical identity and not its dependency graph, so a reader cannot recover the order two stages must run in. Refusing is the fail-closed form of that gap; treating declaration order as execution order would be the silent one. `a_multi_stage_variant_encodes_and_this_reader_refuses_it` pins it so the limit is not rediscovered as a bug. `carry-reconstructable-kernel-programs-in-the-neutral-envelope` owns closing it.
+
+**Two model gaps filed rather than papered over.**
+
+- `record-the-capability-revision-in-selected-provider-identity` (p1). `SelectedProvider` has no field for the capability revision `docs/operation-extensions.md` requires a selected plan to record, and its `capability_api_version: u16` names a fact no component in `tiler-compiler` mints. The assembler carries the compiler's real `u32` revision into that slot through a **checked** narrowing that refuses rather than truncating, with the conflation named at the call site. That was chosen over hard-coding a constant (an invention) and over dropping the value (removing a real identity component); it is still a conflation and the ticket closes it.
+- `expose-the-built-artifact-canonical-identity` (p2). `build` derives an identity and stores it in a private field with no accessor, so a producer cannot state "the artifact I built is the artifact these bytes name". The round trip is provable without it — decode compares the re-derivation to the manifest, and byte-identical re-encode pins the manifest to that re-derivation — but the direct comparison a cache key needs is not reachable.
+
+**Maturity, stated apart.** An artifact that assembles, encodes, and re-validates from its own bytes is not an artifact that has run. `route-the-runtime-proof-through-the-artifact-envelope` still owns removing the direct-`metallib` bypass, and it remains blocked on `prototype-runtime-artifact-validation`.

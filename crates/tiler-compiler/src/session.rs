@@ -44,6 +44,7 @@ use tiler_ir::program::abi::ExprNode;
 use tiler_ir::semantic::{ProviderIdentity, SemanticProgram};
 
 use crate::explain::VerifiedExplainTrace;
+use crate::feasibility::FeasibilityRuleSetIdentity;
 use crate::pipeline::{
     CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind,
     compile as compile_internal,
@@ -88,6 +89,8 @@ pub enum CompileFailure {
 #[derive(Clone, Debug)]
 pub struct Compilation {
     target_profile_key: &'static str,
+    target_profile_descriptor: Vec<u8>,
+    feasibility_rule_set: FeasibilityRuleSetIdentity,
     alternatives: Vec<ProgramAlternative>,
     selected_alternative_id: String,
     explain: VerifiedExplainTrace,
@@ -98,6 +101,55 @@ impl Compilation {
     #[must_use]
     pub fn target_profile_key(&self) -> &str {
         self.target_profile_key
+    }
+
+    /// Returns the canonical descriptor bytes of the profile this compilation
+    /// was assessed against.
+    ///
+    /// ADR 0043 requires a declared target profile to carry both its governed
+    /// key and its exact descriptor identity, because two profiles can advertise
+    /// one key and admit different candidates — so a key alone is not evidence
+    /// that anything here is legal on a device presenting it.
+    ///
+    /// These bytes *are* the descriptor identity rather than a hash of it, so a
+    /// consumer wraps them in its own opaque-identity type. Emitting bytes
+    /// avoids minting a digest here and avoids a second identity that would have
+    /// to be kept in agreement with the bytes it summarizes.
+    ///
+    /// Sited here rather than on [`PlanAlternative`] because one compilation
+    /// declares one profile: every retained alternative was assessed against
+    /// this exact descriptor, and offering it per alternative would invite a
+    /// reader to believe two alternatives of one compilation could differ.
+    #[must_use]
+    pub fn target_profile_descriptor(&self) -> &[u8] {
+        &self.target_profile_descriptor
+    }
+
+    /// Returns the governed key of the feasibility rules this compilation was
+    /// assessed under.
+    ///
+    /// The rules are a second identity beside the target profile rather than a
+    /// field of it: one profile can be re-assessed under new rules and one rule
+    /// set applies across profiles, so neither determines the other, and the
+    /// artifact layer records them as two references for that reason.
+    ///
+    /// Minted by the compiler and handed over whole, like a capability key. The
+    /// pair enters artifact identity under ADR 0072, so a consumer composing a
+    /// key and a revision of its own would be a second derivation of one
+    /// identity.
+    #[must_use]
+    pub fn feasibility_rule_set_key(&self) -> &str {
+        self.feasibility_rule_set.key()
+    }
+
+    /// Returns the output-affecting revision of those feasibility rules.
+    ///
+    /// Always nonzero: zero is reserved for "unset" at the artifact boundary, so
+    /// the compiler refuses to mint one rather than let an artifact record rules
+    /// it was never assessed under.
+    #[must_use]
+    pub fn feasibility_rule_set_revision(&self) -> u32 {
+        self.feasibility_rule_set.revision()
     }
 
     /// Returns every retained plan alternative, in the order the policy ranked.
@@ -156,23 +208,6 @@ impl PlanAlternative<'_> {
     #[must_use]
     pub fn kernels(&self) -> &[VerifiedKernel] {
         &self.0.kernels
-    }
-
-    /// Returns the canonical descriptor bytes of the profile this alternative
-    /// was assessed against.
-    ///
-    /// ADR 0043 requires a declared target profile to carry both its governed
-    /// key and its exact descriptor identity, because two profiles can
-    /// advertise one key and admit different candidates — so a key alone is not
-    /// evidence that this alternative is legal on a device presenting it.
-    ///
-    /// These bytes *are* the descriptor identity rather than a hash of it, so a
-    /// consumer wraps them in its own opaque-identity type. Emitting bytes
-    /// avoids minting a digest here and avoids a second identity that would
-    /// have to be kept in agreement with the bytes it summarizes.
-    #[must_use]
-    pub fn target_profile_descriptor(&self) -> &[u8] {
-        self.0.artifact_plan.target_profile_descriptor()
     }
 
     /// Returns the lowering capabilities this alternative resolved.
@@ -452,6 +487,8 @@ fn into_compilations(product: CompilationProduct) -> Vec<Compilation> {
         .into_iter()
         .map(|target| Compilation {
             target_profile_key: target.target_profile_key,
+            target_profile_descriptor: target.target_profile_descriptor,
+            feasibility_rule_set: target.feasibility_rule_set,
             selected_alternative_id: target.portfolio.selection.selected_alternative_id,
             alternatives: target.portfolio.alternatives,
             explain: target.explain,
@@ -576,6 +613,48 @@ mod tests {
             CompileFailure::BudgetExhausted,
             CompileFailure::Unsupported { rule: "any" },
         );
+    }
+
+    /// The boundary names both assessment identities an artifact must record.
+    ///
+    /// These are the two halves an assembler needs beside the capability pair:
+    /// `TargetProfileRef` wants the profile key and its exact descriptor, and
+    /// `FeasibilityRuleSetRef` wants the rule set key and its revision. Both are
+    /// asserted from `Compilation` alone, because that is where a consumer has
+    /// to be able to reach them without holding an alternative.
+    #[test]
+    fn a_compilation_names_its_target_profile_and_its_feasibility_rules() {
+        let program = semantic_program();
+        let compilations = compile_governed(&program, NumericalContract::StrictF32).unwrap();
+        let compilation = compilations.first().expect("one governed target");
+
+        // Both halves of the profile reference, neither invented by a consumer.
+        assert!(!compilation.target_profile_key().is_empty());
+        let descriptor = compilation.target_profile_descriptor();
+        assert!(!descriptor.is_empty(), "a descriptor identity is carried");
+        assert!(
+            descriptor.len() <= 1_024,
+            "the descriptor fits the artifact boundary's opaque-identity bound: {} bytes",
+            descriptor.len(),
+        );
+
+        // The rule set is a second identity, not a restatement of the profile.
+        // Asserting the two keys differ is the point: fusing them would make an
+        // artifact claim it was assessed under rules named after a target.
+        let rules = compilation.feasibility_rule_set_key();
+        assert!(
+            rules.starts_with("tiler.feasibility."),
+            "unexpected rule set key spelling: {rules}",
+        );
+        assert_ne!(rules, compilation.target_profile_key());
+        assert!(
+            compilation.feasibility_rule_set_revision() > 0,
+            "zero is reserved for unset at the artifact boundary",
+        );
+
+        // Compilation-invariant, not per-alternative: the surface offers one
+        // value and every retained alternative was assessed against it.
+        assert!(compilation.alternatives().len() >= 2);
     }
 
     /// The boundary names every capability that lowered, and its ABI inputs.
