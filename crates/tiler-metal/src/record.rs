@@ -4,16 +4,21 @@
 //! `pub` fields and offers no constructor: only
 //! [`crate::emit::emit_translation_unit`] produces one. Its readers yield the
 //! emitted source, the ordered entry points with their complete binding tables,
-//! the numerical compiler selections the source requires, and the declared
-//! numerical obligations the target cannot realize at all.
+//! the numerical compiler selections the source requires, the declared
+//! numerical obligations the target cannot realize at all, and the arithmetic
+//! types the unit used that the target states no subnormal fact for.
 //!
-//! The last two are deliberately different kinds. A
+//! The last three are deliberately different kinds. A
 //! [`crate::record::MetalNumericalRequirement`] names a compiler selection that
 //! *does* deliver an obligation; a [`crate::record::MetalNumericalGap`] says no
-//! selection does. Keeping hard feasibility apart from a flag choice is what
-//! lets [`crate::record::MetalTranslationUnit::require_declared_realization`]
+//! selection does; and
+//! [`crate::record::MetalTranslationUnit::unstated_subnormal_arithmetic`]
+//! says nothing is known either way, which is `Unknown` and not a verdict.
+//! Keeping hard feasibility apart from a flag choice, and both apart from an
+//! unmeasured fact, is what lets
+//! [`crate::record::MetalTranslationUnit::require_declared_realization`]
 //! fail closed with an explainable reason instead of naming a flag that would
-//! not honour the contract.
+//! not honour the contract or inheriting a measurement made for another dtype.
 //!
 //! Every public item here is a reviewed *draft* boundary (ADR 0074 §7).
 
@@ -22,6 +27,7 @@ use core::fmt;
 use tiler_ir::kernel::{BufferParameter, CanonicalKernelIdentity};
 
 use crate::diagnostic::MetalEmitError;
+use crate::target::{MetalFloatArithmeticType, MetalUnstatedSubnormalArithmetic};
 
 /// One numerical compiler flag this emitted source requires to be correct.
 ///
@@ -123,11 +129,14 @@ impl fmt::Display for MetalNumericalRequirement {
 ///
 /// A profile declaration in the compiler is the authority on *what a target
 /// honours*, and this backend-local step survives alongside it rather than
-/// competing with it. There is exactly one statement of the Metal fact —
-/// [`MetalSubnormalArithmetic`](crate::target::MetalSubnormalArithmetic), whose
-/// measurement is recorded on the type — and every arm of
-/// `crate::emit::subnormal_gap` is derived from that one value, so there is no
-/// second opinion here that could diverge from the profile's.
+/// competing with it. There is exactly one statement of the Metal fact per
+/// arithmetic type —
+/// [`MetalSubnormalArithmeticFacts`](crate::target::MetalSubnormalArithmeticFacts),
+/// whose measurements are recorded on the type — and every arm of
+/// `crate::emit::subnormal_gap` is derived from the single value that record
+/// holds for the arithmetic type being emitted, so there is no second opinion
+/// here that could diverge from the profile's, and no arm reads a fact stated
+/// for a different type.
 ///
 /// What this step adds is a different *question*, not a second answer to the
 /// same one:
@@ -137,11 +146,12 @@ impl fmt::Display for MetalNumericalRequirement {
 ///   before emission, which is what lets the compiler reject early.
 /// - A gap is a claim about **this translation unit**: whether the operations
 ///   actually emitted incur a dimension the target does not honour. The
-///   comparison is only reached from emitted `f32` arithmetic, so a kernel that
-///   only materializes values conforms on a flushing target — which the
-///   measurement supports, because a load-then-store round trip preserves every
-///   subnormal bit pattern. Collapsing the two would either refuse that kernel
-///   or approve an arithmetic one; both are wrong answers.
+///   comparison is only reached from emitted floating-point arithmetic, and it
+///   reads the fact stated for that operation's own arithmetic type, so a
+///   kernel that only materializes values conforms on a flushing target —
+///   which the measurement supports, because a load-then-store round trip
+///   preserves every subnormal bit pattern. Collapsing the two would either
+///   refuse that kernel or approve an arithmetic one; both are wrong answers.
 ///
 /// The dependency graph makes keeping it non-optional. `tiler-metal` depends on
 /// `tiler-ir` and `tiler-artifact` and deliberately not on `tiler-compiler`, so
@@ -152,21 +162,33 @@ impl fmt::Display for MetalNumericalRequirement {
 /// conformance claim anywhere. The two checkpoints are therefore ordered rather
 /// than redundant — the profile declaration governs admission, and this governs
 /// the unit that admission produced.
+///
+/// # A gap names the mismatch and not the arithmetic type it arose in
+///
+/// The set is per translation unit, exactly as it is per region rather than per
+/// subnormal dimension, so a unit performing arithmetic in two types that
+/// mismatched differently would record both gaps without saying which type
+/// produced which. That is a loss of explanation, never a wrong verdict: each
+/// gap is derived from the fact stated for its own arithmetic type, and the
+/// conformance claim fails on any of them. It is unreachable today, because the
+/// structured kernel IR resolves one floating-point element type.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MetalNumericalGap {
-    /// The realization preserves subnormals, but the target's `f32` arithmetic
-    /// flushes subnormal operands and subnormal results to zero.
+    /// The realization preserves subnormals, but the target flushes subnormal
+    /// operands and subnormal results to zero in the arithmetic type this unit
+    /// used.
     ///
     /// No `-fmetal-math-mode`, `-ffp-contract`, `-fmetal-math-fp32-functions`,
-    /// or `-O` selection changes this; see
-    /// [`MetalSubnormalArithmetic`](crate::target::MetalSubnormalArithmetic)
-    /// for the measurement. A kernel that only materializes values is not
-    /// affected, so this gap is recorded only when the kernel performs `f32`
-    /// arithmetic.
+    /// or `-O` selection changes this for the measured `f32` row; see
+    /// [`MetalSubnormalArithmeticFacts`](crate::target::MetalSubnormalArithmeticFacts)
+    /// for that measurement and for the `f16` row that does *not* flush. A
+    /// kernel that only materializes values is not affected, so this gap is
+    /// recorded only when the kernel performs floating-point arithmetic, and
+    /// then only against the fact stated for that arithmetic's own type.
     SubnormalFlushInArithmetic,
-    /// The realization flushes subnormals to zero, but the target's `f32`
-    /// arithmetic preserves them.
+    /// The realization flushes subnormals to zero, but the target preserves
+    /// them in the arithmetic type this unit used.
     ///
     /// This is the converse of
     /// [`MetalNumericalGap::SubnormalFlushInArithmetic`] and it is a gap for
@@ -282,6 +304,7 @@ pub struct MetalTranslationUnit {
     entry_points: Vec<MetalEntryPoint>,
     numerical: Vec<MetalNumericalRequirement>,
     gaps: Vec<MetalNumericalGap>,
+    unstated: Vec<MetalFloatArithmeticType>,
 }
 
 impl MetalTranslationUnit {
@@ -290,12 +313,14 @@ impl MetalTranslationUnit {
         entry_points: Vec<MetalEntryPoint>,
         numerical: Vec<MetalNumericalRequirement>,
         gaps: Vec<MetalNumericalGap>,
+        unstated: Vec<MetalFloatArithmeticType>,
     ) -> Self {
         Self {
             source,
             entry_points,
             numerical,
             gaps,
+            unstated,
         }
     }
 
@@ -326,13 +351,36 @@ impl MetalTranslationUnit {
     /// Returns the declared numerical obligations this Metal profile cannot
     /// realize, in ascending governed order.
     ///
-    /// An empty slice means every declared obligation is either carried by the
-    /// emitted operations or reachable through
-    /// [`Self::numerical_requirements`]. A non-empty slice means no compiler
-    /// selection honours the contract; see [`MetalNumericalGap`].
+    /// A non-empty slice means no compiler selection honours the contract; see
+    /// [`MetalNumericalGap`].
+    ///
+    /// An empty slice is **not** on its own a conformance claim. Gaps are only
+    /// computed for arithmetic types the target states a fact for, so a unit
+    /// whose arithmetic reached an unstated type has an incomplete gap set —
+    /// read [`Self::unstated_subnormal_arithmetic`] beside this, or use
+    /// [`Self::require_declared_realization`], which checks both in the order
+    /// that makes the answer sound.
     #[must_use]
     pub fn numerical_gaps(&self) -> &[MetalNumericalGap] {
         &self.gaps
+    }
+
+    /// Returns the arithmetic types this unit used that the target states no
+    /// subnormal fact for, in ascending governed order.
+    ///
+    /// This is the `Unknown` class. It is neither a delivered obligation nor a
+    /// gap: nothing here says the target cannot honour the contract, only that
+    /// no measurement says whether it can. The measured Apple row flushes in
+    /// `f32` and preserves in `f16`, so there is no neighbouring fact to
+    /// substitute and no behaviour that is safe to assume, and the fail-closed
+    /// answer is to say so rather than to pick one.
+    ///
+    /// A type appears here only when the unit actually emitted arithmetic in
+    /// it. A target that leaves `f16` unstated is fully conformant for a unit
+    /// that performs no `f16` arithmetic.
+    #[must_use]
+    pub fn unstated_subnormal_arithmetic(&self) -> &[MetalFloatArithmeticType] {
+        &self.unstated
     }
 
     /// Fails closed unless this unit realizes every declared numerical
@@ -345,9 +393,21 @@ impl MetalTranslationUnit {
     ///
     /// # Errors
     ///
-    /// Returns [`MetalEmitError::UnrealizableNumericalObligation`] naming the
-    /// first gap in ascending governed order.
+    /// Returns [`MetalEmitError::UnstatedSubnormalArithmetic`] naming the first
+    /// unstated arithmetic type, before considering any gap. An unstated fact
+    /// makes the gap set *incomplete* rather than merely adding one more
+    /// entry to it, so a gap reported from an incomplete comparison would
+    /// present a partial answer as a total one; the missing measurement is also
+    /// the actionable thing.
+    ///
+    /// Otherwise returns [`MetalEmitError::UnrealizableNumericalObligation`]
+    /// naming the first gap in ascending governed order.
     pub fn require_declared_realization(&self) -> Result<(), MetalEmitError> {
+        if let Some(arithmetic_type) = self.unstated.first() {
+            return Err(MetalEmitError::UnstatedSubnormalArithmetic {
+                unstated: MetalUnstatedSubnormalArithmetic::for_type(*arithmetic_type),
+            });
+        }
         match self.gaps.first() {
             Some(gap) => Err(MetalEmitError::UnrealizableNumericalObligation { gap: *gap }),
             None => Ok(()),

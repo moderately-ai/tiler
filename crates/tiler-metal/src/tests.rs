@@ -40,26 +40,41 @@ use crate::emit::{
 };
 use crate::record::{MetalNumericalGap, MetalNumericalRequirement, MetalTranslationUnit};
 use crate::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
-    MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
+    MetalPlatform, MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
+    MslLanguageVersion,
 };
 
 const NAN_BITS: u32 = 0x7fc0_0000;
 const SCALE_BITS: u32 = 0x4000_0000;
 const BIAS_BITS: u32 = 0x3f80_0000;
 
-/// The measured Apple profile: `f32` arithmetic flushes subnormals to zero.
+/// The measured Apple profile: `f32` arithmetic flushes subnormals to the
+/// sign-preserving zero and `f16` arithmetic preserves them.
 fn target() -> MetalTargetFacts {
     MetalTargetFacts::new(
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(13, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
-        MetalSubnormalArithmetic::FlushesToZero {
-            zero_sign: MetalFlushedZeroSign::PreservesSign,
-        },
+        subnormal_facts(APPLE_FLUSH),
         31,
     )
+}
+
+/// The Apple row's per-type subnormal facts, with the `f32` entry varied.
+///
+/// The `f16` entry is the measured preserving one in every case: no test here
+/// emits `f16` arithmetic, so varying it would exercise nothing, and stating it
+/// keeps the fixtures a faithful copy of the measured row rather than a target
+/// that happens to be silent about the second dtype.
+const fn subnormal_facts(f32_behaviour: MetalSubnormalArithmetic) -> MetalSubnormalArithmeticFacts {
+    MetalSubnormalArithmeticFacts::unmeasured()
+        .stating(MetalFloatArithmeticType::F32, f32_behaviour)
+        .stating(
+            MetalFloatArithmeticType::F16,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        )
 }
 
 /// The strict declared realization every golden fixture is emitted under.
@@ -345,7 +360,7 @@ fn emit_pointwise_under(
     );
     let kernel = lower_scheduled_region(&region).expect("bounded pointwise fixture lowers");
     let mut facts = target();
-    facts.subnormal_arithmetic = subnormal_arithmetic;
+    facts.subnormal_arithmetic = subnormal_facts(subnormal_arithmetic);
     emit_translation_unit(&[&kernel], &facts).expect("bounded fixture emits")
 }
 
@@ -658,17 +673,155 @@ fn subnormal_preservation_is_recorded_as_an_unrealizable_gap() {
             .contains("// Declared numerical obligations this profile cannot realize:")
     );
     assert!(unit.source().contains("//   subnormal-flush-in-arithmetic"));
+    assert!(unit.source().contains("//   f32: flushes-to-zero"));
+}
+
+/// Every arithmetic type occupies its own slot in the facts record.
+///
+/// The record is a fixed array keyed by [`MetalFloatArithmeticType::index`], so
+/// two types sharing a slot would silently make one type's stated fact answer
+/// for the other — the exact failure this ticket exists to remove. The map is
+/// written as a match rather than read from the discriminant, and this proves it
+/// is a bijection onto `0..COUNT` rather than trusting that it is.
+#[test]
+fn every_arithmetic_type_indexes_to_its_own_slot() {
+    let mut seen = BTreeSet::new();
+    for arithmetic_type in MetalFloatArithmeticType::ALL {
+        let facts = MetalSubnormalArithmeticFacts::unmeasured().stating(
+            arithmetic_type,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        );
+        for other in MetalFloatArithmeticType::ALL {
+            let stated = facts.behaviour(other).is_ok();
+            assert_eq!(
+                stated,
+                other == arithmetic_type,
+                "stating {arithmetic_type} answered for {other}"
+            );
+        }
+        assert!(
+            seen.insert(arithmetic_type.as_str()),
+            "two arithmetic types share the identifier {arithmetic_type}"
+        );
+    }
+    assert_eq!(seen.len(), MetalFloatArithmeticType::COUNT);
+}
+
+/// A fact stated twice for one arithmetic type is a rejection, not a last-wins.
+///
+/// Two statements about one type are two claims. Keeping either silently would
+/// drop a measurement, and a caller assembling a target profile from more than
+/// one source has to reconcile them rather than discover afterwards which
+/// survived.
+#[test]
+#[should_panic(expected = "a subnormal-arithmetic fact was stated twice")]
+fn stating_one_arithmetic_type_twice_is_refused() {
+    let _ = MetalSubnormalArithmeticFacts::unmeasured()
+        .stating(MetalFloatArithmeticType::F32, APPLE_FLUSH)
+        .stating(
+            MetalFloatArithmeticType::F32,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        );
+}
+
+/// An unstated arithmetic type is never answered by another type's fact.
+///
+/// This is the whole contract consequence of finding 21. The target below states
+/// the measured `f16` behaviour and says nothing about `f32`; the kernel
+/// performs `f32` arithmetic. Emission must not read the `f16` fact — which
+/// would report no gap and approve the strict contract — and must not assume a
+/// flush either. It records the type as unstated, and the conformance claim
+/// fails closed naming it.
+///
+/// The empty gap list is the part worth reading twice: gaps are only computed
+/// for types the target speaks to, so an empty set here is an *incomplete*
+/// answer rather than a conformant one, which is why
+/// `require_declared_realization` consults the unstated set first.
+#[test]
+fn an_unstated_arithmetic_type_is_not_answered_by_another_types_fact() {
+    let mut facts = target();
+    facts.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured().stating(
+        MetalFloatArithmeticType::F16,
+        MetalSubnormalArithmetic::PreservesSubnormals,
+    );
+    let unit = emit_translation_unit(&[&pointwise_kernel()], &facts).unwrap();
+
+    assert_eq!(
+        unit.unstated_subnormal_arithmetic(),
+        [MetalFloatArithmeticType::F32],
+    );
+    assert!(unit.numerical_gaps().is_empty());
+    let error = unit.require_declared_realization().unwrap_err();
+    assert_eq!(error.rule(), "unstated-subnormal-arithmetic");
+    assert_eq!(error.to_string(), "unstated-subnormal-arithmetic: f32");
+    let MetalEmitError::UnstatedSubnormalArithmetic { unstated } = error else {
+        panic!("an unstated fact must reject as itself, not as a gap");
+    };
+    assert_eq!(unstated.arithmetic_type(), MetalFloatArithmeticType::F32);
+
+    // A caller keeping only the emitted text still carries it, and the text says
+    // the obligation list above cannot be read as complete.
     assert!(
         unit.source()
-            .contains("// f32 arithmetic subnormals: flushes-to-zero")
+            .contains("// Arithmetic types used with no stated subnormal fact:\n//   f32\n")
     );
+    assert!(
+        unit.source()
+            .contains("// The obligations above are therefore incomplete.")
+    );
+    assert!(unit.source().contains("//   f32: not stated"));
+    assert!(unit.source().contains("//   f16: preserves-subnormals"));
+}
+
+/// A type the target says nothing about costs nothing to a unit that never uses
+/// it.
+///
+/// The unstated set is a property of the arithmetic this unit emitted, not of
+/// the target record, so a target measured for no type at all is fully
+/// conformant for a unit that performs no arithmetic. The empty portfolio is
+/// the only arithmetic-free unit this crate's fixtures can build — every scalar
+/// program in the bounded profile multiplies or adds — so this bounds the claim
+/// to that case rather than to materialization in general.
+#[test]
+fn a_unit_with_no_arithmetic_reports_no_unstated_type() {
+    let mut facts = target();
+    facts.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured();
+    let unit = emit_translation_unit(&[], &facts).unwrap();
+    assert!(unit.unstated_subnormal_arithmetic().is_empty());
+    assert!(unit.numerical_gaps().is_empty());
+    unit.require_declared_realization().unwrap();
+    assert!(
+        unit.source()
+            .contains("// Arithmetic types used with no stated subnormal fact: none.")
+    );
+    assert!(unit.source().contains("//   f32: not stated"));
+}
+
+/// An unstated type is reported ahead of a gap.
+///
+/// A gap set computed while a fact is missing is incomplete, so reporting a gap
+/// from it would present a partial comparison as a total one. The unit is
+/// assembled directly because no emission can currently produce both: the
+/// structured kernel IR resolves one floating-point element type, so a unit
+/// whose `f32` fact is missing has no other type left to derive a gap from.
+#[test]
+fn an_unstated_type_is_reported_before_a_gap() {
+    let unit = MetalTranslationUnit::new(
+        String::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![MetalNumericalGap::SubnormalFlushInArithmetic],
+        vec![MetalFloatArithmeticType::F16],
+    );
+    let error = unit.require_declared_realization().unwrap_err();
+    assert_eq!(error.rule(), "unstated-subnormal-arithmetic");
 }
 
 /// The gap is a stated target fact, not an assumption compiled into emission.
 #[test]
 fn a_subnormal_preserving_target_has_no_gap() {
     let mut facts = target();
-    facts.subnormal_arithmetic = MetalSubnormalArithmetic::PreservesSubnormals;
+    facts.subnormal_arithmetic = subnormal_facts(MetalSubnormalArithmetic::PreservesSubnormals);
     let unit = emit_translation_unit(&[&pointwise_kernel()], &facts).unwrap();
     assert!(unit.numerical_gaps().is_empty());
     unit.require_declared_realization().unwrap();
@@ -739,7 +892,7 @@ fn a_flush_the_target_delivers_is_honoured_over_real_arithmetic() {
     );
     assert!(
         unit.source()
-            .contains("// f32 arithmetic subnormals: flushes-to-zero-preserving-sign")
+            .contains("//   f32: flushes-to-zero-preserving-sign")
     );
 }
 
@@ -801,7 +954,7 @@ fn an_always_positive_flush_is_honoured_by_an_always_positive_target() {
     unit.require_declared_realization().unwrap();
     assert!(
         unit.source()
-            .contains("// f32 arithmetic subnormals: flushes-to-zero-always-positive")
+            .contains("//   f32: flushes-to-zero-always-positive")
     );
 }
 

@@ -29,7 +29,11 @@
 //!   arithmetic operation is its own statement. Those three hold under every
 //!   math mode. What the operations cannot carry is reported instead of
 //!   assumed: compiler selections as [`record::MetalNumericalRequirement`]s,
-//!   and obligations no selection realizes as [`record::MetalNumericalGap`]s.
+//!   obligations no selection realizes as [`record::MetalNumericalGap`]s, and
+//!   arithmetic types the target states no subnormal fact for through
+//!   [`record::MetalTranslationUnit::unstated_subnormal_arithmetic`]. The last
+//!   is `Unknown` rather than a verdict, and it is kept apart from the other
+//!   two rather than collapsed into either.
 //!
 //! # Emitting is not claiming conformance
 //!
@@ -45,6 +49,16 @@
 //! not deliver it. A realization that accepts a flush to the zero the target
 //! actually produces is honoured, and only a genuine sign mismatch stays a gap.
 //!
+//! The `f32` in that sentence is load-bearing. The same measured hardware
+//! *preserves* subnormals through `f16` arithmetic, in the same math modes,
+//! from modules declaring `air.compile.denorms_disable` identically — so the
+//! subnormal fact is stated once per arithmetic type
+//! ([`target::MetalSubnormalArithmeticFacts`]) and never read across types. A
+//! type the target says nothing about is `Unknown`: emission records it and
+//! the conformance claim fails closed on it, ahead of any gap, because a gap
+//! set computed while a fact is missing is incomplete rather than merely
+//! shorter.
+//!
 //! This step is deliberately kept alongside the compiler's per-dimension
 //! honourability declaration rather than retired in favour of it. The two are
 //! not two answers to one question: the declaration is a claim about a target
@@ -54,7 +68,8 @@
 //! so a compiler-side rejection is unreachable from a caller that drives
 //! [`emit::emit_translation_unit`] from `tiler_ir` alone.
 //! [`record::MetalNumericalGap`] records the full reasoning; the Metal fact
-//! itself is declared exactly once, on [`target::MetalSubnormalArithmetic`].
+//! itself is declared exactly once per arithmetic type, on
+//! [`target::MetalSubnormalArithmeticFacts`].
 //!
 //! # What it does not decide
 //!
@@ -90,9 +105,9 @@
 //! use tiler_metal::emit::emit_translation_unit;
 //! use tiler_metal::record::{MetalNumericalGap, MetalNumericalRequirement};
 //! use tiler_metal::target::{
-//!     LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
-//!     MetalSubnormalArithmetic,
-//!     MetalTargetFacts, MslLanguageVersion,
+//!     LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType,
+//!     MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+//!     MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
 //! };
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -161,9 +176,21 @@
 //!     MetalPlatform::MacOs,
 //!     MetalDeploymentMinimum::new(13, 0),
 //!     LaunchIndexRealization::ThreadPositionInGridUInt,
-//!     MetalSubnormalArithmetic::FlushesToZero {
-//!         zero_sign: MetalFlushedZeroSign::PreservesSign,
-//!     },
+//!     // One measured behaviour per arithmetic type: the Apple row flushes in
+//!     // f32 and preserves in f16. A type left out is Unknown, and emitting
+//!     // arithmetic in it fails the conformance claim rather than borrowing
+//!     // the other type's fact.
+//!     MetalSubnormalArithmeticFacts::unmeasured()
+//!         .stating(
+//!             MetalFloatArithmeticType::F32,
+//!             MetalSubnormalArithmetic::FlushesToZero {
+//!                 zero_sign: MetalFlushedZeroSign::PreservesSign,
+//!             },
+//!         )
+//!         .stating(
+//!             MetalFloatArithmeticType::F16,
+//!             MetalSubnormalArithmetic::PreservesSubnormals,
+//!         ),
 //!     31,
 //! );
 //! let unit = emit_translation_unit(&[&kernel], &target)?;
@@ -190,6 +217,9 @@
 //!     unit.numerical_gaps(),
 //!     [MetalNumericalGap::SubnormalFlushInArithmetic],
 //! );
+//! // Every arithmetic type this unit used has a stated fact, so the gap list
+//! // above is complete and the rejection below is about the gap.
+//! assert!(unit.unstated_subnormal_arithmetic().is_empty());
 //! assert!(unit.require_declared_realization().is_err());
 //! # Ok(())
 //! # }

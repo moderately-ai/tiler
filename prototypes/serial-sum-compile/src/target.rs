@@ -87,8 +87,9 @@ const fn deployment_minimum(minimum: MetalDeploymentMinimum) -> DeploymentMinimu
 mod tests {
     use super::{compile_target, msl_version, sdk_for};
     use tiler_metal::target::{
-        LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
-        MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
+        LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType,
+        MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+        MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
     };
     use tiler_metal_aot::input::{ApplePlatform, AppleSdk, MslVersion};
 
@@ -98,9 +99,22 @@ mod tests {
             platform,
             MetalDeploymentMinimum::new(13, 0),
             LaunchIndexRealization::ThreadPositionInGridUInt,
-            MetalSubnormalArithmetic::FlushesToZero {
-                zero_sign: MetalFlushedZeroSign::PreservesSign,
-            },
+            // The measured Apple row, one behaviour per arithmetic type: `f32`
+            // flushes and `f16` preserves. Nothing here reads the facts — the
+            // translation these tests exercise maps language, family, and
+            // deployment minimum only — so both entries are stated to keep the
+            // fixture a faithful copy of the row rather than a silent target.
+            MetalSubnormalArithmeticFacts::unmeasured()
+                .stating(
+                    MetalFloatArithmeticType::F32,
+                    MetalSubnormalArithmetic::FlushesToZero {
+                        zero_sign: MetalFlushedZeroSign::PreservesSign,
+                    },
+                )
+                .stating(
+                    MetalFloatArithmeticType::F16,
+                    MetalSubnormalArithmetic::PreservesSubnormals,
+                ),
             31,
         )
     }
