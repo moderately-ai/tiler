@@ -326,9 +326,8 @@ than duplicate or weaken it.
   The workspace deliberately declares no stable `rust-version` while accepted
   dependent-array const parameters require nightly. A future stable MSRV needs
   separate conformance evidence and an explicit policy change.
-- Keep workspace Rust and Clippy lints inherited by every crate. New public
-  APIs require documentation, unsafe code remains forbidden unless an accepted
-  decision changes that boundary, and warnings fail the repository gate.
+- Keep workspace Rust and Clippy lints inherited by every crate, with the single exception `scripts/check_workspace.py` pins in `UNINHERITED_LINT_MEMBERS`. That table names the one member permitted to diverge and the exact lint table it may declare instead, so a second member dropping inheritance fails the gate. New public APIs require documentation, and warnings fail the repository gate.
+- Unsafe code is forbidden except at an individual function or module admitted case by case under [ADR 0079](docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md), which states the four conditions a site must meet: a foreign API leaves no safe route, the `#[allow]` carries a `reason`, an assertion checked against the foreign object's own report bounds what the block touches, and a `SAFETY` comment names the invariant relied on. A crate-level `unsafe_code = "allow"`, a second member dropping lint inheritance, and any relaxation of the workspace `forbid` are all outside that decision and each remains Tom's. Citing ADR 0079 is not sufficient to admit a new site; its four conditions are what generalize.
 - Preserve the workspace dev-profile defaults: line-table debug information,
   unpacked split debug information, and optimization level 1 for dependencies.
   If a debugger needs full information, add a temporary or justified
