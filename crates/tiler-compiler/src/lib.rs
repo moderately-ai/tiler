@@ -20,6 +20,7 @@ mod program;
 mod region;
 mod request;
 mod selection;
+pub mod session;
 
 // Keep the bounded compiler path in the ordinary library target while its
 // reviewed public facade is introduced by the capability and conformance
