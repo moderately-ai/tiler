@@ -76,3 +76,13 @@ Behaviour on the governed path is unchanged: the registered contract is still `P
 **Consequence for sequencing.** First execution needs *both* changes, and neither alone produces a `metallib`: the contract must become selectable, and the target fact must state its zero sign. This ticket is no longer merely blocked behind `select-numerical-contract-and-compose-feasibility` — the two are the two halves of one gate, and the gate is what every Metal and runtime p0 waits on.
 
 **Do not close the gap by widening the rule.** Making the fourth arm return no gap regardless of sign, or dropping `zero_sign` from `SubnormalMode`, would let a program that specifies positive-zero flushing run on a sign-preserving target and return `0x80000000` where it asked for `0x00000000`. That is a wrong answer, not a relaxed one.
+
+## Progress — the target fact now names its zero; it is still backend-local
+
+**Landed at `a56bff8`.** `MetalSubnormalArithmetic::FlushesToZero` became `FlushesToZero { zero_sign: MetalFlushedZeroSign }`, and `subnormal_gap` compares the declared zero against the target's through an exhaustive `flushed_zero_gap`. Agreement is now a positive conformance claim; only a genuine sign mismatch is a gap, renamed `FlushedZeroSignMismatch`. Previously the target stated *that* it flushes and not *to what*, so a `SubnormalMode::FlushToZero` — which always names a zero — could never be established, and every flush contract failed closed as `UndeclaredFlushedZeroSign`. Four golden MSL provenance headers were rebaselined; the gate recompiles them through `xcrun`.
+
+That change plus a selectable contract is what let a real program reach an Apple M4 Max and return bits identical to the reference oracle.
+
+**Why this ticket is still open.** What landed is a *backend-local target fact*, which is exactly what this ticket exists to replace. `MetalSubnormalArithmetic` still lives in `tiler-metal` and is still consulted only during emission, so the compiler cannot assess honourability *before* emitting — it discovers unhonourability from `require_declared_realization` after a translation unit already exists. The per-dimension honourability declaration in the shared form, expressed so `feasibility` can assess it as a peer of `CheckedTargetProfile`, is not built; that is `compose-numerical-honourability-and-retire-the-strict-boolean`'s peer authority, and this ticket owns the Metal side of it.
+
+Also unchanged: whether `MetalNumericalGap` and `require_declared_realization` are retired in favour of the typed rejection, or whether a backend-local conformance step survives alongside it with a stated reason. The measurements stay recorded on the declaring types either way.

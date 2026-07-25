@@ -41,3 +41,15 @@ The merged draft's own handoff notes on `tickets/prototype-typed-explain-infrast
 record the reasoning behind each; read them before proposing answers.
 
 Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.
+
+## Progress — a minimal draft landed; this ticket is not met
+
+**Landed at `a56bff8`.** `pub mod session` exposes `compile_governed(&SemanticProgram, NumericalContract)`, one `Compilation` per target profile, borrowed `PlanAlternative` views exposing `stable_id`, `is_fused`, and `kernels`, a typed `CompileFailure`, and explain as an opaque `ExplainReport` with only `render()`. It is the first surface over which any caller outside `tiler-compiler` can compile anything; before it, `pipeline` was a private module with a `pub(crate)` entry point, which is why the backend crates had no work to do. Two consumers now exist — the offline producer and the runtime proof — and the second reaches an Apple M4 Ax end to end through it.
+
+**Why this ticket is still open.** Three reasons, none of them cosmetic.
+
+1. **Tom has not reviewed it.** ADR 0075 makes a new publicly reachable namespace an always-ask category, and the ticket itself says any consequential public boundary "remains a draft until Tom reviews and accepts the exact implementation commit". It has not been reviewed, so it is a draft by definition.
+2. **All seven inherited explain questions remain open.** Report completeness on failure, trace serialization and artifact embedding, renderer/retention/redaction guarantees, enum exhaustiveness versus versioned schema views, evidence-receipt minting, identity as canonical bytes versus a digest, and header stability. The draft answers **none** of them, deliberately: explain is exposed with one rendering method because that is the narrowest shape that cannot answer them by default. Answering by omission is what this ticket exists to prevent, and a richer surface would have done exactly that.
+3. **The request is not exposed.** `compile_governed` names the governed profile rather than letting a caller assemble a `CompilationRequest`. That is honest while the profile admits one shape environment, one budget set, one target profile, and one capability snapshot, but it is not the "consumer-agnostic CompilationRequest, session/provider inputs" ADR 0069 specifies.
+
+**What review should look at first**, because everything downstream is written against it: whether alternatives should be borrowed views or owned records; whether both fused and materialized alternatives belong on the surface (they are exposed because the offline slice needs the selected program *and* the materialized reference, and a selected-only surface could not express that); and whether `CompileFailure`'s four classes are the right granularity or should carry their internal cause.

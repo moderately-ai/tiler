@@ -1,7 +1,7 @@
 ---
 id: select-numerical-contract-and-compose-feasibility
-title: Make the numerical contract a stated request input and compose its feasibility
-status: todo
+title: Make the numerical contract a stated request input
+status: done
 priority: p0
 dependencies: [widen-numerical-vocabulary-and-complete-identity]
 related: [draft-target-honourable-numerical-contract-adr, prototype-optimizer-conformance-gate]
@@ -132,3 +132,17 @@ Note this also means `ConversionBoundaryPreservation` — a separate obligation,
 **Consequence for whoever takes this ticket.** Widening admission is roughly twenty lines and is *not* the work. The work is the ticket's honourability-authority and composition sections: the fusion proof must be contract-parameterized so it proves or refuses rather than deferring, and the physical path's request-subject binding must accept any admitted contract. Until both hold, admitting a second contract only moves the failure from a clear rejection at the boundary to an opaque `InvalidCompilerOutput` deep inside — strictly worse for a caller.
 
 The reverted prototype is not in the tree; this record is what it produced.
+
+## Outcome — the Selection half, delivered; composition split out
+
+**Delivered.** The resolved numerical contract is a stated request input with more than one expressible value. `StrictF32NumericalContract::governed_flush_to_zero()` registers `tiler.flush-f32.v1` — `FlushToZero { zero_sign: PreservesSign }` on both dimensions, contraction and reassociation still `Forbidden` — as a *different contract* with its own versioned key, so the same program under each has different canonical identities, artifacts, and cache entries. `governed_profile()` and `is_governed()` are the single admission authority; `governed_under()` takes the contract as a parameter with no `Default`, for the reason the ticket gave: a strict default would make every Apple compilation fail with a rejection the caller never asked for.
+
+**Three sites hardcoded equality with `governed()`, not one.** `verify_request`, `VerifiedCompilationRequest::for_target` (which reported a contract rejection as `UnverifiedTargetSelection`, naming the wrong subject), and `physical::verify_schedule_with_feasibility`. All three now share `is_governed()`. That third site was the `Intrinsic { rule: "request-subject" }` that made an unadmitted contract surface as an opaque `InvalidCompilerOutput` deep inside the compiler.
+
+**A fusion obligation had to move with it, and the reasoning is the load-bearing part.** `FusionObligation::ExceptionalValues` discharged only when both subnormal dimensions were `Preserve`, so any flush contract deferred every fused candidate and no complete plan formed. `docs/numerical-semantics.md` settles it: both dimensions are **per-operation** rules — "input flushing treats an existing subnormal operand as zero *before arithmetic*", "result flushing replaces a *newly produced* subnormal result with zero". A materialization boundary is a store and a load; neither is arithmetic and neither produces a new result, so removing one neither adds nor removes a flush. The `Preserve` requirement was the strict contract's assumption rather than the obligation's content. The canonical-NaN half stays, because that *is* a per-result rewrite the fused body must apply. `ConversionBoundaryPreservation` independently guards a genuinely semantic boundary via member homogeneity, so nothing is left unguarded.
+
+Along the way `tiler_ir::schedule::numerics` was corrected: it documented `SubnormalMode` as "crossing the region boundary", contradicting the contract. That sentence caused a correct argument to be retracted mid-session and is a live trap for exactly this reasoning.
+
+**Evidence.** `cargo run -p tiler-prototype-run` compiles under the flush contract, reaches an Apple M4 Max, and returns bits identical to `ReferenceEvaluator`. Under the strict contract the same program is still refused with `subnormal-flush-in-arithmetic`. `the_stated_contract_decides_whether_this_target_honours_it` pins both directions.
+
+**Not delivered, and split out rather than left implied.** The honourability authority as a peer of `feasibility::CheckedTargetProfile`, the `Proven`/`Rejected`/`Unknown` composition including the unenumerated-dimension `Unknown` path, retiring `PrototypeTargetProfile::supports_strict_f32` and `CapabilityAxis::StrictF32Arithmetic`, the caller preference list, and the explain rejection shape item 5 requires. All of that is `compose-numerical-honourability-and-retire-the-strict-boolean`.
