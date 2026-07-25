@@ -1,5 +1,11 @@
-.agents/skills/ticketsplease
-.claude/skills/ticketsplease
+# Agent-harness state is local and machine-generated: tool-installed skill
+# copies (`tkt init`) and per-session workflow scripts. The repository's own
+# agent contract is the tracked `AGENTS.md` and `CLAUDE.md` at the root, not
+# anything under these directories. Nothing here has ever been tracked; add
+# shared harness configuration deliberately with `git add -f` rather than by
+# narrowing this rule, so a generated artifact cannot arrive as a side effect.
+/.agents/
+/.claude/
 .pytest_cache/
 .venv/
 __pycache__/
