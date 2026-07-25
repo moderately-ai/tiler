@@ -31,10 +31,11 @@ use super::super::keys::{
     TargetProfileRef,
 };
 use super::super::model::{
-    ArtifactSchema, BackendPayloadDescriptor, BindingData, BindingKind, DeferredPredicateData,
-    InterfaceEntryData, LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider,
-    address_space_from_tag, buffer_access_from_tag, element_type_from_tag, permission_from_tag,
-    subnormal_from_tag, value_role_from_tag,
+    ArtifactSchema, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
+    BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
+    BindingTargetData, DeferredPredicateData, InterfaceEntryData, LaunchData, RoutingPolicy,
+    SchemaVersion, SelectedProvider, address_space_from_tag, buffer_access_from_tag,
+    element_type_from_tag, permission_from_tag, subnormal_from_tag,
 };
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
@@ -744,7 +745,7 @@ fn parse_entry(
                 address_space: cursor.address_space()?,
                 access: cursor.buffer_access()?,
                 alignment: cursor.u32()?,
-                value_role: cursor.value_role()?,
+                target: cursor.binding_target()?,
                 accessible_bytes: cursor.expression_ref(expressions)?,
             })
         },
@@ -998,6 +999,42 @@ impl<'a> Cursor<'a> {
         Ok(operand)
     }
 
+    /// Reads what one binding slot addresses.
+    ///
+    /// The output-key list is read as a canonically ordered set with its own
+    /// governed budget: it is bounded by the interface it names, and a repeat
+    /// would make one buffer answer to one name twice while the artifact's
+    /// identity folded the repetition as meaning.
+    fn binding_target(&mut self) -> Result<BindingTargetData, ArtifactCodecError> {
+        let tag = self.u8()?;
+        match tag {
+            BINDING_TARGET_PROGRAM_INPUT => Ok(BindingTargetData::ProgramInput(
+                InputKey::from_owned(self.text()?)
+                    .map_err(|cause| ArtifactCodecError::InvalidInterfaceKey { cause })?,
+            )),
+            BINDING_TARGET_PROGRAM_OUTPUT => {
+                let keys = self.vec(
+                    MAX_INTERFACE_ENTRIES,
+                    CodecLimitKind::BindingTargetKeys,
+                    |cursor| {
+                        OutputKey::from_owned(cursor.text()?)
+                            .map_err(|cause| ArtifactCodecError::InvalidInterfaceKey { cause })
+                    },
+                )?;
+                if keys.is_empty() {
+                    return Err(ArtifactCodecError::EmptyBindingTarget);
+                }
+                require_sorted_and_distinct(&keys, OrderedSubject::BindingTargetKey)?;
+                Ok(BindingTargetData::ProgramOutput(keys))
+            }
+            BINDING_TARGET_INTERNAL => Ok(BindingTargetData::Internal),
+            tag => Err(ArtifactCodecError::UnknownTag {
+                subject: TagSubject::BindingTarget,
+                tag,
+            }),
+        }
+    }
+
     fn root(&mut self) -> Result<AbiRoot, ArtifactCodecError> {
         let tag = self.u8()?;
         match tag {
@@ -1074,12 +1111,6 @@ tag_reader!(
     tiler_ir::kernel::BufferAccess,
     buffer_access_from_tag,
     TagSubject::BufferAccess
-);
-tag_reader!(
-    value_role,
-    tiler_ir::program::ValueRole,
-    value_role_from_tag,
-    TagSubject::ValueRole
 );
 tag_reader!(
     subnormal,

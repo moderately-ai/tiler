@@ -311,9 +311,10 @@ pub use builder::{
     LaunchSpec, VariantSpec,
 };
 pub use codec::{
-    ArtifactCodecFailure, DecodedArtifact, PayloadContent, PayloadEntryMapping, PayloadMetadata,
-    PayloadProvenance, PayloadSdkIdentity, PayloadTargetObligation, SectionPurpose, SectionView,
-    ToolComponent, decode_artifact,
+    ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedDeferredPredicate, DecodedEntry,
+    DecodedExpr, DecodedInput, DecodedNumerical, DecodedOutput, DecodedVariant, PayloadContent,
+    PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
+    PayloadTargetObligation, SectionPurpose, SectionView, ToolComponent, decode_artifact,
 };
 // The two things `crate::proof` shares with the envelope codec and nothing
 // else: the governed digest algorithm, which `docs/artifact-abi.md` requires
@@ -349,8 +350,8 @@ pub use keys::{
 pub use model::{
     AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,
     ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingKind, BindingRef,
-    CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef, RoutingPolicy, SchemaVersion,
-    SelectedProvider, VariantRef, VerifiedArtifactProgram,
+    BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef, RoutingPolicy,
+    SchemaVersion, SelectedProvider, VariantRef, VerifiedArtifactProgram,
 };
 
 /// Maximum plan variants admitted by one artifact program.

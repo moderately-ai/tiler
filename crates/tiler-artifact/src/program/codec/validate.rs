@@ -13,15 +13,23 @@
 //!
 //! # What cannot be re-proven here, and why it is still pinned
 //!
-//! Two of the builder's obligations tie the ABI to the *program* rather than to
-//! the manifest: a binding's accessible byte range must equal the exact byte
-//! window its stage access addresses, and an entry's bindings must correspond
-//! one-to-one with its kernel's buffer parameters. Neither the byte windows nor
-//! the kernel signature travel in this profile, so a decoder cannot recompute
-//! them. They are not therefore unguarded: both are folded into the artifact's
-//! canonical identity through the binding's expression content key and the
-//! entry's stage key, and the identity is re-derived and compared below. A
-//! forged envelope can restate them only by becoming a different artifact.
+//! Three of the builder's obligations tie the ABI to the *program* rather than
+//! to the manifest: a binding's accessible byte range must equal the exact byte
+//! window its stage access addresses, an entry's bindings must correspond
+//! one-to-one with its kernel's buffer parameters, and each binding's carried
+//! interface reference must be the one its stage access actually resolves to.
+//! Neither the byte windows, the kernel signature, nor the program's value table
+//! travel in this profile, so a decoder cannot recompute them. They are not
+//! therefore unguarded: all three are folded into the artifact's canonical
+//! identity through the binding's expression content key, its encoded target,
+//! and the entry's stage key, and the identity is re-derived and compared below.
+//! A forged envelope can restate them only by becoming a different artifact.
+//!
+//! The binding target is the first such row whose misreading would silently bind
+//! the wrong buffer rather than fail, so the part of it that *is* decidable here
+//! is decided here: `check_binding_targets` proves the name it uses is one the
+//! manifest's own interface declares. That does not prove the correspondence —
+//! nothing decoded can — and the two claims are kept apart deliberately.
 //!
 //! Carrying the byte windows so the check could run locally was considered and
 //! rejected: the window is a value only the program establishes, so a carried
@@ -39,7 +47,7 @@ use super::super::expr::{
     node_type,
 };
 use super::super::facts::AbiFactBinder;
-use super::super::model::deferred_key;
+use super::super::model::{BindingTargetData, deferred_key};
 use super::error::{ArtifactCodecError, OrderedSubject};
 use super::model::{
     ArtifactEnvelope, EntryRow, VariantRow, expression_keys, node_operands, position,
@@ -66,6 +74,8 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     check_interface(envelope)?;
     check_sections(envelope)?;
     check_payload_identity(envelope)?;
+    check_binding_targets(envelope)?;
+    check_entry_mappings(envelope)?;
     let facts = ExpressionFacts::derive(envelope.expressions());
     let keys = expression_keys(envelope.expressions());
     check_expression_closure(envelope)?;
@@ -246,6 +256,102 @@ fn check_payload_identity(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCod
         if envelope.payloads()[payload].digest != derived {
             return Err(ArtifactCodecError::PayloadIdentityMismatch {
                 payload: u32::try_from(payload).expect("a bounded payload table fits u32"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Proves every binding target names an interface entry the artifact declares.
+///
+/// What a slot addresses is the one dispatch fact this decoder cannot
+/// re-derive: the program that established it is carried as identity bytes
+/// alone, so agreement between the reference and the plan is proven by the
+/// builder and pinned by artifact identity, exactly as the accessible byte
+/// range is. What *is* decidable here is narrower and still worth proving — the
+/// name the reference uses must be one the manifest itself declares. Without
+/// it, a forged envelope could direct a slot at a buffer the interface never
+/// mentions and every framing, integrity and identity check would still pass,
+/// because the forged name is folded into the identity it re-derives.
+fn check_binding_targets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    for binding in envelope
+        .variants()
+        .iter()
+        .flat_map(|variant| &variant.entries)
+        .flat_map(|entry| &entry.bindings)
+    {
+        match &binding.target {
+            BindingTargetData::ProgramInput(key) => {
+                if !envelope.inputs().iter().any(|input| input.key == *key) {
+                    return Err(ArtifactCodecError::UnknownBindingTargetKey {
+                        key: key.as_str().to_owned(),
+                        input: true,
+                    });
+                }
+            }
+            BindingTargetData::ProgramOutput(keys) => {
+                for key in keys {
+                    if !envelope.outputs().iter().any(|output| output.key == *key) {
+                        return Err(ArtifactCodecError::UnknownBindingTargetKey {
+                            key: key.as_str().to_owned(),
+                            input: false,
+                        });
+                    }
+                }
+            }
+            BindingTargetData::Internal => {}
+        }
+    }
+    Ok(())
+}
+
+/// Proves every carried payload maps each backend entry the artifact dispatches.
+///
+/// A neutral entry names its backend implementation by an opaque
+/// [`BackendEntryKey`](super::super::BackendEntryKey); the carried payload's
+/// entry mapping is what turns that into the symbol a loader resolves and the
+/// transport slots its bindings occupy. Neither the builder nor the decoder
+/// proved the two agreed before this check existed, so an artifact could carry
+/// a payload that mapped none of the entries it realized and still decode — and
+/// the failure would surface as a loader unable to find a symbol, with the
+/// artifact layer having declared the bytes valid.
+///
+/// Only *carried* payloads are checked. A descriptor-only payload names a
+/// backend object this envelope does not contain, so it has no mapping to
+/// disagree with, and requiring one would make the descriptor-only form
+/// unusable.
+///
+/// The obligation is coverage rather than exhaustion: every entry key must be
+/// mapped, and a payload may map a backend entry no artifact entry dispatches.
+/// A compiled object legitimately exports more than one symbol, and a mapping
+/// for an undispatched one costs a reader nothing — it is folded into the
+/// payload's compilation subject and therefore into artifact identity, so it is
+/// not the unreferenced-content hazard the section and expression tables reject.
+fn check_entry_mappings(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    for entry in envelope
+        .variants()
+        .iter()
+        .flat_map(|variant| &variant.entries)
+    {
+        let Some(content) = envelope.payload_content()[position(entry.payload)] else {
+            continue;
+        };
+        // Re-parsed rather than threaded from `check_payload_identity`: that
+        // check ran for its own reason and this one must not depend on having
+        // been reached, so each proves what it needs from the bytes.
+        let metadata = decode_metadata(&envelope.sections()[position(content.metadata)].bytes)?;
+        let mapping = metadata
+            .entries
+            .iter()
+            .find(|mapping| mapping.entry_key == entry.entry_key)
+            .ok_or(ArtifactCodecError::UnmappedBackendEntry {
+                payload: entry.payload,
+            })?;
+        if mapping.transports.len() != entry.bindings.len() {
+            return Err(ArtifactCodecError::EntryTransportCardinality {
+                payload: entry.payload,
+                bindings: entry.bindings.len(),
+                transports: mapping.transports.len(),
             });
         }
     }

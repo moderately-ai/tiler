@@ -11,6 +11,7 @@
 //! reused rather than restated. A codec-local bound would be a second authority
 //! for the same limit, and the two would drift.
 
+use super::super::model::BindingTargetData;
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
     MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
@@ -20,6 +21,7 @@ use super::model::{
     ArtifactEnvelope, MAX_FEATURES, MAX_INTERFACE_ENTRIES, MAX_INTERFACE_SHAPE_RANK,
     MAX_SECTION_BYTES, MAX_SECTIONS, MAX_TEXT_BYTES,
 };
+use tiler_ir::semantic::OutputKey;
 
 /// Proves one projected envelope fits every governed encoder budget.
 ///
@@ -106,6 +108,18 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
                 MAX_LAUNCH_PRECONDITIONS,
                 CodecLimitKind::LaunchPreconditions,
             )?;
+            // A binding target names published output storage under every key
+            // that publishes it, so its budget is the interface's own: a
+            // reference cannot name more outputs than the artifact declares.
+            for binding in &entry.bindings {
+                if let BindingTargetData::ProgramOutput(keys) = &binding.target {
+                    codec_limit(
+                        keys.len(),
+                        MAX_INTERFACE_ENTRIES,
+                        CodecLimitKind::BindingTargetKeys,
+                    )?;
+                }
+            }
         }
     }
     Ok(())
@@ -143,6 +157,20 @@ fn check_text_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecEr
         }
         for entry in &variant.entries {
             texts.push(entry.numerical.profile_key.as_str());
+            // The same interface keys as above, reached through the binding
+            // targets. Listed rather than assumed equal: the equality is
+            // `super::validate`'s obligation and it has not run when the encoder
+            // checks its budgets, so relying on it here would be a check whose
+            // premise is proven later.
+            for binding in &entry.bindings {
+                match &binding.target {
+                    BindingTargetData::ProgramInput(key) => texts.push(key.as_str()),
+                    BindingTargetData::ProgramOutput(keys) => {
+                        texts.extend(keys.iter().map(OutputKey::as_str));
+                    }
+                    BindingTargetData::Internal => {}
+                }
+            }
         }
     }
     for text in texts {

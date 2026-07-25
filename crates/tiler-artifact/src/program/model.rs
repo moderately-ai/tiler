@@ -45,7 +45,15 @@ use super::keys::{
     RepresentationKey, TargetProfileRef,
 };
 
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v1\0";
+/// Versioned domain separator of one packaged artifact's canonical identity.
+///
+/// Raised to `v2` when each ABI binding gained the interface reference naming
+/// what it addresses. A domain bump rather than a silent re-encoding: the field
+/// landed *inside* the per-binding record, so a `v1` and a `v2` encoding of two
+/// different artifacts could in principle produce equal bytes, and two artifacts
+/// that are not the same artifact must never share an identity. Separating the
+/// domains makes that impossible rather than unlikely.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v2\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v1\0";
@@ -349,6 +357,82 @@ pub(super) struct StoredBackendEntry {
     pub(super) entry_key: BackendEntryKey,
 }
 
+/// The owned storage form of [`BindingTarget`]; see it for the design.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum BindingTargetData {
+    /// The externally bound tensor of one named program input.
+    ProgramInput(InputKey),
+    /// Storage published under every named program output listed.
+    ///
+    /// A list rather than one key because `push_output` rejects a repeated
+    /// *key* and not a repeated *value*, so two named outputs may publish one
+    /// program value. Carrying only one of them would leave a loader binding a
+    /// second buffer for storage that is already bound, or leaving a declared
+    /// output unwritten. Canonically ordered and never empty.
+    ProgramOutput(Vec<OutputKey>),
+    /// Storage the program produced for itself, which the runtime allocates.
+    Internal,
+}
+
+impl BindingTargetData {
+    /// Returns the program role this target implies.
+    ///
+    /// Derived rather than stored beside the target. The two encode one fact,
+    /// and a stored copy could disagree with the reference it describes.
+    pub(super) const fn value_role(&self) -> ValueRole {
+        match self {
+            Self::ProgramInput(_) => ValueRole::Input,
+            Self::ProgramOutput(_) => ValueRole::Output,
+            Self::Internal => ValueRole::Temporary,
+        }
+    }
+}
+
+/// What one ABI binding slot addresses.
+///
+/// # Why the interface, and not a program value
+///
+/// The obvious spelling — the materialized value the binding's stage access
+/// reaches — has no durable name this layer can carry. A builder arena position
+/// is exactly the transient fact artifact identity replaces with canonical
+/// content keys everywhere else, and the shared IR's own canonical *value* key
+/// is crate-private to `tiler_ir::program` with no read view publishing it.
+///
+/// What an artifact can name is the **semantic interface**, which the envelope
+/// already carries and which artifact identity already folds. Every value an
+/// artifact binding addresses is either one of those named entries or storage
+/// the program produced for itself, and those are different instructions to a
+/// loader rather than shades of one.
+///
+/// Deliberately **not** `#[non_exhaustive]` (ADR 0074 convention 5c): a target
+/// is an instruction to a loader, and a reader that gained a wildcard arm would
+/// silently route a newly governed target class into whichever arm the wildcard
+/// named. Adding a class must break the build at every reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BindingTarget<'a> {
+    /// The externally bound tensor of one named program input.
+    ///
+    /// A loader binds the host buffer it was given for this interface key.
+    ProgramInput(&'a InputKey),
+    /// Storage published under every named program output listed.
+    ///
+    /// One buffer, published under each key. The list is canonically ordered
+    /// and never empty; more than one key means the plan publishes one value
+    /// under several names, not that there are several buffers.
+    ProgramOutput(&'a [OutputKey]),
+    /// Storage the program produced for itself.
+    ///
+    /// A loader allocates it rather than binding host data, sized by the
+    /// binding's own accessible-byte expression. It carries no name, for the
+    /// reason above, so two `Internal` slots are indistinguishable — which is
+    /// why [`ArtifactBuildError::AliasedInternalBinding`] refuses to package an
+    /// entry whose two bindings address one internal value rather than encode
+    /// the ambiguity.
+    ///
+    /// [`ArtifactBuildError::AliasedInternalBinding`]: super::ArtifactBuildError::AliasedInternalBinding
+    Internal,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct BindingData {
     pub(super) kind: BindingKind,
@@ -356,7 +440,7 @@ pub(super) struct BindingData {
     pub(super) address_space: AddressSpace,
     pub(super) access: BufferAccess,
     pub(super) alignment: u32,
-    pub(super) value_role: ValueRole,
+    pub(super) target: BindingTargetData,
     pub(super) accessible_bytes: u32,
 }
 
@@ -888,10 +972,33 @@ impl<'a> BindingRef<'a> {
         self.data().alignment
     }
 
+    /// Returns what this binding slot addresses.
+    ///
+    /// The reference the artifact carries, not a walk into the packaged
+    /// program: [`Self::value`] resolves through the `VerifiedKernelProgram`
+    /// and is therefore unavailable to anything holding only encoded bytes,
+    /// which is exactly why this is encoded.
+    ///
+    /// It is nonetheless *derived* rather than declared. The builder reads it
+    /// from the packaged program's own stage access, the same way it reads this
+    /// binding's element type, address space, access mode, and alignment, so a
+    /// producer cannot assert a correspondence its plan contradicts.
+    #[must_use]
+    pub fn target(self) -> BindingTarget<'a> {
+        match &self.data().target {
+            BindingTargetData::ProgramInput(key) => BindingTarget::ProgramInput(key),
+            BindingTargetData::ProgramOutput(keys) => BindingTarget::ProgramOutput(keys),
+            BindingTargetData::Internal => BindingTarget::Internal,
+        }
+    }
+
     /// Returns the program role of the bound value.
+    ///
+    /// Derived from [`Self::target`] rather than stored beside it: the two say
+    /// one thing, and a stored copy is a second authority that can drift.
     #[must_use]
     pub fn value_role(self) -> ValueRole {
-        self.data().value_role
+        self.data().target.value_role()
     }
 
     /// Returns the minimum accessible byte range expression.
@@ -1108,22 +1215,35 @@ pub(super) const fn buffer_access_from_tag(tag: u8) -> Option<BufferAccess> {
     }
 }
 
-pub(super) const fn value_role_tag(role: ValueRole) -> u8 {
-    match role {
-        ValueRole::Input => 0x01,
-        ValueRole::Temporary => 0x02,
-        ValueRole::Output => 0x03,
+/// Writes one binding's interface reference into a canonical byte run.
+///
+/// Shared by the identity encoder and the envelope encoder so the two cannot
+/// spell one reference two ways. The match is exhaustive with no wildcard arm
+/// (ADR 0074 convention 3), so a widened target vocabulary stops the build here
+/// rather than writing bytes a reader would misparse.
+pub(super) fn push_binding_target(bytes: &mut Vec<u8>, target: &BindingTargetData) {
+    match target {
+        BindingTargetData::ProgramInput(key) => {
+            bytes.push(BINDING_TARGET_PROGRAM_INPUT);
+            push_slice(bytes, key.as_str().as_bytes());
+        }
+        BindingTargetData::ProgramOutput(keys) => {
+            bytes.push(BINDING_TARGET_PROGRAM_OUTPUT);
+            push_len(bytes, keys.len());
+            for key in keys {
+                push_slice(bytes, key.as_str().as_bytes());
+            }
+        }
+        BindingTargetData::Internal => bytes.push(BINDING_TARGET_INTERNAL),
     }
 }
 
-pub(super) const fn value_role_from_tag(tag: u8) -> Option<ValueRole> {
-    match tag {
-        0x01 => Some(ValueRole::Input),
-        0x02 => Some(ValueRole::Temporary),
-        0x03 => Some(ValueRole::Output),
-        _ => None,
-    }
-}
+/// Governed wire tag of a binding addressing a named program input.
+pub(super) const BINDING_TARGET_PROGRAM_INPUT: u8 = 0x01;
+/// Governed wire tag of a binding addressing named program output storage.
+pub(super) const BINDING_TARGET_PROGRAM_OUTPUT: u8 = 0x02;
+/// Governed wire tag of a binding addressing program-internal storage.
+pub(super) const BINDING_TARGET_INTERNAL: u8 = 0x03;
 
 /// Encodes one subnormal dimension.
 ///
@@ -1373,7 +1493,7 @@ fn push_entry(
         bytes.push(address_space_tag(binding.address_space)?);
         bytes.push(buffer_access_tag(binding.access)?);
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());
-        bytes.push(value_role_tag(binding.value_role));
+        push_binding_target(bytes, &binding.target);
         push_slice(bytes, &keys[node_at(binding.accessible_bytes)]);
     }
     push_slice(bytes, &keys[node_at(entry.launch.grid_threads)]);

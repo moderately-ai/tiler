@@ -17,21 +17,25 @@
 //! reject it anyway, with the named cause. The byte-level cases separately
 //! prove that an incompetent corruption cannot slip through either.
 
+use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
 use tiler_ir::schedule::NumericalPermission;
-use tiler_ir::semantic::{InputKey, ProviderIdentity};
+use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Axis;
 
+use super::super::facts::AbiFactBinder;
+
 use super::super::error::{AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind};
-use super::super::expr::{AbiBinaryOp, AbiRoot, AbiType, AvailabilityPhase, ExprNode};
+use super::super::expr::{AbiBinaryOp, AbiRoot, AbiType, AbiValue, AvailabilityPhase, ExprNode};
 use super::super::keys::{
     BackendEntryKey, BackendKey, PayloadDigest, RepresentationKey, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef,
 };
 use super::super::model::{
-    ArtifactExecutionPolicy, RoutingPolicy, SchemaVersion, address_space_from_tag,
-    address_space_tag, buffer_access_from_tag, buffer_access_tag, element_type_from_tag,
-    element_type_tag, permission_from_tag, permission_tag, subnormal_from_tag, subnormal_tag,
-    value_role_from_tag, value_role_tag,
+    ArtifactExecutionPolicy, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
+    BINDING_TARGET_PROGRAM_OUTPUT, BindingKind, BindingTarget, BindingTargetData, RoutingPolicy,
+    SchemaVersion, address_space_from_tag, address_space_tag, buffer_access_from_tag,
+    buffer_access_tag, element_type_from_tag, element_type_tag, permission_from_tag,
+    permission_tag, subnormal_from_tag, subnormal_tag,
 };
 use super::super::tests::{
     Formulas, OTHER_SCALE_BITS, SCALE_BITS, build_artifact, default_artifact, formulas,
@@ -411,8 +415,34 @@ fn every_governed_tag_table_round_trips() {
             Some(value),
         );
     }
-    for value in [ValueRole::Input, ValueRole::Temporary, ValueRole::Output] {
-        assert_eq!(value_role_from_tag(value_role_tag(value)), Some(value));
+    // A binding target carries data, so its inverse is the decoder rather than a
+    // tag table. What a tag table would have pinned is pinned directly: the three
+    // governed tags are pairwise distinct, and the program role each target
+    // implies is distinct too — a collision in either would let a decoder read one
+    // dispatch instruction as another.
+    let tags = [
+        BINDING_TARGET_PROGRAM_INPUT,
+        BINDING_TARGET_PROGRAM_OUTPUT,
+        BINDING_TARGET_INTERNAL,
+    ];
+    let mut sorted = tags;
+    sorted.sort_unstable();
+    assert!(
+        sorted.windows(2).all(|pair| pair[0] != pair[1]),
+        "the governed binding-target tags must be pairwise distinct",
+    );
+    for (target, role) in [
+        (
+            BindingTargetData::ProgramInput(InputKey::new("input").unwrap()),
+            ValueRole::Input,
+        ),
+        (
+            BindingTargetData::ProgramOutput(vec![OutputKey::new("result").unwrap()]),
+            ValueRole::Output,
+        ),
+        (BindingTargetData::Internal, ValueRole::Temporary),
+    ] {
+        assert_eq!(target.value_role(), role);
     }
     // Both flush behaviours are enumerated: they name different zeros, so a
     // shared tag would decode one as the other.
@@ -1258,6 +1288,252 @@ fn a_carried_payload_round_trips_with_its_object_and_its_subject() {
         decode_metadata(&decoded.sections()[position(sections.metadata)].bytes)
             .expect("the carried subject decodes"),
         payload_metadata(b"kernel void fused() {}"),
+    );
+}
+
+/// Re-seals a forged carried payload so only the check under test can reject it.
+///
+/// The descriptor's digest is required to equal the identity of the exact
+/// metadata bytes, so editing a carried subject without restamping the digest is
+/// caught by `PayloadIdentityMismatch` before anything else looks at it. Every
+/// entry-mapping case below therefore rewrites both, leaving a perfectly
+/// self-consistent envelope that only the obligation under test refuses.
+fn reject_forged_subject(forge: impl FnOnce(&mut PayloadMetadata)) -> ArtifactCodecError {
+    let artifact = carried_artifact(b"kernel void fused() {}", b"link");
+    let mut envelope = envelope_of(&artifact);
+    let sections = envelope.payload_content()[0].expect("the payload is carried");
+    let mut metadata = payload_metadata(b"kernel void fused() {}");
+    forge(&mut metadata);
+    let bytes = super::payload::encode_metadata(&metadata);
+    envelope.payloads[0].digest =
+        super::payload::payload_identity(&bytes).expect("a bounded subject has an identity");
+    envelope.sections[position(sections.metadata)].bytes = bytes;
+    let encoded = encode(&envelope).expect("a forged envelope still encodes");
+    decode(&encoded).expect_err("the forged envelope must be refused")
+}
+
+/// A consumer holding only bytes can name everything one dispatch needs.
+///
+/// This is the property the whole dispatch record exists for, so it is asserted
+/// end to end from the public entry point rather than through the crate-private
+/// envelope: `decode_artifact` takes bytes and nothing else, and every value
+/// below is read back through the promoted view. Nothing here holds the
+/// `VerifiedArtifactProgram`, the semantic program, a registry, or any producer
+/// code — which is the point, because needing one would mean the artifact is not
+/// the interface.
+#[test]
+fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
+    let artifact = carried_artifact(b"kernel void fused() {}", b"\x00metallib\xff");
+    let bytes = artifact.encode().expect("a verified artifact encodes");
+    let decoded = super::view::decode_artifact(&bytes).expect("the bytes are a valid artifact");
+
+    // The named interface, which is also where an expression's free variables
+    // come from.
+    let inputs: Vec<_> = decoded.inputs().collect();
+    let outputs: Vec<_> = decoded.outputs().collect();
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].key().as_str(), "input");
+    assert_eq!(inputs[0].shape().extents().len(), 2);
+    assert_eq!(outputs[0].key().as_str(), "result");
+
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_shape(inputs[0].key(), inputs[0].shape())
+        .expect("the decoded interface binds its own declared shape");
+    let facts = binder.build();
+
+    let variant = decoded.variants().next().expect("one packaged variant");
+    assert_eq!(variant.routing_rank(), 0);
+    assert_eq!(variant.deferred_predicates().len(), 0);
+    assert_eq!(
+        variant.applicability_guard().evaluate(&facts),
+        Ok(AbiValue::Boolean(true)),
+        "the guard decides routing and must be evaluable from bytes",
+    );
+
+    let entry = variant.entries().next().expect("one executable entry");
+    assert_eq!(entry.resources().buffer_bindings, 2);
+    assert_eq!(entry.numerical().profile_key(), "tiler.test.strict-f32");
+    assert_eq!(
+        entry.numerical().contraction(),
+        NumericalPermission::Forbidden,
+    );
+    assert!(entry.zero_work_skips_dispatch());
+    assert_eq!(entry.launch_preconditions().len(), 0);
+    assert_eq!(
+        entry.launch_threads().evaluate(&facts),
+        Ok(AbiValue::Unsigned(2)),
+    );
+    assert_eq!(
+        entry.threads_per_workgroup().evaluate(&facts),
+        Ok(AbiValue::Unsigned(1)),
+    );
+    assert_eq!(entry.launch_threads().value_type(), AbiType::Unsigned);
+
+    // The backend half: which symbol to look up and where each slot goes.
+    assert_eq!(entry.backend_symbol(), Some("tiler_fused_0"));
+    assert_eq!(entry.transport_slots(), Some([0, 1].as_slice()));
+    assert_eq!(entry.backend_entry_key().as_bytes(), b"fused");
+    assert_eq!(
+        decoded.payload_object(entry.payload()),
+        Some(b"\x00metallib\xff".as_slice()),
+        "the committed object is the exact bytes the producer packaged",
+    );
+    assert_eq!(
+        decoded.payloads()[entry.payload()].representation.as_str(),
+        "metallib",
+    );
+    assert_eq!(
+        decoded
+            .payload_metadata(entry.payload())
+            .expect("the payload is carried")
+            .provenance
+            .target,
+        "air64-apple-macosx26.0",
+    );
+
+    // And the half that decides which buffer each slot addresses.
+    let bindings: Vec<_> = entry.bindings().collect();
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(bindings[0].slot(), 0);
+    assert_eq!(bindings[0].kind(), BindingKind::Buffer);
+    assert_eq!(bindings[0].access(), BufferAccess::Read);
+    assert_eq!(bindings[0].alignment(), 4);
+    assert_eq!(bindings[0].element_type(), KernelType::F32);
+    assert_eq!(bindings[0].address_space(), AddressSpace::Device);
+    assert_eq!(
+        bindings[0].accessible_bytes().evaluate(&facts),
+        Ok(AbiValue::Unsigned(24)),
+    );
+    assert_eq!(
+        bindings[1].accessible_bytes().evaluate(&facts),
+        Ok(AbiValue::Unsigned(8)),
+    );
+    let result = OutputKey::new("result").unwrap();
+    assert_eq!(
+        bindings[0].target(),
+        BindingTarget::ProgramInput(inputs[0].key()),
+    );
+    assert_eq!(
+        bindings[1].target(),
+        BindingTarget::ProgramOutput(std::slice::from_ref(&result)),
+    );
+
+    // The program is named and deliberately not rebuilt.
+    assert_eq!(
+        variant.kernel_program_identity(),
+        fused_program(&semantic_program(), SCALE_BITS)
+            .canonical_identity()
+            .as_bytes(),
+    );
+}
+
+/// A descriptor-only payload reports no symbol rather than an invented one.
+#[test]
+fn an_uncarried_payload_publishes_no_backend_mapping() {
+    let artifact = default_artifact();
+    let bytes = artifact.encode().expect("a verified artifact encodes");
+    let decoded = super::view::decode_artifact(&bytes).expect("the bytes are a valid artifact");
+    let entry = decoded
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    assert_eq!(entry.backend_symbol(), None);
+    assert_eq!(entry.transport_slots(), None);
+    assert_eq!(decoded.payload_object(entry.payload()), None);
+    assert!(decoded.payload_metadata(entry.payload()).is_none());
+    // A position past the descriptor table is the same answer and not a panic.
+    assert!(decoded.payload_metadata(decoded.payloads().len()).is_none());
+    assert_eq!(decoded.payload_object(decoded.payloads().len()), None);
+}
+
+/// A carried payload that maps none of the entries it realizes is refused.
+///
+/// Before this check the artifact layer declared such an envelope valid and left
+/// a loader to discover it could not resolve a symbol. The mapping is what makes
+/// a neutral entry key dispatchable, so an unmapped entry is a record that
+/// cannot be dispatched from, which is a decode failure rather than a loader's
+/// problem.
+#[test]
+fn a_carried_payload_that_maps_no_realized_entry_is_rejected() {
+    assert_eq!(
+        reject_forged_subject(|metadata| {
+            metadata.entries[0].entry_key = BackendEntryKey::from_bytes(b"other").unwrap();
+        }),
+        ArtifactCodecError::UnmappedBackendEntry { payload: 0 },
+    );
+}
+
+/// A mapping whose transport count is not the entry's binding count is refused.
+#[test]
+fn an_entry_mapping_that_does_not_place_every_binding_is_rejected() {
+    assert_eq!(
+        reject_forged_subject(|metadata| metadata.entries[0].transports.truncate(1)),
+        ArtifactCodecError::EntryTransportCardinality {
+            payload: 0,
+            bindings: 2,
+            transports: 1,
+        },
+    );
+}
+
+/// A binding target naming an interface entry the artifact does not declare is refused.
+///
+/// Framing, every digest, and the re-derived identity all still agree here — the
+/// forged name is folded into the identity the decoder recomputes — so this is
+/// the check that catches it, and it is the reason a name is validated even
+/// though the correspondence behind it cannot be.
+#[test]
+fn a_binding_target_naming_an_undeclared_interface_entry_is_rejected() {
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.variants[0].entries[0].bindings[0].target =
+                BindingTargetData::ProgramInput(InputKey::new("absent").unwrap());
+        }),
+        ArtifactCodecError::UnknownBindingTargetKey {
+            key: "absent".to_owned(),
+            input: true,
+        },
+    );
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.variants[0].entries[0].bindings[1].target =
+                BindingTargetData::ProgramOutput(vec![OutputKey::new("absent").unwrap()]);
+        }),
+        ArtifactCodecError::UnknownBindingTargetKey {
+            key: "absent".to_owned(),
+            input: false,
+        },
+    );
+}
+
+/// A binding addressing output storage under no name at all is refused.
+#[test]
+fn a_binding_target_that_names_no_output_is_rejected() {
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.variants[0].entries[0].bindings[1].target =
+                BindingTargetData::ProgramOutput(Vec::new());
+        }),
+        ArtifactCodecError::EmptyBindingTarget,
+    );
+}
+
+/// A binding target's output names are a set, and a repeat is refused.
+#[test]
+fn a_repeated_binding_target_name_is_rejected() {
+    let result = OutputKey::new("result").unwrap();
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.variants[0].entries[0].bindings[1].target =
+                BindingTargetData::ProgramOutput(vec![result.clone(), result.clone()]);
+        }),
+        ArtifactCodecError::DuplicateItem {
+            subject: OrderedSubject::BindingTargetKey,
+        },
     );
 }
 

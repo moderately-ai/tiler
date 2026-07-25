@@ -31,7 +31,8 @@
 //! ABI expression arena, and each plan variant with its guard, declared target
 //! profile and feasibility rule set, deferred predicates, and executable
 //! entries — each entry's stage subject, proven resource requirements, declared
-//! numerical realization, ABI bindings, launch contract, and backend entry. It
+//! numerical realization, ABI bindings with the interface reference each
+//! addresses, launch contract, and backend entry. It
 //! also carries the artifact's canonical identity once, which the decoder
 //! re-derives from the content and compares.
 //!
@@ -122,8 +123,16 @@ pub use payload::{
 // `view` exposes accessors over them rather than the types themselves.
 //
 // Promoted on Tom's review, 2026-07-25.
+// The dispatch-record projection landed with
+// `expose-the-dispatch-record-on-a-decoded-artifact`, which implements Tom's
+// decision that a decoded envelope *is* a dispatch record. These are accessors
+// over rows the decoder already validated, plus one encoded fact the record
+// needed and did not have — see `view`'s module documentation for which facts a
+// decoder re-derives and which it takes on the producer's derivation.
 pub use view::{
-    ArtifactCodecFailure, DecodedArtifact, SectionPurpose, SectionView, decode_artifact,
+    ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedDeferredPredicate, DecodedEntry,
+    DecodedExpr, DecodedInput, DecodedNumerical, DecodedOutput, DecodedVariant, SectionPurpose,
+    SectionView, decode_artifact,
 };
 
 #[cfg(test)]

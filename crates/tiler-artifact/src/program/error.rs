@@ -14,6 +14,7 @@
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::program::ValueRole;
 use tiler_ir::semantic::ProviderIdentity;
 
 use super::ArtifactProgramBuilder;
@@ -275,6 +276,91 @@ pub enum ArtifactBuildError {
         /// Declared ABI binding count.
         actual: usize,
     },
+    /// A binding addresses part of a value rather than the whole of it.
+    ///
+    /// The artifact carries a binding's target as an interface reference and
+    /// its extent as one accessible-byte expression. Neither says *where* in the
+    /// addressed value the range starts, so a partial window would leave a
+    /// loader binding the right buffer at the wrong offset — a silently wrong
+    /// result rather than a refusal. Refusing to package it is the fail-closed
+    /// form until an offset expression is carried; `tiler_ir`'s `push_view`
+    /// admits an arbitrary window, so this is a real narrowing rather than a
+    /// restatement of what the program layer already forbids.
+    ///
+    /// Not covered by a test in this crate, and the reason is exact rather than
+    /// an oversight. Only a `ValueRole::Temporary` value can be larger than what
+    /// one stage addresses: `check_origin` pins an input value's shape to the
+    /// declared interface shape and `push_output` pins an output value's, while
+    /// `push_stage` requires each access to address exactly its buffer's element
+    /// count. Binding a temporary needs a kernel declaring a
+    /// `TensorRole::Intermediate` buffer, and no fixture in this crate builds
+    /// one — `grep -rn "TensorRole::Intermediate" crates/tiler-artifact` is
+    /// empty. `tiler-compiler`'s multi-stage plans do produce them.
+    PartialBindingView {
+        /// Ordered entry position.
+        entry: usize,
+        /// Ordered binding position within that entry.
+        binding: usize,
+        /// First addressed byte of the view.
+        offset: u64,
+        /// Addressed byte count of the view.
+        length: u64,
+        /// Byte count the addressed value requires in total.
+        value_bytes: u64,
+    },
+    /// A binding's addressed value has no interface reference the artifact can carry.
+    ///
+    /// The program role and the value's origin disagree about whether the bytes
+    /// enter across the public interface: an externally bound tensor recorded as
+    /// an internal temporary would be allocated by a loader instead of bound,
+    /// and an internally produced value recorded as a program input would be
+    /// bound from host data the plan never reads.
+    ///
+    /// Unreachable for a verified program, and therefore not covered by a test.
+    /// `tiler_ir::program::KernelProgramBuilder::push_value`'s `check_origin`
+    /// admits exactly `(ProgramInput, Input)`, `(Internal, Temporary)` and
+    /// `(Internal, Output)` and rejects the other three pairs with
+    /// `KernelProgramBuildError::ValueRoleOrigin`. This exists because that
+    /// correspondence is enforced by another crate's builder rather than by a
+    /// type this one can match on: it is the same position the artifact layer is
+    /// in for [`ArtifactDiagnostic::UnrecognizedForeignVariant`], and refusing is
+    /// the only fail-closed behaviour left if the guarantee ever moves.
+    UnnameableBindingTarget {
+        /// Ordered entry position.
+        entry: usize,
+        /// Ordered binding position within that entry.
+        binding: usize,
+        /// Program role the addressed value declares.
+        role: ValueRole,
+        /// Whether the addressed value originates at the program interface.
+        external_origin: bool,
+    },
+    /// Two bindings of one entry address the same program-internal value.
+    ///
+    /// Internal storage reaches the artifact without a durable name, so two
+    /// such bindings encode identically and a loader cannot tell one shared
+    /// buffer from two independent ones. Allocating twice for one value is a
+    /// silently wrong dispatch, so the artifact refuses to package what its
+    /// record cannot distinguish.
+    ///
+    /// Scoped to one entry deliberately. Two *entries* sharing a temporary is
+    /// what a temporary is for, and refusing it would make every multi-stage
+    /// plan unpackageable; that case is already fail-closed on the reading side,
+    /// because such an artifact requires
+    /// `tiler.artifact.feature.multi-stage-program` and this build's reader
+    /// refuses it.
+    ///
+    /// Not covered by a test in this crate, for the reason recorded on
+    /// [`Self::PartialBindingView`]: binding a temporary needs an intermediate
+    /// tensor role no fixture here declares.
+    AliasedInternalBinding {
+        /// Ordered entry position.
+        entry: usize,
+        /// Ordered position of the binding that repeats an earlier target.
+        binding: usize,
+        /// Ordered position of the earlier binding addressing the same value.
+        aliases: usize,
+    },
     /// A binding's accessible-byte expression disagrees with its addressed range.
     AccessibleBytesDisagreement {
         /// Ordered entry position.
@@ -385,6 +471,9 @@ impl Error for ArtifactBuildError {
             | Self::TargetProfileMismatch
             | Self::EntryCardinality { .. }
             | Self::BindingCardinality { .. }
+            | Self::PartialBindingView { .. }
+            | Self::UnnameableBindingTarget { .. }
+            | Self::AliasedInternalBinding { .. }
             | Self::AccessibleBytesDisagreement { .. }
             | Self::LaunchDisagreement { .. }
             | Self::DuplicateVariant => None,
