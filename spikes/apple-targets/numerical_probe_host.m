@@ -31,9 +31,20 @@
 // terminal-status check, so nothing about the per-case procedure is shared but
 // the device and the queue.
 //
-// It reads f32 as raw `uint32_t` on both sides deliberately. Parsing or
-// formatting a decimal literal anywhere in the path would let the host's own
-// libc rounding stand between the GPU and the recorded measurement.
+// It reads every scalar as a raw unsigned integer of the element's own width on
+// both sides deliberately. Parsing or formatting a decimal literal anywhere in
+// the path would let the host's own libc rounding stand between the GPU and the
+// recorded measurement, and a `half` would additionally be rounded twice.
+//
+// # Why an entry names its dtype
+//
+// The element width decides the buffer size, which operand vector the entry is
+// dispatched over, the sentinel an unwritten element is distinguishable by, and
+// the width a result is printed at. None of that is recoverable from a metallib
+// or from MSL source this program does not parse, so a manifest line states it
+// and an unknown or absent dtype is a usage error. A host that guessed would
+// read a correctly dispatched 16-bit kernel back as half as many 32-bit values
+// and print eight-digit patterns that no kernel produced.
 //
 // Exit codes are the harness's classification channel:
 //
@@ -63,12 +74,51 @@ enum {
     kProbeExitFailure = 4,
 };
 
+/// One scalar format this host can dispatch, and everything that differs about it.
+///
+/// `sentinel` seeds the output buffer so an element no kernel wrote is
+/// distinguishable from one written as a zero. It has to be representable in the
+/// element width, which is why it belongs to the dtype rather than being one
+/// constant; the harness holds every value here to the stronger requirement that
+/// no probe kernel can produce it.
+typedef struct {
+    const char *name;
+    uint32_t bits;
+    uint32_t sentinel;
+} ProbeDtype;
+
+static const ProbeDtype kProbeDtypes[] = {
+    {"f32", 32, 0xdeadbeefu},
+    {"f16", 16, 0x0000deadu},
+};
+
+static const ProbeDtype *probe_dtype_named(NSString *name) {
+    size_t count = sizeof(kProbeDtypes) / sizeof(kProbeDtypes[0]);
+    for (size_t index = 0; index < count; index += 1) {
+        if ([name isEqualToString:@(kProbeDtypes[index].name)]) {
+            return &kProbeDtypes[index];
+        }
+    }
+    return NULL;
+}
+
+/// One dtype's operand vector, parsed once and shared by every entry that names it.
+@interface ProbeOperands : NSObject
+@property(nonatomic, assign) const ProbeDtype *dtype;
+@property(nonatomic, strong) NSMutableData *elements;
+@property(nonatomic, assign) NSUInteger count;
+@end
+
+@implementation ProbeOperands
+@end
+
 /// One manifest line, fully resolved before the device is touched.
 ///
 /// ARC forbids an Objective-C pointer in a plain C struct, so this is a class
 /// rather than the record it would otherwise be.
 @interface ProbeEntry : NSObject
 @property(nonatomic, copy) NSString *key;
+@property(nonatomic, assign) const ProbeDtype *dtype;
 @property(nonatomic, assign) BOOL fromSource;
 @property(nonatomic, copy) NSString *path;
 @property(nonatomic, copy) NSString *function;
@@ -79,6 +129,40 @@ enum {
 @implementation ProbeEntry
 @end
 
+/// Whether the element accessors below implement this width.
+///
+/// The dtype table is the only producer of a width, so this guards adding a row
+/// to it rather than guarding input. A dtype whose width had no accessor would
+/// fall through to the 32-bit path and silently misreport every element of every
+/// case measured for it, which is precisely the class of failure this program's
+/// sentinel and terminal-status checks exist to make impossible. `main`
+/// validates the whole table once before anything is dispatched.
+static BOOL probe_width_supported(uint32_t bits) {
+    return bits == 16 || bits == 32;
+}
+
+/// The largest pattern an element of `bits` width can hold.
+static uint32_t probe_width_limit(uint32_t bits) {
+    return bits >= 32 ? UINT32_MAX : (uint32_t)((1u << bits) - 1u);
+}
+
+/// Reads one element of `bits` width out of a packed buffer.
+static uint32_t probe_element(const void *base, NSUInteger index, uint32_t bits) {
+    if (bits == 16) {
+        return ((const uint16_t *)base)[index];
+    }
+    return ((const uint32_t *)base)[index];
+}
+
+/// Writes one element of `bits` width into a packed buffer.
+static void probe_set_element(void *base, NSUInteger index, uint32_t bits, uint32_t value) {
+    if (bits == 16) {
+        ((uint16_t *)base)[index] = (uint16_t)value;
+        return;
+    }
+    ((uint32_t *)base)[index] = value;
+}
+
 static int probe_fail(NSString *stage, NSError *error) {
     fprintf(stderr, "numerical_probe_host: %s failed: %s\n", stage.UTF8String,
             error == nil ? "no error object" : error.localizedDescription.UTF8String);
@@ -87,10 +171,15 @@ static int probe_fail(NSString *stage, NSError *error) {
 
 static int probe_usage(NSString *detail) {
     fprintf(stderr, "numerical_probe_host: %s\n", detail.UTF8String);
-    fprintf(stderr, "usage: numerical_probe_host batch <manifest.tsv> <hex-operand>...\n");
+    fprintf(stderr, "usage: numerical_probe_host batch <manifest.tsv> "
+                    "<dtype>=<hex-operand>[,<hex-operand>...]...\n");
+    fprintf(stderr, "       one operand group per dtype; every dtype a manifest entry names "
+                    "must have one\n");
     fprintf(stderr, "       each manifest line is tab separated and is one of:\n");
-    fprintf(stderr, "         <case-key>\tlibrary\t<metallib>\t<function>\n");
-    fprintf(stderr, "         <case-key>\tsource\t<source.metal>\t<function>\t<options>\n");
+    fprintf(stderr, "         <case-key>\t<dtype>\tlibrary\t<metallib>\t<function>\n");
+    fprintf(stderr,
+            "         <case-key>\t<dtype>\tsource\t<source.metal>\t<function>\t<options>\n");
+    fprintf(stderr, "       <dtype> is one of: f32 f16\n");
     fprintf(stderr, "       <options> is a comma-separated key=value list; every key and value "
                     "must be recognized:\n");
     fprintf(stderr, "         math=safe|relaxed|fast  fpfun=fast|precise  lang=3.1|3.2  "
@@ -291,7 +380,7 @@ static NSArray<ProbeEntry *> *parse_manifest(NSString *text, NSString **complain
             continue;
         }
         NSArray<NSString *> *fields = [line componentsSeparatedByString:@"\t"];
-        if (fields.count < 4) {
+        if (fields.count < 5) {
             *complaint = [NSString stringWithFormat:@"manifest line %lu has %lu fields",
                                                     (unsigned long)number,
                                                     (unsigned long)fields.count];
@@ -299,28 +388,34 @@ static NSArray<ProbeEntry *> *parse_manifest(NSString *text, NSString **complain
         }
         ProbeEntry *entry = [ProbeEntry new];
         entry.key = fields[0];
-        entry.path = fields[2];
-        entry.function = fields[3];
+        entry.dtype = probe_dtype_named(fields[1]);
+        entry.path = fields[3];
+        entry.function = fields[4];
+        if (entry.dtype == NULL) {
+            *complaint = [NSString stringWithFormat:@"unknown dtype %@ for %@", fields[1],
+                                                    entry.key];
+            return nil;
+        }
         if ([seen containsObject:entry.key]) {
             *complaint = [NSString stringWithFormat:@"manifest repeats case key %@", entry.key];
             return nil;
         }
         [seen addObject:entry.key];
-        if ([fields[1] isEqualToString:@"library"]) {
+        if ([fields[2] isEqualToString:@"library"]) {
             entry.fromSource = NO;
-            if (fields.count != 4) {
+            if (fields.count != 5) {
                 *complaint = [NSString stringWithFormat:@"library entry %@ has extra fields",
                                                         entry.key];
                 return nil;
             }
-        } else if ([fields[1] isEqualToString:@"source"]) {
+        } else if ([fields[2] isEqualToString:@"source"]) {
             entry.fromSource = YES;
-            if (fields.count != 5) {
+            if (fields.count != 6) {
                 *complaint = [NSString stringWithFormat:@"source entry %@ needs an option list",
                                                         entry.key];
                 return nil;
             }
-            NSDictionary<NSString *, NSString *> *selections = parse_option_list(fields[4]);
+            NSDictionary<NSString *, NSString *> *selections = parse_option_list(fields[5]);
             if (selections == nil) {
                 *complaint = [NSString stringWithFormat:@"malformed option list for %@", entry.key];
                 return nil;
@@ -345,7 +440,7 @@ static NSArray<ProbeEntry *> *parse_manifest(NSString *text, NSString **complain
                 }
             }
         } else {
-            *complaint = [NSString stringWithFormat:@"unknown compilation mode: %@", fields[1]];
+            *complaint = [NSString stringWithFormat:@"unknown compilation mode: %@", fields[2]];
             return nil;
         }
         [entries addObject:entry];
@@ -362,9 +457,12 @@ static NSArray<ProbeEntry *> *parse_manifest(NSString *text, NSString **complain
 /// Each entry builds its own library, pipeline, buffers, and command buffer, so
 /// the only state shared across a manifest is the device and the queue.
 static int run_entry(id<MTLDevice> device, id<MTLCommandQueue> queue, ProbeEntry *entry,
-                     const uint32_t *operands, NSUInteger count) {
+                     ProbeOperands *operands) {
+    const uint32_t bits = entry.dtype->bits;
+    const NSUInteger count = operands.count;
     printf("case=%s\n", entry.key.UTF8String);
     printf("compilation=%s\n", entry.fromSource ? "source" : "library");
+    printf("dtype=%s\n", entry.dtype->name);
 
     NSError *error = nil;
     id<MTLLibrary> library = nil;
@@ -403,17 +501,19 @@ static int run_entry(id<MTLDevice> device, id<MTLCommandQueue> queue, ProbeEntry
         }
     }
 
-    NSUInteger bytes = count * sizeof(uint32_t);
-    id<MTLBuffer> input = [device newBufferWithBytes:operands
+    NSUInteger bytes = count * (bits / 8);
+    id<MTLBuffer> input = [device newBufferWithBytes:operands.elements.bytes
                                               length:bytes
                                              options:MTLResourceStorageModeShared];
     // The output buffer is seeded with a pattern no probe kernel can produce,
     // so a kernel that never wrote an element is distinguishable from one that
-    // wrote a zero.
+    // wrote a zero. The pattern belongs to the dtype because it has to fit the
+    // element width; truncating one wide pattern could land on a value a kernel
+    // does produce.
     NSMutableData *sentinelData = [NSMutableData dataWithLength:bytes];
-    uint32_t *sentinel = (uint32_t *)sentinelData.mutableBytes;
+    void *sentinel = sentinelData.mutableBytes;
     for (NSUInteger index = 0; index < count; index += 1) {
-        sentinel[index] = 0xdeadbeefu;
+        probe_set_element(sentinel, index, bits, entry.dtype->sentinel);
     }
     id<MTLBuffer> output = [device newBufferWithBytes:sentinel
                                                length:bytes
@@ -453,14 +553,17 @@ static int run_entry(id<MTLDevice> device, id<MTLCommandQueue> queue, ProbeEntry
         return probe_fail(@"command buffer", commands.error);
     }
 
-    const uint32_t *results = (const uint32_t *)output.contents;
+    const void *results = output.contents;
     for (NSUInteger index = 0; index < count; index += 1) {
-        if (results[index] == 0xdeadbeefu) {
+        uint32_t value = probe_element(results, index, bits);
+        if (value == entry.dtype->sentinel) {
             fprintf(stderr, "numerical_probe_host: %s element %lu was never written\n",
                     entry.key.UTF8String, (unsigned long)index);
             return kProbeExitFailure;
         }
-        printf("result=%08x\n", results[index]);
+        // Printed at the element's own width, so a 16-bit result cannot be read
+        // back as a zero-extended 32-bit one.
+        printf("result=%0*x\n", (int)(bits / 4), value);
     }
     return kProbeExitOk;
 }
@@ -468,20 +571,67 @@ static int run_entry(id<MTLDevice> device, id<MTLCommandQueue> queue, ProbeEntry
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (argc < 4 || strcmp(argv[1], "batch") != 0) {
-            return probe_usage(@"expected: batch <manifest.tsv> <hex-operand>...");
+            return probe_usage(@"expected: batch <manifest.tsv> <dtype>=<hex-operand>,...");
         }
-        NSUInteger count = (NSUInteger)(argc - 3);
 
-        NSMutableData *operandData = [NSMutableData dataWithLength:count * sizeof(uint32_t)];
-        uint32_t *operands = (uint32_t *)operandData.mutableBytes;
-        for (NSUInteger index = 0; index < count; index += 1) {
-            const char *text = argv[3 + (int)index];
-            char *end = NULL;
-            unsigned long long value = strtoull(text, &end, 16);
-            if (end == text || *end != '\0' || value > 0xffffffffULL) {
-                return probe_usage([NSString stringWithFormat:@"malformed hex operand: %s", text]);
+        // The dtype table is checked against the accessors once, before anything
+        // is parsed or dispatched. A row whose width they do not implement, or
+        // whose sentinel does not fit its own element, would not fail loudly
+        // anywhere later: the first reads back every result through the wrong
+        // path and the second makes an unwritten element indistinguishable from
+        // a written one.
+        size_t declared = sizeof(kProbeDtypes) / sizeof(kProbeDtypes[0]);
+        for (size_t index = 0; index < declared; index += 1) {
+            const ProbeDtype *dtype = &kProbeDtypes[index];
+            if (!probe_width_supported(dtype->bits)
+                || dtype->sentinel > probe_width_limit(dtype->bits)) {
+                return probe_usage([NSString
+                    stringWithFormat:@"dtype %s declares a %u-bit element or a sentinel this host "
+                                     @"does not implement",
+                                     dtype->name, dtype->bits]);
             }
-            operands[index] = (uint32_t)value;
+        }
+
+        // Every operand group is parsed into elements of its own dtype's width
+        // before anything is dispatched, so a pattern that does not fit is a
+        // usage error rather than a value silently truncated into a buffer.
+        NSMutableDictionary<NSString *, ProbeOperands *> *vectors = [NSMutableDictionary
+            dictionary];
+        for (int argument = 3; argument < argc; argument += 1) {
+            NSString *group = @(argv[argument]);
+            NSRange separator = [group rangeOfString:@"="];
+            if (separator.location == NSNotFound || separator.location == 0) {
+                return probe_usage([NSString stringWithFormat:@"malformed operand group: %@",
+                                                              group]);
+            }
+            NSString *name = [group substringToIndex:separator.location];
+            const ProbeDtype *dtype = probe_dtype_named(name);
+            if (dtype == NULL) {
+                return probe_usage([NSString stringWithFormat:@"unknown operand dtype: %@", name]);
+            }
+            if (vectors[name] != nil) {
+                return probe_usage([NSString stringWithFormat:@"repeated operand group: %@",
+                                                              name]);
+            }
+            NSArray<NSString *> *patterns = [[group substringFromIndex:separator.location + 1]
+                componentsSeparatedByString:@","];
+            ProbeOperands *parsed = [ProbeOperands new];
+            parsed.dtype = dtype;
+            parsed.count = patterns.count;
+            parsed.elements = [NSMutableData dataWithLength:patterns.count * (dtype->bits / 8)];
+            unsigned long long limit = probe_width_limit(dtype->bits);
+            for (NSUInteger index = 0; index < patterns.count; index += 1) {
+                const char *text = patterns[index].UTF8String;
+                char *end = NULL;
+                unsigned long long value = strtoull(text, &end, 16);
+                if (end == text || *end != '\0' || value > limit) {
+                    return probe_usage([NSString stringWithFormat:@"malformed %@ operand: %s",
+                                                                  name, text]);
+                }
+                probe_set_element(parsed.elements.mutableBytes, index, dtype->bits,
+                                  (uint32_t)value);
+            }
+            vectors[name] = parsed;
         }
 
         NSError *error = nil;
@@ -496,6 +646,15 @@ int main(int argc, const char *argv[]) {
         NSArray<ProbeEntry *> *entries = parse_manifest(manifest, &complaint);
         if (entries == nil) {
             return probe_usage(complaint);
+        }
+        // Resolved before the device is touched, for the same reason the compile
+        // options are: an entry whose dtype has no operand group must be a usage
+        // error and not a run that dispatches some cases and then stops.
+        for (ProbeEntry *entry in entries) {
+            if (vectors[@(entry.dtype->name)] == nil) {
+                return probe_usage([NSString stringWithFormat:@"no %s operand group for %@",
+                                                              entry.dtype->name, entry.key]);
+            }
         }
 
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -512,7 +671,7 @@ int main(int argc, const char *argv[]) {
             return kProbeExitFailure;
         }
         for (ProbeEntry *entry in entries) {
-            int status = run_entry(device, queue, entry, operands, count);
+            int status = run_entry(device, queue, entry, vectors[@(entry.dtype->name)]);
             if (status != kProbeExitOk) {
                 return status;
             }
