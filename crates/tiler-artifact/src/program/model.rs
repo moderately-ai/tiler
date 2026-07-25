@@ -27,6 +27,8 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::Shape;
 
+use tiler_ir::identity::{push_len, push_slice};
+
 use super::MAX_ARTIFACT_IDENTITY_BYTES;
 use super::codec::{
     ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow, expression_keys,
@@ -35,7 +37,7 @@ use super::codec::{
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind, ForeignEnumSubject};
 use super::expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,
-    AvailabilityPhase, ExprNode, evaluate, push_slice,
+    AvailabilityPhase, ExprNode, evaluate,
 };
 use super::handles::PayloadId;
 use super::keys::{
@@ -68,14 +70,6 @@ fn stage_at(program: &VerifiedKernelProgram, entry: usize) -> StageRef<'_> {
         .stages()
         .nth(entry)
         .expect("a verified entry names a stage of its own program")
-}
-
-pub(super) fn push_len(bytes: &mut Vec<u8>, len: usize) {
-    bytes.extend_from_slice(
-        &u64::try_from(len)
-            .expect("supported usize fits u64")
-            .to_be_bytes(),
-    );
 }
 
 pub(super) fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {

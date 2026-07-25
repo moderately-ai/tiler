@@ -12,6 +12,7 @@
 //! [`VerifiedKernel`]. The verified wrapper exposes read-only meaning and never
 //! mutation, thawing, or unchecked construction.
 
+use crate::identity::{push_len, push_slice};
 use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
     CanonicalScheduledRegionIdentity, FlushedZeroSign, NumericalPermission, NumericalRealization,
@@ -917,15 +918,6 @@ impl<'a> SerialLoopRef<'a> {
     fn body_data(self) -> &'a BlockData {
         &self.kernel.data.blocks[self.block as usize]
     }
-}
-
-fn push_len(bytes: &mut Vec<u8>, len: usize) {
-    bytes.extend_from_slice(&(len as u64).to_be_bytes());
-}
-
-fn push_slice(bytes: &mut Vec<u8>, value: &[u8]) {
-    push_len(bytes, value.len());
-    bytes.extend_from_slice(value);
 }
 
 fn push_tensor_role(bytes: &mut Vec<u8>, role: TensorRole) {

@@ -6,7 +6,7 @@ title: "Co-locate ABI expressions with executable program IR"
 topics: ["program-planning", "abi", "expressions", "rust"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
-implementation_status: "spike-only"
+implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.artifact-abi"]
 evidence: ["tiler.research.program-planning.abi-expression-ownership"]
 ticket: "prototype-target-neutral-baseline-slice"

@@ -3,7 +3,7 @@ id: complete-program-identity-with-abi-guards-and-routing
 title: Complete program identity with ABI expressions, guards, and routing
 status: todo
 priority: p1
-dependencies: []
+dependencies: [relocate-abi-expressions-into-tiler-ir]
 related: [prototype-kernel-program-ir, prototype-artifact-program-model]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]

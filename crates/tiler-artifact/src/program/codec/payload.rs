@@ -57,12 +57,11 @@
 //! exactly the backend entry keys the artifact's executable entries name.
 
 use super::super::error::ArtifactBuildError;
-use super::super::expr::push_slice;
 use super::super::keys::{BackendEntryKey, PayloadDigest, RepresentationKey};
-use super::super::model::push_len;
 use super::decode::Cursor;
 use super::digest::DigestAlgorithm;
 use super::error::{ArtifactCodecError, CodecLimitKind, OrderedSubject, codec_limit};
+use tiler_ir::identity::{push_len, push_slice};
 
 /// Versioned domain tag opening the canonical payload-metadata bytes.
 pub(super) const PAYLOAD_METADATA_DOMAIN: &[u8] = b"tiler.artifact-envelope.payload-metadata.v1\0";

@@ -228,6 +228,7 @@
 //! # }
 //! ```
 
+pub mod abi;
 mod builder;
 mod error;
 mod handles;

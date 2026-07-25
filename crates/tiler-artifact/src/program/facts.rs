@@ -17,8 +17,8 @@ use tiler_ir::semantic::InputKey;
 use tiler_ir::shape::{Axis, Shape};
 
 use super::error::{ArtifactBuildError, ArtifactLimitKind, limit};
+use super::expr::TargetPropertyKey;
 use super::expr::{AbiFacts, AvailabilityPhase};
-use super::keys::TargetPropertyKey;
 
 /// Maximum bound input-axis extents admitted by one fact environment.
 pub const MAX_BOUND_INPUT_EXTENTS: usize = 4_096;
@@ -181,11 +181,7 @@ impl AbiFactBinder {
             .sort_unstable_by(|left, right| (&left.0, left.1).cmp(&(&right.0, right.1)));
         self.target_properties
             .sort_unstable_by(|left, right| left.0.cmp(&right.0));
-        AbiFacts {
-            reached: self.reached,
-            input_extents: self.input_extents,
-            target_properties: self.target_properties,
-        }
+        AbiFacts::new(self.reached, self.input_extents, self.target_properties)
     }
 
     fn check_phase(&self, available_at: AvailabilityPhase) -> Result<(), AbiBindingError> {

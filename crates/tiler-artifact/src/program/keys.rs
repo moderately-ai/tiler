@@ -158,11 +158,11 @@ governed_key!(
     ArtifactKeyKind::Capability,
     "A governed capability key one provider was selected for."
 );
-governed_key!(
-    TargetPropertyKey,
-    ArtifactKeyKind::TargetProperty,
-    "A governed target-property key an ABI expression root may name."
-);
+// `TargetPropertyKey` is not defined here. It moved to `tiler_ir::program::abi`
+// with the expression domain that names it (ADR 0068, via
+// `relocate-abi-expressions-into-tiler-ir`); leaving the key behind would have
+// reintroduced the external side table that ADR rejects. It is re-exported
+// through `super::expr` for this crate's callers.
 
 opaque_identity!(
     BackendEntryKey,

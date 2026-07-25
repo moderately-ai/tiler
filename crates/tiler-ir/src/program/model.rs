@@ -13,6 +13,7 @@
 //! [`VerifiedKernelProgram`]. The verified wrapper exposes read-only meaning
 //! and never mutation, thawing, or unchecked construction.
 
+use crate::identity::{push_len, push_slice};
 use crate::kernel::{KernelType, VerifiedKernel};
 use crate::schedule::TensorRole;
 use crate::semantic::{InputKey, OutputKey, SemanticGraphIdentity};
@@ -797,19 +798,6 @@ const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v1\0";
-
-fn push_len(bytes: &mut Vec<u8>, len: usize) {
-    bytes.extend_from_slice(
-        &u64::try_from(len)
-            .expect("supported usize fits u64")
-            .to_be_bytes(),
-    );
-}
-
-fn push_slice(bytes: &mut Vec<u8>, value: &[u8]) {
-    push_len(bytes, value.len());
-    bytes.extend_from_slice(value);
-}
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());

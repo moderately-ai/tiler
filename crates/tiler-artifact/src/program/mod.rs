@@ -320,7 +320,7 @@ pub use error::{
 };
 pub use expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,
-    AvailabilityPhase,
+    AvailabilityPhase, MAX_TARGET_PROPERTY_KEY_BYTES, TargetPropertyKey, TargetPropertyKeyError,
 };
 pub use facts::{
     AbiBindingError, AbiFactBinder, MAX_BOUND_INPUT_EXTENTS, MAX_BOUND_TARGET_PROPERTIES,
@@ -329,7 +329,7 @@ pub use handles::{AbiExprId, PayloadId, VariantId};
 pub use keys::{
     BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
     MAX_GOVERNED_KEY_BYTES, MAX_OPAQUE_IDENTITY_BYTES, PayloadDigest, RepresentationKey,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
 pub use model::{
     AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,

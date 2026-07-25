@@ -28,6 +28,8 @@
 
 mod convenience;
 
+/// Canonical byte-encoding primitives shared by every identity derivation.
+pub mod identity;
 /// Public target-independent iteration, access, and scalar-region vocabulary.
 pub mod index;
 /// Public backend-consumable structured kernel IR, verifier, and identity.

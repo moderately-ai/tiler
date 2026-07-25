@@ -36,22 +36,13 @@ use crate::explain::Quantity;
 
 /// Ordered capability availability phases (ADR 0043).
 ///
-/// Earlier phases are strictly less than later phases under the derived ordering,
-/// which the resolver relies on to decide whether a fact is available now or must
-/// be deferred to the first later phase that can supply it.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum AvailabilityPhase {
-    /// Conservative compile-time profile guarantees.
-    CompileProfile,
-    /// Facts derived from a produced AOT artifact.
-    ArtifactEvidence,
-    /// Facts read from a live device before work is committed.
-    LiveDevicePreflight,
-    /// Facts read from a prepared, specialized kernel before work is committed.
-    PreparedKernelPreflight,
-    /// Facts evaluated against concrete launch values before work is committed.
-    LaunchPreflight,
-}
+/// Re-exported rather than redefined. This crate carried its own copy with the
+/// same five variants in the same order until `relocate-abi-expressions-into-tiler-ir`;
+/// nothing checked that the two agreed, so a phase added to one would have left
+/// the other silently unable to express it — the compiler deferring to a phase
+/// the artifact layer cannot name, or the reverse, with no diagnostic. One
+/// governed vocabulary now has one definition.
+pub(crate) use tiler_ir::program::abi::AvailabilityPhase;
 
 /// A governed, typed capability axis.
 ///

@@ -266,7 +266,7 @@ fn compiler_layers_recheck_the_target_and_the_host_expression_graph() {
     );
 
     let mut wrong_bytes = valid.clone();
-    wrong_bytes.host_expressions[2].node = HostExprNode::U64(4);
+    wrong_bytes.host_expressions[2] = ExprNode::Root(AbiRoot::UnsignedLiteral(4));
     assert_eq!(
         verify_kernel_program_layers(&wrong_bytes, &request, &scheduled),
         Err(ProgramError::HostExpression {
@@ -276,7 +276,7 @@ fn compiler_layers_recheck_the_target_and_the_host_expression_graph() {
     );
 
     let mut wrong_launch = valid.clone();
-    wrong_launch.host_expressions[5].node = HostExprNode::U64(5);
+    wrong_launch.host_expressions[5] = ExprNode::Root(AbiRoot::UnsignedLiteral(5));
     assert_eq!(
         verify_kernel_program_layers(&wrong_launch, &request, &scheduled),
         Err(ProgramError::HostExpression {
@@ -299,7 +299,7 @@ fn compiler_layers_recheck_the_target_and_the_host_expression_graph() {
 fn host_expression_overflow_is_a_hard_failure() {
     let (semantic, request, scheduled) = fixture();
     let mut program = build_kernel_program(&semantic, &request, &scheduled).unwrap();
-    program.host_expressions[0].node = HostExprNode::U64(u64::MAX);
+    program.host_expressions[0] = ExprNode::Root(AbiRoot::UnsignedLiteral(u64::MAX));
     assert_eq!(
         evaluate_expressions(&program.host_expressions),
         Err(ProgramError::HostExpression {
@@ -309,8 +309,11 @@ fn host_expression_overflow_is_a_hard_failure() {
     );
 
     let mut malformed = build_kernel_program(&semantic, &request, &scheduled).unwrap();
-    malformed.host_expressions[2].node =
-        HostExprNode::CheckedMultiply(HostExprId(99), HostExprId(1));
+    malformed.host_expressions[2] = ExprNode::Binary {
+        op: AbiBinaryOp::CheckedMultiply,
+        left: 99,
+        right: 1,
+    };
     assert_eq!(
         verify_kernel_program_layers(&malformed, &request, &scheduled),
         Err(ProgramError::HostExpression {

@@ -141,7 +141,7 @@ fn guarded_artifact() -> VerifiedArtifactProgram {
     let formulas = formulas(&mut draft);
     let property = draft
         .push_root(AbiRoot::TargetProperty {
-            key: super::super::keys::TargetPropertyKey::new("tiler.target.max-threads").unwrap(),
+            key: super::super::expr::TargetPropertyKey::new("tiler.target.max-threads").unwrap(),
             phase: AvailabilityPhase::LaunchPreflight,
         })
         .unwrap();

@@ -17,7 +17,10 @@ use std::fmt;
 use tiler_ir::semantic::ProviderIdentity;
 
 use super::ArtifactProgramBuilder;
-use super::expr::{AbiEvaluationError, AbiType, AvailabilityPhase};
+use super::expr::{
+    AbiEvaluationError, AbiType, AvailabilityPhase, MAX_TARGET_PROPERTY_KEY_BYTES,
+    TargetPropertyKeyError,
+};
 
 /// An artifact-owned entity category used by typed handle and closure errors.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -322,6 +325,29 @@ pub enum ArtifactBuildError {
     },
     /// A plan variant with the same program and applicability guard exists.
     DuplicateVariant,
+}
+
+/// Classifies the ABI domain's own key rejection into this crate's vocabulary.
+///
+/// ADR 0068 gives `tiler-ir` the expression domain, including validating a
+/// target-property key, and gives this crate failure classification. So the
+/// domain rejects with its own typed error and this conversion is where that
+/// becomes an artifact diagnostic — rather than the domain importing this
+/// crate's error type, which would be the dependency inversion the ADR exists
+/// to prevent.
+impl From<TargetPropertyKeyError> for ArtifactBuildError {
+    fn from(error: TargetPropertyKeyError) -> Self {
+        match error {
+            TargetPropertyKeyError::Empty => Self::EmptyKey {
+                kind: ArtifactKeyKind::TargetProperty,
+            },
+            TargetPropertyKeyError::TooLong { bytes } => Self::KeyTooLong {
+                kind: ArtifactKeyKind::TargetProperty,
+                bytes,
+                limit: MAX_TARGET_PROPERTY_KEY_BYTES,
+            },
+        }
+    }
 }
 
 impl fmt::Display for ArtifactBuildError {

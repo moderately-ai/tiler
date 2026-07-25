@@ -11,15 +11,16 @@
 //! cannot silently renumber a value that is already on disk.
 
 use super::super::error::ArtifactDiagnostic;
-use super::super::expr::{ExprNode, push_slice};
+use super::super::expr::ExprNode;
 use super::super::model::{address_space_tag, buffer_access_tag};
 use super::super::model::{
-    element_type_tag, push_len, push_numerical, push_resources, push_shape, value_role_tag,
+    element_type_tag, push_numerical, push_resources, push_shape, value_role_tag,
 };
 use super::budget::check_budgets;
 use super::digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::model::{ArtifactEnvelope, EntryRow, MAX_SECTION_BYTES, Section, ordinal};
+use tiler_ir::identity::{push_len, push_slice};
 
 /// Fixed framing magic of the target-neutral artifact envelope.
 pub(super) const MAGIC: [u8; 8] = *b"TILERART";

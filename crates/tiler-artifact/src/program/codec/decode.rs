@@ -22,13 +22,13 @@ use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Shape;
 
 use super::super::expr::{
-    AbiBinaryOp, AbiRoot, AbiType, AbiUnaryOp, AvailabilityPhase, ExprNode, binary_operand_type,
-    node_type, unary_operand_type,
+    AbiBinaryOp, AbiRoot, AbiType, AbiUnaryOp, AvailabilityPhase, ExprNode, TargetPropertyKey,
+    binary_operand_type, node_type, unary_operand_type,
 };
 use super::super::keys::{
     BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
     PayloadDigest, RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey,
-    TargetProfileRef, TargetPropertyKey,
+    TargetProfileRef,
 };
 use super::super::model::{
     ArtifactSchema, BackendPayloadDescriptor, BindingData, BindingKind, DeferredPredicateData,
@@ -1009,8 +1009,11 @@ impl<'a> Cursor<'a> {
                 axis: tiler_ir::shape::Axis::new(self.u32()?),
             }),
             0x04 => Ok(AbiRoot::TargetProperty {
-                key: TargetPropertyKey::from_owned(self.text()?)
-                    .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
+                key: TargetPropertyKey::from_owned(self.text()?).map_err(|cause| {
+                    ArtifactCodecError::InvalidGovernedKey {
+                        cause: cause.into(),
+                    }
+                })?,
                 phase: self.phase()?,
             }),
             tag => Err(ArtifactCodecError::UnknownTag {

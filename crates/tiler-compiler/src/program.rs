@@ -23,6 +23,11 @@ use tiler_ir::program::{
 use tiler_ir::semantic::{F32, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
 
+use tiler_ir::program::abi::{
+    AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiValue, AvailabilityPhase, ExprNode,
+    evaluate as abi_evaluate,
+};
+
 use crate::physical::{
     NumericalRealization, RegionId, ResourceRequirements, VerifiedKernel, VerifiedScheduledRegion,
     lower_structured_kernel,
@@ -35,14 +40,23 @@ const ELEMENT_BYTES: u64 = 4;
 /// Byte alignment every bounded-profile value and allocation requires.
 const ELEMENT_ALIGNMENT: u32 = 4;
 
+/// Arena position of one node of the host preflight ABI expression graph.
+///
+/// This is a reference into [`ExprNode`]'s arena, not a second expression
+/// vocabulary. `relocate-abi-expressions-into-tiler-ir` replaced the compiler's
+/// own `HostExpr` — a nine-node table of `U64`/`Bool`/`CheckedMultiply` — with
+/// the shared `AbiExpr` domain, because the two covered the same three facts
+/// (guards, accessible byte counts, launch geometry) with two vocabularies that
+/// nothing kept in agreement. That is the drift hazard ADR 0068 exists to
+/// prevent, and it is why the width widened from `u8` to the arena's own `u32`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct HostExprId(u8);
+pub(crate) struct HostExprId(u32);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct StageId(u8);
 
 impl HostExprId {
-    pub(crate) const fn index(self) -> u8 {
+    pub(crate) const fn index(self) -> u32 {
         self.0
     }
 }
@@ -59,26 +73,6 @@ pub(crate) struct MaterializedValueId(pub(crate) u8);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct EntryBindingId(u8);
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum HostValueType {
-    U64,
-    Bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum HostExprNode {
-    U64(u64),
-    Bool(bool),
-    CheckedMultiply(HostExprId, HostExprId),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct HostExpr {
-    pub(crate) id: HostExprId,
-    pub(crate) value_type: HostValueType,
-    pub(crate) node: HostExprNode,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AbiAccess {
@@ -133,7 +127,7 @@ pub(crate) struct RoutingTransition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct KernelProgram {
     target_profile_key: &'static str,
-    host_expressions: Vec<HostExpr>,
+    host_expressions: Vec<ExprNode>,
     applicability_guard: HostExprId,
     core: VerifiedKernelProgram,
     entries: Vec<EntryContract>,
@@ -607,7 +601,7 @@ pub(crate) fn verify_kernel_program_layers(
 fn verify_host_contract(
     program: &KernelProgram,
     request: &VerifiedTargetRequest,
-) -> Result<Vec<HostValue>, ProgramError> {
+) -> Result<Vec<AbiValue>, ProgramError> {
     let subject = request.serial_sum();
     let expected_expressions =
         canonical_host_expressions(subject.input_elements, subject.output_elements);
@@ -638,7 +632,7 @@ fn verify_host_contract(
         });
     }
     let values = evaluate_expressions(&program.host_expressions)?;
-    if values.get(usize::from(program.applicability_guard.0)) != Some(&HostValue::Bool(true)) {
+    if values.get(program.applicability_guard.0 as usize) != Some(&AbiValue::Boolean(true)) {
         return Err(ProgramError::Structure {
             rule: "applicability-guard",
         });
@@ -652,7 +646,7 @@ fn verify_entry(
     entry: &EntryContract,
     position: usize,
     scheduled: &VerifiedScheduledRegion,
-    values: &[HostValue],
+    values: &[AbiValue],
 ) -> Result<(), ProgramError> {
     let index = u8::try_from(position).map_err(|_| ProgramError::Structure {
         rule: "stage-id-overflow",
@@ -681,10 +675,10 @@ fn verify_entry(
             stage: entry.stage,
         });
     }
-    if values.get(usize::from(entry.launch_threads.0))
-        != Some(&HostValue::U64(scheduled.region().schedule.work_items))
-        || values.get(usize::from(entry.threads_per_workgroup.0))
-            != Some(&HostValue::U64(u64::from(
+    if values.get(entry.launch_threads.0 as usize)
+        != Some(&AbiValue::Unsigned(scheduled.region().schedule.work_items))
+        || values.get(entry.threads_per_workgroup.0 as usize)
+            != Some(&AbiValue::Unsigned(u64::from(
                 scheduled.region().schedule.threads_per_workgroup,
             )))
     {
@@ -712,13 +706,13 @@ fn verify_entry(
             StageAccessMode::Read => AbiAccess::Read,
             StageAccessMode::Write => AbiAccess::Write,
         };
-        let expected_bytes = HostValue::U64(bound.required_bytes());
+        let expected_bytes = AbiValue::Unsigned(bound.required_bytes());
         if binding.id != EntryBindingId(u8::try_from(position).expect("bounded binding count"))
             || bound != access.view().value()
             || binding.access != expected_access
             || binding.alignment != bound.alignment()
             || binding.role != component_role(bound)
-            || values.get(usize::from(binding.accessible_bytes.0)) != Some(&expected_bytes)
+            || values.get(binding.accessible_bytes.0 as usize) != Some(&expected_bytes)
         {
             return Err(ProgramError::Abi {
                 rule: "binding",
@@ -880,7 +874,7 @@ pub(crate) fn verify_artifact_plan(
     Ok(())
 }
 
-fn host_expressions(request: &VerifiedTargetRequest) -> Result<Vec<HostExpr>, ProgramError> {
+fn host_expressions(request: &VerifiedTargetRequest) -> Result<Vec<ExprNode>, ProgramError> {
     let expressions = canonical_host_expressions(
         request.serial_sum().input_elements,
         request.serial_sum().output_elements,
@@ -900,72 +894,90 @@ fn host_expressions(request: &VerifiedTargetRequest) -> Result<Vec<HostExpr>, Pr
     Ok(expressions)
 }
 
-fn canonical_host_expressions(input_elements: u64, output_elements: u64) -> Vec<HostExpr> {
+/// Builds the canonical host preflight graph for one bounded-profile subject.
+///
+/// Every extent enters as an `UnsignedLiteral` because the bounded profile's
+/// shapes are static, so each is already known at `CompileProfile`. The domain
+/// also admits an `InputExtent` root that resolves at `LiveDevicePreflight`,
+/// which is what a dynamic-shape subject would name here instead; promoting
+/// these literals is a capability question tied to dynamic shapes, not a
+/// property of the vocabulary, and nothing in this graph has to change shape
+/// for it.
+///
+/// Positions are load-bearing and are named by the `HostExprId` constants at
+/// the construction sites. Operands always precede their use, which is the
+/// arena's acyclicity invariant.
+fn canonical_host_expressions(input_elements: u64, output_elements: u64) -> Vec<ExprNode> {
     vec![
-        expression(0, HostValueType::U64, HostExprNode::U64(ELEMENT_BYTES)),
-        expression(1, HostValueType::U64, HostExprNode::U64(input_elements)),
-        expression(
-            2,
-            HostValueType::U64,
-            HostExprNode::CheckedMultiply(HostExprId(0), HostExprId(1)),
-        ),
-        expression(3, HostValueType::U64, HostExprNode::U64(output_elements)),
-        expression(
-            4,
-            HostValueType::U64,
-            HostExprNode::CheckedMultiply(HostExprId(0), HostExprId(3)),
-        ),
-        expression(5, HostValueType::U64, HostExprNode::U64(input_elements)),
-        expression(6, HostValueType::U64, HostExprNode::U64(output_elements)),
-        expression(7, HostValueType::Bool, HostExprNode::Bool(true)),
-        expression(8, HostValueType::U64, HostExprNode::U64(1)),
+        // 0: the element byte width every accessible range scales by.
+        ExprNode::Root(AbiRoot::UnsignedLiteral(ELEMENT_BYTES)),
+        // 1..=2: input elements, and the input's accessible byte count.
+        ExprNode::Root(AbiRoot::UnsignedLiteral(input_elements)),
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedMultiply,
+            left: 0,
+            right: 1,
+        },
+        // 3..=4: output elements, and the output's accessible byte count.
+        ExprNode::Root(AbiRoot::UnsignedLiteral(output_elements)),
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedMultiply,
+            left: 0,
+            right: 3,
+        },
+        // 5..=6: per-stage launch thread counts.
+        ExprNode::Root(AbiRoot::UnsignedLiteral(input_elements)),
+        ExprNode::Root(AbiRoot::UnsignedLiteral(output_elements)),
+        // 7: the applicability guard, which must evaluate true.
+        ExprNode::Root(AbiRoot::BooleanLiteral(true)),
+        // 8: threads per workgroup for the serial subject.
+        ExprNode::Root(AbiRoot::UnsignedLiteral(1)),
     ]
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HostValue {
-    U64(u64),
-    Bool(bool),
-}
-
-fn evaluate_expressions(expressions: &[HostExpr]) -> Result<Vec<HostValue>, ProgramError> {
+/// Evaluates every node of the host preflight graph in arena order.
+///
+/// The shared evaluator is the authority for what each node means, so this
+/// function owns only the mapping from its typed failures onto this crate's
+/// rules. Every node is evaluated rather than only the roots the entries name,
+/// because an unreferenced node that cannot evaluate is still a malformed graph
+/// and the arena is nine nodes.
+///
+/// The bound environment is empty and reaches only `CompileProfile`: the
+/// bounded profile's graph is entirely literals, so binding a device fact here
+/// would be claiming an availability this stage does not have.
+fn evaluate_expressions(expressions: &[ExprNode]) -> Result<Vec<AbiValue>, ProgramError> {
+    let facts = AbiFacts::new(AvailabilityPhase::CompileProfile, Vec::new(), Vec::new());
     let mut values = Vec::with_capacity(expressions.len());
-    for (position, expression) in expressions.iter().enumerate() {
-        if usize::from(expression.id.0) != position {
-            return Err(ProgramError::HostExpression {
-                rule: "canonical-id",
-                expression: expression.id,
-            });
-        }
-        let value = match expression.node {
-            HostExprNode::U64(value) if expression.value_type == HostValueType::U64 => {
-                HostValue::U64(value)
-            }
-            HostExprNode::Bool(value) if expression.value_type == HostValueType::Bool => {
-                HostValue::Bool(value)
-            }
-            HostExprNode::CheckedMultiply(left, right)
-                if expression.value_type == HostValueType::U64 =>
-            {
-                let Some(HostValue::U64(left)) = values.get(usize::from(left.0)) else {
-                    return host_error("operand", expression.id);
-                };
-                let Some(HostValue::U64(right)) = values.get(usize::from(right.0)) else {
-                    return host_error("operand", expression.id);
-                };
-                HostValue::U64(
-                    left.checked_mul(*right)
-                        .ok_or(ProgramError::HostExpression {
-                            rule: "overflow",
-                            expression: expression.id,
-                        })?,
-                )
-            }
-            _ => return host_error("type", expression.id),
-        };
-        values.push(value);
+    for position in 0..expressions.len() {
+        let root = u32::try_from(position).map_err(|_| ProgramError::Structure {
+            rule: "host-expression-budget",
+        })?;
+        values.push(
+            abi_evaluate(expressions, root, &facts)
+                .map_err(|error| host_expression_error(&error, HostExprId(root)))?,
+        );
     }
     Ok(values)
+}
+
+/// Maps one shared evaluation failure onto this crate's stable rule vocabulary.
+///
+/// The match is exhaustive over the wildcard-free arms it can name; the shared
+/// error is `#[non_exhaustive]`, so a variant added upstream reaches the final
+/// arm and reports `evaluation` rather than being silently reclassified as one
+/// of the specific rules.
+fn host_expression_error(error: &AbiEvaluationError, at: HostExprId) -> ProgramError {
+    let rule = match error {
+        AbiEvaluationError::Overflow { .. } => "overflow",
+        AbiEvaluationError::UnboundInputExtent { .. }
+        | AbiEvaluationError::UnboundTargetProperty { .. } => "operand",
+        _ => "evaluation",
+    };
+    ProgramError::HostExpression {
+        rule,
+        expression: at,
+    }
 }
 
 fn binding(
@@ -1000,18 +1012,6 @@ fn entry(
         requirements,
         numerical,
     }
-}
-
-fn expression(id: u8, value_type: HostValueType, node: HostExprNode) -> HostExpr {
-    HostExpr {
-        id: HostExprId(id),
-        value_type,
-        node,
-    }
-}
-
-fn host_error<T>(rule: &'static str, expression: HostExprId) -> Result<T, ProgramError> {
-    Err(ProgramError::HostExpression { rule, expression })
 }
 
 /// Proves the separately retained kernels are exactly the ones the program binds.
