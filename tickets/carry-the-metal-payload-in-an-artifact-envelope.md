@@ -3,7 +3,7 @@ id: carry-the-metal-payload-in-an-artifact-envelope
 title: Carry the Metal payload in an artifact envelope and round-trip it
 status: in-progress
 priority: p0
-dependencies: [assemble-the-metal-payload-from-emission-and-compilation, relocate-abi-expressions-into-tiler-ir, name-the-resolved-lowering-capability]
+dependencies: [assemble-the-metal-payload-from-emission-and-compilation, relocate-abi-expressions-into-tiler-ir, name-the-resolved-lowering-capability, carry-the-target-profile-descriptor-identity-into-the-plan]
 related: [route-the-runtime-proof-through-the-artifact-envelope, prototype-public-compiler-api]
 scopes: [implementation/metal-aot, implementation/artifact, implementation/compiler]
 shared_scopes: [project/tickets]
