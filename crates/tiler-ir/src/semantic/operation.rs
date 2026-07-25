@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::identity::push_len;
 use crate::shape::Shape;
 
 use super::handles::{GraphId, OperationId, OperationIndex, ValueId, ValueIndex};
@@ -182,11 +183,7 @@ impl OperationAttributes {
     }
 
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
-        output.extend_from_slice(
-            &u64::try_from(self.0.len())
-                .expect("supported usize fits u64")
-                .to_be_bytes(),
-        );
+        push_len(output, self.0.len());
         for field in &self.0 {
             output.extend_from_slice(&field.id().get().to_be_bytes());
             field.value().encode(output);
@@ -718,11 +715,7 @@ impl OperationSchema {
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
         self.operands.encode(output);
         self.results.encode(output);
-        output.extend_from_slice(
-            &u64::try_from(self.attributes.len())
-                .expect("supported usize fits u64")
-                .to_be_bytes(),
-        );
+        push_len(output, self.attributes.len());
         for field in &self.attributes {
             output.extend_from_slice(&field.id.get().to_be_bytes());
             output.push(field.kind.encode());

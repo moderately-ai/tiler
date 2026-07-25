@@ -349,17 +349,29 @@ fn push_tool_version(bytes: &mut Vec<u8>, tool: &ResolvedTool) {
 
 /// Writes a fixed-width big-endian count before a repeated run.
 ///
+/// This crate's sole copy of the workspace's canonical length framing, and the
+/// sole one it is permitted. `tiler_ir::identity` owns that framing everywhere
+/// else, but ADR 0077 item 2 pins this crate's dependency closure empty — it
+/// declares no workspace dependency at all — so the framing cannot be imported
+/// here and has to be restated. `scripts/check_workspace.py` admits exactly this
+/// definition and [`push_str`] beside it, so a second copy in this crate fails
+/// the gate rather than growing quietly.
+///
 /// `u64` matches the workspace's canonical form and is wide enough for every
 /// run a 64-bit host can address, so there is no bound here that could reject
 /// or truncate a real subject. `scripts/check_rust.py` admits only 64-bit
 /// profiles, which is what makes the conversion total.
-fn push_len(bytes: &mut Vec<u8>, len: usize) {
+pub(crate) fn push_len(bytes: &mut Vec<u8>, len: usize) {
     let len = u64::try_from(len).expect("the admitted profiles have a 64-bit address space");
     bytes.extend_from_slice(&len.to_be_bytes());
 }
 
 /// Writes a fixed-width big-endian length before a variable-length run.
-fn push_str(bytes: &mut Vec<u8>, value: &str) {
+///
+/// Admitted alongside [`push_len`] for the reason stated there, and a `&str`
+/// rather than a `&[u8]` run because every variable-width field this crate
+/// encodes is textual.
+pub(crate) fn push_str(bytes: &mut Vec<u8>, value: &str) {
     push_len(bytes, value.len());
     bytes.extend_from_slice(value.as_bytes());
 }

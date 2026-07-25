@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::OnceLock;
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::FrozenScalarRegistry;
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
@@ -818,28 +819,24 @@ impl VerifiedRequestSubject {
     pub(crate) fn canonical_explain_subject_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"tiler.compiler.request-subject.v1\0");
-        encode_explain_bytes(&mut bytes, self.semantic_identity.graph().as_bytes());
-        encode_explain_bytes(
+        push_slice(&mut bytes, self.semantic_identity.graph().as_bytes());
+        push_slice(
             &mut bytes,
             self.semantic_identity.reached_definitions().as_bytes(),
         );
-        encode_explain_bytes(
+        push_slice(
             &mut bytes,
             self.semantic_identity.admission_provenance().as_bytes(),
         );
-        encode_explain_bytes(
+        push_slice(
             &mut bytes,
             self.semantic_identity.registry_snapshot().as_bytes(),
         );
-        encode_explain_bytes(&mut bytes, self.normalized.input_key.as_str().as_bytes());
-        encode_explain_bytes(&mut bytes, self.normalized.output_key.as_str().as_bytes());
+        push_slice(&mut bytes, self.normalized.input_key.as_str().as_bytes());
+        push_slice(&mut bytes, self.normalized.output_key.as_str().as_bytes());
         encode_explain_shape(&mut bytes, &self.normalized.input_shape);
         encode_explain_shape(&mut bytes, &self.normalized.output_shape);
-        bytes.extend_from_slice(
-            &u64::try_from(self.normalized.reduction_axes.len())
-                .unwrap_or(u64::MAX)
-                .to_be_bytes(),
-        );
+        push_len(&mut bytes, self.normalized.reduction_axes.len());
         for axis in &self.normalized.reduction_axes {
             bytes.extend_from_slice(&axis.get().to_be_bytes());
         }
@@ -849,11 +846,7 @@ impl VerifiedRequestSubject {
             self.normalized.members.pointwise(),
             self.normalized.members.reduction(),
         ] {
-            bytes.extend_from_slice(
-                &u64::try_from(members.len())
-                    .unwrap_or(u64::MAX)
-                    .to_be_bytes(),
-            );
+            push_len(&mut bytes, members.len());
             for member in members {
                 bytes.extend_from_slice(&member.0.to_be_bytes());
             }
@@ -863,11 +856,7 @@ impl VerifiedRequestSubject {
         encode_contract(&mut bytes, self.numerical_contract);
         // The stated preference follows the resolved contract, length-framed and
         // in the caller's order, so a reordered list is a different subject.
-        bytes.extend_from_slice(
-            &u64::try_from(self.numerical_contracts.stated().len())
-                .unwrap_or(u64::MAX)
-                .to_be_bytes(),
-        );
+        push_len(&mut bytes, self.numerical_contracts.stated().len());
         for contract in self.numerical_contracts.stated() {
             encode_contract(&mut bytes, *contract);
         }
@@ -893,7 +882,7 @@ impl VerifiedRequestSubject {
         ] {
             bytes.extend_from_slice(&budget.to_be_bytes());
         }
-        encode_explain_bytes(&mut bytes, self.target_profile.key.as_bytes());
+        push_slice(&mut bytes, self.target_profile.key.as_bytes());
         bytes.extend_from_slice(&self.target_profile.max_threads_per_grid_axis.to_be_bytes());
         bytes.extend_from_slice(&self.target_profile.max_threads_per_workgroup.to_be_bytes());
         bytes.extend_from_slice(
@@ -908,16 +897,12 @@ impl VerifiedRequestSubject {
         // byte. It is encoded per line rather than summarized, because that is
         // exactly what the boolean could not say: which dimension, which
         // behaviour, and by what means.
-        bytes.extend_from_slice(
-            &u64::try_from(self.target_profile.numerical.len())
-                .unwrap_or(u64::MAX)
-                .to_be_bytes(),
-        );
+        push_len(&mut bytes, self.target_profile.numerical.len());
         for declared in self.target_profile.numerical {
             declared.encode_declaration(&mut bytes);
         }
         bytes.extend_from_slice(&self.capability_schema_version.to_be_bytes());
-        encode_explain_bytes(&mut bytes, self.lowering_registry.as_bytes());
+        push_slice(&mut bytes, self.lowering_registry.as_bytes());
         bytes
     }
 }
@@ -928,7 +913,7 @@ impl VerifiedRequestSubject {
 /// [`subnormal_tag`] and [`permission_tag`]: the contract key is encoded beside
 /// the field values it names and never in place of them (ADR 0076 item 6).
 fn encode_contract(bytes: &mut Vec<u8>, contract: StrictF32NumericalContract) {
-    encode_explain_bytes(bytes, contract.key.as_bytes());
+    push_slice(bytes, contract.key.as_bytes());
     bytes.extend_from_slice(&contract.canonical_arithmetic_nan_bits.to_be_bytes());
     bytes.push(subnormal_tag(contract.input_subnormals));
     bytes.push(subnormal_tag(contract.result_subnormals));
@@ -964,17 +949,8 @@ pub(crate) const fn permission_tag(permission: NumericalPermission) -> u8 {
     }
 }
 
-fn encode_explain_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    output.extend_from_slice(&u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
-    output.extend_from_slice(value);
-}
-
 fn encode_explain_shape(output: &mut Vec<u8>, shape: &Shape) {
-    output.extend_from_slice(
-        &u64::try_from(shape.rank())
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
+    push_len(output, shape.rank());
     for extent in shape.extents() {
         output.extend_from_slice(&extent.get().to_be_bytes());
     }

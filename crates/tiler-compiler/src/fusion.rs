@@ -12,6 +12,8 @@
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::identity::push_slice;
+
 use crate::region::{RegionCandidate, RegionError, RegionGraph, verify_candidate};
 use crate::request::{
     NumericalPermission, VerifiedRequestSubject, VerifiedTargetRequest, permission_tag,
@@ -36,8 +38,8 @@ impl FusionNumericalProof {
 
     pub(crate) fn canonical_explain_evidence_bytes(&self) -> Vec<u8> {
         let mut bytes = self.request_subject.canonical_explain_subject_bytes();
-        encode_evidence_bytes(&mut bytes, self.candidate.occurrence().as_bytes());
-        encode_evidence_bytes(&mut bytes, self.candidate.content().as_bytes());
+        push_slice(&mut bytes, self.candidate.occurrence().as_bytes());
+        push_slice(&mut bytes, self.candidate.content().as_bytes());
         bytes.push(match self.atomic_operations {
             AtomicOperationProof::MultiplyThenAdd => 1,
         });
@@ -59,11 +61,6 @@ impl FusionNumericalProof {
         }
         bytes
     }
-}
-
-fn encode_evidence_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    output.extend_from_slice(&u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
-    output.extend_from_slice(value);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

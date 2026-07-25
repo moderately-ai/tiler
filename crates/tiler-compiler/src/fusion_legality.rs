@@ -41,6 +41,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{
     F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
@@ -1185,15 +1186,15 @@ fn encode_content_identity(
     obligations: &[DerivedObligation],
 ) -> FusionLegalityContentIdentity {
     let mut bytes = CONTENT_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, region_content.as_bytes());
-    encode_bytes(&mut bytes, contract_key.as_bytes());
+    push_slice(&mut bytes, region_content.as_bytes());
+    push_slice(&mut bytes, contract_key.as_bytes());
     structure.encode(&mut bytes);
-    encode_len(&mut bytes, obligations.len());
+    push_len(&mut bytes, obligations.len());
     for derived in obligations {
         bytes.push(derived.obligation.tag());
         bytes.push(derived.assessment.tag());
         bytes.push(derived.evidence.tag());
-        encode_bytes(
+        push_slice(
             &mut bytes,
             derived.assessment.reason().unwrap_or("").as_bytes(),
         );
@@ -1210,22 +1211,22 @@ fn encode_occurrence_identity(
     value_bindings: &FusionValueBindings,
 ) -> FusionLegalityIdentity {
     let mut bytes = OCCURRENCE_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, content.identity.as_bytes());
-    encode_bytes(&mut bytes, occurrence.as_bytes());
-    encode_bytes(&mut bytes, registry_snapshot);
-    encode_len(&mut bytes, reached_definitions.len());
+    push_slice(&mut bytes, content.identity.as_bytes());
+    push_slice(&mut bytes, occurrence.as_bytes());
+    push_slice(&mut bytes, registry_snapshot);
+    push_len(&mut bytes, reached_definitions.len());
     for reached in reached_definitions {
         encode_op_key(&mut bytes, &reached.operation);
-        encode_bytes(&mut bytes, reached.normative_definition.as_bytes());
+        push_slice(&mut bytes, reached.normative_definition.as_bytes());
         bytes.push(reached.effect_tag);
     }
     encode_provider(&mut bytes, capabilities.provider());
     bytes.extend_from_slice(&capabilities.revision().to_be_bytes());
-    encode_len(&mut bytes, value_bindings.boundary_inputs.len());
+    push_len(&mut bytes, value_bindings.boundary_inputs.len());
     for input in &value_bindings.boundary_inputs {
         bytes.extend_from_slice(&input.to_be_bytes());
     }
-    encode_len(&mut bytes, value_bindings.retained_outputs.len());
+    push_len(&mut bytes, value_bindings.retained_outputs.len());
     for output in &value_bindings.retained_outputs {
         bytes.extend_from_slice(&output.value.to_be_bytes());
         bytes.extend_from_slice(&output.producer.to_be_bytes());
@@ -1251,24 +1252,15 @@ const fn effect_tag(effect: OperationEffect) -> u8 {
 }
 
 fn encode_op_key(output: &mut Vec<u8>, key: &OpKey) {
-    encode_bytes(output, key.namespace().as_bytes());
-    encode_bytes(output, key.name().as_bytes());
+    push_slice(output, key.namespace().as_bytes());
+    push_slice(output, key.name().as_bytes());
     output.extend_from_slice(&key.semantic_version().to_be_bytes());
 }
 
 fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
-    encode_bytes(output, provider.namespace().as_bytes());
-    encode_bytes(output, provider.name().as_bytes());
+    push_slice(output, provider.namespace().as_bytes());
+    push_slice(output, provider.name().as_bytes());
     output.extend_from_slice(&provider.revision().to_be_bytes());
-}
-
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(&u64::try_from(value).unwrap_or(u64::MAX).to_be_bytes());
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
 }
 
 #[cfg(test)]

@@ -655,3 +655,194 @@ def test_a_pin_outside_a_diverging_member_is_rejected(tmp_path: Path) -> None:
         )
     )
     assert 'inherits the workspace `unsafe_code = "forbid"`' in errors
+
+
+FRAMING_PATH = "prototypes/planted/src/identity.rs"
+FRAMING_ITEM = "pub fn push_len(bytes: &mut Vec<u8>, len: usize)"
+FRAMING_PIN = {(FRAMING_PATH, FRAMING_ITEM): ("planted reason", "the sole framing")}
+# The admitted form: a documented sink-plus-payload helper, with the citation
+# the pin requires somewhere in its documentation.
+ADMITTED_FRAMING = (
+    "//! A module whose prose says `.len()` and `to_be_bytes()` without framing.\n"
+    "\n"
+    "/// Appends the canonical prefix.\n"
+    "///\n"
+    "/// This is the sole framing this package is permitted.\n"
+    "#[inline]\n"
+    "pub fn push_len(bytes: &mut Vec<u8>, len: usize) {\n"
+    '    let len = u64::try_from(len).expect("64-bit");\n'
+    "    bytes.extend_from_slice(&len.to_be_bytes());\n"
+    "}\n"
+    "\n"
+    "#[cfg(test)]\n"
+    "mod tests {\n"
+    "    #[test]\n"
+    "    fn the_prefix_is_eight_bytes() {\n"
+    "        assert_eq!(subject.len() as u64, 8_u64.to_be_bytes().len() as u64);\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def planted_framing(tmp_path: Path, body: str, *, name: str = "identity.rs") -> Path:
+    """Write one synthetic governed package holding a single Rust source file."""
+    root = tmp_path / "repo"
+    source = root / "prototypes/planted/src"
+    source.mkdir(parents=True, exist_ok=True)
+    (source / name).write_text(body, encoding="utf-8")
+    return root
+
+
+def framing_errors(root: Path, admitted: dict[tuple[str, str], tuple[str, str]]) -> str:
+    """Render length-framing violations for concise assertions."""
+    return "\n".join(
+        check_workspace.validate_length_framing_pins(
+            root, package_dirs=PLANTED_PACKAGES, admitted=admitted
+        )
+    )
+
+
+def test_the_checked_in_framing_sites_match_their_pins() -> None:
+    """Keep the tree to one length framing per crate that is permitted one.
+
+    The scan result is compared to the pin as well as to the empty error list,
+    because a scan that reached nothing would also report no violations against
+    a table it never looked at.
+    """
+    assert check_workspace.validate_length_framing_pins(REPOSITORY_ROOT) == []
+    found, errors, population = check_workspace.scan_length_framing_sites(
+        REPOSITORY_ROOT, check_workspace.PACKAGE_DIRS
+    )
+    assert errors == []
+    assert set(found) == set(check_workspace.FRAMING_SITE_CITATIONS)
+    assert found
+    assert set(population) == set(check_workspace.PACKAGE_DIRS)
+    assert all(count > 0 for count in population.values())
+
+
+def test_the_admitted_form_is_recognized_and_its_tests_are_not(tmp_path: Path) -> None:
+    """One site, and neither the module prose nor the test module beneath it."""
+    root = planted_framing(tmp_path, ADMITTED_FRAMING)
+    assert framing_errors(root, FRAMING_PIN) == ""
+    found, errors, _population = check_workspace.scan_length_framing_sites(root, PLANTED_PACKAGES)
+    assert errors == []
+    assert set(found) == {(FRAMING_PATH, FRAMING_ITEM)}
+
+
+def test_a_second_copy_in_a_permitted_crate_fails(tmp_path: Path) -> None:
+    """The whole point of admitting a forced copy: a second one is a diff."""
+    added = ADMITTED_FRAMING + (
+        "/// A second framing.\npub fn push_count(bytes: &mut Vec<u8>, count: usize) {\n}\n"
+    )
+    root = planted_framing(tmp_path, added)
+    assert "`pub fn push_count(bytes: &mut Vec<u8>, count: usize)` frames a length" in (
+        framing_errors(root, FRAMING_PIN)
+    )
+
+
+def framing_subjects(root: Path) -> set[str]:
+    """Return the subjects the scan recognized, with no pin comparison."""
+    found, errors, _population = check_workspace.scan_length_framing_sites(root, PLANTED_PACKAGES)
+    assert errors == []
+    return {subject for _path, subject in found}
+
+
+def test_a_copy_under_any_helper_name_is_caught(tmp_path: Path) -> None:
+    """The failure a name list cannot see: `encode_count` defeated the last one."""
+    root = planted_framing(
+        tmp_path,
+        "/// Frames a length under a name no list held.\n"
+        "fn scribble_ordinal(sink: &mut Vec<u8>, value: usize) {\n}\n",
+    )
+    assert framing_subjects(root) == {"fn scribble_ordinal(sink: &mut Vec<u8>, value: usize)"}
+
+
+def test_a_helper_less_copy_wrapped_across_lines_is_caught(tmp_path: Path) -> None:
+    """`rustfmt` wraps at 100 columns, which a per-line search cannot follow."""
+    root = planted_framing(
+        tmp_path,
+        "fn encode(output: &mut Vec<u8>, shape: &Shape) {\n"
+        "    output.extend_from_slice(\n"
+        "        &u64::try_from(shape.rank())\n"
+        "            .unwrap_or(u64::MAX)\n"
+        "            .to_be_bytes(),\n"
+        "    );\n"
+        "}\n",
+    )
+    assert framing_subjects(root) == {
+        "output.extend_from_slice( &u64::try_from(shape.rank()) .unwrap_or(u64::MAX) "
+        ".to_be_bytes(), );"
+    }
+
+
+def test_counting_and_comparison_are_not_framing(tmp_path: Path) -> None:
+    """`tiler-cache` holds each of these, and rewriting them would be the defect."""
+    root = planted_framing(
+        tmp_path,
+        "fn scan(bytes: &[u8], limit: u64) -> u64 {\n"
+        "    if bytes.len() as u64 > limit {\n"
+        "        return 0;\n"
+        "    }\n"
+        "    self.entries.len() as u64\n"
+        "}\n",
+    )
+    assert framing_subjects(root) == set()
+
+
+def test_a_renamed_framing_site_fails_even_though_the_count_is_unchanged(tmp_path: Path) -> None:
+    """The failure a count predicate cannot see: one site added, one removed."""
+    moved = ADMITTED_FRAMING.replace("fn push_len(", "fn push_prefix(")
+    root = planted_framing(tmp_path, moved)
+    errors = framing_errors(root, FRAMING_PIN)
+    assert "`pub fn push_prefix(bytes: &mut Vec<u8>, len: usize)` frames a length" in errors
+    assert f"pinned site `{FRAMING_ITEM}` is gone" in errors
+
+
+def test_a_dropped_citation_fails_although_the_site_is_unchanged(tmp_path: Path) -> None:
+    """The decision that forces a copy is the substance of admitting it."""
+    weakened = ADMITTED_FRAMING.replace("the sole framing this package is permitted", "fine")
+    root = planted_framing(tmp_path, weakened)
+    assert "admitted on the strength of 'the sole framing'" in framing_errors(root, FRAMING_PIN)
+
+
+def test_an_empty_population_fails_rather_than_reporting_success(tmp_path: Path) -> None:
+    """Finding nothing is what a broken search does, so it cannot be a pass.
+
+    This check exists partly because a sweep for these copies returned six clean
+    results after `zsh` expanded an unquoted `--include` glob.
+    """
+    root = tmp_path / "repo"
+    (root / "prototypes/planted/src").mkdir(parents=True)
+    errors = framing_errors(root, {})
+    assert "`planted` contributed no production source" in errors
+    assert "the admitted table is empty" in errors
+
+
+def test_a_scan_over_no_package_at_all_fails(tmp_path: Path) -> None:
+    """A `package_dirs` that silently shrank must not read as a clean tree."""
+    root = planted_framing(tmp_path, ADMITTED_FRAMING)
+    errors = "\n".join(
+        check_workspace.validate_length_framing_pins(root, package_dirs={}, admitted=FRAMING_PIN)
+    )
+    assert "no package was scanned" in errors
+    assert f"pinned site `{FRAMING_ITEM}` is gone" in errors
+
+
+def test_a_whole_file_test_module_is_excluded(tmp_path: Path) -> None:
+    """Nine such files exist; `tests.rs` holds no `#[cfg(test)]` of its own."""
+    root = planted_framing(tmp_path, "#[cfg(test)]\nmod checks;\n", name="lib.rs")
+    planted_framing(
+        tmp_path,
+        "fn corrupt(bytes: &[u8]) -> Vec<u8> {\n"
+        "    (bytes.len() as u64 + 1).to_be_bytes().to_vec()\n"
+        "}\n",
+        name="checks.rs",
+    )
+    assert framing_subjects(root) == set()
+
+
+def test_an_unresolvable_test_module_stops_the_gate(tmp_path: Path) -> None:
+    """A declaration whose file is missing must not leave the scan quietly short."""
+    root = planted_framing(tmp_path, "#[cfg(test)]\nmod absent;\n", name="lib.rs")
+    _found, errors, _population = check_workspace.scan_length_framing_sites(root, PLANTED_PACKAGES)
+    assert any("`#[cfg(test)] mod absent;` resolves to no file" in error for error in errors)

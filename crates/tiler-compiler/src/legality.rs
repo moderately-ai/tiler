@@ -53,6 +53,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
     CanonicalIndexRegionIdentity, FrozenScalarRegistry, IndexRegionBuildError,
     IndexRegionDiagnostic, ScalarAuthorityEvidence, ScalarRegistryError, TensorRole,
@@ -1086,17 +1087,17 @@ fn encode_content_identity(
     scalar_authority: &ScalarAuthorityEvidence,
 ) -> RefinementContentIdentity {
     let mut bytes = CONTENT_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, region_identity.as_bytes());
+    push_slice(&mut bytes, region_identity.as_bytes());
     encode_op_key(&mut bytes, &occurrence.operation);
-    encode_len(&mut bytes, operand_interface.len());
+    push_len(&mut bytes, operand_interface.len());
     for (local, value_type, shape) in operand_interface {
         bytes.extend_from_slice(&local.to_be_bytes());
-        encode_bytes(&mut bytes, value_type.canonical_encoding().as_bytes());
+        push_slice(&mut bytes, value_type.canonical_encoding().as_bytes());
         encode_shape(&mut bytes, shape);
     }
-    encode_len(&mut bytes, occurrence.results.len());
+    push_len(&mut bytes, occurrence.results.len());
     for result in &occurrence.results {
-        encode_bytes(
+        push_slice(
             &mut bytes,
             result.value_type.canonical_encoding().as_bytes(),
         );
@@ -1106,17 +1107,17 @@ fn encode_content_identity(
     // Attributes are content: two occurrences of one family that differ only in
     // an attribute are different reusable facts even when their emitted regions
     // happen to coincide.
-    encode_bytes(
+    push_slice(
         &mut bytes,
         occurrence.attributes.canonical_encoding().as_bytes(),
     );
-    encode_bytes(&mut bytes, occurrence.numerical_contract.as_bytes());
+    push_slice(&mut bytes, occurrence.numerical_contract.as_bytes());
     // Provider-independent reached authority is content; provider-attributed
     // admission provenance is deliberately withheld for the occurrence binding.
-    encode_bytes(&mut bytes, scalar_authority.definitions().as_bytes());
-    encode_bytes(&mut bytes, scalar_authority.type_definitions().as_bytes());
-    encode_bytes(&mut bytes, scalar_authority.semantic_snapshot().as_bytes());
-    encode_bytes(&mut bytes, scalar_authority.scalar_snapshot().as_bytes());
+    push_slice(&mut bytes, scalar_authority.definitions().as_bytes());
+    push_slice(&mut bytes, scalar_authority.type_definitions().as_bytes());
+    push_slice(&mut bytes, scalar_authority.semantic_snapshot().as_bytes());
+    push_slice(&mut bytes, scalar_authority.scalar_snapshot().as_bytes());
     RefinementContentIdentity(bytes)
 }
 
@@ -1126,20 +1127,20 @@ fn encode_occurrence_identity(
     occurrence: &SemanticOccurrence,
 ) -> IndexRefinementIdentity {
     let mut bytes = OCCURRENCE_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, content.identity.as_bytes());
-    encode_bytes(&mut bytes, occurrence.identity.as_bytes());
+    push_slice(&mut bytes, content.identity.as_bytes());
+    push_slice(&mut bytes, occurrence.identity.as_bytes());
     encode_provider(&mut bytes, capability.provider());
     bytes.extend_from_slice(&capability.revision().get().to_be_bytes());
     let authority = capability.authority();
-    encode_bytes(
+    push_slice(
         &mut bytes,
         authority
             .operation_authority()
             .admission_provenance()
             .as_bytes(),
     );
-    encode_bytes(&mut bytes, content.scalar_authority.admission().as_bytes());
-    encode_bytes(
+    push_slice(&mut bytes, content.scalar_authority.admission().as_bytes());
+    push_slice(
         &mut bytes,
         content.scalar_authority.type_admission().as_bytes(),
     );
@@ -1160,31 +1161,22 @@ const fn effect_tag(effect: OperationEffect) -> u8 {
 }
 
 fn encode_op_key(output: &mut Vec<u8>, key: &OpKey) {
-    encode_bytes(output, key.namespace().as_bytes());
-    encode_bytes(output, key.name().as_bytes());
+    push_slice(output, key.namespace().as_bytes());
+    push_slice(output, key.name().as_bytes());
     output.extend_from_slice(&key.semantic_version().to_be_bytes());
 }
 
 fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
-    encode_bytes(output, provider.namespace().as_bytes());
-    encode_bytes(output, provider.name().as_bytes());
+    push_slice(output, provider.namespace().as_bytes());
+    push_slice(output, provider.name().as_bytes());
     output.extend_from_slice(&provider.revision().to_be_bytes());
 }
 
 fn encode_shape(output: &mut Vec<u8>, shape: &Shape) {
-    encode_len(output, shape.rank());
+    push_len(output, shape.rank());
     for extent in shape.extents() {
         output.extend_from_slice(&extent.get().to_be_bytes());
     }
-}
-
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(&u64::try_from(value).unwrap_or(u64::MAX).to_be_bytes());
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
 }
 
 #[cfg(test)]

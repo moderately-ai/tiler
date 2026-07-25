@@ -35,6 +35,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity, DimensionId,
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
@@ -168,13 +169,13 @@ impl LoweringSignature {
     }
 
     fn encode(&self, output: &mut Vec<u8>) {
-        encode_len(output, self.operands.len());
+        push_len(output, self.operands.len());
         for value_type in &self.operands {
-            encode_bytes(output, value_type.canonical_encoding().as_bytes());
+            push_slice(output, value_type.canonical_encoding().as_bytes());
         }
-        encode_len(output, self.results.len());
+        push_len(output, self.results.len());
         for value_type in &self.results {
-            encode_bytes(output, value_type.canonical_encoding().as_bytes());
+            push_slice(output, value_type.canonical_encoding().as_bytes());
         }
     }
 }
@@ -1498,9 +1499,9 @@ fn compute_identity(
     capabilities: &BTreeMap<LoweringCapabilityKey, RegisteredLoweringCapability>,
 ) -> CanonicalLoweringRegistryIdentity {
     let mut bytes = REGISTRY_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, semantic_snapshot);
-    encode_bytes(&mut bytes, scalar_snapshot);
-    encode_len(&mut bytes, capabilities.len());
+    push_slice(&mut bytes, semantic_snapshot);
+    push_slice(&mut bytes, scalar_snapshot);
+    push_len(&mut bytes, capabilities.len());
     for (key, capability) in capabilities {
         encode_capability(&mut bytes, key, &capability.authority, capability.revision);
     }
@@ -1518,22 +1519,22 @@ fn encode_capability(
     key.signature.encode(output);
     encode_provider(output, &key.provider);
     output.extend_from_slice(&revision.get().to_be_bytes());
-    encode_bytes(output, authority.emitted_scalar_definitions.as_bytes());
-    encode_bytes(
+    push_slice(output, authority.emitted_scalar_definitions.as_bytes());
+    push_slice(
         output,
         authority
             .operation_authority
             .reached_definitions()
             .as_bytes(),
     );
-    encode_bytes(
+    push_slice(
         output,
         authority
             .operation_authority
             .admission_provenance()
             .as_bytes(),
     );
-    encode_bytes(
+    push_slice(
         output,
         authority.operation_authority.registry_snapshot().as_bytes(),
     );
@@ -1550,28 +1551,19 @@ fn capability_identity_len(
 }
 
 fn encode_op_key(output: &mut Vec<u8>, key: &OpKey) {
-    encode_bytes(output, key.namespace().as_bytes());
-    encode_bytes(output, key.name().as_bytes());
+    push_slice(output, key.namespace().as_bytes());
+    push_slice(output, key.name().as_bytes());
     output.extend_from_slice(&key.semantic_version().to_be_bytes());
 }
 
 fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
-    encode_bytes(output, provider.namespace().as_bytes());
-    encode_bytes(output, provider.name().as_bytes());
+    push_slice(output, provider.namespace().as_bytes());
+    push_slice(output, provider.name().as_bytes());
     output.extend_from_slice(&provider.revision().to_be_bytes());
 }
 
 const fn encoded_bytes_len(bytes: usize) -> usize {
     size_of::<u64>().saturating_add(bytes)
-}
-
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(&u64::try_from(value).unwrap_or(u64::MAX).to_be_bytes());
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
 }
 
 #[cfg(test)]

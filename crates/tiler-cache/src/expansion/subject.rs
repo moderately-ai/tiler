@@ -237,6 +237,16 @@ impl ComposedSubject {
 
 /// Writes a fixed-width big-endian count before a repeated run.
 ///
+/// This crate's sole copy of the workspace's canonical length framing, and the
+/// sole one it is permitted. `tiler_ir::identity` owns that framing, and a
+/// composed subject is a genuine identity preimage rather than a container
+/// field — but ADR 0082 item 2 decides this crate's closure is exactly
+/// `tiler-artifact` and says in terms that `tiler-ir` is "an edge this record
+/// decides the crate does not have", so the framing cannot be imported here and
+/// has to be restated. `scripts/check_workspace.py` admits exactly this
+/// definition and [`push_run`] beside it, so a second copy in this crate fails
+/// the gate rather than growing quietly.
+///
 /// `u64` is wide enough for every sequence a 64-bit host can address, so no
 /// real subject can be rejected or truncated here.
 /// `scripts/check_rust.py` admits only 64-bit profiles, which is what makes the
@@ -247,6 +257,8 @@ fn push_count(bytes: &mut Vec<u8>, count: usize) {
 }
 
 /// Writes one length-prefixed run.
+///
+/// Admitted alongside [`push_count`] under the same ADR 0082 item 2 closure.
 ///
 /// The prefix is what keeps adjacent facets from being re-split: without it, a
 /// compilation subject ending in the head of an artifact-program subject and a

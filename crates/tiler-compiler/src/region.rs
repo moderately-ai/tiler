@@ -49,6 +49,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::semantic::{
     CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, OpKey,
     OperationAttributes, OperationEffect, SemanticProgram, ValueId,
@@ -1334,13 +1335,13 @@ fn encode_content(
         .collect::<Result<_, RegionError>>()?;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"tiler.compiler.region-content.v1\0");
-    encode_bytes(&mut bytes, numerical_contract.key.as_bytes());
+    push_slice(&mut bytes, numerical_contract.key.as_bytes());
     bytes.push(duplication.tag());
-    encode_count(&mut bytes, canonical.len());
+    push_len(&mut bytes, canonical.len());
     for member in &canonical {
         let operation = graph.operation(*member)?;
         encode_operation_facts(&mut bytes, operation)?;
-        encode_count(&mut bytes, operation.operands.len());
+        push_len(&mut bytes, operation.operands.len());
         for operand in &operation.operands {
             if let Some(producer) = internal_producer(graph, members, *operand)? {
                 let position = local
@@ -1359,12 +1360,12 @@ fn encode_content(
                 bytes.extend_from_slice(&position.to_be_bytes());
             }
         }
-        encode_count(&mut bytes, operation.results.len());
+        push_len(&mut bytes, operation.results.len());
         for result in &operation.results {
             encode_value_facts(&mut bytes, graph.value(*result)?);
         }
     }
-    encode_count(&mut bytes, boundary_order.len());
+    push_len(&mut bytes, boundary_order.len());
     for value in &boundary_order {
         encode_value_facts(&mut bytes, graph.value(*value)?);
     }
@@ -1388,7 +1389,7 @@ fn encode_content(
         })
         .collect::<Result<_, RegionError>>()?;
     retained.sort_unstable();
-    encode_count(&mut bytes, retained.len());
+    push_len(&mut bytes, retained.len());
     for (position, result_position, named_result, external_consumers) in retained {
         bytes.extend_from_slice(&position.to_be_bytes());
         bytes.extend_from_slice(&result_position.to_be_bytes());
@@ -1425,7 +1426,7 @@ fn canonical_member_order(
         let operation = graph.operation(*member)?;
         let mut bytes = Vec::new();
         encode_operation_facts(&mut bytes, operation)?;
-        encode_count(&mut bytes, operation.results.len());
+        push_len(&mut bytes, operation.results.len());
         for result in &operation.results {
             encode_value_facts(&mut bytes, graph.value(*result)?);
         }
@@ -1438,7 +1439,7 @@ fn canonical_member_order(
             let mut bytes = base[position].clone();
             bytes.extend_from_slice(&labels[position].to_be_bytes());
             let operation = graph.operation(*member)?;
-            encode_count(&mut bytes, operation.operands.len());
+            push_len(&mut bytes, operation.operands.len());
             for operand in &operation.operands {
                 if let Some(producer) = internal_producer(graph, members, *operand)? {
                     let source =
@@ -1480,8 +1481,8 @@ fn encode_operation_facts(
     bytes: &mut Vec<u8>,
     operation: &GraphOperation,
 ) -> Result<(), RegionError> {
-    encode_bytes(bytes, operation.key.namespace().as_bytes());
-    encode_bytes(bytes, operation.key.name().as_bytes());
+    push_slice(bytes, operation.key.namespace().as_bytes());
+    push_slice(bytes, operation.key.name().as_bytes());
     bytes.extend_from_slice(&operation.key.semantic_version().to_be_bytes());
     encode_attributes(bytes, &operation.attributes)
 }
@@ -1518,8 +1519,8 @@ fn encode_occurrence(
 ) -> Result<RegionOccurrenceIdentity, RegionError> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"tiler.compiler.region-occurrence.v1\0");
-    encode_bytes(&mut bytes, content.as_bytes());
-    encode_count(&mut bytes, members.len());
+    push_slice(&mut bytes, content.as_bytes());
+    push_len(&mut bytes, members.len());
     for position in canonical_positions(graph, members.iter().copied())? {
         bytes.extend_from_slice(&position.to_be_bytes());
     }
@@ -1531,7 +1532,7 @@ fn encode_occurrence(
             .map(|output| output.value.0)
             .collect::<Vec<_>>(),
     ] {
-        encode_count(&mut bytes, values.len());
+        push_len(&mut bytes, values.len());
         let mut sites = values
             .iter()
             .map(|value| graph.canonical_value(*value))
@@ -1562,8 +1563,8 @@ fn canonical_positions(
 }
 
 fn encode_value_facts(bytes: &mut Vec<u8>, value: &GraphValue) {
-    encode_bytes(bytes, &value.type_encoding);
-    encode_count(bytes, value.shape.rank());
+    push_slice(bytes, &value.type_encoding);
+    push_len(bytes, value.shape.rank());
     for extent in value.shape.extents() {
         bytes.extend_from_slice(&extent.get().to_be_bytes());
     }
@@ -1581,7 +1582,7 @@ fn encode_fields(
     fields: &[CanonicalField],
     depth: u32,
 ) -> Result<(), RegionError> {
-    encode_count(bytes, fields.len());
+    push_len(bytes, fields.len());
     for field in fields {
         bytes.extend_from_slice(&field.id().get().to_be_bytes());
         encode_canonical_value(bytes, field.value(), depth)?;
@@ -1607,7 +1608,7 @@ fn encode_canonical_value(
     match value.view() {
         CanonicalValueView::Type(resolved) => {
             bytes.push(1);
-            encode_bytes(bytes, resolved.canonical_encoding().as_bytes());
+            push_slice(bytes, resolved.canonical_encoding().as_bytes());
         }
         CanonicalValueView::Bool(value) => {
             bytes.extend_from_slice(&[2, u8::from(value)]);
@@ -1622,22 +1623,22 @@ fn encode_canonical_value(
         }
         CanonicalValueView::FloatBits(float) => {
             bytes.push(5);
-            encode_bytes(bytes, float.format().namespace().as_bytes());
-            encode_bytes(bytes, float.format().name().as_bytes());
+            push_slice(bytes, float.format().namespace().as_bytes());
+            push_slice(bytes, float.format().name().as_bytes());
             bytes.extend_from_slice(&float.format().semantic_version().to_be_bytes());
-            encode_bytes(bytes, float.bits());
+            push_slice(bytes, float.bits());
         }
         CanonicalValueView::Bytes(value) => {
             bytes.push(6);
-            encode_bytes(bytes, value);
+            push_slice(bytes, value);
         }
         CanonicalValueView::Utf8(value) => {
             bytes.push(7);
-            encode_bytes(bytes, value.as_bytes());
+            push_slice(bytes, value.as_bytes());
         }
         CanonicalValueView::Sequence(values) => {
             bytes.push(8);
-            encode_count(bytes, values.len());
+            push_len(bytes, values.len());
             for item in values {
                 encode_canonical_value(bytes, item, depth.saturating_add(1))?;
             }
@@ -1665,15 +1666,6 @@ const fn integer_width_tag(width: CanonicalIntegerWidth) -> Result<u8, RegionErr
             rule: "canonical-integer-width",
         }),
     }
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_count(output, value.len());
-    output.extend_from_slice(value);
-}
-
-fn encode_count(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(&count(value).to_be_bytes());
 }
 
 fn count(value: usize) -> u64 {
