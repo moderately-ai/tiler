@@ -11,7 +11,7 @@ evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.resea
 
 # Operation extension contract
 
-**Status:** accepted semantic registration boundary; index/access lowering capabilities implemented and resolved on the compile path, remaining compiler capabilities proposed
+**Status:** accepted semantic registration boundary and accepted seam classification; index/access lowering capabilities implemented and resolved on the compile path; scalar-lowering and reference capabilities implemented but reached by no compile-path caller; remaining compiler capabilities proposed
 
 ## Ownership boundary
 
@@ -53,7 +53,34 @@ This measured limitation is accepted by ADR 0045. It does not make the
 compiler-core extension boundary consumer-specific or close the ordinary
 compiler API.
 
-**Fact — the ordinary compiler API does not exist yet, and the list above describes the intended boundary rather than a reachable one.** `tiler-compiler` exports no compile entry point, and the compilation request and its installed-capability field are crate-private, so no out-of-crate caller supplies providers to a compiler session today. What *is* reachable out of crate is composition: a lowering-capability registry can be built entirely through the public capability surface, and one so composed has been driven through the compiler's own entry point from inside the crate. Composing a registry and installing one are different claims and this contract keeps them apart; [`prototype-public-compiler-api`](../tickets/prototype-public-compiler-api.md) owns the reviewed facade that would make the second true.
+**Fact — a public compile entry point now exists; supplying providers to it does not, so the list above still describes the intended boundary rather than a reachable one.** `tiler_compiler::session::compile_governed` compiles a semantic program an out-of-crate caller owns, and it names the governed profile rather than accepting a request: `CompilationRequest` and its installed-capability field are both crate-private, so every compilation resolves against the capabilities this build ships and no out-of-crate caller supplies its own. What *is* reachable out of crate is composition: a lowering-capability registry can be built entirely through the public capability surface, and one so composed has been driven through the compiler's own entry point from inside the crate. Composing a registry, installing one, and reaching the compiler are three separate claims and this contract keeps them apart; [`prototype-public-compiler-api`](../tickets/prototype-public-compiler-api.md) owns widening the boundary to the consumer-agnostic request that would make installation reachable.
+
+## Public extension seams
+
+[ADR 0078](decisions/0078-name-the-intended-public-extension-seams.md) accepts which surfaces Tiler intends as public extension seams. That record owns the classification and the derivation behind it; this contract states which surfaces the classification names and what it obliges a provider surface to keep, and does not restate its reasoning. Its complementary half — which authorities are permanently internal — is stated by [the architecture contract](architecture.md#permanently-internal-authorities), which owns component ownership.
+
+A seam is a propose-then-re-verify boundary, and that is the whole of its trust model. A provider *proposes* work and Tiler *re-derives* every fact the proposal would otherwise assert; a provider is trusted to be deterministic, side-effect-free, and in-process, and it is never believed. Four properties are jointly the admission test, and a surface that cannot hold all four is not a seam however it is spelled:
+
+- the provider's output re-enters the ordinary checked path, so resolution establishes an authority and never the correctness of what that authority emits;
+- the provider cannot stamp its own provenance — identity, exact resource requirements, and boundary contracts are derived by the host from verified output, so a proposal can neither forge another provider nor declare what a verifier did not compute;
+- its identity is versioned and separated from graph meaning under ADR 0072; and
+- every disposition — admission, rejection, ambiguity, absence, and an exhausted proof budget — is a distinct typed outcome that reaches the explain trace.
+
+These are the surfaces intended as public extension seams, with the participation model each is intended to admit at maturity:
+
+| Surface | Intended participation |
+| --- | --- |
+| `tiler_ir::semantic::SemanticRegistryProvider`, with `OperationInferencer` and `ValueTypeInstanceValidator` | Third-party |
+| `tiler_compiler::capability::IndexAccessLoweringProvider` | Third-party |
+| `tiler_compiler::capability::ScalarLoweringProvider` | Third-party |
+| `tiler_reference::{ReferenceRegistryProvider, ReferenceOperation, ReferenceValueValidator}` and `tiler_reference::oracle::ScalarReferenceOperation` | Third-party |
+| `tiler_ir::index::ScalarOperationInferencer` | Third-party |
+
+Two further extension-shaped surfaces are deliberately unassigned and acquire no intent from standing beside these: the physical-implementation provider, and the mature per-operation fusion numerical capability that this contract lists among separately versioned optional capabilities below. ADR 0078 records both as open questions. Neither is a seam of this contract until one of those questions is answered, and neither may be treated as one because the surrounding table names five that are.
+
+Intended participation is not a maturity claim, and a `pub` keyword is neither necessary nor sufficient for either. ADR 0078 records the rung each row has reached against the four claims `AGENTS.md` keeps apart — a type-system reservation, an architectural seam, implemented support, and a tested guarantee — and those rungs differ across the table and can differ between the two halves of one surface. **Inference — what this contract states in place of a rung, because a rung is a measurement that goes stale and an invariant is not:** a surface has reached a tested guarantee only when a provider written outside the defining crate's own governed set has driven it through the ordinary compile path and the resulting plan names that provider as its authority. Registration and resolution being implemented and tested is the weaker claim, and it is the one the scalar-lowering and reference rows hold: no compile-path caller resolves the scalar family, and `tiler-reference` is a development dependency of `tiler-compiler`, so neither is reachable from a production compiler stage.
+
+The lowering seam is the case where the two halves differ, and the asymmetry is deliberate. Its registration surface is public — a registry composes entirely through `tiler_compiler::capability` — while its installation path is not, for the reason the fact above states. Under ADR 0074's staging convention a crate-private authority is a temporary posture rather than a classification, so neither a private surface in this table nor a public one absent from it may be read as an intent.
 
 ## Registry lifecycle and coherence
 
@@ -298,6 +325,22 @@ mutable global state, registry order, or call order.
   the distinction is checked: an absent capability and a contended one reach
   the explain trace as different dispositions, so a reader is never left to
   infer which of the two occurred.
+
+### What a seam is not
+
+The properties below are what a seam must *keep* rather than accidents of the bounded profile, and ADR 0078 makes them normative. They are stated here because this contract owns the provider surface each constrains. Two of them the list above already states in terms — that missing optional knowledge is conservative, and that an absent capability and a contended one are different findings — and they are deliberately not restated.
+
+**Offering nothing is a legitimate local result, not an error and not a licence to approximate.** A provider that recognizes no work for a region and target offers none; enumeration then succeeds with nothing admitted, and a region no provider can implement is reported by complete-plan selection as unimplemented. No offer, a typed rejection, and a compiler fault stay three distinct outcomes. A provider that emits structurally invalid IR fails the whole enumeration closed rather than being dropped into the empty case, which is indistinguishable from outside and is a defect rather than an absence.
+
+**An unenumerated capability fails closed as `Unknown`; it never defaults to supported.** "Conservative" above means a compile refusal for index/access lowering; for fusion legality it means an explicit `Unknown`. An operation family with no registered fusion role classifies as `Unknown` rather than an approximated accept, and normative guarantees, sound proofs, exhaustive finite evidence, empirical evidence, and `Unknown` remain five classes that are never collapsed into one another.
+
+**An exhausted analysis budget is an `Unknown` gap, not a rejection and not an admission.** When a checked proof cannot afford a region, the compiler records a typed budget stop naming the resource, its limit, and the required amount, and nothing about the emitted work was disproved. A budget stop is reported only when it is the sole diagnostic, so it can never stand in for a genuine refusal.
+
+**A reservation is not a capability.** A reserved body variant exists so an unsupported proposal rejects explicitly under its own name instead of being approximated by the nearest thing the bounded profile can emit; it carries an uninterpreted marker echoed into the rejection and read nowhere else. Reading the reserved physical-body variants as opaque-call support is wrong. The opaque-call contract is the typed ABI, effect, alias, placement, target, numerical, resource, and failure-stage boundary this contract requires above, and [`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md) owns it; it does not exist.
+
+**A provider's revision is provenance, not a version negotiation.** A capability key carries its provider identity while resolution selects on family, operation, and signature alone, so no revision supersedes another, no later registration wins, and there is no precedence order and no default provider. **Inference, not a tested guarantee:** two revisions of one provider therefore register as two distinct keys that one selector matches, producing the same contention two unrelated providers would; [`test-two-revisions-of-one-provider-as-a-capability-ambiguity`](../tickets/test-two-revisions-of-one-provider-as-a-capability-ambiguity.md) owns pinning that behaviour.
+
+**Contention at one seam is not contention at another, and neither rule generalizes.** Two providers claiming one occurrence is unresolvable in the lowering registry, because exactly one authority may define how an occurrence lowers. Two providers proposing an implementation of one region is additive: both are retained, separated by their folded provenance, and chosen between later on cost. A region may legitimately have several correct implementations; an occurrence may not have several meanings.
 
 An extension's semantic-equivalence claim remains trusted. Host verification
 can establish structural, typing, shape, memory-safety, and declared numerical

@@ -134,7 +134,7 @@ graph-specific compiler entry points or public support-profile namespaces.
 Fixed region, stage, entry, and buffer cardinalities in a slice are not
 `CompilationRequest` or compiler-product invariants. See ADR 0069.
 
-Lowering-capability resolution is an implemented stage of that entry point rather than a description of one. It runs unconditionally, resolves exactly one index/access capability per recognized occurrence, and fails closed on an absent or a contended capability with a typed, occurrence-attributed cause. Composing a registry from outside the crate is possible through the public capability surface; *installing* one is not, because the request path is crate-private and no public compile entry point is exported. [The optimizer contract](compiler/optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns the stage's behaviour and that maturity boundary.
+Lowering-capability resolution is an implemented stage of that entry point rather than a description of one. It runs unconditionally, resolves exactly one index/access capability per recognized occurrence, and fails closed on an absent or a contended capability with a typed, occurrence-attributed cause. Composing a registry from outside the crate is possible through the public capability surface; *installing* one is not. `tiler_compiler::session::compile_governed` is a public compile entry point, but it names the governed profile rather than accepting a request, and `CompilationRequest` and its installed-capability field remain crate-private — so an out-of-crate caller can reach the compiler and cannot choose what it resolves against. [The optimizer contract](compiler/optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns the stage's behaviour and that maturity boundary.
 
 ## Hierarchical planning with feedback
 
@@ -327,6 +327,12 @@ that exposes such a surface, and the IR contract states them normatively for
 the representations it owns. This document does not restate them: a component
 boundary in the table above allocates responsibility and dependency direction,
 and it does not license a differently shaped public API.
+
+### Permanently internal authorities
+
+[ADR 0078](decisions/0078-name-the-intended-public-extension-seams.md) accepts that these responsibilities are Tiler's outright, free to change shape without a participation story: region formation, cover enumeration, fusion-legality *derivation*, plan selection, feasibility assessment, normalization, request verification, the pipeline itself, and the governed provider set. Each decides something about a program that no provider is positioned to know, and none of them takes a proposal. Giving one of them a registration path contradicts an accepted decision and needs a superseding one. [The operation-extension contract](operation-extensions.md#public-extension-seams) states the complementary half, which surfaces are intended as public extension seams, and neither list may be extended by reading the other.
+
+Two qualifications keep that from over-claiming, and both belong here because this document is what allocates the responsibilities they name. **Explain** is internal as an authority and public as an obligation: nobody registers an explain provider, and ADR 0073 nonetheless makes typed explain output a contract every stage speaks, the seams included. **Feasibility** is internal as a decision *procedure* only. The typed target profiles it consumes are data whose ownership ADR 0078 leaves explicitly undecided, so no row of the table above and no sentence here assigns them; a component boundary that names feasibility must not be read as having placed the profile data with it.
 
 ## Accepted prototype packaging profile
 

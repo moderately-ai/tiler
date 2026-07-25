@@ -137,7 +137,7 @@ witnesses explicit. These precedents support scoped Tiler symbols and the
 initial requirement that every output/temporary/guard/launch expression be
 host-evaluable from declared inputs. They also show that data-dependent shapes
 would require a separate shape/discovery program rather than another ordinary
-extent expression.
+shape expression.
 
 Sources:
 

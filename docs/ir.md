@@ -174,7 +174,7 @@ Metal details. This layer normally remains owned by the frontend crate.
 Required properties include:
 
 - every input has a resolved logical rank or rank constraint;
-- introduced axes have known extent expressions;
+- introduced axes have known shape expressions;
 - removed axes name an explicit reduction;
 - composed axes have factorization constraints;
 - output axis order is complete and unambiguous.
@@ -185,7 +185,7 @@ Required properties include:
 It is a pure, backend-neutral operation/value DAG describing what tensor values
 mean. Frontends construct this graph; no frontend syntax, consumer runtime
 object, storage layout, kernel boundary, target schedule, or live device object
-belongs in it. Its extent expressions reference scoped symbols. A separate
+belongs in it. Its shape expressions reference scoped extent symbols. A separate
 typed semantic interface binds those symbols from static values, input
 metadata, caller parameters, or admitted versioned target properties.
 
@@ -810,6 +810,17 @@ extent equalities, divisibility, nonnegativity, intervals, and factorization
 relationships. Facts record provenance: statically proven, frontend-required,
 or runtime-validated.
 
+`ShapeExpr` is the expression language over that environment, and it is the
+one this contract names at every layer that computes an extent.
+[ADR 0008](decisions/0008-typed-root-bindings.md) fixes that a shape
+expression references scoped extent symbols while `ShapeEnv` separately
+declares how each root symbol is bound, so value algebra and value provenance
+never become one concept. Its arithmetic is mathematical-integer rather than
+machine-width, and it is a newtyped domain distinct from the bounded-width
+`AbiExpr` a lowered program carries; [the shape environment
+contract](research/shapes/shape-environment-contract.md) owns both accepted
+decisions and the explicit checked lowering between the two domains.
+
 Value-domain facts use the same provenance discipline but are not shape facts.
 The initial optimizer may consume compiler-proven or runtime-validated value
 facts for correctness-sensitive transformations. It records caller-declared,
@@ -873,7 +884,7 @@ address conversion. See ADR 0046.
 Core concepts:
 
 ```text
-ExtentExpr        IndexExpr          ScalarOperation / ScalarValue
+ShapeExpr         IndexExpr          ScalarOperation / ScalarValue
 IterationVar      IterationDomain    ReductionDomain
 TensorAccessMap   ProvenFact
 ```
