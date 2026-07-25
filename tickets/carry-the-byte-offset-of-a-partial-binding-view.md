@@ -1,7 +1,7 @@
 ---
 id: carry-the-byte-offset-of-a-partial-binding-view
 title: Carry a binding's byte offset so a partial view is packageable
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [expose-the-dispatch-record-on-a-decoded-artifact, carry-reconstructable-kernel-programs-in-the-neutral-envelope]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi]
+claimed_from: todo
+assignee: agent-carry-the-byte-offset-of-a-partial-binding-view
+lease_expires_at: 1785045285
 ---
 Split from `expose-the-dispatch-record-on-a-decoded-artifact`, which encoded *which* buffer each ABI binding slot addresses and deliberately did not encode *where in it*.
 

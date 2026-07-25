@@ -1,7 +1,7 @@
 ---
 id: remove-the-wall-clock-race-from-the-cache-kill-harness
 title: Remove the wall-clock race from the expansion cache kill-phase harness
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [prototype-expansion-content-cache, inject-deterministic-expansion-cache-io-failures, design-bounded-expansion-cache-garbage-collection]
@@ -9,6 +9,9 @@ scopes: [implementation/cache]
 shared_scopes: []
 paths: []
 tags: [implementation, cache, tests, flake]
+claimed_from: todo
+assignee: agent-remove-the-wall-clock-race-from-the-cache-kill-harness
+lease_expires_at: 1785045284
 ---
 **Measurement — 2026-07-25, this host, during a full-gate run with four concurrent agent worktrees compiling.** `expansion::harness::processes_racing_a_dying_writer_still_resolve` failed the repository gate:
 
