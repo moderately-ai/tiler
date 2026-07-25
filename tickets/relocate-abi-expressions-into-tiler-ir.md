@@ -1,7 +1,7 @@
 ---
 id: relocate-abi-expressions-into-tiler-ir
 title: Relocate the ABI expression domain into tiler-ir as ADR 0068 decides
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: [carry-the-metal-payload-in-an-artifact-envelope, complete-program-identity-with-abi-guards-and-routing]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi, decisions]
-claimed_from: todo
-assignee: agent-coordinator
-lease_expires_at: 1784989580
 ---
 Accepted ADR 0068 decides where the ABI expression domain lives, and the tree does not match it. That divergence is currently blocking artifact assembly, so this is a live obstacle rather than tidying.
 
