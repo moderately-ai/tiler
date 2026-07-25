@@ -23,11 +23,13 @@
 //! - **Boundary agreement across each materialization edge.** For each
 //!   [`crate::cover::MaterializationEdge`] the producer region's selected
 //!   implementation must guarantee the materialized cross-region tensor and every
-//!   consumer region's selected implementation must require it, with the producer's
-//!   [`BoundaryProduction`] discharging the consumer's [`BoundaryAvailability`].
-//!   The reconciliation is derived from the verified regions' boundary contracts,
-//!   never from a provider claim, and fails closed on any dangling read, leaked
-//!   intermediate, undischarged handoff, or ambiguous boundary.
+//!   consumer region's selected implementation must require it, with every typed
+//!   property the consumer requires discharged by the producer's guarantee under
+//!   [`crate::boundary::unsatisfied_properties`]. A property the producer is
+//!   silent on does not pass. The reconciliation is derived from the verified
+//!   regions' boundary contracts, never from a provider claim, and fails closed
+//!   on any dangling read, leaked intermediate, undischarged handoff, or
+//!   ambiguous boundary.
 //! - **Hard feasibility stays distinct from cost.** Feasibility was already
 //!   decided by the frontier; a selected implementation is feasible by
 //!   construction. Cost never gates validity: the portfolio retains every valid
@@ -61,14 +63,17 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use tiler_ir::schedule::TensorRole;
+use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::schedule::{AccessMode, TensorRole};
 use tiler_ir::semantic::SemanticProgram;
 
+use crate::boundary::{
+    GuaranteedProperties, RequiredProperties, UnsatisfiedProperty, unsatisfied_properties,
+};
 use crate::cover::{CoverError, MaterializationEdge, RegionCover, verify_cover};
 use crate::feasibility::ResolvedPredicate;
 use crate::frontier::{
-    AdmittedImplementation, BoundaryAvailability, BoundaryProduction, FrontierRegionSubject,
-    ImplementationFrontier,
+    AdmittedImplementation, BoundaryOwnership, FrontierRegionSubject, ImplementationFrontier,
 };
 use crate::honourability::HonouredDimension;
 use crate::region::RegionOccurrenceIdentity;
@@ -183,7 +188,7 @@ impl PlanStructuralCost {
     }
 
     fn encode(&self, output: &mut Vec<u8>) {
-        encode_bytes(output, self.model_key.as_bytes());
+        push_slice(output, self.model_key.as_bytes());
         output.extend_from_slice(&self.dispatch_count.to_be_bytes());
         output.extend_from_slice(&self.launched_threads.to_be_bytes());
         output.extend_from_slice(&self.temporary_bytes.to_be_bytes());
@@ -196,9 +201,11 @@ impl PlanStructuralCost {
 /// It records the materialized value's content-derived coordinates (the producing
 /// member's canonical position and its result position), the producing region's
 /// occurrence identity, the consuming regions' occurrence identities in canonical
-/// order, and the tensor role plus the production/availability that discharged the
-/// handoff. Holding one is evidence that the producer's [`BoundaryGuarantee`]
-/// matched every consumer's [`BoundaryRequirement`] for the edge.
+/// order, and the tensor role plus the two side qualifiers — the producer's
+/// ownership and the consumer's access mode — that the discharged edge carried.
+/// Holding one is evidence that the producer's [`BoundaryGuarantee`] discharged
+/// every typed property every consumer's [`BoundaryRequirement`] named for the
+/// edge.
 ///
 /// [`BoundaryGuarantee`]: crate::frontier::BoundaryGuarantee
 /// [`BoundaryRequirement`]: crate::frontier::BoundaryRequirement
@@ -209,8 +216,8 @@ pub(crate) struct SatisfiedHandoff {
     producer: RegionOccurrenceIdentity,
     consumers: Vec<RegionOccurrenceIdentity>,
     role: TensorRole,
-    production: BoundaryProduction,
-    availability: BoundaryAvailability,
+    ownership: BoundaryOwnership,
+    access: AccessMode,
 }
 
 #[allow(
@@ -243,17 +250,29 @@ impl SatisfiedHandoff {
         self.role
     }
 
+    /// Returns the ownership with which the producer wrote the handed-off value.
+    pub(crate) const fn ownership(&self) -> BoundaryOwnership {
+        self.ownership
+    }
+
+    /// Encodes the handoff's content-derived coordinates and its two side
+    /// qualifiers.
+    ///
+    /// The discharged property sets are deliberately absent: each region's
+    /// contract is already folded into its own `ImplementationProposalIdentity`,
+    /// which this plan's identity folds in turn, so encoding the properties again
+    /// here would restate the same facts under a second authority.
     fn encode(&self, output: &mut Vec<u8>) {
         output.extend_from_slice(&self.producer_position.to_be_bytes());
         output.extend_from_slice(&self.result_position.to_be_bytes());
-        encode_bytes(output, self.producer.as_bytes());
-        encode_len(output, self.consumers.len());
+        push_slice(output, self.producer.as_bytes());
+        push_len(output, self.consumers.len());
         for consumer in &self.consumers {
-            encode_bytes(output, consumer.as_bytes());
+            push_slice(output, consumer.as_bytes());
         }
         output.push(tensor_role_tag(self.role));
-        output.push(production_tag(self.production));
-        output.push(availability_tag(self.availability));
+        output.push(ownership_tag(self.ownership));
+        output.push(access_mode_tag(self.access));
     }
 
     fn sort_key(&self) -> Vec<u8> {
@@ -514,8 +533,8 @@ impl PlanRejection {
         match self {
             Self::RegionUnimplemented { role, cover } => {
                 output.push(1);
-                encode_bytes(output, role.as_bytes());
-                encode_bytes(output, cover);
+                push_slice(output, role.as_bytes());
+                push_slice(output, cover);
             }
             Self::BoundaryDisagreement {
                 disagreement,
@@ -523,7 +542,7 @@ impl PlanRejection {
             } => {
                 output.push(2);
                 disagreement.encode(output);
-                encode_bytes(output, cover);
+                push_slice(output, cover);
             }
         }
     }
@@ -555,11 +574,19 @@ pub(crate) enum BoundaryDisagreement {
         region: Vec<u8>,
     },
     /// A producer guarantee does not discharge a consumer requirement.
+    ///
+    /// The typed [`UnsatisfiedProperty`] names the exact dimension, the value
+    /// required, the value guaranteed if there was one, and whether the producer
+    /// offered the wrong value or none at all. That distinction is what an
+    /// enforcer needs: a wrong value may be converted, and silence cannot be.
     UndischargedHandoff {
         /// The producing region occurrence in canonical bytes.
         producer: Vec<u8>,
         /// The consuming region occurrence in canonical bytes.
         consumer: Vec<u8>,
+        /// The first property, in canonical dimension order, that was not
+        /// discharged.
+        unsatisfied: UnsatisfiedProperty,
     },
     /// A region guarantees a cross-region tensor no materialization edge consumes.
     UnconsumedGuarantee {
@@ -581,11 +608,15 @@ pub(crate) enum BoundaryDisagreement {
 
 impl BoundaryDisagreement {
     /// Returns the stable reason code of the disagreement.
+    ///
+    /// [`Self::UndischargedHandoff`] delegates to the property model's own reason
+    /// code, so an explanation names *which* property was not supplied rather
+    /// than only that the handoff failed.
     pub(crate) const fn reason(&self) -> &'static str {
         match self {
             Self::ProducerGuaranteeMissing { .. } => "producer-guarantee-missing",
             Self::ConsumerRequirementMissing { .. } => "consumer-requirement-missing",
-            Self::UndischargedHandoff { .. } => "undischarged-handoff",
+            Self::UndischargedHandoff { unsatisfied, .. } => unsatisfied.reason().code(),
             Self::UnconsumedGuarantee { .. } => "unconsumed-guarantee",
             Self::UnsatisfiedRequirement { .. } => "unsatisfied-requirement",
             Self::AmbiguousBoundary { .. } => "ambiguous-boundary",
@@ -593,16 +624,21 @@ impl BoundaryDisagreement {
     }
 
     fn encode(&self, output: &mut Vec<u8>) {
-        encode_bytes(output, self.reason().as_bytes());
+        push_slice(output, self.reason().as_bytes());
         match self {
             Self::ProducerGuaranteeMissing { region }
             | Self::ConsumerRequirementMissing { region }
             | Self::UnconsumedGuarantee { region }
             | Self::UnsatisfiedRequirement { region }
-            | Self::AmbiguousBoundary { region } => encode_bytes(output, region),
-            Self::UndischargedHandoff { producer, consumer } => {
-                encode_bytes(output, producer);
-                encode_bytes(output, consumer);
+            | Self::AmbiguousBoundary { region } => push_slice(output, region),
+            Self::UndischargedHandoff {
+                producer,
+                consumer,
+                unsatisfied,
+            } => {
+                push_slice(output, producer);
+                push_slice(output, consumer);
+                unsatisfied.encode(output);
             }
         }
     }
@@ -610,7 +646,18 @@ impl BoundaryDisagreement {
 
 impl fmt::Display for BoundaryDisagreement {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "selection.boundary.{}", self.reason())
+        match self {
+            Self::UndischargedHandoff { unsatisfied, .. } => {
+                write!(formatter, "selection.boundary.{unsatisfied}")
+            }
+            Self::ProducerGuaranteeMissing { .. }
+            | Self::ConsumerRequirementMissing { .. }
+            | Self::UnconsumedGuarantee { .. }
+            | Self::UnsatisfiedRequirement { .. }
+            | Self::AmbiguousBoundary { .. } => {
+                write!(formatter, "selection.boundary.{}", self.reason())
+            }
+        }
     }
 }
 
@@ -1165,8 +1212,24 @@ fn assemble_plan(
 /// join reconciles these facets against the cover's materialization edges.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RegionBoundary {
-    guarantees: Vec<(TensorRole, BoundaryProduction)>,
-    requirements: Vec<(TensorRole, BoundaryAvailability)>,
+    guarantees: Vec<GuaranteeFacet>,
+    requirements: Vec<RequirementFacet>,
+}
+
+/// One guarantee a region's selected implementation makes at its boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GuaranteeFacet {
+    tensor: TensorRole,
+    ownership: BoundaryOwnership,
+    properties: GuaranteedProperties,
+}
+
+/// One requirement a region's selected implementation places at its boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RequirementFacet {
+    tensor: TensorRole,
+    access: AccessMode,
+    properties: RequiredProperties,
 }
 
 /// Derives a region's boundary facet from its selected implementation contract.
@@ -1176,12 +1239,20 @@ fn region_boundary(implementation: &AdmittedImplementation) -> RegionBoundary {
         guarantees: contract
             .guarantees()
             .iter()
-            .map(|guarantee| (guarantee.tensor(), guarantee.production()))
+            .map(|guarantee| GuaranteeFacet {
+                tensor: guarantee.tensor(),
+                ownership: guarantee.ownership(),
+                properties: guarantee.properties().clone(),
+            })
             .collect(),
         requirements: contract
             .requirements()
             .iter()
-            .map(|requirement| (requirement.tensor(), requirement.availability()))
+            .map(|requirement| RequirementFacet {
+                tensor: requirement.tensor(),
+                access: requirement.access(),
+                properties: requirement.properties().clone(),
+            })
             .collect(),
     }
 }
@@ -1220,8 +1291,9 @@ fn reconcile_boundaries(
     // Per-region closure: the intermediate guarantees/requirements a region carries
     // must exactly match the edges it produces/consumes, without ambiguity.
     for (occurrence, boundary) in boundaries {
-        let guarantees = intermediate_count(boundary.guarantees.iter().map(|facet| facet.0));
-        let requirements = intermediate_count(boundary.requirements.iter().map(|facet| facet.0));
+        let guarantees = intermediate_count(boundary.guarantees.iter().map(|facet| facet.tensor));
+        let requirements =
+            intermediate_count(boundary.requirements.iter().map(|facet| facet.tensor));
         if guarantees > 1 || requirements > 1 {
             return Err(BoundaryOutcome::Disagreement(
                 BoundaryDisagreement::AmbiguousBoundary {
@@ -1277,18 +1349,17 @@ fn satisfy_edge(
     let producer_boundary = boundaries
         .get(&producer_bytes)
         .ok_or(BoundaryOutcome::Structure("edge-producer-unbound"))?;
-    let production = producer_boundary
+    let guarantee = producer_boundary
         .guarantees
         .iter()
-        .find(|facet| facet.0 == TensorRole::Intermediate)
-        .map(|facet| facet.1)
+        .find(|facet| facet.tensor == TensorRole::Intermediate)
         .ok_or(BoundaryOutcome::Disagreement(
             BoundaryDisagreement::ProducerGuaranteeMissing {
                 region: producer_bytes.clone(),
             },
         ))?;
 
-    let mut availability = None;
+    let mut access = None;
     for consumer in edge.consumers() {
         let consumer_bytes = consumer.as_bytes().to_vec();
         let consumer_boundary = boundaries
@@ -1297,24 +1368,33 @@ fn satisfy_edge(
         let requirement = consumer_boundary
             .requirements
             .iter()
-            .find(|facet| facet.0 == TensorRole::Intermediate)
-            .map(|facet| facet.1)
+            .find(|facet| facet.tensor == TensorRole::Intermediate)
             .ok_or(BoundaryOutcome::Disagreement(
                 BoundaryDisagreement::ConsumerRequirementMissing {
                     region: consumer_bytes.clone(),
                 },
             ))?;
-        if !discharges(production, requirement) {
+        // Every typed property the consumer requires must be discharged by the
+        // producer's guarantee. The first unsatisfied one, in canonical dimension
+        // order, is what the disagreement names; the rest are recoverable by
+        // re-running the relation on the same pair, so a plan rejection carries
+        // one actionable reason rather than a list.
+        if let Some(unsatisfied) =
+            unsatisfied_properties(&requirement.properties, &guarantee.properties)
+                .into_iter()
+                .next()
+        {
             return Err(BoundaryOutcome::Disagreement(
                 BoundaryDisagreement::UndischargedHandoff {
                     producer: producer_bytes.clone(),
                     consumer: consumer_bytes,
+                    unsatisfied,
                 },
             ));
         }
-        availability = Some(requirement);
+        access = Some(requirement.access);
     }
-    let availability = availability.ok_or(BoundaryOutcome::Structure("edge-without-consumer"))?;
+    let access = access.ok_or(BoundaryOutcome::Structure("edge-without-consumer"))?;
 
     Ok(SatisfiedHandoff {
         producer_position: edge.producer_position(),
@@ -1322,20 +1402,9 @@ fn satisfy_edge(
         producer: edge.producer().clone(),
         consumers: edge.consumers().to_vec(),
         role: TensorRole::Intermediate,
-        production,
-        availability,
+        ownership: guarantee.ownership,
+        access,
     })
-}
-
-/// Whether a producer's production discharges a consumer's required availability.
-const fn discharges(production: BoundaryProduction, availability: BoundaryAvailability) -> bool {
-    matches!(
-        (production, availability),
-        (
-            BoundaryProduction::TotalRaceFreeWrite,
-            BoundaryAvailability::MaterializedInDeviceMemory
-        )
-    )
 }
 
 /// Counts how many facets carry the intermediate cross-region role.
@@ -1450,21 +1519,21 @@ fn encode_plan_identity(
     cost: PlanStructuralCost,
 ) -> SelectedPlanIdentity {
     let mut bytes = SELECTED_PLAN_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, cover.identity().as_bytes());
-    encode_len(&mut bytes, selections.len());
+    push_slice(&mut bytes, cover.identity().as_bytes());
+    push_len(&mut bytes, selections.len());
     for selection in selections {
-        encode_bytes(&mut bytes, selection.occurrence.as_bytes());
-        encode_bytes(&mut bytes, selection.implementation.identity().as_bytes());
+        push_slice(&mut bytes, selection.occurrence.as_bytes());
+        push_slice(&mut bytes, selection.implementation.identity().as_bytes());
     }
-    encode_len(&mut bytes, handoffs.len());
+    push_len(&mut bytes, handoffs.len());
     for handoff in handoffs {
         handoff.encode(&mut bytes);
     }
-    encode_len(&mut bytes, guards.len());
+    push_len(&mut bytes, guards.len());
     for guard in guards {
         encode_guard(&mut bytes, *guard);
     }
-    encode_len(&mut bytes, honoured.len());
+    push_len(&mut bytes, honoured.len());
     for entry in honoured {
         encode_honoured(&mut bytes, *entry);
     }
@@ -1474,16 +1543,16 @@ fn encode_plan_identity(
 
 fn encode_portfolio_identity(plans: &[SelectedPlan]) -> SelectedPortfolioIdentity {
     let mut bytes = SELECTED_PORTFOLIO_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, SELECTION_POLICY_KEY.as_bytes());
-    encode_len(&mut bytes, plans.len());
+    push_slice(&mut bytes, SELECTION_POLICY_KEY.as_bytes());
+    push_len(&mut bytes, plans.len());
     for plan in plans {
-        encode_bytes(&mut bytes, plan.identity.as_bytes());
+        push_slice(&mut bytes, plan.identity.as_bytes());
     }
     SelectedPortfolioIdentity(bytes)
 }
 
 fn encode_guard(output: &mut Vec<u8>, guard: ResolvedPredicate) {
-    encode_bytes(output, guard.axis().key().as_bytes());
+    push_slice(output, guard.axis().key().as_bytes());
     output.extend_from_slice(&guard.required().value().to_be_bytes());
     output.extend_from_slice(&guard.available().value().to_be_bytes());
 }
@@ -1495,10 +1564,10 @@ fn encode_guard(output: &mut Vec<u8>, guard: ResolvedPredicate) {
 /// that rely on declarations from different profiles rest on different evidence;
 /// either omission would give distinguishable plans one identity.
 fn encode_honoured(output: &mut Vec<u8>, honoured: HonouredDimension) {
-    encode_bytes(output, honoured.dimension().key().as_bytes());
+    push_slice(output, honoured.dimension().key().as_bytes());
     output.extend_from_slice(&honoured.behaviour().tag());
-    encode_bytes(output, honoured.means().key().as_bytes());
-    encode_bytes(output, honoured.profile().key().as_bytes());
+    push_slice(output, honoured.means().key().as_bytes());
+    push_slice(output, honoured.profile().key().as_bytes());
 }
 
 fn member_key(members: &[crate::region::SemanticMemberId]) -> Vec<u32> {
@@ -1516,25 +1585,22 @@ const fn tensor_role_tag(role: TensorRole) -> u8 {
     }
 }
 
-const fn production_tag(production: BoundaryProduction) -> u8 {
-    match production {
-        BoundaryProduction::TotalRaceFreeWrite => 1,
+const fn ownership_tag(ownership: BoundaryOwnership) -> u8 {
+    match ownership {
+        BoundaryOwnership::TotalRaceFreeWrite => 1,
     }
 }
 
-const fn availability_tag(availability: BoundaryAvailability) -> u8 {
-    match availability {
-        BoundaryAvailability::MaterializedInDeviceMemory => 1,
+/// The governed tag naming an access mode in a canonical encoding.
+///
+/// A second out-of-crate total map over `AccessMode`, alongside
+/// `crate::frontier`'s; both are ADR 0074 convention 5b sites and neither may
+/// carry a wildcard.
+const fn access_mode_tag(mode: AccessMode) -> u8 {
+    match mode {
+        AccessMode::Read => 1,
+        AccessMode::Write => 2,
     }
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
-}
-
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(&count(value).to_be_bytes());
 }
 
 fn count(value: usize) -> u64 {
@@ -1550,15 +1616,22 @@ fn digest(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundaryDisagreement, CoverFrontiers, PlanRejection, RegionBoundary, RegionFrontier,
+        AccessMode, BoundaryDisagreement, CoverFrontiers, GuaranteeFacet, GuaranteedProperties,
+        PlanRejection, RegionBoundary, RegionFrontier, RequiredProperties, RequirementFacet,
         SelectionError, TensorRole, reconcile_boundaries, select_physical_plans,
         verify_selected_plan, verify_selected_portfolio,
     };
+    use crate::boundary::{
+        AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, BoundaryProperty,
+        ByteAlignment, ExecutionAffinity, GuaranteedProperty, LayoutGuarantee, LayoutRequirement,
+        MaterializationForm, MemoryDomainClass, RequiredProperty, StorageEncoding,
+        UnsatisfiedReason, VisibilityGuarantee, VisibilityRequirement,
+    };
     use crate::cover::{RegionCover, enumerate_covers};
     use crate::frontier::{
-        BoundaryAvailability, BoundaryProduction, FrontierRegionSubject, ImplementationContext,
-        ImplementationProposal, PhysicalCostEstimate, PhysicalImplementationProvider,
-        PhysicalProviderProvenance, ProposalBody, TargetApplicability, enumerate_frontier,
+        BoundaryOwnership, FrontierRegionSubject, ImplementationContext, ImplementationProposal,
+        PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProviderProvenance,
+        ProposalBody, TargetApplicability, enumerate_frontier,
     };
     use crate::physical::{ScheduledRegion, build_fused_scheduled_region, build_scheduled_regions};
     use crate::request::{
@@ -1815,6 +1888,54 @@ mod tests {
         ));
     }
 
+    /// The bounded profile's guarantee set, for facets assembled by hand.
+    fn profile_guarantees() -> GuaranteedProperties {
+        GuaranteedProperties::new([
+            GuaranteedProperty::StorageLayout(LayoutGuarantee::DenseRowMajor),
+            GuaranteedProperty::StorageEncoding(StorageEncoding::Unpacked),
+            GuaranteedProperty::Alignment(ByteAlignment::F32_NATURAL),
+            GuaranteedProperty::Materialization(MaterializationForm::MaterializedBuffer),
+            GuaranteedProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
+            GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device),
+            GuaranteedProperty::Availability(AvailabilityGuarantee::AfterOwnDispatch),
+            GuaranteedProperty::Visibility(VisibilityGuarantee::CoherentOnProducingAffinity),
+        ])
+        .unwrap()
+    }
+
+    /// The bounded profile's requirement set, for facets assembled by hand.
+    fn profile_requirements() -> RequiredProperties {
+        RequiredProperties::new([
+            RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
+            RequiredProperty::StorageEncoding(StorageEncoding::Unpacked),
+            RequiredProperty::Alignment(ByteAlignment::F32_NATURAL),
+            RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
+            RequiredProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
+            RequiredProperty::MemoryDomain(
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).unwrap(),
+            ),
+            RequiredProperty::Availability(AvailabilityRequirement::AfterProducingDispatch),
+            RequiredProperty::Visibility(VisibilityRequirement::ReadableOnRequiringAffinity),
+        ])
+        .unwrap()
+    }
+
+    fn guarantee_facet(tensor: TensorRole, properties: GuaranteedProperties) -> GuaranteeFacet {
+        GuaranteeFacet {
+            tensor,
+            ownership: BoundaryOwnership::TotalRaceFreeWrite,
+            properties,
+        }
+    }
+
+    fn requirement_facet(tensor: TensorRole, properties: RequiredProperties) -> RequirementFacet {
+        RequirementFacet {
+            tensor,
+            access: AccessMode::Read,
+            properties,
+        }
+    }
+
     /// Boundary reconciliation rejects a materialization edge whose producer does
     /// not guarantee the cross-region intermediate.
     #[test]
@@ -1833,20 +1954,17 @@ mod tests {
         boundaries.insert(
             producer,
             RegionBoundary {
-                guarantees: vec![(TensorRole::Output, BoundaryProduction::TotalRaceFreeWrite)],
-                requirements: vec![(
-                    TensorRole::Input,
-                    BoundaryAvailability::MaterializedInDeviceMemory,
-                )],
+                guarantees: vec![guarantee_facet(TensorRole::Output, profile_guarantees())],
+                requirements: vec![requirement_facet(TensorRole::Input, profile_requirements())],
             },
         );
         boundaries.insert(
             consumer,
             RegionBoundary {
-                guarantees: vec![(TensorRole::Output, BoundaryProduction::TotalRaceFreeWrite)],
-                requirements: vec![(
+                guarantees: vec![guarantee_facet(TensorRole::Output, profile_guarantees())],
+                requirements: vec![requirement_facet(
                     TensorRole::Intermediate,
-                    BoundaryAvailability::MaterializedInDeviceMemory,
+                    profile_requirements(),
                 )],
             },
         );
@@ -1860,6 +1978,75 @@ mod tests {
             BoundaryDisagreement::ProducerGuaranteeMissing { .. }
         ));
         assert_eq!(disagreement.reason(), "producer-guarantee-missing");
+    }
+
+    /// A producer that guarantees the cross-region intermediate but delivers it
+    /// in the wrong storage layout is refused, and the refusal names the exact
+    /// property rather than only the handoff.
+    ///
+    /// The bounded profile's own regions all guarantee and require dense
+    /// row-major, so this case cannot arise end to end; the relation is exercised
+    /// directly against the reconciliation with real cover occurrences. That is a
+    /// measurement boundary on this test, not a gap in the guard, and it matches
+    /// how the sibling disagreement guards above are exercised.
+    #[test]
+    fn a_handoff_whose_properties_disagree_names_the_property_that_failed() {
+        let program = serial_sum_program();
+        let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
+        let edge = &cover.materializations()[0];
+        let producer = edge.producer().as_bytes().to_vec();
+        let consumer = edge.consumers()[0].as_bytes().to_vec();
+
+        // The consumer needs unit stride on the leading axis — what a vectorized
+        // reduction over that axis would ask for. A dense row-major producer has
+        // unit stride on the trailing axis only.
+        let leading_axis =
+            RequiredProperties::new(profile_requirements().properties().iter().map(|property| {
+                match property {
+                    RequiredProperty::StorageLayout(_) => {
+                        RequiredProperty::StorageLayout(LayoutRequirement::UnitStrideOnAxis {
+                            axis: Axis::new(0),
+                            rank: 2,
+                        })
+                    }
+                    other => other.clone(),
+                }
+            }))
+            .unwrap();
+
+        let mut boundaries: BTreeMap<Vec<u8>, RegionBoundary> = BTreeMap::new();
+        boundaries.insert(
+            producer,
+            RegionBoundary {
+                guarantees: vec![guarantee_facet(
+                    TensorRole::Intermediate,
+                    profile_guarantees(),
+                )],
+                requirements: vec![requirement_facet(TensorRole::Input, profile_requirements())],
+            },
+        );
+        boundaries.insert(
+            consumer,
+            RegionBoundary {
+                guarantees: vec![guarantee_facet(TensorRole::Output, profile_guarantees())],
+                requirements: vec![requirement_facet(TensorRole::Intermediate, leading_axis)],
+            },
+        );
+
+        let outcome = reconcile_boundaries(&cover, &boundaries);
+        let Err(super::BoundaryOutcome::Disagreement(
+            disagreement @ BoundaryDisagreement::UndischargedHandoff { .. },
+        )) = outcome
+        else {
+            panic!("expected an undischarged handoff");
+        };
+        let BoundaryDisagreement::UndischargedHandoff { unsatisfied, .. } = &disagreement else {
+            unreachable!("matched above")
+        };
+        assert_eq!(unsatisfied.property(), BoundaryProperty::StorageLayout);
+        assert_eq!(unsatisfied.reason(), UnsatisfiedReason::NotSatisfied);
+        assert!(unsatisfied.guaranteed().is_some());
+        assert_eq!(disagreement.reason(), "property-not-satisfied");
     }
 
     /// A valid two-region plan reconciles into exactly one satisfied handoff, so
@@ -2071,13 +2258,25 @@ mod tests {
         assert_eq!(structure.class(), "structure");
         assert_eq!(structure.to_string(), "selection.structure.plan-mismatch");
 
+        let unsatisfied = crate::boundary::unsatisfied_properties(
+            &RequiredProperties::new([RequiredProperty::Alignment(
+                ByteAlignment::new(16).unwrap(),
+            )])
+            .unwrap(),
+            &GuaranteedProperties::new([GuaranteedProperty::Alignment(ByteAlignment::F32_NATURAL)])
+                .unwrap(),
+        )
+        .remove(0);
         let composition =
             SelectionError::InvalidComposition(BoundaryDisagreement::UndischargedHandoff {
                 producer: vec![1],
                 consumer: vec![2],
+                unsatisfied,
             });
         assert_eq!(composition.class(), "composition");
-        assert_eq!(composition.reason(), "undischarged-handoff");
+        // The reason is delegated to the property model, so a composition fault
+        // names which property was not supplied.
+        assert_eq!(composition.reason(), "property-not-satisfied");
     }
 
     /// A diamond program that is structurally distinct from the serial-sum chain,
