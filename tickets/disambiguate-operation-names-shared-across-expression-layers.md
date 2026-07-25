@@ -1,7 +1,7 @@
 ---
 id: disambiguate-operation-names-shared-across-expression-layers
 title: Disambiguate the operation names shared across expression layers
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [disambiguate-select-across-ir-layers, disambiguate-contraction-in-the-glossary, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, glossary, coherence]
+claimed_from: todo
+assignee: agent-foundation2
+lease_expires_at: 1784997854
 ---
 `Select` was not the only name denoting several unrelated constructs. It was the worst instance, and closing it in `disambiguate-select-across-ir-layers` required enumerating the operation vocabulary of every expression layer, which surfaced the rest of the class. This ticket carries that enumeration so the sweep is not repeated from nothing.
 
