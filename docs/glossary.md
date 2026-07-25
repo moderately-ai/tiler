@@ -16,6 +16,8 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Accumulation dtype | Type specified independently for reduction accumulation; it may equal the input or output dtype. |
 | Accuracy contract | Canonical per-operation allowed result set relative to immutable reference semantics, including domains and versioned metrics where applicable. |
 | Accuracy guarantee | Machine-checkable result-set claim made by one candidate implementation; it must refine the requested accuracy contract. |
+| Add (shape expression) | The canonical, possibly n-ary addition of the shape-metadata expression language. Its arithmetic is mathematical-integer by the accepted decision of 2026-07-19: it does not wrap, saturate, or expose overflow from an arbitrary compiler intermediate width, so `ExactDiv(A * B, B) == A` holds even where `A * B` exceeds any machine width. Distinct from *Add (tensor)*, which is floating-point and carries a rounding contract instead. Adopted and unimplemented: `crates/tiler-ir/src/shape/` implements only the crate-private `ExtentTerm`/`ExtentRelation` constraint fragment, which is deliberately closed under relations over symbols and literals and has no arithmetic node at all. |
+| Add (tensor) | The semantic elementwise addition family whose strict boundary is a resolved homogeneous computation and result type, round-to-nearest-ties-even, and a rounding boundary distinct from every other operation's. Registered as `tiler::add-f32@1` and authored through the `F32Add` facade; the scalar operation it lowers into is separately identified as `tiler.scalar::add-f32@1`. Distinct from *Add (shape expression)*: naming a shape formula's addition `Add` grants it no rounding contract, and naming a tensor addition `Add` grants it no exact mathematical-integer arithmetic. A `Multiply` followed by an `Add` has two rounding boundaries, and whether they fuse into one is *contraction (numerical)* rather than a property of `Add`. |
 | Artifact | A versioned bundle or kernel-entry record consumed across the compiler/runtime boundary. |
 | Axis symbol | Stable frontend identity for a logical axis such as `b`, `h`, or `w`. |
 | Bundle | Self-contained target artifact and manifest containing a complete program portfolio; an integration may scope one bundle to one macro invocation. |
@@ -39,6 +41,8 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Expansion compiler cache | Disposable global content-addressed cache used by proc macros to avoid repeated external AOT compilation. |
 | Expansion-time AOT | Offline target compilation performed synchronously while a proc macro expands, with completed bytes embedded in returned Rust. |
 | Extent expression | Static extent or expression over runtime scalar parameters. |
+| `F32Add` / `F32Multiply` (semantic authoring facade) | The public typed facades over the registered tensor families `tiler::add-f32@1` and `tiler::multiply-f32@1`. Each is a unit struct whose `apply`, `apply_shaped`, `apply_scalar_left`, and `apply_scalar_right` constructors append one semantic operation to a `SemanticProgramBuilder`; they are defined in `crates/tiler-ir/src/semantic/standard_operations.rs` and re-exported from `crates/tiler-ir/src/semantic.rs`. Distinct from *`F32Add` / `F32Multiply` (structured kernel operation)*, which is the same spelling for a device-level operation in a lowered kernel body. The two meet at exactly one point — lowering a semantic graph is what produces the kernel operations — and share nothing else: one is how a caller authors a graph, the other is an instruction inside the result. |
+| `F32Add` / `F32Multiply` (structured kernel operation) | Two variants of `BinaryOp`, the pure binary operation of the structured kernel IR, documented "IEEE-754 binary32 addition" and "IEEE-754 binary32 multiplication", defined in `crates/tiler-ir/src/kernel/model.rs` and consumed by the Metal emitter in `crates/tiler-metal/src/emit.rs`. Their four sibling variants are spelled `IndexAdd`, `IndexMultiply`, `IndexDivide`, and `IndexModulo`, whose prefixes carry the operand role where these two carry only the element type. Distinct from *`F32Add` / `F32Multiply` (semantic authoring facade)*. This is the only pair in the shared-name table whose two senses are both implemented, both public, and both defined in `tiler-ir`; every other shared name separates by maturity, by crate, or by both. |
 | Fallback | Semantically compatible alternative execution path used when no compiled variant applies. |
 | Fusion visibility boundary | Limit that a frontend can optimize only semantics submitted in its semantic graph; a proc-macro invocation is one such boundary. |
 | Applicability predicate | Runtime-checkable condition under which a program or region implementation may execute. |
@@ -60,6 +64,8 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Map/scalar expression | Typed pointwise computation formed while lowering or fusing semantic operations into a region implementation. |
 | Materialization | Allocating and storing an intermediate tensor rather than retaining it in a fused expression. |
 | Materialization boundary | Kernel-program edge at which an intermediate tensor is stored. |
+| `Minimum` / `Maximum` (ABI expression) | Two variants of `AbiBinaryOp`, documented "Unsigned minimum" and "Unsigned maximum" and evaluated as `u64::min` and `u64::max` over the checked 64-bit unsigned domain of the host-side ABI expression language, in `crates/tiler-ir/src/program/abi.rs`. That domain has neither NaN nor a signed zero, so the exceptional-value contract defining *`Minimum` / `Maximum` (tensor)* is not merely unimplemented here — it is inexpressible. The invariant a reader needs: every `Minimum` or `Maximum` in `crates/` that is an identifier rather than English prose in a comment is this construct, reproducible with `grep -rnwE 'Minimum\|Maximum' crates/ \| grep -vE ':\s*(///\|//\|\*)'`, which returns lines only from `program/abi.rs`. The shape-expression language deliberately spells its own extrema `Min` and `Max`. |
+| `Minimum` / `Maximum` (tensor) | The semantic extrema family whose strict boundary is NaN-propagating with a deterministic `-0.0 < +0.0` ordering, so the minimum of opposite-signed zeros is `-0.0` and the maximum is `+0.0`; NaN-absence and signed-zero relaxations remain independent permissions. It is a separate family from `MinimumNumber`/`MaximumNumber` rather than one operation with a backend-selected mode, and Metal `fmin`/`fmax` are number-preferring and therefore not an exact implementation of it without a fixup or a matching authorized relaxation. No operation key registers it. Distinct from *`Minimum` / `Maximum` (ABI expression)*: an implemented `Minimum` found in `crates/` is never evidence that this family is supported. |
 | Numerical contract | Operation semantics, optimization permissions, and execution guarantees taken together. |
 | Numerical policy | Granular optimization permissions such as reassociation, contraction, and approximate intrinsics. |
 | Numerical mode | Optional user-facing preset that expands into a complete numerical contract. |
@@ -125,3 +131,57 @@ support from a search is about: every `Select` in `crates/` belongs to the ABI
 expression language, and the same search over `docs/` additionally returns ADR
 0049, whose title uses the ordinary English verb and defines no `Select`
 construct at all.
+
+## Operation names shared across expression layers
+
+`Select` is not the only name that denotes several unrelated constructs. Six vocabularies in this repository name operations, and each is the naming authority only inside its own layer. The same spelling appearing in two of them is two constructs, not one construct seen twice.
+
+| Layer | Naming authority | Maturity of that vocabulary |
+|---|---|---|
+| Semantic tensor operations | Governed `OpKey`s in the `tiler` namespace, plus the family names of the adopted [operation conformance matrix](research/numerics/operation-conformance-matrix.md) | Four families have a governed key and a lowering capability outside tests — `constant-f32`, `multiply-f32`, `add-f32`, `strict-serial-sum-f32`; most matrix families have no key |
+| Shape expressions and predicates | The accepted 2026-07-19 decisions in the [shape environment contract](research/shapes/shape-environment-contract.md), which also record that the exact initial primitive set remains to be chosen | Adopted; the only implemented part is the crate-private `ExtentTerm`/`ExtentRelation` constraint fragment |
+| Index and scalar expressions | `IndexExprView`, and governed `ScalarOpKey`s in the `tiler.scalar` namespace | Implemented and public |
+| Structured kernel operations | The bounded initial set of the adopted [structured kernel IR research](research/kernel-ir/structured-kernel-ir-verifier.md); [Layer 4 of the IR contract](ir.md#layer-4-structured-kernel-ir) names a representative subset | Partially implemented; `OperationView` is the implemented subset |
+| ABI expressions | `ExprNode`, `AbiUnaryOp`, and `AbiBinaryOp` | Implemented and public |
+| Reference oracle | Independent scalar reference implementations in `tiler-reference` | Implemented; a checking authority rather than a program vocabulary |
+
+**The convention, now recorded.** An operation name is layer-qualified by its identity, not by its bare spelling, and two mechanisms already do this. A governed key carries a namespace: `tiler::add-f32@1` is the semantic tensor family and `tiler.scalar::add-f32@1` is the scalar operation it lowers into, identical in name component and distinct in authority, which is the same separation [the IR contract](ir.md#layer-2-index-and-iteration-ir) states when it makes `ScalarOpKey` deliberately distinct from `OpKey`. A Rust variant carries its enum path, so `AbiBinaryOp::Minimum` and `BinaryOp::F32Add` are unambiguous at a use site. Where neither mechanism is present — a bare word in prose, a diagnostic string, a search result — the layer is unrecoverable from the name and the reader must look it up here.
+
+A new operation name entering a layer should be distinguishable from an existing name in another layer by its key namespace or by a qualified spelling. Several already are, unevenly and without anything having recorded the rule: the ABI language spells its addition `CheckedAdd` and its divisibility predicate `IsMultipleOf` where the shape language says `Add` and `Divisible`; the shape language spells its extrema `Min` and `Max` where the tensor family says `Minimum` and `Maximum`; the structured-kernel research spells its narrowing `CheckedNarrow`; and four of `BinaryOp`'s six variants carry an `Index` prefix. `AbiBinaryOp::Minimum`, `AbiBinaryOp::Maximum`, `AbiBinaryOp::Equal`, and `BinaryOp::F32Add` did not, which is why the table below exists.
+
+The table indexes which layer a name belongs to. Where two senses also differ semantically in a way that produces a wrong answer rather than only a wrong location, the term table above carries the full definitions: *`Add`*, *`Minimum` / `Maximum`*, *`F32Add` / `F32Multiply`*, and the four *`Select`* entries.
+
+| Name | Layer and construct | Implementation spelling | Maturity |
+|---|---|---|---|
+| `Add` | Semantic tensor elementwise addition | `tiler::add-f32@1`, facade `F32Add` | Registered and implemented |
+| `Add` | Shape-expression canonical addition | None | Adopted, unimplemented |
+| `Add` | Scalar operation a tensor `Add` lowers into | `tiler.scalar::add-f32@1`, `PointwiseScalar::Add` | Implemented |
+| `Add` | Reference-oracle addition used to check a result | `F32BinaryReference::Add`, `StandardScalarBinaryF32::Add` | Implemented |
+| `Binary` | ABI expression: one checked binary application over two earlier arena nodes | `ExprNode::Binary` | Implemented, public |
+| `Binary` | Structured kernel operation applying a pure `BinaryOp` | `OperationView::Binary` | Implemented, public |
+| `Binary` | Metal emission diagnostic family | `MetalOperationFamily::Binary` | Implemented |
+| `Compare` | Shape predicate primitive of the typed `ShapePredicate` language | None | Adopted, unimplemented |
+| `Compare` | Structured kernel operation producing a predicate | `OperationView::Compare` over `CompareOp::IndexLessThan` | Implemented, public |
+| `Constant` | Semantic tensor bit-preserving constant family | `tiler::constant-f32@1`, facade `F32Constant` | Registered and implemented |
+| `Constant` | Shape constraint literal extent term | `ExtentTerm::Constant` | Implemented, crate-private |
+| `Constant` | Index-expression exact integer constant | `IndexExprView::Constant` | Implemented, public |
+| `Constant` | Scalar operation a tensor constant lowers into | `tiler.scalar::constant-f32@1` | Implemented |
+| `Constant` | Structured kernel operation defining a typed immediate | `OperationView::Constant` over `KernelConstant` | Implemented, public |
+| `Constant` | Structured kernel *address space* — read-only memory constant for the whole dispatch, not an operation | `AddressSpace::Constant` | Implemented, public |
+| `Equal` | Shape constraint asserting equality of two extent terms | `ExtentRelation::Equal` | Implemented, crate-private |
+| `Equal` | ABI expression unsigned equality | `AbiBinaryOp::Equal` | Implemented, public |
+| `FloorDiv` | Shape-expression floor division, rounding toward negative infinity including for negative operands | None | Adopted, unimplemented |
+| `FloorDiv` | Index-expression Euclidean floor division by a positive constant | `IndexExprView::FloorDiv` | Implemented, public |
+| `F32Add` / `F32Multiply` | Semantic authoring facades — see the term rows above | `standard_operations.rs` | Implemented, public |
+| `F32Add` / `F32Multiply` | Structured kernel binary operations — see the term rows above | `BinaryOp` | Implemented, public |
+| `Minimum` / `Maximum` | Semantic tensor extrema family — see the term rows above | None | Named by an adopted matrix row only |
+| `Minimum` / `Maximum` | ABI expression unsigned extrema — see the term rows above | `AbiBinaryOp` | Implemented, public |
+| `Not` | Shape predicate negation, typed and normalized where that does not cause uncontrolled expansion | None | Adopted, unimplemented |
+| `Not` | ABI expression predicate negation | `AbiUnaryOp::Not` | Implemented, public |
+| `Select` | Four constructs — see the four *`Select`* term rows above | `ExprNode::Select` only | One of four implemented |
+| `Unary` | ABI expression: one checked unary application over an earlier arena node | `ExprNode::Unary` | Implemented, public |
+| `Unary` | Structured kernel operation in the proposed bounded initial set | None | Proposed, unimplemented |
+
+Three invariants hold over `crates/` and are more durable than a hit count, which the relocation of the ABI domain has already made stale once. Every `Unary` is the ABI construct; every `Not` is the ABI construct; and every `Minimum` or `Maximum` that is an identifier rather than English prose in a comment is the ABI construct. No such invariant holds for `Constant`, `Binary`, `Equal`, or `Add`, each of which has at least two implemented senses in `crates/`, and `AddressSpace::Constant` and `OperationView::Constant` are declared in one file.
+
+Never write any of these names unqualified in normative text or diagnostics. Name the layer, or use the spelling that already carries it.
