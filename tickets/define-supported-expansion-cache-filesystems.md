@@ -1,7 +1,7 @@
 ---
 id: define-supported-expansion-cache-filesystems
 title: Define the supported expansion cache filesystems
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [implement-the-expansion-cache-protocol]
@@ -9,6 +9,9 @@ scopes: [research/cache, contracts/artifacts]
 shared_scopes: []
 paths: []
 tags: [cache, durability, portability]
+claimed_from: todo
+assignee: agent-cache-filesystems
+lease_expires_at: 1785041370
 ---
 The research note's fifth follow-up gate: define supported local filesystems and add platform-specific Windows and network-filesystem feasibility gates before claiming portability.
 
