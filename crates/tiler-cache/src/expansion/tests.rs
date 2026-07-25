@@ -1,0 +1,1064 @@
+//! Bounded tests for the expansion cache protocol.
+//!
+//! # What these are evidence for, and what they are not
+//!
+//! They are evidence for the framing, the path parser, the key derivation, and
+//! the *threaded* half of the protocol: exclusion on one key, the post-lock
+//! recheck, publication by rename, immutability of a published entry, and the
+//! replacement of a rejected one.
+//!
+//! **They are not evidence for any cross-process crash or race property.** A
+//! thread that returns is not a process that was killed: it unwinds, it closes
+//! its descriptors on its own, and it never leaves a half-written file behind
+//! with no owner. Those properties need real processes stopped at each
+//! publication phase, which
+//! [`spikes/cache/cache_harness.rs`](https://github.com/moderately-ai/tiler/blob/main/spikes/cache/cache_harness.rs)
+//! does for its own miniature frame and *not* for the bundle this crate
+//! publishes. Nothing below is offered as a substitute, and no test here is
+//! named as if it were.
+//!
+//! Two mechanisms are used to make the protocol reachable without a real
+//! artifact envelope. Framing tests call the bundle encoder and decoder
+//! directly. Protocol tests call the crate-private [`ExpansionCache::resolve`]
+//! and [`ExpansionCache::read_entry`] with a validator that accepts any bytes,
+//! which is what lets a "compilation" be a byte string. The public API's own
+//! validator is separately shown to be the artifact decoder, by feeding it bytes
+//! that are not an artifact and observing the artifact layer's own typed
+//! refusal.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use tiler_artifact::program::{ArtifactCodecFailure, DIGEST_BYTES, DigestAlgorithm};
+
+use super::bundle::{self, BundleRejection, BundleSection};
+use super::key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
+use super::layout::{PathRejection, key_of_entry_path};
+use super::limits::Limits;
+use super::lock::KeyLock;
+use super::report::{EntryRejection, MissReason, QuarantineOutcome};
+use super::store::{Durability, ExpansionCache, Lookup, ProtocolOutcome, PublishFailure};
+
+// -------------------------------------------------------------------------
+// Fixtures
+// -------------------------------------------------------------------------
+
+/// A validator that accepts any non-empty payload, for exercising the protocol.
+///
+/// It refuses an empty one so it has a real rejection branch: a validator that
+/// could not fail would let the protocol's rejection paths compile without ever
+/// being reachable through it.
+fn any_payload(bytes: &[u8]) -> Result<Vec<u8>, ArtifactCodecFailure> {
+    if bytes.is_empty() {
+        return Err(ArtifactCodecFailure::Malformed {
+            detail: "an empty payload is not an artifact".to_owned(),
+        });
+    }
+    Ok(bytes.to_vec())
+}
+
+/// A unique directory for one test, removed when the guard drops.
+struct Scratch {
+    path: PathBuf,
+}
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("the host clock is after the Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tiler-cache-test-{name}-{}-{nonce}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir_all(&path).expect("a scratch directory is creatable");
+        Self { path }
+    }
+
+    fn root(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn cache(scratch: &Scratch) -> ExpansionCache {
+    ExpansionCache::open(scratch.root().join("cache"))
+}
+
+/// Publishes one subject through the private protocol and returns the key.
+fn publish(cache: &ExpansionCache, subject: &[u8], envelope: &[u8]) -> CacheKey {
+    let outcome = cache
+        .resolve(subject, || Ok::<_, String>(envelope.to_vec()), &any_payload)
+        .expect("a build that succeeds resolves");
+    match outcome {
+        ProtocolOutcome::Hit {
+            entry, published, ..
+        } => {
+            assert!(published, "an empty cache publishes rather than hits");
+            entry.key
+        }
+        ProtocolOutcome::Uncached { report, .. } => panic!(
+            "publication was refused: {:?}",
+            report.publication_refusal().map(ToString::to_string),
+        ),
+    }
+}
+
+// -------------------------------------------------------------------------
+// Complete cache identity
+// -------------------------------------------------------------------------
+
+/// The key is a function of the subject bytes alone.
+#[test]
+fn the_key_is_a_function_of_the_subject() {
+    assert_eq!(CacheKey::derive(b"subject"), CacheKey::derive(b"subject"));
+    assert_ne!(CacheKey::derive(b"subject"), CacheKey::derive(b"subjecu"));
+    assert_ne!(CacheKey::derive(b"subject"), CacheKey::derive(b"subject "));
+    assert_ne!(CacheKey::derive(b""), CacheKey::derive(b"\0"));
+}
+
+/// A key renders as exactly the fixed width the namespace parses.
+#[test]
+fn a_key_renders_at_the_parsed_width() {
+    let label = CacheKey::derive(b"subject").label();
+    assert_eq!(label.len(), KEY_LABEL_BYTES);
+    assert!(
+        label.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{label}",
+    );
+    assert!(
+        label.bytes().all(|byte| !byte.is_ascii_uppercase()),
+        "{label}",
+    );
+}
+
+/// The key is domain-separated from a bare digest of the same bytes.
+///
+/// Without the domain, a cache key would equal any other governed digest taken
+/// over the same subject — an artifact payload identity over the same source,
+/// say — and two subjects that mean different things would share a value.
+#[test]
+fn the_key_is_domain_separated_from_a_bare_digest() {
+    let subject = b"subject";
+    let bare = DigestAlgorithm::GOVERNED.digest(b"", subject);
+    assert_ne!(CacheKey::derive(subject).label(), bare.label());
+}
+
+// -------------------------------------------------------------------------
+// The path parser
+// -------------------------------------------------------------------------
+
+/// A well-formed entry path yields the key it was built from.
+#[test]
+fn an_entry_path_round_trips_its_key() {
+    let scratch = Scratch::new("path-round-trip");
+    let cache = cache(&scratch);
+    let key = CacheKey::derive(b"subject");
+    assert_eq!(
+        key_of_entry_path(&cache.entry_path(&key)).expect("a constructed entry path parses"),
+        key,
+    );
+}
+
+/// A key one character short is refused rather than padded, and one character
+/// long is refused rather than cut.
+///
+/// This is the clause that must never "fit" a key to the width: either
+/// adjustment maps two distinct compilations onto one entry, and a validated hit
+/// would then return an artifact built from different inputs.
+#[test]
+fn a_key_of_the_wrong_width_is_never_fitted() {
+    let label = CacheKey::derive(b"subject").label();
+    for text in [&label[..KEY_LABEL_BYTES - 1], &format!("{label}0")[..]] {
+        assert_eq!(
+            CacheKey::parse_label(text),
+            Err(KeyTextRejection::Width { found: text.len() }),
+            "{text}",
+        );
+    }
+}
+
+/// Uppercase hexadecimal is refused rather than folded.
+///
+/// Folding would make two texts name one key, so one entry could be reached by
+/// two paths and the per-key lock at one of them would not protect the other.
+#[test]
+fn uppercase_hexadecimal_is_refused_rather_than_folded() {
+    let label = CacheKey::derive(b"subject").label();
+    let upper = label.to_uppercase();
+    let position = label
+        .bytes()
+        .position(|byte| byte.is_ascii_alphabetic())
+        .expect("this digest renders with at least one letter");
+    assert_eq!(
+        CacheKey::parse_label(&upper),
+        Err(KeyTextRejection::NotLowercaseHexadecimal {
+            position,
+            byte: upper.as_bytes()[position],
+        }),
+    );
+}
+
+/// A non-hexadecimal byte is refused, naming its position.
+#[test]
+fn a_non_hexadecimal_byte_is_refused_by_position() {
+    let mut label = CacheKey::derive(b"subject").label();
+    label.replace_range(7..8, "z");
+    assert_eq!(
+        CacheKey::parse_label(&label),
+        Err(KeyTextRejection::NotLowercaseHexadecimal {
+            position: 7,
+            byte: b'z',
+        }),
+    );
+}
+
+/// An entry under the wrong shard is refused as misplaced.
+#[test]
+fn an_entry_under_the_wrong_shard_is_misplaced() {
+    let label = CacheKey::derive(b"subject").label();
+    let wrong = if label.starts_with("00") { "11" } else { "00" };
+    let path = Path::new("/cache/v1/entries")
+        .join(wrong)
+        .join(format!("{label}.bundle"));
+    assert_eq!(
+        key_of_entry_path(&path),
+        Err(PathRejection::Shard {
+            expected: label[..2].to_owned(),
+            found: wrong.to_owned(),
+        }),
+    );
+}
+
+/// A file that is not a bundle is refused on its extension.
+#[test]
+fn a_non_bundle_file_name_is_refused() {
+    let label = CacheKey::derive(b"subject").label();
+    let path = Path::new("/cache/v1/entries")
+        .join(&label[..2])
+        .join(format!("{label}.metallib"));
+    assert_eq!(key_of_entry_path(&path), Err(PathRejection::Extension));
+}
+
+// -------------------------------------------------------------------------
+// The bundle frame
+// -------------------------------------------------------------------------
+
+fn encoded(subject: &[u8], envelope: &[u8]) -> (CacheKey, Vec<u8>) {
+    bundle::encode(subject, envelope, &Limits::default()).expect("a small bundle encodes")
+}
+
+fn decode_default(bytes: &[u8], key: &CacheKey) -> Result<(), BundleRejection> {
+    bundle::decode(bytes, key, &Limits::default()).map(|_| ())
+}
+
+/// A bundle round-trips its subject and its envelope.
+#[test]
+fn a_bundle_round_trips() {
+    let (key, bytes) = encoded(b"subject", b"envelope-bytes");
+    let view = bundle::decode(&bytes, &key, &Limits::default()).expect("a fresh bundle validates");
+    assert_eq!(view.key, key);
+    assert_eq!(view.subject, b"subject");
+    assert_eq!(view.envelope, b"envelope-bytes");
+}
+
+/// The bundle encoder derives the key rather than accepting one.
+///
+/// This is what makes a bundle filed under a key its subject does not produce
+/// unconstructable through the encoder, rather than merely detectable later.
+#[test]
+fn the_encoder_derives_the_key_from_the_subject() {
+    let (key, _) = encoded(b"subject", b"envelope");
+    assert_eq!(key, CacheKey::derive(b"subject"));
+}
+
+/// Foreign bytes are refused on the magic, before anything else is read.
+#[test]
+fn foreign_bytes_are_refused_on_the_magic() {
+    let key = CacheKey::derive(b"subject");
+    let bytes = vec![0x5a_u8; 256];
+    assert_eq!(decode_default(&bytes, &key), Err(BundleRejection::Magic));
+}
+
+/// A short byte run is refused as truncated rather than indexed into.
+#[test]
+fn a_short_byte_run_is_refused_as_truncated() {
+    let key = CacheKey::derive(b"subject");
+    assert!(matches!(
+        decode_default(&[], &key),
+        Err(BundleRejection::Truncated { found: 0, .. }),
+    ));
+    let (_, bytes) = encoded(b"subject", b"envelope");
+    assert!(matches!(
+        decode_default(&bytes[..16], &key),
+        Err(BundleRejection::Truncated { found: 16, .. }),
+    ));
+}
+
+/// A bundle validated for one key is refused for another.
+///
+/// A valid bundle at the wrong content path is a miss, and this is the check
+/// that makes it one: nothing about the bytes is wrong, only where they were
+/// asked for.
+#[test]
+fn a_bundle_is_refused_for_a_key_it_was_not_published_under() {
+    let (key, bytes) = encoded(b"subject", b"envelope");
+    let other = CacheKey::derive(b"other-subject");
+    assert_eq!(
+        decode_default(&bytes, &other),
+        Err(BundleRejection::KeyMismatch {
+            requested: other.label(),
+            embedded: key.label(),
+        }),
+    );
+}
+
+/// Each framing field is checked, and each rejection names its own boundary.
+///
+/// Written as one table because the property is uniform — every fixed field of
+/// the header refuses a value this build does not write — and a per-field test
+/// would restate the same three lines eleven times.
+#[test]
+fn every_framing_field_refuses_a_value_this_build_does_not_write() {
+    let (key, original) = encoded(b"subject", b"envelope");
+    let corrupt = |at: usize, to: &[u8]| {
+        let mut bytes = original.clone();
+        bytes[at..at + to.len()].copy_from_slice(to);
+        bytes
+    };
+
+    // Schema major, which this build does not read at any other value.
+    assert!(matches!(
+        decode_default(&corrupt(8, &2_u16.to_be_bytes()), &key),
+        Err(BundleRejection::Schema { major: 2, minor: 0 }),
+    ));
+    // Schema minor beyond what this build implements.
+    assert!(matches!(
+        decode_default(&corrupt(10, &1_u16.to_be_bytes()), &key),
+        Err(BundleRejection::Schema { major: 1, minor: 1 }),
+    ));
+    // A digest algorithm tag this build does not implement, refused rather than
+    // inferred from the digest width sitting beside it.
+    assert!(matches!(
+        decode_default(&corrupt(12, &[0xff]), &key),
+        Err(BundleRejection::DigestAlgorithm { tag: 0xff }),
+    ));
+    // A reserved field carrying anything.
+    assert_eq!(
+        decode_default(&corrupt(13, &[1]), &key),
+        Err(BundleRejection::ReservedNotZero),
+    );
+    // A total length that disagrees with the bytes present.
+    assert!(matches!(
+        decode_default(
+            &corrupt(16, &(original.len() as u64 + 1).to_be_bytes()),
+            &key
+        ),
+        Err(BundleRejection::TotalLength { .. }),
+    ));
+}
+
+/// A corrupted section is caught by its digest.
+#[test]
+fn a_corrupted_section_is_caught_by_its_digest() {
+    for (name, purpose, offset_from_end) in [
+        ("envelope", BundleSection::ArtifactEnvelope, 1),
+        ("subject", BundleSection::CompilationSubject, 9),
+    ] {
+        let (key, mut bytes) = encoded(b"subject", b"envelope");
+        let at = bytes.len() - offset_from_end;
+        bytes[at] ^= 1;
+        assert_eq!(
+            decode_default(&bytes, &key),
+            Err(BundleRejection::SectionDigest { purpose }),
+            "{name}",
+        );
+    }
+}
+
+/// A forger that reseals every digest is still refused.
+///
+/// Corrupting bytes and watching a digest reject them proves only that the
+/// digest works. This case rewrites the carried subject *and* its descriptor
+/// digest, so every integrity field in the bundle is internally consistent; what
+/// refuses it is the key no longer being the subject's own digest, which a
+/// forger cannot restore without moving the entry to a different path.
+#[test]
+fn a_resealed_forgery_is_refused_by_the_key_derivation() {
+    let (key, bytes) = encoded(b"subject-a", b"envelope");
+    let (_, forged) = encoded(b"subject-b", b"envelope");
+
+    // Splice the forged body and descriptor table under the original header, so
+    // the bundle claims the original key while carrying the other subject. The
+    // two subjects are the same length, so every offset stays valid and the
+    // total length field still agrees with the bytes present.
+    assert_eq!(
+        bytes.len(),
+        forged.len(),
+        "the fixture keeps offsets aligned"
+    );
+    let mut spliced = forged;
+    spliced[24..24 + DIGEST_BYTES].copy_from_slice(key.as_bytes());
+
+    assert_eq!(
+        decode_default(&spliced, &key),
+        Err(BundleRejection::KeyNotDerivedFromSubject {
+            embedded: key.label(),
+            derived: CacheKey::derive(b"subject-b").label(),
+        }),
+    );
+}
+
+/// A bundle above the configured bound is refused before it is read.
+#[test]
+fn an_oversize_bundle_is_refused_against_the_bound() {
+    let limits = Limits {
+        max_bundle_bytes: 64,
+        ..Limits::default()
+    };
+    let rejection = bundle::encode(b"subject", b"envelope", &limits)
+        .expect_err("a bundle above the bound does not encode");
+    assert!(matches!(rejection, BundleRejection::BundleTooLarge { .. }));
+}
+
+// -------------------------------------------------------------------------
+// Validation on every hit
+// -------------------------------------------------------------------------
+
+/// A published entry is validated again when it is read back.
+#[test]
+fn a_published_entry_validates_when_it_is_read_back() {
+    let scratch = Scratch::new("read-back");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let entry = cache
+        .read_entry(&key, &any_payload)
+        .expect("a published entry validates");
+    assert_eq!(entry.key, key);
+    assert_eq!(entry.envelope, b"envelope");
+    assert_eq!(entry.payload, b"envelope");
+}
+
+/// Every read runs the payload validator, and a validator rejection is a miss
+/// carrying the artifact layer's own failure.
+#[test]
+fn a_payload_rejection_is_a_typed_miss() {
+    let scratch = Scratch::new("payload-rejection");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+
+    let calls = std::cell::Cell::new(0_u32);
+    let refuse = |_: &[u8]| -> Result<(), ArtifactCodecFailure> {
+        calls.set(calls.get() + 1);
+        Err(ArtifactCodecFailure::Malformed {
+            detail: "the payload validator refused".to_owned(),
+        })
+    };
+    let reason = cache
+        .read_entry(&key, &refuse)
+        .expect_err("a refused payload is not a hit");
+    assert_eq!(calls.get(), 1, "the validator runs on every read");
+    assert!(
+        matches!(
+            reason,
+            MissReason::Rejected(EntryRejection::Payload(
+                ArtifactCodecFailure::Malformed { .. }
+            )),
+        ),
+        "{reason}",
+    );
+}
+
+/// The public API pins the artifact decoder as its validator.
+///
+/// Proven through the public surface with bytes that are not an artifact: the
+/// miss carries the artifact layer's own classification, which nothing else in
+/// this crate produces.
+#[test]
+fn the_public_api_validates_the_payload_as_an_artifact() {
+    let scratch = Scratch::new("public-validator");
+    let cache = cache(&scratch);
+    publish(&cache, b"subject", b"not an artifact envelope at all");
+
+    let Lookup::Miss(reason) = cache.lookup(b"subject") else {
+        panic!("a payload that is not an artifact is not a hit");
+    };
+    assert!(
+        matches!(
+            reason,
+            MissReason::Rejected(EntryRejection::Payload(
+                ArtifactCodecFailure::Malformed { .. }
+            )),
+        ),
+        "{reason}",
+    );
+}
+
+/// A corrupt entry is a miss carrying the exact boundary that refused it.
+///
+/// The miss is what ADR 0050 decides; the reason is what keeps it from being
+/// silence. A cache permanently rejecting every entry is visible here.
+#[test]
+fn a_corrupt_entry_is_a_reported_miss() {
+    let scratch = Scratch::new("corrupt-entry");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let path = cache.entry_path(&key);
+    let mut bytes = fs::read(&path).expect("the entry is readable");
+    *bytes.last_mut().expect("the bundle is not empty") ^= 1;
+    fs::write(&path, &bytes).expect("the entry is writable in this test");
+
+    let reason = cache
+        .read_entry(&key, &any_payload)
+        .expect_err("a corrupt entry is not a hit");
+    assert!(
+        matches!(
+            reason,
+            MissReason::Rejected(EntryRejection::Bundle(BundleRejection::SectionDigest {
+                purpose: BundleSection::ArtifactEnvelope,
+            })),
+        ),
+        "{reason}",
+    );
+}
+
+/// An absent entry is an ordinary miss, distinguishable from a rejection.
+#[test]
+fn an_absent_entry_is_distinguishable_from_a_rejected_one() {
+    let scratch = Scratch::new("absent");
+    let cache = cache(&scratch);
+    let reason = cache
+        .read_entry(&CacheKey::derive(b"subject"), &any_payload)
+        .expect_err("nothing is published");
+    assert!(matches!(reason, MissReason::Absent), "{reason}");
+}
+
+/// An entry above the configured bound is refused without being allocated whole.
+#[test]
+fn an_oversize_entry_is_refused_against_the_bound() {
+    let scratch = Scratch::new("oversize-entry");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let stored = fs::metadata(cache.entry_path(&key))
+        .expect("the entry exists")
+        .len();
+
+    let bounded = ExpansionCache::open(cache.root()).with_limits(Limits {
+        max_bundle_bytes: stored - 1,
+        ..Limits::default()
+    });
+    let reason = bounded
+        .read_entry(&key, &any_payload)
+        .expect_err("an entry above the bound is not a hit");
+    assert!(
+        matches!(
+            reason,
+            MissReason::Rejected(EntryRejection::TooLarge { .. })
+        ),
+        "{reason}",
+    );
+}
+
+// -------------------------------------------------------------------------
+// Immutability and atomic publication
+// -------------------------------------------------------------------------
+
+/// Publishing leaves exactly one entry, and it is byte-identical to the bundle
+/// that was validated.
+#[test]
+fn publication_leaves_one_validated_entry() {
+    let scratch = Scratch::new("publication");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let path = cache.entry_path(&key);
+    let stored = fs::read(&path).expect("the entry is readable");
+    let (_, expected) = encoded(b"subject", b"envelope");
+    assert_eq!(
+        stored, expected,
+        "the published bytes are the encoded bundle"
+    );
+}
+
+/// A second call for the same subject hits rather than republishing.
+#[test]
+fn a_second_call_hits_rather_than_rebuilding() {
+    let scratch = Scratch::new("second-call");
+    let cache = cache(&scratch);
+    publish(&cache, b"subject", b"envelope");
+
+    let outcome = cache
+        .resolve(
+            b"subject",
+            || -> Result<Vec<u8>, String> { panic!("a hit must not build") },
+            &any_payload,
+        )
+        .expect("a hit resolves");
+    let ProtocolOutcome::Hit {
+        published, report, ..
+    } = outcome
+    else {
+        panic!("a published subject hits");
+    };
+    assert!(!published, "the second call does not publish");
+    assert!(
+        report.lookup_miss().is_none(),
+        "the lock-free read hit, so nothing missed",
+    );
+}
+
+/// Publication leaves no temporary file behind.
+#[test]
+fn publication_leaves_no_temporary_behind() {
+    let scratch = Scratch::new("no-temporary");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let temporaries = cache
+        .root()
+        .join("v1/tmp")
+        .join(&key.label()[..2])
+        .read_dir()
+        .expect("the temporary directory was created")
+        .count();
+    assert_eq!(temporaries, 0);
+}
+
+/// The `fsync` policy publishes the same bytes as the default policy.
+///
+/// Durability changes what the operating system is asked to persist, never what
+/// a reader accepts. A policy that changed the bytes would make an entry
+/// published under one policy unreadable under the other.
+#[test]
+fn the_durability_policy_does_not_change_what_is_published() {
+    let scratch = Scratch::new("durability");
+    let default = cache(&scratch);
+    let key = publish(&default, b"subject", b"envelope");
+    let under_default = fs::read(default.entry_path(&key)).expect("the entry is readable");
+
+    let synced_scratch = Scratch::new("durability-fsync");
+    let synced = cache(&synced_scratch).with_durability(Durability::Fsync);
+    let synced_key = publish(&synced, b"subject", b"envelope");
+    let under_fsync = fs::read(synced.entry_path(&synced_key)).expect("the entry is readable");
+
+    assert_eq!(key, synced_key);
+    assert_eq!(under_default, under_fsync);
+}
+
+/// A rejected entry is replaced, and its bytes are retained for diagnosis.
+#[test]
+fn a_rejected_entry_is_replaced_and_retained() {
+    let scratch = Scratch::new("replace-rejected");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let path = cache.entry_path(&key);
+    fs::write(&path, b"this is not a bundle").expect("the entry is writable in this test");
+
+    let outcome = cache
+        .resolve(
+            b"subject",
+            || Ok::<_, String>(b"rebuilt-envelope".to_vec()),
+            &any_payload,
+        )
+        .expect("a rebuild resolves");
+    let ProtocolOutcome::Hit {
+        entry,
+        report,
+        published,
+    } = outcome
+    else {
+        panic!("a corrupt entry is rebuilt and republished");
+    };
+    assert!(published);
+    assert_eq!(entry.envelope, b"rebuilt-envelope");
+    assert!(
+        matches!(
+            report.recheck_miss(),
+            Some(MissReason::Rejected(EntryRejection::Bundle(
+                BundleRejection::Truncated { found: 20, .. },
+            ))),
+        ),
+        "the recheck reports why the old entry was refused: {:?}",
+        report.recheck_miss().map(ToString::to_string),
+    );
+    let Some(QuarantineOutcome::Retained { path: retained }) = report.quarantine() else {
+        panic!(
+            "the refused bytes are retained: {:?}",
+            report.quarantine().map(ToString::to_string),
+        );
+    };
+    assert_eq!(
+        fs::read(retained).expect("the quarantined bytes are readable"),
+        b"this is not a bundle",
+        "quarantine keeps the exact bytes that were refused",
+    );
+}
+
+/// Reaching the quarantine bound discards evidence loudly rather than silently.
+#[test]
+fn the_quarantine_bound_is_reported_when_it_discards() {
+    let scratch = Scratch::new("quarantine-bound");
+    let cache = cache(&scratch).with_limits(Limits {
+        max_quarantine_bytes: 1,
+        ..Limits::default()
+    });
+    let key = publish(&cache, b"subject", b"envelope");
+    fs::write(cache.entry_path(&key), b"this is not a bundle")
+        .expect("the entry is writable in this test");
+
+    let outcome = cache
+        .resolve(
+            b"subject",
+            || Ok::<_, String>(b"rebuilt".to_vec()),
+            &any_payload,
+        )
+        .expect("a rebuild resolves");
+    let ProtocolOutcome::Hit { report, .. } = outcome else {
+        panic!("a corrupt entry is rebuilt");
+    };
+    assert!(
+        matches!(
+            report.quarantine(),
+            Some(QuarantineOutcome::BoundReached { discarded: 20, .. }),
+        ),
+        "{:?}",
+        report.quarantine().map(ToString::to_string),
+    );
+}
+
+// -------------------------------------------------------------------------
+// The lock, and the recheck it exists for
+// -------------------------------------------------------------------------
+
+/// One key's lock excludes a second holder.
+///
+/// Two *threads* of one process, which is what this crate can test. The
+/// cross-process case is the harness's, and nothing here claims it.
+#[test]
+fn one_key_lock_excludes_a_second_holder() {
+    let scratch = Scratch::new("lock-exclusion");
+    let cache = cache(&scratch);
+    let key = CacheKey::derive(b"subject");
+    cache
+        .prepare_directories(&key)
+        .expect("the namespace is creatable");
+    let path = cache.lock_path(&key);
+
+    let held = KeyLock::try_acquire(&path)
+        .expect("the lock file opens")
+        .expect("an unheld lock is free");
+    // A second descriptor on the same file: `flock` associates the lock with the
+    // open file, so this is the same observation a second process would make.
+    assert!(
+        KeyLock::try_acquire(&path)
+            .expect("the lock file opens")
+            .is_none(),
+        "a held lock is not free",
+    );
+    held.release().expect("the lock releases");
+    assert!(
+        KeyLock::try_acquire(&path)
+            .expect("the lock file opens")
+            .is_some(),
+        "a released lock is free again",
+    );
+}
+
+/// A waiter rechecks after taking the lock and hits what the holder published.
+///
+/// The recheck is the reason the lock is taken *before* building rather than
+/// after: without it, every waiter would rebuild what it waited for.
+#[test]
+fn a_waiter_rechecks_after_the_lock_and_does_not_rebuild() {
+    let scratch = Scratch::new("post-lock-recheck");
+    let cache = cache(&scratch);
+    let key = CacheKey::derive(b"subject");
+    cache
+        .prepare_directories(&key)
+        .expect("the namespace is creatable");
+
+    // Hold the key's lock, publish underneath it, then release. A waiter that
+    // did not recheck would rebuild; one that does, hits.
+    let held = cache.acquire_lock(&key).expect("the lock is takeable");
+    let (waiter_started, started) = mpsc::channel();
+    let waiting_cache = cache.clone();
+    let waiter = thread::spawn(move || {
+        waiter_started.send(()).expect("the test thread is alive");
+        waiting_cache.resolve(
+            b"subject",
+            || -> Result<Vec<u8>, String> { Err("a waiter that rebuilds fails this test".into()) },
+            &any_payload,
+        )
+    });
+    started.recv().expect("the waiter starts");
+
+    // The waiter is either blocked on the lock or about to be. Publishing here
+    // and releasing is what it must observe on its recheck.
+    let (_, bytes) = encoded(b"subject", b"envelope");
+    let temporary = cache.root().join("staged");
+    fs::write(&temporary, &bytes).expect("the staging file is writable");
+    fs::rename(&temporary, cache.entry_path(&key)).expect("the entry publishes");
+    held.release().expect("the lock releases");
+
+    let outcome = waiter
+        .join()
+        .expect("the waiter does not panic")
+        .expect("the waiter resolves");
+    match outcome {
+        ProtocolOutcome::Hit {
+            entry,
+            published,
+            report,
+        } => {
+            assert!(!published, "the waiter did not publish");
+            assert_eq!(entry.envelope, b"envelope");
+            // Either the lock-free read already saw it or the recheck did. Both
+            // are correct; what must not happen is a rebuild, and the build
+            // closure returns an error, so a rebuild would have failed the call.
+            assert!(
+                report.lookup_miss().is_none() || report.recheck_miss().is_none(),
+                "one of the two reads hit",
+            );
+        }
+        ProtocolOutcome::Uncached { .. } => panic!("the waiter must not fall open here"),
+    }
+}
+
+/// Concurrent callers for one key produce one entry, and every caller sees it.
+#[test]
+fn concurrent_callers_for_one_key_agree_on_one_entry() {
+    const THREADS: usize = 8;
+    let scratch = Scratch::new("concurrent-identical");
+    let cache = cache(&scratch);
+    let builds = std::sync::Arc::new(AtomicU32::new(0));
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let cache = cache.clone();
+            let builds = std::sync::Arc::clone(&builds);
+            thread::spawn(move || {
+                cache
+                    .resolve(
+                        b"subject",
+                        || {
+                            builds.fetch_add(1, Ordering::SeqCst);
+                            Ok::<_, String>(b"envelope".to_vec())
+                        },
+                        &any_payload,
+                    )
+                    .expect("every caller resolves")
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        match handle.join().expect("no caller panics") {
+            ProtocolOutcome::Hit { entry, .. } => assert_eq!(entry.envelope, b"envelope"),
+            ProtocolOutcome::Uncached { report, .. } => panic!(
+                "a caller fell open: {:?}",
+                report.publication_refusal().map(ToString::to_string),
+            ),
+        }
+    }
+    // The lock is what suppresses duplicate work, and it is deliberately not the
+    // correctness boundary: the assertion that matters is the one above, that
+    // every caller got the same validated bytes. This one records that the
+    // suppression works at all.
+    assert_eq!(
+        builds.load(Ordering::SeqCst),
+        1,
+        "the per-key lock suppressed duplicate builds",
+    );
+}
+
+/// Concurrent callers for distinct keys each publish their own entry.
+#[test]
+fn concurrent_callers_for_distinct_keys_do_not_collide() {
+    const THREADS: usize = 8;
+    let scratch = Scratch::new("concurrent-distinct");
+    let cache = cache(&scratch);
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|index| {
+            let cache = cache.clone();
+            thread::spawn(move || {
+                let subject = format!("subject-{index}");
+                let envelope = format!("envelope-{index}");
+                let outcome = cache
+                    .resolve(
+                        subject.as_bytes(),
+                        || Ok::<_, String>(envelope.clone().into_bytes()),
+                        &any_payload,
+                    )
+                    .expect("every caller resolves");
+                let ProtocolOutcome::Hit { entry, .. } = outcome else {
+                    panic!("every distinct key publishes");
+                };
+                assert_eq!(entry.envelope, envelope.as_bytes());
+                assert_eq!(entry.key, CacheKey::derive(subject.as_bytes()));
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("no caller panics");
+    }
+}
+
+// -------------------------------------------------------------------------
+// Falling open
+// -------------------------------------------------------------------------
+
+/// An unusable root produces a validated uncached result, with the reason.
+#[test]
+fn an_unusable_root_falls_open_with_a_reason() {
+    let scratch = Scratch::new("unusable-root");
+    let occupied = scratch.root().join("occupied");
+    fs::write(&occupied, b"a regular file where a directory must be")
+        .expect("the scratch directory is writable");
+    let cache = ExpansionCache::open(&occupied);
+
+    let outcome = cache
+        .resolve(
+            b"subject",
+            || Ok::<_, String>(b"envelope".to_vec()),
+            &any_payload,
+        )
+        .expect("an unusable cache still resolves");
+    let ProtocolOutcome::Uncached { entry, report } = outcome else {
+        panic!("an unusable root cannot publish");
+    };
+    assert_eq!(entry.envelope, b"envelope");
+    assert!(
+        report.publication_refusal().is_some(),
+        "the refusal is reported rather than silent",
+    );
+}
+
+/// A build failure is a hard error, not a cache fall-open.
+#[test]
+fn a_build_failure_is_not_absorbed_by_the_cache() {
+    let scratch = Scratch::new("build-failure");
+    let cache = cache(&scratch);
+    let failure = cache
+        .resolve(
+            b"subject",
+            || Err::<Vec<u8>, _>("the compiler failed".to_owned()),
+            &any_payload,
+        )
+        .expect_err("a build failure is an error");
+    assert!(matches!(failure, PublishFailure::Build(_)), "{failure:?}");
+    assert!(
+        !cache.entry_path(&CacheKey::derive(b"subject")).exists(),
+        "a failed build publishes nothing",
+    );
+}
+
+/// An invalid produced artifact is a hard error, not a cache fall-open.
+#[test]
+fn an_invalid_produced_artifact_is_not_absorbed_by_the_cache() {
+    let scratch = Scratch::new("invalid-artifact");
+    let cache = cache(&scratch);
+    let failure = cache
+        .get_or_publish(b"subject", || {
+            Ok::<_, String>(b"not an artifact envelope".to_vec())
+        })
+        .expect_err("bytes that are not an artifact are an error");
+    assert!(
+        matches!(failure, PublishFailure::Artifact(_)),
+        "{failure:?}"
+    );
+    assert!(
+        !cache.entry_path(&CacheKey::derive(b"subject")).exists(),
+        "an invalid artifact publishes nothing",
+    );
+}
+
+// -------------------------------------------------------------------------
+// Eviction and sweeping
+// -------------------------------------------------------------------------
+
+/// Eviction removes the entry and retains the lock file.
+///
+/// Retaining it is not tidiness. Unlinking a locked file lets a later process
+/// create a different inode at the same path and take an independent lock while
+/// an earlier process still holds the first, which splits contenders into two
+/// groups that do not exclude each other.
+#[test]
+fn eviction_removes_the_entry_and_retains_the_lock_file() {
+    let scratch = Scratch::new("eviction");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let lock = cache.lock_path(&key);
+    assert!(lock.exists(), "publishing created the lock file");
+
+    assert_eq!(
+        cache.evict(&key).expect("eviction succeeds"),
+        super::store::Eviction::Removed,
+    );
+    assert!(!cache.entry_path(&key).exists(), "the entry is gone");
+    assert!(lock.exists(), "the lock file is retained");
+    assert_eq!(
+        cache.evict(&key).expect("a second eviction succeeds"),
+        super::store::Eviction::Absent,
+    );
+}
+
+/// A temporary younger than the grace period is retained rather than swept.
+#[test]
+fn a_young_temporary_is_retained_by_the_sweep() {
+    let scratch = Scratch::new("sweep-young");
+    let cache = cache(&scratch);
+    let key = CacheKey::derive(b"subject");
+    cache
+        .prepare_directories(&key)
+        .expect("the namespace is creatable");
+    let abandoned = cache
+        .root()
+        .join("v1/tmp")
+        .join(&key.label()[..2])
+        .join(format!("{}.999.0.0.tmp", key.label()));
+    fs::write(&abandoned, b"abandoned").expect("the temporary is writable");
+
+    let report = cache.sweep_temporaries(&key).expect("the sweep succeeds");
+    assert_eq!(report.retained, 1);
+    assert_eq!(report.removed, 0);
+    assert!(abandoned.exists(), "a live writer's temporary survives");
+}
+
+/// A temporary older than the grace period is swept, and its bytes are counted.
+#[test]
+fn an_aged_temporary_is_swept() {
+    let scratch = Scratch::new("sweep-aged");
+    let cache = cache(&scratch).with_limits(Limits {
+        temporary_grace: Duration::ZERO,
+        ..Limits::default()
+    });
+    let key = CacheKey::derive(b"subject");
+    cache
+        .prepare_directories(&key)
+        .expect("the namespace is creatable");
+    let directory = cache.root().join("v1/tmp").join(&key.label()[..2]);
+    let abandoned = directory.join(format!("{}.999.0.0.tmp", key.label()));
+    fs::write(&abandoned, b"abandoned").expect("the temporary is writable");
+    let unrelated = directory.join("something-else.tmp");
+    fs::write(&unrelated, b"not this key").expect("the file is writable");
+
+    let report = cache.sweep_temporaries(&key).expect("the sweep succeeds");
+    assert_eq!(report.removed, 1);
+    assert_eq!(report.bytes, 9);
+    assert!(!abandoned.exists());
+    assert!(
+        unrelated.exists(),
+        "a sweep holding one key's lock touches only that key's temporaries",
+    );
+}

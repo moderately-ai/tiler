@@ -6,7 +6,7 @@ title: "Use immutable self-validating expansion-cache entries"
 topics: ["cache", "artifacts", "concurrency", "durability"]
 catalog_group: "artifacts-build-toolchains"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.artifact-abi", "tiler.contract.frontend-integration", "tiler.contract.metal-backend"]
 evidence: ["tiler.research.cache.crash-race-protocol"]
 ticket: "cache-crash-race-harness"
@@ -62,3 +62,16 @@ would make an optional accelerator a correctness dependency.
 
 Applies to artifact publication and inline expansion. The crash/race report and
 process harness exercise the accepted protocol; production durability remains bounded.
+
+[ADR 0082](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) names the
+component that implements this record — `tiler-cache` — after the previously
+assigned owner proved unable to reach the governed digest this decision requires
+it to validate against. `implementation_status` is `partial` rather than
+`complete`: the namespace, locking, bundle, validation, publication, replacement,
+and reporting are implemented and tested, and three things this record implies
+are not. The complete compilation key is not yet composed as one canonical byte
+run (`compose-the-complete-expansion-cache-subject`), the cross-process crash and
+race behaviour is exercised only against the spike's miniature frame
+(`port-the-cache-harness-to-the-production-bundle`), and the durability default
+is this record's recommendation rather than a measured one
+(`measure-expansion-cache-durability-policies`).

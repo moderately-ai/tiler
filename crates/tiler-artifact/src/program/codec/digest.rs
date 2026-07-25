@@ -20,11 +20,27 @@
 //! The implementation is FIPS 180-4 SHA-256 and is pinned by the standard
 //! published test vectors plus the three message lengths that exercise every
 //! padding branch.
+//!
+//! # Why this module is public
+//!
+//! Being the *only* place that maps the governed tag to an implementation is
+//! the whole point, and that property is what a second component reaching for a
+//! hash function would destroy. ADR 0050 requires the expansion cache to
+//! validate a stored bundle's section digests on every hit; Tom decided on
+//! 2026-07-25 that the cache is a dedicated crate reaching this algorithm rather
+//! than owning one. [`DigestAlgorithm`] and [`Digest`] are therefore public.
+//!
+//! What stays private is as deliberate as what does not. `digest_parts` is
+//! crate-private because its documented contract puts unambiguity on the caller,
+//! and every use inside this crate discharges it with a governed domain followed
+//! by fixed-width qualifiers. An outside caller gets [`DigestAlgorithm::digest`],
+//! which takes exactly one domain and one run, and therefore cannot express the
+//! ambiguous concatenation.
 
 use std::fmt;
 
 /// Byte width of one governed artifact digest.
-pub(crate) const DIGEST_BYTES: usize = 32;
+pub const DIGEST_BYTES: usize = 32;
 
 /// The governed digest algorithm one envelope was written with.
 ///
@@ -33,31 +49,34 @@ pub(crate) const DIGEST_BYTES: usize = 32;
 /// have to invent a hash function — so a second admitted algorithm must be a
 /// compile error at every such site rather than a silently wrong digest.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum DigestAlgorithm {
+pub enum DigestAlgorithm {
     /// FIPS 180-4 SHA-256, governed as `tiler.digest.sha-256.v1`.
     Sha256,
 }
 
 impl DigestAlgorithm {
     /// The algorithm this build of the crate writes.
-    pub(crate) const GOVERNED: Self = Self::Sha256;
+    pub const GOVERNED: Self = Self::Sha256;
 
     /// Returns the governed wire tag of this algorithm.
-    pub(crate) const fn tag(self) -> u8 {
+    #[must_use]
+    pub const fn tag(self) -> u8 {
         match self {
             Self::Sha256 => 0x01,
         }
     }
 
     /// Returns the governed algorithm key, for diagnostics and explain output.
-    pub(crate) const fn governed_key(self) -> &'static str {
+    #[must_use]
+    pub const fn governed_key(self) -> &'static str {
         match self {
             Self::Sha256 => "tiler.digest.sha-256.v1",
         }
     }
 
     /// Resolves a governed wire tag, or `None` for an unrecognized algorithm.
-    pub(crate) const fn from_tag(tag: u8) -> Option<Self> {
+    #[must_use]
+    pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             0x01 => Some(Self::Sha256),
             _ => None,
@@ -65,7 +84,13 @@ impl DigestAlgorithm {
     }
 
     /// Digests `bytes` under an explicit domain separator.
-    pub(crate) fn digest(self, domain: &[u8], bytes: &[u8]) -> Digest {
+    ///
+    /// The domain is a prefix, so separation rests on no admitted domain being
+    /// a prefix of another. Every domain this crate writes is one of its own
+    /// constants and the property is checked over them; a caller outside this
+    /// crate that introduces a domain owns the same obligation for its own set.
+    #[must_use]
+    pub fn digest(self, domain: &[u8], bytes: &[u8]) -> Digest {
         self.digest_parts(&[domain, bytes])
     }
 
@@ -100,28 +125,36 @@ impl fmt::Display for DigestAlgorithm {
 /// public constructor, so no caller can assemble a digest naming bytes that
 /// were never hashed (ADR 0074 convention 2).
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct Digest([u8; DIGEST_BYTES]);
+pub struct Digest([u8; DIGEST_BYTES]);
 
 impl Digest {
     /// Wraps digest bytes read from an envelope being validated.
     ///
     /// The result is a *claim* until it is compared with a digest this crate
     /// derived; decoding never treats a read digest as evidence on its own.
-    pub(crate) const fn from_wire(bytes: [u8; DIGEST_BYTES]) -> Self {
+    #[must_use]
+    pub const fn from_wire(bytes: [u8; DIGEST_BYTES]) -> Self {
         Self(bytes)
     }
 
     /// Returns the exact digest bytes.
-    pub(crate) const fn as_bytes(&self) -> &[u8; DIGEST_BYTES] {
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; DIGEST_BYTES] {
         &self.0
     }
 
     /// Returns the lowercase hexadecimal rendering, for diagnostics and fixtures.
-    pub(crate) fn label(&self) -> String {
+    ///
+    /// Indexed from a sixteen-character table rather than converted, so the
+    /// four-bit value that selects a character cannot be out of range and there
+    /// is no unreachable failure to document or to handle.
+    #[must_use]
+    pub fn label(&self) -> String {
+        const DIGITS: [u8; 16] = *b"0123456789abcdef";
         let mut rendered = String::with_capacity(DIGEST_BYTES * 2);
         for byte in self.0 {
-            rendered.push(char::from_digit(u32::from(byte >> 4), 16).expect("nibble is hex"));
-            rendered.push(char::from_digit(u32::from(byte & 0x0f), 16).expect("nibble is hex"));
+            rendered.push(char::from(DIGITS[usize::from(byte >> 4)]));
+            rendered.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
         }
         rendered
     }
