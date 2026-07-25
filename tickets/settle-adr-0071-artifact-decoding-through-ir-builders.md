@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [update-adr-0071-schedule-builder-boundary, prototype-runtime-artifact-validation, carry-the-metal-payload-in-an-artifact-envelope]
 scopes: [contracts/decisions]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, artifact, ir]
 ---
