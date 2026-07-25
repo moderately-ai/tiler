@@ -498,3 +498,160 @@ def test_lock_verification_runs_after_a_failed_phase(monkeypatch: pytest.MonkeyP
     with pytest.raises(check_rust.GateFailure, match="boom"):
         check_rust.run_gate({})
     assert phases == ["verify-locks"]
+
+
+PLANTED_PACKAGES = {"planted": "prototypes/planted"}
+PLANTED_MEMBERS: dict[str, object] = {"planted": {}}
+PLANTED_PATH = "prototypes/planted/src/buffer.rs"
+PLANTED_ITEM = "pub fn write(target: &Buffer)"
+PLANTED_PIN = {(PLANTED_PATH, PLANTED_ITEM): "planted reason"}
+# The admitted form, verbatim in shape: a four-line attribute whose `reason` is
+# on its own line, followed by a second attribute before the signature.
+ADMITTED_SITE = (
+    "//! `unsafe_code` in prose must not register as a site.\n"
+    "#[allow(\n"
+    "    unsafe_code,\n"
+    '    reason = "planted reason"\n'
+    ")]\n"
+    "#[must_use]\n"
+    "pub fn write(target: &Buffer) {\n"
+    "}\n"
+)
+
+
+def planted_source(tmp_path: Path, body: str) -> Path:
+    """Write one synthetic governed package holding a single Rust source file."""
+    root = tmp_path / "repo"
+    source = root / "prototypes/planted/src"
+    source.mkdir(parents=True)
+    (source / "buffer.rs").write_text(body, encoding="utf-8")
+    return root
+
+
+def unsafe_errors(root: Path, admitted: dict[tuple[str, str], str]) -> str:
+    """Render site-pin violations for concise assertions."""
+    return "\n".join(
+        check_workspace.validate_unsafe_site_pins(
+            root,
+            package_dirs=PLANTED_PACKAGES,
+            admitted=admitted,
+            diverging_members=PLANTED_MEMBERS,
+        )
+    )
+
+
+def test_the_checked_in_unsafe_sites_match_their_pins() -> None:
+    """Keep the tree conforming to the per-site half of ADR 0079.
+
+    The scan result is compared to the pin as well as to the empty error list,
+    because a scan that reached nothing would also report no violations against
+    a table it never looked at.
+    """
+    assert check_workspace.validate_unsafe_site_pins(REPOSITORY_ROOT) == []
+    found, errors = check_workspace.scan_unsafe_allow_sites(
+        REPOSITORY_ROOT, check_workspace.PACKAGE_DIRS
+    )
+    assert errors == []
+    assert found == check_workspace.ADMITTED_UNSAFE_SITES
+    assert found
+
+
+def test_the_admitted_multi_line_form_is_recognized_as_one_site(tmp_path: Path) -> None:
+    """A per-line search splits the landed four-line attribute; this must not."""
+    root = planted_source(tmp_path, ADMITTED_SITE)
+    assert unsafe_errors(root, PLANTED_PIN) == ""
+    found, errors = check_workspace.scan_unsafe_allow_sites(root, PLANTED_PACKAGES)
+    assert errors == []
+    assert found == PLANTED_PIN
+
+
+def test_an_added_site_fails_until_it_is_pinned(tmp_path: Path) -> None:
+    """ADR 0079 makes a third site a new decision, not an application of one."""
+    added = ADMITTED_SITE + (
+        '#[allow(unsafe_code, reason = "second")]\npub fn read(target: &Buffer) {\n}\n'
+    )
+    root = planted_source(tmp_path, added)
+    assert "`pub fn read(target: &Buffer)` admits unsafe_code and is not pinned" in unsafe_errors(
+        root, PLANTED_PIN
+    )
+
+
+def test_a_moved_site_fails_even_though_the_count_is_unchanged(tmp_path: Path) -> None:
+    """The failure a count predicate cannot see: one site added, one removed."""
+    moved = ADMITTED_SITE.replace("pub fn write(target: &Buffer)", "pub fn stash(target: &Buffer)")
+    root = planted_source(tmp_path, moved)
+    errors = unsafe_errors(root, PLANTED_PIN)
+    assert "`pub fn stash(target: &Buffer)` admits unsafe_code and is not pinned" in errors
+    assert f"pinned site `{PLANTED_ITEM}` is gone" in errors
+
+
+def test_a_removed_site_fails_until_its_pin_is_removed(tmp_path: Path) -> None:
+    root = planted_source(tmp_path, "pub fn write(target: &Buffer) {\n}\n")
+    assert f"pinned site `{PLANTED_ITEM}` is gone" in unsafe_errors(root, PLANTED_PIN)
+
+
+def test_a_weakened_reason_fails_although_the_site_is_unchanged(tmp_path: Path) -> None:
+    """The `reason` is ADR 0079 item 3's second condition, so it is pinned too."""
+    weakened = ADMITTED_SITE.replace('"planted reason"', '"it is fine"')
+    root = planted_source(tmp_path, weakened)
+    assert "states reason 'it is fine', pinned as 'planted reason'" in unsafe_errors(
+        root, PLANTED_PIN
+    )
+
+
+def test_a_site_without_a_reason_is_rejected(tmp_path: Path) -> None:
+    root = planted_source(tmp_path, "#[allow(unsafe_code)]\npub fn write(target: &Buffer) {\n}\n")
+    assert "admits unsafe_code without the `reason`" in unsafe_errors(root, {})
+
+
+def test_the_token_outside_a_recognized_attribute_is_reported(tmp_path: Path) -> None:
+    """A `cfg_attr`, macro, or string literal must stop the gate, not pass unseen."""
+    root = planted_source(
+        tmp_path,
+        '#[cfg_attr(target_os = "macos", allow(unsafe_code))]\n'
+        "pub fn write(target: &Buffer) {\n}\n",
+    )
+    assert "`unsafe_code` appears outside a recognized" in unsafe_errors(root, {})
+
+
+def test_prose_mentioning_the_lint_is_not_a_site(tmp_path: Path) -> None:
+    """`buffer.rs`'s own module documentation names the lint three times."""
+    root = planted_source(
+        tmp_path,
+        "//! The crate denies `unsafe_code`.\n// unsafe_code again.\npub fn write() {\n}\n",
+    )
+    assert unsafe_errors(root, {}) == ""
+
+
+def test_a_bracket_inside_a_reason_does_not_end_the_attribute(tmp_path: Path) -> None:
+    """Counting brackets inside a literal would close the span early."""
+    body = ADMITTED_SITE.replace('"planted reason"', '"copy_nonoverlapping(src, dst) over &[f32]"')
+    root = planted_source(tmp_path, body)
+    found, errors = check_workspace.scan_unsafe_allow_sites(root, PLANTED_PACKAGES)
+    assert errors == []
+    assert found == {(PLANTED_PATH, PLANTED_ITEM): "copy_nonoverlapping(src, dst) over &[f32]"}
+
+
+def test_a_multi_line_trailing_attribute_is_skipped_whole(tmp_path: Path) -> None:
+    """Its continuation must not be mistaken for the admitted item's signature."""
+    body = ADMITTED_SITE.replace(
+        "#[must_use]\n", '#[cfg_attr(\n    target_os = "macos",\n    must_use\n)]\n'
+    )
+    root = planted_source(tmp_path, body)
+    found, errors = check_workspace.scan_unsafe_allow_sites(root, PLANTED_PACKAGES)
+    assert errors == []
+    assert found == PLANTED_PIN
+
+
+def test_a_pin_outside_a_diverging_member_is_rejected(tmp_path: Path) -> None:
+    """A site can only compile where the workspace `forbid` was replaced."""
+    root = planted_source(tmp_path, ADMITTED_SITE)
+    errors = "\n".join(
+        check_workspace.validate_unsafe_site_pins(
+            root,
+            package_dirs=PLANTED_PACKAGES,
+            admitted=PLANTED_PIN,
+            diverging_members={},
+        )
+    )
+    assert 'inherits the workspace `unsafe_code = "forbid"`' in errors
