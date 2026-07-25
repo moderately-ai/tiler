@@ -33,3 +33,13 @@ Decide explicitly whether a `CapabilityFact`'s provenance names the profile that
 ## Closes when
 
 A target profile identity and a feasibility rule set identity exist as separate types, every provenance site names the one it means, a consumer can build both `TargetProfileRef` and `FeasibilityRuleSetRef` with no invented value, and `uv run --locked python scripts/check_repository.py` passes.
+
+## Measured scope, and an answer to this ticket's own open question
+
+**Size, read rather than estimated.** `grep -rn "ProfileIdentity" crates/tiler-compiler/src/` returns 16 lines across two files — 14 in `feasibility.rs`, 2 in `physical.rs`. The ticket body above says the split means "rewriting every `FactProvenance` in the feasibility layer"; that overstated it. `FactProvenance` is one struct with one field (`feasibility.rs:278-287`) and one constructor, `declared_by`. Most of the 14 sites are test fixtures.
+
+**The provenance question, answered by what the code means.** The ticket asks whether a `CapabilityFact`'s provenance names the profile that declared it, the rule set that admitted it, or both. It should name the **target profile**. A capability fact is a *bound* — "workgroup threads ≤ 1" — and a profile is what declares that bound; the rule set governs how a bound is compared against a requirement, not what the bound is. The existing constructor is already named `declared_by` and documented "Records that a fact was declared by `profile`", so the code already means the profile and only the type is wrong.
+
+**The genuine difficulty, which is not the rename.** `ProfileIdentity::version` is documented as "the feasibility-rule identity of the profile: two profiles that would evaluate predicates differently must not share a version" — a *profile* versioning requirement expressed through a *rule* version. So the conflation is not merely two fields in one struct; it encodes a real invariant that must survive the split. After splitting, something must still guarantee that a profile whose predicates evaluate differently is distinguishable. `carry-the-target-profile-descriptor-identity-into-the-plan` supplies the mechanism: the canonical descriptor already covers every fact's axis, bound, phase, authority, and validity, so two profiles that evaluate predicates differently already have different descriptors without relying on a shared version counter. Confirm that before removing the version from the profile's side, rather than assuming the descriptor subsumes it.
+
+**Do not** simply rename `ProfileIdentity` to `TargetProfileIdentity` and add a second struct. The version field has to be assigned to one side or the other with a stated reason, and the invariant above is what decides it.
