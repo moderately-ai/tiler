@@ -97,4 +97,19 @@ naming hazard ADR 0074 also left open.
 
 **What remains here.** The `fusion_legality::effect_tag` bullet is untouched and still two-step behind `resolve-non-exhaustive-recognizer-hole`. The two tag-form deviations also remain: `b"tiler.schedule.v1"` is still the one domain tag in the workspace that is not NUL-terminated, and `push_numerical` still writes `profile_key` NUL-terminated rather than length-prefixed. Both were deliberately left out of that change so it would not absorb this ticket's scope.
 
+## Measurement 2026-07-25: the remaining `tiler-ir` half is not landable inside `implementation/ir`
+
+An `implementation/ir` worker claimed this, implemented both remaining tag-form edits in `crates/tiler-ir/src/schedule/model.rs` — `b"tiler.schedule.v1"` to `b"tiler.schedule.v1\0"`, and `profile_key` from NUL-terminated to `crate::identity::push_slice` — measured the blast radius, and **reverted**. The ticket now records what it costs so the next worker does not rediscover it.
+
+**Measurement (macOS arm64, pinned nightly, base `9608997`).** `cargo nextest run --workspace --no-fail-fast` goes from 769 passing to 764 passing and 5 failing:
+
+- `tiler-ir schedule::builder::tests::the_strict_f32_region_has_its_recorded_canonical_identity` — the pinned scheduled-region identity. In scope.
+- `tiler-metal tests::{pointwise,single_axis_reduction,multi_axis_reduction,fused_reduction}_matches_its_golden_source` — **out of scope.**
+
+**Why the Metal goldens are not incidental.** The generated MSL embeds the identities in its own text: the entry point is named `tiler_kernel_<kernel identity digest>`, and the header comment carries both `kernel identity digest:` and `scheduled region identity digest:`. For the pointwise golden the failure is `5eb771d4f02610db`/`a82a4d1c67a8aa44` becoming `56c4136874313b48`/`8747500aa18bd2fb`. Re-baselining therefore means rewriting all four `crates/tiler-metal/goldens/*.metal` files, which is `implementation/metal`.
+
+**Why that was refused rather than done.** This ticket declares `implementation/ir` and `implementation/compiler`, not `implementation/metal`. `tkt guard` shows six open tickets holding `implementation/metal` — `prototype-metal-bundle-assembly`, `prototype-metal-kir-lowering`, `prototype-metal-numerical-realization`, `declare-metal-numerical-honourability`, `compile-golden-msl-through-the-aot-driver-in-the-gate`, and `choose-one-owner-for-apple-target-vocabulary` — so re-baselining goldens underneath them would land an identity shift in the middle of live work in a scope this ticket never claimed.
+
+**Consequence for scheduling.** Nothing that remains here is landable within `implementation/ir` alone. The `effect_tag` half is `tiler-compiler` and still two-step behind `resolve-non-exhaustive-recognizer-hole`; both tag-form edits ripple into `implementation/metal`. **Add `implementation/metal` to this ticket's scopes before dispatching it**, and dispatch it to a worker who holds all three, or sequence it after the open Metal tickets close. The first re-baseline (`widen-numerical-vocabulary-and-complete-identity`) declared `implementation/metal` for exactly this reason; this ticket does not, and that is the gap.
+
 **One re-baseline has already happened**, so this ticket's remaining edits are a *second* deliberate re-baseline rather than the first. Recorded shifts, so the next one can be told apart from drift: scheduled-region identity for the strict-`f32` pointwise fixture went 192 -> 194 bytes (`sha256 d900fe4a…` -> `d221e1a3…`, pinned as exact hex in `builder.rs`), kernel identity 607 -> 612 bytes (`sha256 39804fc0…` -> `75181a5c…`), artifact-program identity 12833 -> 12866 bytes (`sha256 3a622133…` -> `271e9e35…`), and the four `crates/tiler-metal/goldens/*.metal` digests moved with them.
