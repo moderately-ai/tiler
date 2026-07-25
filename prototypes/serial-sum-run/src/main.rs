@@ -1283,6 +1283,34 @@ mod tests {
     //! evidence about what the producer emits; `prototypes/serial-sum-compile`
     //! owns that, and the binary above carries these same probes onto a real
     //! artifact on hardware.
+    //!
+    //! # Why this is not the duplication a closed ticket rejected
+    //!
+    //! `share-the-serial-sum-artifact-assembler` considered exactly this file as
+    //! its option (c) — "duplicate the assembler into `prototypes/serial-sum-run`"
+    //! — and rejected it, on the ground that "two independently maintained
+    //! descriptions of one compilation is the exact defect the routing ticket
+    //! exists to remove". That rejection is correct and still binding for the
+    //! case it was about, and it does not cover this one. The distinction is not
+    //! size: [`assemble`] is comparable in length to the producer's.
+    //!
+    //! It was about an assembler on the **proof's own path**, giving the runner
+    //! an in-process `VerifiedArtifactProgram` to dispatch from *instead of* the
+    //! producer's file. Two such assemblers really are two descriptions of one
+    //! compilation, and the proof would have had no way to tell which it ran.
+    //! This one is `#[cfg(test)]`, reaches no device, and is never named by
+    //! [`run`]: the hardware proof still reads the producer's envelope, and this
+    //! assembly cannot substitute for it. Nor does anything here compare the two
+    //! or claim they agree — the fixture's only obligation is to be *a* valid
+    //! artifact, which the artifact layer decides on its own terms.
+    //!
+    //! What that leaves is a real and bounded drift risk, stated rather than
+    //! dismissed: a builder or encoder change breaks this at compile time, but a
+    //! change to what the *producer chooses* to package — a deferred predicate,
+    //! a second variant — would leave this fixture valid and no longer shaped
+    //! like the artifact it stands in for. It would then exercise a different
+    //! legal envelope, which is a weaker probe rather than a wrong one, and the
+    //! hardware run is what would notice.
 
     use super::{
         BACKEND_KEY, ProbeSubject, REPRESENTATION_KEY, ROWS, bind_interface, host_environment,
