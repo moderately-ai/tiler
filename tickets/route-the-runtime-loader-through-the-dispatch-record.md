@@ -1,7 +1,7 @@
 ---
 id: route-the-runtime-loader-through-the-dispatch-record
 title: Route the runtime loader through the projected dispatch record
-status: todo
+status: in-progress
 priority: p1
 dependencies: [expose-the-dispatch-record-on-a-decoded-artifact]
 related: [route-the-runtime-proof-through-the-artifact-envelope, prototype-runtime-artifact-validation]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, artifact]
+claimed_from: todo
+assignee: agent-bypass
+lease_expires_at: 1785011575
 ---
 `expose-the-dispatch-record-on-a-decoded-artifact` projected the dispatch record onto `DecodedArtifact`. `crates/tiler-runtime` was written against the surface that existed before it, so three of its statements are now false and one of its workarounds is now unnecessary. This ticket is the runtime-side follow-through; it holds `implementation/runtime`, which that ticket did not.
 
