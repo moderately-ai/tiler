@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: []
 related: [carry-the-metal-payload-in-an-artifact-envelope, name-the-resolved-lowering-capability, resolve-capability-key-signature-conflation]
-scopes: [implementation/artifact]
+scopes: [implementation/artifact, contracts/artifacts, contracts/foundation, implementation/metal-aot, research/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, identity]
@@ -42,3 +42,39 @@ An out-of-crate assembler records everything `docs/operation-extensions.md` requ
 **Approved: promote.** ADR 0075 reserves public-surface promotions to the owner; this one is granted.
 
 `SelectedProvider` gains a slot for the capability revision. The assembler currently carries the real `u32` through a checked narrowing into a `u16` that refuses rather than truncates, with the conflation named at the call site — honest, but still a conflation, and artifact identity should record which capability revision actually lowered rather than a narrowed proxy.
+
+## Outcome
+
+**2026-07-25. The API version was replaced, not joined.** `SelectedProvider` is now `{provider: ProviderIdentity, capability: CapabilityKey, capability_revision: u32}`. The `u16` `capability_api_version` is gone.
+
+**Why replaced rather than added beside, which is the half the decision left open.** This ticket's own `## Scope` fixed the test: "If the API version survives, name its authority: which component mints it, and what it is a version *of*. If nothing can mint one today, say so and remove it rather than leaving a field every producer must fill with something." Nothing can. **Exact check, reproducible in one line:** `grep -rni "api_version\|api version" crates/` returned six hits before this change, every one inside `tiler-artifact` — the field's declaration, its canonical-key fold, its encode, its decode, one fixture, and one doc example — and none in any component that could supply a value. After this change it returns nothing. Keeping the field would have kept a slot in artifact identity whose only possible content is a guess, which is the defect the ticket was filed about rather than a second one to tolerate beside it.
+
+The `## Closes when` clause makes the same call: "records everything `docs/operation-extensions.md` requires a selected plan to record, with **no conflated and no invented value**". A field with no producer cannot be filled with anything but an invented value.
+
+**The requirement is not abandoned, it is made legible.** `docs/operation-extensions.md` still says compiler and capability-API versions participate in identity, and that sentence is now marked in place as a requirement rather than a description, pointing at `name-the-capability-api-version-authority-or-retire-the-requirement`. `docs/artifact-abi.md` states the same from the artifact's side: what the provider row carries, what it deliberately does not, and why absence is the fail-closed reading.
+
+**`u32`, not `u16`.** `LoweringCapabilityRevision` is a `u32`, so a `u16` field could not hold every value the compiler can mint, and the assembler's checked narrowing was a refusal path that existed only because of the width mismatch. It and `BundleError::CapabilityRevisionWidth` are both gone; the assembler now passes `selected.capability_revision()` through unchanged.
+
+**Not validated nonzero here, deliberately.** `tiler-compiler` documents the revision nonzero and this layer does not re-check it, exactly as the `FeasibilityRuleSetRef::revision` beside it does not. Adding a refusal on one and not the other would make two received revisions mean different things at one boundary; adding it to both is a separate change with its own argument.
+
+### Versioning — three constants moved, and each for a stated reason
+
+- `MANIFEST_SCHEMA` `3.0` → **`4.0`**. Major, and for a stronger reason than the previous two steps: the field's *width* moved from two bytes to four, so a `3.0` reader does not merely misinterpret a value, it loses framing for every row after it. The reader admits `minor <= implemented`, so a minor step would have left it accepting a manifest it can no longer parse.
+- `ARTIFACT_DOMAIN` `v2` → **`v3`**, and `PROVIDER_KEY_DOMAIN` `v1` → **`v2`**. Both, not one: a provider key is folded into the artifact identity *and* sorted and deduplicated against its siblings on its own, so the record has to be self-describing rather than relying on the enclosing domain to separate it. Without the retag, a `v2` provider key and a `v3` provider key of two different selections could differ only in bytes a reader of either domain would have consumed as something else.
+
+`ENVELOPE_FORMAT` and `CANONICAL_ENCODING` stay at `{1, 0}`: the manifest's contents moved, not the framing around them.
+
+**Every existing artifact identity changes.** That is the intended consequence and not a migration cost to soften — the whole defect was that a capability revision change produced an unchanged identity. There is nothing to migrate: no artifact is persisted anywhere in this repository, and a stale one now fails closed on the manifest schema rather than decoding into a plausible wrong program.
+
+### The defect was untested, and now is not
+
+`a_reached_capability_provider_revision_changes_identity` varies the **provider's** revision and passed before and after. Nothing exercised the capability's own revision, which is exactly why the drift could exist. `a_reached_capability_revision_changes_identity` now builds two artifacts differing only in `capability_revision` and asserts their canonical identities differ, that a rebuild at the original revision reproduces the original identity, and that the provider identity is byte-equal across the pair — so the test fails if the assertion ever passes for the wrong reason.
+
+### What landed
+
+- `crates/tiler-artifact/src/program/model.rs`: the field, its documentation of why two revisions are independent and that this one is received rather than derived, its fold into `canonical_key`, and the two domain bumps with the reason at each site.
+- `crates/tiler-artifact/src/program/codec/{encode,decode}.rs`: the `u32` wire field and the `MANIFEST_SCHEMA` step with its reason.
+- `crates/tiler-artifact/src/program/{mod,tests}.rs`: the doc example, the fixture, and the regression case.
+- `prototypes/serial-sum-compile/src/bundle.rs`: `capability_version`, its retraction comment, and `BundleError::CapabilityRevisionWidth` are gone; the module's own summary of what enters identity now names the capability revision.
+- `docs/artifact-abi.md` and `docs/operation-extensions.md` as described above.
+- Split: `name-the-capability-api-version-authority-or-retire-the-requirement`.
