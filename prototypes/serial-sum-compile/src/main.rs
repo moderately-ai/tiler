@@ -12,19 +12,22 @@
 //!
 //! Running it proves the offline path composes end to end: a semantic program
 //! reaches a verified kernel through the public compiler boundary, that kernel
-//! emits deterministic MSL, and `xcrun` turns that MSL into a real `metallib`
-//! on this host. It proves nothing about execution — no device is created, no
-//! kernel is dispatched, and no output bits are compared. Packaging the result
-//! into an artifact envelope is not done here either: the payload carrier's
-//! constructors are `pub(crate)` in `tiler-artifact`, and promoting them is
-//! ADR 0075 review that has not happened.
+//! emits deterministic MSL, `xcrun` turns that MSL into a real `metallib` on this
+//! host, and [`bundle`] carries both in a neutral artifact envelope that survives
+//! an encode, a decode, and a byte-identical re-encode.
+//!
+//! It proves nothing about execution — no device is created, no kernel is
+//! dispatched, and no output bits are compared. An artifact that assembles,
+//! encodes, and re-validates from its own bytes is not an artifact that has run.
 
+mod bundle;
 mod payload;
 mod target;
 
 use std::fmt;
 use std::process::ExitCode;
 
+use tiler_artifact::program::{ArtifactCodecFailure, decode_artifact};
 use tiler_compiler::session::{CompileFailure, NumericalContract, compile_governed};
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
@@ -89,6 +92,34 @@ fn serial_sum_program() -> SemanticProgram {
         )
         .expect("the output binds");
     builder.build().expect("the program verifies")
+}
+
+/// Emits and offline-compiles one plan's kernels, for the cases below.
+///
+/// Shared at crate scope rather than duplicated per test module: `bundle`'s
+/// cases must package the payload built from the *same* kernels the plan they
+/// assemble dispatches, and a second fixture that recompiled independently could
+/// drift from this one without failing.
+///
+/// It reaches `xcrun`, so it is a host-dependent fixture rather than a pure one.
+#[cfg(test)]
+fn emit_and_compile(
+    kernels: &[&tiler_ir::kernel::VerifiedKernel],
+) -> (
+    tiler_metal::record::MetalTranslationUnit,
+    tiler_metal_aot::record::CompiledArtifact,
+) {
+    let unit = emit_translation_unit(kernels, &target_facts()).expect("the kernels emit");
+    let request = CompileRequest::new(
+        unit.source(),
+        target::compile_target(target_facts()),
+        OptimizationLevel::Default,
+        NumericalRealization::strict_baseline(),
+    );
+    let artifact = Toolchain::system()
+        .compile(&request)
+        .expect("the offline toolchain compiles");
+    (unit, artifact)
 }
 
 fn main() -> ExitCode {
@@ -171,6 +202,31 @@ fn run() -> Result<(), ProducerError> {
         payload.metadata.obligations.len(),
         identity.as_bytes().len(),
     );
+
+    // Carry it in the neutral envelope, then read the bytes back. A payload that
+    // assembles but does not survive a round trip is not carried.
+    //
+    // A successful decode is itself the identity proof: `decode_artifact`
+    // re-derives the identity from the decoded content and refuses when it does
+    // not equal the one the manifest carries. The byte-identical re-encode is
+    // the complement — a field the decoder silently dropped could not be written
+    // back — and, because the encoder *derives* the identity rather than copying
+    // it, byte equality also pins the manifest's stored identity to that
+    // re-derivation.
+    let artifact = bundle::assemble(&program, compilation, selected, payload)
+        .map_err(ProducerError::Bundle)?;
+    let bytes = artifact.encode().map_err(ProducerError::Encode)?;
+    let decoded = decode_artifact(&bytes).map_err(ProducerError::Decode)?;
+    if decoded.re_encode().map_err(ProducerError::Encode)? != bytes {
+        return Err(ProducerError::UnstableEncoding);
+    }
+    println!(
+        "artifact envelope: {} bytes, {} section(s), {} variant(s), identity {} bytes",
+        bytes.len(),
+        decoded.sections().len(),
+        decoded.variant_count(),
+        decoded.identity().as_bytes().len(),
+    );
     Ok(())
 }
 
@@ -190,6 +246,10 @@ enum ProducerError {
     Payload(String),
     PayloadIdentity,
     Toolchain,
+    Bundle(bundle::BundleError),
+    Encode(ArtifactCodecFailure),
+    Decode(ArtifactCodecFailure),
+    UnstableEncoding,
 }
 
 impl fmt::Display for ProducerError {
@@ -211,17 +271,21 @@ impl fmt::Display for ProducerError {
             Self::PayloadIdentity => {
                 formatter.write_str("the carried payload's compilation subject has no identity")
             }
+            Self::Bundle(cause) => write!(formatter, "the artifact did not assemble: {cause}"),
+            Self::Encode(cause) => write!(formatter, "the envelope did not encode: {cause}"),
+            Self::Decode(cause) => write!(formatter, "the envelope did not decode: {cause}"),
+            Self::UnstableEncoding => {
+                formatter.write_str("re-encoding the decoded envelope did not reproduce its bytes")
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{payload, serial_sum_program, target, target_facts};
+    use super::{payload, serial_sum_program, target_facts};
     use tiler_compiler::session::{NumericalContract, compile_governed};
     use tiler_metal::emit::emit_translation_unit;
-    use tiler_metal_aot::driver::Toolchain;
-    use tiler_metal_aot::input::{CompileRequest, NumericalRealization, OptimizationLevel};
 
     /// The offline path composes as far as deterministic MSL, without a
     /// toolchain.
@@ -364,17 +428,7 @@ mod tests {
             .expect("the governed program compiles");
         let plan = compilations[0].selected().expect("a selected alternative");
         let kernels: Vec<_> = plan.kernels().iter().collect();
-        let unit = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
-        let request = CompileRequest::new(
-            unit.source(),
-            target::compile_target(target_facts()),
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
-        );
-        let artifact = Toolchain::system()
-            .compile(&request)
-            .expect("the offline toolchain compiles");
-        (unit, artifact)
+        super::emit_and_compile(&kernels)
     }
 
     /// The contract a caller states decides whether this target can honour it.
