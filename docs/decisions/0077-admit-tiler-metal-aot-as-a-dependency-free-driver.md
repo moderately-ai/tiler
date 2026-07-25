@@ -16,7 +16,7 @@ ticket: "record-an-adr-for-the-metal-aot-crate-admission"
 
 # 0077: Admit tiler-metal-aot as a dependency-free offline driver
 
-**Status:** proposed. Tom accepts; nothing here is operative until he does. This record is unusual in the direction it points: the crate, its empty dependency closure, and the development-only edge below are already implemented and mechanically pinned, and what is missing is the decision. Until acceptance, ADR 0056's retained clause placing AOT invocation inside `tiler-metal` still stands and the workspace still contradicts it.
+**Status:** accepted. This record was unusual in the direction it pointed: the crate, its empty dependency closure, and the development-only edge below were already implemented and mechanically pinned, and what was missing was the decision. Acceptance supplies it, so ADR 0056's clause placing AOT invocation inside `tiler-metal` is superseded and no longer retained text the workspace contradicts.
 
 ## Context
 
@@ -104,7 +104,7 @@ This restates ADR 0070's block completely rather than replacing any edge in it. 
 
 **Fact — nothing in this record is unimplemented.** `implementation_status` is `implemented`: `Cargo.toml` carries the six library members, `scripts/check_workspace.py` pins the member set, the `[workspace.dependencies]` table, and every package's complete normal and development dependency list including third-party crates, `crates/tiler-metal/src/golden_compilation.rs` uses the development edge, and `crates/tiler-metal/src/target_correspondence.rs` enforces the vocabulary correspondence. Acceptance changes the record, not the workspace.
 
-**One edit is deliberately withheld until acceptance.** ADR 0056's Consequences already carry an in-body **Retired:** marker where ADRs 0070 and 0071 retired a clause, and its Decision paragraph should gain the same in-body marker beside "MSL emission and AOT invocation remain modules in `tiler-metal`". Writing it now would assert a supersession that has not happened, so ADR 0056 currently records this proposal in its status line only. Whoever lands the acceptance adds the in-body marker.
+**The edit withheld until acceptance has now been made.** ADR 0056's Consequences already carried an in-body **Retired:** marker where ADRs 0070 and 0071 retired a clause; its Decision paragraph now carries the same marker beside "MSL emission and AOT invocation remain modules in `tiler-metal`". Writing it before acceptance would have asserted a supersession that had not happened, which is why it was withheld rather than landed with the draft.
 
 ## Traceability
 

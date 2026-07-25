@@ -1,7 +1,7 @@
 ---
 id: admit-the-device-free-runtime-validation-crate
 title: Admit the device-free runtime validation crate
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: [prototype-runtime-artifact-validation, record-an-adr-for-the-metal-aot-crate-admission]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, contracts/decisions, implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, workspace, runtime, needs-tom]
-claimed_from: todo
-assignee: agent-runtime2
-lease_expires_at: 1785006883
 ---
 `prototype-runtime-artifact-validation` says "if the owning production crate is absent, this ticket owns its atomic workspace admission and lockfile update." Attempting that admission established that it cannot be done from `implementation/workspace` alone, and that the accepted contract currently withholds the crate. This ticket owns the part that is not a workspace edit.
 
@@ -50,3 +47,17 @@ Tom decides whether the device-free validation crate is admitted now or waits fo
 **This is the last structural piece of the spine.** `prototype-runtime-artifact-validation` (p0) unblocks, and behind it `route-the-runtime-proof-through-the-artifact-envelope` — which removes the bypass. The runtime proof currently loads a `metallib` directly, so the envelope that round-trips today is still not in the execution path. Two descriptions of one compilation exist and only one is load-bearing; this is what collapses them.
 
 The accepted packaging profile must be amended in the same change, not left to disagree with the workspace.
+
+## Outcome
+
+**Landed.** `crates/tiler-runtime` is a workspace member with the closure `[tiler-artifact]`, and the five things ADR 0081 item 4 requires to move together moved together: `Cargo.toml`'s `members` and `[workspace.dependencies]`; `scripts/check_workspace.py`'s `EXPECTED_MEMBERS`, `EXPECTED_WORKSPACE_DEPENDENCIES`, `PACKAGE_DESCRIPTIONS`, `PACKAGE_DIRS`, and `EXPECTED_DEPENDENCIES`; `docs/architecture.md`'s accepted packaging profile and component-ownership table; `ticketsplease.toml`'s `[scope_crates]` owner; and [ADR 0081](../docs/decisions/0081-admit-tiler-runtime-as-a-device-free-artifact-loader.md).
+
+**ADR 0077's non-precedent clause is recorded as applied, not waived.** ADR 0081 item 3 states the clause's own test — "never touches a live device, an `MTLDevice`, or a pipeline state" — shows the crate meets it structurally (item 2 refuses the dependency that would let it fail), and says in terms that the withheld crate is still withheld and that this record is not precedent for one either. `docs/architecture.md`'s "deliberately omits … reusable Metal-*runtime* crates" sentence keeps that clause verbatim and states beside it why the loader is not one, rather than deleting or narrowing it. ADR 0056's status line records the same thing from the other side.
+
+**Two acceptance edits that ADR 0077 reserved were still outstanding and are landed here.** `accept-adr-0077-metal-aot-crate-admission` is `done` and the record's `decision_status` is `accepted`, but its body still opened "**Status:** proposed. Tom accepts; nothing here is operative until he does", and its Implementation boundary still said "One edit is deliberately withheld until acceptance … Whoever lands the acceptance adds the in-body marker" — the marker on ADR 0056's Decision paragraph had never been added. This is the asymmetry `AGENTS.md` names: a disclosure required while a decision is proposed becomes wrong once it is accepted, and the check enforcing it stops applying at exactly that moment. Fixed rather than worked around, because this ticket cites ADR 0077's clause as operative and could not do so against a record whose body said it was not. ADR 0077's status line now reads accepted, its Implementation boundary records the edit as made, and ADR 0056's Decision carries the `**Retired:**` marker beside the AOT-invocation sentence.
+
+**Two stale sentences in the packaging profile were corrected in the block being rewritten.** `tiler-prototype-compile`'s edge list omitted `tiler-metal-aot`, which `EXPECTED_DEPENDENCIES` has pinned since `prototype-apple-aot-driver`; and `tiler-prototype-run` was described as `-> [tiler-artifact] + planned platform Metal bindings` with the note "the runner's Metal bindings remain part of the accepted profile rather than a landed edge: `tiler-prototype-run` is still a stub". The runner is not a stub — it dispatches on a real device — and the `metal` edge is pinned. Both blocks now match the pinned reality.
+
+**What landed in the crate under this ticket, and what did not.** `crates/tiler-runtime/src/load.rs` carries the decode stage: `DecodedProgram::decode`, the identity/feature/routing/payload/section accessors, and `LoadRejection`, which carries `ArtifactCodecFailure` whole rather than restating the codec's five classes. Three unit cases pin that foreign bytes classify as malformed rather than damaged, that empty input is refused, and that the classified rejection keeps the codec's own failure reachable as its `source`. The compatibility, binding, object-resolution, and routing-commit stages are `prototype-runtime-artifact-validation`'s and land next; ADR 0081's `implementation_status` is `partial` and names exactly which of them the envelope's public read surface does not permit at all.
+
+**Measurement.** `uv run --locked python scripts/check_workspace.py` passes; `cargo nextest run -p tiler-runtime` runs 3 tests, 3 passed; `uv run --locked python scripts/docs.py render` regenerated the ADR chronology and topic catalogs with ADR 0081. The complete `scripts/check_repository.py` result is recorded on the branch's final commit rather than here.

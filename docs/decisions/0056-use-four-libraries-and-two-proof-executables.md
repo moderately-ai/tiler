@@ -17,9 +17,10 @@ ticket: "prototype-foundation-contract"
 **Status:** superseded by ADR 0065 for the reusable-crate count and reference
 evaluator placement and by ADR 0070 for the compiler-to-artifact dependency
 edge; ADRs 0070 and 0071 additionally retire its lockstep artifact/IR
-consequence; ADR 0077 proposes superseding its AOT-invocation clause and is not
-accepted, so that clause is retained text the workspace has already departed
-from; the remaining packaging boundaries are retained
+consequence; ADR 0077 supersedes its AOT-invocation clause; ADR 0081 admits a
+device-free artifact loader on the stated terms of the reusable-Metal-runtime
+clause rather than as an exception to it, so that clause is retained and
+unchanged; the remaining packaging boundaries are retained
 
 ## Context
 
@@ -37,8 +38,11 @@ artifact contract and live Metal bindings, never the compiler.
 
 Multiple target-independent IRs remain modules in `tiler-ir`; compiler passes
 remain modules in `tiler-compiler`; MSL emission and AOT invocation remain
-modules in `tiler-metal`. No frontend, proc-macro, Candle, generalized cache, or
-reusable Metal-runtime crate is created for the first proof.
+modules in `tiler-metal`. **Retired:** ADR 0077 makes offline Apple tool
+invocation its own dependency-free crate, `tiler-metal-aot`; the retained part
+of this sentence is that MSL emission stays in `tiler-metal`. No frontend,
+proc-macro, Candle, generalized cache, or reusable Metal-runtime crate is
+created for the first proof.
 
 ## Consequences
 
