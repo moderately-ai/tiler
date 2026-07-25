@@ -14,7 +14,7 @@ ticket: "numerical-policy-contract"
 
 # 0019: Separate subnormal input and result handling
 
-**Status:** accepted
+**Status:** accepted. One sentence of the Decision was amended on 2026-07-25; the "Amendments" section records what it said, what it says now, and the evidence that moved it. Nothing else in this record changes, and the decision to separate the two subnormal dimensions is untouched.
 
 ## Traceability
 
@@ -35,8 +35,10 @@ behavior occurred.
 
 Every applicable floating-point operation resolves subnormal input handling
 and subnormal result handling independently. Each dimension initially supports
-preservation or an explicit flush-to-zero behavior; zero-sign behavior is
-resolved with the signed-zero contract.
+preservation or an explicit flush-to-zero behavior; a flush-to-zero behavior
+states which zero it produces, as part of that behavior.
+
+*Amended 2026-07-25 by [`reconcile-adr-0019-zero-sign-placement-with-the-landed-flush`](../../tickets/reconcile-adr-0019-zero-sign-placement-with-the-landed-flush.md). The final clause previously read "zero-sign behavior is resolved with the signed-zero contract". "Amendments" below records the evidence, what a reader of the earlier text should un-learn, and the obligation this places on whoever admits a signed-zero dimension.*
 
 Portable-bitwise execution preserves both input and result subnormals. Relaxed
 operation contracts may permit either or both kinds of flushing. A backend that
@@ -62,3 +64,25 @@ One flush-to-zero flag is compact but loses observable information. Treating
 all subnormal behavior as backend-defined makes fusion and fallback disagree.
 Requiring preservation in every conformance mode unnecessarily excludes
 explicitly requested fast execution.
+
+## Amendments
+
+An amendment changes a stated clause of this accepted record without reopening the decision it records. Each entry names what the record said before, what it says now, and the evidence that moved it, so a reader who applied the earlier text can see precisely what to revise.
+
+### 2026-07-25 — a flush-to-zero behavior states its own zero (`widen-numerical-vocabulary-and-complete-identity`)
+
+**What the record said.** The Decision's second sentence closed with "zero-sign behavior is resolved with the signed-zero contract". Read either way "with" can be read — resolved *from* that contract, or resolved jointly *alongside* it — the sentence sends a reader to a separate signed-zero contract to find out which zero a flush produces.
+
+**What it says now.** A flush-to-zero behavior states which zero it produces, as part of that behavior. Nothing else in the sentence changes: both dimensions still resolve independently and each still supports preservation or an explicit flush.
+
+**Fact — the question was deliberately reopened before it was answered.** [ADR 0076](0076-declare-target-honourable-numerical-realizations.md) `refines` this record, and its item 1 states: "Whether the sign is carried as a field of the flush behaviour or resolved from the contract's signed-zero dimension is an implementation choice for the IR ticket; leaving it unstated is not." That framing is itself evidence that this record's sentence was not read as settling the placement — a record cannot reopen a question its own refined predecessor had closed. ADR 0076's forcing measurement is why the question exists at all: on the measured Apple row `0x80400000 * 2.0f` returns `0x80000000`, so a flush mode that does not state its zero cannot be checked against that hardware.
+
+**Fact — which way the implementation went, and its reason.** `1f78223` on 2026-07-24 landed `tiler_ir::schedule::SubnormalMode` as `Preserve | FlushToZero { zero_sign }` over `FlushedZeroSign::{PreservesSign, AlwaysPositive}` in `crates/tiler-ir/src/schedule/numerics.rs`. The reason recorded on the type is that the resolution route is unsound rather than merely inconvenient: a permission may leave a zero's sign *unspecified*, and an unspecified flush result is exactly the under-specification ADR 0076 item 1 forbids, so every `SubnormalMode` value must answer "which zero" on its own.
+
+**Fact — the earlier clause names nothing that exists.** `NumericalRealization` in the same module carries `profile_key`, `canonical_arithmetic_nan_bits`, `input_subnormals`, `result_subnormals`, `contraction`, and `reassociation`. There is no signed-zero dimension in the resolved contract. The exact check is `grep -rn 'SignedZero\|signed_zero' crates/`, which returns one Metal driver accessor (`MslOptimization::preserves_signed_zero`, a property of a compiler math mode) and prose in doc comments and tests; nothing in the numerical contract vocabulary. So the amended clause is not one of two available placements — it is the only one the contract can currently express, and the earlier clause deferred to a dimension that has never been admitted.
+
+**Why this is an amendment and not a supersession, and not a "compatible readings" note.** The decision this record makes is that subnormal input and result handling resolve independently, and that is untouched — no clause is reversed, `applies_to` and evidence are unchanged, and ADR 0076 continues to refine this record rather than replace it. It is also not a case where both statements stand: the charitable "resolved jointly alongside the signed-zero contract" reading is unsatisfiable while no such contract exists, so recording the two as compatible would leave a reader of this record alone still looking for a dimension to consult. The sentence is corrected in place, and the earlier text is quoted above rather than deleted.
+
+**Obligation on whoever admits a signed-zero dimension.** When the resolved contract gains one, it constrains a flush's stated `zero_sign` rather than supplying it: the two must agree, and disagreement is a rejection rather than a precedence rule. **Nothing checks this today** — there is no second field to disagree with — so this is a stated obligation on a future change and not an implemented invariant, and the change that admits the dimension owes the check as well as the field.
+
+**What a reader of `docs/numerical-semantics.md` should note.** That contract's sentence "the zero sign follows the resolved signed-zero and subnormal contract rather than an ambient target mode" was never falsified — it names the subnormal contract as a source, and its operative point is the negative one about ambient target modes. It is sharpened in the same change to say which of the two states a flushed zero's sign, and its `SubnormalContract` sketch, which spelled `FlushToZero` with no sign, is corrected for the same reason: a descriptive sketch that omits the sign illustrates precisely the under-specification ADR 0076 item 1 forbids.

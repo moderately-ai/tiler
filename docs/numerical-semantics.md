@@ -469,15 +469,19 @@ Subnormal handling has two independent dimensions:
 
 ```text
 SubnormalContract {
-  inputs:  Preserve | FlushToZero,
-  results: Preserve | FlushToZero,
+  inputs:  Preserve | FlushToZero { zero_sign },
+  results: Preserve | FlushToZero { zero_sign },
 }
 ```
 
 Input flushing treats an existing subnormal operand as zero before arithmetic.
-Result flushing replaces a newly produced subnormal result with zero. The zero
-sign follows the resolved signed-zero and subnormal contract rather than an
-ambient target mode.
+Result flushing replaces a newly produced subnormal result with zero. A flush
+states which zero it produces, on the behaviour itself: binary32 has two zeros
+and they are observably different values, so a flush that leaves the sign to be
+resolved elsewhere is under-specified (ADR 0076 item 1, ADR 0019 as amended).
+The sign never follows an ambient target mode. Should the resolved contract
+later gain a signed-zero dimension, that dimension constrains the stated sign
+and does not supply it.
 
 Portable-bitwise execution preserves both input and result subnormals. Other
 contracts may permit either or both forms of flushing. Some targets expose only
