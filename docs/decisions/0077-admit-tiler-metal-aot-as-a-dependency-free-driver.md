@@ -5,7 +5,7 @@ kind: "decision"
 title: "Admit tiler-metal-aot as a dependency-free offline driver"
 topics: ["rust", "workspace", "dependencies", "metal", "apple-targets"]
 catalog_group: "foundation-semantics-extensions"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "implemented"
 applies_to: ["tiler.contract.architecture"]
 evidence: ["tiler.research.workspace.prototype-crate-layout-and-msrv", "tiler.research.apple-targets.compatibility"]

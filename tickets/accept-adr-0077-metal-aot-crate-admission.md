@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0077-metal-aot-crate-admission
 title: Accept or reject ADR 0077, the tiler-metal-aot crate admission
-status: in-progress
+status: done
 priority: p1
 dependencies: [record-an-adr-for-the-metal-aot-crate-admission]
 related: []
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: []
 paths: []
 tags: [decisions, governance, workspace]
-claimed_from: todo
-assignee: agent-dec3
-lease_expires_at: 1785005326
 ---
 **Only Tom closes this ticket.** No agent may set it `done`, and no agent may do its work. It is the graph node standing for a decision that has not been made, so that anything conditional on that decision is held out of the ready frontier by a dependency edge rather than by a worker noticing after being dispatched. Its permanent status is `awaiting-decision` — a `parked` category state that `tkt ready` excludes and that never satisfies a dependent.
 
@@ -44,3 +41,13 @@ The record is deliberate about what it does *not* supersede, and accepting it ac
 **Accepted.** `decision_status` moves `proposed` → `accepted`.
 
 Two consequences to carry out rather than assume: the disclosure at `docs/architecture.md:350` is no longer required by the proposed-decision gate (Check A) and may be reworded to cite an accepted decision; and this ADR's own clause that its admission must not be cited as precedent stays in force — it is the reason `admit-the-device-free-runtime-validation-crate` is a separate question rather than a corollary.
+
+## Outcome
+
+**Accepted by Tom, 2026-07-25.** `decision_status` moved `proposed` → `accepted` on `docs/decisions/0077-admit-tiler-metal-aot-as-a-dependency-free-driver.md`.
+
+**The disclosure site was corrected rather than deleted.** `docs/architecture.md` opened its ADR 0077 paragraph with "No accepted ADR yet records that admission" and explained that the supersession of ADR 0056's retained AOT-invocation clause "takes effect when Tom accepts it; until then ADR 0056's retained packaging text still places AOT invocation inside `tiler-metal`". Both halves were true only while the record was proposed, and the second was making a live claim about where AOT invocation lives — so leaving it would have left the contract asserting the opposite of the accepted decision. Rewritten to state the supersession is in force.
+
+The `validate_proposal_disclosure` gate check does not fire either way: it requires disclosure only for a *proposed* citation, so acceptance silently removes its obligation. That is precisely why the stale wording had to be found by reading rather than by the gate.
+
+**Still in force:** the ADR's own clause that its admission must not be cited as precedent for admitting another crate. `admit-the-device-free-runtime-validation-crate` therefore remains a separate open question rather than a corollary of this acceptance.

@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0078-public-extension-seams
 title: Accept or reject ADR 0078, the public extension seam classification
-status: todo
+status: done
 priority: p1
 dependencies: [draft-public-extension-seam-ownership-adr]
 related: []
@@ -44,3 +44,11 @@ Three outcomes are available and each has a different consequence for the graph:
 **Accepted.** `decision_status` moves `proposed` → `accepted`. This releases `propagate-extension-seam-classification-into-governed-contracts`, which was correctly parked and refusing to dispatch: writing a proposed ADR into a normative contract is precisely what the new Check A now refuses.
 
 Repoint that ticket off the acceptance node and return it to the ready pool.
+
+## Outcome
+
+**Accepted by Tom, 2026-07-25.** `decision_status` moved `proposed` → `accepted` on `docs/decisions/0078-name-the-intended-public-extension-seams.md`.
+
+**The dependent is released.** `propagate-extension-seam-classification-into-governed-contracts` depends on this node and is now dependency-satisfied, back in the ready pool. It was correctly parked before: writing a proposed ADR into a normative contract is the failure `make-adr-acceptance-visible-to-the-work-graph` was filed to make structural, and the check that catches it silently is `gate-proposed-decision-assertions`.
+
+That parking is the acceptance-node mechanism working as designed — the ticket surfaced as ready from its *drafting* dependency alone, an agent diagnosed it rather than writing the proposal into a contract, and the node now exists so the next instance cannot dispatch at all.

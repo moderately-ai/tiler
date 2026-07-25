@@ -5,7 +5,7 @@ kind: "decision"
 title: "Name the intended public extension seams"
 topics: ["extensions", "api", "capability", "governance", "identity"]
 catalog_group: "foundation-semantics-extensions"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "partial"
 applies_to: ["tiler.contract.operation-extensions", "tiler.contract.architecture"]
 evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.semantic-foundation-api-v2", "tiler.research.extensions.proc-macro-extension-visibility"]
