@@ -37,6 +37,45 @@
 //!   stricter; nothing in this module lets an environment variable weaken a
 //!   check.
 //!
+//! # Which contract governs the goldens
+//!
+//! Two different records are called a "contract" here and they are decided
+//! separately. The **declared realization** is the program's, baked into the
+//! emitted bytes; the **compiler realization** is the driver's flag row,
+//! selected by [`golden_request`]. The goldens are governed under the strict
+//! declared realization — `tiler.test.strict-f32`, preserving subnormals on
+//! both dimensions — and under the strict driver baseline.
+//!
+//! The declared half was reconsidered against the flush-accepting alternative
+//! and deliberately left strict. Three reasons, and the third is the decisive
+//! one:
+//!
+//! - Nothing about the compiler evidence would change. Neither subnormal mode
+//!   names a compiler selection, so the flag row is identical either way, and
+//!   the emitted *bodies* are identical too — no operation is emitted to
+//!   realize a flush, because this backend expresses no emulation. Rebaselining
+//!   would change every entry-point symbol, since the canonical kernel identity
+//!   encodes the profile key and both subnormal dimensions, and buy no coverage.
+//! - Under the strict realization these are the only checked-in artifacts that
+//!   pin the non-empty unrealizable-obligation provenance block, which is what a
+//!   caller keeping only the emitted text reads.
+//! - **There is no flush-accepting contract this crate can name.** The governed
+//!   one is registered in `tiler-compiler`, which `tiler-metal` does not and
+//!   must not depend on, so a "flush golden" would carry a crate-local key that
+//!   merely resembles it. Writing the registered key as a string literal here
+//!   would duplicate a versioned identity across a boundary with no compile-time
+//!   link, and a rename on the owning side would leave a golden silently
+//!   claiming the wrong contract. Recording the governed flush contract's bytes
+//!   belongs to a component that can name it.
+//!
+//! One consequence is worth stating rather than leaving to be discovered: the
+//! units compiled below are ones
+//! [`require_declared_realization`](crate::record::MetalTranslationUnit::require_declared_realization)
+//! refuses. That is intentional and is itself evidence — it shows the refusal is
+//! a Tiler conformance decision about a contract the target cannot honour, not a
+//! compiler rejection of the source. The honoured-flush case is covered by
+//! `crate::tests` over the same fixture kernel rather than by a fixture file.
+//!
 //! # Measurement
 //!
 //! On an Apple M4 Max under macOS 27.0 (build 26A5388g) with Metal 32023.883

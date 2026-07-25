@@ -118,6 +118,40 @@ impl fmt::Display for MetalNumericalRequirement {
 /// cannot know. [`MetalTranslationUnit::require_declared_realization`] is the
 /// fail-closed step: a caller that needs the declared realization exactly must
 /// call it, and it rejects with the naming gap.
+///
+/// # This is not a second authority on what the target honours
+///
+/// A profile declaration in the compiler is the authority on *what a target
+/// honours*, and this backend-local step survives alongside it rather than
+/// competing with it. There is exactly one statement of the Metal fact —
+/// [`MetalSubnormalArithmetic`](crate::target::MetalSubnormalArithmetic), whose
+/// measurement is recorded on the type — and every arm of
+/// `crate::emit::subnormal_gap` is derived from that one value, so there is no
+/// second opinion here that could diverge from the profile's.
+///
+/// What this step adds is a different *question*, not a second answer to the
+/// same one:
+///
+/// - A profile declaration is a claim about a **target and a contract**:
+///   whether the dimensions the contract names are honoured. It is answerable
+///   before emission, which is what lets the compiler reject early.
+/// - A gap is a claim about **this translation unit**: whether the operations
+///   actually emitted incur a dimension the target does not honour. The
+///   comparison is only reached from emitted `f32` arithmetic, so a kernel that
+///   only materializes values conforms on a flushing target — which the
+///   measurement supports, because a load-then-store round trip preserves every
+///   subnormal bit pattern. Collapsing the two would either refuse that kernel
+///   or approve an arithmetic one; both are wrong answers.
+///
+/// The dependency graph makes keeping it non-optional. `tiler-metal` depends on
+/// `tiler-ir` and `tiler-artifact` and deliberately not on `tiler-compiler`, so
+/// a compiler-side rejection is not reachable from here and cannot be relied on
+/// to have run: [`crate::emit::emit_translation_unit`] is a public entry point
+/// that a caller can drive from `tiler-ir` alone. Retiring this step would
+/// leave that path emitting source under a contract the target refuses, with no
+/// conformance claim anywhere. The two checkpoints are therefore ordered rather
+/// than redundant — the profile declaration governs admission, and this governs
+/// the unit that admission produced.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MetalNumericalGap {

@@ -26,10 +26,10 @@ use tiler_ir::kernel::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-    TensorRole, VerifiedScheduledRegion, element_count,
+    ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
+    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -38,7 +38,7 @@ use crate::emit::{
     address_space_declaration, barrier_call, emit_translation_unit, is_f32_nan, msl_type,
     reserve_symbol,
 };
-use crate::record::{MetalNumericalGap, MetalNumericalRequirement};
+use crate::record::{MetalNumericalGap, MetalNumericalRequirement, MetalTranslationUnit};
 use crate::target::{
     LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
     MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
@@ -62,12 +62,33 @@ fn target() -> MetalTargetFacts {
     )
 }
 
+/// The strict declared realization every golden fixture is emitted under.
 fn numerical(nan_bits: u32) -> NumericalRealization {
-    NumericalRealization::new(
+    subnormal_realization(
         "tiler.test.strict-f32",
         nan_bits,
         SubnormalMode::Preserve,
         SubnormalMode::Preserve,
+    )
+}
+
+/// A declared realization that varies only the two subnormal dimensions.
+///
+/// Contraction and reassociation stay forbidden, which is what the one governed
+/// contract accepting a flush also does: accepting flushing widens exactly that
+/// dimension and authorizes nothing else. Holding the other two fixed keeps
+/// every assertion below about the subnormal comparison and nothing else.
+fn subnormal_realization(
+    profile_key: &'static str,
+    nan_bits: u32,
+    input_subnormals: SubnormalMode,
+    result_subnormals: SubnormalMode,
+) -> NumericalRealization {
+    NumericalRealization::new(
+        profile_key,
+        nan_bits,
+        input_subnormals,
+        result_subnormals,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
     )
@@ -89,8 +110,18 @@ fn linear_schedule(work_items: u64) -> KernelSchedule {
     }
 }
 
-/// A pointwise scale-then-bias region over `shape`.
+/// A pointwise scale-then-bias region over `shape` under the strict realization.
 fn pointwise_region(id: RegionId, shape: &Shape, nan_bits: u32) -> VerifiedScheduledRegion {
+    pointwise_region_under(id, shape, nan_bits, numerical(nan_bits))
+}
+
+/// A pointwise scale-then-bias region carrying one stated declared realization.
+fn pointwise_region_under(
+    id: RegionId,
+    shape: &Shape,
+    nan_bits: u32,
+    realization: NumericalRealization,
+) -> VerifiedScheduledRegion {
     let elements = element_count(shape).expect("bounded fixture shape");
     let mut builder = ScheduledRegionBuilder::new(id);
     builder.iteration_shape(shape.clone()).unwrap();
@@ -140,7 +171,7 @@ fn pointwise_region(id: RegionId, shape: &Shape, nan_bits: u32) -> VerifiedSched
             contraction: false,
         })
         .unwrap();
-    builder.numerical(numerical(nan_bits)).unwrap();
+    builder.numerical(realization).unwrap();
     builder.schedule(linear_schedule(elements)).unwrap();
     builder.build().unwrap()
 }
@@ -294,6 +325,39 @@ fn emit_one(kernel: &VerifiedKernel) -> String {
         .source()
         .to_owned()
 }
+
+/// Emits the pointwise fixture under one declared realization and one target
+/// fact.
+///
+/// The pointwise fixture is used rather than a materialization-only kernel
+/// because the subnormal comparison is only reached from emitted `f32`
+/// arithmetic. A kernel with no arithmetic conforms vacuously, so a "no gap"
+/// result over one would be evidence of nothing.
+fn emit_pointwise_under(
+    realization: NumericalRealization,
+    subnormal_arithmetic: MetalSubnormalArithmetic,
+) -> MetalTranslationUnit {
+    let region = pointwise_region_under(
+        RegionId::new(0),
+        &Shape::from_dims([4]),
+        NAN_BITS,
+        realization,
+    );
+    let kernel = lower_scheduled_region(&region).expect("bounded pointwise fixture lowers");
+    let mut facts = target();
+    facts.subnormal_arithmetic = subnormal_arithmetic;
+    emit_translation_unit(&[&kernel], &facts).expect("bounded fixture emits")
+}
+
+/// The two flush-to-zero declarations, one per zero the vocabulary names.
+const fn flush(zero_sign: FlushedZeroSign) -> SubnormalMode {
+    SubnormalMode::FlushToZero { zero_sign }
+}
+
+/// The measured Apple target fact: a sign-preserving flush.
+const APPLE_FLUSH: MetalSubnormalArithmetic = MetalSubnormalArithmetic::FlushesToZero {
+    zero_sign: MetalFlushedZeroSign::PreservesSign,
+};
 
 /// Compares emitted source against a checked-in fixture.
 ///
@@ -638,6 +702,172 @@ fn every_arithmetic_kernel_records_the_subnormal_gap() {
             [MetalNumericalGap::SubnormalFlushInArithmetic],
         );
     }
+}
+
+/// A flush the target honours is a positive conformance claim, not a weaker one.
+///
+/// This is the arm the widened vocabulary made expressible, and it is the one
+/// that turns the Apple row from "refuse every contract" into "honour the one
+/// the hardware delivers". The non-vacuity assertion matters more than the
+/// conformance one: the same kernel under the strict realization records the
+/// flush gap, which proves this fixture reaches `record_subnormal_obligation`
+/// at all, so the empty gap set below is a decision about the contract rather
+/// than a kernel with no arithmetic in it.
+#[test]
+fn a_flush_the_target_delivers_is_honoured_over_real_arithmetic() {
+    let strict = emit_pointwise_under(numerical(NAN_BITS), APPLE_FLUSH);
+    assert_eq!(
+        strict.numerical_gaps(),
+        [MetalNumericalGap::SubnormalFlushInArithmetic],
+        "this fixture must reach the subnormal comparison for the check below to mean anything"
+    );
+
+    let unit = emit_pointwise_under(
+        subnormal_realization(
+            "tiler.test.flush-f32",
+            NAN_BITS,
+            flush(FlushedZeroSign::PreservesSign),
+            flush(FlushedZeroSign::PreservesSign),
+        ),
+        APPLE_FLUSH,
+    );
+    assert!(unit.numerical_gaps().is_empty());
+    unit.require_declared_realization().unwrap();
+    assert!(
+        unit.source()
+            .contains("// Declared numerical obligations this profile cannot realize: none.")
+    );
+    assert!(
+        unit.source()
+            .contains("// f32 arithmetic subnormals: flushes-to-zero-preserving-sign")
+    );
+}
+
+/// A declared zero the target does not produce fails closed.
+///
+/// The two zeros are different results, not different precisions: the measured
+/// Apple flush preserves the sign of the value it replaces, so a program that
+/// asked for `AlwaysPositive` would read `0x80000000` where it required
+/// `0x00000000`. Returning no gap here would be a wrong answer rather than a
+/// relaxed one, which is why the sign is compared instead of assumed.
+#[test]
+fn a_flush_to_the_other_zero_is_refused() {
+    let unit = emit_pointwise_under(
+        subnormal_realization(
+            "tiler.test.flush-f32-always-positive",
+            NAN_BITS,
+            flush(FlushedZeroSign::AlwaysPositive),
+            flush(FlushedZeroSign::AlwaysPositive),
+        ),
+        APPLE_FLUSH,
+    );
+    assert_eq!(
+        unit.numerical_gaps(),
+        [MetalNumericalGap::FlushedZeroSignMismatch],
+    );
+    assert_eq!(
+        unit.require_declared_realization().unwrap_err(),
+        MetalEmitError::UnrealizableNumericalObligation {
+            gap: MetalNumericalGap::FlushedZeroSignMismatch,
+        }
+    );
+    assert_eq!(
+        MetalNumericalGap::FlushedZeroSignMismatch.rule(),
+        "flushed-zero-sign-mismatch"
+    );
+    assert!(unit.source().contains("//   flushed-zero-sign-mismatch"));
+}
+
+/// Agreement, not flushing, is what the honoured arm requires.
+///
+/// No governed Apple family has been measured to flush to the always-positive
+/// zero. Stating a target that does proves the comparison honours agreement in
+/// both directions rather than special-casing the one measured value, and it is
+/// the only exercise of that target fact's emitted spelling.
+#[test]
+fn an_always_positive_flush_is_honoured_by_an_always_positive_target() {
+    let unit = emit_pointwise_under(
+        subnormal_realization(
+            "tiler.test.flush-f32-always-positive",
+            NAN_BITS,
+            flush(FlushedZeroSign::AlwaysPositive),
+            flush(FlushedZeroSign::AlwaysPositive),
+        ),
+        MetalSubnormalArithmetic::FlushesToZero {
+            zero_sign: MetalFlushedZeroSign::AlwaysPositive,
+        },
+    );
+    assert!(unit.numerical_gaps().is_empty());
+    unit.require_declared_realization().unwrap();
+    assert!(
+        unit.source()
+            .contains("// f32 arithmetic subnormals: flushes-to-zero-always-positive")
+    );
+}
+
+/// A declared flush is not honoured by a target that preserves subnormals.
+///
+/// Emission never narrows, widens, or substitutes the declared contract to fit
+/// a target, and this is the direction where doing so would be tempting because
+/// preservation is the stronger behaviour. It is not the *declared* behaviour:
+/// honouring the flush would mean emitting an explicit one, which is emulation,
+/// which this backend does not express.
+#[test]
+fn a_flush_contract_on_a_preserving_target_is_refused() {
+    let unit = emit_pointwise_under(
+        subnormal_realization(
+            "tiler.test.flush-f32",
+            NAN_BITS,
+            flush(FlushedZeroSign::PreservesSign),
+            flush(FlushedZeroSign::PreservesSign),
+        ),
+        MetalSubnormalArithmetic::PreservesSubnormals,
+    );
+    assert_eq!(
+        unit.numerical_gaps(),
+        [MetalNumericalGap::SubnormalPreservationInArithmetic],
+    );
+    assert_eq!(
+        MetalNumericalGap::SubnormalPreservationInArithmetic.rule(),
+        "subnormal-preservation-in-arithmetic"
+    );
+}
+
+/// The two subnormal dimensions are compared independently.
+///
+/// A target that couples input and result flushing in one execution mode does
+/// not couple the contract's semantic dimensions (ADR 0019). Declaring a
+/// mismatched flush on the input dimension and preservation on the result
+/// dimension therefore yields *two different* gaps from one kernel — which a
+/// pair of cases that happened to produce the same gap could not distinguish
+/// from a single coupled comparison.
+///
+/// It also pins the documented rejection order: `require_declared_realization`
+/// names the first gap in ascending governed order.
+#[test]
+fn the_two_subnormal_dimensions_are_compared_independently() {
+    let unit = emit_pointwise_under(
+        subnormal_realization(
+            "tiler.test.mixed-subnormal-f32",
+            NAN_BITS,
+            flush(FlushedZeroSign::AlwaysPositive),
+            SubnormalMode::Preserve,
+        ),
+        APPLE_FLUSH,
+    );
+    assert_eq!(
+        unit.numerical_gaps(),
+        [
+            MetalNumericalGap::SubnormalFlushInArithmetic,
+            MetalNumericalGap::FlushedZeroSignMismatch,
+        ],
+    );
+    assert_eq!(
+        unit.require_declared_realization().unwrap_err(),
+        MetalEmitError::UnrealizableNumericalObligation {
+            gap: MetalNumericalGap::SubnormalFlushInArithmetic,
+        }
+    );
 }
 
 /// Pins the ticket's central property mechanically.
