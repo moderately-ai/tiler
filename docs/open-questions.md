@@ -253,11 +253,11 @@ The implementation graph now maps these contracts to bounded coding tickets:
 - Close: exact cold/warm/edit/cache/compiler-invocation matrix when a real
   rust-analyzer binary, rather than only the rustup proxy, is available.
 
-### Q-ART-007 — Apple cross-machine and patch-toolchain evidence
+### Q-ART-007 — Apple cross-machine, patch-toolchain, and runtime-compiler evidence
 
 - Owner/track: [Metal backend](backends/metal.md), Milestone 7.
-- Close: reproducibility and compatibility matrix across machines and
-  toolchain patch versions.
+- Close: a reproducibility and compatibility matrix over four independent axes — the machine and GPU, the Xcode toolchain patch version, the **OS build**, and the **installed simulator runtime version**. The last two are axes in their own right because a host that never changes Xcode can still change two of its three Metal compilers: the offline driver ships with Xcode, the macOS runtime compiler with the OS, and a booted simulator's with that runtime, as [Metal backend](backends/metal.md#compiler-provenance-and-the-runtime-compiler) records. Read without them, this question is satisfied by a matrix that holds the OS constant, and the numerical harness then announces an environment-row difference and declines to compare rather than confirming agreement.
+- Closing measurement: re-run [`numerical_probe.py`](../spikes/apple-targets/numerical_probe.py) on a host whose OS build differs while its Xcode build does not, and again against a second installed simulator runtime version, comparing the resulting `environment.family.<name>.runtime_compiler_build` rows with the retained record. A run whose rows are unchanged has not exercised the axis and does not close it.
 
 ### Q-ART-011-E — Apple deployment-minimum compatibility experiment
 
