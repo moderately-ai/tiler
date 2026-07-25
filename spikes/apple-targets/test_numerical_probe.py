@@ -112,7 +112,13 @@ def dispatched_families(run: PROBE.Run) -> tuple[str, ...]:
 
 
 def is_subnormal(bits: int) -> bool:
-    return bits & 0x7F800000 == 0 and bits & 0x007FFFFF != 0
+    """Whether an `f32` pattern is subnormal, for the tests that name `f32` values.
+
+    A test over the whole kernel table must use the kernel's own dtype instead;
+    `f16`'s exponent field is four bits narrower and every `f32` normal would read
+    as subnormal under this mask.
+    """
+    return PROBE.F32.is_subnormal(bits)
 
 
 def synthetic(
@@ -127,8 +133,11 @@ def synthetic(
 
     `results=None` builds the compile-side-only shape a family with no attached
     device produces, which is the one an unguarded reading must never classify.
+    The operand vector is the named kernel's own, so a synthetic `f16`
+    observation is indexed the way a measured one is.
     """
     case = PROBE.Case(family, kernel, PROBE.Configuration("safe", "2", "off"))
+    operands = PROBE.BY_NAME[kernel].dtype.operands
     return PROBE.Observation(
         case=case,
         compile_options=("air.compile.denorms_disable",),
@@ -136,7 +145,7 @@ def synthetic(
         results=(
             None
             if results is None
-            else tuple(results.get(operand, operand) for operand in PROBE.OPERANDS)
+            else tuple(results.get(operand, operand) for operand in operands)
         ),
         applied_options=None,
         archived_options=None,
@@ -148,11 +157,12 @@ def synthetic_runtime(
 ) -> PROBE.Observation:
     """Build a runtime observation, whose compile side is unreadable rather than empty."""
     case = PROBE.Case(family, kernel, PROBE.RuntimeConfiguration(mode, "default"))
+    operands = PROBE.BY_NAME[kernel].dtype.operands
     return PROBE.Observation(
         case=case,
         compile_options=None,
         operations=None,
-        results=tuple(results.get(operand, operand) for operand in PROBE.OPERANDS),
+        results=tuple(results.get(operand, operand) for operand in operands),
         applied_options=f"math={mode},fpfun=precise,lang=3.1,opt=default",
         archived_options="air.compile.denorms_disable",
     )
@@ -180,9 +190,13 @@ def test_every_kernel_states_a_witness_that_could_prove_its_arithmetic_ran() -> 
             continue
         assert witness.executed != witness.deleted, kernel.name
         for value in (witness.operand, witness.executed, witness.deleted):
-            assert not is_subnormal(value), (
+            assert not kernel.dtype.is_subnormal(value), (
                 f"{kernel.name}: a witness value may not be subnormal, or the witness would "
                 f"depend on the behaviour under test"
+            )
+            assert value <= kernel.dtype.mask, (
+                f"{kernel.name}: {value:x} does not fit {kernel.dtype.name}, so it is a pattern "
+                f"of another dtype"
             )
         assert witness.deleted == witness.operand, (
             f"{kernel.name}: every kernel here stores its loaded value when its operations are "
@@ -206,21 +220,23 @@ def test_a_subnormal_probe_separates_flushing_from_preserving() -> None:
     """
     seen = 0
     for kernel in PROBE.KERNELS:
+        dtype = kernel.dtype
         for probe in kernel.subnormal_probes:
             seen += 1
-            assert probe.preserving != probe.flushing, f"{kernel.name}/{probe.operand:08x}"
-            assert is_subnormal(probe.operand) or is_subnormal(probe.preserving), (
+            spelled = f"{kernel.name}/{dtype.render(probe.operand)}"
+            assert probe.preserving != probe.flushing, spelled
+            assert dtype.is_subnormal(probe.operand) or dtype.is_subnormal(probe.preserving), (
                 "a subnormal probe must have a subnormal operand or a subnormal exact result"
             )
             assert PROBE.evaluate(kernel, probe.operand, flushes=False) == probe.preserving, (
-                f"{kernel.name}/{probe.operand:08x}: declared preserving result "
-                f"{probe.preserving:08x} is not the exact one"
+                f"{spelled}: declared preserving result {dtype.render(probe.preserving)} is not "
+                f"the exact one"
             )
             assert PROBE.evaluate(kernel, probe.operand, flushes=True) == probe.flushing, (
-                f"{kernel.name}/{probe.operand:08x}: declared flushing result "
-                f"{probe.flushing:08x} is not what substituting a signed zero gives"
+                f"{spelled}: declared flushing result {dtype.render(probe.flushing)} is not what "
+                f"substituting a signed zero gives"
             )
-            assert probe.operand in PROBE.OPERANDS, f"{kernel.name}: {probe.operand:08x}"
+            assert probe.operand in dtype.operands, spelled
     assert seen >= 4, "the probe table lost its kernels"
 
 
@@ -237,7 +253,7 @@ def test_an_order_probe_separates_two_evaluation_orders() -> None:
     probe = PROBE.REASSOCIATION
     kernel = PROBE.BY_NAME["reassociation_chain"]
     assert probe.ordered != probe.reassociated
-    assert probe.operand in PROBE.OPERANDS
+    assert probe.operand in kernel.dtype.operands
     assert PROBE.evaluate(kernel, probe.operand, flushes=False) == probe.ordered
     assert PROBE.evaluate(kernel, probe.operand, flushes=True) == probe.ordered, (
         "the order probe must not depend on flushing, or it would measure two things at once"
@@ -305,11 +321,14 @@ def test_a_witnessed_surviving_operation_is_admitted_as_evidence() -> None:
 def test_every_generated_kernel_declares_the_entry_point_and_the_exact_constants() -> None:
     """Emission must stay in the shape the record describes and use no decimal literals."""
     for kernel in PROBE.KERNELS:
+        dtype = kernel.dtype
         source = kernel.source()
         assert f"kernel void {PROBE.ENTRY_POINT}(" in source, kernel.name
-        assert f"ulong v1 = {len(PROBE.OPERANDS)}ul;" in source, kernel.name
+        assert f"ulong v1 = {len(dtype.operands)}ul;" in source, kernel.name
+        assert f"device const {dtype.metal_type} *b0" in source, kernel.name
+        assert f"device {dtype.metal_type} *b1" in source, kernel.name
         for step in kernel.steps:
-            assert f"as_type<float>(0x{step.constant:08x}u)" in source, kernel.name
+            assert dtype.literal(step.constant) in source, kernel.name
         assert source.count("= fma(") == (1 if kernel.fused else 0), kernel.name
         for operator in (" * ", " + ", " / "):
             spelled = sum(1 for step in kernel.steps if step.operator == operator.strip())
@@ -319,6 +338,121 @@ def test_every_generated_kernel_declares_the_entry_point_and_the_exact_constants
         assert ".0f" not in source and "e+" not in source, (
             f"{kernel.name}: a decimal float literal would put host rendering in the path"
         )
+        for other in PROBE.DTYPES:
+            if other is dtype:
+                continue
+            assert f" {other.metal_type} " not in source, (
+                f"{kernel.name}: a second scalar type in one translation unit would make the "
+                f"measured arithmetic ambiguous"
+            )
+
+
+def test_every_kernel_names_its_dtype_exactly_when_it_is_not_the_default() -> None:
+    """A case key has to say which dtype it measured, without renaming the ones that existed.
+
+    `f32` kernels keep their bare names, so every case key the retained record and
+    the research memo cite keeps its exact meaning; every other dtype's kernels
+    carry the suffix, so a reader of a key knows the width its `results` row is
+    rendered at without consulting the harness.
+    """
+    for kernel in PROBE.KERNELS:
+        suffixed = kernel.name.endswith(f"_{kernel.dtype.name}")
+        assert suffixed == (kernel.dtype is not PROBE.DEFAULT_DTYPE), kernel.name
+        for other in PROBE.DTYPES:
+            if other is kernel.dtype:
+                continue
+            assert not kernel.name.endswith(f"_{other.name}"), kernel.name
+    assert PROBE.F16_KERNELS, "the second dtype lost every kernel"
+    assert set(PROBE.F16_KERNELS) < set(PROBE.BY_NAME)
+
+
+def test_every_dtype_renders_at_its_own_width_and_declares_a_consistent_format() -> None:
+    """The widths, masks, and boundaries each dtype states must agree with `struct`'s.
+
+    Nothing here needs a GPU and everything here is what a `case.*.results` row's
+    meaning rests on: a dtype whose declared exponent mask disagreed with the
+    format it packs would classify a normal as subnormal and derive both of a
+    probe's candidates wrongly, in a way no device measurement would contradict.
+    """
+    assert PROBE.DEFAULT_DTYPE in PROBE.DTYPES
+    assert len({dtype.name for dtype in PROBE.DTYPES}) == len(PROBE.DTYPES)
+    for dtype in PROBE.DTYPES:
+        assert dtype.digits * 4 == dtype.bits
+        assert len(dtype.render(dtype.mask)) == dtype.digits
+        assert dtype.exponent_mask | dtype.mantissa_mask | dtype.sign_mask == dtype.mask
+        assert not dtype.exponent_mask & dtype.mantissa_mask
+        assert dtype.as_bits(0.0) == 0
+        assert dtype.as_bits(-0.0) == dtype.sign_mask
+        assert not dtype.is_subnormal(0) and not dtype.is_subnormal(dtype.sign_mask)
+        assert dtype.flush(dtype.sign_mask | 1) == dtype.sign_mask, (
+            f"{dtype.name}: the flush must preserve the sign, which is finding 3"
+        )
+        assert len(dtype.operands) == len(PROBE.DEFAULT_DTYPE.operands), (
+            f"{dtype.name}: every dtype answers the same questions, so the vectors are aligned"
+        )
+        for operand in dtype.operands:
+            assert operand <= dtype.mask, f"{dtype.name}: {operand:x}"
+            assert dtype.as_bits(dtype.as_float(operand)) == operand, (
+                f"{dtype.name}: {dtype.render(operand)} does not survive its own round trip"
+            )
+        subnormals = [operand for operand in dtype.operands if dtype.is_subnormal(operand)]
+        assert len(subnormals) == 4, f"{dtype.name}: {[dtype.render(v) for v in subnormals]}"
+
+
+def test_no_kernel_can_produce_the_sentinel_its_dtype_seeds_the_output_with() -> None:
+    """An unwritten element must stay distinguishable from a written one.
+
+    The dispatch host seeds the output buffer with the dtype's sentinel and
+    reports an element that still carries it as never written. That refusal is
+    only sound while no kernel can return the pattern, which is a property of the
+    kernel table and the operand vectors rather than of the host, so it is checked
+    here — where a new kernel or a new operand is added.
+    """
+    for kernel in PROBE.KERNELS:
+        dtype = kernel.dtype
+        assert dtype.sentinel <= dtype.mask, dtype.name
+        for operand in dtype.operands:
+            for flushes in (False, True):
+                assert PROBE.evaluate(kernel, operand, flushes=flushes) != dtype.sentinel, (
+                    f"{kernel.name} can return {dtype.render(dtype.sentinel)}, which the host "
+                    f"reads as an element no kernel wrote"
+                )
+        if kernel.witness is not None:
+            assert kernel.witness.executed != dtype.sentinel, kernel.name
+
+
+def test_the_operation_count_sees_every_spelling_this_front_end_emits() -> None:
+    """A surviving operation reported as zero is indistinguishable from a deleted one.
+
+    That is the reading finding 7 rests on, and it is exactly what went wrong once:
+    `FUSED_INTRINSIC` named only the LLVM spellings while this front end emits
+    `@air.fma.f32`, so a kernel whose whole body was one fused multiply-add
+    counted zero operations. Widening the dtype puts the same question again in a
+    new spelling, so the parse is pinned here over a module fragment rather than
+    trusted — including the `call` to the generated canonicalization helper, which
+    appears at `-O0`, is not arithmetic, and must not be counted.
+    """
+    fragment = "\n".join(
+        (
+            "  %9 = call half @tiler_canonicalize_nan_f16_7e00(half %8) #2",
+            "  %16 = fmul half %8, 0xH4000",
+            "  %17 = fdiv half %16, 0xH4200",
+            "  %18 = tail call half @air.fma.f16(half %17, half 0xH3E00, half 0xH3C00) #2",
+            "  %19 = fadd reassoc nsz arcp afn half %18, 0xH3C00",
+            "  %20 = tail call float @air.fma.f32(float %2, float 1.0, float 1.0) #2",
+            "  %21 = fcmp oeq half %19, 0xH0000",
+            "  %22 = fmul float %20, 2.000000e+00",
+        )
+    )
+    found = PROBE.float_operations(fragment)
+    assert [str(operation) for operation in found] == [
+        "fmul",
+        "fdiv",
+        "air.fma.f16",
+        "fadd+reassoc+nsz+arcp+afn",
+        "air.fma.f32",
+        "fmul",
+    ], found
 
 
 def test_an_unreadable_module_and_a_module_with_no_arithmetic_are_never_confused() -> None:
@@ -568,7 +702,7 @@ def test_a_runtime_result_matching_no_offline_candidate_is_the_divergence_outcom
     as a disagreement would report a missing flag as a compiler divergence.
     """
     candidates = ("f.k.safe.O2.contract-off", "f.k.safe.O2.contract-fast")
-    results = (0x3F800000,) * len(PROBE.OPERANDS)
+    results = (0x3F800000,) * len(PROBE.F32.operands)
     key = "f.k.runtime.safe.opt-default"
     everything = PROBE.PathComparison(key, candidates, candidates, results)
     some = PROBE.PathComparison(key, candidates, candidates[:1], results)
@@ -666,6 +800,10 @@ def test_an_absent_xcrun_is_classified_as_an_absent_toolchain() -> None:
     assert caught.value.reason is PROBE.Reason.TOOLCHAIN
 
 
+FAKE_DTYPES = {"k": PROBE.F32, "a": PROBE.F32, "b": PROBE.F32}
+"""The dtype of every case key the fake dispatch hosts below report."""
+
+
 def fake_host(directory: str, script: str) -> tuple[Path, PROBE.Attachment, Path]:
     """Write an executable stand-in for the dispatch host and a one-entry manifest."""
     host = Path(directory) / "host"
@@ -673,11 +811,60 @@ def fake_host(directory: str, script: str) -> tuple[Path, PROBE.Attachment, Path
     host.chmod(0o755)
     manifest = Path(directory) / "manifest.tsv"
     manifest.write_text(
-        "k\tlibrary\t/absent.metallib\ttiler_probe\n",
+        "k\tf32\tlibrary\t/absent.metallib\ttiler_probe\n",
         encoding="utf-8",
     )
     attachment = PROBE.Attachment(PROBE.FAMILY_BY_NAME[HOST], True, "", (), "macosx", (), ())
     return host, attachment, manifest
+
+
+def test_a_dispatch_reporting_a_pattern_too_wide_for_its_dtype_is_a_defect() -> None:
+    """A result that does not fit the element that produced it must never reach the record.
+
+    The host prints an `f16` result at four digits, so an eight-digit pattern
+    under an `f16` case key means the manifest, the host, or the buffer width
+    disagreed about what was dispatched. Left unchecked it would be recorded as a
+    plausible measurement, because nothing downstream re-derives the width.
+    """
+    with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
+        results = "\n".join("echo result=3f800000" for _ in PROBE.F16.operands)
+        host, attachment, manifest = fake_host(
+            directory, f"#!/bin/sh\necho device=fake\necho case=k\n{results}\n"
+        )
+        with pytest.raises(PROBE.ProbeFailure):
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host", {"k": PROBE.F16})
+        reported = PROBE.dispatch_batch(host, attachment, manifest, "the fake host", FAKE_DTYPES)
+    assert reported.entries["k"].results == (0x3F800000,) * len(PROBE.F32.operands), (
+        "the same output must be accepted as f32, or this test is rejecting it for another reason"
+    )
+
+
+def test_a_dispatch_reporting_a_case_the_manifest_never_asked_for_is_a_defect() -> None:
+    """An unrecognized case key has no dtype, so its results have no width to be read at."""
+    with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
+        results = "\n".join("echo result=00000000" for _ in PROBE.F32.operands)
+        host, attachment, manifest = fake_host(
+            directory, f"#!/bin/sh\necho device=fake\necho case=unasked\n{results}\n"
+        )
+        with pytest.raises(PROBE.ProbeFailure):
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host", FAKE_DTYPES)
+
+
+def test_every_dtype_is_given_its_own_operand_group_on_every_invocation() -> None:
+    """An entry must never be able to resolve a vector the harness did not pass.
+
+    Passing only the dtypes a manifest happens to use would make the host's
+    refusal of a missing group unreachable, which is the check that stops an
+    `f16` entry being dispatched over `f32` operands.
+    """
+    arguments = PROBE.operand_arguments()
+    assert len(arguments) == len(PROBE.DTYPES)
+    for dtype, argument in zip(PROBE.DTYPES, arguments, strict=True):
+        name, _, patterns = argument.partition("=")
+        assert name == dtype.name
+        assert patterns.split(",") == [dtype.render(value) for value in dtype.operands]
+        for pattern in patterns.split(","):
+            assert len(pattern) == dtype.digits, pattern
 
 
 def test_a_host_reporting_no_metal_device_is_classified_as_an_absent_device() -> None:
@@ -690,7 +877,7 @@ def test_a_host_reporting_no_metal_device_is_classified_as_an_absent_device() ->
     with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
         host, attachment, manifest = fake_host(directory, "#!/bin/sh\necho no device >&2\nexit 3\n")
         with pytest.raises(PROBE.ProbeUnavailable) as caught:
-            PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host", FAKE_DTYPES)
     assert caught.value.reason is PROBE.Reason.DEVICE
 
 
@@ -701,7 +888,7 @@ def test_a_host_that_fails_for_any_other_reason_is_a_defect_not_a_skip() -> None
             directory, "#!/bin/sh\necho pipeline exploded >&2\nexit 4\n"
         )
         with pytest.raises(PROBE.ProbeFailure):
-            PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host", FAKE_DTYPES)
 
 
 def test_a_truncated_dispatch_is_a_defect() -> None:
@@ -711,7 +898,7 @@ def test_a_truncated_dispatch_is_a_defect() -> None:
             directory, "#!/bin/sh\necho device=fake\necho case=k\necho result=00000000\n"
         )
         with pytest.raises(PROBE.ProbeFailure):
-            PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host", FAKE_DTYPES)
 
 
 def test_a_dispatch_that_reports_no_case_is_a_defect() -> None:
@@ -719,7 +906,7 @@ def test_a_dispatch_that_reports_no_case_is_a_defect() -> None:
     with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
         host, attachment, manifest = fake_host(directory, "#!/bin/sh\necho device=fake\n")
         with pytest.raises(PROBE.ProbeFailure):
-            PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
+            PROBE.dispatch_batch(host, attachment, manifest, "the fake host", FAKE_DTYPES)
 
 
 def test_a_batch_reports_every_case_separately() -> None:
@@ -730,8 +917,8 @@ def test_a_batch_reports_every_case_separately() -> None:
     together would report one case's bit patterns under another's name.
     """
     with tempfile.TemporaryDirectory(prefix="tiler-probe-host.") as directory:
-        results_a = "\n".join(f"echo result={value:08x}" for value in PROBE.OPERANDS)
-        results_b = "\n".join("echo result=00000000" for _ in PROBE.OPERANDS)
+        results_a = "\n".join(f"echo result={value:08x}" for value in PROBE.F32.operands)
+        results_b = "\n".join("echo result=00000000" for _ in PROBE.F32.operands)
         host, attachment, manifest = fake_host(
             directory,
             "#!/bin/sh\necho device=fake\necho registry-id=7\n"
@@ -739,11 +926,11 @@ def test_a_batch_reports_every_case_separately() -> None:
             f"echo case=b\necho applied=math=safe\n{results_b}\n"
             "echo runtime-compiler-image=/x/GPUCompiler.framework/y\n",
         )
-        reported = PROBE.dispatch_batch(host, attachment, manifest, "the fake host")
+        reported = PROBE.dispatch_batch(host, attachment, manifest, "the fake host", FAKE_DTYPES)
     assert reported.device == "fake"
     assert reported.registry_id == "7"
-    assert reported.entries["a"].results == PROBE.OPERANDS
-    assert reported.entries["b"].results == (0,) * len(PROBE.OPERANDS)
+    assert reported.entries["a"].results == PROBE.F32.operands
+    assert reported.entries["b"].results == (0,) * len(PROBE.F32.operands)
     assert reported.entries["a"].applied_options is None
     assert reported.entries["b"].applied_options == "math=safe"
     assert reported.compiler_images == ("/x/GPUCompiler.framework/y",)
@@ -976,7 +1163,9 @@ def test_materialization_is_unaffected_when_a_toolchain_and_gpu_resolve() -> Non
             assert run.of(family.name, "materialize", mode).operation_count == 0, family.name
     for family in dispatched_families(run):
         for mode in PROBE.MATH_MODES:
-            assert run.of(family, "materialize", mode).results == PROBE.OPERANDS, f"{family}/{mode}"
+            assert run.of(family, "materialize", mode).results == PROBE.F32.operands, (
+                f"{family}/{mode}"
+            )
 
 
 def test_the_math_mode_changes_a_conforming_result_when_a_toolchain_and_gpu_resolve() -> None:
@@ -1380,6 +1569,224 @@ def test_the_further_optimization_levels_behave_like_o2_when_a_toolchain_and_gpu
 
 
 # --------------------------------------------------------------------------
+# The second dtype. Every kernel below is an `f32` kernel above with its
+# constants respelled at `f16`'s boundaries and nothing else changed.
+# --------------------------------------------------------------------------
+
+F16_FLUSH_PROBES = (
+    ("multiply_two_f16", "multiply_two", PROBE.INPUT_FLUSH_F16, PROBE.INPUT_FLUSH),
+    (
+        "multiply_two_f16",
+        "multiply_two",
+        PROBE.NEGATIVE_INPUT_FLUSH_F16,
+        PROBE.NEGATIVE_INPUT_FLUSH,
+    ),
+    ("multiply_half_f16", "multiply_half", PROBE.RESULT_FLUSH_F16, PROBE.RESULT_FLUSH),
+    (
+        "add_smallest_normal_f16",
+        "add_smallest_normal",
+        PROBE.ADDITIVE_INPUT_FLUSH_F16,
+        PROBE.ADDITIVE_INPUT_FLUSH,
+    ),
+    (
+        "divide_by_three_eighths_f16",
+        "divide_by_three_eighths",
+        PROBE.DIVIDED_INPUT_FLUSH_F16,
+        PROBE.DIVIDED_INPUT_FLUSH,
+    ),
+    (
+        "divide_by_three_eighths_f16",
+        "divide_by_three_eighths",
+        PROBE.DIVIDED_NEGATIVE_INPUT_FLUSH_F16,
+        PROBE.DIVIDED_NEGATIVE_INPUT_FLUSH,
+    ),
+    (
+        "divide_by_three_f16",
+        "divide_by_three",
+        PROBE.DIVIDED_RESULT_FLUSH_F16,
+        PROBE.DIVIDED_RESULT_FLUSH,
+    ),
+)
+"""Each `f16` probe beside the `f32` probe that asks the identical question.
+
+Pairing them is what makes the comparison a statement about the dtype. Each row
+isolates one flush dimension — input, result, sign, additive path, division — in
+both formats, over kernels that differ only in the width of the constants.
+"""
+
+
+def test_the_second_dtype_declares_the_same_denormals_disable_when_a_toolchain_gpu_resolve() -> (
+    None
+):
+    """The module-level declaration does not vary by dtype, which is why it cannot settle one.
+
+    `air.compile.denorms_disable` is emitted for the `f16` kernels exactly as for
+    the `f32` ones, in every math mode and for every family. That is the argument
+    for expecting the flush to be dtype-independent; the measurement below is the
+    reason the argument does not hold. This is the compile side, so a family with
+    no attached device answers it too.
+    """
+    run = probe_run()
+    for family in PROBE.FAMILIES:
+        for kernel in PROBE.F16_KERNELS:
+            for mode in PROBE.MATH_MODES:
+                observation = run.of(family.name, kernel, mode)
+                assert observation.compile_options is not None, f"{family.name}/{kernel}/{mode}"
+                assert "air.compile.denorms_disable" in observation.compile_options, (
+                    f"{family.name}/{kernel}/{mode} declared {observation.compile_options}"
+                )
+        for mode in PROBE.MATH_MODES:
+            wide = run.of(family.name, "multiply_two", mode)
+            narrow = run.of(family.name, "multiply_two_f16", mode)
+            assert narrow.compile_options == wide.compile_options, (
+                f"{family.name}/{mode}: the two dtypes declared different module options, so a "
+                f"per-dtype difference in the result would have a compile-side explanation"
+            )
+            assert [operation.opcode for operation in narrow.operations] == [
+                operation.opcode for operation in wide.operations
+            ], f"{family.name}/{mode}: {narrow.operations} against {wide.operations}"
+
+
+def test_the_second_dtype_preserves_what_the_first_flushes_when_a_toolchain_and_gpu_resolve() -> (
+    None
+):
+    """The headline. The subnormal flush is not dtype-independent on this row.
+
+    Every probe below isolates one flush dimension in both dtypes over kernels
+    that differ only in the width of their constants, under the identical
+    two-layer guard. The `f32` observation is admitted as `flushed-to-zero` and
+    the `f16` one as `preserved`, in every math mode, on both dispatchable
+    families — from modules that declare `air.compile.denorms_disable`
+    identically, which the test above pins.
+
+    Both verdicts are evidence, which is the point: this is not a kernel whose
+    arithmetic was deleted returning its operand. Each `f16` kernel carries an
+    execution witness that reports `executed`, and the guard would have refused
+    the observation otherwise.
+    """
+    run = probe_run()
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for narrow_name, wide_name, narrow_probe, wide_probe in F16_FLUSH_PROBES:
+                narrow = run.of(family, narrow_name, mode)
+                wide = run.of(family, wide_name, mode)
+                narrow_verdict = PROBE.subnormal_verdict(narrow, narrow_probe)
+                wide_verdict = PROBE.subnormal_verdict(wide, wide_probe)
+                assert wide_verdict is PROBE.Verdict.FLUSHED_TO_ZERO, (
+                    f"{family}/{mode}/{wide_name}: {wide_verdict}"
+                )
+                assert narrow_verdict is PROBE.Verdict.PRESERVED, (
+                    f"{family}/{mode}/{narrow_name}: {narrow_verdict}. If this became "
+                    f"flushed-to-zero the dtype dependence has gone away and the record's "
+                    f"finding 21 must be restated, not the test relaxed"
+                )
+                assert narrow_verdict.is_evidence and wide_verdict.is_evidence
+                assert narrow.result_for(narrow_probe.operand) == narrow_probe.preserving
+                assert wide.result_for(wide_probe.operand) == wide_probe.flushing
+
+
+def test_the_second_dtype_flush_hypothesis_is_refuted_by_sign_when_a_toolchain_gpu_resolve() -> (
+    None
+):
+    """A preserved negative subnormal is the reading a flushed one cannot produce.
+
+    Finding 3 measures the `f32` flush producing `80000000` for `80400000`. The
+    `f16` twin returns `8400`, the exactly doubled subnormal, so the returned
+    pattern is not a signed zero at all and no sign convention reconciles the two.
+    """
+    run = probe_run()
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            wide = run.of(family, "multiply_two", mode)
+            narrow = run.of(family, "multiply_two_f16", mode)
+            assert wide.result_for(0x80400000) == 0x80000000, f"{family}/{mode}"
+            assert narrow.result_for(0x8200) == 0x8400, f"{family}/{mode}"
+            assert narrow.result_for(0x8000) == 0x8000, (
+                f"{family}/{mode}: negative zero is not subnormal and must survive"
+            )
+
+
+def test_the_second_dtype_materializes_unchanged_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 4's counterpart, and the control the preservation result needs.
+
+    A load and a store of `half` returning every operand unchanged is what rules
+    out the buffer round trip as the explanation for a preserved subnormal: the
+    `f16` path in and out of device memory is exact, so a doubled subnormal came
+    from the multiply and not from the transfer.
+    """
+    run = probe_run()
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family.name, "materialize_f16", mode).operation_count == 0, family.name
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family, "materialize_f16", mode).results == PROBE.F16.operands, (
+                f"{family}/{mode}"
+            )
+
+
+def test_the_second_dtype_keeps_the_trap_and_the_guard_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 7 reproduces in `f16`, so the guard is doing the same work at the new width.
+
+    The identity multiply folds, the `scale 1.0, bias +0.0` kernel keeps exactly
+    one `fadd` under `safe` and none under the relaxed modes, and its unguarded
+    reading under those modes is `preserved` while the guard refuses it. That
+    matters more here than in `f32`: the dtype's admissible observations *are*
+    `preserved`, so a guard that stopped discriminating would make the headline
+    result indistinguishable from the trap.
+    """
+    run = probe_run()
+    probe = PROBE.IDENTITY_VALUED_FLUSH_F16
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family.name, "multiply_one_f16", mode).operation_count == 0, (
+                f"{family.name}/{mode}: x * 1.0h must fold"
+            )
+        safe = run.of(family.name, "scale_one_bias_zero_f16", "safe")
+        assert safe.operation_count == 1 and safe.operations[0].opcode == "fadd", family.name
+        for mode in ("relaxed", "fast"):
+            assert run.of(family.name, "scale_one_bias_zero_f16", mode).operation_count == 0, (
+                f"{family.name}/{mode}"
+            )
+        unoptimized = run.of(family.name, "scale_one_bias_zero_f16", "relaxed", "0")
+        assert unoptimized.operation_count == 2, (
+            f"{family.name}: -O0 must remain the level at which the front end keeps both"
+        )
+    for family in dispatched_families(run):
+        for mode in ("relaxed", "fast"):
+            for optimization in ("0", "2"):
+                observation = run.of(family, "scale_one_bias_zero_f16", mode, optimization)
+                assert PROBE.naive_verdict(observation, probe) is PROBE.Verdict.PRESERVED
+                guarded = PROBE.subnormal_verdict(observation, probe)
+                assert not guarded.is_evidence, (
+                    f"{family}/{mode}/O{optimization} was admitted as {guarded}"
+                )
+        safe = run.of(family, "scale_one_bias_zero_f16", "safe")
+        assert PROBE.subnormal_verdict(safe, probe) is PROBE.Verdict.PRESERVED, (
+            "the same kernel under safe must be admitted, or the guard simply refuses everything"
+        )
+        assert safe.result_for(0x8000) == 0x0000, (
+            f"{family}: the signed-zero divergence of finding 5 must reproduce in f16, or the "
+            f"surviving fadd is not the operation finding 7 says it is"
+        )
+        # The identity multiply is refused by layer 1 before its missing witness
+        # is reached, because the fold leaves a measured-empty operation list.
+        # `no-execution-witness` is what the same kernel yields on the runtime
+        # path, where there is no module to read; both are inadmissible and the
+        # verdicts name which layer did the refusing.
+        witnessless = run.of(family, "multiply_one_f16", "safe")
+        assert witnessless.kernel.witness is None, family
+        assert witnessless.results is not None and witnessless.operations == (), family
+        assert PROBE.subnormal_verdict(witnessless, probe) is (
+            PROBE.Verdict.NO_EMITTED_ARITHMETIC
+        ), family
+        assert PROBE.naive_verdict(witnessless, probe) is PROBE.Verdict.PRESERVED, (
+            "the unguarded reading must still be 'preserved', or this kernel is not the control "
+            "the preservation result needs"
+        )
+
+
+# --------------------------------------------------------------------------
 # Runtime-compilation measurements. The same kernels through
 # `newLibraryWithSource:options:` instead of a linked metallib.
 # --------------------------------------------------------------------------
@@ -1470,6 +1877,37 @@ def test_runtime_input_and_result_flushing_when_a_toolchain_and_gpu_resolve() ->
                 assert doubled.result_for(PROBE.NEGATIVE_INPUT_FLUSH.operand) == 0x80000000
 
 
+def test_the_second_dtype_preserves_through_runtime_compilation_when_a_toolchain_gpu_resolve() -> (
+    None
+):
+    """The dtype dependence is a property of the two compilers, not of one of them.
+
+    Each family's runtime compiler is a different build from its offline driver
+    (finding 12), so reproducing the preservation there is what stops the result
+    being read as an artefact of `xcrun metal`. The execution witness carries the
+    admissibility decision alone on this path, because there is no readable
+    module.
+    """
+    run = probe_run()
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+                for narrow_name, wide_name, narrow_probe, wide_probe in F16_FLUSH_PROBES:
+                    narrow = run.runtime(family, narrow_name, mode, optimization)
+                    wide = run.runtime(family, wide_name, mode, optimization)
+                    assert narrow.operations is None
+                    assert PROBE.subnormal_verdict(narrow, narrow_probe) is (
+                        PROBE.Verdict.PRESERVED
+                    ), f"{family}/{mode}/{optimization}/{narrow_name}"
+                    assert PROBE.subnormal_verdict(wide, wide_probe) is (
+                        PROBE.Verdict.FLUSHED_TO_ZERO
+                    ), f"{family}/{mode}/{optimization}/{wide_name}"
+                assert (
+                    run.runtime(family, "materialize_f16", mode, optimization).results
+                    == PROBE.F16.operands
+                ), f"{family}/{mode}/{optimization}"
+
+
 def test_runtime_materialization_is_unaffected_when_a_toolchain_and_gpu_resolve() -> None:
     """Finding 4 through the runtime path, where no emitted-operation count backs it up."""
     run = probe_run()
@@ -1477,7 +1915,7 @@ def test_runtime_materialization_is_unaffected_when_a_toolchain_and_gpu_resolve(
         for mode in PROBE.MATH_MODES:
             for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
                 observation = run.runtime(family, "materialize", mode, optimization)
-                assert observation.results == PROBE.OPERANDS, f"{family}/{mode}/{optimization}"
+                assert observation.results == PROBE.F32.operands, f"{family}/{mode}/{optimization}"
 
 
 def test_the_runtime_math_mode_changes_a_result_when_a_toolchain_and_gpu_resolve() -> None:
@@ -1615,36 +2053,53 @@ def test_the_host_fails_closed_on_a_bad_option_when_a_toolchain_and_gpu_resolve(
         toolchain.build_host(host, "macosx")
         source = Path(directory) / "probe.metal"
         source.write_text(PROBE.BY_NAME["multiply_two"].source(), encoding="utf-8")
+        wide = Path(directory) / "probe_f16.metal"
+        wide.write_text(PROBE.BY_NAME["multiply_two_f16"].source(), encoding="utf-8")
         accepted = "math=safe,fpfun=precise,lang=3.1,opt=default"
+        entry = f"k\tf32\tsource\t{source}\t{PROBE.ENTRY_POINT}"
         rejected = (
-            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\tmath=bogus,fpfun=precise,lang=3.1,"
-            "opt=default",
-            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\tmathMode=safe,fpfun=precise,lang=3.1,"
-            "opt=default",
-            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\tmath=safe,fpfun=precise,lang=3.1",
-            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\tmath=safe,math=fast,fpfun=precise,"
-            "lang=3.1,opt=default",
-            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}",
-            f"k\tlibrary\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}",
-            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}\n"
+            f"{entry}\tmath=bogus,fpfun=precise,lang=3.1,opt=default",
+            f"{entry}\tmathMode=safe,fpfun=precise,lang=3.1,opt=default",
+            f"{entry}\tmath=safe,fpfun=precise,lang=3.1",
+            f"{entry}\tmath=safe,math=fast,fpfun=precise,lang=3.1,opt=default",
+            entry,
+            f"k\tf32\tlibrary\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}",
+            f"{entry}\t{accepted}\n{entry}\t{accepted}",
+            # The dtype field is rejected on the same terms as an option: an
+            # unknown one, and an absent one that shifts every later field.
+            f"k\tf64\tsource\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}",
             f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}",
             "",
         )
         manifest = Path(directory) / "manifest.tsv"
+        operands = PROBE.operand_arguments()
         for body in rejected:
             manifest.write_text(f"{body}\n" if body else "", encoding="utf-8")
             result = subprocess.run(
-                [str(host), "batch", str(manifest), "3f800000"],
+                [str(host), "batch", str(manifest), *operands],
                 check=False,
                 capture_output=True,
                 text=True,
             )
             assert result.returncode == 2, f"{body!r} was not rejected: {result.returncode}"
+        # An entry whose dtype has no operand group must be refused before the
+        # device is touched, or it would be dispatched over another dtype's
+        # vector and its results recorded as if they answered the same question.
         manifest.write_text(
-            f"k\tsource\t{source}\t{PROBE.ENTRY_POINT}\t{accepted}\n", encoding="utf-8"
+            f"k\tf16\tsource\t{wide}\t{PROBE.ENTRY_POINT}\t{accepted}\n", encoding="utf-8"
         )
+        for arguments in (
+            [str(host), "batch", str(manifest), "f32=3f800000"],
+            [str(host), "batch", str(manifest), "f64=3c00"],
+            [str(host), "batch", str(manifest), "f16=3c00", "f16=4000"],
+            [str(host), "batch", str(manifest), "f16=zzzz"],
+            [str(host), "batch", str(manifest), "f16=13c00"],
+        ):
+            result = subprocess.run(arguments, check=False, capture_output=True, text=True)
+            assert result.returncode == 2, f"{arguments[3:]!r} was accepted: {result.returncode}"
+        manifest.write_text(f"{entry}\t{accepted}\n", encoding="utf-8")
         result = subprocess.run(
-            [str(host), "batch", str(manifest), "3f800000"],
+            [str(host), "batch", str(manifest), *operands],
             check=False,
             capture_output=True,
             text=True,
@@ -1654,6 +2109,7 @@ def test_the_host_fails_closed_on_a_bad_option_when_a_toolchain_and_gpu_resolve(
             f"{result.stderr.strip()}"
         )
         assert f"applied={accepted}" in result.stdout, result.stdout
+        assert "dtype=f32" in result.stdout, result.stdout
 
 
 def test_the_retained_record_still_holds_when_a_toolchain_and_gpu_resolve() -> None:

@@ -1,12 +1,13 @@
-schema	tiler.apple-numerical-behaviour/v4
-probe.repository_base_revision	38b276b4b15ac92abffa92bfaa5b79d067892c84
-probe.harness_sha256	4df75f4345f5b29d95fbabed78bb19c34605552f04c3d436fd31c4fc3cef394d
-probe.host_source_sha256	2018fb0ed7029d19bcd2188bf070b00da32c5dbdf328cf68c905390b40f14758
+schema	tiler.apple-numerical-behaviour/v5
+probe.repository_base_revision	69e505cde46937df0d46dc26eb165486659f8914
+probe.harness_sha256	5d079a5dddbe1c2770b4d15fb2a763d325d71f5df9b8ddd13dacf648ec28dae7
+probe.host_source_sha256	f5a83e0bdc7f49099c1ed476fc0ce4d991e793563827ae885d061482d77c18bf
 probe.matrix	covering
 probe.fixed_flags	-std=metal3.1
 probe.default_fp32_functions	precise
 probe.entry_point	tiler_probe
-probe.operands	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+probe.dtypes	f32 f16
+probe.default_dtype	f32
 probe.runtime_fixed_options	lang=3.1
 probe.runtime_paired_optimization	-O2
 probe.guard_layers.offline_with_device	emitted-arithmetic execution-witness
@@ -15,7 +16,9 @@ probe.guard_layers.runtime	execution-witness
 probe.offline_flag_without_runtime_counterpart.0	-target: MTLCompileOptions has no target property; the runtime compiler targets the device and OS it is running on, which is why a runtime case is attributed to the family whose execution environment compiled it
 probe.offline_flag_without_runtime_counterpart.1	-ffp-contract: MTLCompileOptions has no contraction property; the source-level `#pragma METAL fp contract(...)` is accepted by this front end but changing the source would break the byte-identical pairing the comparison depends on
 probe.offline_flag_without_runtime_counterpart.2	-O0/-O1/-O3/-Os: MTLLibraryOptimizationLevel offers Default and Size only, so four of the five offline optimization levels have no runtime counterpart
-environment.date_utc	2026-07-25T15:56:35Z
+probe.operands.f32	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+probe.operands.f16	0001 0200 03ff 0400 8200 8000 3555 3c00
+environment.date_utc	2026-07-25T21:42:36Z
 environment.os_version	27.0
 environment.os_build	26A5388g
 environment.machine	arm64
@@ -79,6 +82,12 @@ case.ios-device.add_smallest_normal.safe.O0.contract-off.compile_options	air.com
 case.ios-device.add_smallest_normal.safe.O0.contract-off.float_operations	fadd
 case.ios-device.add_smallest_normal.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.add_smallest_normal.safe.O2.contract-off.float_operations	fadd
+case.ios-device.add_smallest_normal_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.add_smallest_normal_f16.fast.O2.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-device.add_smallest_normal_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.add_smallest_normal_f16.relaxed.O2.contract-off.float_operations	fadd+reassoc+nsz+arcp+afn
+case.ios-device.add_smallest_normal_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.add_smallest_normal_f16.safe.O2.contract-off.float_operations	fadd
 case.ios-device.contraction_pair.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.contraction_pair.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
 case.ios-device.contraction_pair.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
@@ -105,6 +114,18 @@ case.ios-device.divide_by_three_eighths.relaxed.O2.contract-off.compile_options	
 case.ios-device.divide_by_three_eighths.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
 case.ios-device.divide_by_three_eighths.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.divide_by_three_eighths.safe.O2.contract-off.float_operations	fdiv
+case.ios-device.divide_by_three_eighths_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.divide_by_three_eighths_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-device.divide_by_three_eighths_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.divide_by_three_eighths_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-device.divide_by_three_eighths_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.divide_by_three_eighths_f16.safe.O2.contract-off.float_operations	fdiv
+case.ios-device.divide_by_three_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.divide_by_three_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-device.divide_by_three_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.divide_by_three_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-device.divide_by_three_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.divide_by_three_f16.safe.O2.contract-off.float_operations	fdiv
 case.ios-device.divide_by_two.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.divide_by_two.safe.O2.contract-off.float_operations	fmul
 case.ios-device.fused_pair.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
@@ -119,6 +140,12 @@ case.ios-device.materialize.relaxed.O2.contract-off.compile_options	air.compile.
 case.ios-device.materialize.relaxed.O2.contract-off.float_operations	
 case.ios-device.materialize.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.materialize.safe.O2.contract-off.float_operations	
+case.ios-device.materialize_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.materialize_f16.fast.O2.contract-off.float_operations	
+case.ios-device.materialize_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.materialize_f16.relaxed.O2.contract-off.float_operations	
+case.ios-device.materialize_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.materialize_f16.safe.O2.contract-off.float_operations	
 case.ios-device.multiply_half.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-device.multiply_half.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.ios-device.multiply_half.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
@@ -137,6 +164,12 @@ case.ios-device.multiply_half.safe.O2.contract-off.compile_options	air.compile.d
 case.ios-device.multiply_half.safe.O2.contract-off.float_operations	fmul
 case.ios-device.multiply_half.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.multiply_half.safe.O2.contract-off.fpfun-fast.float_operations	fmul
+case.ios-device.multiply_half_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_half_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-device.multiply_half_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_half_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-device.multiply_half_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_half_f16.safe.O2.contract-off.float_operations	fmul
 case.ios-device.multiply_one.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-device.multiply_one.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.ios-device.multiply_one.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
@@ -149,6 +182,12 @@ case.ios-device.multiply_one.safe.O0.contract-off.compile_options	air.compile.de
 case.ios-device.multiply_one.safe.O0.contract-off.float_operations	fmul
 case.ios-device.multiply_one.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.multiply_one.safe.O2.contract-off.float_operations	
+case.ios-device.multiply_one_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_one_f16.fast.O2.contract-off.float_operations	
+case.ios-device.multiply_one_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_one_f16.relaxed.O2.contract-off.float_operations	
+case.ios-device.multiply_one_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_one_f16.safe.O2.contract-off.float_operations	
 case.ios-device.multiply_two.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-device.multiply_two.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.ios-device.multiply_two.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
@@ -167,6 +206,18 @@ case.ios-device.multiply_two.safe.O2.contract-off.compile_options	air.compile.de
 case.ios-device.multiply_two.safe.O2.contract-off.float_operations	fmul
 case.ios-device.multiply_two.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.multiply_two.safe.O2.contract-off.fpfun-fast.float_operations	fmul
+case.ios-device.multiply_two_f16.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_two_f16.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-device.multiply_two_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_two_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-device.multiply_two_f16.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_two_f16.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-device.multiply_two_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_two_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-device.multiply_two_f16.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_two_f16.safe.O0.contract-off.float_operations	fmul
+case.ios-device.multiply_two_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.multiply_two_f16.safe.O2.contract-off.float_operations	fmul
 case.ios-device.reassociation_chain.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-device.reassociation_chain.fast.O2.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
 case.ios-device.reassociation_chain.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
@@ -197,6 +248,18 @@ case.ios-device.scale_one_bias_zero.safe.O3.contract-off.compile_options	air.com
 case.ios-device.scale_one_bias_zero.safe.O3.contract-off.float_operations	fadd
 case.ios-device.scale_one_bias_zero.safe.Os.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-device.scale_one_bias_zero.safe.Os.contract-off.float_operations	fadd
+case.ios-device.scale_one_bias_zero_f16.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.scale_one_bias_zero_f16.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-device.scale_one_bias_zero_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-device.scale_one_bias_zero_f16.fast.O2.contract-off.float_operations	
+case.ios-device.scale_one_bias_zero_f16.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.scale_one_bias_zero_f16.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.ios-device.scale_one_bias_zero_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.scale_one_bias_zero_f16.relaxed.O2.contract-off.float_operations	
+case.ios-device.scale_one_bias_zero_f16.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.scale_one_bias_zero_f16.safe.O0.contract-off.float_operations	fmul fadd
+case.ios-device.scale_one_bias_zero_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-device.scale_one_bias_zero_f16.safe.O2.contract-off.float_operations	fadd
 case.ios-device.scale_two_bias_one.fast.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-device.scale_two_bias_one.fast.O2.contract-fast.float_operations	fmul+fast fadd+fast
 case.ios-device.scale_two_bias_one.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
@@ -251,6 +314,33 @@ case.ios-simulator.add_smallest_normal.safe.O0.contract-off.results	00800000 008
 case.ios-simulator.add_smallest_normal.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-simulator.add_smallest_normal.safe.O2.contract-off.float_operations	fadd
 case.ios-simulator.add_smallest_normal.safe.O2.contract-off.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.ios-simulator.add_smallest_normal_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.add_smallest_normal_f16.fast.O2.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-simulator.add_smallest_normal_f16.fast.O2.contract-off.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.ios-simulator.add_smallest_normal_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.add_smallest_normal_f16.relaxed.O2.contract-off.float_operations	fadd+reassoc+nsz+arcp+afn
+case.ios-simulator.add_smallest_normal_f16.relaxed.O2.contract-off.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.ios-simulator.add_smallest_normal_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.add_smallest_normal_f16.runtime.fast.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.add_smallest_normal_f16.runtime.fast.opt-default.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.ios-simulator.add_smallest_normal_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.add_smallest_normal_f16.runtime.fast.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.add_smallest_normal_f16.runtime.fast.opt-size.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.ios-simulator.add_smallest_normal_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.add_smallest_normal_f16.runtime.relaxed.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.add_smallest_normal_f16.runtime.relaxed.opt-default.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.ios-simulator.add_smallest_normal_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.add_smallest_normal_f16.runtime.relaxed.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.add_smallest_normal_f16.runtime.relaxed.opt-size.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.ios-simulator.add_smallest_normal_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.add_smallest_normal_f16.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.add_smallest_normal_f16.runtime.safe.opt-default.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.ios-simulator.add_smallest_normal_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.add_smallest_normal_f16.runtime.safe.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.add_smallest_normal_f16.runtime.safe.opt-size.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.ios-simulator.add_smallest_normal_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.add_smallest_normal_f16.safe.O2.contract-off.float_operations	fadd
+case.ios-simulator.add_smallest_normal_f16.safe.O2.contract-off.results	0401 0600 07ff 0800 0200 0400 3555 3c00
 case.ios-simulator.contraction_pair.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
 case.ios-simulator.contraction_pair.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
 case.ios-simulator.contraction_pair.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
@@ -344,6 +434,60 @@ case.ios-simulator.divide_by_three_eighths.runtime.safe.opt-size.results	0000000
 case.ios-simulator.divide_by_three_eighths.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-simulator.divide_by_three_eighths.safe.O2.contract-off.float_operations	fdiv
 case.ios-simulator.divide_by_three_eighths.safe.O2.contract-off.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.ios-simulator.divide_by_three_eighths_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.divide_by_three_eighths_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-simulator.divide_by_three_eighths_f16.fast.O2.contract-off.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_eighths_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.divide_by_three_eighths_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-simulator.divide_by_three_eighths_f16.relaxed.O2.contract-off.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_eighths_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.divide_by_three_eighths_f16.runtime.fast.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_eighths_f16.runtime.fast.opt-default.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_eighths_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.divide_by_three_eighths_f16.runtime.fast.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_eighths_f16.runtime.fast.opt-size.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_eighths_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.divide_by_three_eighths_f16.runtime.relaxed.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_eighths_f16.runtime.relaxed.opt-default.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_eighths_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.divide_by_three_eighths_f16.runtime.relaxed.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_eighths_f16.runtime.relaxed.opt-size.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_eighths_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.divide_by_three_eighths_f16.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_eighths_f16.runtime.safe.opt-default.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_eighths_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.divide_by_three_eighths_f16.runtime.safe.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_eighths_f16.runtime.safe.opt-size.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_eighths_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.divide_by_three_eighths_f16.safe.O2.contract-off.float_operations	fdiv
+case.ios-simulator.divide_by_three_eighths_f16.safe.O2.contract-off.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.ios-simulator.divide_by_three_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.divide_by_three_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-simulator.divide_by_three_f16.fast.O2.contract-off.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.ios-simulator.divide_by_three_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.divide_by_three_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-simulator.divide_by_three_f16.relaxed.O2.contract-off.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.ios-simulator.divide_by_three_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.divide_by_three_f16.runtime.fast.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_f16.runtime.fast.opt-default.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.ios-simulator.divide_by_three_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.divide_by_three_f16.runtime.fast.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_f16.runtime.fast.opt-size.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.ios-simulator.divide_by_three_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.divide_by_three_f16.runtime.relaxed.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_f16.runtime.relaxed.opt-default.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.ios-simulator.divide_by_three_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.divide_by_three_f16.runtime.relaxed.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_f16.runtime.relaxed.opt-size.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.ios-simulator.divide_by_three_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.divide_by_three_f16.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_f16.runtime.safe.opt-default.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.ios-simulator.divide_by_three_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.divide_by_three_f16.runtime.safe.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.divide_by_three_f16.runtime.safe.opt-size.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.ios-simulator.divide_by_three_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.divide_by_three_f16.safe.O2.contract-off.float_operations	fdiv
+case.ios-simulator.divide_by_three_f16.safe.O2.contract-off.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
 case.ios-simulator.divide_by_two.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
 case.ios-simulator.divide_by_two.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
 case.ios-simulator.divide_by_two.runtime.safe.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
@@ -395,6 +539,33 @@ case.ios-simulator.materialize.runtime.safe.opt-size.results	00000001 00400000 0
 case.ios-simulator.materialize.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-simulator.materialize.safe.O2.contract-off.float_operations	
 case.ios-simulator.materialize.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.ios-simulator.materialize_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.materialize_f16.fast.O2.contract-off.float_operations	
+case.ios-simulator.materialize_f16.fast.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.materialize_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.materialize_f16.relaxed.O2.contract-off.float_operations	
+case.ios-simulator.materialize_f16.relaxed.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.materialize_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.materialize_f16.runtime.fast.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.materialize_f16.runtime.fast.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.materialize_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.materialize_f16.runtime.fast.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.materialize_f16.runtime.fast.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.materialize_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.materialize_f16.runtime.relaxed.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.materialize_f16.runtime.relaxed.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.materialize_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.materialize_f16.runtime.relaxed.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.materialize_f16.runtime.relaxed.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.materialize_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.materialize_f16.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.materialize_f16.runtime.safe.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.materialize_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.materialize_f16.runtime.safe.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.materialize_f16.runtime.safe.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.materialize_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.materialize_f16.safe.O2.contract-off.float_operations	
+case.ios-simulator.materialize_f16.safe.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
 case.ios-simulator.multiply_half.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-simulator.multiply_half.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.ios-simulator.multiply_half.fast.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
@@ -458,6 +629,33 @@ case.ios-simulator.multiply_half.safe.O2.contract-off.results	00000000 00000000 
 case.ios-simulator.multiply_half.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-simulator.multiply_half.safe.O2.contract-off.fpfun-fast.float_operations	fmul
 case.ios-simulator.multiply_half.safe.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.ios-simulator.multiply_half_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_half_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-simulator.multiply_half_f16.fast.O2.contract-off.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.ios-simulator.multiply_half_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_half_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-simulator.multiply_half_f16.relaxed.O2.contract-off.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.ios-simulator.multiply_half_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_half_f16.runtime.fast.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_half_f16.runtime.fast.opt-default.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.ios-simulator.multiply_half_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_half_f16.runtime.fast.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_half_f16.runtime.fast.opt-size.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.ios-simulator.multiply_half_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_half_f16.runtime.relaxed.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_half_f16.runtime.relaxed.opt-default.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.ios-simulator.multiply_half_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_half_f16.runtime.relaxed.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_half_f16.runtime.relaxed.opt-size.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.ios-simulator.multiply_half_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_half_f16.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_half_f16.runtime.safe.opt-default.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.ios-simulator.multiply_half_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_half_f16.runtime.safe.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_half_f16.runtime.safe.opt-size.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.ios-simulator.multiply_half_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_half_f16.safe.O2.contract-off.float_operations	fmul
+case.ios-simulator.multiply_half_f16.safe.O2.contract-off.results	0000 0100 0200 0200 8100 8000 3155 3800
 case.ios-simulator.multiply_one.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-simulator.multiply_one.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.ios-simulator.multiply_one.fast.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
@@ -494,6 +692,33 @@ case.ios-simulator.multiply_one.safe.O0.contract-off.results	00000001 00400000 0
 case.ios-simulator.multiply_one.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-simulator.multiply_one.safe.O2.contract-off.float_operations	
 case.ios-simulator.multiply_one.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.ios-simulator.multiply_one_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_one_f16.fast.O2.contract-off.float_operations	
+case.ios-simulator.multiply_one_f16.fast.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.multiply_one_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_one_f16.relaxed.O2.contract-off.float_operations	
+case.ios-simulator.multiply_one_f16.relaxed.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.multiply_one_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_one_f16.runtime.fast.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_one_f16.runtime.fast.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.multiply_one_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_one_f16.runtime.fast.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_one_f16.runtime.fast.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.multiply_one_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_one_f16.runtime.relaxed.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_one_f16.runtime.relaxed.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.multiply_one_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_one_f16.runtime.relaxed.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_one_f16.runtime.relaxed.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.multiply_one_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_one_f16.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_one_f16.runtime.safe.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.multiply_one_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_one_f16.runtime.safe.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_one_f16.runtime.safe.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.multiply_one_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_one_f16.safe.O2.contract-off.float_operations	
+case.ios-simulator.multiply_one_f16.safe.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
 case.ios-simulator.multiply_two.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-simulator.multiply_two.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.ios-simulator.multiply_two.fast.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
@@ -557,6 +782,42 @@ case.ios-simulator.multiply_two.safe.O2.contract-off.results	00000000 00000000 0
 case.ios-simulator.multiply_two.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-simulator.multiply_two.safe.O2.contract-off.fpfun-fast.float_operations	fmul
 case.ios-simulator.multiply_two.safe.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.ios-simulator.multiply_two_f16.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_two_f16.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-simulator.multiply_two_f16.fast.O0.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_two_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-simulator.multiply_two_f16.fast.O2.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_two_f16.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-simulator.multiply_two_f16.relaxed.O0.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_two_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.ios-simulator.multiply_two_f16.relaxed.O2.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_two_f16.runtime.fast.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_two_f16.runtime.fast.opt-default.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_two_f16.runtime.fast.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_two_f16.runtime.fast.opt-size.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_two_f16.runtime.relaxed.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_two_f16.runtime.relaxed.opt-default.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_two_f16.runtime.relaxed.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_two_f16.runtime.relaxed.opt-size.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.multiply_two_f16.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_two_f16.runtime.safe.opt-default.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.multiply_two_f16.runtime.safe.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.multiply_two_f16.runtime.safe.opt-size.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_two_f16.safe.O0.contract-off.float_operations	fmul
+case.ios-simulator.multiply_two_f16.safe.O0.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.ios-simulator.multiply_two_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.multiply_two_f16.safe.O2.contract-off.float_operations	fmul
+case.ios-simulator.multiply_two_f16.safe.O2.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
 case.ios-simulator.reassociation_chain.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-simulator.reassociation_chain.fast.O2.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
 case.ios-simulator.reassociation_chain.fast.O2.contract-off.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800001
@@ -656,6 +917,42 @@ case.ios-simulator.scale_one_bias_zero.safe.O3.contract-off.results	00000000 000
 case.ios-simulator.scale_one_bias_zero.safe.Os.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.ios-simulator.scale_one_bias_zero.safe.Os.contract-off.float_operations	fadd
 case.ios-simulator.scale_one_bias_zero.safe.Os.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.ios-simulator.scale_one_bias_zero_f16.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.scale_one_bias_zero_f16.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.ios-simulator.scale_one_bias_zero_f16.fast.O0.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.ios-simulator.scale_one_bias_zero_f16.fast.O2.contract-off.float_operations	
+case.ios-simulator.scale_one_bias_zero_f16.fast.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.scale_one_bias_zero_f16.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.ios-simulator.scale_one_bias_zero_f16.relaxed.O0.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.scale_one_bias_zero_f16.relaxed.O2.contract-off.float_operations	
+case.ios-simulator.scale_one_bias_zero_f16.relaxed.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.scale_one_bias_zero_f16.runtime.fast.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.scale_one_bias_zero_f16.runtime.fast.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.scale_one_bias_zero_f16.runtime.fast.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.scale_one_bias_zero_f16.runtime.fast.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.scale_one_bias_zero_f16.runtime.relaxed.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.scale_one_bias_zero_f16.runtime.relaxed.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.scale_one_bias_zero_f16.runtime.relaxed.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.scale_one_bias_zero_f16.runtime.relaxed.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.ios-simulator.scale_one_bias_zero_f16.runtime.safe.opt-default.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.scale_one_bias_zero_f16.runtime.safe.opt-default.results	0001 0200 03ff 0400 8200 0000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.ios-simulator.scale_one_bias_zero_f16.runtime.safe.opt-size.archived_options	unavailable:dispatch of the archive-support probe failed with 134: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device architecture is nil' Child process terminated with signal 6: Abort trap
+case.ios-simulator.scale_one_bias_zero_f16.runtime.safe.opt-size.results	0001 0200 03ff 0400 8200 0000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.scale_one_bias_zero_f16.safe.O0.contract-off.float_operations	fmul fadd
+case.ios-simulator.scale_one_bias_zero_f16.safe.O0.contract-off.results	0001 0200 03ff 0400 8200 0000 3555 3c00
+case.ios-simulator.scale_one_bias_zero_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.ios-simulator.scale_one_bias_zero_f16.safe.O2.contract-off.float_operations	fadd
+case.ios-simulator.scale_one_bias_zero_f16.safe.O2.contract-off.results	0001 0200 03ff 0400 8200 0000 3555 3c00
 case.ios-simulator.scale_two_bias_one.fast.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.ios-simulator.scale_two_bias_one.fast.O2.contract-fast.float_operations	fmul+fast fadd+fast
 case.ios-simulator.scale_two_bias_one.fast.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
@@ -737,6 +1034,33 @@ case.macos.add_smallest_normal.safe.O0.contract-off.results	00800000 00800000 00
 case.macos.add_smallest_normal.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.add_smallest_normal.safe.O2.contract-off.float_operations	fadd
 case.macos.add_smallest_normal.safe.O2.contract-off.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.fast.O2.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.add_smallest_normal_f16.fast.O2.contract-off.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.macos.add_smallest_normal_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.relaxed.O2.contract-off.float_operations	fadd+reassoc+nsz+arcp+afn
+case.macos.add_smallest_normal_f16.relaxed.O2.contract-off.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.macos.add_smallest_normal_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.macos.add_smallest_normal_f16.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.runtime.fast.opt-default.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.macos.add_smallest_normal_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.macos.add_smallest_normal_f16.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.runtime.fast.opt-size.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.macos.add_smallest_normal_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.macos.add_smallest_normal_f16.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.runtime.relaxed.opt-default.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.macos.add_smallest_normal_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.macos.add_smallest_normal_f16.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.runtime.relaxed.opt-size.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.macos.add_smallest_normal_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.macos.add_smallest_normal_f16.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.runtime.safe.opt-default.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.macos.add_smallest_normal_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.macos.add_smallest_normal_f16.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.runtime.safe.opt-size.results	0401 0600 07ff 0800 0200 0400 3555 3c00
+case.macos.add_smallest_normal_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal_f16.safe.O2.contract-off.float_operations	fadd
+case.macos.add_smallest_normal_f16.safe.O2.contract-off.results	0401 0600 07ff 0800 0200 0400 3555 3c00
 case.macos.contraction_pair.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
 case.macos.contraction_pair.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.contraction_pair.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
@@ -830,6 +1154,60 @@ case.macos.divide_by_three_eighths.runtime.safe.opt-size.results	00000000 000000
 case.macos.divide_by_three_eighths.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.divide_by_three_eighths.safe.O2.contract-off.float_operations	fdiv
 case.macos.divide_by_three_eighths.safe.O2.contract-off.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.divide_by_three_eighths_f16.fast.O2.contract-off.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_eighths_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.divide_by_three_eighths_f16.relaxed.O2.contract-off.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_eighths_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.macos.divide_by_three_eighths_f16.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.runtime.fast.opt-default.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_eighths_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.macos.divide_by_three_eighths_f16.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.runtime.fast.opt-size.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_eighths_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.macos.divide_by_three_eighths_f16.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.runtime.relaxed.opt-default.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_eighths_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.macos.divide_by_three_eighths_f16.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.runtime.relaxed.opt-size.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_eighths_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.macos.divide_by_three_eighths_f16.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.runtime.safe.opt-default.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_eighths_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.macos.divide_by_three_eighths_f16.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.runtime.safe.opt-size.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_eighths_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths_f16.safe.O2.contract-off.float_operations	fdiv
+case.macos.divide_by_three_eighths_f16.safe.O2.contract-off.results	0003 0555 0954 0955 8555 8000 3b1c 4155
+case.macos.divide_by_three_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.divide_by_three_f16.fast.O2.contract-off.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.macos.divide_by_three_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.divide_by_three_f16.relaxed.O2.contract-off.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.macos.divide_by_three_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.macos.divide_by_three_f16.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.runtime.fast.opt-default.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.macos.divide_by_three_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.macos.divide_by_three_f16.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.runtime.fast.opt-size.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.macos.divide_by_three_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.macos.divide_by_three_f16.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.runtime.relaxed.opt-default.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.macos.divide_by_three_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.macos.divide_by_three_f16.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.runtime.relaxed.opt-size.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.macos.divide_by_three_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.macos.divide_by_three_f16.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.runtime.safe.opt-default.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.macos.divide_by_three_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.macos.divide_by_three_f16.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.runtime.safe.opt-size.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
+case.macos.divide_by_three_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_f16.safe.O2.contract-off.float_operations	fdiv
+case.macos.divide_by_three_f16.safe.O2.contract-off.results	0000 00ab 0155 0155 80ab 8000 2f1c 3555
 case.macos.divide_by_two.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
 case.macos.divide_by_two.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.divide_by_two.runtime.safe.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
@@ -881,6 +1259,33 @@ case.macos.materialize.runtime.safe.opt-size.results	00000001 00400000 007fffff 
 case.macos.materialize.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.materialize.safe.O2.contract-off.float_operations	
 case.macos.materialize.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.fast.O2.contract-off.float_operations	
+case.macos.materialize_f16.fast.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.materialize_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.relaxed.O2.contract-off.float_operations	
+case.macos.materialize_f16.relaxed.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.materialize_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.macos.materialize_f16.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.runtime.fast.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.materialize_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.macos.materialize_f16.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.runtime.fast.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.materialize_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.macos.materialize_f16.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.runtime.relaxed.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.materialize_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.macos.materialize_f16.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.runtime.relaxed.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.materialize_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.macos.materialize_f16.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.runtime.safe.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.materialize_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.macos.materialize_f16.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.runtime.safe.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.materialize_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize_f16.safe.O2.contract-off.float_operations	
+case.macos.materialize_f16.safe.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
 case.macos.multiply_half.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.macos.multiply_half.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.macos.multiply_half.fast.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
@@ -944,6 +1349,33 @@ case.macos.multiply_half.safe.O2.contract-off.results	00000000 00000000 00000000
 case.macos.multiply_half.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.multiply_half.safe.O2.contract-off.fpfun-fast.float_operations	fmul
 case.macos.multiply_half.safe.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_half_f16.fast.O2.contract-off.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.macos.multiply_half_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_half_f16.relaxed.O2.contract-off.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.macos.multiply_half_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_half_f16.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.runtime.fast.opt-default.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.macos.multiply_half_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_half_f16.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.runtime.fast.opt-size.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.macos.multiply_half_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_half_f16.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.runtime.relaxed.opt-default.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.macos.multiply_half_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_half_f16.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.runtime.relaxed.opt-size.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.macos.multiply_half_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_half_f16.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.runtime.safe.opt-default.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.macos.multiply_half_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_half_f16.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.runtime.safe.opt-size.results	0000 0100 0200 0200 8100 8000 3155 3800
+case.macos.multiply_half_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half_f16.safe.O2.contract-off.float_operations	fmul
+case.macos.multiply_half_f16.safe.O2.contract-off.results	0000 0100 0200 0200 8100 8000 3155 3800
 case.macos.multiply_one.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.macos.multiply_one.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.macos.multiply_one.fast.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
@@ -980,6 +1412,33 @@ case.macos.multiply_one.safe.O0.contract-off.results	00000001 00400000 007fffff 
 case.macos.multiply_one.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.multiply_one.safe.O2.contract-off.float_operations	
 case.macos.multiply_one.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.fast.O2.contract-off.float_operations	
+case.macos.multiply_one_f16.fast.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.multiply_one_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.relaxed.O2.contract-off.float_operations	
+case.macos.multiply_one_f16.relaxed.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.multiply_one_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_one_f16.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.runtime.fast.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.multiply_one_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_one_f16.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.runtime.fast.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.multiply_one_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_one_f16.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.runtime.relaxed.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.multiply_one_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_one_f16.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.runtime.relaxed.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.multiply_one_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_one_f16.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.runtime.safe.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.multiply_one_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_one_f16.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.runtime.safe.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.multiply_one_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one_f16.safe.O2.contract-off.float_operations	
+case.macos.multiply_one_f16.safe.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
 case.macos.multiply_two.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.macos.multiply_two.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
 case.macos.multiply_two.fast.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
@@ -1043,6 +1502,42 @@ case.macos.multiply_two.safe.O2.contract-off.results	00000000 00000000 00000000 
 case.macos.multiply_two.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.multiply_two.safe.O2.contract-off.fpfun-fast.float_operations	fmul
 case.macos.multiply_two.safe.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two_f16.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_two_f16.fast.O0.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_two_f16.fast.O2.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_two_f16.relaxed.O0.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_two_f16.relaxed.O2.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_two_f16.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.runtime.fast.opt-default.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_two_f16.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.runtime.fast.opt-size.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_two_f16.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.runtime.relaxed.opt-default.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_two_f16.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.runtime.relaxed.opt-size.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.macos.multiply_two_f16.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.runtime.safe.opt-default.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.macos.multiply_two_f16.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.runtime.safe.opt-size.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.safe.O0.contract-off.float_operations	fmul
+case.macos.multiply_two_f16.safe.O0.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
+case.macos.multiply_two_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two_f16.safe.O2.contract-off.float_operations	fmul
+case.macos.multiply_two_f16.safe.O2.contract-off.results	0002 0400 07fe 0800 8400 8000 3955 4000
 case.macos.reassociation_chain.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.macos.reassociation_chain.fast.O2.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
 case.macos.reassociation_chain.fast.O2.contract-off.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800001
@@ -1142,6 +1637,42 @@ case.macos.scale_one_bias_zero.safe.O3.contract-off.results	00000000 00000000 00
 case.macos.scale_one_bias_zero.safe.Os.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
 case.macos.scale_one_bias_zero.safe.Os.contract-off.float_operations	fadd
 case.macos.scale_one_bias_zero.safe.Os.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero_f16.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.scale_one_bias_zero_f16.fast.O0.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.scale_one_bias_zero_f16.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.fast.O2.contract-off.float_operations	
+case.macos.scale_one_bias_zero_f16.fast.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.scale_one_bias_zero_f16.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.macos.scale_one_bias_zero_f16.relaxed.O0.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.scale_one_bias_zero_f16.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.relaxed.O2.contract-off.float_operations	
+case.macos.scale_one_bias_zero_f16.relaxed.O2.contract-off.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.scale_one_bias_zero_f16.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.macos.scale_one_bias_zero_f16.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.runtime.fast.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.scale_one_bias_zero_f16.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.macos.scale_one_bias_zero_f16.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.runtime.fast.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.scale_one_bias_zero_f16.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.macos.scale_one_bias_zero_f16.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.runtime.relaxed.opt-default.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.scale_one_bias_zero_f16.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.macos.scale_one_bias_zero_f16.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.runtime.relaxed.opt-size.results	0001 0200 03ff 0400 8200 8000 3555 3c00
+case.macos.scale_one_bias_zero_f16.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=3.1,opt=default
+case.macos.scale_one_bias_zero_f16.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.runtime.safe.opt-default.results	0001 0200 03ff 0400 8200 0000 3555 3c00
+case.macos.scale_one_bias_zero_f16.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=3.1,opt=size
+case.macos.scale_one_bias_zero_f16.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.runtime.safe.opt-size.results	0001 0200 03ff 0400 8200 0000 3555 3c00
+case.macos.scale_one_bias_zero_f16.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.safe.O0.contract-off.float_operations	fmul fadd
+case.macos.scale_one_bias_zero_f16.safe.O0.contract-off.results	0001 0200 03ff 0400 8200 0000 3555 3c00
+case.macos.scale_one_bias_zero_f16.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero_f16.safe.O2.contract-off.float_operations	fadd
+case.macos.scale_one_bias_zero_f16.safe.O2.contract-off.results	0001 0200 03ff 0400 8200 0000 3555 3c00
 case.macos.scale_two_bias_one.fast.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
 case.macos.scale_two_bias_one.fast.O2.contract-fast.float_operations	fmul+fast fadd+fast
 case.macos.scale_two_bias_one.fast.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
@@ -1193,6 +1724,12 @@ comparison.ios-simulator.add_smallest_normal.runtime.relaxed.opt-default	agree c
 comparison.ios-simulator.add_smallest_normal.runtime.relaxed.opt-size	agree candidates=ios-simulator.add_smallest_normal.relaxed.O2.contract-off matched=ios-simulator.add_smallest_normal.relaxed.O2.contract-off
 comparison.ios-simulator.add_smallest_normal.runtime.safe.opt-default	agree candidates=ios-simulator.add_smallest_normal.safe.O2.contract-off matched=ios-simulator.add_smallest_normal.safe.O2.contract-off
 comparison.ios-simulator.add_smallest_normal.runtime.safe.opt-size	agree candidates=ios-simulator.add_smallest_normal.safe.O2.contract-off matched=ios-simulator.add_smallest_normal.safe.O2.contract-off
+comparison.ios-simulator.add_smallest_normal_f16.runtime.fast.opt-default	agree candidates=ios-simulator.add_smallest_normal_f16.fast.O2.contract-off matched=ios-simulator.add_smallest_normal_f16.fast.O2.contract-off
+comparison.ios-simulator.add_smallest_normal_f16.runtime.fast.opt-size	agree candidates=ios-simulator.add_smallest_normal_f16.fast.O2.contract-off matched=ios-simulator.add_smallest_normal_f16.fast.O2.contract-off
+comparison.ios-simulator.add_smallest_normal_f16.runtime.relaxed.opt-default	agree candidates=ios-simulator.add_smallest_normal_f16.relaxed.O2.contract-off matched=ios-simulator.add_smallest_normal_f16.relaxed.O2.contract-off
+comparison.ios-simulator.add_smallest_normal_f16.runtime.relaxed.opt-size	agree candidates=ios-simulator.add_smallest_normal_f16.relaxed.O2.contract-off matched=ios-simulator.add_smallest_normal_f16.relaxed.O2.contract-off
+comparison.ios-simulator.add_smallest_normal_f16.runtime.safe.opt-default	agree candidates=ios-simulator.add_smallest_normal_f16.safe.O2.contract-off matched=ios-simulator.add_smallest_normal_f16.safe.O2.contract-off
+comparison.ios-simulator.add_smallest_normal_f16.runtime.safe.opt-size	agree candidates=ios-simulator.add_smallest_normal_f16.safe.O2.contract-off matched=ios-simulator.add_smallest_normal_f16.safe.O2.contract-off
 comparison.ios-simulator.contraction_pair.runtime.safe.opt-default	agree-on-some candidates=ios-simulator.contraction_pair.safe.O2.contract-fast,ios-simulator.contraction_pair.safe.O2.contract-off,ios-simulator.contraction_pair.safe.O2.contract-on matched=ios-simulator.contraction_pair.safe.O2.contract-off,ios-simulator.contraction_pair.safe.O2.contract-on
 comparison.ios-simulator.contraction_pair.runtime.safe.opt-size	agree-on-some candidates=ios-simulator.contraction_pair.safe.O2.contract-fast,ios-simulator.contraction_pair.safe.O2.contract-off,ios-simulator.contraction_pair.safe.O2.contract-on matched=ios-simulator.contraction_pair.safe.O2.contract-off,ios-simulator.contraction_pair.safe.O2.contract-on
 comparison.ios-simulator.contraction_pair_canonicalized.runtime.safe.opt-default	agree candidates=ios-simulator.contraction_pair_canonicalized.safe.O2.contract-fast,ios-simulator.contraction_pair_canonicalized.safe.O2.contract-off,ios-simulator.contraction_pair_canonicalized.safe.O2.contract-on matched=ios-simulator.contraction_pair_canonicalized.safe.O2.contract-fast,ios-simulator.contraction_pair_canonicalized.safe.O2.contract-off,ios-simulator.contraction_pair_canonicalized.safe.O2.contract-on
@@ -1211,6 +1748,18 @@ comparison.ios-simulator.divide_by_three_eighths.runtime.relaxed.opt-default	agr
 comparison.ios-simulator.divide_by_three_eighths.runtime.relaxed.opt-size	agree candidates=ios-simulator.divide_by_three_eighths.relaxed.O2.contract-off matched=ios-simulator.divide_by_three_eighths.relaxed.O2.contract-off
 comparison.ios-simulator.divide_by_three_eighths.runtime.safe.opt-default	agree candidates=ios-simulator.divide_by_three_eighths.safe.O2.contract-off matched=ios-simulator.divide_by_three_eighths.safe.O2.contract-off
 comparison.ios-simulator.divide_by_three_eighths.runtime.safe.opt-size	agree candidates=ios-simulator.divide_by_three_eighths.safe.O2.contract-off matched=ios-simulator.divide_by_three_eighths.safe.O2.contract-off
+comparison.ios-simulator.divide_by_three_eighths_f16.runtime.fast.opt-default	agree candidates=ios-simulator.divide_by_three_eighths_f16.fast.O2.contract-off matched=ios-simulator.divide_by_three_eighths_f16.fast.O2.contract-off
+comparison.ios-simulator.divide_by_three_eighths_f16.runtime.fast.opt-size	agree candidates=ios-simulator.divide_by_three_eighths_f16.fast.O2.contract-off matched=ios-simulator.divide_by_three_eighths_f16.fast.O2.contract-off
+comparison.ios-simulator.divide_by_three_eighths_f16.runtime.relaxed.opt-default	agree candidates=ios-simulator.divide_by_three_eighths_f16.relaxed.O2.contract-off matched=ios-simulator.divide_by_three_eighths_f16.relaxed.O2.contract-off
+comparison.ios-simulator.divide_by_three_eighths_f16.runtime.relaxed.opt-size	agree candidates=ios-simulator.divide_by_three_eighths_f16.relaxed.O2.contract-off matched=ios-simulator.divide_by_three_eighths_f16.relaxed.O2.contract-off
+comparison.ios-simulator.divide_by_three_eighths_f16.runtime.safe.opt-default	agree candidates=ios-simulator.divide_by_three_eighths_f16.safe.O2.contract-off matched=ios-simulator.divide_by_three_eighths_f16.safe.O2.contract-off
+comparison.ios-simulator.divide_by_three_eighths_f16.runtime.safe.opt-size	agree candidates=ios-simulator.divide_by_three_eighths_f16.safe.O2.contract-off matched=ios-simulator.divide_by_three_eighths_f16.safe.O2.contract-off
+comparison.ios-simulator.divide_by_three_f16.runtime.fast.opt-default	agree candidates=ios-simulator.divide_by_three_f16.fast.O2.contract-off matched=ios-simulator.divide_by_three_f16.fast.O2.contract-off
+comparison.ios-simulator.divide_by_three_f16.runtime.fast.opt-size	agree candidates=ios-simulator.divide_by_three_f16.fast.O2.contract-off matched=ios-simulator.divide_by_three_f16.fast.O2.contract-off
+comparison.ios-simulator.divide_by_three_f16.runtime.relaxed.opt-default	agree candidates=ios-simulator.divide_by_three_f16.relaxed.O2.contract-off matched=ios-simulator.divide_by_three_f16.relaxed.O2.contract-off
+comparison.ios-simulator.divide_by_three_f16.runtime.relaxed.opt-size	agree candidates=ios-simulator.divide_by_three_f16.relaxed.O2.contract-off matched=ios-simulator.divide_by_three_f16.relaxed.O2.contract-off
+comparison.ios-simulator.divide_by_three_f16.runtime.safe.opt-default	agree candidates=ios-simulator.divide_by_three_f16.safe.O2.contract-off matched=ios-simulator.divide_by_three_f16.safe.O2.contract-off
+comparison.ios-simulator.divide_by_three_f16.runtime.safe.opt-size	agree candidates=ios-simulator.divide_by_three_f16.safe.O2.contract-off matched=ios-simulator.divide_by_three_f16.safe.O2.contract-off
 comparison.ios-simulator.divide_by_two.runtime.safe.opt-default	agree candidates=ios-simulator.divide_by_two.safe.O2.contract-off matched=ios-simulator.divide_by_two.safe.O2.contract-off
 comparison.ios-simulator.divide_by_two.runtime.safe.opt-size	agree candidates=ios-simulator.divide_by_two.safe.O2.contract-off matched=ios-simulator.divide_by_two.safe.O2.contract-off
 comparison.ios-simulator.fused_pair.runtime.safe.opt-default	agree candidates=ios-simulator.fused_pair.safe.O2.contract-fast,ios-simulator.fused_pair.safe.O2.contract-off,ios-simulator.fused_pair.safe.O2.contract-on matched=ios-simulator.fused_pair.safe.O2.contract-fast,ios-simulator.fused_pair.safe.O2.contract-off,ios-simulator.fused_pair.safe.O2.contract-on
@@ -1221,6 +1770,12 @@ comparison.ios-simulator.materialize.runtime.relaxed.opt-default	agree candidate
 comparison.ios-simulator.materialize.runtime.relaxed.opt-size	agree candidates=ios-simulator.materialize.relaxed.O2.contract-off matched=ios-simulator.materialize.relaxed.O2.contract-off
 comparison.ios-simulator.materialize.runtime.safe.opt-default	agree candidates=ios-simulator.materialize.safe.O2.contract-off matched=ios-simulator.materialize.safe.O2.contract-off
 comparison.ios-simulator.materialize.runtime.safe.opt-size	agree candidates=ios-simulator.materialize.safe.O2.contract-off matched=ios-simulator.materialize.safe.O2.contract-off
+comparison.ios-simulator.materialize_f16.runtime.fast.opt-default	agree candidates=ios-simulator.materialize_f16.fast.O2.contract-off matched=ios-simulator.materialize_f16.fast.O2.contract-off
+comparison.ios-simulator.materialize_f16.runtime.fast.opt-size	agree candidates=ios-simulator.materialize_f16.fast.O2.contract-off matched=ios-simulator.materialize_f16.fast.O2.contract-off
+comparison.ios-simulator.materialize_f16.runtime.relaxed.opt-default	agree candidates=ios-simulator.materialize_f16.relaxed.O2.contract-off matched=ios-simulator.materialize_f16.relaxed.O2.contract-off
+comparison.ios-simulator.materialize_f16.runtime.relaxed.opt-size	agree candidates=ios-simulator.materialize_f16.relaxed.O2.contract-off matched=ios-simulator.materialize_f16.relaxed.O2.contract-off
+comparison.ios-simulator.materialize_f16.runtime.safe.opt-default	agree candidates=ios-simulator.materialize_f16.safe.O2.contract-off matched=ios-simulator.materialize_f16.safe.O2.contract-off
+comparison.ios-simulator.materialize_f16.runtime.safe.opt-size	agree candidates=ios-simulator.materialize_f16.safe.O2.contract-off matched=ios-simulator.materialize_f16.safe.O2.contract-off
 comparison.ios-simulator.multiply_half.runtime.fast.opt-default	agree candidates=ios-simulator.multiply_half.fast.O2.contract-off matched=ios-simulator.multiply_half.fast.O2.contract-off
 comparison.ios-simulator.multiply_half.runtime.fast.opt-default.fpfun-fast	agree candidates=ios-simulator.multiply_half.fast.O2.contract-off.fpfun-fast matched=ios-simulator.multiply_half.fast.O2.contract-off.fpfun-fast
 comparison.ios-simulator.multiply_half.runtime.fast.opt-size	agree candidates=ios-simulator.multiply_half.fast.O2.contract-off matched=ios-simulator.multiply_half.fast.O2.contract-off
@@ -1233,12 +1788,24 @@ comparison.ios-simulator.multiply_half.runtime.safe.opt-default	agree candidates
 comparison.ios-simulator.multiply_half.runtime.safe.opt-default.fpfun-fast	agree candidates=ios-simulator.multiply_half.safe.O2.contract-off.fpfun-fast matched=ios-simulator.multiply_half.safe.O2.contract-off.fpfun-fast
 comparison.ios-simulator.multiply_half.runtime.safe.opt-size	agree candidates=ios-simulator.multiply_half.safe.O2.contract-off matched=ios-simulator.multiply_half.safe.O2.contract-off
 comparison.ios-simulator.multiply_half.runtime.safe.opt-size.fpfun-fast	agree candidates=ios-simulator.multiply_half.safe.O2.contract-off.fpfun-fast matched=ios-simulator.multiply_half.safe.O2.contract-off.fpfun-fast
+comparison.ios-simulator.multiply_half_f16.runtime.fast.opt-default	agree candidates=ios-simulator.multiply_half_f16.fast.O2.contract-off matched=ios-simulator.multiply_half_f16.fast.O2.contract-off
+comparison.ios-simulator.multiply_half_f16.runtime.fast.opt-size	agree candidates=ios-simulator.multiply_half_f16.fast.O2.contract-off matched=ios-simulator.multiply_half_f16.fast.O2.contract-off
+comparison.ios-simulator.multiply_half_f16.runtime.relaxed.opt-default	agree candidates=ios-simulator.multiply_half_f16.relaxed.O2.contract-off matched=ios-simulator.multiply_half_f16.relaxed.O2.contract-off
+comparison.ios-simulator.multiply_half_f16.runtime.relaxed.opt-size	agree candidates=ios-simulator.multiply_half_f16.relaxed.O2.contract-off matched=ios-simulator.multiply_half_f16.relaxed.O2.contract-off
+comparison.ios-simulator.multiply_half_f16.runtime.safe.opt-default	agree candidates=ios-simulator.multiply_half_f16.safe.O2.contract-off matched=ios-simulator.multiply_half_f16.safe.O2.contract-off
+comparison.ios-simulator.multiply_half_f16.runtime.safe.opt-size	agree candidates=ios-simulator.multiply_half_f16.safe.O2.contract-off matched=ios-simulator.multiply_half_f16.safe.O2.contract-off
 comparison.ios-simulator.multiply_one.runtime.fast.opt-default	agree candidates=ios-simulator.multiply_one.fast.O2.contract-off matched=ios-simulator.multiply_one.fast.O2.contract-off
 comparison.ios-simulator.multiply_one.runtime.fast.opt-size	agree candidates=ios-simulator.multiply_one.fast.O2.contract-off matched=ios-simulator.multiply_one.fast.O2.contract-off
 comparison.ios-simulator.multiply_one.runtime.relaxed.opt-default	agree candidates=ios-simulator.multiply_one.relaxed.O2.contract-off matched=ios-simulator.multiply_one.relaxed.O2.contract-off
 comparison.ios-simulator.multiply_one.runtime.relaxed.opt-size	agree candidates=ios-simulator.multiply_one.relaxed.O2.contract-off matched=ios-simulator.multiply_one.relaxed.O2.contract-off
 comparison.ios-simulator.multiply_one.runtime.safe.opt-default	agree candidates=ios-simulator.multiply_one.safe.O2.contract-off matched=ios-simulator.multiply_one.safe.O2.contract-off
 comparison.ios-simulator.multiply_one.runtime.safe.opt-size	agree candidates=ios-simulator.multiply_one.safe.O2.contract-off matched=ios-simulator.multiply_one.safe.O2.contract-off
+comparison.ios-simulator.multiply_one_f16.runtime.fast.opt-default	agree candidates=ios-simulator.multiply_one_f16.fast.O2.contract-off matched=ios-simulator.multiply_one_f16.fast.O2.contract-off
+comparison.ios-simulator.multiply_one_f16.runtime.fast.opt-size	agree candidates=ios-simulator.multiply_one_f16.fast.O2.contract-off matched=ios-simulator.multiply_one_f16.fast.O2.contract-off
+comparison.ios-simulator.multiply_one_f16.runtime.relaxed.opt-default	agree candidates=ios-simulator.multiply_one_f16.relaxed.O2.contract-off matched=ios-simulator.multiply_one_f16.relaxed.O2.contract-off
+comparison.ios-simulator.multiply_one_f16.runtime.relaxed.opt-size	agree candidates=ios-simulator.multiply_one_f16.relaxed.O2.contract-off matched=ios-simulator.multiply_one_f16.relaxed.O2.contract-off
+comparison.ios-simulator.multiply_one_f16.runtime.safe.opt-default	agree candidates=ios-simulator.multiply_one_f16.safe.O2.contract-off matched=ios-simulator.multiply_one_f16.safe.O2.contract-off
+comparison.ios-simulator.multiply_one_f16.runtime.safe.opt-size	agree candidates=ios-simulator.multiply_one_f16.safe.O2.contract-off matched=ios-simulator.multiply_one_f16.safe.O2.contract-off
 comparison.ios-simulator.multiply_two.runtime.fast.opt-default	agree candidates=ios-simulator.multiply_two.fast.O2.contract-off matched=ios-simulator.multiply_two.fast.O2.contract-off
 comparison.ios-simulator.multiply_two.runtime.fast.opt-default.fpfun-fast	agree candidates=ios-simulator.multiply_two.fast.O2.contract-off.fpfun-fast matched=ios-simulator.multiply_two.fast.O2.contract-off.fpfun-fast
 comparison.ios-simulator.multiply_two.runtime.fast.opt-size	agree candidates=ios-simulator.multiply_two.fast.O2.contract-off matched=ios-simulator.multiply_two.fast.O2.contract-off
@@ -1251,6 +1818,12 @@ comparison.ios-simulator.multiply_two.runtime.safe.opt-default	agree candidates=
 comparison.ios-simulator.multiply_two.runtime.safe.opt-default.fpfun-fast	agree candidates=ios-simulator.multiply_two.safe.O2.contract-off.fpfun-fast matched=ios-simulator.multiply_two.safe.O2.contract-off.fpfun-fast
 comparison.ios-simulator.multiply_two.runtime.safe.opt-size	agree candidates=ios-simulator.multiply_two.safe.O2.contract-off matched=ios-simulator.multiply_two.safe.O2.contract-off
 comparison.ios-simulator.multiply_two.runtime.safe.opt-size.fpfun-fast	agree candidates=ios-simulator.multiply_two.safe.O2.contract-off.fpfun-fast matched=ios-simulator.multiply_two.safe.O2.contract-off.fpfun-fast
+comparison.ios-simulator.multiply_two_f16.runtime.fast.opt-default	agree candidates=ios-simulator.multiply_two_f16.fast.O2.contract-off matched=ios-simulator.multiply_two_f16.fast.O2.contract-off
+comparison.ios-simulator.multiply_two_f16.runtime.fast.opt-size	agree candidates=ios-simulator.multiply_two_f16.fast.O2.contract-off matched=ios-simulator.multiply_two_f16.fast.O2.contract-off
+comparison.ios-simulator.multiply_two_f16.runtime.relaxed.opt-default	agree candidates=ios-simulator.multiply_two_f16.relaxed.O2.contract-off matched=ios-simulator.multiply_two_f16.relaxed.O2.contract-off
+comparison.ios-simulator.multiply_two_f16.runtime.relaxed.opt-size	agree candidates=ios-simulator.multiply_two_f16.relaxed.O2.contract-off matched=ios-simulator.multiply_two_f16.relaxed.O2.contract-off
+comparison.ios-simulator.multiply_two_f16.runtime.safe.opt-default	agree candidates=ios-simulator.multiply_two_f16.safe.O2.contract-off matched=ios-simulator.multiply_two_f16.safe.O2.contract-off
+comparison.ios-simulator.multiply_two_f16.runtime.safe.opt-size	agree candidates=ios-simulator.multiply_two_f16.safe.O2.contract-off matched=ios-simulator.multiply_two_f16.safe.O2.contract-off
 comparison.ios-simulator.reassociation_chain.runtime.fast.opt-default	agree candidates=ios-simulator.reassociation_chain.fast.O2.contract-off matched=ios-simulator.reassociation_chain.fast.O2.contract-off
 comparison.ios-simulator.reassociation_chain.runtime.fast.opt-size	agree candidates=ios-simulator.reassociation_chain.fast.O2.contract-off matched=ios-simulator.reassociation_chain.fast.O2.contract-off
 comparison.ios-simulator.reassociation_chain.runtime.relaxed.opt-default	agree candidates=ios-simulator.reassociation_chain.relaxed.O2.contract-off matched=ios-simulator.reassociation_chain.relaxed.O2.contract-off
@@ -1269,6 +1842,12 @@ comparison.ios-simulator.scale_one_bias_zero.runtime.safe.opt-default	agree cand
 comparison.ios-simulator.scale_one_bias_zero.runtime.safe.opt-default.fpfun-fast	agree candidates=ios-simulator.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast matched=ios-simulator.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast
 comparison.ios-simulator.scale_one_bias_zero.runtime.safe.opt-size	agree candidates=ios-simulator.scale_one_bias_zero.safe.O2.contract-off matched=ios-simulator.scale_one_bias_zero.safe.O2.contract-off
 comparison.ios-simulator.scale_one_bias_zero.runtime.safe.opt-size.fpfun-fast	agree candidates=ios-simulator.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast matched=ios-simulator.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast
+comparison.ios-simulator.scale_one_bias_zero_f16.runtime.fast.opt-default	agree candidates=ios-simulator.scale_one_bias_zero_f16.fast.O2.contract-off matched=ios-simulator.scale_one_bias_zero_f16.fast.O2.contract-off
+comparison.ios-simulator.scale_one_bias_zero_f16.runtime.fast.opt-size	agree candidates=ios-simulator.scale_one_bias_zero_f16.fast.O2.contract-off matched=ios-simulator.scale_one_bias_zero_f16.fast.O2.contract-off
+comparison.ios-simulator.scale_one_bias_zero_f16.runtime.relaxed.opt-default	agree candidates=ios-simulator.scale_one_bias_zero_f16.relaxed.O2.contract-off matched=ios-simulator.scale_one_bias_zero_f16.relaxed.O2.contract-off
+comparison.ios-simulator.scale_one_bias_zero_f16.runtime.relaxed.opt-size	agree candidates=ios-simulator.scale_one_bias_zero_f16.relaxed.O2.contract-off matched=ios-simulator.scale_one_bias_zero_f16.relaxed.O2.contract-off
+comparison.ios-simulator.scale_one_bias_zero_f16.runtime.safe.opt-default	agree candidates=ios-simulator.scale_one_bias_zero_f16.safe.O2.contract-off matched=ios-simulator.scale_one_bias_zero_f16.safe.O2.contract-off
+comparison.ios-simulator.scale_one_bias_zero_f16.runtime.safe.opt-size	agree candidates=ios-simulator.scale_one_bias_zero_f16.safe.O2.contract-off matched=ios-simulator.scale_one_bias_zero_f16.safe.O2.contract-off
 comparison.ios-simulator.scale_two_bias_one.runtime.fast.opt-default	agree candidates=ios-simulator.scale_two_bias_one.fast.O2.contract-fast,ios-simulator.scale_two_bias_one.fast.O2.contract-off,ios-simulator.scale_two_bias_one.fast.O2.contract-on matched=ios-simulator.scale_two_bias_one.fast.O2.contract-fast,ios-simulator.scale_two_bias_one.fast.O2.contract-off,ios-simulator.scale_two_bias_one.fast.O2.contract-on
 comparison.ios-simulator.scale_two_bias_one.runtime.fast.opt-size	agree candidates=ios-simulator.scale_two_bias_one.fast.O2.contract-fast,ios-simulator.scale_two_bias_one.fast.O2.contract-off,ios-simulator.scale_two_bias_one.fast.O2.contract-on matched=ios-simulator.scale_two_bias_one.fast.O2.contract-fast,ios-simulator.scale_two_bias_one.fast.O2.contract-off,ios-simulator.scale_two_bias_one.fast.O2.contract-on
 comparison.ios-simulator.scale_two_bias_one.runtime.relaxed.opt-default	agree candidates=ios-simulator.scale_two_bias_one.relaxed.O2.contract-fast,ios-simulator.scale_two_bias_one.relaxed.O2.contract-off,ios-simulator.scale_two_bias_one.relaxed.O2.contract-on matched=ios-simulator.scale_two_bias_one.relaxed.O2.contract-fast,ios-simulator.scale_two_bias_one.relaxed.O2.contract-off,ios-simulator.scale_two_bias_one.relaxed.O2.contract-on
@@ -1281,6 +1860,12 @@ comparison.macos.add_smallest_normal.runtime.relaxed.opt-default	agree candidate
 comparison.macos.add_smallest_normal.runtime.relaxed.opt-size	agree candidates=macos.add_smallest_normal.relaxed.O2.contract-off matched=macos.add_smallest_normal.relaxed.O2.contract-off
 comparison.macos.add_smallest_normal.runtime.safe.opt-default	agree candidates=macos.add_smallest_normal.safe.O2.contract-off matched=macos.add_smallest_normal.safe.O2.contract-off
 comparison.macos.add_smallest_normal.runtime.safe.opt-size	agree candidates=macos.add_smallest_normal.safe.O2.contract-off matched=macos.add_smallest_normal.safe.O2.contract-off
+comparison.macos.add_smallest_normal_f16.runtime.fast.opt-default	agree candidates=macos.add_smallest_normal_f16.fast.O2.contract-off matched=macos.add_smallest_normal_f16.fast.O2.contract-off
+comparison.macos.add_smallest_normal_f16.runtime.fast.opt-size	agree candidates=macos.add_smallest_normal_f16.fast.O2.contract-off matched=macos.add_smallest_normal_f16.fast.O2.contract-off
+comparison.macos.add_smallest_normal_f16.runtime.relaxed.opt-default	agree candidates=macos.add_smallest_normal_f16.relaxed.O2.contract-off matched=macos.add_smallest_normal_f16.relaxed.O2.contract-off
+comparison.macos.add_smallest_normal_f16.runtime.relaxed.opt-size	agree candidates=macos.add_smallest_normal_f16.relaxed.O2.contract-off matched=macos.add_smallest_normal_f16.relaxed.O2.contract-off
+comparison.macos.add_smallest_normal_f16.runtime.safe.opt-default	agree candidates=macos.add_smallest_normal_f16.safe.O2.contract-off matched=macos.add_smallest_normal_f16.safe.O2.contract-off
+comparison.macos.add_smallest_normal_f16.runtime.safe.opt-size	agree candidates=macos.add_smallest_normal_f16.safe.O2.contract-off matched=macos.add_smallest_normal_f16.safe.O2.contract-off
 comparison.macos.contraction_pair.runtime.safe.opt-default	agree-on-some candidates=macos.contraction_pair.safe.O2.contract-fast,macos.contraction_pair.safe.O2.contract-off,macos.contraction_pair.safe.O2.contract-on matched=macos.contraction_pair.safe.O2.contract-off,macos.contraction_pair.safe.O2.contract-on
 comparison.macos.contraction_pair.runtime.safe.opt-size	agree-on-some candidates=macos.contraction_pair.safe.O2.contract-fast,macos.contraction_pair.safe.O2.contract-off,macos.contraction_pair.safe.O2.contract-on matched=macos.contraction_pair.safe.O2.contract-off,macos.contraction_pair.safe.O2.contract-on
 comparison.macos.contraction_pair_canonicalized.runtime.safe.opt-default	agree candidates=macos.contraction_pair_canonicalized.safe.O2.contract-fast,macos.contraction_pair_canonicalized.safe.O2.contract-off,macos.contraction_pair_canonicalized.safe.O2.contract-on matched=macos.contraction_pair_canonicalized.safe.O2.contract-fast,macos.contraction_pair_canonicalized.safe.O2.contract-off,macos.contraction_pair_canonicalized.safe.O2.contract-on
@@ -1299,6 +1884,18 @@ comparison.macos.divide_by_three_eighths.runtime.relaxed.opt-default	agree candi
 comparison.macos.divide_by_three_eighths.runtime.relaxed.opt-size	agree candidates=macos.divide_by_three_eighths.relaxed.O2.contract-off matched=macos.divide_by_three_eighths.relaxed.O2.contract-off
 comparison.macos.divide_by_three_eighths.runtime.safe.opt-default	agree candidates=macos.divide_by_three_eighths.safe.O2.contract-off matched=macos.divide_by_three_eighths.safe.O2.contract-off
 comparison.macos.divide_by_three_eighths.runtime.safe.opt-size	agree candidates=macos.divide_by_three_eighths.safe.O2.contract-off matched=macos.divide_by_three_eighths.safe.O2.contract-off
+comparison.macos.divide_by_three_eighths_f16.runtime.fast.opt-default	agree candidates=macos.divide_by_three_eighths_f16.fast.O2.contract-off matched=macos.divide_by_three_eighths_f16.fast.O2.contract-off
+comparison.macos.divide_by_three_eighths_f16.runtime.fast.opt-size	agree candidates=macos.divide_by_three_eighths_f16.fast.O2.contract-off matched=macos.divide_by_three_eighths_f16.fast.O2.contract-off
+comparison.macos.divide_by_three_eighths_f16.runtime.relaxed.opt-default	agree candidates=macos.divide_by_three_eighths_f16.relaxed.O2.contract-off matched=macos.divide_by_three_eighths_f16.relaxed.O2.contract-off
+comparison.macos.divide_by_three_eighths_f16.runtime.relaxed.opt-size	agree candidates=macos.divide_by_three_eighths_f16.relaxed.O2.contract-off matched=macos.divide_by_three_eighths_f16.relaxed.O2.contract-off
+comparison.macos.divide_by_three_eighths_f16.runtime.safe.opt-default	agree candidates=macos.divide_by_three_eighths_f16.safe.O2.contract-off matched=macos.divide_by_three_eighths_f16.safe.O2.contract-off
+comparison.macos.divide_by_three_eighths_f16.runtime.safe.opt-size	agree candidates=macos.divide_by_three_eighths_f16.safe.O2.contract-off matched=macos.divide_by_three_eighths_f16.safe.O2.contract-off
+comparison.macos.divide_by_three_f16.runtime.fast.opt-default	agree candidates=macos.divide_by_three_f16.fast.O2.contract-off matched=macos.divide_by_three_f16.fast.O2.contract-off
+comparison.macos.divide_by_three_f16.runtime.fast.opt-size	agree candidates=macos.divide_by_three_f16.fast.O2.contract-off matched=macos.divide_by_three_f16.fast.O2.contract-off
+comparison.macos.divide_by_three_f16.runtime.relaxed.opt-default	agree candidates=macos.divide_by_three_f16.relaxed.O2.contract-off matched=macos.divide_by_three_f16.relaxed.O2.contract-off
+comparison.macos.divide_by_three_f16.runtime.relaxed.opt-size	agree candidates=macos.divide_by_three_f16.relaxed.O2.contract-off matched=macos.divide_by_three_f16.relaxed.O2.contract-off
+comparison.macos.divide_by_three_f16.runtime.safe.opt-default	agree candidates=macos.divide_by_three_f16.safe.O2.contract-off matched=macos.divide_by_three_f16.safe.O2.contract-off
+comparison.macos.divide_by_three_f16.runtime.safe.opt-size	agree candidates=macos.divide_by_three_f16.safe.O2.contract-off matched=macos.divide_by_three_f16.safe.O2.contract-off
 comparison.macos.divide_by_two.runtime.safe.opt-default	agree candidates=macos.divide_by_two.safe.O2.contract-off matched=macos.divide_by_two.safe.O2.contract-off
 comparison.macos.divide_by_two.runtime.safe.opt-size	agree candidates=macos.divide_by_two.safe.O2.contract-off matched=macos.divide_by_two.safe.O2.contract-off
 comparison.macos.fused_pair.runtime.safe.opt-default	agree candidates=macos.fused_pair.safe.O2.contract-fast,macos.fused_pair.safe.O2.contract-off,macos.fused_pair.safe.O2.contract-on matched=macos.fused_pair.safe.O2.contract-fast,macos.fused_pair.safe.O2.contract-off,macos.fused_pair.safe.O2.contract-on
@@ -1309,6 +1906,12 @@ comparison.macos.materialize.runtime.relaxed.opt-default	agree candidates=macos.
 comparison.macos.materialize.runtime.relaxed.opt-size	agree candidates=macos.materialize.relaxed.O2.contract-off matched=macos.materialize.relaxed.O2.contract-off
 comparison.macos.materialize.runtime.safe.opt-default	agree candidates=macos.materialize.safe.O2.contract-off matched=macos.materialize.safe.O2.contract-off
 comparison.macos.materialize.runtime.safe.opt-size	agree candidates=macos.materialize.safe.O2.contract-off matched=macos.materialize.safe.O2.contract-off
+comparison.macos.materialize_f16.runtime.fast.opt-default	agree candidates=macos.materialize_f16.fast.O2.contract-off matched=macos.materialize_f16.fast.O2.contract-off
+comparison.macos.materialize_f16.runtime.fast.opt-size	agree candidates=macos.materialize_f16.fast.O2.contract-off matched=macos.materialize_f16.fast.O2.contract-off
+comparison.macos.materialize_f16.runtime.relaxed.opt-default	agree candidates=macos.materialize_f16.relaxed.O2.contract-off matched=macos.materialize_f16.relaxed.O2.contract-off
+comparison.macos.materialize_f16.runtime.relaxed.opt-size	agree candidates=macos.materialize_f16.relaxed.O2.contract-off matched=macos.materialize_f16.relaxed.O2.contract-off
+comparison.macos.materialize_f16.runtime.safe.opt-default	agree candidates=macos.materialize_f16.safe.O2.contract-off matched=macos.materialize_f16.safe.O2.contract-off
+comparison.macos.materialize_f16.runtime.safe.opt-size	agree candidates=macos.materialize_f16.safe.O2.contract-off matched=macos.materialize_f16.safe.O2.contract-off
 comparison.macos.multiply_half.runtime.fast.opt-default	agree candidates=macos.multiply_half.fast.O2.contract-off matched=macos.multiply_half.fast.O2.contract-off
 comparison.macos.multiply_half.runtime.fast.opt-default.fpfun-fast	agree candidates=macos.multiply_half.fast.O2.contract-off.fpfun-fast matched=macos.multiply_half.fast.O2.contract-off.fpfun-fast
 comparison.macos.multiply_half.runtime.fast.opt-size	agree candidates=macos.multiply_half.fast.O2.contract-off matched=macos.multiply_half.fast.O2.contract-off
@@ -1321,12 +1924,24 @@ comparison.macos.multiply_half.runtime.safe.opt-default	agree candidates=macos.m
 comparison.macos.multiply_half.runtime.safe.opt-default.fpfun-fast	agree candidates=macos.multiply_half.safe.O2.contract-off.fpfun-fast matched=macos.multiply_half.safe.O2.contract-off.fpfun-fast
 comparison.macos.multiply_half.runtime.safe.opt-size	agree candidates=macos.multiply_half.safe.O2.contract-off matched=macos.multiply_half.safe.O2.contract-off
 comparison.macos.multiply_half.runtime.safe.opt-size.fpfun-fast	agree candidates=macos.multiply_half.safe.O2.contract-off.fpfun-fast matched=macos.multiply_half.safe.O2.contract-off.fpfun-fast
+comparison.macos.multiply_half_f16.runtime.fast.opt-default	agree candidates=macos.multiply_half_f16.fast.O2.contract-off matched=macos.multiply_half_f16.fast.O2.contract-off
+comparison.macos.multiply_half_f16.runtime.fast.opt-size	agree candidates=macos.multiply_half_f16.fast.O2.contract-off matched=macos.multiply_half_f16.fast.O2.contract-off
+comparison.macos.multiply_half_f16.runtime.relaxed.opt-default	agree candidates=macos.multiply_half_f16.relaxed.O2.contract-off matched=macos.multiply_half_f16.relaxed.O2.contract-off
+comparison.macos.multiply_half_f16.runtime.relaxed.opt-size	agree candidates=macos.multiply_half_f16.relaxed.O2.contract-off matched=macos.multiply_half_f16.relaxed.O2.contract-off
+comparison.macos.multiply_half_f16.runtime.safe.opt-default	agree candidates=macos.multiply_half_f16.safe.O2.contract-off matched=macos.multiply_half_f16.safe.O2.contract-off
+comparison.macos.multiply_half_f16.runtime.safe.opt-size	agree candidates=macos.multiply_half_f16.safe.O2.contract-off matched=macos.multiply_half_f16.safe.O2.contract-off
 comparison.macos.multiply_one.runtime.fast.opt-default	agree candidates=macos.multiply_one.fast.O2.contract-off matched=macos.multiply_one.fast.O2.contract-off
 comparison.macos.multiply_one.runtime.fast.opt-size	agree candidates=macos.multiply_one.fast.O2.contract-off matched=macos.multiply_one.fast.O2.contract-off
 comparison.macos.multiply_one.runtime.relaxed.opt-default	agree candidates=macos.multiply_one.relaxed.O2.contract-off matched=macos.multiply_one.relaxed.O2.contract-off
 comparison.macos.multiply_one.runtime.relaxed.opt-size	agree candidates=macos.multiply_one.relaxed.O2.contract-off matched=macos.multiply_one.relaxed.O2.contract-off
 comparison.macos.multiply_one.runtime.safe.opt-default	agree candidates=macos.multiply_one.safe.O2.contract-off matched=macos.multiply_one.safe.O2.contract-off
 comparison.macos.multiply_one.runtime.safe.opt-size	agree candidates=macos.multiply_one.safe.O2.contract-off matched=macos.multiply_one.safe.O2.contract-off
+comparison.macos.multiply_one_f16.runtime.fast.opt-default	agree candidates=macos.multiply_one_f16.fast.O2.contract-off matched=macos.multiply_one_f16.fast.O2.contract-off
+comparison.macos.multiply_one_f16.runtime.fast.opt-size	agree candidates=macos.multiply_one_f16.fast.O2.contract-off matched=macos.multiply_one_f16.fast.O2.contract-off
+comparison.macos.multiply_one_f16.runtime.relaxed.opt-default	agree candidates=macos.multiply_one_f16.relaxed.O2.contract-off matched=macos.multiply_one_f16.relaxed.O2.contract-off
+comparison.macos.multiply_one_f16.runtime.relaxed.opt-size	agree candidates=macos.multiply_one_f16.relaxed.O2.contract-off matched=macos.multiply_one_f16.relaxed.O2.contract-off
+comparison.macos.multiply_one_f16.runtime.safe.opt-default	agree candidates=macos.multiply_one_f16.safe.O2.contract-off matched=macos.multiply_one_f16.safe.O2.contract-off
+comparison.macos.multiply_one_f16.runtime.safe.opt-size	agree candidates=macos.multiply_one_f16.safe.O2.contract-off matched=macos.multiply_one_f16.safe.O2.contract-off
 comparison.macos.multiply_two.runtime.fast.opt-default	agree candidates=macos.multiply_two.fast.O2.contract-off matched=macos.multiply_two.fast.O2.contract-off
 comparison.macos.multiply_two.runtime.fast.opt-default.fpfun-fast	agree candidates=macos.multiply_two.fast.O2.contract-off.fpfun-fast matched=macos.multiply_two.fast.O2.contract-off.fpfun-fast
 comparison.macos.multiply_two.runtime.fast.opt-size	agree candidates=macos.multiply_two.fast.O2.contract-off matched=macos.multiply_two.fast.O2.contract-off
@@ -1339,6 +1954,12 @@ comparison.macos.multiply_two.runtime.safe.opt-default	agree candidates=macos.mu
 comparison.macos.multiply_two.runtime.safe.opt-default.fpfun-fast	agree candidates=macos.multiply_two.safe.O2.contract-off.fpfun-fast matched=macos.multiply_two.safe.O2.contract-off.fpfun-fast
 comparison.macos.multiply_two.runtime.safe.opt-size	agree candidates=macos.multiply_two.safe.O2.contract-off matched=macos.multiply_two.safe.O2.contract-off
 comparison.macos.multiply_two.runtime.safe.opt-size.fpfun-fast	agree candidates=macos.multiply_two.safe.O2.contract-off.fpfun-fast matched=macos.multiply_two.safe.O2.contract-off.fpfun-fast
+comparison.macos.multiply_two_f16.runtime.fast.opt-default	agree candidates=macos.multiply_two_f16.fast.O2.contract-off matched=macos.multiply_two_f16.fast.O2.contract-off
+comparison.macos.multiply_two_f16.runtime.fast.opt-size	agree candidates=macos.multiply_two_f16.fast.O2.contract-off matched=macos.multiply_two_f16.fast.O2.contract-off
+comparison.macos.multiply_two_f16.runtime.relaxed.opt-default	agree candidates=macos.multiply_two_f16.relaxed.O2.contract-off matched=macos.multiply_two_f16.relaxed.O2.contract-off
+comparison.macos.multiply_two_f16.runtime.relaxed.opt-size	agree candidates=macos.multiply_two_f16.relaxed.O2.contract-off matched=macos.multiply_two_f16.relaxed.O2.contract-off
+comparison.macos.multiply_two_f16.runtime.safe.opt-default	agree candidates=macos.multiply_two_f16.safe.O2.contract-off matched=macos.multiply_two_f16.safe.O2.contract-off
+comparison.macos.multiply_two_f16.runtime.safe.opt-size	agree candidates=macos.multiply_two_f16.safe.O2.contract-off matched=macos.multiply_two_f16.safe.O2.contract-off
 comparison.macos.reassociation_chain.runtime.fast.opt-default	agree candidates=macos.reassociation_chain.fast.O2.contract-off matched=macos.reassociation_chain.fast.O2.contract-off
 comparison.macos.reassociation_chain.runtime.fast.opt-size	agree candidates=macos.reassociation_chain.fast.O2.contract-off matched=macos.reassociation_chain.fast.O2.contract-off
 comparison.macos.reassociation_chain.runtime.relaxed.opt-default	agree candidates=macos.reassociation_chain.relaxed.O2.contract-off matched=macos.reassociation_chain.relaxed.O2.contract-off
@@ -1357,6 +1978,12 @@ comparison.macos.scale_one_bias_zero.runtime.safe.opt-default	agree candidates=m
 comparison.macos.scale_one_bias_zero.runtime.safe.opt-default.fpfun-fast	agree candidates=macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast matched=macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast
 comparison.macos.scale_one_bias_zero.runtime.safe.opt-size	agree candidates=macos.scale_one_bias_zero.safe.O2.contract-off matched=macos.scale_one_bias_zero.safe.O2.contract-off
 comparison.macos.scale_one_bias_zero.runtime.safe.opt-size.fpfun-fast	agree candidates=macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast matched=macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast
+comparison.macos.scale_one_bias_zero_f16.runtime.fast.opt-default	agree candidates=macos.scale_one_bias_zero_f16.fast.O2.contract-off matched=macos.scale_one_bias_zero_f16.fast.O2.contract-off
+comparison.macos.scale_one_bias_zero_f16.runtime.fast.opt-size	agree candidates=macos.scale_one_bias_zero_f16.fast.O2.contract-off matched=macos.scale_one_bias_zero_f16.fast.O2.contract-off
+comparison.macos.scale_one_bias_zero_f16.runtime.relaxed.opt-default	agree candidates=macos.scale_one_bias_zero_f16.relaxed.O2.contract-off matched=macos.scale_one_bias_zero_f16.relaxed.O2.contract-off
+comparison.macos.scale_one_bias_zero_f16.runtime.relaxed.opt-size	agree candidates=macos.scale_one_bias_zero_f16.relaxed.O2.contract-off matched=macos.scale_one_bias_zero_f16.relaxed.O2.contract-off
+comparison.macos.scale_one_bias_zero_f16.runtime.safe.opt-default	agree candidates=macos.scale_one_bias_zero_f16.safe.O2.contract-off matched=macos.scale_one_bias_zero_f16.safe.O2.contract-off
+comparison.macos.scale_one_bias_zero_f16.runtime.safe.opt-size	agree candidates=macos.scale_one_bias_zero_f16.safe.O2.contract-off matched=macos.scale_one_bias_zero_f16.safe.O2.contract-off
 comparison.macos.scale_two_bias_one.runtime.fast.opt-default	agree candidates=macos.scale_two_bias_one.fast.O2.contract-fast,macos.scale_two_bias_one.fast.O2.contract-off,macos.scale_two_bias_one.fast.O2.contract-on matched=macos.scale_two_bias_one.fast.O2.contract-fast,macos.scale_two_bias_one.fast.O2.contract-off,macos.scale_two_bias_one.fast.O2.contract-on
 comparison.macos.scale_two_bias_one.runtime.fast.opt-size	agree candidates=macos.scale_two_bias_one.fast.O2.contract-fast,macos.scale_two_bias_one.fast.O2.contract-off,macos.scale_two_bias_one.fast.O2.contract-on matched=macos.scale_two_bias_one.fast.O2.contract-fast,macos.scale_two_bias_one.fast.O2.contract-off,macos.scale_two_bias_one.fast.O2.contract-on
 comparison.macos.scale_two_bias_one.runtime.relaxed.opt-default	agree candidates=macos.scale_two_bias_one.relaxed.O2.contract-fast,macos.scale_two_bias_one.relaxed.O2.contract-off,macos.scale_two_bias_one.relaxed.O2.contract-on matched=macos.scale_two_bias_one.relaxed.O2.contract-fast,macos.scale_two_bias_one.relaxed.O2.contract-off,macos.scale_two_bias_one.relaxed.O2.contract-on

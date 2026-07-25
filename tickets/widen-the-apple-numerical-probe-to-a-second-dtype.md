@@ -1,7 +1,7 @@
 ---
 id: widen-the-apple-numerical-probe-to-a-second-dtype
 title: Widen the Apple numerical probe to a second dtype
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [broaden-the-apple-numerical-probe-matrix, check-in-apple-numerical-behaviour-probe]
@@ -9,9 +9,6 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, metal, measurement]
-claimed_from: todo
-assignee: agent-dtype
-lease_expires_at: 1785016235
 ---
 `spikes/apple-targets/numerical_probe.py` measures `f32` and only `f32`. `broaden-the-apple-numerical-probe-matrix` widened the operation vocabulary to multiply, add, divide, and a source-level `fma`, and closed the `-fmetal-math-fp32-functions` and optimization-level boundaries, but it deliberately did not widen the *dtype*: `docs/research/apple-targets/numerical-behaviour.md` still records `half` and every other dtype as unmeasured.
 
@@ -22,3 +19,31 @@ The question it would answer is worth asking. `MetalSubnormalArithmetic` is decl
 Keep the two-layer guard intact: a `half` kernel needs its own execution witness in `half`, and the witness must not itself be subnormal in `half`. Keep the gate runtime bounded the way the `f32` matrix now does, with a covering subset and the exhaustive sweep behind `TILER_APPLE_NUMERICS_EXHAUSTIVE`.
 
 A second machine, a second Apple GPU family, an iOS device, and a second toolchain build remain out of reach without hardware and are not in scope here.
+
+## Outcome
+
+**The flush is not dtype-independent.** `f16` arithmetic **preserves** the subnormals `f32` arithmetic flushes, on the same hardware, in the same math modes, from modules that declare `air.compile.denorms_disable` identically. That is a Measurement on one bounded row and it refutes the Inference this record previously carried; it is the class of claim a single counterexample can establish, and no number of agreeing dtypes could have established the positive.
+
+**Measurement — the environment row.** Apple M4 Max (`registryID` 4294968621), macOS 27.0 build 26A5388g, arm64, Xcode 26.6 build 17F113. SDKs `macosx` 26.5 build 25F70, `iphoneos` 26.5 build 23F81a, `iphonesimulator` 26.5 build 23F81a. Offline driver `Apple metal version 32023.883 (metalfe-32023.883)` shared by all three SDKs; runtime compilers `metalfe-32023.921` on the macOS host and `metalfe-32023.830.1` in the booted iOS 26.0 (26.0.1) build 23A8464 simulator. Identical to the row the `f32` findings were taken on, which is why the two dtypes are directly comparable.
+
+**Measurement — the results, each with an execution witness reporting `executed`.** `x * 2.0h` returns `0400` for the operand `0200`, where the `f32` twin returns `00000000` for `00400000`; `8200` returns `8400` where `f32` returns `80000000`; `x * 0.5h` returns the subnormal `0200` for the smallest normal `0400`; `x + 2**-14` returns `0200` for `8200` where `f32` returns the flushed `00800000`; `x / 0.375h` returns `0555` for `0200` and `8555` for `8200`; `x / 3.0h` returns `0155` for `0400`. Witnesses: `3c00 → 4000`, `3c00 → 3800`, `0400 → 0800`, `3c00 → 4155`, `3c00 → 3555`. All in `safe`, `relaxed`, and `fast`, on the offline and runtime paths, for `MacOs` and `IOsSimulator`.
+
+**Measurement — the compile side predicts none of it.** `multiply_two_f16` and `multiply_two` declare the identical `air.compile_options` set, including `air.compile.denorms_disable`, and emit the identical opcode sequence, in every math mode and for all three families. The declaration is a compile-side fact about what was requested; only a witnessed dispatch says what was delivered.
+
+**What landed.** Record schema `tiler.apple-numerical-behaviour/v5`. `numerical_probe.py` gained a `Dtype` type owning the operand vector, the result width, the MSL constant spelling and its narrowing cast, the NaN-canonicalization helper, the exact evaluation through `struct`'s `<e`/`<f`, the subnormal boundary, the sign-preserving flush, and the output-buffer sentinel; `F32` and `F16` are its two instances and `evaluate`, `record_rows`, `path_comparisons`, `Observation.result_for`, and `main` all read widths off it. Eight `f16` kernels joined the table — materialization, multiply in both flush directions, a bare add taking a subnormal straight from the buffer, the identity multiply, the trap, and a surviving `fdiv` in both directions — each with its witness and probes derived by `evaluate` rather than stated. `numerical_probe_host.m` takes the dtype as a manifest field and one `<dtype>=<hex>,...` operand group per dtype on argv, allocates and reads back elements at the declared width, seeds a per-dtype sentinel, and prints results at that width. Case keys are unchanged for `f32`: a kernel names its dtype only when it is not `f32`, exactly as a case names `-fmetal-math-fp32-functions` only when it departs from `precise`.
+
+**Measurement — the widening did not change what the harness asks about `f32`.** Both retained records were rewritten in place on the identical host and date row. Across both, the only rows that moved are `schema`, `probe.repository_base_revision`, the two digests, `environment.date_utc`, and `probe.operands` (now the per-dtype `probe.operands.f32`/`.f16`). **No `case.*`, `comparison.*`, or `hazard.*` row changed or disappeared** — every difference is an added `f16` row. A separate check compared the generated MSL of all 15 `f32` kernels against the pre-change harness: byte-identical.
+
+**Measurement — the operation-count patterns were checked before any count was trusted.** This front end spells the half fused intrinsic `@air.fma.f16`, which `FUSED_INTRINSIC`'s existing `(?:llvm|air)\.(?:fma|fmuladd)\.\S+?` already matches, and `fmul half`/`fdiv half` match `FLOAT_OPERATION` unchanged. At `-O0` the canonicalization helper is emitted as a real `call half @tiler_canonicalize_nan_f16_7e00(...)`, which is matched as a `call` and correctly dropped because it names no fused intrinsic. Verified by running the checked-in `float_operations` over real emitted `f16` modules at `-O0` and `-O2`, and now pinned by a portable test over a module fragment so a future dtype cannot regress it silently.
+
+**Measurement — the gate cost.** `uv run --locked python -m pytest -c pyproject.toml spikes/apple-targets`: 76 tests, 36.3 s covering and 43.6 s exhaustive, none skipped. The covering matrix is 312 offline cases across three families and 272 runtime ones across the two that dispatch, of which the second dtype contributes 90 and 96; the exhaustive matrix is 492 offline. The pre-widening README figure of 47 s is **not** comparable — it was taken with a different concurrent load, and the widened run measured here is faster than the narrower one it replaced. The case counts are the exact statement of what grew.
+
+**Retraction.** The record's closing Proposal — "`air.compile.denorms_disable` is a module-level declaration, which is an argument that the flush is dtype-independent … until it runs, the declared fact's dtype independence is an Inference" — is refuted, not refined. It was correctly labelled as an Inference and is now measured false. The argument behind it survives as finding 22, which is precisely the statement that the declaration does not establish the behaviour.
+
+**Corrections made during the work.** One assertion of mine was wrong and was fixed rather than worked around: `multiply_one_f16` under the guard yields `no-emitted-arithmetic`, not `no-execution-witness`, because the folded multiply trips layer 1 before the missing witness is reached. The `no-execution-witness` verdict is what the same kernel gives on the runtime path, where there is no module to read. The test now states both and says which layer refused.
+
+**What this does not establish.** Two dtypes disagreeing settles that the flush depends on the dtype and settles nothing about which dtypes flush; `bfloat` and every other format remain unmeasured. The mechanism is undistinguished — native `f16` subnormal support and evaluation at a wider internal precision both fit every observation, and nothing here separates them. Contraction, a source-level `fma`, and reassociation have no `f16` counterpart, so findings 6, 16, and 17 stay `f32`-only. A physical iOS device is unmeasured for both dtypes, as finding 13 already records.
+
+**Split out.** [carry-the-dtype-on-the-metal-subnormal-flush-fact](carry-the-dtype-on-the-metal-subnormal-flush-fact.md) (p1) owns the contract consequence in `implementation/metal` and `contracts/decisions`, which this ticket holds no scope for. [rename-the-apple-numerical-record-past-one-dtype](rename-the-apple-numerical-record-past-one-dtype.md) owns the title, whose string lives in four generated catalog blocks and three prose citations outside this scope. [measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes](measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes.md) and [widen-the-f16-operation-vocabulary-to-contraction-and-reassociation](widen-the-f16-operation-vocabulary-to-contraction-and-reassociation.md) own the two named measurement boundaries.
+
+**Gate.** `uv run --locked python scripts/docs.py render` and the full `uv run --locked python scripts/check_repository.py` both passed on the committed state.

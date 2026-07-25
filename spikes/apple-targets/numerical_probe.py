@@ -167,6 +167,29 @@ the full cross product on the widened axes. `probe.matrix` records which one
 produced a record and `matrix_mismatch` refuses to compare one against a run of
 the other, because the two pin different case sets and every case they do not
 share would otherwise read as decay.
+
+# The second dtype, which is not another row of that matrix
+
+`DTYPES` names `f32` and `f16`, and widening to the second one changed the shape
+of the harness in four places at once rather than adding a column. Each dtype
+carries its own operand vector, because a subnormal boundary is a property of the
+format — `f16`'s smallest normal is `0400`, not `00800000` — its own result
+width, so a recorded pattern is four hex digits or eight and a reader may no
+longer assume one; its own exact evaluation, through `struct`'s `<e` rather than
+`<f`; and its own dispatch shape in `numerical_probe_host.m`, which allocates and
+reads back elements of that width. A kernel names its dtype in `Kernel.dtype` and
+its name carries the `_f16` suffix exactly when that dtype is not
+`DEFAULT_DTYPE`, so every case key recorded while the harness was `f32`-only
+keeps its exact meaning and only the new kernels are new keys.
+
+The question the second dtype answers could not be answered by argument.
+`air.compile.denorms_disable` is a module-level declaration emitted identically
+for both dtypes, which is a reason to expect the flush to be dtype-independent
+and is not a measurement of it. It is not: on the measured row every `f16`
+arithmetic kernel here **preserves** the subnormals its `f32` twin flushes, under
+the same execution witness, in the same math modes, from the same module-level
+declaration. So a returned bit pattern is not evidence, a module flag is not
+evidence, and neither is another dtype's measurement.
 """
 
 from __future__ import annotations
@@ -193,7 +216,7 @@ HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parents[1]
 HOST_SOURCE = HERE / "numerical_probe_host.m"
 
-SCHEMA = "tiler.apple-numerical-behaviour/v4"
+SCHEMA = "tiler.apple-numerical-behaviour/v5"
 """Record format identity. Bump this whenever a key's meaning changes.
 
 v2 added the runtime-compilation path. `case.*.float_operations` and
@@ -219,6 +242,14 @@ and a two-add reassociation chain joined multiply and add; and `probe.matrix`
 names which case matrix produced the record, because the exhaustive sweep and
 the covering subset the gate runs are different sets of cases and a record from
 one may not be compared against a run of the other.
+
+v5 adds the second dtype. `probe.operands` became the per-dtype
+`probe.operands.<dtype>` rows, because the vectors differ, and a `case.*.results`
+row is rendered at its kernel's own width — four hex digits for `f16`, eight for
+`f32` — so a reader can no longer assume every recorded pattern is 32 bits wide.
+`probe.dtypes` names every dtype measured and `probe.default_dtype` names the one
+a kernel carries when its name has no dtype suffix, so every v4 case key keeps its
+exact meaning and only the `_f16` kernels are new keys.
 """
 
 REQUIRE_TOOLCHAIN = "TILER_REQUIRE_METAL_TOOLCHAIN"
@@ -259,18 +290,6 @@ key recorded while the flag was fixed keeps its exact meaning.
 """
 
 ENTRY_POINT = "tiler_probe"
-
-OPERANDS: tuple[int, ...] = (
-    0x00000001,  # smallest positive subnormal
-    0x00400000,  # mid subnormal; doubling it is the smallest normal
-    0x007FFFFF,  # largest subnormal
-    0x00800000,  # smallest positive normal; halving it is subnormal
-    0x80400000,  # negative mid subnormal, for the sign of the flushed zero
-    0x80000000,  # negative zero, which is not subnormal
-    0x3EB97EF9,  # an ordinary normal whose scale-then-bias result reveals fusion
-    0x3F800000,  # 1.0, the execution witness for the scaling kernels
-)
-"""The one operand vector every dispatch uses, so one launch answers every case."""
 
 MATH_MODES = ("safe", "relaxed", "fast")
 FP_CONTRACTS = ("off", "on", "fast")
@@ -398,17 +417,6 @@ COMPILE_OPTIONS = re.compile(r"^!air\.compile_options = !\{(.*)\}$", re.MULTILIN
 METADATA_STRING = re.compile(r'^!(\d+) = !\{!"([^"]+)"\}$', re.MULTILINE)
 EMITTED_TRIPLE = re.compile(r'^target triple = "([^"]+)"$', re.MULTILINE)
 
-CANONICALIZATION = """\
-// Replaces an arithmetic NaN with the canonical pattern 0x7fc00000, spelled as
-// an integer test exactly as the Metal emitter spells it.
-static inline float tiler_canonicalize_nan_f32_7fc00000(float value) {
-    uint pattern = as_type<uint>(value);
-    bool nan = (pattern & 0x7f800000u) == 0x7f800000u
-        && (pattern & 0x007fffffu) != 0x00000000u;
-    return nan ? as_type<float>(0x7fc00000u) : value;
-}
-"""
-
 
 class Reason(enum.Enum):
     """Why the probe could not run, in the classification the gate skips on.
@@ -495,6 +503,186 @@ class Execution(enum.Enum):
 
 
 @dataclass(frozen=True)
+class Dtype:
+    """One scalar format the probe measures, complete enough to generate and read it.
+
+    Everything that differs between two floating-point formats lives here, so a
+    kernel, a probe, a record row, and a dispatch are written once against the
+    dtype rather than against `f32`'s widths. `name` is the spelling the record
+    and a kernel's name suffix use; `metal_type` is what the generated source
+    declares.
+
+    `sentinel` is the pattern the dispatch host seeds an output buffer with, so an
+    element no kernel wrote is distinguishable from one written as a zero. It is
+    part of the dtype because it has to be representable in the element width, and
+    a guard test holds every declared value to the requirement that no kernel here
+    can produce it.
+    """
+
+    name: str
+    metal_type: str
+    unsigned_type: str
+    narrowing_cast: str
+    struct_format: str
+    unsigned_struct_format: str
+    bits: int
+    exponent_mask: int
+    mantissa_mask: int
+    quiet_nan: int
+    sentinel: int
+    operands: tuple[int, ...]
+
+    @property
+    def digits(self) -> int:
+        """How many hex digits a pattern of this dtype is rendered with, everywhere."""
+        return self.bits // 4
+
+    @property
+    def mask(self) -> int:
+        return (1 << self.bits) - 1
+
+    @property
+    def sign_mask(self) -> int:
+        return 1 << (self.bits - 1)
+
+    @property
+    def canonicalizer(self) -> str:
+        """The generated NaN-canonicalization helper's name, which names its dtype."""
+        return f"tiler_canonicalize_nan_{self.name}_{self.render(self.quiet_nan)}"
+
+    def render(self, bits: int) -> str:
+        """One bit pattern at this dtype's width, which is how every record row spells it."""
+        return f"{bits:0{self.digits}x}"
+
+    def pattern(self, bits: int) -> str:
+        """The MSL integer literal for one exact bit pattern."""
+        return f"0x{self.render(bits)}u"
+
+    def literal(self, bits: int) -> str:
+        """The MSL expression that reinterprets an exact pattern as this dtype.
+
+        `narrowing_cast` is not decoration. An unsuffixed integer literal is
+        `uint`, and `as_type` requires the two types to have the same size, so a
+        dtype narrower than 32 bits needs the pattern converted first while `f32`
+        must not have a conversion added — its generated source is byte-identical
+        to what produced every retained `f32` row.
+        """
+        pattern = self.pattern(bits)
+        narrowed = f"{self.narrowing_cast}({pattern})" if self.narrowing_cast else pattern
+        return f"as_type<{self.metal_type}>({narrowed})"
+
+    def canonicalization(self) -> str:
+        """The NaN-canonicalization helper, in the shape the Metal emitter writes it."""
+        return (
+            f"// Replaces an arithmetic NaN with the canonical pattern "
+            f"0x{self.render(self.quiet_nan)}, spelled as\n"
+            f"// an integer test exactly as the Metal emitter spells it.\n"
+            f"static inline {self.metal_type} {self.canonicalizer}({self.metal_type} value) {{\n"
+            f"    {self.unsigned_type} pattern = as_type<{self.unsigned_type}>(value);\n"
+            f"    bool nan = (pattern & {self.pattern(self.exponent_mask)}) == "
+            f"{self.pattern(self.exponent_mask)}\n"
+            f"        && (pattern & {self.pattern(self.mantissa_mask)}) != {self.pattern(0)};\n"
+            f"    return nan ? {self.literal(self.quiet_nan)} : value;\n"
+            f"}}\n"
+        )
+
+    def is_subnormal(self, bits: int) -> bool:
+        return bits & self.exponent_mask == 0 and bits & self.mantissa_mask != 0
+
+    def flush(self, bits: int) -> int:
+        """Replace a subnormal with the zero of its own sign, which is what finding 3 measured."""
+        return bits & self.sign_mask if self.is_subnormal(bits) else bits
+
+    def as_float(self, bits: int) -> float:
+        packed = struct.pack(self.unsigned_struct_format, bits)
+        return float(struct.unpack(self.struct_format, packed)[0])
+
+    def as_bits(self, value: float) -> int:
+        """Narrow a double to this dtype's bits, refusing a value it cannot hold."""
+        try:
+            narrowed = struct.pack(self.struct_format, value)
+        except OverflowError as overflowed:
+            raise ProbeFailure(
+                f"{value!r} is not representable as {self.name}: {overflowed}"
+            ) from overflowed
+        return int(struct.unpack(self.unsigned_struct_format, narrowed)[0])
+
+
+F32 = Dtype(
+    name="f32",
+    metal_type="float",
+    unsigned_type="uint",
+    narrowing_cast="",
+    struct_format="<f",
+    unsigned_struct_format="<I",
+    bits=32,
+    exponent_mask=0x7F800000,
+    mantissa_mask=0x007FFFFF,
+    quiet_nan=0x7FC00000,
+    sentinel=0xDEADBEEF,
+    operands=(
+        0x00000001,  # smallest positive subnormal
+        0x00400000,  # mid subnormal; doubling it is the smallest normal
+        0x007FFFFF,  # largest subnormal
+        0x00800000,  # smallest positive normal; halving it is subnormal
+        0x80400000,  # negative mid subnormal, for the sign of the flushed zero
+        0x80000000,  # negative zero, which is not subnormal
+        0x3EB97EF9,  # an ordinary normal whose scale-then-bias result reveals fusion
+        0x3F800000,  # 1.0, the execution witness for the scaling kernels
+    ),
+)
+
+F16 = Dtype(
+    name="f16",
+    metal_type="half",
+    unsigned_type="ushort",
+    narrowing_cast="ushort",
+    struct_format="<e",
+    unsigned_struct_format="<H",
+    bits=16,
+    exponent_mask=0x7C00,
+    mantissa_mask=0x03FF,
+    quiet_nan=0x7E00,
+    sentinel=0xDEAD,
+    operands=(
+        0x0001,  # smallest positive subnormal
+        0x0200,  # mid subnormal; doubling it is the smallest normal
+        0x03FF,  # largest subnormal
+        0x0400,  # smallest positive normal; halving it is subnormal
+        0x8200,  # negative mid subnormal, for the sign of the flushed zero
+        0x8000,  # negative zero, which is not subnormal
+        0x3555,  # an ordinary normal, so a kernel is exercised away from its boundaries
+        0x3C00,  # 1.0, the execution witness for the scaling kernels
+    ),
+)
+"""`f16`'s operand vector, entry for entry in the same roles as `f32`'s.
+
+Every position answers the same question its `f32` counterpart does, at this
+format's own boundaries: `0400` is the smallest normal where `f32` spells it
+`00800000`, and `0200` is the mid subnormal whose double is exactly that smallest
+normal. Keeping the roles aligned is what makes a per-dtype difference in a
+result a difference in what the hardware did rather than in what it was asked.
+
+`0001` is the one entry whose role is *not* symmetric under halving: `f32`'s
+smallest subnormal halved rounds to zero and so does this one, which is why the
+result-flush probe uses `0400` and not this operand — a returned zero there is
+correct rounding and not a flush.
+"""
+
+DTYPES: tuple[Dtype, ...] = (F32, F16)
+DTYPE_BY_NAME = {dtype.name: dtype for dtype in DTYPES}
+
+DEFAULT_DTYPE = F32
+"""The dtype a kernel carries when its name has no dtype suffix.
+
+Naming `f32` in a kernel's name would rewrite every case key recorded while the
+harness measured one dtype, and every citation of one in the research record with
+it, for no gain: an unsuffixed kernel name means `f32` and `probe.default_dtype`
+says so in the record.
+"""
+
+
+@dataclass(frozen=True)
 class Family:
     """One `MetalPlatform` artifact family and how to produce and run its module.
 
@@ -559,6 +747,9 @@ class Witness:
     witness is independent of the behaviour under test. `executed` is the result
     when every emitted operation ran; `deleted` is the result when they were all
     removed, which for these kernels is the operand itself.
+
+    Every field is a bit pattern of the kernel's own dtype, so "not subnormal" is
+    decided by that dtype's boundaries and not by `f32`'s.
     """
 
     operand: int
@@ -671,6 +862,56 @@ mechanism from the one this probe isolates and must not read as agreement with
 it.
 """
 
+NEGATIVE_ZERO_F16 = 0x8000
+
+INPUT_FLUSH_F16 = SubnormalProbe(operand=0x0200, preserving=0x0400, flushing=POSITIVE_ZERO)
+"""`INPUT_FLUSH`'s isolation at `f16`'s boundaries, which are not `f32`'s.
+
+Doubling this subnormal is exactly the smallest normal `0400`, so the isolation
+is the same one and the constants are the only thing that moved. The pair exists
+so a per-dtype difference in the returned pattern is a difference in what the
+hardware did rather than in which question it was asked.
+"""
+
+NEGATIVE_INPUT_FLUSH_F16 = SubnormalProbe(
+    operand=0x8200, preserving=0x8400, flushing=NEGATIVE_ZERO_F16
+)
+"""The same isolation with a negative operand, so the flushed zero's sign shows."""
+
+RESULT_FLUSH_F16 = SubnormalProbe(operand=0x0400, preserving=0x0200, flushing=POSITIVE_ZERO)
+"""Halving the smallest normal has an exactly representable *subnormal* result.
+
+The operand is the smallest normal and not the smallest subnormal for a reason
+this dtype makes sharper: halving `0001` rounds to zero under exact IEEE
+arithmetic, so a returned zero there would be correct rounding rather than a
+flush and the probe would not separate anything.
+"""
+
+IDENTITY_VALUED_FLUSH_F16 = SubnormalProbe(
+    operand=0x0200, preserving=0x0200, flushing=POSITIVE_ZERO
+)
+"""The `f16` probe for a kernel whose exact result is the operand itself."""
+
+DIVIDED_INPUT_FLUSH_F16 = SubnormalProbe(operand=0x0200, preserving=0x0555, flushing=POSITIVE_ZERO)
+"""Dividing this subnormal by `0.375` has a *normal* result, isolating the input."""
+
+DIVIDED_NEGATIVE_INPUT_FLUSH_F16 = SubnormalProbe(
+    operand=0x8200, preserving=0x8555, flushing=NEGATIVE_ZERO_F16
+)
+"""The same isolation with a negative operand, so the flushed zero's sign shows."""
+
+DIVIDED_RESULT_FLUSH_F16 = SubnormalProbe(operand=0x0400, preserving=0x0155, flushing=POSITIVE_ZERO)
+"""Dividing the smallest normal by `3.0` has a subnormal result, isolating the result."""
+
+ADDITIVE_INPUT_FLUSH_F16 = SubnormalProbe(operand=0x8200, preserving=0x0200, flushing=0x0400)
+"""`ADDITIVE_INPUT_FLUSH`'s isolation at `f16`'s boundaries.
+
+`-2**-15 + 2**-14` is the subnormal `0200` when the operand is preserved and the
+*normal* `0400` when it is flushed to a signed zero first. As in `f32`, neither
+candidate is a zero, so this is the probe that would catch a reader assuming a
+flush always shows up as one.
+"""
+
 REASSOCIATION = OrderProbe(operand=0x3F800000, ordered=0x3F800000, reassociated=0x3F800001)
 """`(1.0 + 2**-24) + 2**-24`, whose value depends on where the parentheses go.
 
@@ -686,9 +927,9 @@ indexing scheme, and no change to the operand vector.
 class Step:
     """One arithmetic statement of a probe kernel.
 
-    `constant` is an exact `f32` bit pattern emitted through `as_type<float>`,
-    never a decimal literal, so no rendering step stands between the stated
-    constant and the compiled one.
+    `constant` is an exact bit pattern of the kernel's dtype, emitted through
+    `as_type`, never a decimal literal, so no rendering step stands between the
+    stated constant and the compiled one.
     """
 
     constant: int
@@ -709,6 +950,11 @@ class Kernel:
     and therefore cannot prove its own arithmetic ran. `subnormal_probes` names
     every probe this kernel is read with, so a guard test can derive each probe's
     two candidate results from this kernel rather than trusting a literal.
+
+    `dtype` decides the declared buffer element type, the constant spelling, the
+    operand vector, and the width every result of this kernel is rendered at. A
+    kernel whose dtype is not `DEFAULT_DTYPE` names it in `name`, so a case key
+    recorded while the harness measured one dtype keeps its exact meaning.
     """
 
     name: str
@@ -718,22 +964,24 @@ class Kernel:
     witness: Witness | None
     subnormal_probes: tuple[SubnormalProbe, ...] = ()
     fused: bool = False
+    dtype: Dtype = DEFAULT_DTYPE
 
     def source(self) -> str:
         """Render the complete translation unit for this kernel."""
+        scalar = self.dtype.metal_type
         lines = ["#include <metal_stdlib>", "using namespace metal;", ""]
         if self.canonicalized and self.steps:
-            lines += [CANONICALIZATION]
+            lines += [self.dtype.canonicalization()]
         lines += [
             f"kernel void {ENTRY_POINT}(",
-            "        device const float *b0 [[buffer(0)]],",
-            "        device float *b1 [[buffer(1)]],",
+            f"        device const {scalar} *b0 [[buffer(0)]],",
+            f"        device {scalar} *b1 [[buffer(1)]],",
             "        uint tiler_global_invocation_index [[thread_position_in_grid]]) {",
             "    ulong v0 = ulong(tiler_global_invocation_index);",
-            f"    ulong v1 = {len(OPERANDS)}ul;",
+            f"    ulong v1 = {len(self.dtype.operands)}ul;",
             "    bool v2 = v0 < v1;",
             "    if (v2) {",
-            "        float v3 = b0[v0];",
+            f"        {scalar} v3 = b0[v0];",
         ]
         register, current = 4, "v3"
 
@@ -741,26 +989,26 @@ class Kernel:
             nonlocal register, current
             if not self.canonicalized:
                 return
-            helper = "tiler_canonicalize_nan_f32_7fc00000"
-            lines.append(f"        float v{register} = {helper}({current});")
+            helper = self.dtype.canonicalizer
+            lines.append(f"        {scalar} v{register} = {helper}({current});")
             current = f"v{register}"
             register += 1
 
         if self.fused:
             scale, bias = self.steps
-            lines.append(f"        float v{register} = as_type<float>(0x{scale.constant:08x}u);")
-            lines.append(f"        float v{register + 1} = as_type<float>(0x{bias.constant:08x}u);")
+            lines.append(f"        {scalar} v{register} = {self.dtype.literal(scale.constant)};")
+            lines.append(f"        {scalar} v{register + 1} = {self.dtype.literal(bias.constant)};")
             lines.append(
-                f"        float v{register + 2} = fma({current}, v{register}, v{register + 1});"
+                f"        {scalar} v{register + 2} = fma({current}, v{register}, v{register + 1});"
             )
             current = f"v{register + 2}"
             register += 3
             canonicalize()
         else:
             for step in self.steps:
-                lines.append(f"        float v{register} = as_type<float>(0x{step.constant:08x}u);")
+                lines.append(f"        {scalar} v{register} = {self.dtype.literal(step.constant)};")
                 lines.append(
-                    f"        float v{register + 1} = {current} {step.operator} v{register};"
+                    f"        {scalar} v{register + 1} = {current} {step.operator} v{register};"
                 )
                 current = f"v{register + 1}"
                 register += 2
@@ -899,32 +1147,97 @@ KERNELS: tuple[Kernel, ...] = (
         canonicalized=False,
         witness=Witness(operand=0x00800000, executed=0x34000000, deleted=0x00800000),
     ),
+    # The second dtype. Each kernel below is its `f32` twin with the constants
+    # respelled at `f16`'s boundaries and nothing else changed, so a difference
+    # in what comes back is a difference in what the hardware did with the dtype
+    # rather than a difference in the question. The vocabulary stops at multiply,
+    # add, and a surviving division: contraction, a source-level `fma`, and
+    # reassociation are `f32`-only here and named as such in the record's
+    # boundaries rather than assumed to carry over.
+    Kernel(
+        name="materialize_f16",
+        purpose="a load and a store with no arithmetic at all",
+        steps=(),
+        canonicalized=False,
+        witness=None,
+        dtype=F16,
+    ),
+    Kernel(
+        name="multiply_two_f16",
+        purpose="isolates input flushing: a subnormal operand whose exact result is normal",
+        steps=times(0x4000),
+        canonicalized=True,
+        witness=Witness(operand=0x3C00, executed=0x4000, deleted=0x3C00),
+        subnormal_probes=(INPUT_FLUSH_F16, NEGATIVE_INPUT_FLUSH_F16),
+        dtype=F16,
+    ),
+    Kernel(
+        name="multiply_half_f16",
+        purpose="isolates result flushing: a normal operand whose exact result is subnormal",
+        steps=times(0x3800),
+        canonicalized=True,
+        witness=Witness(operand=0x3C00, executed=0x3800, deleted=0x3C00),
+        subnormal_probes=(RESULT_FLUSH_F16,),
+        dtype=F16,
+    ),
+    Kernel(
+        name="add_smallest_normal_f16",
+        purpose="the only f16 kernel whose add takes a subnormal operand straight from the buffer",
+        steps=(Step(0x0400, "+"),),
+        canonicalized=True,
+        witness=Witness(operand=0x0400, executed=0x0800, deleted=0x0400),
+        subnormal_probes=(ADDITIVE_INPUT_FLUSH_F16,),
+        dtype=F16,
+    ),
+    Kernel(
+        name="multiply_one_f16",
+        purpose="the identity multiply: no witness exists, so it can prove nothing",
+        steps=times(0x3C00),
+        canonicalized=True,
+        witness=None,
+        subnormal_probes=(IDENTITY_VALUED_FLUSH_F16,),
+        dtype=F16,
+    ),
+    Kernel(
+        name="scale_one_bias_zero_f16",
+        purpose="the emitter's MultiplyThenAdd shape whose relaxed form deletes its arithmetic",
+        steps=scale_then_bias(0x3C00, POSITIVE_ZERO),
+        canonicalized=True,
+        witness=Witness(
+            operand=NEGATIVE_ZERO_F16, executed=POSITIVE_ZERO, deleted=NEGATIVE_ZERO_F16
+        ),
+        subnormal_probes=(IDENTITY_VALUED_FLUSH_F16,),
+        dtype=F16,
+    ),
+    Kernel(
+        name="divide_by_three_eighths_f16",
+        purpose="input flushing through a division the driver keeps: a subnormal whose result "
+        "is normal",
+        steps=over(0x3600),
+        canonicalized=True,
+        witness=Witness(operand=0x3C00, executed=0x4155, deleted=0x3C00),
+        subnormal_probes=(DIVIDED_INPUT_FLUSH_F16, DIVIDED_NEGATIVE_INPUT_FLUSH_F16),
+        dtype=F16,
+    ),
+    Kernel(
+        name="divide_by_three_f16",
+        purpose="result flushing through a division the driver keeps: a normal whose result "
+        "is subnormal",
+        steps=over(0x4200),
+        canonicalized=True,
+        witness=Witness(operand=0x3C00, executed=0x3555, deleted=0x3C00),
+        subnormal_probes=(DIVIDED_RESULT_FLUSH_F16,),
+        dtype=F16,
+    ),
 )
 BY_NAME = {kernel.name: kernel for kernel in KERNELS}
 
-
-def _as_float(bits: int) -> float:
-    return float(struct.unpack("<f", struct.pack("<I", bits))[0])
-
-
-def _as_bits(value: float) -> int:
-    """Narrow a double to `f32` bits, refusing a value `f32` cannot hold."""
-    try:
-        narrowed = struct.pack("<f", value)
-    except OverflowError as overflowed:
-        raise ProbeFailure(f"{value!r} is not representable as f32: {overflowed}") from overflowed
-    return int(struct.unpack("<I", narrowed)[0])
-
-
-def flush_subnormal(bits: int) -> int:
-    """Replace a subnormal with the zero of its own sign, which is what finding 3 measured."""
-    if bits & 0x7F800000 == 0 and bits & 0x007FFFFF != 0:
-        return bits & 0x80000000
-    return bits
+F16_KERNELS = tuple(kernel.name for kernel in KERNELS if kernel.dtype is F16)
+"""Every `f16` kernel, in declaration order, so `cases` cannot silently drop one."""
 
 
 def evaluate(kernel: Kernel, operand: int, *, flushes: bool) -> int:
-    """The exact `f32` result of one kernel on one operand, under a stated flush hypothesis.
+    """The exact result of one kernel on one operand, under a stated flush hypothesis.
 
     This is not a measurement and never becomes one: it derives what a probe's
     two candidate results *must* be, so a hand-written `SubnormalProbe` or
@@ -933,36 +1246,42 @@ def evaluate(kernel: Kernel, operand: int, *, flushes: bool) -> int:
 
     `flushes=True` substitutes a sign-preserving zero for the operand on entry
     and for the result of every step, which is the behaviour findings 2 and 3
-    measured. `flushes=False` is IEEE-754 with subnormals intact.
+    measured for `f32`. `flushes=False` is IEEE-754 with subnormals intact. Both
+    are hypotheses the harness derives and neither is a claim about a dtype: the
+    `f16` kernels are read with the same two candidates and the device chooses
+    between them.
 
     **Why a double intermediate is exact here.** Each step is one `+`, `*`, or
-    `/` of two `f32` values. Rounding such a result to double and then to `f32`
-    agrees with rounding it directly to `f32`, because double's 53-bit
-    significand exceeds the 2*24+2 = 50 bits that make the second rounding
-    innocuous. Signed zero is carried by the double path natively, which matters
-    because `(-0.0) + (+0.0)` is `+0.0` and that is finding 5. The fused form is
-    a single rounding of `x*a + b`, which no single double operation performs, so
-    it is evaluated exactly as a rational and narrowed once; a fused kernel whose
-    exact result is zero would lose its sign that way and is refused rather than
-    guessed at, because no kernel here needs one.
+    `/` of two values of the kernel's dtype. Rounding such a result to double and
+    then narrowing agrees with rounding it directly, because double's 53-bit
+    significand exceeds the 2p+2 bits that make the second rounding innocuous —
+    50 for `f32`'s 24-bit significand and 24 for `f16`'s 11-bit one, so the
+    margin only widens for the narrower dtype. Signed zero is carried by the
+    double path natively, which matters because `(-0.0) + (+0.0)` is `+0.0` and
+    that is finding 5. The fused form is a single rounding of `x*a + b`, which no
+    single double operation performs, so it is evaluated exactly as a rational
+    and narrowed once; a fused kernel whose exact result is zero would lose its
+    sign that way and is refused rather than guessed at, because no kernel here
+    needs one.
     """
-    current = flush_subnormal(operand) if flushes else operand
+    dtype = kernel.dtype
+    current = dtype.flush(operand) if flushes else operand
     if kernel.fused:
         if len(kernel.steps) != 2 or [step.operator for step in kernel.steps] != ["*", "+"]:
             raise ProbeFailure(f"{kernel.name}: a fused kernel must be one multiply then one add")
         scale, bias = kernel.steps
-        exact = Fraction(_as_float(current)) * Fraction(_as_float(scale.constant)) + Fraction(
-            _as_float(bias.constant)
-        )
+        exact = Fraction(dtype.as_float(current)) * Fraction(
+            dtype.as_float(scale.constant)
+        ) + Fraction(dtype.as_float(bias.constant))
         if exact == 0:
             raise ProbeFailure(
                 f"{kernel.name}: a fused result of zero would need signed-zero handling that "
                 f"the rational evaluation cannot supply"
             )
-        fused = _as_bits(float(exact))
-        return flush_subnormal(fused) if flushes else fused
+        fused = dtype.as_bits(float(exact))
+        return dtype.flush(fused) if flushes else fused
     for step in kernel.steps:
-        value, constant = _as_float(current), _as_float(step.constant)
+        value, constant = dtype.as_float(current), dtype.as_float(step.constant)
         if step.operator == "*":
             stepped = value * constant
         elif step.operator == "+":
@@ -973,9 +1292,9 @@ def evaluate(kernel: Kernel, operand: int, *, flushes: bool) -> int:
             stepped = value / constant
         else:
             raise ProbeFailure(f"{kernel.name}: no evaluation rule for {step.operator!r}")
-        current = _as_bits(stepped)
+        current = dtype.as_bits(stepped)
         if flushes:
-            current = flush_subnormal(current)
+            current = dtype.flush(current)
     return current
 
 
@@ -1189,6 +1508,23 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     else:
         for optimization in ("1", "3", "s"):
             add("scale_one_bias_zero", "safe", optimization, "off")
+    # The second dtype, in every math mode, because a flush that depended on the
+    # dtype could depend on the mode too and the `f32` rows this is compared
+    # against are measured in all three. `-O0` is kept in the covering set for
+    # the two kernels where the level is load-bearing — the trap kernel, whose
+    # surviving operation count moves there, and the input-flush kernel, which
+    # carries the headline claim — and the exhaustive sweep takes the rest.
+    for mode in MATH_MODES:
+        for kernel in F16_KERNELS:
+            add(kernel, mode, "2", "off")
+        for kernel in ("multiply_two_f16", "scale_one_bias_zero_f16"):
+            add(kernel, mode, "0", "off")
+    if exhaustive:
+        for mode in MATH_MODES:
+            for kernel in F16_KERNELS:
+                add(kernel, mode, "0", "off")
+            for optimization in ("1", "3", "s"):
+                add("scale_one_bias_zero_f16", mode, optimization, "off")
 
     unique: dict[str, Case] = {}
     for case in selected:
@@ -1297,9 +1633,10 @@ class Observation:
     def result_for(self, operand: int) -> int:
         if self.results is None:
             raise ProbeFailure(
-                f"{self.case.key} was never dispatched, so it has no result for {operand:08x}"
+                f"{self.case.key} was never dispatched, so it has no result for "
+                f"{self.kernel.dtype.render(operand)}"
             )
-        return self.results[OPERANDS.index(operand)]
+        return self.results[self.kernel.dtype.operands.index(operand)]
 
     def flags_for(self, opcode: str) -> tuple[tuple[str, ...], ...]:
         if self.operations is None:
@@ -1640,26 +1977,59 @@ class Attachment:
     identity: tuple[tuple[str, str], ...]
 
 
-def _manifest_line(key: str, source: Path, function: str, options: str | None) -> str:
+def _manifest_line(key: str, dtype: Dtype, source: Path, function: str, options: str | None) -> str:
+    """One manifest entry, whose dtype the host needs before it allocates anything.
+
+    The dtype is a field rather than something the host infers, because the
+    element width decides the buffer size, the operand vector, the sentinel, and
+    the width every result is printed at. A host that guessed would read a
+    correctly dispatched `f16` kernel back as half as many `f32` values.
+    """
+    prefix = (key, dtype.name)
     if options is None:
-        return "\t".join((key, "library", str(source), function))
-    return "\t".join((key, "source", str(source), function, options))
+        return "\t".join((*prefix, "library", str(source), function))
+    return "\t".join((*prefix, "source", str(source), function, options))
 
 
-def dispatch_batch(host: Path, attachment: Attachment, manifest: Path, subject: str) -> Dispatch:
+def operand_arguments() -> list[str]:
+    """The `<dtype>=<hex>,...` groups the dispatch host is given, one per dtype.
+
+    Every dtype's vector is passed on every invocation rather than only the ones
+    a manifest happens to use, so an entry can never resolve a vector that was
+    omitted and the host's rejection of a missing group stays a real check.
+    """
+    return [
+        f"{dtype.name}=" + ",".join(dtype.render(value) for value in dtype.operands)
+        for dtype in DTYPES
+    ]
+
+
+def dispatch_batch(
+    host: Path,
+    attachment: Attachment,
+    manifest: Path,
+    subject: str,
+    dtypes: dict[str, Dtype],
+) -> Dispatch:
     """Run the dispatch host once over a whole manifest and parse its `key=value` lines.
 
     Every entry comes through here whichever way its library was obtained, so
     the device-side procedure is literally the same code for the offline and
     runtime paths within a family, and a difference between them cannot be an
     artefact of dispatching them differently.
+
+    `dtypes` maps each case key to the dtype its manifest line declared, which is
+    what lets the returned values be checked for count *and* width. A pattern
+    wider than the element that produced it is a defect in the host or the
+    manifest, and it would otherwise reach the record as a plausible-looking
+    result.
     """
     command = [
         *attachment.launch,
         str(host),
         "batch",
         str(manifest),
-        *(f"{value:08x}" for value in OPERANDS),
+        *operand_arguments(),
     ]
     result = _run(command)
     if result.returncode == 3:
@@ -1681,10 +2051,18 @@ def dispatch_batch(host: Path, attachment: Attachment, manifest: Path, subject: 
     def close() -> None:
         if not key:
             return
-        if len(values) != len(OPERANDS):
+        if key not in dtypes:
+            raise ProbeFailure(f"{subject}: {key} was reported but is not in the manifest")
+        dtype = dtypes[key]
+        if len(values) != len(dtype.operands):
             raise ProbeFailure(
-                f"{subject}: {key} returned {len(values)} results, expected {len(OPERANDS)}"
+                f"{subject}: {key} returned {len(values)} results, expected {len(dtype.operands)}"
             )
+        for value in values:
+            if value > dtype.mask:
+                raise ProbeFailure(
+                    f"{subject}: {key} returned {value:x}, which does not fit {dtype.name}"
+                )
         if key in entries:
             raise ProbeFailure(f"{subject}: {key} was reported twice")
         entries[key] = Reported(tuple(values), applied, archive)
@@ -1835,6 +2213,7 @@ class PathComparison:
     candidates: tuple[str, ...]
     matched: tuple[str, ...]
     runtime_results: tuple[int, ...]
+    dtype: Dtype = DEFAULT_DTYPE
 
     @property
     def agreement(self) -> Agreement:
@@ -1848,7 +2227,8 @@ class PathComparison:
         """One record row's worth of the comparison, complete enough to act on."""
         summary = f"{self.agreement.value} candidates={','.join(self.candidates)}"
         if self.agreement is Agreement.DIFFER:
-            return f"{summary} runtime={' '.join(f'{v:08x}' for v in self.runtime_results)}"
+            patterns = " ".join(self.dtype.render(value) for value in self.runtime_results)
+            return f"{summary} runtime={patterns}"
         return f"{summary} matched={','.join(self.matched)}"
 
 
@@ -1895,6 +2275,7 @@ def path_comparisons(run: Run) -> tuple[PathComparison, ...]:
                     name for name, results in candidates.items() if results == observation.results
                 ),
                 runtime_results=observation.results,
+                dtype=observation.kernel.dtype,
             )
         )
     return tuple(compared)
@@ -2057,15 +2438,23 @@ def archive_support(host: Path, attachment: Attachment, work: Path) -> str:
     for an archive inside a manifest that carries measurements would take the
     whole run down with it.
     """
+    kernel = BY_NAME["multiply_two"]
     source = work / "archive_probe.metal"
-    source.write_text(BY_NAME["multiply_two"].source(), encoding="utf-8")
+    source.write_text(kernel.source(), encoding="utf-8")
     manifest = work / "archive_probe.manifest.tsv"
     options = RuntimeConfiguration("safe", "default").options(work / "archive_probe.metallib")
     manifest.write_text(
-        _manifest_line(ARCHIVE_PROBE_CASE, source, ENTRY_POINT, options) + "\n", encoding="utf-8"
+        _manifest_line(ARCHIVE_PROBE_CASE, kernel.dtype, source, ENTRY_POINT, options) + "\n",
+        encoding="utf-8",
     )
     try:
-        reported = dispatch_batch(host, attachment, manifest, "the archive-support probe")
+        reported = dispatch_batch(
+            host,
+            attachment,
+            manifest,
+            "the archive-support probe",
+            {ARCHIVE_PROBE_CASE: kernel.dtype},
+        )
     except ProbeFailure as failed:
         return _normalized(str(failed))
     archive = reported.entries[ARCHIVE_PROBE_CASE].archive
@@ -2127,25 +2516,29 @@ def _cross_family_hazard(
         if family.execution is not Execution.NONE:
             continue
         case = Case(family.name, "multiply_two", Configuration("safe", "2", "off"))
+        kernel = BY_NAME[case.kernel]
         stem = f"hazard_{case.key.replace('.', '_')}"
         source = work / f"{stem}.metal"
-        source.write_text(BY_NAME[case.kernel].source(), encoding="utf-8")
+        source.write_text(kernel.source(), encoding="utf-8")
         air_path = work / f"{stem}.air"
         library = work / f"{stem}.metallib"
         toolchain.compile_air(source, air_path, case)
         toolchain.link(air_path, library, family)
         manifest = work / f"{stem}.manifest.tsv"
         manifest.write_text(
-            _manifest_line("hazard", library, ENTRY_POINT, None) + "\n", encoding="utf-8"
+            _manifest_line("hazard", kernel.dtype, library, ENTRY_POINT, None) + "\n",
+            encoding="utf-8",
         )
         name = f"cross_family_load.{family.name}_module_on_{attachment.family.name}_gpu"
         try:
-            reported = dispatch_batch(host, attachment, manifest, name)
+            reported = dispatch_batch(host, attachment, manifest, name, {"hazard": kernel.dtype})
         except ProbeFailure as refused:
             measured[name] = _normalized(f"refused: {refused}")
             continue
         results = reported.entries["hazard"].results
-        measured[name] = "loaded and ran; results " + " ".join(f"{v:08x}" for v in results)
+        measured[name] = "loaded and ran; results " + " ".join(
+            kernel.dtype.render(value) for value in results
+        )
     return measured
 
 
@@ -2204,28 +2597,41 @@ def probe(work_directory: Path) -> Run:
         archive_reason = archive_support(host, attachment, work)
         runtime_sources: dict[str, Path] = {}
         archives: dict[str, Path] = {}
+        manifest_dtypes: dict[str, Dtype] = {}
         lines: list[str] = []
         for case in cases(family.name):
-            lines.append(_manifest_line(case.key, libraries[case.key], ENTRY_POINT, None))
+            dtype = BY_NAME[case.kernel].dtype
+            manifest_dtypes[case.key] = dtype
+            lines.append(_manifest_line(case.key, dtype, libraries[case.key], ENTRY_POINT, None))
         for case in runtime_cases(family.name):
             assert isinstance(case.configuration, RuntimeConfiguration)
+            kernel = BY_NAME[case.kernel]
+            manifest_dtypes[case.key] = kernel.dtype
             stem = case.key.replace(".", "_")
             # The runtime path compiles the same bytes the offline path compiled,
             # so the file is written once per case rather than shared: a case
             # that generated different source would otherwise be invisible here.
             source = work / f"{stem}.metal"
-            source.write_text(BY_NAME[case.kernel].source(), encoding="utf-8")
+            source.write_text(kernel.source(), encoding="utf-8")
             runtime_sources[case.key] = source
             archive = None
             if not archive_reason:
                 archive = work / f"{stem}.archive.metallib"
                 archives[case.key] = archive
             lines.append(
-                _manifest_line(case.key, source, ENTRY_POINT, case.configuration.options(archive))
+                _manifest_line(
+                    case.key,
+                    kernel.dtype,
+                    source,
+                    ENTRY_POINT,
+                    case.configuration.options(archive),
+                )
             )
         manifest = work_directory / f"{family.name}.manifest.tsv"
         manifest.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-        reported = dispatch_batch(host, attachment, manifest, f"the {family.name} manifest")
+        reported = dispatch_batch(
+            host, attachment, manifest, f"the {family.name} manifest", manifest_dtypes
+        )
         devices[family.name] = reported.device
         registries[family.name] = reported.registry_id or "unreported"
         runtime_images[family.name] = " ".join(reported.compiler_images) or "unreported"
@@ -2341,7 +2747,8 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
         ("probe.fixed_flags", f"-std={MSL_VERSION}"),
         ("probe.default_fp32_functions", DEFAULT_FP32_FUNCTIONS),
         ("probe.entry_point", ENTRY_POINT),
-        ("probe.operands", " ".join(f"{value:08x}" for value in OPERANDS)),
+        ("probe.dtypes", " ".join(dtype.name for dtype in DTYPES)),
+        ("probe.default_dtype", DEFAULT_DTYPE.name),
         ("probe.runtime_fixed_options", f"lang={RUNTIME_LANGUAGE}"),
         ("probe.runtime_paired_optimization", f"-O{RUNTIME_PAIRED_OPTIMIZATION}"),
         ("probe.guard_layers.offline_with_device", f"{EMITTED_ARITHMETIC} {EXECUTION_WITNESS}"),
@@ -2351,6 +2758,10 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
     rows += [
         (f"probe.offline_flag_without_runtime_counterpart.{index}", gap)
         for index, gap in enumerate(OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART)
+    ]
+    rows += [
+        (f"probe.operands.{dtype.name}", " ".join(dtype.render(v) for v in dtype.operands))
+        for dtype in DTYPES
     ]
     rows += [(f"environment.{key}", value) for key, value in run.environment.items()]
     rows += [(f"hazard.{key}", value) for key, value in sorted(run.hazards.items())]
@@ -2372,8 +2783,14 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
         if observation.archived_options is not None:
             rows.append((f"case.{key}.archived_options", observation.archived_options))
         if observation.results is not None:
+            # Rendered at the kernel's own width, so an `f16` row is four hex
+            # digits and cannot be mistaken for a zero-extended `f32` one.
+            dtype = observation.kernel.dtype
             rows.append(
-                (f"case.{key}.results", " ".join(f"{value:08x}" for value in observation.results))
+                (
+                    f"case.{key}.results",
+                    " ".join(dtype.render(value) for value in observation.results),
+                )
             )
     for comparison in path_comparisons(run):
         rows.append((f"comparison.{comparison.runtime_case}", comparison.render()))
@@ -2488,7 +2905,7 @@ def main(arguments: list[str] | None = None) -> int:
         results = (
             "not-dispatched"
             if observation.results is None
-            else " ".join(f"{value:08x}" for value in observation.results)
+            else " ".join(observation.kernel.dtype.render(value) for value in observation.results)
         )
         print(f"{key}\tfp-ops={'unreadable' if count is None else count}\t{results}")
     for comparison in path_comparisons(run):
