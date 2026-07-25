@@ -1,7 +1,7 @@
 ---
 id: execute-governed-refined-regions-against-the-oracle
 title: Execute the governed lowerings' own refined regions against the scalar oracle in the compile path
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [register-governed-scalar-reference-evaluation, reconcile-single-contributor-strict-sum-nan-canonicalization]
@@ -23,3 +23,21 @@ Use the conformance vectors from `pipeline::tests::structured_fused_body_interpr
 **Closing evidence.** Each governed family's refined region is executed by the oracle and agrees with the semantic evaluator bit for bit, on vectors that include at least one non-canonical NaN payload and both signed zeros. A deliberate defect injected into any governed lowering's emitted arithmetic fails the test.
 
 **Ordering.** `reconcile-single-contributor-strict-sum-nan-canonicalization` records a measured disagreement on a single-contributor reduction over a non-canonical NaN. Until it is decided, exclude that one case explicitly and cite that ticket, rather than choosing a vector that happens to avoid it.
+
+## Outcome
+
+Three cases in `crates/tiler-compiler/src/governed.rs` now execute the region `refine_index_region` **actually returned** for each governed family, through `IndexRegionEvaluator::new(FrozenReferenceRegistry::standard(), FrozenScalarReferenceRegistry::standard())`.
+
+**The gap this closes.** `crates/tiler-reference/tests/governed_scalar_reference.rs` answers the numerical questions completely, but against hand-written *mirrors* of these emissions. A mirror that drifted from `governed.rs` would keep passing. These cases take `IndexRefinement::region()` from the governed provider set itself, so a change to a lowering's emitted arithmetic has nowhere to hide.
+
+They live in `tiler-compiler` for the reason the ticket states: `tiler-reference` depends only on `tiler-ir`, and the oracle must not depend on the compiler. `tiler-compiler` dev-depends on `tiler-reference`, which is the one direction that composes. Scope is `implementation/compiler` alone, as declared.
+
+**Comparison is on exact bit patterns, not `f32` equality.** `-0.0 == 0.0` is true and a NaN equals nothing, so float comparison would silently accept exactly the results a numerical contract exists to pin.
+
+**What is checked.** The constant lowering reproduces its declared payload for `1.0`, `-0.0`, the least subnormal, and a non-canonical NaN — a constant is bit-preserving, so the NaN must survive uncanonicalized. Multiply and add over the same vector canonicalize the NaN they produce to `0x7fc00000` while `-0.0` keeps its sign and the subnormal survives. The strict serial sum folds `1 + 2 + 3 = 6`, canonicalizes a lone non-canonical NaN at its result boundary, leaves a lone `-0.0` alone — which is what distinguishes the boundary conversion from an addition — and preserves a subnormal across a two-element fold.
+
+**The ordering note is discharged rather than honoured.** It said to exclude the single-contributor NaN case and cite `reconcile-single-contributor-strict-sum-nan-canonicalization`. That ticket is now `done`: a lone contributor canonicalizes at the reduction's result boundary, all three implementations agree, and the case discriminates. It is included.
+
+**Measurement — the cases are shown to discriminate, not assumed to.** Deleting the result-boundary canonicalization from `GovernedStrictSerialSumF32` (replacing the `canonicalize_nan_f32_scalar_op` apply with the bare `seed`) fails `the_governed_serial_sum_region_executes_its_declared_contract` with `left: [2143294004]` against `right: [2143289344]` — the input's `0x7fc01234` leaking through where `0x7fc00000` is required. The defect was reverted and the suite is green.
+
+`cargo nextest run --workspace --no-fail-fast` — 628 passed, 0 skipped; clippy and fmt clean.

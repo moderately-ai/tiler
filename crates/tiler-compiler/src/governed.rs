@@ -701,12 +701,18 @@ mod tests {
         IndexRefinement, NumericalContractIdentity, OccurrenceOperand, OccurrenceResult,
         OccurrenceValueId, SemanticOccurrence, SemanticOccurrenceIdentity, refine_index_region,
     };
+    use tiler_ir::semantic::{CANONICAL_F32_ARITHMETIC_NAN_BITS, FrozenSemanticRegistry};
     use tiler_ir::semantic::{
         CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, OpKey,
         OperationAttributes, OperationEffect, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, TypeKey,
         add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
     };
     use tiler_ir::shape::{Axis, Shape};
+    use tiler_reference::{
+        FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry,
+        IndexRegionAuthority, IndexRegionEvaluator, IndexRegionInput, ReferenceElement, Tensor,
+        TensorPayloadView,
+    };
 
     fn f32_type() -> ResolvedValueType {
         F32::resolved_type()
@@ -849,5 +855,219 @@ mod tests {
             assert_eq!(refinement.operand_bindings().len(), 1);
             assert_eq!(refinement.result_bindings().len(), 1);
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // The emitted regions, executed by the independent oracle
+    // ---------------------------------------------------------------------
+    //
+    // Every case above proves a governed lowering *refines* its occurrence:
+    // structure, interface, reached authority, ownership. None of them runs the
+    // arithmetic. `crates/tiler-reference/tests/governed_scalar_reference.rs`
+    // does run it, but against hand-written *mirrors* of these emissions, so a
+    // mirror that drifted from `governed.rs` would keep passing.
+    //
+    // These cases close that gap by executing the region
+    // `refine_index_region` actually returned. They live here rather than in
+    // `tiler-reference` because the oracle must not depend on the compiler:
+    // `tiler-reference` depends only on `tiler-ir`, and inverting that would
+    // break the layering `AGENTS.md` requires. `tiler-compiler` dev-depends on
+    // `tiler-reference`, so this is the one direction that composes.
+    //
+    // Comparison is on exact bit patterns, not `f32` equality: `-0.0 == 0.0` is
+    // true and a NaN equals nothing, so float comparison would silently accept
+    // exactly the results a numerical contract exists to pin.
+
+    /// The least positive `f32` subnormal.
+    const LEAST_SUBNORMAL: u32 = 0x0000_0001;
+    /// A quiet NaN whose payload is *not* the canonical arithmetic pattern.
+    const NONCANONICAL_NAN: u32 = 0x7fc0_1234;
+
+    fn bit_tensor(shape: Shape, bits: &[u32]) -> Tensor {
+        Tensor::dense(
+            f32_type(),
+            shape,
+            bits.iter()
+                .map(|value| {
+                    ReferenceElement::from_float_bits(
+                        value.to_be_bytes(),
+                        FloatBitOrder::MostSignificantByteFirst,
+                    )
+                    .expect("the operand is a valid f32 pattern")
+                })
+                .collect(),
+        )
+        .expect("the tensor is well formed")
+    }
+
+    fn output_bits(tensor: &Tensor) -> Vec<u32> {
+        let TensorPayloadView::Dense(elements) = tensor.payload() else {
+            panic!("expected a dense f32 tensor")
+        };
+        elements
+            .iter()
+            .map(|value| {
+                u32::from_be_bytes(
+                    <[u8; 4]>::try_from(value.as_bytes()).expect("an f32 element is four bytes"),
+                )
+            })
+            .collect()
+    }
+
+    /// Executes one refined governed region through the standard scalar oracle.
+    ///
+    /// The evaluator is built from `FrozenScalarReferenceRegistry::standard()`,
+    /// the same governed profile the lowerings emit against, so an operation a
+    /// lowering emits but the oracle cannot execute is a failure here rather
+    /// than a silently skipped check.
+    fn evaluate_refined(refinement: &IndexRefinement, inputs: &[(usize, &Tensor)]) -> Vec<u32> {
+        let scalars = governed_scalars().expect("the governed scalar authority composes");
+        let semantic = FrozenSemanticRegistry::standard().expect("the governed semantics compose");
+        let evaluator = IndexRegionEvaluator::new(
+            FrozenReferenceRegistry::standard().expect("the governed value profile composes"),
+            FrozenScalarReferenceRegistry::standard().expect("the governed scalar oracle composes"),
+        );
+        let bound: Vec<IndexRegionInput<'_>> = inputs
+            .iter()
+            .map(|(operand, value)| {
+                IndexRegionInput::new(
+                    refinement.operand_bindings()[*operand].input_tensor(),
+                    value,
+                )
+            })
+            .collect();
+        let evaluation = evaluator
+            .evaluate(
+                refinement.region(),
+                IndexRegionAuthority::new(&scalars, &semantic),
+                &bound,
+            )
+            .expect("the governed region executes on the oracle");
+        output_bits(&evaluation.outputs()[0])
+    }
+
+    /// The constant lowering emits the exact declared payload, NaN included.
+    #[test]
+    fn the_governed_constant_region_reproduces_its_declared_bits() {
+        for bits in [
+            0x3f80_0000,
+            (-0.0_f32).to_bits(),
+            LEAST_SUBNORMAL,
+            NONCANONICAL_NAN,
+        ] {
+            let refinement = refine(
+                constant_f32_op(),
+                Vec::new(),
+                vec![OccurrenceResult::new(f32_type(), Shape::new([]))],
+                constant_attributes(bits),
+            );
+            assert_eq!(
+                evaluate_refined(&refinement, &[]),
+                vec![bits],
+                "a declared constant is bit-preserving, including a non-canonical NaN",
+            );
+        }
+    }
+
+    /// Multiply and add canonicalize every NaN they produce and preserve every
+    /// other payload, in the region the lowering actually emitted.
+    #[test]
+    fn the_governed_pointwise_regions_execute_their_declared_contract() {
+        let shape = Shape::from_dims([4]);
+        let left = bit_tensor(
+            shape.clone(),
+            &[
+                0x3f80_0000,
+                (-0.0_f32).to_bits(),
+                LEAST_SUBNORMAL,
+                NONCANONICAL_NAN,
+            ],
+        );
+        let right = bit_tensor(
+            shape.clone(),
+            &[0x4000_0000, 0x3f80_0000, 0x3f80_0000, 0x3f80_0000],
+        );
+
+        let multiply = refine(
+            multiply_f32_op(),
+            vec![
+                OccurrenceOperand::new(OccurrenceValueId(0), f32_type(), shape.clone()),
+                OccurrenceOperand::new(OccurrenceValueId(1), f32_type(), shape.clone()),
+            ],
+            vec![OccurrenceResult::new(f32_type(), shape.clone())],
+            OperationAttributes::new([]).expect("an empty attribute set is valid"),
+        );
+        assert_eq!(
+            evaluate_refined(&multiply, &[(0, &left), (1, &right)]),
+            vec![
+                0x4000_0000,
+                (-0.0_f32).to_bits(),
+                LEAST_SUBNORMAL,
+                CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            ],
+            "1*2=2; -0*1 keeps its sign; a subnormal survives; a NaN canonicalizes",
+        );
+
+        let add = refine(
+            add_f32_op(),
+            vec![
+                OccurrenceOperand::new(OccurrenceValueId(0), f32_type(), shape.clone()),
+                OccurrenceOperand::new(OccurrenceValueId(1), f32_type(), shape.clone()),
+            ],
+            vec![OccurrenceResult::new(f32_type(), shape)],
+            OperationAttributes::new([]).expect("an empty attribute set is valid"),
+        );
+        assert_eq!(
+            evaluate_refined(&add, &[(0, &left), (1, &right)])[3],
+            CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            "an add over a non-canonical NaN produces the canonical payload",
+        );
+    }
+
+    /// The strict serial sum's emitted fold, executed on exceptional values.
+    ///
+    /// The single-contributor case is included rather than excluded. The
+    /// ordering note on this ticket deferred it to
+    /// `reconcile-single-contributor-strict-sum-nan-canonicalization`, which is
+    /// now `done`: a lone contributor canonicalizes at the reduction's result
+    /// boundary, so the three implementations agree and the case discriminates.
+    #[test]
+    fn the_governed_serial_sum_region_executes_its_declared_contract() {
+        let reduce = |extent: u64, bits: &[u32]| {
+            let input = Shape::from_dims([extent]);
+            let refinement = refine(
+                strict_serial_sum_f32_op(),
+                vec![OccurrenceOperand::new(
+                    OccurrenceValueId(0),
+                    f32_type(),
+                    input.clone(),
+                )],
+                vec![OccurrenceResult::new(f32_type(), Shape::new([]))],
+                axes_attributes(&[0]),
+            );
+            let tensor = bit_tensor(input, bits);
+            evaluate_refined(&refinement, &[(0, &tensor)])
+        };
+
+        assert_eq!(
+            reduce(3, &[0x3f80_0000, 0x4000_0000, 0x4040_0000]),
+            vec![0x40c0_0000],
+            "1 + 2 + 3 = 6",
+        );
+        assert_eq!(
+            reduce(1, &[NONCANONICAL_NAN]),
+            vec![CANONICAL_F32_ARITHMETIC_NAN_BITS],
+            "a lone contributor canonicalizes at the reduction result boundary",
+        );
+        assert_eq!(
+            reduce(1, &[(-0.0_f32).to_bits()]),
+            vec![(-0.0_f32).to_bits()],
+            "the boundary rule is a conversion, not an addition: -0.0 survives",
+        );
+        assert_eq!(
+            reduce(2, &[LEAST_SUBNORMAL, 0x0000_0000]),
+            vec![LEAST_SUBNORMAL],
+            "a subnormal survives a strict-preserving fold",
+        );
     }
 }
