@@ -454,6 +454,11 @@ def validate_graph(records: list[Record], root: Path) -> list[str]:
 MARKDOWN = MarkdownIt("commonmark")
 COMMENT_ONLY_HTML = re.compile(r"(?:\s*<!--(?:(?!-->)[\s\S])*-->)*\s*")
 DIRECT_INTERNAL_ENTRYPOINTS = {Path("spikes/shapes/shape-evidence/generate-workloads.sh")}
+INLINE_LINK = re.compile(r"\[(?:[^\]\\]|\\.)*\]\(([^()\s]*)(?:\s+\"[^\"]*\")?\)")
+QUOTED = re.compile(r"“([^”]{2,400})”|\"([^\"]{2,400})\"")
+ELLIPSIS = re.compile(r"…|\.\.\.")
+SENTENCE_BREAK = re.compile(r"[.;:!?][\s)\]]")
+QUOTE_REACH = 220
 
 
 def validate_local_target(record: Record, raw: str, root: Path) -> str | None:
@@ -511,6 +516,91 @@ def validate_links(records: list[Record], root: Path) -> list[str]:
                         error = validate_local_target(record, target, root)
                         if error:
                             errors.append(error)
+    return errors
+
+
+def quotable(body: str) -> list[str]:
+    """Blank-line-separated paragraphs outside fenced blocks; fenced content is never mined."""
+    paragraphs, buffer, fenced = [], [], False
+    for line in body.splitlines():
+        opening = line.lstrip().startswith("```")
+        if opening or (not fenced and not line.strip()):
+            # A fence may abut the paragraph above it with no blank line between.
+            if buffer:
+                paragraphs.append("\n".join(buffer))
+                buffer = []
+            fenced = fenced != opening
+            continue
+        if not fenced:
+            buffer.append(line)
+    if buffer:
+        paragraphs.append("\n".join(buffer))
+    return paragraphs
+
+
+def flatten(text: str) -> str:
+    """Drop what a faithful quotation may restyle: wrapping, case, and inline markup."""
+    return re.sub(r"\s+", " ", text.replace("`", "").replace("*", "")).casefold()
+
+
+def quotes(haystack: str, quoted: str) -> bool:
+    """An elided quotation asserts only that its fragments appear in the written order."""
+    cursor = 0
+    for fragment in (f for f in (flatten(f).strip() for f in ELLIPSIS.split(quoted)) if f):
+        index = haystack.find(fragment, cursor)
+        if index < 0:
+            return False
+        cursor = index + len(fragment)
+    return True
+
+
+def validate_quotations(records: list[Record], root: Path) -> list[str]:
+    """Require a quotation attached to a link to exist in a governed document that paragraph links.
+
+    A resolving link proves the destination exists, not that it still says what
+    the quoting sentence claims. Only an unambiguously attributed span is
+    checked: a multi-word quotation reached from a preceding governed-document
+    link in the same sentence. A term in scare quotes, a quotation of a document
+    named in prose or of a ticket, and one placed a sentence away from its link
+    carry no target this can resolve and are left to review.
+    """
+    base = root.resolve()
+    corpus = {path.resolve() for path in governed(root)}
+    flattened: dict[Path, str] = {}
+    errors = []
+    for record in records:
+        own = (root / record.path).resolve()
+        for paragraph in quotable(record.body):
+            linked: list[tuple[int, Path]] = []
+            for match in INLINE_LINK.finditer(paragraph):
+                parsed = urllib.parse.urlsplit(match.group(1))
+                if parsed.scheme or parsed.netloc or not parsed.path:
+                    continue
+                target = (root / record.path.parent / urllib.parse.unquote(parsed.path)).resolve()
+                if target in corpus and target != own:
+                    linked.append((match.end(), target))
+            for match in QUOTED.finditer(paragraph):
+                quoted = match.group(1) or match.group(2)
+                preceding = [pair for pair in linked if pair[0] <= match.start()]
+                if len(flatten(quoted).split()) < 2 or not preceding:
+                    continue
+                end, attributed = preceding[-1]
+                gap = paragraph[end : match.start()]
+                if len(gap) > QUOTE_REACH or SENTENCE_BREAK.search(gap):
+                    continue
+                # One sentence may name two contracts and quote the second, so any
+                # document the paragraph links clears the quotation.
+                for candidate in dict.fromkeys([attributed, *(path for _, path in linked)]):
+                    if candidate not in flattened:
+                        flattened[candidate] = flatten(candidate.read_text(encoding="utf-8"))
+                    if quotes(flattened[candidate], quoted):
+                        break
+                else:
+                    errors.append(
+                        f"{record.path}: quoted text attributed to "
+                        f"{attributed.relative_to(base).as_posix()} appears in no document this "
+                        f"paragraph links: {quoted!r}"
+                    )
     return errors
 
 
@@ -689,6 +779,7 @@ def validate(root: Path, check_render: bool = True) -> list[str]:
         errors += validate_record(record, root)
     errors += validate_graph(records, root)
     errors += validate_links(records, root)
+    errors += validate_quotations(records, root)
     errors += validate_executable_modes(records, root)
     errors += validate_tickets(root)
     errors += validate_questions(root)

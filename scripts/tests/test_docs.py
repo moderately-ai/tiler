@@ -133,6 +133,86 @@ def test_link_validation_ignores_fenced_indented_and_inline_code(tmp_path: Path)
     assert docs.validate_links([record], tmp_path) == []
 
 
+def quoting(tmp_path: Path, body: str, root: Path | None = None, **linked: str):
+    (tmp_path / "docs").mkdir(exist_ok=True)
+    for name, text in linked.items():
+        (tmp_path / "docs" / f"{name}.md").write_text(text, encoding="utf-8")
+    record = docs.Record(Path("docs/quoting.md"), {"id": "tiler.test", "kind": "portal"}, body)
+    return docs.validate_quotations([record], root or tmp_path)
+
+
+def test_quotation_absent_from_the_linked_document_fails(tmp_path: Path):
+    body = (
+        '[Contract](contract.md) requires a plan to be "proved contract-preserving".\n\n'
+        '[Contract](contract.md) also requires it to be "cheap and plausible".\n'
+    )
+    errors = quoting(tmp_path, body, contract="Every rewrite must be proved contract-preserving.\n")
+
+    assert len(errors) == 1
+    assert "appears in no document this paragraph links" in errors[0]
+    assert "cheap and plausible" in errors[0]
+    # A caller may pass an unnormalized root; the reported path is still repository-relative.
+    assert quoting(tmp_path, body, root=tmp_path / "docs" / "..") == errors
+
+
+def test_quotation_survives_wrapping_case_elision_and_inline_markup(tmp_path: Path):
+    """The corpus is mostly hard-wrapped, so a faithful quotation rarely matches byte for byte."""
+    assert (
+        quoting(
+            tmp_path,
+            '[Contract](contract.md) states that "Accuracy is a hard semantic dimension" and '
+            'that a `Verdict` "keeps its candidate … in search state".\n',
+            contract="accuracy is a *hard semantic*\ndimension; a Verdict keeps its\n"
+            "candidate out of the frontier and in search state.\n",
+        )
+        == []
+    )
+
+
+def test_quotation_clears_against_any_document_the_paragraph_links(tmp_path: Path):
+    """A sentence may name two contracts and quote the one that is not the nearer link."""
+    assert (
+        quoting(
+            tmp_path,
+            "[Optimizer](optimizer.md) and [Scheduling](scheduling.md) both bound the frontier, "
+            'of which "only checked proposals are admitted".\n',
+            optimizer="The frontier admits only checked proposals are admitted.\n",
+            scheduling="The frontier is bounded.\n",
+        )
+        == []
+    )
+
+
+def test_quotation_without_an_attributed_link_is_not_checked(tmp_path: Path):
+    """A term in scare quotes, an unlinked source, and a distant link name no target to check."""
+    assert (
+        quoting(
+            tmp_path,
+            '"Conservative" is the floor, not a description; see [Contract](contract.md).\n\n'
+            'ADR 0047 names "materialization and repacking" as an enforcer, and so does '
+            "[Contract](contract.md).\n\n"
+            "[Contract](contract.md) bounds the vocabulary. A later sentence in the same "
+            'paragraph adds "an unrelated invented phrase".\n',
+            contract="The vocabulary is bounded.\n",
+        )
+        == []
+    )
+
+
+def test_quotation_mining_skips_fences_without_swallowing_the_paragraph_above(tmp_path: Path):
+    errors = quoting(
+        tmp_path,
+        '[Contract](contract.md) forbids "an invented rule".\n'
+        "```text\n"
+        '[Contract](contract.md) forbids "another invented rule".\n'
+        "```\n",
+        contract="The vocabulary is bounded.\n",
+    )
+
+    assert len(errors) == 1
+    assert "an invented rule" in errors[0]
+
+
 def test_link_validation_rejects_duplicate_definitions_file_uris_and_html(tmp_path: Path):
     (tmp_path / "present.md").write_text("", encoding="utf-8")
     record = docs.Record(
