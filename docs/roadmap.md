@@ -122,9 +122,11 @@ deferred behind the optimizer conformance gate and the mature boundary-property
 and analytical-cost authorities.
 
 Metal is then split into independently verifiable KIR lowering, strict
-numerical realization, Apple offline compilation, artifact codec/bundle
-assembly, and proof-evidence work before the existing Metal AOT integration
-ticket. Runtime validation, preflight, one-way routing commit, and execution
+numerical realization, Apple offline compilation, bundle assembly, and
+proof-evidence work before the existing Metal AOT integration ticket. The
+neutral artifact codec half of that split has landed, behind an unaccepted
+crate-private facade; filling its carried-payload shape from a real emission
+and a real compilation has not. Runtime validation, preflight, one-way routing commit, and execution
 mechanics similarly precede the device integration proof. The inline proc
 macro, cache, artifact-family delivery, embedding measurements, complete inline
 workflow, and Candle adapter remain explicit downstream tickets rather than

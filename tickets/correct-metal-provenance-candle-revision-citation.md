@@ -1,7 +1,7 @@
 ---
 id: correct-metal-provenance-candle-revision-citation
 title: Correct the Metal provenance section's Candle revision citation
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [record-metal-runtime-compiler-provenance-gap]
@@ -19,3 +19,13 @@ tags: [documentation, candle, metal, provenance]
 **The work.** Re-pin that one sentence to the full `31f35b147389700ed2a178ee66a91c3cc25cc80d`, with the line numbers above, so `docs/backends/metal.md` and `docs/integration/candle.md` cite the same inspected revision. `docs/integration/candle.md` already does, under **Numerical scope across the Candle kernel boundary**, and additionally records that Tiler declares no Candle dependency — a fact the metal.md sentence's "working checkout" phrasing obscures rather than states. Do not restate the boundary itself; metal.md already delegates it.
 
 **Closes when:** `docs/backends/metal.md` cites a revision reachable in the repository it names, and the two documents' Candle citations agree.
+
+## Outcome
+
+`docs/backends/metal.md` now cites `huggingface/candle` `31f35b147389700ed2a178ee66a91c3cc25cc80d` (0.11.0) in full, with the exact line numbers — `Kernels::load_library` at `candle-metal-kernels/src/kernel.rs:109` calling `new_library_with_source` at 122, and `MetalDevice::compile` at `candle-core/src/metal_backend/device.rs:101` calling it at 111. That is the revision `docs/integration/candle.md` and six other corpus documents already use, so the two Candle citations now agree and a reader can resolve the commit against the repository the sentence names.
+
+The sentence also stopped calling it a "working checkout" and now records the fact that phrasing obscured: Tiler declares no Candle dependency, so this is an inspected upstream revision rather than a resolved pin. Re-pinning it when an adapter crate actually depends on Candle is `repin-candle-numerical-scope-citation-at-adapter-admission`.
+
+The claim the citation supports was never in doubt and is unchanged; only its provenance was wrong. The boundary itself is still delegated to `docs/integration/candle.md` rather than restated here.
+
+`uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py` pass.

@@ -1,11 +1,11 @@
 ---
 id: reconcile-stale-neutral-artifact-codec-status
 title: Reconcile the stale neutral-artifact-codec status statements
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [record-the-implemented-artifact-envelope-in-the-contract, prototype-neutral-artifact-codec]
-scopes: []
+scopes: [research/artifacts, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, artifact]
@@ -21,3 +21,15 @@ tags: [documentation, artifact]
 **The constraint that makes this non-mechanical.** `docs/artifact-abi.md` deliberately states `partial`, not implemented, because every codec item is `pub(crate)` behind an unaccepted facade under ADR 0074 convention 7. Do not let any of the three edits above upgrade past that: the accurate claim is that a bounded lockstep codec exists behind an unaccepted facade, and each record must agree with `docs/artifact-abi.md` rather than out-run it. `partial` is the matching frontmatter value for the research record.
 
 **Closes when** the three records state the implemented subset at the same maturity `docs/artifact-abi.md` does, and `uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py` pass.
+
+## Outcome
+
+All three records now state the implemented subset at the maturity `docs/artifact-abi.md` states it, and none out-runs it.
+
+- `docs/research/artifacts/target-neutral-artifact-envelope.md` moves `spike-only` → `partial`. Its status line records a bounded canonical envelope codec behind an unaccepted crate-private facade, and the Traceability sentence is **split** rather than deleted, as the ticket required: canonical serialization, canonical form, and integrity validation are implemented; authenticity and version-skew policy remain unimplemented. It also names the bound explicitly — every codec item is `pub(crate)` behind a private module under ADR 0074 convention 7 — and says in its own words that it must not out-run the artifact ABI.
+- `docs/status.md` no longer lists the neutral artifact codec among work that separate tickets merely track. It records what landed, with the same `pub(crate)`-facade qualification, and now also records that the codec carries a backend payload's compilation subject and object bytes.
+- `docs/roadmap.md` no longer lists "artifact codec/bundle assembly" as one undifferentiated item still ahead. The codec half is recorded as landed behind an unaccepted facade; filling its carried-payload shape from a real emission and a real compilation is recorded as not done, which is `assemble-the-metal-payload-from-emission-and-compilation`.
+
+The roadmap and status edits were widened slightly beyond the ticket's text because `prototype-metal-bundle-assembly` landed the carried-payload half after this ticket was written; describing the codec as it stood at `f57e23b` would have been accurate about the ticket and stale about the tree.
+
+`uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py` pass.

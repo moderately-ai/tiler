@@ -7,7 +7,7 @@ topics: ["artifacts", "abi", "backends", "validation"]
 catalog_group: "artifacts-build-toolchains"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.metal-backend"]
 ticket: "artifact-envelope-model"
@@ -15,7 +15,7 @@ ticket: "artifact-envelope-model"
 
 # Target-neutral artifact and backend payload envelope
 
-**Status:** completed research adopted by the artifact contract; serialization implementation remains future work
+**Status:** completed research adopted by the artifact contract; a bounded canonical envelope codec is implemented behind an unaccepted crate-private facade
 **Ticket:** `artifact-envelope-model`
 
 ## Outcome
@@ -752,6 +752,6 @@ rustc --edition 2021 --test \
 
 ## Traceability
 
-The result is adopted by the [artifact ABI](../../artifact-abi.md) and exercised
-by the [artifact envelope spike](../../../spikes/artifacts/README.md). Production
-serialization, authenticity, and version-skew policy remain unimplemented.
+The result is adopted by the [artifact ABI](../../artifact-abi.md) and exercised by the [artifact envelope spike](../../../spikes/artifacts/README.md).
+
+Canonical serialization, canonical form, and integrity validation are implemented; authenticity and version-skew policy remain unimplemented. The implemented subset is bounded in exactly the way the artifact ABI records under "Implemented envelope profile": every item of `crates/tiler-artifact/src/program/codec/` is `pub(crate)` behind a private module under ADR 0074 convention 7, so no crate outside `tiler-artifact` can encode or decode an artifact and no consumer surface has been accepted. This record therefore says `partial` rather than implemented, and must not out-run that contract.

@@ -99,10 +99,12 @@ board's to report, not this page's: `tkt ready` shows the current frontier and
 proceed when their actual verifier and IR prerequisites exist; they do not
 depend on that ergonomic facade merely for ordering.
 
-This chain is an architectural value proof. Separate tickets now track the
-neutral artifact codec, Metal lowering and offline driver, runtime validation
-and one-way commit, inline proc macro and expansion cache, artifact-family
-delivery, embedding measurements, and Candle integration. Completion of the
+This chain is an architectural value proof. The neutral artifact codec has
+landed as a bounded lockstep codec behind an unaccepted crate-private facade,
+and carries a backend payload's compilation subject and object bytes; separate
+tickets track Metal payload assembly, Metal lowering and offline driver,
+runtime validation and one-way commit, inline proc macro and expansion cache,
+artifact-family delivery, embedding measurements, and Candle integration. Completion of the
 serial Metal proof still does not by itself complete the inline-DX exit for
 Milestone 0B or the broader Milestone 2 product profile.
 
