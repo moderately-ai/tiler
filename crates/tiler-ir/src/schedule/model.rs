@@ -5,6 +5,7 @@
 //! value data; only [`super::ScheduledRegionBuilder::build`] can bind a region
 //! into an opaque [`VerifiedScheduledRegion`] after intrinsic verification.
 
+use crate::identity::push_len;
 use crate::shape::{Axis, Shape};
 
 use super::error::{ContributorError, ElementCountOverflow};
@@ -461,14 +462,14 @@ const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
-    bytes.extend_from_slice(&(shape.rank() as u64).to_be_bytes());
+    push_len(bytes, shape.rank());
     for extent in shape.extents() {
         bytes.extend_from_slice(&extent.get().to_be_bytes());
     }
 }
 
 fn push_axes(bytes: &mut Vec<u8>, axes: &[Axis]) {
-    bytes.extend_from_slice(&(axes.len() as u64).to_be_bytes());
+    push_len(bytes, axes.len());
     for axis in axes {
         bytes.extend_from_slice(&axis.get().to_be_bytes());
     }
@@ -675,11 +676,11 @@ pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledReg
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"tiler.schedule.v1");
     push_shape(&mut bytes, &region.index.iteration_shape);
-    bytes.extend_from_slice(&(region.index.accesses.len() as u64).to_be_bytes());
+    push_len(&mut bytes, region.index.accesses.len());
     for access in &region.index.accesses {
         push_access(&mut bytes, access);
     }
-    bytes.extend_from_slice(&(region.index.bounds_proofs.len() as u64).to_be_bytes());
+    push_len(&mut bytes, region.index.bounds_proofs.len());
     for proof in &region.index.bounds_proofs {
         push_bounds_proof(&mut bytes, proof);
     }

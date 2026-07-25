@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::identity::{push_len, push_slice};
 use crate::semantic::{
     AttributeFieldId, CanonicalValue, CanonicalValueKind, CanonicalValueView,
     FrozenSemanticRegistry, MAX_PROVIDER_DIAGNOSTIC_MESSAGE_BYTES, NormativeDefinitionRef,
@@ -1538,7 +1539,7 @@ impl FrozenScalarRegistry {
             }
         }
         let mut output = b"tiler.scalar-definition-projection.v2\0".to_vec();
-        encode_len(&mut output, reached_keys.len());
+        push_len(&mut output, reached_keys.len());
         for key in reached_keys {
             let definition = self
                 .definition(&key)
@@ -1598,14 +1599,14 @@ impl FrozenScalarRegistry {
             .project_value_set_authority(value_types, canonical_values)
             .map_err(|error| ScalarRegistryError::TypeAuthority(Arc::new(error)))?;
         let mut admission = b"tiler.scalar-admission-provenance.v1\0".to_vec();
-        encode_len(&mut admission, reached.len());
+        push_len(&mut admission, reached.len());
         for key in &reached {
             encode_key(&mut admission, key);
             let provider = self
                 .provider(key)
                 .ok_or_else(|| ScalarRegistryError::UnknownOperation { key: key.clone() })?;
-            encode_bytes(&mut admission, provider.namespace().as_bytes());
-            encode_bytes(&mut admission, provider.name().as_bytes());
+            push_slice(&mut admission, provider.namespace().as_bytes());
+            push_slice(&mut admission, provider.name().as_bytes());
             admission.extend_from_slice(&provider.revision().to_be_bytes());
         }
         Ok(ScalarAuthorityEvidence {
@@ -1780,18 +1781,18 @@ fn encode_definition(definition: &ScalarOperationDefinition) -> Vec<u8> {
     let exact_capacity = encoded_definition_len(definition);
     let mut encoded = Vec::with_capacity(exact_capacity);
     encode_key(&mut encoded, &definition.key);
-    encode_bytes(
+    push_slice(
         &mut encoded,
         definition.normative_definition.as_str().as_bytes(),
     );
     encoded.push(match definition.effect {
         ScalarEffect::Pure => 1,
     });
-    encode_len(&mut encoded, definition.operands.min);
-    encode_len(&mut encoded, definition.operands.max);
-    encode_len(&mut encoded, definition.results.min);
-    encode_len(&mut encoded, definition.results.max);
-    encode_len(&mut encoded, definition.attributes.0.len());
+    push_len(&mut encoded, definition.operands.min);
+    push_len(&mut encoded, definition.operands.max);
+    push_len(&mut encoded, definition.results.min);
+    push_len(&mut encoded, definition.results.max);
+    push_len(&mut encoded, definition.attributes.0.len());
     for field in &definition.attributes.0 {
         encoded.extend_from_slice(&field.id.get().to_be_bytes());
         encoded.push(canonical_kind_tag(field.kind));
@@ -1844,12 +1845,12 @@ fn compute_scalar_snapshot_identity(
     definitions: &BTreeMap<ScalarOpKey, RegisteredScalarOperation>,
 ) -> CanonicalScalarRegistrySnapshotIdentity {
     let mut bytes = b"tiler.scalar-registry-snapshot.v1\0".to_vec();
-    encode_len(&mut bytes, definitions.len());
+    push_len(&mut bytes, definitions.len());
     for (key, registered) in definitions {
         encode_key(&mut bytes, key);
-        encode_bytes(&mut bytes, &encode_definition(&registered.definition));
-        encode_bytes(&mut bytes, registered.provider.namespace().as_bytes());
-        encode_bytes(&mut bytes, registered.provider.name().as_bytes());
+        push_slice(&mut bytes, &encode_definition(&registered.definition));
+        push_slice(&mut bytes, registered.provider.namespace().as_bytes());
+        push_slice(&mut bytes, registered.provider.name().as_bytes());
         bytes.extend_from_slice(&registered.provider.revision().to_be_bytes());
     }
     CanonicalScalarRegistrySnapshotIdentity(bytes)
@@ -1994,23 +1995,12 @@ fn canonical_kind_tag(kind: CanonicalValueKind) -> u8 {
 }
 
 pub(super) fn encode_key(output: &mut Vec<u8>, key: &ScalarOpKey) {
-    encode_bytes(output, key.namespace().as_bytes());
-    encode_bytes(output, key.name().as_bytes());
+    push_slice(output, key.namespace().as_bytes());
+    push_slice(output, key.name().as_bytes());
     output.extend_from_slice(&key.semantic_version().to_be_bytes());
 }
 pub(super) fn encode_canonical(output: &mut Vec<u8>, value: &CanonicalValue) {
     value.encode(output);
-}
-pub(super) fn encode_len(output: &mut Vec<u8>, len: usize) {
-    output.extend_from_slice(
-        &u64::try_from(len)
-            .expect("bounded usize fits u64")
-            .to_be_bytes(),
-    );
-}
-pub(super) fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
 }
 
 #[cfg(test)]

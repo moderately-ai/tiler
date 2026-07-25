@@ -7,6 +7,7 @@ use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
 
 use crate::convenience::{CheckedBuildError, build_checked};
+use crate::identity::{push_len, push_slice};
 use crate::semantic::ResolvedValueType;
 use crate::shape::{Extent, Shape};
 
@@ -19,8 +20,8 @@ use super::model::{
     TensorData, VerifiedAccessData, VerifiedIndexRegionData, WriteOwnershipProof,
 };
 use super::scalar::{
-    ScalarApplyError, ScalarInferenceCapacity, ScalarInferenceHostFailure, encode_bytes,
-    encode_canonical, encode_key, encode_len,
+    ScalarApplyError, ScalarInferenceCapacity, ScalarInferenceHostFailure, encode_canonical,
+    encode_key,
 };
 use super::sourced::{
     ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape, SymbolicExtentError,
@@ -256,7 +257,7 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
             })?;
             let mut key = vec![1];
             key.extend_from_slice(&index.to_be_bytes());
-            encode_bytes(&mut key, value_type.canonical_encoding().as_bytes());
+            push_slice(&mut key, value_type.canonical_encoding().as_bytes());
             value_keys.push(Arc::new(key));
             values.push(ReducerBodyValueData {
                 source: ReducerBodyValueSource::StateParameter(index),
@@ -269,7 +270,7 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
             })?;
             let mut key = vec![2];
             key.extend_from_slice(&index.to_be_bytes());
-            encode_bytes(&mut key, value_type.canonical_encoding().as_bytes());
+            push_slice(&mut key, value_type.canonical_encoding().as_bytes());
             value_keys.push(Arc::new(key));
             values.push(ReducerBodyValueData {
                 source: ReducerBodyValueSource::ContributorParameter(index),
@@ -2913,14 +2914,14 @@ impl IndexRegionBuilder {
                     key.push(match traversal {
                         ReductionTraversal::ExactLexicographicLeftFold => 1,
                     });
-                    encode_len(&mut key, init.len());
-                    encode_len(&mut key, contributors.len());
+                    push_len(&mut key, init.len());
+                    push_len(&mut key, contributors.len());
                     encode_reducer_body(&mut key, body);
                 }
             }
-            encode_len(&mut key, operation.operands.len());
+            push_len(&mut key, operation.operands.len());
             for operand in &operation.operands {
-                encode_bytes(&mut key, &value_keys[*operand as usize]);
+                push_slice(&mut key, &value_keys[*operand as usize]);
             }
             let free_dimensions: BTreeSet<_> =
                 operation
@@ -2966,7 +2967,7 @@ impl IndexRegionBuilder {
             TensorRole::Input => 1,
             TensorRole::Output => 2,
         });
-        encode_len(&mut key, role_ordinal);
+        push_len(&mut key, role_ordinal);
         let mut domain: Vec<_> = data
             .domain
             .iter()
@@ -2974,9 +2975,9 @@ impl IndexRegionBuilder {
             .collect();
         domain.sort_unstable();
         encode_u32s(&mut key, &domain);
-        encode_len(&mut key, data.coordinates.len());
+        push_len(&mut key, data.coordinates.len());
         for coordinate in &data.coordinates {
-            encode_bytes(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
+            push_slice(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
         }
         key
     }
@@ -3583,10 +3584,10 @@ fn structural_index_key(node: &IndexNode, expressions: &[DraftIndexExpr]) -> Vec
         IndexNode::LinearCombination { constant, terms } => {
             output.push(3);
             constant.encode(&mut output);
-            encode_len(&mut output, terms.len());
+            push_len(&mut output, terms.len());
             for term in terms {
                 term.coefficient.encode(&mut output);
-                encode_bytes(
+                push_slice(
                     &mut output,
                     &expressions[term.value as usize].structural_key,
                 );
@@ -3594,12 +3595,12 @@ fn structural_index_key(node: &IndexNode, expressions: &[DraftIndexExpr]) -> Vec
         }
         IndexNode::FloorDiv { dividend, divisor } => {
             output.push(4);
-            encode_bytes(&mut output, &expressions[*dividend as usize].structural_key);
+            push_slice(&mut output, &expressions[*dividend as usize].structural_key);
             output.extend_from_slice(&divisor.to_be_bytes());
         }
         IndexNode::Modulo { dividend, divisor } => {
             output.push(5);
-            encode_bytes(&mut output, &expressions[*dividend as usize].structural_key);
+            push_slice(&mut output, &expressions[*dividend as usize].structural_key);
             output.extend_from_slice(&divisor.to_be_bytes());
         }
     }
@@ -3620,11 +3621,11 @@ fn access_read_key(
         TensorRole::Input => 1,
         TensorRole::Output => 2,
     });
-    encode_len(&mut output, role_ordinal);
+    push_len(&mut output, role_ordinal);
     encode_u32s(&mut output, &data.domain);
-    encode_len(&mut output, data.coordinates.len());
+    push_len(&mut output, data.coordinates.len());
     for coordinate in &data.coordinates {
-        encode_bytes(
+        push_slice(
             &mut output,
             &expressions[*coordinate as usize].structural_key,
         );
@@ -3640,9 +3641,9 @@ fn nested_operation_key(
     let mut output = b"tiler.index.reducer-apply.v2\0".to_vec();
     encode_key(&mut output, key);
     encode_canonical(&mut output, attributes.value());
-    encode_len(&mut output, operands.len());
+    push_len(&mut output, operands.len());
     for operand in operands {
-        encode_bytes(&mut output, &value_keys[*operand as usize]);
+        push_slice(&mut output, &value_keys[*operand as usize]);
     }
     output
 }
@@ -3657,9 +3658,9 @@ fn apply_operation_key(
     output.push(1);
     encode_key(&mut output, key);
     encode_canonical(&mut output, attributes.value());
-    encode_len(&mut output, operands.len());
+    push_len(&mut output, operands.len());
     for operand in operands {
-        encode_bytes(&mut output, &values[operand.as_usize()].structural_key);
+        push_slice(&mut output, &values[operand.as_usize()].structural_key);
     }
     encode_u32s(
         &mut output,
@@ -3692,14 +3693,14 @@ fn operation_structural_key(
             output.push(match traversal {
                 ReductionTraversal::ExactLexicographicLeftFold => 1,
             });
-            encode_len(&mut output, init.len());
-            encode_len(&mut output, contributors.len());
+            push_len(&mut output, init.len());
+            push_len(&mut output, contributors.len());
             encode_reducer_body(&mut output, body);
         }
     }
-    encode_len(&mut output, operands.len());
+    push_len(&mut output, operands.len());
     for operand in operands {
-        encode_bytes(&mut output, &values[operand.as_usize()].structural_key);
+        push_slice(&mut output, &values[operand.as_usize()].structural_key);
     }
     encode_u32s(
         &mut output,
@@ -3708,7 +3709,7 @@ fn operation_structural_key(
     output
 }
 fn encode_reducer_body(output: &mut Vec<u8>, body: &ScalarReducerBodyData) {
-    encode_len(output, body.values.len());
+    push_len(output, body.values.len());
     for value in &body.values {
         match value.source {
             ReducerBodyValueSource::StateParameter(index) => {
@@ -3725,9 +3726,9 @@ fn encode_reducer_body(output: &mut Vec<u8>, body: &ScalarReducerBodyData) {
                 output.extend_from_slice(&result.get().to_be_bytes());
             }
         }
-        encode_bytes(output, value.value_type.canonical_encoding().as_bytes());
+        push_slice(output, value.value_type.canonical_encoding().as_bytes());
     }
-    encode_len(output, body.operations.len());
+    push_len(output, body.operations.len());
     for operation in &body.operations {
         encode_key(output, &operation.key);
         encode_canonical(output, operation.attributes.value());
@@ -3775,7 +3776,7 @@ fn alpha_expr_key_impl(
                 .map(|term| {
                     let mut encoded = Vec::new();
                     term.coefficient.encode(&mut encoded);
-                    encode_bytes(
+                    push_slice(
                         &mut encoded,
                         &alpha_expr_key_impl(term.value, expressions, dimension_map, dimensions),
                     );
@@ -3783,14 +3784,14 @@ fn alpha_expr_key_impl(
                 })
                 .collect::<Vec<_>>();
             encoded_terms.sort();
-            encode_len(&mut output, encoded_terms.len());
+            push_len(&mut output, encoded_terms.len());
             for term in encoded_terms {
-                encode_bytes(&mut output, &term);
+                push_slice(&mut output, &term);
             }
         }
         IndexNode::FloorDiv { dividend, divisor } => {
             output.push(4);
-            encode_bytes(
+            push_slice(
                 &mut output,
                 &alpha_expr_key_impl(*dividend, expressions, dimension_map, dimensions),
             );
@@ -3798,7 +3799,7 @@ fn alpha_expr_key_impl(
         }
         IndexNode::Modulo { dividend, divisor } => {
             output.push(5);
-            encode_bytes(
+            push_slice(
                 &mut output,
                 &alpha_expr_key_impl(*dividend, expressions, dimension_map, dimensions),
             );
@@ -3901,11 +3902,11 @@ fn encode_region(
     match sources {
         Some(sources) => {
             out.push(1);
-            encode_bytes(&mut out, sources.environment_identity().as_bytes());
+            push_slice(&mut out, sources.environment_identity().as_bytes());
         }
         None => out.push(0),
     }
-    encode_len(&mut out, dimensions.len());
+    push_len(&mut out, dimensions.len());
     for d in dimensions {
         out.push(match d.role {
             DomainRole::Parallel => 1,
@@ -3913,20 +3914,20 @@ fn encode_region(
         });
         d.extent.encode(&mut out);
     }
-    encode_len(&mut out, tensors.len());
+    push_len(&mut out, tensors.len());
     for t in tensors {
         out.push(match t.role {
             TensorRole::Input => 1,
             TensorRole::Output => 2,
         });
-        encode_bytes(&mut out, t.value_type.canonical_encoding().as_bytes());
+        push_slice(&mut out, t.value_type.canonical_encoding().as_bytes());
         t.shape.encode(&mut out);
     }
-    encode_len(&mut out, expressions.len());
+    push_len(&mut out, expressions.len());
     for e in expressions {
         encode_index_node(&mut out, &e.node);
     }
-    encode_len(&mut out, accesses.len());
+    push_len(&mut out, accesses.len());
     for a in accesses {
         out.push(match a.mode {
             AccessMode::Read => 1,
@@ -3936,13 +3937,13 @@ fn encode_region(
         encode_u32s(&mut out, &a.domain);
         encode_u32s(&mut out, &a.coordinates);
     }
-    encode_len(&mut out, operations.len());
+    push_len(&mut out, operations.len());
     for op in operations {
         encode_operation_kind(&mut out, &op.kind);
         encode_u32s(&mut out, &op.operands);
         encode_u32s(&mut out, &op.results);
     }
-    encode_len(&mut out, values.len());
+    push_len(&mut out, values.len());
     for v in values {
         match v.definition {
             ScalarValueDefinition::AccessRead { access } => {
@@ -3955,13 +3956,13 @@ fn encode_region(
                 out.extend_from_slice(&result.get().to_be_bytes());
             }
         }
-        encode_bytes(&mut out, v.value_type.canonical_encoding().as_bytes());
+        push_slice(&mut out, v.value_type.canonical_encoding().as_bytes());
         encode_u32s(
             &mut out,
             &v.free_dimensions.iter().copied().collect::<Vec<_>>(),
         );
     }
-    encode_len(&mut out, outputs.len());
+    push_len(&mut out, outputs.len());
     for o in outputs {
         out.extend_from_slice(&o.access.to_be_bytes());
         out.extend_from_slice(&o.value.to_be_bytes());
@@ -4177,7 +4178,7 @@ fn encode_index_node(out: &mut Vec<u8>, node: &IndexNode) {
         IndexNode::LinearCombination { constant, terms } => {
             out.push(3);
             constant.encode(out);
-            encode_len(out, terms.len());
+            push_len(out, terms.len());
             for t in terms {
                 t.coefficient.encode(out);
                 out.extend_from_slice(&t.value.to_be_bytes());
@@ -4216,7 +4217,7 @@ fn encode_operation_kind(out: &mut Vec<u8>, kind: &ScalarOperationKindData) {
             });
             encode_u32s(out, init);
             encode_u32s(out, contributors);
-            encode_len(out, body.values.len());
+            push_len(out, body.values.len());
             for value in &body.values {
                 match value.source {
                     ReducerBodyValueSource::StateParameter(i) => {
@@ -4233,9 +4234,9 @@ fn encode_operation_kind(out: &mut Vec<u8>, kind: &ScalarOperationKindData) {
                         out.extend_from_slice(&result.get().to_be_bytes());
                     }
                 }
-                encode_bytes(out, value.value_type.canonical_encoding().as_bytes());
+                push_slice(out, value.value_type.canonical_encoding().as_bytes());
             }
-            encode_len(out, body.operations.len());
+            push_len(out, body.operations.len());
             for op in &body.operations {
                 encode_key(out, &op.key);
                 encode_canonical(out, op.attributes.value());
@@ -4248,7 +4249,7 @@ fn encode_operation_kind(out: &mut Vec<u8>, kind: &ScalarOperationKindData) {
 }
 
 fn encode_u32s(out: &mut Vec<u8>, values: &[u32]) {
-    encode_len(out, values.len());
+    push_len(out, values.len());
     for v in values {
         out.extend_from_slice(&v.to_be_bytes());
     }
