@@ -48,3 +48,28 @@ The ticket above proposed carrying "the checked profile's `ProfileIdentity` — 
 **Fact — a second, separate profile type exists.** `PrototypeTargetProfile` (`crates/tiler-compiler/src/request.rs:343-351`) carries `key` plus scalar limits and is the request-side profile; `CheckedTargetProfile` is the feasibility-side one. They are not two spellings of one type. Whether the descriptor digest should cover the checked facts, the request-side limits, or a reconciliation of both is now the ticket's real question, and it should be settled before an encoder is written — digesting the wrong subject would produce a stable, wrong descriptor identity.
 
 **Consequence.** This ticket splits cleanly into an exposure half that needs no decision (`FeasibilityRuleSetRef` from `ProfileIdentity`) and a design half that does (what the descriptor's canonical subject is). The first can land immediately; the second must not be settled by an assembler's convenience.
+
+## Retraction and a fuller reading: `ProfileIdentity` conflates two governed vocabularies
+
+The correction above claimed "`ProfileIdentity` supplies `FeasibilityRuleSetRef`, not `TargetProfileDescriptorDigest`". That is also wrong, and reading the construction site rather than the accessors is what shows it. Recorded rather than quietly replaced, because the mistake has a pattern worth naming: both wrong claims came from matching *shapes* — `{key, u32}` against `{key, u32}` — instead of reading where the values come from.
+
+**Fact — `crates/tiler-compiler/src/physical.rs:666`.** `let identity = ProfileIdentity::new(target.key, PROTOTYPE_FEASIBILITY_RULE_VERSION);` where `target` is a `PrototypeTargetProfile` and `PROTOTYPE_FEASIBILITY_RULE_VERSION: u32 = 1` is declared at `physical.rs:39`.
+
+**Fact.** So `ProfileIdentity`'s `key` is the **target profile** key and its `version` is the **feasibility rule** version. Its two accessors say exactly this and were read as one identity anyway.
+
+**Fact — no feasibility rule set key exists.** `grep -rni "rule_set\|ruleset\|FeasibilityRuleSet" crates/tiler-compiler/src/` returns nothing. The feasibility rules have a version and no name.
+
+**Inference — the compiler can supply two of the four values an artifact needs, and they are not the two the shapes suggested.**
+
+| Artifact value | Compiler source |
+| --- | --- |
+| `TargetProfileRef::key` | `PrototypeTargetProfile::key` — available |
+| `TargetProfileRef::descriptor` | none; no digest or canonical descriptor encoding exists |
+| `FeasibilityRuleSetRef::key` | none; the rules are unnamed |
+| `FeasibilityRuleSetRef::revision` | `PROTOTYPE_FEASIBILITY_RULE_VERSION` — available |
+
+**This is the session's defect class again, in the producer rather than between crates.** Two governed vocabularies — which target profile, and which feasibility rules assessed it — are fused into one struct in `tiler-compiler`, while `tiler-artifact` keeps them as two independent refs precisely because a profile can be re-assessed under new rules and a rule set applies across profiles. Propagating the fused identity into an artifact would encode the conflation into artifact identity.
+
+**Consequence — the ticket needs a third piece it did not name:** the feasibility rules need a governed key of their own, not just a version. Splitting `ProfileIdentity` into a target-profile identity and a feasibility-rule-set identity is the durable fix; `split-profile-and-feasibility-rule-identity` owns it, because doing it inside this ticket would mean changing every `FactProvenance` in the feasibility layer while also adding a descriptor encoding, and those fail for different reasons.
+
+**Descriptor subject, decided.** `TargetProfileDescriptorDigest` is an `opaque_identity!` accepting bounded non-empty bytes up to `MAX_OPAQUE_IDENTITY_BYTES = 1_024` (`keys.rs:28`), not a hash of a fixed width. So the compiler exposes the **canonical descriptor bytes** of the checked profile's facts and the consumer wraps them, rather than the compiler minting a hash. That avoids introducing a digest algorithm and a second identity that must be kept in agreement with the bytes it summarizes — the same argument that kept the signature out of the capability key. If a profile's canonical descriptor ever exceeds the bound, that is the point at which a digest becomes a real decision with a real reason, and it will fail closed rather than silently truncate.
