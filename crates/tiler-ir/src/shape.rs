@@ -5,6 +5,10 @@ use std::error::Error;
 use std::fmt;
 
 mod evidence;
+// Draft under ADR 0074 convention 7: `implement-shapeenv-core` keeps any
+// consequential boundary a draft until it is reviewed, so the shape-symbol
+// authority is crate-internal and its promotion is a separate reviewed step.
+pub(crate) mod env;
 
 pub use evidence::{Rank, ShapeEvidence, ShapeExpectation, StaticShape};
 

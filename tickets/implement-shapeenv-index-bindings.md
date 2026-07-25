@@ -3,7 +3,7 @@ id: implement-shapeenv-index-bindings
 title: Bind ShapeEnv sources into canonical index regions
 status: todo
 priority: p1
-dependencies: [implement-shapeenv-core]
+dependencies: [implement-shapeenv-core, implement-shapeenv-constraints]
 related: [prototype-canonical-index-region-slice]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
