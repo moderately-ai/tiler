@@ -28,6 +28,7 @@ use tiler_ir::program::abi::{
     evaluate as abi_evaluate,
 };
 
+use crate::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 use crate::physical::{
     NumericalRealization, RegionId, ResourceRequirements, VerifiedKernel, VerifiedScheduledRegion,
     lower_structured_kernel, target_profile_descriptor,
@@ -145,6 +146,13 @@ pub(crate) struct ArtifactConstructionPlan {
     /// ADR 0043 requires both the key and the exact descriptor: a key alone is
     /// not evidence that a variant is legal on a device advertising that key.
     target_profile_descriptor: Vec<u8>,
+    /// Feasibility rules the plan's candidates were assessed under.
+    ///
+    /// A second, independent identity beside the profile rather than a field of
+    /// it: one profile can be re-assessed under new rules and one rule set
+    /// applies across profiles, so neither determines the other. The artifact
+    /// layer records them as two references for exactly that reason.
+    feasibility_rule_set: FeasibilityRuleSetIdentity,
     entry_regions: Vec<RegionId>,
     routing_guard: HostExprId,
     lowering_providers: Vec<LoweringProviderIdentity>,
@@ -206,6 +214,20 @@ impl ArtifactConstructionPlan {
     /// Returns the canonical descriptor bytes of the assessed target profile.
     pub(crate) fn target_profile_descriptor(&self) -> &[u8] {
         &self.target_profile_descriptor
+    }
+
+    /// Returns the feasibility rules this plan's candidates were assessed under.
+    ///
+    /// Minted by the feasibility authority and handed over whole, like a
+    /// capability key: the pair enters artifact identity, and a consumer
+    /// composing a key and a revision of its own would be a second derivation of
+    /// one identity.
+    #[allow(
+        dead_code,
+        reason = "the compiler-side half of the artifact's FeasibilityRuleSetRef; carrying it onto the public session boundary is a public-surface decision owned by expose-the-feasibility-rule-set-on-the-compiler-boundary, and this module's own tests read it until then"
+    )]
+    pub(crate) const fn feasibility_rule_set(&self) -> FeasibilityRuleSetIdentity {
+        self.feasibility_rule_set
     }
 }
 
@@ -803,6 +825,12 @@ pub(crate) fn build_artifact_plan(
                 rule: "target-profile-descriptor",
             },
         )?,
+        // Read from the authority that decides feasibility rather than composed
+        // here. It is a constant and not a function of the request because the
+        // rules do not vary by target: `CheckedTargetProfile::assess` applies
+        // exactly these rules to every profile, so a per-target derivation would
+        // imply a variation that cannot occur.
+        feasibility_rule_set: GOVERNED_FEASIBILITY_RULE_SET,
         entry_regions: program
             .core
             .stages()
