@@ -7,10 +7,13 @@
 //!
 //! **Complete cache identity.** A key that omits an input does not make a cache
 //! slower; it makes a validated hit return an artifact built from different
-//! inputs. [`CacheKey::derive`] digests a canonical *subject* the producer
-//! supplies, under the governed algorithm and this crate's own domain. What this
-//! crate can prove about that subject is stated exactly under [`CacheKey`], and
-//! what it cannot prove is stated there too rather than assumed.
+//! inputs. [`CacheKey::derive`] digests a [`ComposedSubject`] under the governed
+//! algorithm and this crate's own domain, and a composed subject is
+//! constructable only by naming every facet of the envelope a bundle carries —
+//! the backend compilations *and* the artifact program wrapped around them. What
+//! this crate can prove about that subject is stated exactly under [`CacheKey`]
+//! and [`SubjectFacets`], and what it cannot prove is stated there too rather
+//! than assumed.
 //!
 //! **Validation on every hit.** [`ExpansionCache::lookup`] has no fast path.
 //! Every read decodes the whole bundle frame — magic, schema, algorithm,
@@ -42,16 +45,19 @@
 //!
 //! The threaded properties — mutual exclusion on one key, the post-lock recheck
 //! that a waiter performs, publication, replacement, immutability, and every
-//! framing rejection — are tested in this crate.
+//! framing rejection — are tested in this crate's `expansion::tests`.
 //!
-//! **The cross-process crash and race properties are not tested here, and this
-//! crate claims nothing about them.** They need real processes killed at each
-//! publication phase, which
-//! [`spikes/cache/cache_harness.rs`](https://github.com/moderately-ai/tiler/blob/main/spikes/cache/cache_harness.rs)
-//! does — for the spike's own miniature frame, on one measured host, not for
-//! the bundle this module publishes. A threaded test is not evidence for a
-//! process-crash property and is not offered as one; `port-the-cache-harness-to-the-production-bundle`
-//! owns closing that gap.
+//! **The cross-process crash and race properties are measured in
+//! `expansion::harness`, against this bundle.** A thread that returns is not a
+//! process that was
+//! killed, so those properties need real processes stopped at each publication
+//! phase; the harness re-executes this crate's own test binary and the armed
+//! child aborts inside [`ExpansionCache`]'s publication path, at each of nine
+//! named phases. It is a *bounded measurement on one host* — see
+//! [`spikes/cache/README.md`](https://github.com/moderately-ai/tiler/blob/main/spikes/cache/README.md)
+//! for the exact command and the recorded result — and not a portable
+//! guarantee. What the harness substitutes, and why that substitution does not
+//! reach these properties, is stated in its own module documentation.
 //!
 //! Likewise, no in-crate test here builds a *real* artifact envelope. Doing so
 //! needs a `SemanticProgram`, which needs a frozen registry holding live
@@ -64,12 +70,17 @@
 //! that holds both crates.
 
 mod bundle;
+#[cfg(test)]
+mod fault;
+#[cfg(test)]
+mod harness;
 mod key;
 mod layout;
 mod limits;
 mod lock;
 mod report;
 mod store;
+mod subject;
 
 #[cfg(test)]
 mod tests;
@@ -86,3 +97,4 @@ pub use store::{
     CachedEntry, Durability, Eviction, ExpansionCache, Lookup, PublishFailure, Resolution,
     SweepReport,
 };
+pub use subject::{ComposedSubject, SubjectFacet, SubjectFacets, SubjectRefusal};

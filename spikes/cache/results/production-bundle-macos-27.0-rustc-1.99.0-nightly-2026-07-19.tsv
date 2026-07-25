@@ -1,0 +1,18 @@
+schema	tiler-cache-production-harness-evidence-v1
+subject	crates/tiler-cache expansion::harness, against the published bundle
+host	macOS 27.0 build 26A5388g, arm64, 14 logical cores
+toolchain	rustc 1.99.0-nightly (eff8269f7 2026-07-18), the rust-toolchain.toml pin
+runner	cargo nextest run -p tiler-cache -E 'test(expansion::harness)' --test-threads 1
+repetitions	10
+concurrency	32
+kill_points	9
+child_processes	1720
+payload_validator	stand-in accepting any non-empty payload, not decode_artifact
+columns	case	status	repetitions	concurrency	child_processes	detail	elapsed_ms
+run	damaged-entries	passed	10	32	40	damage_kinds=2	278
+run	killed-writers	passed	10	32	360	kill_points=9	3279
+run	race-distinct	passed	10	32	320	entries_per_key=1	565
+run	race-identical	passed	10	32	320	compiles_per_key=1	1120
+run	external-deletion	passed	10	32	40	deletion_scales=2	301
+run	race-dying-writer	passed	10	32	320	dying_per_race=1	757
+run	active-deletion	passed	10	32	320	invalid_reads=0	7907

@@ -279,7 +279,16 @@ of scope for this ticket.
 1. Choose and publish Tiler's workspace MSRV; accept Rust 1.89 or select and
    audit an older-compatible lock adapter.
 2. Integrate the finalized artifact envelope rather than the spike's miniature
-   cache frame, then fuzz every framing and bounded-allocation path.
+   cache frame, then fuzz every framing and bounded-allocation path. **The
+   process half is closed:** `tiler_cache::expansion::harness` runs the same nine
+   kill points against the bundle `tiler-cache` publishes, with real
+   re-executed processes aborting inside the real publication path, recorded in
+   [`spikes/cache/results/`](../../../spikes/cache/results/). It substitutes a
+   stand-in payload validator for `decode_artifact`, because a real envelope
+   needs `tiler-ir` and ADR 0082 item 2 decides the cache does not depend on it;
+   a positive end-to-end hit carrying a real compiled artifact is still owed by
+   the orchestrator holding both crates. The fuzzing half remains open under
+   `fuzz-the-expansion-cache-framing-paths`.
 3. Add deterministic injected errors for disk full, rename failure, directory
    sync failure, compiler failure, and retry exhaustion.
 4. Measure cache latency and survival for `process-crash` versus `fsync`; only

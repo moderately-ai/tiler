@@ -9,6 +9,8 @@ use std::time::SystemTime;
 use tiler_artifact::program::{ArtifactCodecFailure, DecodedArtifact, decode_artifact};
 
 use super::bundle::{self, BundleRejection};
+#[cfg(test)]
+use super::fault;
 use super::key::CacheKey;
 use super::layout::Layout;
 use super::limits::Limits;
@@ -17,6 +19,7 @@ use super::report::{
     CacheOperation, CacheReport, CacheUnavailable, EntryRejection, MissReason, PublicationRefusal,
     QuarantineOutcome,
 };
+use super::subject::ComposedSubject;
 
 /// Attempts to find an unused temporary path before giving up.
 ///
@@ -80,12 +83,17 @@ impl CachedEntry {
         &self.key
     }
 
-    /// Returns the canonical compilation subject this entry was published for.
+    /// Returns the composed subject bytes this entry was published under.
     ///
     /// Carried so an entry can say what it claims to be. A reader has already
     /// proved this is the subject the key derives from — that check runs on
     /// every hit — so these are the exact bytes the producer named, not a
     /// separately recorded description of them that could disagree.
+    ///
+    /// Bytes rather than a [`ComposedSubject`], because a subject read off disk
+    /// is untrusted: returning the composed type would assert this crate had
+    /// re-derived its structure, and the re-derivation that actually ran hashed
+    /// these bytes without parsing them.
     #[must_use]
     pub fn subject(&self) -> &[u8] {
         &self.subject
@@ -257,14 +265,18 @@ impl ExpansionCache {
         self.layout.root()
     }
 
-    /// Reads the entry for one compilation subject, validating it completely.
+    /// Reads the entry for one composed subject, validating it completely.
     ///
     /// Lock-free. A reader takes no lock because a lock would not make unvalidated
     /// bytes correct and validation does not need one: the reader holds an open
     /// descriptor, and on the Unix and Darwin hosts this crate targets, an entry
     /// unlinked after that open stays readable through the descriptor.
+    ///
+    /// The parameter is a [`ComposedSubject`] and not a byte run, which is what
+    /// makes under-keying unrepresentable here rather than merely documented: a
+    /// caller cannot reach this with the backend compilation subject alone.
     #[must_use]
-    pub fn lookup(&self, subject: &[u8]) -> Lookup {
+    pub fn lookup(&self, subject: &ComposedSubject) -> Lookup {
         let key = CacheKey::derive(subject);
         match self.read_entry(&key, &artifact_validator) {
             Ok(entry) => Lookup::Hit(Box::new(CachedEntry {
@@ -289,33 +301,35 @@ impl ExpansionCache {
     /// [`Resolution::Uncached`] carrying the reason.
     pub fn get_or_publish<E>(
         &self,
-        subject: &[u8],
+        subject: &ComposedSubject,
         build: impl FnOnce() -> Result<Vec<u8>, E>,
     ) -> Result<Resolution, PublishFailure<E>> {
-        Ok(match self.resolve(subject, build, &artifact_validator)? {
-            ProtocolOutcome::Hit {
-                entry,
-                report,
-                published,
-            } => {
-                let entry = CachedEntry {
-                    key: entry.key,
-                    subject: entry.subject,
+        Ok(
+            match self.resolve(subject.as_bytes(), build, &artifact_validator)? {
+                ProtocolOutcome::Hit {
+                    entry,
+                    report,
+                    published,
+                } => {
+                    let entry = CachedEntry {
+                        key: entry.key,
+                        subject: entry.subject,
+                        envelope: entry.envelope,
+                        artifact: entry.payload,
+                    };
+                    if published {
+                        Resolution::Published { entry, report }
+                    } else {
+                        Resolution::Hit { entry, report }
+                    }
+                }
+                ProtocolOutcome::Uncached { entry, report } => Resolution::Uncached {
                     envelope: entry.envelope,
                     artifact: entry.payload,
-                };
-                if published {
-                    Resolution::Published { entry, report }
-                } else {
-                    Resolution::Hit { entry, report }
-                }
-            }
-            ProtocolOutcome::Uncached { entry, report } => Resolution::Uncached {
-                envelope: entry.envelope,
-                artifact: entry.payload,
-                report,
+                    report,
+                },
             },
-        })
+        )
     }
 
     /// Removes the entry for one key, holding that key's lock while doing so.
@@ -427,7 +441,7 @@ impl ExpansionCache {
         build: impl FnOnce() -> Result<Vec<u8>, E>,
         validate: &dyn Fn(&[u8]) -> Result<T, ArtifactCodecFailure>,
     ) -> Result<ProtocolOutcome<T>, PublishFailure<E>> {
-        let key = CacheKey::derive(subject);
+        let key = CacheKey::derive_bytes(subject);
         let mut report = CacheReport::default();
 
         match self.read_entry(&key, validate) {
@@ -454,6 +468,8 @@ impl ExpansionCache {
                 None
             }
         };
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterLock);
 
         // The recheck is the whole reason the lock is taken before compiling:
         // another process may have published while this one waited for it.
@@ -473,6 +489,8 @@ impl ExpansionCache {
                 }
             }
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterRecheck);
 
         let envelope = build().map_err(PublishFailure::Build)?;
         // A build failure and an invalid generated artifact are hard errors that
@@ -614,20 +632,21 @@ impl ExpansionCache {
         );
 
         let (temporary, mut file) = self.create_temporary(key)?;
-        let write = file
-            .write_all(&encoded)
-            .and_then(|()| file.flush())
-            .map_err(|error| {
-                PublicationRefusal::Unavailable(CacheUnavailable::new(
-                    CacheOperation::WriteTemporary,
-                    temporary.clone(),
-                    error,
-                ))
-            });
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterTempCreate);
+        let write = write_encoded(&mut file, &encoded).map_err(|error| {
+            PublicationRefusal::Unavailable(CacheUnavailable::new(
+                CacheOperation::WriteTemporary,
+                temporary.clone(),
+                error,
+            ))
+        });
         if let Err(refusal) = write {
             remove_abandoned(&temporary);
             return Err(refusal);
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterWrite);
 
         // Read the bytes back through a *separate* descriptor. Validating the
         // buffer this process just wrote would prove only that the encoder
@@ -637,6 +656,8 @@ impl ExpansionCache {
             remove_abandoned(&temporary);
             return Err(refusal);
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterTempValidation);
 
         if self.durability == Durability::Fsync
             && let Err(error) = file.sync_all()
@@ -648,6 +669,8 @@ impl ExpansionCache {
                 error,
             )));
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterFileSync);
         drop(file);
 
         let entry = self.layout.entry_path(key);
@@ -668,6 +691,8 @@ impl ExpansionCache {
                 error,
             )));
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterRename);
 
         if self.durability == Durability::Fsync {
             let directory = entry
@@ -686,6 +711,8 @@ impl ExpansionCache {
                 )));
             }
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterDirectorySync);
         Ok(quarantine)
     }
 
@@ -879,6 +906,33 @@ pub(crate) enum ProtocolOutcome<T> {
 /// The validator the public API pins: no caller can substitute a weaker one.
 fn artifact_validator(bytes: &[u8]) -> Result<DecodedArtifact, ArtifactCodecFailure> {
     decode_artifact(bytes)
+}
+
+/// Writes the encoded bundle to the temporary and flushes it.
+#[cfg(not(test))]
+fn write_encoded(file: &mut File, encoded: &[u8]) -> io::Result<()> {
+    file.write_all(encoded)?;
+    file.flush()
+}
+
+/// Writes the encoded bundle in two halves, so a writer can be killed with a
+/// partial temporary on disk.
+///
+/// The split point is artificial and exists only in a test build. A real crash
+/// lands wherever the operating system happened to be, which no test can
+/// schedule; simulating the window by flushing half the bytes is the same thing
+/// `spikes/cache/cache_harness.rs` does for its own frame, so this is the
+/// evidence class that spike already established rather than a new one. What is
+/// *not* simulated is the recovery: nothing below the fault knows it happened,
+/// and the next reader runs the ordinary validated read.
+#[cfg(test)]
+fn write_encoded(file: &mut File, encoded: &[u8]) -> io::Result<()> {
+    let middle = encoded.len() / 2;
+    file.write_all(&encoded[..middle])?;
+    file.flush()?;
+    fault::reach(fault::Phase::MidWrite);
+    file.write_all(&encoded[middle..])?;
+    file.flush()
 }
 
 /// Removes a temporary file this call created and will not publish.

@@ -50,7 +50,7 @@ const MAGIC: &[u8; 8] = b"TLRCACHE";
 /// Bundle schema this build writes and reads.
 const SCHEMA: (u16, u16) = (1, 0);
 /// Domain separator of one framed section's content digest.
-const SECTION_DIGEST_DOMAIN: &[u8] = b"tiler.cache.bundle-section.v1\0";
+pub(super) const SECTION_DIGEST_DOMAIN: &[u8] = b"tiler.cache.bundle-section.v1\0";
 
 /// Fixed-width framing header, before the descriptor table.
 const HEADER_BYTES: usize = 64;
@@ -137,7 +137,7 @@ pub(crate) fn encode(
     envelope: &[u8],
     limits: &Limits,
 ) -> Result<(CacheKey, Vec<u8>), BundleRejection> {
-    let key = CacheKey::derive(subject);
+    let key = CacheKey::derive_bytes(subject);
     let sections = [subject, envelope];
     let table_bytes = DESCRIPTOR_BYTES * sections.len();
     let body_bytes: usize = sections.iter().map(|section| section.len()).sum();
@@ -211,7 +211,7 @@ pub(crate) fn decode<'bytes>(
     // does not produce the key it is filed under is refused even though every
     // digest in it verified. A forger recomputes digests; it cannot recompute
     // this without changing the path the entry lives at.
-    let derived = CacheKey::derive(subject);
+    let derived = CacheKey::derive_bytes(subject);
     if derived != header.key {
         return Err(BundleRejection::KeyNotDerivedFromSubject {
             embedded: header.key.label(),

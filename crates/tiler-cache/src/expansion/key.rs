@@ -4,12 +4,14 @@ use core::fmt;
 
 use tiler_artifact::program::{DIGEST_BYTES, Digest, DigestAlgorithm};
 
+use super::subject::ComposedSubject;
+
 /// Versioned domain separator of one expansion-cache key.
 ///
 /// A digest under this domain can never equal a digest of the same bytes taken
 /// for another purpose, which is what keeps a key derived here from colliding
 /// with, say, an artifact's payload identity over the same source.
-const CACHE_KEY_DOMAIN: &[u8] = b"tiler.cache.expansion-key.v1\0";
+pub(super) const CACHE_KEY_DOMAIN: &[u8] = b"tiler.cache.expansion-key.v1\0";
 
 /// Width, in lowercase hexadecimal characters, of one rendered cache key.
 ///
@@ -29,35 +31,31 @@ pub const KEY_LABEL_BYTES: usize = DIGEST_BYTES * 2;
 /// refuses a bundle whose stored subject does not hash to the key it is filed
 /// under.
 ///
-/// **It does not prove the subject is complete, and completeness here is a
-/// stronger requirement than it first looks.** A conforming subject must
-/// determine *every byte the bundle carries*, which is a whole artifact
-/// envelope and not only the compiled object inside it. `docs/backends/metal.md`
-/// states the same requirement from the other side — "full artifact identity is
-/// the key" — and the reason is exactly the failure ADR 0050's complete-identity
-/// clause exists to exclude: two artifacts that share source, flags, and
-/// toolchain but differ in their plan variants, ABI bindings, or routing are
-/// different artifacts, and a subject naming only the compilation would file
-/// them under one key and serve either for the other.
+/// **It proves the subject names every facet of the envelope, because it can no
+/// longer be given anything else.** A conforming subject must determine *every
+/// byte the bundle carries*, which is a whole artifact envelope and not only the
+/// compiled object inside it — `docs/backends/metal.md` states the same
+/// requirement from the other side, "full artifact identity is the key". This
+/// derivation therefore takes a [`ComposedSubject`] rather than a byte run, and
+/// that type is constructable only by naming both the backend compilations and
+/// the artifact program wrapped around them. Two artifacts sharing source,
+/// flags, and toolchain and differing in their plan portfolio are two facet sets,
+/// two composed subjects, and two keys; they can no longer be filed as one.
 ///
-/// `crates/tiler-metal-aot/src/identity.rs` is therefore *half* of a conforming
-/// subject, not the whole of one. It is the good half — it determines the
-/// `metallib` by a mechanism rather than by vigilance, because its request and
-/// toolchain records are destructured irrefutably, so a new input fails to
-/// compile until it reaches the subject — but it says nothing about the artifact
-/// program that carries the object. **No component emits the composed subject as
-/// one canonical byte run today**, and this crate deliberately does not invent
-/// one: it cannot compose a subject without becoming an authority over encodings
-/// it does not own. `compose-the-complete-expansion-cache-subject` owns closing
-/// that, and until it does, a caller passing the driver's subject alone is
-/// under-keying and this crate cannot detect it.
+/// **It does not prove a facet's bytes are that authority's real subject.**
+/// Telling a genuine artifact-program subject from an invented one means parsing
+/// an encoding this crate does not own, which is exactly what ADR 0082 rejected
+/// for the digest. [`super::SubjectFacets`] states what the composition does and
+/// does not cover, and names the producer that does not exist yet.
 ///
 /// **It does not prove the subject describes the carried artifact.** Even given a
 /// complete subject, a bundle proves it was published under key `K` and that `K`
 /// derives from the subject it carries; nothing here ties that subject to the
-/// compilation the carried envelope records, because doing so would require this
-/// crate to parse the producer's subject encoding.
-/// `bind-the-cache-subject-to-the-carried-payload-provenance` owns that gap.
+/// compilation the carried envelope records.
+/// `bind-the-cache-subject-to-the-carried-payload-provenance` owns that gap, and
+/// composing the subject does not close it — it makes it *reachable*, because the
+/// composed frame is this crate's own and its facets can be counted without
+/// parsing any producer's encoding.
 ///
 /// **A key does not carry a reuse scope, and this crate does not enforce one.**
 /// `tiler-metal-aot`'s evidence class bounds reuse of its identities to the host
@@ -70,9 +68,23 @@ pub const KEY_LABEL_BYTES: usize = DIGEST_BYTES * 2;
 pub struct CacheKey(Digest);
 
 impl CacheKey {
-    /// Derives the cache key of one canonical compilation subject.
+    /// Derives the cache key of one composed subject.
     #[must_use]
-    pub fn derive(subject: &[u8]) -> Self {
+    pub fn derive(subject: &ComposedSubject) -> Self {
+        Self::derive_bytes(subject.as_bytes())
+    }
+
+    /// Derives the cache key of an already-composed byte run.
+    ///
+    /// Crate-private, and the asymmetry with [`Self::derive`] is the point. This
+    /// is what the bundle decoder re-derives a stored key from, and it must
+    /// accept bytes rather than a [`ComposedSubject`] because a subject read off
+    /// disk is untrusted input: recomposing it would mean parsing it, and the
+    /// check that gives the re-derivation its value is precisely that it hashes
+    /// the exact bytes present without understanding them. Keeping it out of the
+    /// public surface is what stops a caller from reaching past
+    /// [`ComposedSubject`] and keying an entry on a bare producer subject.
+    pub(crate) fn derive_bytes(subject: &[u8]) -> Self {
         Self(DigestAlgorithm::GOVERNED.digest(CACHE_KEY_DOMAIN, subject))
     }
 
