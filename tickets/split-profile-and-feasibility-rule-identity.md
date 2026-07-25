@@ -1,7 +1,7 @@
 ---
 id: split-profile-and-feasibility-rule-identity
 title: Split ProfileIdentity into a target profile identity and a feasibility rule set identity
-status: todo
+status: review
 priority: p1
 dependencies: []
 related: []
