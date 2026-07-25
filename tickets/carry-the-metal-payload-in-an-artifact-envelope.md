@@ -94,3 +94,19 @@ This is a case where the codec was right and the naive assembly was wrong, which
 So an assembler outside `tiler-compiler` has no faithful value for `SelectedProvider::capability`. Inventing a plausible key would put a capability into artifact identity that is not tied to the lowering that actually ran — `AGENTS.md` requires unsupported cases to "reject explicitly rather than silently approximating them", and ADR 0072 makes selected providers part of complete program identity, so an invented key is a wrong identity rather than a cosmetic placeholder.
 
 **This is not a reason to stop; it is one more thing to build.** The fix is to carry the resolved capability's governed key alongside its revision from capability resolution into `LoweringProviderIdentity`, and expose it on the session view beside the provider. That is a `tiler-compiler` change in `capability.rs`/`request.rs`, in this ticket's declared scopes. Split out as `name-the-resolved-lowering-capability` only because it is independently testable and has its own closing condition, not to defer it — this ticket depends on it and cannot close first.
+
+## Hard blocker found by reading: the codec is not reachable from an assembler
+
+The ticket says to "encode the envelope, and then **decode the bytes back** and verify", and treats that as the point of the work. It assumed the codec was reachable. It is not.
+
+**Fact — `crates/tiler-artifact/src/program/codec/encode.rs:71` and `codec/decode.rs:70`** declare `pub(crate) fn encode(envelope: &ArtifactEnvelope)` and `pub(crate) fn decode(bytes: &[u8])`. `codec` is a private module of `program`.
+
+**Fact — `crates/tiler-artifact/src/program/codec/mod.rs:93-100`** states the exclusion deliberately: "The carried-payload vocabulary is the one part of this module that is public. A backend assembler outside this crate must be able to describe what it compiled, and nothing else here is reachable: the envelope, the encoder, the decoder, the rejection vocabulary, and the governed constants all stay `pub(crate)` behind this private module under ADR 0074 convention 7." The next line reads "Promoted on Tom's review, 2026-07-25", recording that the sibling promotion required review.
+
+**Fact — the artifact itself carries no escape hatch.** Reading the whole `impl VerifiedArtifactProgram` block in `model.rs`, its complete public surface is `selected_providers`, `payloads`, `inputs`, `outputs`, `variants`, and `expressions`. There is no `encode`, no byte accessor, and no identity accessor. `ArtifactEnvelope` is `pub(crate)`.
+
+**Inference.** No out-of-crate caller can encode an artifact, decode one, or observe an envelope digest. The round trip this ticket exists to prove is unreachable without promoting `pub(crate)` to `pub`, which ADR 0075 lists as always-ask and which the module's own comment shows was last exercised through review rather than unilaterally.
+
+**What this does not block.** Everything up to `ArtifactProgramBuilder::build()` needs no promotion: the compilation environment, selected providers, `push_carried_payload`, the pruned arena replay, entry and launch specs, `push_variant`, and whole-artifact verification. That is the larger half and it is being built now. Only the encode → decode → re-encode assertions are gated.
+
+**Consequence for this ticket's closing condition.** It cannot close on the assembler alone, because "a payload that assembles but does not survive a round trip is not carried" is its own stated bar. The promotion question is with Tom.
