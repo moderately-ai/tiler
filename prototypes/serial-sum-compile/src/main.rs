@@ -32,8 +32,8 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalPlatform, MetalSubnormalArithmetic,
-    MetalTargetFacts, MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
+    MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
 };
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{CompileRequest, NumericalRealization, OptimizationLevel};
@@ -58,7 +58,9 @@ fn target_facts() -> MetalTargetFacts {
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(13, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
-        MetalSubnormalArithmetic::FlushesToZero,
+        MetalSubnormalArithmetic::FlushesToZero {
+            zero_sign: MetalFlushedZeroSign::PreservesSign,
+        },
         BUFFER_BINDING_LIMIT,
     )
 }
@@ -226,7 +228,8 @@ mod tests {
     /// The governed numerical contract declares subnormal *preservation*.
     /// Apple `f32` arithmetic flushes subnormal operands and results to zero on
     /// every governed family and in every math mode, which
-    /// `MetalSubnormalArithmetic::FlushesToZero` states as a target fact. So the
+    /// `MetalSubnormalArithmetic::FlushesToZero` states as a target fact, now
+    /// naming the sign-preserving zero it produces. So the
     /// target cannot honour the contract the kernels declare, and emission's
     /// conformance check refuses — after producing perfectly good MSL, because
     /// emission and conformance are deliberately separate steps.

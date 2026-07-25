@@ -66,14 +66,16 @@ use tiler_ir::kernel::{
     CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelType, MemoryScope, OperationRef,
     OperationView, SerialLoopRef, VerifiedBufferId, VerifiedKernel, VerifiedValueId,
 };
-use tiler_ir::schedule::{NumericalPermission, NumericalRealization, SubnormalMode};
+use tiler_ir::schedule::{
+    FlushedZeroSign, NumericalPermission, NumericalRealization, SubnormalMode,
+};
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError, MetalOperationFamily};
 use crate::record::{
     MetalBufferBinding, MetalEntryPoint, MetalNumericalGap, MetalNumericalRequirement,
     MetalTranslationUnit,
 };
-use crate::target::{MetalSubnormalArithmetic, MetalTargetFacts};
+use crate::target::{MetalFlushedZeroSign, MetalSubnormalArithmetic, MetalTargetFacts};
 
 /// One level of emitted indentation.
 const INDENT: &str = "    ";
@@ -565,30 +567,53 @@ fn realization_requirements(
 /// `#[non_exhaustive]`, which constrains matches outside this crate but not
 /// this one, so the match stays wildcard-free.
 ///
-/// **Deferred.** `MetalSubnormalArithmetic::FlushesToZero` states *that* the
-/// target flushes and not *which zero* it produces, even though the measured
-/// Apple flush is sign-preserving (`0x80400000 * 2.0f` returns `0x80000000`).
-/// A declared flush is therefore not established by the target fact and fails
-/// closed as [`MetalNumericalGap::UndeclaredFlushedZeroSign`].
-/// `declare-metal-numerical-honourability` owns replacing this backend-local
-/// fact with a per-dimension honourability declaration that names the zero, at
-/// which point a sign-matching flush becomes a positive conformance claim and
-/// only a sign *mismatch* remains a gap.
+/// A declared flush is honoured when the target flushes to the *same* zero the
+/// program named. The two zero vocabularies are distinct types — one is a
+/// declaration a program makes, the other a fact a target states — and this is
+/// the one place they are compared, so a mismatch is a decision rather than an
+/// assumed agreement. A program asking for `AlwaysPositive` on the measured
+/// sign-preserving Apple flush is a gap, because running it would return
+/// `0x80000000` where the program asked for `0x00000000`.
 const fn subnormal_gap(
     declared: SubnormalMode,
     target: MetalSubnormalArithmetic,
 ) -> Option<MetalNumericalGap> {
     match (declared, target) {
         (SubnormalMode::Preserve, MetalSubnormalArithmetic::PreservesSubnormals) => None,
-        (SubnormalMode::Preserve, MetalSubnormalArithmetic::FlushesToZero) => {
+        (SubnormalMode::Preserve, MetalSubnormalArithmetic::FlushesToZero { .. }) => {
             Some(MetalNumericalGap::SubnormalFlushInArithmetic)
         }
         (
             SubnormalMode::FlushToZero { zero_sign: _ },
             MetalSubnormalArithmetic::PreservesSubnormals,
         ) => Some(MetalNumericalGap::SubnormalPreservationInArithmetic),
-        (SubnormalMode::FlushToZero { zero_sign: _ }, MetalSubnormalArithmetic::FlushesToZero) => {
-            Some(MetalNumericalGap::UndeclaredFlushedZeroSign)
+        (
+            SubnormalMode::FlushToZero {
+                zero_sign: declared,
+            },
+            MetalSubnormalArithmetic::FlushesToZero {
+                zero_sign: honoured,
+            },
+        ) => flushed_zero_gap(declared, honoured),
+    }
+}
+
+/// Compares a declared flushed zero against the zero a target flushes to.
+///
+/// Exhaustive in both arguments and wildcard-free, so a widened zero vocabulary
+/// on either side stops the build rather than falling into whichever arm a
+/// catch-all named. Agreement is the only honoured case; a mismatch returns a
+/// different value, not a less precise one.
+const fn flushed_zero_gap(
+    declared: FlushedZeroSign,
+    honoured: MetalFlushedZeroSign,
+) -> Option<MetalNumericalGap> {
+    match (declared, honoured) {
+        (FlushedZeroSign::PreservesSign, MetalFlushedZeroSign::PreservesSign)
+        | (FlushedZeroSign::AlwaysPositive, MetalFlushedZeroSign::AlwaysPositive) => None,
+        (FlushedZeroSign::PreservesSign, MetalFlushedZeroSign::AlwaysPositive)
+        | (FlushedZeroSign::AlwaysPositive, MetalFlushedZeroSign::PreservesSign) => {
+            Some(MetalNumericalGap::FlushedZeroSignMismatch)
         }
     }
 }

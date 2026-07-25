@@ -87,8 +87,8 @@ const fn deployment_minimum(minimum: MetalDeploymentMinimum) -> DeploymentMinimu
 mod tests {
     use super::{compile_target, msl_version, sdk_for};
     use tiler_metal::target::{
-        LaunchIndexRealization, MetalDeploymentMinimum, MetalPlatform, MetalSubnormalArithmetic,
-        MetalTargetFacts, MslLanguageVersion,
+        LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
+        MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
     };
     use tiler_metal_aot::input::{ApplePlatform, AppleSdk, MslVersion};
 
@@ -98,7 +98,9 @@ mod tests {
             platform,
             MetalDeploymentMinimum::new(13, 0),
             LaunchIndexRealization::ThreadPositionInGridUInt,
-            MetalSubnormalArithmetic::FlushesToZero,
+            MetalSubnormalArithmetic::FlushesToZero {
+                zero_sign: MetalFlushedZeroSign::PreservesSign,
+            },
             31,
         )
     }

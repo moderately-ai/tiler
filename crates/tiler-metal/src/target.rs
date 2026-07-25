@@ -274,8 +274,18 @@ impl LaunchIndexRealization {
 #[non_exhaustive]
 pub enum MetalSubnormalArithmetic {
     /// `f32` arithmetic flushes subnormal operands and subnormal results to
-    /// zero. This is the measured behaviour of every governed Apple family.
-    FlushesToZero,
+    /// the stated zero. This is the measured behaviour of every governed Apple
+    /// family.
+    ///
+    /// The zero is a field rather than an implied `+0.0` because a flush that
+    /// does not say which zero it produces cannot establish a declared
+    /// `SubnormalMode::FlushToZero`, which always names one. Stating it is what
+    /// turns a sign-matching flush into a positive conformance claim and leaves
+    /// only a sign *mismatch* as a gap.
+    FlushesToZero {
+        /// The zero this target's flush produces.
+        zero_sign: MetalFlushedZeroSign,
+    },
     /// `f32` arithmetic preserves subnormal operands and results exactly.
     ///
     /// No governed Apple family has been measured to do this. The variant
@@ -289,10 +299,35 @@ impl MetalSubnormalArithmetic {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::FlushesToZero => "flushes-to-zero",
+            Self::FlushesToZero {
+                zero_sign: MetalFlushedZeroSign::PreservesSign,
+            } => "flushes-to-zero-preserving-sign",
+            Self::FlushesToZero {
+                zero_sign: MetalFlushedZeroSign::AlwaysPositive,
+            } => "flushes-to-zero-always-positive",
             Self::PreservesSubnormals => "preserves-subnormals",
         }
     }
+}
+
+/// Which zero a target's subnormal flush produces.
+///
+/// The counterpart of `tiler_ir::schedule::FlushedZeroSign` on the target side.
+/// They are separate types because one is a *declaration a program makes* and
+/// the other a *fact a target states*, and `tiler-metal` must be able to
+/// compare them rather than assume they agree.
+///
+/// **Measurement.** On an Apple M4 Max under macOS 27.0 (build 26A5388g) with
+/// Metal 32023.883, an emitted `x * 2.0f` returns `0x80000000` for the operand
+/// `0x80400000`, not `0x00000000`. The governed Apple flush is therefore
+/// sign-preserving, and a program that asks for `AlwaysPositive` is *not*
+/// honoured by it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MetalFlushedZeroSign {
+    /// The produced zero carries the sign of the value it replaced.
+    PreservesSign,
+    /// Every flushed value produces positive zero regardless of its own sign.
+    AlwaysPositive,
 }
 
 impl fmt::Display for MetalSubnormalArithmetic {

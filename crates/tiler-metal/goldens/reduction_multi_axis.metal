@@ -5,7 +5,7 @@
 // Artifact family: macos (deployment minimum 13.0)
 // Launch index: [[thread_position_in_grid]] declared as uint
 // Launch precondition: no invocation index may exceed 4294967295.
-// f32 arithmetic subnormals: flushes-to-zero
+// f32 arithmetic subnormals: flushes-to-zero-preserving-sign
 //
 // Carried by these operations under every math mode: every f32 immediate
 // is its exact bit pattern, every arithmetic operation is one statement,

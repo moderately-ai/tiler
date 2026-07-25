@@ -40,8 +40,8 @@ use crate::emit::{
 };
 use crate::record::{MetalNumericalGap, MetalNumericalRequirement};
 use crate::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalPlatform, MetalSubnormalArithmetic,
-    MetalTargetFacts, MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
+    MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
 };
 
 const NAN_BITS: u32 = 0x7fc0_0000;
@@ -55,7 +55,9 @@ fn target() -> MetalTargetFacts {
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(13, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
-        MetalSubnormalArithmetic::FlushesToZero,
+        MetalSubnormalArithmetic::FlushesToZero {
+            zero_sign: MetalFlushedZeroSign::PreservesSign,
+        },
         31,
     )
 }

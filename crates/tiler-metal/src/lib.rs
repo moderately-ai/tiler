@@ -78,7 +78,8 @@
 //! use tiler_metal::emit::emit_translation_unit;
 //! use tiler_metal::record::{MetalNumericalGap, MetalNumericalRequirement};
 //! use tiler_metal::target::{
-//!     LaunchIndexRealization, MetalDeploymentMinimum, MetalPlatform, MetalSubnormalArithmetic,
+//!     LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
+//!     MetalSubnormalArithmetic,
 //!     MetalTargetFacts, MslLanguageVersion,
 //! };
 //!
@@ -148,7 +149,9 @@
 //!     MetalPlatform::MacOs,
 //!     MetalDeploymentMinimum::new(13, 0),
 //!     LaunchIndexRealization::ThreadPositionInGridUInt,
-//!     MetalSubnormalArithmetic::FlushesToZero,
+//!     MetalSubnormalArithmetic::FlushesToZero {
+//!         zero_sign: MetalFlushedZeroSign::PreservesSign,
+//!     },
 //!     31,
 //! );
 //! let unit = emit_translation_unit(&[&kernel], &target)?;
