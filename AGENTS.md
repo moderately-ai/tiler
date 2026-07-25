@@ -214,6 +214,18 @@ These are failure modes observed in practice, not hypotheticals.
 - **Push before dispatching.** A worker's worktree derives from the remote, so
   local-only commits make every base you hand out unreachable. Push, confirm
   `git rev-list --left-right --count origin/main...main` is `0 0`, then dispatch.
+- **Gate the exact commit you hand out.** A base is a starting point several
+  workers build on, so a red one multiplies. Running the gate on a later state
+  does not cover it: a ticket-status edit made only to unblock a claim once left
+  a pushed base failing documentation validation, and the worker that inherited
+  it had to prove no intermediate commit could be green. Gate, then push, then
+  dispatch, in that order.
+- **A brief's assertions are claims, held to the same standard as any other.** A
+  dispatch that states a fact saves a worker the lookup and costs it the
+  verification, so a wrong one propagates with your authority behind it. Cite
+  where each claim came from and say which are unverified. Three briefs this
+  session asserted something false about the code they described, and each was
+  caught by the worker rather than the author.
 - **Refill the scope a landing frees, in the same turn.** Reporting a merge and
   waiting leaves dependency-satisfied work unclaimed for no reason.
 - **Two workers from one base can both be right and still not compose.** A
