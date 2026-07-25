@@ -930,6 +930,42 @@ impl ShapeEnv {
             .ok()?
             .interval(slot)
     }
+
+    /// Returns whether this environment forces two symbols to be equal.
+    ///
+    /// The question [`Self::extent_interval`] cannot answer. An interval is a
+    /// fact about one symbol in isolation, so two symbols confined to the same
+    /// wide interval are not thereby equal, and two symbols the environment
+    /// *does* force together are not thereby confined to one point. Deciding
+    /// equality needs the equality classes themselves, which is what this
+    /// exposes.
+    ///
+    /// One-sided: `true` proves equality in every model, `false` means the
+    /// environment does not prove it and never that the two differ. Recomputed
+    /// rather than stored, like every other query here, so no derived solver
+    /// state exists that could reach canonical identity.
+    ///
+    /// Returns `false` for a symbol this environment does not declare, which is
+    /// the fail-closed answer: an undeclared symbol has no binding here and
+    /// nothing this environment says can bear on it.
+    pub(crate) fn proves_equal(&self, left: &ShapeSymbol, right: &ShapeSymbol) -> bool {
+        let Some(left) = self.entries.iter().position(|(held, _)| held == left) else {
+            return false;
+        };
+        let Some(right) = self.entries.iter().position(|(held, _)| held == right) else {
+            return false;
+        };
+        let relations: Vec<&ExtentRelation> = self
+            .constraints
+            .iter()
+            .map(SemanticInputConstraint::relation)
+            .collect();
+        // As in `extent_interval`: `build` already decided this exact set, and a
+        // failure is propagated as "not proved" rather than unwrapped, so a
+        // future refactor's mistake becomes a refusal instead of a crash.
+        constraint::solve(&self.entries, &relations)
+            .is_ok_and(|mut solution| solution.same_class(left, right))
+    }
 }
 
 /// Encodes one bound environment canonically.

@@ -69,28 +69,44 @@
 //! initially determine semantic output shapes: doing so would create a
 //! dependency from shape to plan/pipeline and back to shape".
 //!
-//! **Inference.** An index-domain extent is upstream of exactly those
-//! quantities — it fixes the iteration domain a launch geometry is derived
-//! from — so the same rule binds it. On ADR 0043's ladder that makes
-//! [`EXTENT_PHASE_CEILING`] the last admissible phase, and
-//! [`AvailabilityPhase::PreparedKernelPreflight`] and
-//! [`AvailabilityPhase::LaunchPreflight`] too late. The corpus states the rule
-//! for semantic extents and does not restate it for index domains; this module
-//! is where that inference is written down rather than assumed.
+//! One ceiling, [`EXTENT_PHASE_CEILING`], binds both kinds of sourced extent,
+//! but the two reach it by different routes and the difference is worth keeping
+//! legible:
 //!
-//! The check is a comparison because ADR 0043's order is total and documented
-//! as load-bearing: "a use site evaluated at one phase may only name roots
-//! available no later than it".
+//! - **A tensor boundary extent is the quoted case.** An output boundary's
+//!   extent *is* an "initial output shape", which the clause above names
+//!   outright. Nothing has to be inferred.
+//! - **An index-domain extent is the inferred case.** It is upstream of exactly
+//!   those quantities — it fixes the iteration domain a launch geometry is
+//!   derived from — so the same rule binds it. The corpus states the rule for
+//!   semantic extents and does not restate it for index domains; this module is
+//!   where that inference is written down rather than assumed.
+//!
+//! Either way [`AvailabilityPhase::PreparedKernelPreflight`] and
+//! [`AvailabilityPhase::LaunchPreflight`] are too late. The check is a
+//! comparison because ADR 0043's order is total and documented as load-bearing:
+//! "a use site evaluated at one phase may only name roots available no later
+//! than it".
 //!
 //! # What the environment lets a verifier prove
 //!
-//! A symbolic extent is not an opaque hole. [`ExtentSources::interval`] asks the
-//! environment for the closed interval every model confines the symbol to, so a
-//! coordinate derived from a symbolic domain can still be proved in bounds
-//! against a static tensor axis whenever the constraint environment bounds the
-//! symbol tightly enough. [`ExtentSources::determined`] answers the stronger
-//! question — does the environment fix exactly one value — which is what an
-//! exhaustive enumeration or a write-permutation argument needs.
+//! A symbolic extent is not an opaque hole. Three questions are answerable, and
+//! they are deliberately three rather than one because each admits a different
+//! proof and a caller that confused them would claim more than it proved:
+//!
+//! - [`ExtentSources::interval`] returns the closed interval every model
+//!   confines the symbol to, so a coordinate can be proved in bounds against an
+//!   axis whenever the constraint environment bounds the two tightly enough.
+//! - [`ExtentSources::determined`] answers the stronger question — does the
+//!   environment fix exactly one value — which is what an exhaustive
+//!   enumeration needs.
+//! - [`ExtentSources::proves_equal`] answers a question neither of the others
+//!   can: whether two extents are the *same* extent in every model, even when
+//!   no model-independent value is known for either. That is what a
+//!   dynamically shaped output needs — a write covers its boundary exactly when
+//!   the domain it iterates and the boundary it writes are the same size, and
+//!   with both symbolic that is an equality-class fact rather than an
+//!   arithmetic one.
 //!
 //! Neither answer is ever guessed. An extent the environment does not bound is
 //! reported as unprovable by the region verifier rather than approximated, and
@@ -100,14 +116,17 @@ use std::sync::Arc;
 
 use super::IndexBuildError;
 use crate::program::abi::AvailabilityPhase;
-use crate::shape::Extent;
 use crate::shape::env::constraint::ExtentInterval;
 use crate::shape::env::{ShapeEnv, ShapeEnvIdentity, ShapeSymbol};
+use crate::shape::{Extent, Shape, ShapeError};
 
-/// The last availability phase an index-domain extent may be sourced from.
+/// The last availability phase a sourced extent may be read from.
 ///
-/// See the module documentation: this is an inference from the accepted
-/// pre-dispatch host-evaluability decision, not a clause quoted from it.
+/// One ceiling for index-domain extents and tensor boundary extents alike. See
+/// the module documentation for why the two reach it differently: for a
+/// boundary the accepted pre-dispatch host-evaluability decision names "every
+/// initial output shape" outright, while for a domain it is an inference from
+/// that decision rather than a clause quoted from it.
 pub(crate) const EXTENT_PHASE_CEILING: AvailabilityPhase = AvailabilityPhase::LiveDevicePreflight;
 
 /// One extent and where its value comes from.
@@ -180,6 +199,118 @@ impl SourcedExtent {
     }
 }
 
+/// One tensor boundary's ordered extents, and where each one comes from.
+///
+/// # Why an enum rather than a bare `Vec<SourcedExtent>`
+///
+/// [`Shape`] is the crate's public shape vocabulary and
+/// [`TensorRef::static_shape`](super::TensorRef::static_shape) returns a
+/// *borrow* of one. A wholly static boundary must keep answering that borrow,
+/// so the static case holds the `Shape` it would otherwise have to materialize
+/// on every call. Widening the accessor to return a `Shape` by value instead
+/// would change a public signature to express something no public caller can
+/// yet observe.
+///
+/// Holding [`Shape`] here also keeps one definition of a static shape rather
+/// than two: an all-literal boundary is a `Shape`, never a parallel vector of
+/// literal [`SourcedExtent`]s that happens to mean the same thing.
+///
+/// # The normalization invariant
+///
+/// [`Self::sourced`] collapses an all-literal extent vector into
+/// [`Self::Static`], so [`Self::Sourced`] holds at least one symbol and a
+/// boundary has exactly one spelling. That is what makes `static_shape()`
+/// depend on the boundary rather than on which constructor authored it.
+#[derive(Clone, Debug)]
+pub(crate) enum SourcedShape {
+    /// Every extent was a literal fixed when the region was authored.
+    Static(Shape),
+    /// At least one extent is a declared `ShapeEnv` symbol.
+    Sourced(Vec<SourcedExtent>),
+}
+
+impl SourcedShape {
+    /// Wraps an already-bounded static shape.
+    pub(crate) const fn from_shape(shape: Shape) -> Self {
+        Self::Static(shape)
+    }
+
+    /// Builds a boundary from ordered sourced extents, normalizing as above.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShapeError::RankTooLarge`] when an all-literal boundary's rank
+    /// exceeds the governed shape bound. The index layer's own, tighter
+    /// `MAX_TENSOR_RANK` is checked separately by the builder; this is the
+    /// shape vocabulary refusing to represent the normalized form at all, and
+    /// the two limits stay distinct rather than one standing in for the other.
+    pub(crate) fn sourced(extents: Vec<SourcedExtent>) -> Result<Self, ShapeError> {
+        let literals: Option<Vec<Extent>> = extents.iter().map(SourcedExtent::as_static).collect();
+        match literals {
+            Some(literals) => Shape::try_new(literals).map(Self::Static),
+            None => Ok(Self::Sourced(extents)),
+        }
+    }
+
+    /// Returns the logical rank.
+    pub(crate) fn rank(&self) -> usize {
+        match self {
+            Self::Static(shape) => shape.rank(),
+            Self::Sourced(extents) => extents.len(),
+        }
+    }
+
+    /// Returns the borrowed static shape, for a wholly literal boundary only.
+    ///
+    /// `None` for a boundary any of whose extents names a symbol, even when the
+    /// environment determines every one of them: this asks what was *written*,
+    /// exactly as [`SourcedExtent::as_static`] does, and identity is a function
+    /// of that rather than of what a particular environment resolves it to.
+    pub(crate) const fn as_static(&self) -> Option<&Shape> {
+        match self {
+            Self::Static(shape) => Some(shape),
+            Self::Sourced(_) => None,
+        }
+    }
+
+    /// Returns the ordered extents with their sources, outermost first.
+    ///
+    /// A static boundary is projected extent by extent rather than kept on a
+    /// separate path, so every verifier reads one shape vocabulary and a rule
+    /// cannot be extended for one representation and forgotten for the other.
+    pub(crate) fn extents(&self) -> impl ExactSizeIterator<Item = SourcedExtent> + '_ {
+        // Indexed rather than chained so the result stays `ExactSizeIterator`.
+        // Each arm indexes the slice whose length `rank()` returned, so both
+        // indices are in range by construction; a panic here would be a broken
+        // invariant rather than an input a caller can reach.
+        (0..self.rank()).map(move |axis| match self {
+            Self::Static(shape) => SourcedExtent::Static(shape.extents()[axis]),
+            Self::Sourced(extents) => extents[axis].clone(),
+        })
+    }
+
+    /// Appends this boundary's canonical bytes.
+    ///
+    /// Length-framed and then extent by extent through
+    /// [`SourcedExtent::encode`], so a literal axis encodes identically whether
+    /// it was authored as a [`Shape`] or normalized out of an extent vector.
+    /// One encoding for one boundary is what keeps the representation choice
+    /// above from being observable in identity.
+    pub(crate) fn encode(&self, bytes: &mut Vec<u8>) {
+        crate::identity::push_len(bytes, self.rank());
+        for extent in self.extents() {
+            extent.encode(bytes);
+        }
+    }
+
+    /// Returns the exact canonical byte length [`Self::encode`] appends.
+    pub(crate) fn encoded_len(&self) -> usize {
+        self.extents()
+            .map(|extent| extent.encoded_len())
+            .fold(8_usize, usize::saturating_add)
+    }
+}
+
 /// Why one sourced extent may not be used where it was written.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ExtentSourceError {
@@ -239,6 +370,14 @@ pub(crate) enum SymbolicExtentError {
     Source(ExtentSourceError),
     /// A governed structural limit or handle rule refused the dimension.
     Structural(IndexBuildError),
+    /// The shape vocabulary refused to represent the boundary at all.
+    ///
+    /// Distinct from [`Self::Structural`] because the two name different
+    /// authorities: the index layer's own `MAX_TENSOR_RANK` governs how large a
+    /// boundary *this* IR admits, while [`ShapeError`] is the shape
+    /// vocabulary's bound on what a [`Shape`] can hold. Collapsing them would
+    /// report one limit's rejection under the other's name.
+    Shape(ShapeError),
 }
 
 impl std::fmt::Display for SymbolicExtentError {
@@ -246,6 +385,7 @@ impl std::fmt::Display for SymbolicExtentError {
         match self {
             Self::Source(error) => write!(formatter, "{error}"),
             Self::Structural(error) => write!(formatter, "{error}"),
+            Self::Shape(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -326,6 +466,39 @@ impl ExtentSources {
         }
     }
 
+    /// Returns whether every model assigns these two extents the same value.
+    ///
+    /// One-sided, and deliberately so. `true` is a proof of equality; `false`
+    /// means *not proved*, never *proved different*. A caller that read `false`
+    /// as a disequality would be inventing a fact the environment did not
+    /// state.
+    ///
+    /// Two independent routes reach `true`, and both are needed because neither
+    /// subsumes the other:
+    ///
+    /// - **The equality class.** Two symbols the environment forces together —
+    ///   by an asserted symbol equality, or by a `>=` cycle, which forces
+    ///   equality just as directly — share a class, and every model therefore
+    ///   assigns them one value. This route proves equality with no value
+    ///   known for either side, which is exactly the dynamically shaped case:
+    ///   an output boundary sized `n` and a domain iterating `n` are the same
+    ///   size whatever `n` turns out to be.
+    /// - **A common determined value.** Two extents the environment pins to the
+    ///   same single value are equal even when nothing relates them
+    ///   syntactically, and this is the only route available when one side is a
+    ///   literal.
+    pub(crate) fn proves_equal(&self, left: &SourcedExtent, right: &SourcedExtent) -> bool {
+        if let (Some(left), Some(right)) = (left.symbol(), right.symbol())
+            && self.environment.proves_equal(left, right)
+        {
+            return true;
+        }
+        match (self.determined(left), self.determined(right)) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        }
+    }
+
     /// Returns the closed interval every model confines this extent to.
     ///
     /// Sound to prove an upper bound against and never sound to enumerate: a
@@ -347,12 +520,14 @@ mod tests {
     use std::sync::Arc;
 
     use super::{EXTENT_PHASE_CEILING, ExtentSourceError, SymbolicExtentError};
+    use super::{ExtentSources, SourcedExtent, SourcedShape};
     use crate::index::{
         BoundsProofView, DomainRole, FrozenScalarRegistry, IndexRegionBuildError,
         IndexRegionBuilder, IndexRegionDiagnostic, ScalarArity, ScalarAttributeSchema,
         ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
         ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
         ScalarOperationInferencer, ScalarRegistryBuilder, TensorRole, VerifiedIndexRegion,
+        WriteOwnershipProofView,
     };
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
@@ -360,6 +535,7 @@ mod tests {
         SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
         TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey,
     };
+    use crate::shape::Extent;
     use crate::shape::Shape;
     use crate::shape::env::constraint::{ExtentRelation, ExtentTerm, SemanticInputConstraint};
     use crate::shape::env::{
@@ -447,10 +623,15 @@ mod tests {
     }
 
     /// An interface parameter, whose source class floors exactly at the ceiling.
-    fn parameter_binding(phase: AvailabilityPhase) -> RootBinding {
+    ///
+    /// One parameter key per symbol: two symbols bound to *one* parameter would
+    /// be one value, and an environment that recorded that in its bindings
+    /// without recording it as a constraint would be stating a fact its own
+    /// decision procedure could not see.
+    fn parameter_binding(name: &str, phase: AvailabilityPhase) -> RootBinding {
         RootBinding::new(
             BindingSource::InterfaceParameter {
-                key: InterfaceParameterKey::new("n").unwrap(),
+                key: InterfaceParameterKey::new(name).unwrap(),
             },
             phase,
             FactProvenance::RuntimeValidated,
@@ -458,12 +639,20 @@ mod tests {
         .unwrap()
     }
 
-    /// An environment declaring `n` with one root binding and given relations.
-    fn environment(phase: AvailabilityPhase, relations: &[ExtentRelation]) -> Arc<ShapeEnv> {
+    /// An environment declaring each named symbol once, with given relations.
+    fn environment_over(
+        phase: AvailabilityPhase,
+        names: &[&str],
+        relations: &[ExtentRelation],
+    ) -> Arc<ShapeEnv> {
         let mut draft = ShapeEnvBuilder::new();
-        let n = symbol("n");
-        draft.declare(n.clone()).unwrap();
-        draft.bind(&n, parameter_binding(phase)).unwrap();
+        for name in names {
+            let declared = symbol(name);
+            draft.declare(declared.clone()).unwrap();
+            draft
+                .bind(&declared, parameter_binding(name, phase))
+                .unwrap();
+        }
         for relation in relations {
             draft
                 .require(SemanticInputConstraint::new(
@@ -473,6 +662,11 @@ mod tests {
                 .unwrap();
         }
         Arc::new(draft.build().unwrap())
+    }
+
+    /// An environment declaring `n` with one root binding and given relations.
+    fn environment(phase: AvailabilityPhase, relations: &[ExtentRelation]) -> Arc<ShapeEnv> {
+        environment_over(phase, &["n"], relations)
     }
 
     /// Reduces one input axis of symbolic extent into a rank-zero output.
@@ -797,6 +991,473 @@ mod tests {
         assert!(
             region.extent_sources().is_some(),
             "a region with a symbolic extent retains the environment resolving it",
+        );
+    }
+
+    /// Copies one element of a symbolic-boundary input into a static output.
+    ///
+    /// The read is what the boundary work adds: the coordinate is bounded by a
+    /// *static* domain and the axis it indexes is symbolic, so whether it is in
+    /// bounds is a question about the environment's bound on that axis and
+    /// nothing else. The output stays static and rank-zero so the write proves
+    /// itself without involving the boundary under test.
+    fn read_from_symbolic_axis(
+        environment: Arc<ShapeEnv>,
+    ) -> Result<VerifiedIndexRegion, IndexRegionBuildError> {
+        let mut builder = IndexRegionBuilder::new(registry())
+            .unwrap()
+            .with_shape_environment(environment);
+        let input = builder
+            .sourced_tensor(
+                TensorRole::Input,
+                value_type(),
+                vec![SourcedExtent::Symbol(symbol("m"))],
+            )
+            .expect("the source is admissible in these fixtures");
+        let output = builder
+            .tensor(TensorRole::Output, value_type(), Shape::from_dims([]))
+            .unwrap();
+        let reduced = builder
+            .dimension(DomainRole::Reduction, Extent::new(4))
+            .unwrap();
+        let coordinate = builder.dimension_expr(reduced).unwrap();
+        let contributor = builder.read(input, &[reduced], &[coordinate]).unwrap();
+        let initial = builder
+            .apply(zero_key(), ScalarAttributes::empty(), &[])
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let total = builder
+            .reduce(&[reduced], &[initial], &[contributor], |body| {
+                let state = body.state(0).expect("one accumulator");
+                let contributed = body.contributor(0).expect("one contributor");
+                let stepped =
+                    body.apply(step_key(), ScalarAttributes::empty(), &[state, contributed])?;
+                let stepped = stepped.get(0).expect("one result");
+                body.yield_values(&[stepped])
+            })
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let write = builder.write(output, &[], &[]).unwrap();
+        builder.output(write, total).unwrap();
+        builder.build()
+    }
+
+    /// `static_shape()` is absent exactly for a symbolically sourced boundary.
+    ///
+    /// `docs/ir.md` reserved this beside the dimension case: static dimensions
+    /// and tensor boundaries "return `Some` throughout this bounded profile. A
+    /// future symbolic profile can return `None` and expose its `ShapeEnv`
+    /// expression through an additive borrowed view instead of changing the
+    /// meaning of an existing accessor."
+    ///
+    /// The second half is the normalization invariant, and it is what keeps the
+    /// accessor a fact about the boundary rather than about which constructor
+    /// authored it: a boundary written through the *sourced* path whose extents
+    /// all turned out to be literals still answers `Some`.
+    #[test]
+    fn static_shape_is_absent_exactly_for_a_symbolically_sourced_boundary() {
+        let region = read_from_symbolic_axis(environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m"],
+            &[ExtentRelation::interval(term("m"), 8, 16).unwrap()],
+        ))
+        .expect("a domain of 4 indexes an axis of at least 8");
+
+        let boundaries: Vec<_> = region
+            .tensors()
+            .map(|tensor| {
+                (
+                    tensor.role(),
+                    tensor.static_shape().is_some(),
+                    tensor
+                        .sourced_shape()
+                        .extents()
+                        .filter_map(|extent| extent.symbol().cloned())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        assert!(
+            boundaries
+                .iter()
+                .all(|(_, literal, symbols)| *literal == symbols.is_empty()),
+            "a boundary is either wholly literal or symbolic and never both: {boundaries:?}",
+        );
+        assert!(
+            boundaries
+                .iter()
+                .any(|(role, _, symbols)| *role == TensorRole::Input && symbols == &[symbol("m")]),
+            "the symbolic input exposes the symbol it was sourced from: {boundaries:?}",
+        );
+
+        // Authored through the sourced path, but every extent is a literal, so
+        // it normalizes to the same boundary a static caller would have
+        // written — and answers `static_shape()` accordingly.
+        let normalized = SourcedShape::sourced(vec![
+            SourcedExtent::Static(Extent::new(2)),
+            SourcedExtent::Static(Extent::new(3)),
+        ])
+        .expect("rank two is within the governed shape bound");
+        assert_eq!(
+            normalized.as_static(),
+            Some(&Shape::from_dims([2, 3])),
+            "an all-literal sourced boundary is a static shape, not a second spelling of one",
+        );
+    }
+
+    /// Two extents can be proved equal with no value known for either.
+    ///
+    /// The mechanism the dynamically shaped case rests on, isolated from the
+    /// region verifier. Neither symbol is determined here — the environment
+    /// pins no constant at all — so a predicate that compared resolved values
+    /// would answer "not proved", and the equality class is the only thing that
+    /// can answer at all. The neighbour drops the one relation.
+    #[test]
+    fn two_undetermined_symbols_are_proved_equal_by_their_equality_class() {
+        let related = ExtentSources::new(environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m", "n"],
+            &[ExtentRelation::equal(term("m"), term("n"))],
+        ));
+        let m = SourcedExtent::Symbol(symbol("m"));
+        let n = SourcedExtent::Symbol(symbol("n"));
+
+        assert_eq!(
+            (related.determined(&m), related.determined(&n)),
+            (None, None),
+            "neither symbol has a value, so no comparison of values could decide this",
+        );
+        assert!(
+            related.proves_equal(&m, &n),
+            "`m == n` makes them one extent in every model",
+        );
+
+        let unrelated = ExtentSources::new(environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m", "n"],
+            &[
+                ExtentRelation::interval(term("m"), 1, 4).unwrap(),
+                ExtentRelation::interval(term("n"), 1, 4).unwrap(),
+            ],
+        ));
+        assert!(
+            !unrelated.proves_equal(&m, &n),
+            "sharing an interval is not being one extent: the answer is not-proved, \
+             and a caller may not read it as proved-different either",
+        );
+    }
+
+    /// A symbolic tensor boundary is proved in bounds from the environment.
+    ///
+    /// The boundary counterpart of the domain case: nothing here knows how long
+    /// the input axis is, and the read is admitted because the constraint
+    /// environment bounds that axis *below* every coordinate the static domain
+    /// can produce. The rejecting neighbour differs only in that bound, so the
+    /// acceptance is evidence about the environment rather than about the
+    /// region's shape.
+    #[test]
+    fn a_symbolic_boundary_axis_is_proved_in_bounds_by_its_environment_floor() {
+        let roomy = read_from_symbolic_axis(environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m"],
+            &[ExtentRelation::interval(term("m"), 8, 16).unwrap()],
+        ))
+        .expect("`m >= 8` admits every coordinate a 4-point domain produces");
+        // Interval, not enumeration: the axis length is still unknown, so
+        // nothing could have been walked.
+        assert!(
+            roomy
+                .accesses()
+                .any(|access| access.bounds_proof() == BoundsProofView::Interval),
+            "the read into a symbolic axis is proved by the environment's interval",
+        );
+
+        // One admissible extent below the domain is one too few, and the same
+        // region is refused. Nothing else about it changed.
+        let too_short = read_from_symbolic_axis(environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m"],
+            &[ExtentRelation::interval(term("m"), 3, 16).unwrap()],
+        ))
+        .unwrap_err();
+        assert!(
+            reports(&too_short, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::BoundsNotProven { .. }
+            )),
+            "an admissible extent of 3 cannot hold coordinate 3: {too_short}",
+        );
+        assert!(
+            !reports(&too_short, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::ProofResourceLimit { .. }
+            )),
+            "this is a refusal, not an enumeration that ran out of budget: {too_short}",
+        );
+    }
+
+    /// A boundary source arriving after the ceiling is refused where it is written.
+    ///
+    /// For a *boundary* this is the quoted clause rather than the inference the
+    /// domain case rests on: an output boundary's extent is an "initial output
+    /// shape", and the accepted contract requires every one of those to be
+    /// "evaluable on the host before any device work begins".
+    #[test]
+    fn a_boundary_source_after_the_phase_ceiling_is_refused_where_it_is_written() {
+        for phase in [
+            AvailabilityPhase::PreparedKernelPreflight,
+            AvailabilityPhase::LaunchPreflight,
+        ] {
+            let mut builder = IndexRegionBuilder::new(registry())
+                .unwrap()
+                .with_shape_environment(environment(phase, &[]));
+            assert_eq!(
+                builder.sourced_tensor(
+                    TensorRole::Output,
+                    value_type(),
+                    vec![SourcedExtent::Symbol(symbol("n"))],
+                ),
+                Err(SymbolicExtentError::Source(
+                    ExtentSourceError::SourceTooLate {
+                        symbol: symbol("n"),
+                        available: phase,
+                        ceiling: EXTENT_PHASE_CEILING,
+                    }
+                )),
+            );
+        }
+
+        // The same source one phase earlier is admitted, so the refusals above
+        // are about when the value arrives rather than about the source class.
+        let mut admitted = IndexRegionBuilder::new(registry())
+            .unwrap()
+            .with_shape_environment(environment(EXTENT_PHASE_CEILING, &[]));
+        admitted
+            .sourced_tensor(
+                TensorRole::Output,
+                value_type(),
+                vec![SourcedExtent::Symbol(symbol("n"))],
+            )
+            .expect("a value available before device work may size an output");
+    }
+
+    /// A dynamically shaped write is owned exactly when the environment proves
+    /// the domain and boundary extents equal.
+    ///
+    /// This is what a caller-sized program needs. `write_is_permutation` used to
+    /// compare a determined extent against a literal; the symbolic form of that
+    /// comparison is symbol equality, and the constraint environment decides it
+    /// from the equality classes alone. Both fixtures below prove their bounds
+    /// by interval, so the pair turns on ownership and nothing else: the
+    /// accepted one asserts `m == n` and the rejected one bounds `m` to a range
+    /// that contains `n`'s value without ever saying they are the same extent.
+    #[test]
+    fn a_dynamically_shaped_write_is_owned_when_the_environment_proves_the_extents_equal() {
+        fn write_to_symbolic_boundary(
+            environment: Arc<ShapeEnv>,
+        ) -> Result<VerifiedIndexRegion, IndexRegionBuildError> {
+            let mut builder = IndexRegionBuilder::new(registry())
+                .unwrap()
+                .with_shape_environment(environment);
+            let input = builder
+                .tensor(TensorRole::Input, value_type(), Shape::from_dims([4]))
+                .unwrap();
+            let output = builder
+                .sourced_tensor(
+                    TensorRole::Output,
+                    value_type(),
+                    vec![SourcedExtent::Symbol(symbol("m"))],
+                )
+                .expect("admissible in both fixtures");
+            let dimension = builder
+                .symbolic_dimension(DomainRole::Parallel, symbol("n"))
+                .expect("admissible in both fixtures");
+            let coordinate = builder.dimension_expr(dimension).unwrap();
+            let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+            let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+            builder.output(write, value).unwrap();
+            builder.build()
+        }
+
+        let same_extent = write_to_symbolic_boundary(environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m", "n"],
+            &[
+                ExtentRelation::equal(term("n"), ExtentTerm::Constant(4)),
+                ExtentRelation::equal(term("m"), term("n")),
+            ],
+        ))
+        .expect("an output sized `m == n` is covered exactly by a domain sized `n`");
+        assert!(
+            same_extent
+                .accesses()
+                .any(|access| access.write_ownership_proof()
+                    == Some(WriteOwnershipProofView::CoordinatePermutation)),
+            "ownership is the permutation argument, discharged through the environment",
+        );
+
+        // `m` is bounded tightly enough for the coordinate to be in bounds, and
+        // its range even contains `n`'s value — but the environment never says
+        // the two are one extent, so the write is not proved to cover it.
+        let merely_overlapping = write_to_symbolic_boundary(environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m", "n"],
+            &[
+                ExtentRelation::equal(term("n"), ExtentTerm::Constant(4)),
+                ExtentRelation::interval(term("m"), 4, 5).unwrap(),
+            ],
+        ))
+        .unwrap_err();
+        assert!(
+            reports(&merely_overlapping, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::WriteOwnershipNotProven { .. }
+            )),
+            "an output that may hold 5 elements is not covered by 4 writes: {merely_overlapping}",
+        );
+        assert!(
+            !reports(&merely_overlapping, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::ProofResourceLimit { .. }
+            )),
+            "this is a refusal, not an enumeration that ran out of budget: {merely_overlapping}",
+        );
+    }
+
+    /// A boundary's identity names the symbol it was written with, not the
+    /// value its environment resolves that symbol to.
+    ///
+    /// The accepted contract keeps `graph identity`, `interface identity`, and
+    /// `specialized identity` distinguishable. An output written as `[m]` in an
+    /// environment that happens to pin `m == 4` is a program that adapts to its
+    /// caller; one written as `[4]` is a program that does not. Folding the
+    /// resolved value in here would collapse the first into the second, and a
+    /// cache would then serve either for the other.
+    #[test]
+    fn a_boundary_identity_names_its_symbol_rather_than_a_resolved_value() {
+        fn region(environment: Arc<ShapeEnv>, symbolic_output: bool) -> VerifiedIndexRegion {
+            let mut builder = IndexRegionBuilder::new(registry())
+                .unwrap()
+                .with_shape_environment(environment);
+            let input = builder
+                .tensor(TensorRole::Input, value_type(), Shape::from_dims([4]))
+                .unwrap();
+            let output = if symbolic_output {
+                builder
+                    .sourced_tensor(
+                        TensorRole::Output,
+                        value_type(),
+                        vec![SourcedExtent::Symbol(symbol("m"))],
+                    )
+                    .expect("`m` is declared and available in time")
+            } else {
+                builder
+                    .tensor(TensorRole::Output, value_type(), Shape::from_dims([4]))
+                    .unwrap()
+            };
+            let dimension = builder
+                .dimension(DomainRole::Parallel, Extent::new(4))
+                .unwrap();
+            let coordinate = builder.dimension_expr(dimension).unwrap();
+            let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+            let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+            builder.output(write, value).unwrap();
+            builder
+                .build()
+                .expect("both spellings verify under `m == 4`")
+        }
+
+        let pinned = environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m"],
+            &[ExtentRelation::equal(term("m"), ExtentTerm::Constant(4))],
+        );
+        let symbolic = region(Arc::clone(&pinned), true);
+        let literal = region(Arc::clone(&pinned), false);
+
+        assert_eq!(
+            symbolic.canonical_identity(),
+            region(pinned, true).canonical_identity(),
+            "one environment and one structure name one region",
+        );
+        assert_ne!(
+            symbolic.canonical_identity(),
+            literal.canonical_identity(),
+            "a boundary sized by a symbol is a different program from one sized by that symbol's value",
+        );
+        assert!(
+            literal
+                .tensors()
+                .all(|tensor| tensor.static_shape().is_some()),
+            "the literal spelling stays wholly static even though `m` resolves to it",
+        );
+    }
+
+    /// A wholly undetermined `[n] -> [n]` copy is refused, explicitly.
+    ///
+    /// **Measurement, and this profile's boundary.** Ownership *is* proved
+    /// here — the environment decides `m == n` from the equality class — but
+    /// bounds are not, and the reason is structural rather than a gap in the
+    /// environment. Proving `i < m` from `0 <= i < n` and `m == n` is an
+    /// equality-class argument, not an interval comparison: `n`'s interval is
+    /// the whole extent domain, so `max(i)` is nowhere below `m`'s floor.
+    ///
+    /// The argument itself is sound and cheap. What blocks it is that
+    /// [`BoundsProofView`] has no name for it — `VacuousEmptyDomain`,
+    /// `Interval`, and `Exhaustive` would each misdescribe how such an access
+    /// was proved, and an access whose retained evidence names the wrong proof
+    /// is worse than one that is refused. Naming it is a public enum variant,
+    /// which is owner-reserved, so
+    /// `name-the-proved-extent-equality-bounds-proof` carries it.
+    ///
+    /// Until then the refusal must stay *explicit*, which is what this asserts:
+    /// both accesses are refused, and neither is the proof-resource diagnostic,
+    /// which `docs/ir.md` defines as meaning "the enumeration stopped — not
+    /// that the region was disproved". When the follow-up lands this test is
+    /// the thing that fails, which is the trigger it should have.
+    #[test]
+    fn a_wholly_undetermined_dynamic_copy_is_refused_rather_than_approximated() {
+        let mut builder = IndexRegionBuilder::new(registry())
+            .unwrap()
+            .with_shape_environment(environment_over(
+                EXTENT_PHASE_CEILING,
+                &["m", "n"],
+                &[ExtentRelation::equal(term("m"), term("n"))],
+            ));
+        let boundary = |builder: &mut IndexRegionBuilder, role| {
+            builder
+                .sourced_tensor(role, value_type(), vec![SourcedExtent::Symbol(symbol("m"))])
+                .expect("`m` is declared and available in time")
+        };
+        let input = boundary(&mut builder, TensorRole::Input);
+        let output = boundary(&mut builder, TensorRole::Output);
+        let dimension = builder
+            .symbolic_dimension(DomainRole::Parallel, symbol("n"))
+            .expect("`n` is declared and available in time");
+        let coordinate = builder.dimension_expr(dimension).unwrap();
+        let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+
+        let error = builder.build().unwrap_err();
+        assert!(
+            reports(&error, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::BoundsNotProven { .. }
+            )) && reports(&error, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::WriteOwnershipNotProven { .. }
+            )),
+            "both accesses are refused while no bounds-proof kind names the argument: {error}",
+        );
+        assert!(
+            !reports(&error, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::ProofResourceLimit { .. }
+            )),
+            "nothing was enumerated, so nothing ran out of budget: {error}",
         );
     }
 }

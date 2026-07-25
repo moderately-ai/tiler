@@ -22,7 +22,9 @@ use super::scalar::{
     ScalarApplyError, ScalarInferenceCapacity, ScalarInferenceHostFailure, encode_bytes,
     encode_canonical, encode_key, encode_len,
 };
-use super::sourced::{ExtentSourceError, ExtentSources, SourcedExtent, SymbolicExtentError};
+use super::sourced::{
+    ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape, SymbolicExtentError,
+};
 use super::{
     AccessMode, CanonicalIndexRegionIdentity, DimensionId, DomainRole, FrozenScalarRegistry,
     IndexBuildError, IndexEntityKind, IndexExprClass, IndexExprId, IndexInteger, IndexLimitKind,
@@ -36,7 +38,11 @@ use super::{
     ScalarAttributes, ScalarOpKey, ScalarOperationId, ScalarResultIndex, ScalarValueId,
     TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
 };
+use crate::shape::env::constraint::ExtentInterval;
 use crate::shape::env::{ShapeEnv, ShapeSymbol};
+
+/// The domain separator of one verified index region's canonical identity.
+const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v6\0";
 
 /// What interval propagation concluded about one access's coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -590,6 +596,70 @@ impl IndexRegionBuilder {
         value_type: ResolvedValueType,
         shape: Shape,
     ) -> Result<TensorId, IndexBuildError> {
+        self.push_tensor(role, value_type, SourcedShape::from_shape(shape))
+    }
+
+    /// Declares one tensor boundary whose extents may name `ShapeEnv` symbols.
+    ///
+    /// The counterpart of [`Self::symbolic_dimension`] on the boundary side,
+    /// and what makes a *dynamically shaped output* expressible: an output
+    /// extent that names the same symbol the iteration domain does states that
+    /// the two are one size, which is the fact a write-ownership argument then
+    /// discharges through the environment rather than against a literal.
+    ///
+    /// Every symbolic extent is admitted against this region's one environment
+    /// under the same ceiling a domain extent obeys — see
+    /// [`EXTENT_PHASE_CEILING`], where the boundary case is the quoted one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymbolicExtentError::Source`] when no environment is bound,
+    /// when the environment does not declare a named symbol, or when a symbol's
+    /// root binding arrives later than a boundary extent may be sourced from;
+    /// [`SymbolicExtentError::Shape`] when the shape vocabulary cannot
+    /// represent the normalized boundary; and
+    /// [`SymbolicExtentError::Structural`] for an unknown type or exceeded
+    /// structural limit.
+    #[allow(
+        dead_code,
+        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
+    )]
+    pub(crate) fn sourced_tensor(
+        &mut self,
+        role: TensorRole,
+        value_type: ResolvedValueType,
+        extents: Vec<SourcedExtent>,
+    ) -> Result<TensorId, SymbolicExtentError> {
+        // Admitted before the boundary exists, so a refused source leaves the
+        // draft exactly as it was rather than half-applied — and admitted for
+        // every extent before any of them is retained, so a boundary is never
+        // partly sourced from a refused symbol.
+        for extent in &extents {
+            if extent.symbol().is_none() {
+                continue;
+            }
+            let Some(sources) = self.sources.as_ref() else {
+                // No environment can declare the symbol, so it is undeclared
+                // here for exactly the reason the variant names.
+                return Err(SymbolicExtentError::Source(
+                    ExtentSourceError::UndeclaredSymbol {
+                        symbol: extent.symbol().cloned().expect("checked above"),
+                    },
+                ));
+            };
+            sources.admit(extent).map_err(SymbolicExtentError::Source)?;
+        }
+        let shape = SourcedShape::sourced(extents).map_err(SymbolicExtentError::Shape)?;
+        self.push_tensor(role, value_type, shape)
+            .map_err(SymbolicExtentError::Structural)
+    }
+
+    fn push_tensor(
+        &mut self,
+        role: TensorRole,
+        value_type: ResolvedValueType,
+        shape: SourcedShape,
+    ) -> Result<TensorId, IndexBuildError> {
         self.registry.validate_type(&value_type)?;
         limit(
             self.tensors.len() + 1,
@@ -601,7 +671,7 @@ impl IndexRegionBuilder {
             .canonical_encoding()
             .as_bytes()
             .len()
-            .saturating_add(shape.rank().saturating_mul(8))
+            .saturating_add(shape.encoded_len())
             .saturating_add(16);
         limit(
             self.boundary_bytes.saturating_add(bytes),
@@ -708,6 +778,55 @@ impl IndexRegionBuilder {
         Ok(id)
     }
 
+    /// Returns the closed interval every model confines one sourced extent to.
+    ///
+    /// The single place this builder resolves an extent against its
+    /// environment. Every stronger question below — is it determined, is it
+    /// nonempty, does it bound a coordinate — is asked through this one, so a
+    /// rule cannot be extended for the domain side and forgotten for the
+    /// boundary side.
+    ///
+    /// `None` means the environment says nothing this builder can prove
+    /// against. That is not zero and not "very many", and substituting either
+    /// would be the silent approximation the contract forbids.
+    fn extent_interval(&self, extent: &SourcedExtent) -> Option<ExtentInterval> {
+        match (extent.as_static(), self.sources.as_ref()) {
+            (Some(value), _) => Some(ExtentInterval {
+                lower: value.get(),
+                upper: value.get(),
+            }),
+            // A symbolic extent with no environment is unresolvable rather than
+            // unconstrained. No constructor can produce one, so this is a
+            // fail-closed floor rather than a reachable path.
+            (None, None) => None,
+            (None, Some(sources)) => sources.interval(extent),
+        }
+    }
+
+    /// Returns the one value this region's environment fixes for an extent.
+    ///
+    /// A one-point interval leaves one admissible value, which is sound because
+    /// the interval contains every model.
+    fn determined(&self, extent: &SourcedExtent) -> Option<u64> {
+        self.extent_interval(extent)
+            .filter(|interval| interval.lower == interval.upper)
+            .map(|interval| interval.lower)
+    }
+
+    /// Returns whether the environment proves two extents are one extent.
+    ///
+    /// The symbolic form of a literal `==`. A wholly static region has no
+    /// environment to ask, and there only two literals are comparable.
+    fn extents_proved_equal(&self, left: &SourcedExtent, right: &SourcedExtent) -> bool {
+        match self.sources.as_ref() {
+            Some(sources) => sources.proves_equal(left, right),
+            None => match (left.as_static(), right.as_static()) {
+                (Some(left), Some(right)) => left == right,
+                _ => false,
+            },
+        }
+    }
+
     /// Returns the one extent this region's environment fixes for `dimension`.
     ///
     /// `None` means the environment admits more than one value, which is a
@@ -715,14 +834,7 @@ impl IndexRegionBuilder {
     /// what makes an exhaustive enumeration or a permutation argument
     /// unavailable rather than false.
     fn determined_extent(&self, dimension: u32) -> Option<u64> {
-        let extent = &self.dimensions[dimension as usize].extent;
-        match (extent, self.sources.as_ref()) {
-            (SourcedExtent::Static(value), _) => Some(value.get()),
-            (SourcedExtent::Symbol(_), Some(sources)) => {
-                sources.determined(extent).map(Extent::get)
-            }
-            (SourcedExtent::Symbol(_), None) => None,
-        }
+        self.determined(&self.dimensions[dimension as usize].extent)
     }
 
     /// Returns the largest extent any binding admits for `dimension`.
@@ -730,14 +842,8 @@ impl IndexRegionBuilder {
     /// Sound to bound a coordinate against: the interval contains every model,
     /// so a coordinate below it is below every admissible extent.
     fn extent_upper_bound(&self, dimension: u32) -> Option<u64> {
-        let extent = &self.dimensions[dimension as usize].extent;
-        match (extent, self.sources.as_ref()) {
-            (SourcedExtent::Static(value), _) => Some(value.get()),
-            (SourcedExtent::Symbol(_), Some(sources)) => {
-                sources.interval(extent).map(|interval| interval.upper)
-            }
-            (SourcedExtent::Symbol(_), None) => None,
-        }
+        self.extent_interval(&self.dimensions[dimension as usize].extent)
+            .map(|interval| interval.upper)
     }
 
     /// Returns whether every dimension of `domain` is proved to have a point.
@@ -747,14 +853,42 @@ impl IndexRegionBuilder {
     /// lower bound is zero may not be.
     fn domain_is_nonempty(&self, domain: &[u32]) -> bool {
         domain.iter().all(|dimension| {
-            let extent = &self.dimensions[*dimension as usize].extent;
-            match (extent, self.sources.as_ref()) {
-                (SourcedExtent::Static(value), _) => value.get() >= 1,
-                (SourcedExtent::Symbol(_), Some(sources)) => {
-                    sources.interval(extent).is_some_and(|it| it.lower >= 1)
-                }
-                (SourcedExtent::Symbol(_), None) => false,
-            }
+            self.extent_interval(&self.dimensions[*dimension as usize].extent)
+                .is_some_and(|interval| interval.lower >= 1)
+        })
+    }
+
+    /// Returns each boundary axis's exact extent, when all of them are known.
+    ///
+    /// The boundary counterpart of [`Self::domain_extents`], and `None` for the
+    /// same reason: an enumeration walks a boundary axis by axis, and one
+    /// undetermined axis means there is no enumeration rather than a shorter
+    /// one. Kept apart from an element count that does not fit this host, which
+    /// is a different failure with a different remedy.
+    fn boundary_extents(&self, shape: &SourcedShape) -> Option<Vec<u64>> {
+        shape
+            .extents()
+            .map(|extent| self.determined(&extent))
+            .collect()
+    }
+
+    /// Returns the dense element count of a boundary whose extents are known.
+    ///
+    /// Mirrors [`Shape::element_count`] exactly, including that one zero extent
+    /// makes the count zero even when another extent does not fit this host.
+    ///
+    /// `None` covers two different failures — an undetermined axis and a count
+    /// too large for this host — because every caller of *this* answer alone
+    /// fails closed on both. A caller that must tell them apart asks
+    /// [`Self::boundary_extents`] first, and the verifier does exactly that
+    /// before it budgets or enumerates anything.
+    fn boundary_element_count(&self, shape: &SourcedShape) -> Option<usize> {
+        let extents = self.boundary_extents(shape)?;
+        if extents.contains(&0) {
+            return Some(0);
+        }
+        extents.iter().try_fold(1_usize, |count, extent| {
+            count.checked_mul(usize::try_from(*extent).ok()?)
         })
     }
     /// Creates or reuses an exact constant expression.
@@ -1840,6 +1974,27 @@ impl IndexRegionBuilder {
             }
         }
     }
+    /// Returns the refusal that fits this access's mode.
+    ///
+    /// A write left unproved has not been shown to own its output; a read left
+    /// unproved has not been shown to stay in bounds. Both are refusals in
+    /// `docs/ir.md`'s taxonomy, and neither is the proof-resource diagnostic,
+    /// which the same contract defines as meaning an enumeration stopped.
+    ///
+    /// Matched exhaustively rather than tested against `Write`, so a third
+    /// access mode is a build error here instead of silently inheriting the
+    /// read's refusal.
+    fn unproved(&self, access_index: u32, mode: AccessMode) -> IndexRegionDiagnostic {
+        let access = TensorAccessId {
+            owner: self.owner,
+            index: access_index,
+        };
+        match mode {
+            AccessMode::Write => IndexRegionDiagnostic::WriteOwnershipNotProven { access },
+            AccessMode::Read => IndexRegionDiagnostic::BoundsNotProven { access },
+        }
+    }
+
     fn verify_accesses(
         &self,
         accesses: &BTreeSet<u32>,
@@ -1852,7 +2007,8 @@ impl IndexRegionBuilder {
             let shape = &self.tensors[access.tensor as usize].shape;
             let points = self.domain_points(&access.domain);
             if points == Some(0) {
-                if access.mode == AccessMode::Write && shape.element_count() != Some(0) {
+                if access.mode == AccessMode::Write && self.boundary_element_count(shape) != Some(0)
+                {
                     diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
                         access: TensorAccessId {
                             owner: self.owner,
@@ -1883,37 +2039,30 @@ impl IndexRegionBuilder {
             if !interval_proved
                 || (access.mode == AccessMode::Write && !self.write_is_permutation(access, shape))
             {
-                let Some(points) = points else {
-                    // The environment does not determine this domain's size, so
-                    // there is no enumeration to budget for and no interval
-                    // that closed the question. Refusing here is what keeps a
-                    // symbolic extent from becoming an unproved escape hatch;
-                    // it is a refusal, deliberately not the proof-resource
-                    // diagnostic, which would mean an enumeration stopped.
-                    diagnostics.push(if access.mode == AccessMode::Write {
-                        IndexRegionDiagnostic::WriteOwnershipNotProven {
-                            access: TensorAccessId {
-                                owner: self.owner,
-                                index: *access_index,
-                            },
-                        }
-                    } else {
-                        IndexRegionDiagnostic::BoundsNotProven {
-                            access: TensorAccessId {
-                                owner: self.owner,
-                                index: *access_index,
-                            },
-                        }
-                    });
+                // The finite fallback walks the domain point by point and checks
+                // each coordinate against a boundary axis, so it needs an exact
+                // size on both sides. An environment that determines neither
+                // leaves no enumeration to budget for and no interval that
+                // closed the question. Refusing here is what keeps a symbolic
+                // extent from becoming an unproved escape hatch; it is a
+                // refusal, deliberately not the proof-resource diagnostic,
+                // which `docs/ir.md` defines as meaning an enumeration stopped.
+                let enumerable = points.is_some() && self.boundary_extents(shape).is_some();
+                let Some(points) = points.filter(|_| enumerable) else {
+                    diagnostics.push(self.unproved(*access_index, access.mode));
                     continue;
                 };
                 let (plan_len, bytes_per_point) = self.proof_plan_size(&access.coordinates);
                 cells = cells.saturating_add(u128::from(points).saturating_mul(plan_len as u128));
                 let coordinate_bytes = u128::from(points).saturating_mul(bytes_per_point.max(1));
                 let dense_bytes = if access.mode == AccessMode::Write {
-                    shape.element_count().map_or(u128::MAX, |elements| {
-                        elements.div_ceil(64).saturating_mul(8) as u128
-                    })
+                    // Every axis is determined here, so a `None` is an element
+                    // count this host cannot represent — the pre-existing
+                    // unbounded-proof case, kept on its pre-existing path.
+                    self.boundary_element_count(shape)
+                        .map_or(u128::MAX, |elements| {
+                            elements.div_ceil(64).saturating_mul(8) as u128
+                        })
                 } else {
                     0
                 };
@@ -1930,10 +2079,13 @@ impl IndexRegionBuilder {
                 for access_index in accesses {
                     let access = &self.accesses[*access_index as usize];
                     let shape = &self.tensors[access.tensor as usize].shape;
-                    // An undetermined domain was already refused above; it has
-                    // no extent vector to walk, so it is skipped rather than
-                    // enumerated with a substituted size.
+                    // An undetermined domain or boundary was already refused
+                    // above; neither has an extent vector to walk, so both are
+                    // skipped rather than enumerated with a substituted size.
                     let Some(extents) = self.domain_extents(&access.domain) else {
+                        continue;
+                    };
+                    let Some(axes) = self.boundary_extents(shape) else {
                         continue;
                     };
                     if extents.contains(&0) || !self.access_needs_exhaustive_proof(access, shape) {
@@ -1944,7 +2096,13 @@ impl IndexRegionBuilder {
                         self.mark_expr(*coordinate, &mut reached);
                     }
                     let plan = reached.into_iter().collect::<Vec<_>>();
-                    self.verify_access_exhaustively(*access_index, &plan, &extents, diagnostics);
+                    self.verify_access_exhaustively(
+                        *access_index,
+                        &plan,
+                        &extents,
+                        &axes,
+                        diagnostics,
+                    );
                 }
             },
         );
@@ -1958,7 +2116,16 @@ impl IndexRegionBuilder {
     /// The two answers are independent and neither implies the other's
     /// negation: an interval that overlaps a boundary proves nothing either
     /// way, while one lying wholly outside refutes the access.
-    fn interval_verdict(&self, access: &AccessData, shape: &Shape) -> IntervalVerdict {
+    ///
+    /// A symbolic axis is compared against the *side of its own interval that
+    /// makes each answer sound*, and the two sides are different. Proving a
+    /// coordinate in bounds needs it below the axis in **every** model, so it is
+    /// compared against the axis's lower bound. Refuting one needs it at or
+    /// above the axis in every model, so that is compared against the upper
+    /// bound. A static axis has a one-point interval and both comparisons
+    /// collapse to the literal, which is why this reads as one rule rather than
+    /// a symbolic special case.
+    fn interval_verdict(&self, access: &AccessData, shape: &SourcedShape) -> IntervalVerdict {
         let mut verdict = IntervalVerdict {
             interval_proved: true,
             definitely_outside: false,
@@ -1968,32 +2135,29 @@ impl IndexRegionBuilder {
                 verdict.interval_proved = false;
                 continue;
             };
-            let extent = BigInt::from(extent.get());
-            if max < &BigInt::zero() || min >= &extent {
+            let Some(axis) = self.extent_interval(&extent) else {
+                // The environment bounds this axis nowhere, so nothing about it
+                // is provable and nothing about it is refutable either.
+                verdict.interval_proved = false;
+                continue;
+            };
+            if max < &BigInt::zero() || min >= &BigInt::from(axis.upper) {
                 verdict.definitely_outside = true;
             }
-            if min < &BigInt::zero() || max >= &extent {
+            if min < &BigInt::zero() || max >= &BigInt::from(axis.lower) {
                 verdict.interval_proved = false;
             }
         }
         verdict
     }
 
-    fn access_needs_exhaustive_proof(&self, access: &AccessData, shape: &Shape) -> bool {
-        let interval_proved =
-            access
-                .coordinates
-                .iter()
-                .zip(shape.extents())
-                .all(|(coordinate, extent)| {
-                    self.expressions[*coordinate as usize]
-                        .interval
-                        .as_ref()
-                        .is_some_and(|(minimum, maximum)| {
-                            minimum >= &BigInt::zero() && maximum < &BigInt::from(extent.get())
-                        })
-                });
-        !interval_proved
+    /// Returns whether interval propagation alone leaves this access unproved.
+    ///
+    /// Exactly the condition the verifier falls through on, read from
+    /// [`Self::interval_verdict`] rather than recomputed, so the enumeration
+    /// pass cannot come to disagree with the pass that decided one was needed.
+    fn access_needs_exhaustive_proof(&self, access: &AccessData, shape: &SourcedShape) -> bool {
+        !self.interval_verdict(access, shape).interval_proved
             || (access.mode == AccessMode::Write && !self.write_is_permutation(access, shape))
     }
 
@@ -2091,22 +2255,13 @@ impl IndexRegionBuilder {
         access_index: u32,
         expression_plan: &[u32],
         extents: &[u64],
+        axes: &[u64],
         diagnostics: &mut Vec<IndexRegionDiagnostic>,
     ) {
         let access = &self.accesses[access_index as usize];
         let shape = &self.tensors[access.tensor as usize].shape;
-        let Some(elements) = shape.element_count() else {
-            let access = TensorAccessId {
-                owner: self.owner,
-                index: access_index,
-            };
-            diagnostics.push(
-                if self.accesses[access_index as usize].mode == AccessMode::Write {
-                    IndexRegionDiagnostic::WriteOwnershipNotProven { access }
-                } else {
-                    IndexRegionDiagnostic::BoundsNotProven { access }
-                },
-            );
+        let Some(elements) = self.boundary_element_count(shape) else {
+            diagnostics.push(self.unproved(access_index, access.mode));
             return;
         };
         let mut seen =
@@ -2122,12 +2277,12 @@ impl IndexRegionBuilder {
             let evaluated = self.evaluate_expressions(expression_plan, &assignments);
             let mut linear = 0_usize;
             let mut in_bounds = true;
-            for (coordinate, extent) in access.coordinates.iter().zip(shape.extents()) {
+            for (coordinate, extent) in access.coordinates.iter().zip(axes) {
                 let Some(value) = evaluated.get(coordinate).and_then(ToPrimitive::to_usize) else {
                     in_bounds = false;
                     break;
                 };
-                let Ok(axis_extent) = usize::try_from(extent.get()) else {
+                let Ok(axis_extent) = usize::try_from(*extent) else {
                     in_bounds = false;
                     break;
                 };
@@ -2212,7 +2367,19 @@ impl IndexRegionBuilder {
         }
         values
     }
-    fn write_is_permutation(&self, access: &AccessData, shape: &Shape) -> bool {
+    /// Returns whether this write's coordinates are a dimension permutation
+    /// that covers its boundary exactly once.
+    ///
+    /// The per-axis obligation is that the dimension written along and the axis
+    /// written into are the *same size*. With both static that is a literal
+    /// comparison; with either symbolic it is a question only the constraint
+    /// environment can answer, and [`Self::extents_proved_equal`] answers it
+    /// one-sidedly — an unproved equality is not a permutation, never a proved
+    /// disequality. That is what lets a dynamically shaped output be written:
+    /// `y[i] = f(i)` over a domain sized `n` covers a boundary sized `n`
+    /// whatever value `n` takes, and the environment proves that from the
+    /// symbol alone.
+    fn write_is_permutation(&self, access: &AccessData, shape: &SourcedShape) -> bool {
         if access.coordinates.len() != access.domain.len() || shape.rank() != access.domain.len() {
             return false;
         }
@@ -2222,7 +2389,7 @@ impl IndexRegionBuilder {
                 return false;
             };
             if !access.domain.contains(&d)
-                || self.determined_extent(d) != Some(extent.get())
+                || !self.extents_proved_equal(&self.dimensions[d as usize].extent, &extent)
                 || !seen.insert(d)
             {
                 return false;
@@ -2467,20 +2634,13 @@ impl IndexRegionBuilder {
         dimension_map: &BTreeMap<u32, u32>,
     ) -> VerifiedAccessData {
         let access = &self.accesses[old as usize];
+        let shape = &self.tensors[access.tensor as usize].shape;
         let points = self.domain_points(&access.domain);
-        let interval = points != Some(0)
-            && access
-                .coordinates
-                .iter()
-                .zip(self.tensors[access.tensor as usize].shape.extents())
-                .all(|(coordinate, extent)| {
-                    self.expressions[*coordinate as usize]
-                        .interval
-                        .as_ref()
-                        .is_some_and(|(minimum, maximum)| {
-                            minimum >= &BigInt::zero() && maximum < &BigInt::from(extent.get())
-                        })
-                });
+        // The retained evidence names how the access was *actually* proved, so
+        // it reads the same predicate the verifier admitted it on rather than a
+        // second copy of it. A copy that drifted would record an interval proof
+        // for an access the verifier enumerated, or the reverse.
+        let interval = points != Some(0) && self.interval_verdict(access, shape).interval_proved;
         VerifiedAccessData {
             tensor: tensor_map[&access.tensor],
             mode: access.mode,
@@ -2508,7 +2668,7 @@ impl IndexRegionBuilder {
                 }
             },
             ownership_proof: (access.mode == AccessMode::Write).then(|| {
-                if self.write_is_permutation(access, &self.tensors[access.tensor as usize].shape) {
+                if self.write_is_permutation(access, shape) {
                     WriteOwnershipProof::CoordinatePermutation
                 } else {
                     WriteOwnershipProof::Exhaustive {
@@ -3729,7 +3889,11 @@ fn encode_region(
         outputs,
     } = compacted;
     let mut out = Vec::with_capacity(exact_capacity);
-    out.extend_from_slice(b"tiler.index-region.v5\0");
+    // `v6`: a tensor boundary now encodes extent by extent through
+    // `SourcedExtent`, which tags each axis as literal or symbolic, where `v5`
+    // wrote eight raw bytes per axis. The bytes of a wholly static boundary
+    // therefore changed even though its meaning did not, so the domain moves.
+    out.extend_from_slice(INDEX_REGION_DOMAIN);
     // The environment a symbolic extent resolves against is part of what this
     // region is. Two regions spelling the same symbol against differently bound
     // environments are different regions, and folding the environment's own
@@ -3756,10 +3920,7 @@ fn encode_region(
             TensorRole::Output => 2,
         });
         encode_bytes(&mut out, t.value_type.canonical_encoding().as_bytes());
-        encode_len(&mut out, t.shape.rank());
-        for e in t.shape.extents() {
-            out.extend_from_slice(&e.get().to_be_bytes());
-        }
+        t.shape.encode(&mut out);
     }
     encode_len(&mut out, expressions.len());
     for e in expressions {
@@ -3819,7 +3980,7 @@ fn encoded_region_len(compacted: &CompactedRegion, sources: Option<&ExtentSource
         values,
         outputs,
     } = compacted;
-    let mut bytes = b"tiler.index-region.v5\0".len() + 1;
+    let mut bytes = INDEX_REGION_DOMAIN.len() + 1;
     if let Some(sources) = sources {
         bytes = bytes.saturating_add(encoded_bytes_len(
             sources.environment_identity().as_bytes().len(),
@@ -3838,8 +3999,7 @@ fn encoded_region_len(compacted: &CompactedRegion, sources: Option<&ExtentSource
             .saturating_add(encoded_bytes_len(
                 tensor.value_type.canonical_encoding().as_bytes().len(),
             ))
-            .saturating_add(8)
-            .saturating_add(tensor.shape.rank().saturating_mul(8));
+            .saturating_add(tensor.shape.encoded_len());
     }
     bytes = bytes.saturating_add(8);
     for expression in expressions {
