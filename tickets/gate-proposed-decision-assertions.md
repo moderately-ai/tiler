@@ -1,17 +1,14 @@
 ---
 id: gate-proposed-decision-assertions
 title: Refuse a contract that asserts a proposed decision as fact
-status: in-progress
+status: done
 priority: p1
 dependencies: [make-adr-acceptance-visible-to-the-work-graph]
 related: []
 scopes: [contracts/navigation]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, validation, decisions, governance]
-claimed_from: todo
-assignee: agent-nav3
-lease_expires_at: 1785000986
 ---
 Split out of [`make-adr-acceptance-visible-to-the-work-graph`](make-adr-acceptance-visible-to-the-work-graph.md), which could not hold this scope. That ticket made the *scheduling* failure structural — a ticket conditional on an unaccepted ADR now depends on an `accept-adr-NNNN-*` node that only Tom closes, so it cannot reach the ready frontier. This ticket closes the other, more dangerous half: nothing mechanically prevents a worker from writing a proposed decision into a normative contract as though it were settled, and such a change passes the repository gate today.
 
@@ -52,3 +49,27 @@ The convention itself is recorded in `ticketsplease.toml` beside `[workflow.stat
 Both checks are implemented in `scripts/docs.py`, covered by tests in `scripts/tests/`, reported through the existing `docs.py validate` phase so `scripts/check_repository.py` needs no edit, each check's failing case is reconstructed by a test rather than only described, the two measurement boundaries above are recorded in the outcome, `docs/work-tracking.md` states the acceptance-node rule, and `uv run --locked python scripts/check_repository.py` passes.
 
 Do not weaken either check to a warning. `AGENTS.md` requires failing closed with an explainable error, and a warning in a gate that already emits none would be read as noise.
+
+## Outcome
+
+Both checks landed in `scripts/docs.py`, reported through the existing `docs.py validate` phase, with no edit to any `implementation/workspace` file. `docs/work-tracking.md` now states the acceptance-node rule. Thirteen tests in `scripts/tests/test_docs.py`; `uv run --locked python scripts/check_repository.py` passes.
+
+**Retraction — the dispatch brief's base claim was wrong, and this is recorded so the next worker does not inherit it.** The brief stated base `1b75b194e21bf765f00e9b5e4f46320da5f90a48` was "pushed to `origin/main`". It is not: `origin/main` is `b4db7c6025de76ac6f000dc85557737a08c36860`, and `1b75b19` is 12 commits ahead of it on local `main`, unpushed. The dispatched worktree started at `b4db7c6`, not at the stated base, which is exactly the stale-worktree defect the brief warned about. Reproduce: `git rev-parse origin/main` and `git rev-list --left-right --count main...origin/main`. The branch was recreated at `1b75b19` before any edit.
+
+**Check A — `validate_proposal_disclosure`.** For each `kind: contract` record, every resolved inline link whose target is a decision with `decision_status: "proposed"` must sit in a block that also says `proposed`. Two deviations from the sketch, both deliberate. The disclosing unit is the *outermost* block containing the link, not the paragraph: a citation in a list item is cleared by a sibling item but not by a preceding separate paragraph, which keeps the common "these are all proposed:" list from producing false positives without letting a distant word clear a silent citation. Link destinations are blanked before the word is sought, so an ADR filename containing `proposed` cannot stand in for prose — a hole the paragraph heuristic would have had.
+
+**Measurement — Check A, at `1b75b19`.** 183 records; 2 proposed decisions (ADR 0077, ADR 0078); **1 contract citation of a proposed decision, 0 violations**. The ticket's probe result at `b70da90` reproduces exactly. The ticket predicted a token-accurate version "may surface violations the probe did not"; it surfaced none — that prediction is retracted, the coarser heuristic and the token-accurate range agree on this corpus. The check fires: stripping the disclosure from `docs/architecture.md` in memory yields one error reporting **file line 350**, the exact line the ticket named, which also confirms the new `Record.offset` makes reported lines file-relative rather than body-relative.
+
+**Measurement boundary — Check A.** It sees a *citation*, not an assertion. A contract that states a proposal's content while citing nothing is invisible to it, because no predicate over link structure can catch that; it is left to review, bounded only by the convention that propagation tickets say "cite the record". A reference-style link *definition* is also not a citation here — markdown-it emits `link_open` at the usage site only — which is correct, since naming a destination asserts nothing about it. It covers 15 contract records of 183; portals, research, roadmaps, and experiments are not checked.
+
+**Measured and rejected — widening Check A to proposed contracts and roadmaps.** 3 records carry `contract_status`/`roadmap_status: "proposed"` (`docs/vision.md`, `docs/roadmap.md`, `docs/backends/cpu.md`), and widening the predicate to them produces 2 findings: `docs/backends/metal.md:260` citing Vision's non-goals list, and `docs/ir.md:578` pointing at the roadmap's operation-family support matrix. Both were read in full and both are navigational — a document-maturity status is not a discrete undecided proposition the way an ADR is, and neither paragraph asserts anything as settled. The widening is a category error, not a backlog; it is rejected rather than deferred, and no follow-up ticket is filed. (It would also have required remediation in `contracts/artifacts` and `contracts/foundation`, outside this ticket's scope.)
+
+**Check B — extended `validate_tickets`.** For each proposed decision, its `ticket` field names the drafting ticket; no ticket in a dispatchable-or-open status may name that ticket in `dependencies:`. A proposed decision with no `ticket` field is an error in its own right, so the join cannot be silently escaped by omitting the field.
+
+**Measurement — Check B, the regression pair on the real `tickets/` tree.** Against a copy of the live directory: **0 violations after**, and **1 violation before** once `propagate-extension-seam-classification-into-governed-contracts` is pointed back at `draft-public-extension-seam-ownership-adr`. That is the ticket's stated pair, reproduced. `accept-adr-0078-public-extension-seams` is `awaiting-decision` and depends on the drafting ticket, and is correctly not flagged.
+
+**Measurement boundary — Check B.** It only sees a declared edge, and only on a dispatchable or open ticket. A ticket conditional on a proposed ADR that declares no dependency at all is invisible to it. A *parked* ticket carrying the bad edge is not reported while parked — it is reported the moment it unparks, before it can be dispatched, so this is a deferral of the report and not a silent pass. The exclusion is required: the acceptance node itself must depend on its drafting ticket, and it is parked. `DISPATCHABLE_OR_OPEN` is asserted equal to the set of `ticketsplease.toml` states whose `category` is `dispatchable` or `open`, so adding a workflow state that this check does not classify fails the gate rather than silently exempting it.
+
+**Evidence that the tests are not vacuous.** Each check was neutered in an isolated copy of `scripts/` and the suite rerun. Disabling Check A fails 4 tests; disabling Check B's edge test fails 2; dropping `review` from `DISPATCHABLE_OR_OPEN` and removing the missing-`ticket` branch fails 2 more. No new test passes against a no-op implementation.
+
+**Claim classes.** Implemented and tested: both predicates, on this corpus, at this commit. Not claimed: that a proposal cannot reach a normative contract — Check A makes the disclosed-citation path total and leaves the uncited-assertion path to human review.

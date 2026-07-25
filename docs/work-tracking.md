@@ -19,9 +19,21 @@ tkt show <id>              # ticket, comments, and outcome
 tkt reconcile              # branch/worktree/board consistency
 ```
 
-`awaiting-decision` means research is complete but Tom must choose among genuine
-product alternatives. `deferred` means the work is intentionally parked until
-its stated trigger. Neither belongs in `tkt ready`.
+`awaiting-decision` covers two shapes. A worker's own ticket reaches it when
+research is complete but Tom must choose among genuine product alternatives. An
+`accept-adr-NNNN-*` node is the other: its research was finished by a different
+ticket, and its only function is to hold dependents out of the ready frontier
+until Tom accepts the record. Only he closes one. A ticket conditional on an ADR
+being accepted therefore depends on that acceptance node, never on the ticket
+that drafted the record — drafting a proposed ADR is a completed outcome, so the
+drafting ticket is correctly `done` the moment the file exists, and a dependency
+on it cannot tell written from decided. That convention lives in
+[`ticketsplease.toml`](../ticketsplease.toml), beside
+`[workflow.states.awaiting-decision]`, and that file is its authority;
+`scripts/docs.py` enforces it, so a dispatchable or open ticket depending on
+such a drafting ticket fails the documentation gate. `deferred` means the work
+is intentionally parked until its stated trigger. Neither belongs in
+`tkt ready`.
 
 Before work: read [AGENTS.md](../AGENTS.md), inspect `git status`, atomically
 claim the ticket, then immediately create or enter its dedicated branch/worktree
