@@ -70,6 +70,11 @@
 //! [`probe_fail_closed`] establishes the other half before the positive route is
 //! claimed: a damaged, truncated, unexpected, or wrongly-targeted input is
 //! refused under its *own* class rather than as a variant that did not apply.
+//! Each probe is paired with [`probe_accepted_baseline`], which requires the
+//! unperturbed subject to route, so a refusal is evidence about the one thing
+//! that probe changed. The same probe functions run in the repository gate,
+//! against an envelope this crate's test module assembles from the live builder;
+//! this call is what carries them onto a real artifact on hardware.
 //!
 //! # What makes the comparison worth anything
 //!
@@ -104,8 +109,8 @@ use metal::{
     MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, AvailabilityPhase, BackendKey, BindingTarget, RepresentationKey,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    AbiFactBinder, AbiFacts, ArtifactCodecFailure, AvailabilityPhase, BackendKey, BindingTarget,
+    RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
 use tiler_compiler::session::{Compilation, CompileFailure, NumericalContract, compile_governed};
 use tiler_ir::kernel::KernelType;
@@ -496,141 +501,279 @@ fn dispatch_direct(
     })
 }
 
-/// Proves the loader fails closed on inputs that are not this artifact.
+/// The exact inputs a fail-closed probe perturbs one element of.
 ///
-/// Run against the **real** envelope this process just read, not against a
-/// synthetic fixture, and run *before* the positive route is claimed. Each probe
-/// perturbs exactly one thing and asserts the class of the refusal, because the
-/// failure mode this guards against is not "it was accepted" — it is a refusal
-/// arriving under the wrong class. A damaged file reported as
+/// Grouped rather than passed as four arguments so a probe's signature shows
+/// that it changes *one* of them and leaves the rest alone. That is what makes a
+/// refusal evidence about the perturbation rather than about the whole kind: the
+/// same subject routes under [`probe_accepted_baseline`], so a probe that gets a
+/// refusal has isolated its cause.
+#[derive(Clone, Copy)]
+struct ProbeSubject<'a> {
+    /// The exact encoded envelope bytes under test.
+    bytes: &'a [u8],
+    /// The canonical identity bytes whatever named this artifact recorded.
+    expected: &'a [u8],
+    /// What the host running these probes independently states it offers.
+    environment: &'a ExecutionEnvironment,
+    /// The ABI facts bound from the artifact's own declared interface.
+    abi: &'a AbiFacts,
+}
+
+/// Reports a probe whose refusal did not arrive under the class it must.
+fn refused(probe: &'static str, outcome: String) -> ProofError {
+    ProofError::NotFailedClosed { probe, outcome }
+}
+
+/// Proves the loader **accepts** the unperturbed subject, before anything is
+/// perturbed.
+///
+/// This is the neighbour every probe below is paired against, and without it
+/// each of them proves close to nothing. A refusal is the easy outcome to
+/// obtain: a subject whose bytes never decoded, whose recorded identity was
+/// wrong, or whose host profile never matched would refuse *every* perturbation
+/// under a plausible-looking class, and the probes would report a fail-closed
+/// loader while measuring a broken harness. Establishing the positive route
+/// first is what makes each refusal below attributable to the one thing that
+/// probe changed.
+fn probe_accepted_baseline(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
+    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let preflight = decoded
+        .preflight(subject.environment, subject.expected, subject.abi)
+        .map_err(ProofError::ProbeBaseline)?;
+    Ok(format!(
+        "the unperturbed subject routes: {} thread(s) over {} binding(s)",
+        preflight.launch().grid_threads(),
+        preflight.bindings().len(),
+    ))
+}
+
+/// A flipped byte inside a framed section's content is an **integrity** failure.
+///
+/// The class is *derived* rather than observed. The encoder writes the framing
+/// header, then the manifest, then each section as its ordinal, its length, and
+/// its exact content, so the last section's content ends the envelope — asserted
+/// here rather than assumed. The manifest carries that section's content digest,
+/// so a changed content byte can only be caught by a digest comparison: a
+/// section digest, the payload identity derived from the metadata section, or
+/// the artifact identity re-derived from decoded content. All three classify as
+/// [`ArtifactCodecFailure::IntegrityFailure`], and none of them is a routing
+/// question.
+///
+/// Pinning the exact class is the whole point. A damaged file reported as
 /// `NoApplicableVariant` reads as "this artifact does not apply to your host",
-/// which sends a reader to rebuild a plan when the actual repair is to re-fetch
-/// the bytes. That is the "corrupt artifacts must not become route misses"
-/// obligation, and it is only observable by asserting the variant.
+/// which sends a reader to rebuild a plan when the repair is to re-fetch the
+/// bytes; one reported as `Malformed` sends them to look for a different file.
+fn probe_damaged_section_content(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
+    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let content = decoded
+        .sections()
+        .last()
+        .ok_or(ProofError::UnprobableEnvelope {
+            detail: "the envelope frames no section to damage",
+        })?
+        .bytes()
+        .to_vec();
+    if content.is_empty() || !subject.bytes.ends_with(&content) {
+        return Err(ProofError::UnprobableEnvelope {
+            detail: "the last framed section's content does not end the envelope",
+        });
+    }
+    let at = subject.bytes.len() - content.len();
+
+    let mut damaged = subject.bytes.to_vec();
+    damaged[at] ^= 0x01;
+    match DecodedProgram::decode(&damaged) {
+        Err(rejection @ LoadRejection::Artifact(ArtifactCodecFailure::IntegrityFailure { .. })) => {
+            Ok(format!(
+                "a flipped byte at section offset {at}: {rejection}"
+            ))
+        }
+        Err(other) => Err(refused("a damaged section", other.to_string())),
+        Ok(_) => Err(refused(
+            "a damaged section",
+            "the envelope decoded as valid".to_owned(),
+        )),
+    }
+}
+
+/// A flipped byte at an arbitrary interior offset never survives into routing.
 ///
-/// The probes are decidable without a device. They run here rather than as unit
-/// tests because they need a valid artifact, and this workspace's only producer
-/// of one is a separate binary; a test in this crate would have to carry a
-/// fixture that goes stale against the encoder it is meant to exercise.
-fn probe_fail_closed(
-    bytes: &[u8],
-    expected: &[u8],
-    environment: &ExecutionEnvironment,
-    abi: &AbiFacts,
-) -> Result<(), ProofError> {
-    let refused =
-        |probe: &'static str, outcome: String| ProofError::NotFailedClosed { probe, outcome };
-
-    // A single flipped bit anywhere in the framed body must be caught by the
-    // envelope's own integrity or framing, never survive into routing.
-    let mut corrupt = bytes.to_vec();
-    let midpoint = corrupt.len() / 2;
-    corrupt[midpoint] ^= 0x01;
-    match DecodedProgram::decode(&corrupt) {
+/// Retained beside [`probe_damaged_section_content`] because it perturbs the
+/// envelope the way damage actually arrives — at an offset nobody chose — and
+/// deliberately asserts less. Which boundary refuses is a function of where the
+/// byte lands: inside the manifest or a section's content it is an integrity
+/// failure, inside a framed length it is malformed, inside a section ordinal it
+/// is invalid. What must hold for *every* offset is that the artifact layer
+/// refuses, so that is what is asserted; pinning one of those classes here would
+/// pin an accident of this envelope's size rather than a property of the loader.
+///
+/// **Measurement**, on an Apple M4 Max against the producer's 32,449-byte
+/// envelope: the midpoint lands in the manifest and the refusal is
+/// `ManifestDigestMismatch`, an integrity failure. That is one envelope's
+/// arithmetic, not a guarantee, which is exactly why it is not asserted.
+fn probe_damaged_interior_byte(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
+    let mut damaged = subject.bytes.to_vec();
+    let midpoint = damaged.len() / 2;
+    damaged[midpoint] ^= 0x01;
+    match DecodedProgram::decode(&damaged) {
         Err(rejection @ LoadRejection::Artifact(_)) => {
-            println!("  a flipped byte at offset {midpoint}: {rejection}");
+            Ok(format!("a flipped byte at offset {midpoint}: {rejection}"))
         }
-        Err(other) => return Err(refused("a flipped byte", other.to_string())),
-        Ok(_) => {
-            return Err(refused(
-                "a flipped byte",
-                "the envelope decoded as valid".to_owned(),
-            ));
-        }
+        Err(other) => Err(refused("a flipped interior byte", other.to_string())),
+        Ok(_) => Err(refused(
+            "a flipped interior byte",
+            "the envelope decoded as valid".to_owned(),
+        )),
     }
+}
 
-    // A truncated file is a different damage class and must also be refused by
-    // the artifact layer rather than routed against whatever survived.
-    match DecodedProgram::decode(&bytes[..midpoint]) {
-        Err(rejection @ LoadRejection::Artifact(_)) => {
-            println!("  truncated to {midpoint} byte(s): {rejection}");
+/// A truncated envelope is **malformed**, and that class is derivable.
+///
+/// The framing header states the envelope's own total length, which is a
+/// derived field of the exact encoding rather than a producer claim. No proper
+/// prefix satisfies it, so a prefix long enough to carry the header is refused
+/// as a total-length disagreement and a shorter one is refused as truncation.
+/// Both classify as [`ArtifactCodecFailure::Malformed`], for either length, so
+/// nothing about this class depends on where the cut falls.
+fn probe_truncated_envelope(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
+    let midpoint = subject.bytes.len() / 2;
+    match DecodedProgram::decode(&subject.bytes[..midpoint]) {
+        Err(rejection @ LoadRejection::Artifact(ArtifactCodecFailure::Malformed { .. })) => {
+            Ok(format!("truncated to {midpoint} byte(s): {rejection}"))
         }
-        Err(other) => return Err(refused("a truncated envelope", other.to_string())),
-        Ok(_) => {
-            return Err(refused(
-                "a truncated envelope",
-                "the envelope decoded as valid".to_owned(),
-            ));
-        }
+        Err(other) => Err(refused("a truncated envelope", other.to_string())),
+        Ok(_) => Err(refused(
+            "a truncated envelope",
+            "the envelope decoded as valid".to_owned(),
+        )),
     }
+}
 
-    // Everything below decodes: these are valid bytes refused for host reasons,
-    // and each must name its own reason rather than fall through to a later one.
-    let decoded = DecodedProgram::decode(bytes).map_err(ProofError::Load)?;
-
-    // An artifact that is not the one this process expected is a mismatch, not
-    // a variant that failed to apply.
-    let mut foreign = expected.to_vec();
+/// An artifact that is not the expected one is a **program mismatch**.
+///
+/// Not a variant that failed to apply, and not damage. These bytes decode and
+/// are internally consistent; what is wrong is that they are some other valid
+/// artifact, which is a stale cache entry or a mixed-up path rather than a plan
+/// to rebuild.
+fn probe_foreign_expected_identity(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
+    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut foreign = subject.expected.to_vec();
     if let Some(last) = foreign.last_mut() {
         *last ^= 0x01;
     }
-    match decoded.preflight(environment, &foreign, abi) {
-        Err(rejection @ LoadRejection::ProgramMismatch { .. }) => {
-            println!("  an expected identity that is not this artifact's: {rejection}");
-        }
-        Err(other) => return Err(refused("a foreign expected identity", other.to_string())),
-        Ok(_) => {
-            return Err(refused(
-                "a foreign expected identity",
-                "the route was accepted".to_owned(),
-            ));
-        }
+    match decoded.preflight(subject.environment, &foreign, subject.abi) {
+        Err(rejection @ LoadRejection::ProgramMismatch { .. }) => Ok(format!(
+            "an expected identity that is not this artifact's: {rejection}"
+        )),
+        Err(other) => Err(refused("a foreign expected identity", other.to_string())),
+        Ok(_) => Err(refused(
+            "a foreign expected identity",
+            "the route was accepted".to_owned(),
+        )),
     }
+}
 
-    // A host offering the same target family under a profile descriptor the
-    // artifact was not assessed against must be refused as an incompatible
-    // target naming *which* declaration refused, so a reader knows whether to
-    // rebuild the plan or the object.
-    let mut descriptor = environment.target_profile.descriptor.as_bytes().to_vec();
+/// A host offering another profile descriptor is an **incompatible target**,
+/// named on the *variant's* declaration.
+///
+/// Both halves of the class are pinned. Which declaration refused separates a
+/// plan assessed for another profile from an object compiled for one, and those
+/// are different repairs; the classification separates the same target family
+/// under a descriptor this host does not offer from an artifact built for
+/// another family entirely. Asserting only that something refused would erase
+/// both distinctions at the moment a caller needs them.
+fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
+    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut descriptor = subject
+        .environment
+        .target_profile
+        .descriptor
+        .as_bytes()
+        .to_vec();
     if let Some(last) = descriptor.last_mut() {
         *last ^= 0x01;
     }
     let other_host = ExecutionEnvironment {
         target_profile: TargetProfileRef {
-            key: environment.target_profile.key.clone(),
+            key: subject.environment.target_profile.key.clone(),
             descriptor: TargetProfileDescriptorDigest::from_bytes(&descriptor)
                 .map_err(|_| ProofError::HostProfile)?,
         },
-        backend: environment.backend.clone(),
-        representation: environment.representation.clone(),
+        backend: subject.environment.backend.clone(),
+        representation: subject.environment.representation.clone(),
     };
-    match decoded.preflight(&other_host, expected, abi) {
+    match decoded.preflight(&other_host, subject.expected, subject.abi) {
         Err(
             rejection @ LoadRejection::IncompatibleTarget {
                 declaration: TargetDeclaration::Variant,
                 classification: TargetCompatibility::DescriptorMismatch { .. },
             },
-        ) => println!("  a host offering another profile descriptor: {rejection}"),
-        Err(other) => return Err(refused("another profile descriptor", other.to_string())),
-        Ok(_) => {
-            return Err(refused(
-                "another profile descriptor",
-                "the route was accepted".to_owned(),
-            ));
-        }
+        ) => Ok(format!(
+            "a host offering another profile descriptor: {rejection}"
+        )),
+        Err(other) => Err(refused("another profile descriptor", other.to_string())),
+        Ok(_) => Err(refused(
+            "another profile descriptor",
+            "the route was accepted".to_owned(),
+        )),
     }
+}
 
-    // A host that cannot execute the packaged backend family must be refused on
-    // that ground rather than on the profile it happens to share.
+/// A host stating another backend family is an **unexecutable payload**.
+///
+/// Refused on that ground rather than on the target profile it happens to
+/// share, which is why this probe changes only the backend key: the host still
+/// offers the exact profile the variant was assessed against, so the refusal
+/// cannot come from the compatibility classification.
+fn probe_other_backend_family(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
+    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let other_backend = ExecutionEnvironment {
-        target_profile: environment.target_profile.clone(),
+        target_profile: subject.environment.target_profile.clone(),
         backend: BackendKey::new("tiler.some-other-backend")
             .map_err(|_| ProofError::HostProfile)?,
-        representation: environment.representation.clone(),
+        representation: subject.environment.representation.clone(),
     };
-    match decoded.preflight(&other_backend, expected, abi) {
-        Err(rejection @ LoadRejection::UnexecutablePayload { .. }) => {
-            println!("  a host stating another backend family: {rejection}");
-        }
-        Err(other) => return Err(refused("another backend family", other.to_string())),
-        Ok(_) => {
-            return Err(refused(
-                "another backend family",
-                "the route was accepted".to_owned(),
-            ));
-        }
+    match decoded.preflight(&other_backend, subject.expected, subject.abi) {
+        Err(rejection @ LoadRejection::UnexecutablePayload { .. }) => Ok(format!(
+            "a host stating another backend family: {rejection}"
+        )),
+        Err(other) => Err(refused("another backend family", other.to_string())),
+        Ok(_) => Err(refused(
+            "another backend family",
+            "the route was accepted".to_owned(),
+        )),
     }
+}
 
+/// Proves the loader fails closed on inputs that are not this artifact.
+///
+/// Run against the **real** envelope this process just read, not against a
+/// synthetic fixture, and run *before* the positive route is claimed. Each probe
+/// perturbs exactly one thing and pins the class of the refusal, because the
+/// failure mode this guards against is not "it was accepted" — it is a refusal
+/// arriving under the wrong class. That is the "corrupt artifacts must not
+/// become route misses" obligation, and it is only observable by asserting the
+/// variant.
+///
+/// The probes are decidable without a device, and the crate's own test module
+/// runs every one of them in the repository gate against an envelope it
+/// assembles from the live builder. This call is what carries the same
+/// assertions onto a real `xcrun`-produced artifact on hardware; neither
+/// subsumes the other, because the gate cannot reach a Metal toolchain on both
+/// CI profiles and the hardware run is not a gate.
+fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<(), ProofError> {
+    for probe in [
+        probe_accepted_baseline as fn(&ProbeSubject<'_>) -> Result<String, ProofError>,
+        probe_damaged_section_content,
+        probe_damaged_interior_byte,
+        probe_truncated_envelope,
+        probe_foreign_expected_identity,
+        probe_other_profile_descriptor,
+        probe_other_backend_family,
+    ] {
+        println!("  {}", probe(subject)?);
+    }
     Ok(())
 }
 
@@ -846,7 +989,12 @@ fn run() -> Result<(), ProofError> {
     // these bytes would say nothing about what it refuses, and the refusals are
     // half of what makes the acceptance mean anything.
     println!("fail-closed probes against these exact bytes:");
-    probe_fail_closed(&bytes, &expected, &environment, &abi)?;
+    probe_fail_closed(&ProbeSubject {
+        bytes: &bytes,
+        expected: &expected,
+        environment: &environment,
+        abi: &abi,
+    })?;
 
     let preflight = decoded
         .preflight(&environment, &expected, &abi)
@@ -959,6 +1107,10 @@ enum ProofError {
     NoDevice,
     HostProfile,
     Load(LoadRejection),
+    ProbeBaseline(LoadRejection),
+    UnprobableEnvelope {
+        detail: &'static str,
+    },
     NotFailedClosed {
         probe: &'static str,
         outcome: String,
@@ -1014,6 +1166,15 @@ impl fmt::Display for ProofError {
             Self::HostProfile => formatter
                 .write_str("the compiler's target profile does not compose a host environment"),
             Self::Load(rejection) => write!(formatter, "the artifact was refused: {rejection}"),
+            Self::ProbeBaseline(rejection) => write!(
+                formatter,
+                "the fail-closed probes have no accepted neighbour to perturb: the unperturbed \
+                 subject was itself refused: {rejection}",
+            ),
+            Self::UnprobableEnvelope { detail } => write!(
+                formatter,
+                "a fail-closed probe could not be constructed from these bytes: {detail}",
+            ),
             Self::NotFailedClosed { probe, outcome } => write!(
                 formatter,
                 "the loader did not fail closed on {probe}: {outcome}",
@@ -1058,5 +1219,553 @@ impl fmt::Display for ProofError {
                 "the {path} path returned {device:08x?}, reference requires {reference:08x?}",
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The fail-closed probes, carried into the repository gate.
+    //!
+    //! # What is asserted, and why a refusal alone would not be worth asserting
+    //!
+    //! Every case below runs one of the crate's own probe functions against an
+    //! envelope this module assembles, and each of those functions pins the
+    //! *class* of the refusal rather than the fact of one. The class is the
+    //! property: it decides whether a reader re-fetches bytes, looks for a
+    //! different file, rebuilds a plan, or rebuilds an object, and a loader that
+    //! started reporting a corrupt file as `NoApplicableVariant` would still
+    //! refuse every one of these inputs.
+    //!
+    //! Each case additionally asserts the rendered class prefix at the call
+    //! site, so the guarantee is legible where it is claimed as well as where it
+    //! is enforced. [`the_unperturbed_envelope_routes`] is the neighbour they
+    //! are all paired against: without it a harness that produced garbage would
+    //! refuse everything and report a fail-closed loader.
+    //!
+    //! # The closure taken, and the two that were eliminated
+    //!
+    //! The probes need a *valid* artifact, and this workspace's only producer of
+    //! one is `tiler-prototype-compile`. Three closures were available.
+    //!
+    //! **A checked-in envelope fixture — eliminated.** It is the cheapest and it
+    //! is a claim on disk that outlives whatever produced it: an encoder change
+    //! leaves the fixture testing a format nobody emits any more, and nothing in
+    //! the repository compares the two. `AGENTS.md` governs exactly this shape of
+    //! retained artifact, and no predicate over a byte fixture survives an edit
+    //! to the encoder beside it.
+    //!
+    //! **A unit test inside `tiler-runtime` — eliminated by scope rather than by
+    //! design, and it is the better home.** `ArtifactProgramBuilder::new` takes a
+    //! `tiler_ir::semantic::SemanticProgram`, and `tiler-runtime` depends on
+    //! `tiler-artifact` alone, so an in-crate test needs a `tiler-ir`
+    //! dev-dependency. That edits `Cargo.lock`, which is the
+    //! `implementation/cargo-lock` scope this ticket does not hold, and
+    //! `cargo test --locked` would refuse the change. Relocating these cases into
+    //! the crate is a move, not new evidence.
+    //!
+    //! **Assembling the envelope here — taken.** This crate's `[[bin]]` declares
+    //! `test = true`, so `cargo test --workspace --locked` — the exact command
+    //! `scripts/check_rust.py` runs — builds and runs this module, and the crate
+    //! already depends on every crate the assembly needs. Nothing can go stale:
+    //! the envelope is minted by the live builder through the live encoder in the
+    //! same compilation as the loader under test, so a builder or encoder change
+    //! is a build failure rather than a fixture that quietly describes
+    //! yesterday's format.
+    //!
+    //! # What this fixture is not
+    //!
+    //! It is a loader fixture, not a second producer. It substitutes a synthetic
+    //! carried payload for a real `xcrun` link, which the loader can neither
+    //! observe nor interpret: a payload's object bytes are opaque to every check
+    //! `DecodedProgram` performs. The substitution is what keeps these cases
+    //! device-free and toolchain-free, so they hold on both CI profiles rather
+    //! than only where a Metal toolchain exists. It is deliberately *not*
+    //! evidence about what the producer emits; `prototypes/serial-sum-compile`
+    //! owns that, and the binary above carries these same probes onto a real
+    //! artifact on hardware.
+    //!
+    //! # Why this is not the duplication a closed ticket rejected
+    //!
+    //! `share-the-serial-sum-artifact-assembler` considered exactly this file as
+    //! its option (c) — "duplicate the assembler into `prototypes/serial-sum-run`"
+    //! — and rejected it, on the ground that "two independently maintained
+    //! descriptions of one compilation is the exact defect the routing ticket
+    //! exists to remove". That rejection is correct and still binding for the
+    //! case it was about, and it does not cover this one. The distinction is not
+    //! size: [`assemble`] is comparable in length to the producer's.
+    //!
+    //! It was about an assembler on the **proof's own path**, giving the runner
+    //! an in-process `VerifiedArtifactProgram` to dispatch from *instead of* the
+    //! producer's file. Two such assemblers really are two descriptions of one
+    //! compilation, and the proof would have had no way to tell which it ran.
+    //! This one is `#[cfg(test)]`, reaches no device, and is never named by
+    //! [`run`]: the hardware proof still reads the producer's envelope, and this
+    //! assembly cannot substitute for it. Nor does anything here compare the two
+    //! or claim they agree — the fixture's only obligation is to be *a* valid
+    //! artifact, which the artifact layer decides on its own terms.
+    //!
+    //! What that leaves is a real and bounded drift risk, stated rather than
+    //! dismissed: a builder or encoder change breaks this at compile time, but a
+    //! change to what the *producer chooses* to package — a deferred predicate,
+    //! a second variant — would leave this fixture valid and no longer shaped
+    //! like the artifact it stands in for. It would then exercise a different
+    //! legal envelope, which is a weaker probe rather than a wrong one, and the
+    //! hardware run is what would notice.
+
+    use super::{
+        BACKEND_KEY, ProbeSubject, REPRESENTATION_KEY, ROWS, bind_interface, host_environment,
+        probe_accepted_baseline, probe_damaged_interior_byte, probe_damaged_section_content,
+        probe_foreign_expected_identity, probe_other_backend_family,
+        probe_other_profile_descriptor, probe_truncated_envelope, serial_sum_program,
+    };
+    use tiler_artifact::program::{
+        AbiExprId, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
+        BackendEntryRef, BackendKey, BindingKind, BindingSpec, CapabilityKey,
+        CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
+        LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance,
+        PayloadSdkIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
+        TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
+        VariantSpec, VerifiedArtifactProgram,
+    };
+    use tiler_compiler::session::{
+        Compilation, NumericalContract, PlanAlternative, compile_governed,
+    };
+    use tiler_ir::program::abi::ExprNode;
+    use tiler_ir::semantic::SemanticProgram;
+    use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment};
+
+    /// Columns of the fixture's input; the reduced axis.
+    ///
+    /// **One, and not by choice**, for the same measured reason
+    /// `prototypes/serial-sum-compile` packages one: a `BackendEntryKey` is
+    /// bounded at `MAX_OPAQUE_IDENTITY_BYTES` = 1,024 and the canonical kernel
+    /// identity of a serial sum with two or more contributors measures 1,113
+    /// bytes, so an entry keyed on it does not construct. The fixture keys its
+    /// entry on that identity rather than on a short synthetic string precisely
+    /// so it inherits the producer's real constraint instead of quietly routing
+    /// around it. `bound-the-backend-entry-key-by-the-identity-it-carries` owns
+    /// closing the gap; when it does, this becomes [`super::COLUMNS`].
+    const FIXTURE_COLUMNS: u64 = 1;
+
+    /// The object bytes the fixture's payload carries.
+    ///
+    /// Never loaded, never parsed, never compared. `DecodedProgram` treats a
+    /// payload's object as opaque — its content digest is integrity rather than
+    /// identity, and no loader check reads a byte of it — so a real `metallib`
+    /// would change nothing these cases assert and would tie them to a host with
+    /// a Metal toolchain.
+    const PROBE_OBJECT: &[u8] = b"tiler probe object; not an executable image";
+
+    /// One assembled envelope and everything a probe needs to route it.
+    ///
+    /// Owned rather than borrowed from the compilation that produced it, so a
+    /// case can hold the subject after the `Compilation` has been dropped.
+    struct Fixture {
+        bytes: Vec<u8>,
+        expected: Vec<u8>,
+        environment: ExecutionEnvironment,
+        abi: AbiFacts,
+    }
+
+    impl Fixture {
+        fn subject(&self) -> ProbeSubject<'_> {
+            ProbeSubject {
+                bytes: &self.bytes,
+                expected: &self.expected,
+                environment: &self.environment,
+                abi: &self.abi,
+            }
+        }
+    }
+
+    /// Compiles, packages, and encodes one valid envelope for the probes.
+    ///
+    /// The three facts a probe perturbs are each taken from the authority that
+    /// owns it, exactly as the binary takes them: the expected identity from the
+    /// artifact this function assembled, the host environment from the compiler's
+    /// own target registry rather than from the artifact, and the ABI facts from
+    /// the interface the *decoded* envelope declares. Reading any of them back
+    /// out of the envelope would make the corresponding probe a tautology.
+    fn fixture() -> Fixture {
+        let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
+        let compilations = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed program compiles");
+        let compilation = compilations.first().expect("one governed target profile");
+        let plan = compilation.selected().expect("a selected plan alternative");
+
+        let artifact = assemble(&semantic, compilation, plan);
+        let bytes = artifact.encode().expect("the envelope encodes");
+        let expected = artifact.canonical_identity().as_bytes().to_vec();
+        let environment = host_environment(compilation).expect("the host environment composes");
+
+        let decoded = DecodedProgram::decode(&bytes).expect("the assembled envelope decodes");
+        let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
+        Fixture {
+            bytes,
+            expected,
+            environment,
+            abi,
+        }
+    }
+
+    /// Packages one plan alternative and a synthetic payload as an artifact.
+    ///
+    /// Deliberately a second, smaller assembler rather than a reach into
+    /// `prototypes/serial-sum-compile`: that one lives in a `[[bin]]`-only
+    /// package in another ticket scope, so it is not linkable from here at all.
+    /// What it shares with the producer is everything a loader can observe — the
+    /// compiler's own expressions, entry keys, target profile, and rule set — and
+    /// what it omits is the toolchain.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one artifact is assembled top to bottom in the order the builder requires, and that order is the readable part"
+    )]
+    fn assemble(
+        semantic: &SemanticProgram,
+        compilation: &Compilation,
+        plan: PlanAlternative<'_>,
+    ) -> VerifiedArtifactProgram {
+        let profile = TargetProfileRef {
+            key: TargetProfileKey::new(compilation.target_profile_key())
+                .expect("the compiler mints a governed profile key"),
+            descriptor: TargetProfileDescriptorDigest::from_bytes(
+                compilation.target_profile_descriptor(),
+            )
+            .expect("the compiler mints a profile descriptor"),
+        };
+        let rules = FeasibilityRuleSetRef {
+            key: FeasibilityRuleSetKey::new(compilation.feasibility_rule_set_key())
+                .expect("the compiler mints a governed rule-set key"),
+            revision: compilation.feasibility_rule_set_revision(),
+        };
+
+        let environment = CompilationEnvironment::new(
+            plan.selected_capabilities()
+                .map(|selected| selected.provider().clone()),
+        )
+        .expect("the offered providers compose an environment");
+        let mut builder =
+            ArtifactProgramBuilder::new(semantic, environment).expect("a builder identity remains");
+        for selected in plan.selected_capabilities() {
+            builder
+                .select_provider(SelectedProvider {
+                    provider: selected.provider().clone(),
+                    capability: CapabilityKey::new(selected.capability_key())
+                        .expect("the compiler mints a governed capability key"),
+                    capability_api_version: u16::try_from(selected.capability_revision())
+                        .expect("the bounded profile's capability revision fits a u16"),
+                })
+                .expect("a selected provider was offered");
+        }
+
+        let abi = plan.abi();
+        let program = abi.kernel_program();
+
+        // One mapping per stage, keyed on the same canonical kernel identity the
+        // artifact's executable entry names, because the decoder proves the two
+        // tables correlate and a mapping keyed on anything else is refused as an
+        // unmapped backend entry.
+        let mut mappings: Vec<PayloadEntryMapping> = abi
+            .entries()
+            .zip(program.stages())
+            .enumerate()
+            .map(|(position, (entry, stage))| PayloadEntryMapping {
+                entry_key: BackendEntryKey::from_bytes(
+                    stage.kernel().canonical_identity().as_bytes(),
+                )
+                .expect("the packaged kernel identity fits a backend entry key"),
+                symbol: format!("tiler_probe_entry_{position}"),
+                transports: (0..u32::try_from(entry.accessible_bytes().len())
+                    .expect("a bounded binding count fits a u32"))
+                    .collect(),
+            })
+            .collect();
+        mappings.sort_by(|left, right| left.entry_key.cmp(&right.entry_key));
+
+        let payload = builder
+            .push_carried_payload(
+                BackendKey::new(BACKEND_KEY).expect("a governed backend key"),
+                RepresentationKey::new(REPRESENTATION_KEY).expect("a governed representation key"),
+                SchemaVersion::new(1, 0),
+                profile.clone(),
+                // The loader refuses anything a device-free path cannot deliver,
+                // so the fixture declares a native image for the accepted
+                // neighbour to exist at all.
+                ArtifactExecutionPolicy::NativeImage,
+                PayloadContent {
+                    metadata: PayloadMetadata {
+                        source_representation: RepresentationKey::new("tiler.probe.source")
+                            .expect("a governed representation key"),
+                        source: b"// the probe fixture compiles nothing".to_vec(),
+                        provenance: PayloadProvenance {
+                            toolchain: "tiler.probe.toolchain".to_owned(),
+                            target: "tiler-probe-target".to_owned(),
+                            family: "tiler.probe.family".to_owned(),
+                            language: "tiler.probe.language".to_owned(),
+                            deployment_major: 1,
+                            deployment_minor: 0,
+                            components: vec![ToolComponent {
+                                role: "compiler".to_owned(),
+                                version: "0".to_owned(),
+                            }],
+                            sdk: PayloadSdkIdentity {
+                                name: "tiler.probe.sdk".to_owned(),
+                                version: "0".to_owned(),
+                                build: "0".to_owned(),
+                            },
+                            compile_flags: Vec::new(),
+                            link_flags: Vec::new(),
+                        },
+                        entries: mappings,
+                        obligations: Vec::new(),
+                    },
+                    code: PROBE_OBJECT.to_vec(),
+                },
+            )
+            .expect("the synthetic payload is carried");
+
+        let minted = replay(&mut builder, abi.expressions(), &variant_roots(plan));
+        let resolve = |position: u32| {
+            minted[usize::try_from(position).expect("a bounded arena position fits a usize")]
+                .expect("every use site names a position the variant's own roots reach")
+        };
+
+        let entries: Vec<EntrySpec> = abi
+            .entries()
+            .zip(program.stages())
+            .map(|(entry, stage)| EntrySpec {
+                bindings: entry
+                    .accessible_bytes()
+                    .map(|position| BindingSpec {
+                        kind: BindingKind::Buffer,
+                        accessible_bytes: resolve(position),
+                    })
+                    .collect(),
+                launch: LaunchSpec {
+                    grid_threads: resolve(entry.grid_threads()),
+                    threads_per_workgroup: resolve(entry.threads_per_workgroup()),
+                    // Not a choice: `tiler_ir::schedule`'s intrinsic verifier
+                    // refuses a scheduled region whose launch plan does not skip a
+                    // zero-thread dispatch, so every verified region carries it.
+                    zero_work_skips_dispatch: true,
+                    preconditions: Vec::new(),
+                },
+                implementation: BackendEntryRef {
+                    payload,
+                    entry_key: BackendEntryKey::from_bytes(
+                        stage.kernel().canonical_identity().as_bytes(),
+                    )
+                    .expect("the packaged kernel identity fits a backend entry key"),
+                },
+            })
+            .collect();
+
+        builder
+            .push_variant(
+                program,
+                VariantSpec {
+                    applicability_guard: resolve(abi.applicability_guard()),
+                    target_profile: profile,
+                    feasibility_rules: rules,
+                    deferred_predicates: Vec::new(),
+                    entries,
+                },
+            )
+            .expect("the variant packages the plan it was built from");
+        builder.build().expect("the assembled artifact verifies")
+    }
+
+    /// Returns the arena positions one variant names directly.
+    fn variant_roots(plan: PlanAlternative<'_>) -> Vec<u32> {
+        let abi = plan.abi();
+        let mut roots = vec![abi.applicability_guard()];
+        for entry in abi.entries() {
+            roots.extend(entry.accessible_bytes());
+            roots.push(entry.grid_threads());
+            roots.push(entry.threads_per_workgroup());
+        }
+        roots
+    }
+
+    /// Transliterates the reachable sub-DAG of one arena onto the builder's own.
+    ///
+    /// Pruned to the variant's roots rather than replayed wholesale, because the
+    /// artifact layer refuses an arena node no use site reaches and the compiler's
+    /// canonical graph serves both plan alternatives, so one variant's use sites
+    /// reach a subset of it. Whether a wholesale replay would survive on any
+    /// particular graph is a question about that graph — the builder deduplicates
+    /// by content key, so it survives when every unreachable node repeats content
+    /// a reachable one carries — and this fixture does not depend on the answer.
+    ///
+    /// One forward pass suffices: operands precede the node naming them in the
+    /// compiler's arena, and the reachable set is operand-closed.
+    fn replay(
+        builder: &mut ArtifactProgramBuilder,
+        arena: &[ExprNode],
+        roots: &[u32],
+    ) -> Vec<Option<AbiExprId>> {
+        let reachable = reachable_from(arena, roots);
+        let mut minted: Vec<Option<AbiExprId>> = vec![None; arena.len()];
+        let resolve = |minted: &[Option<AbiExprId>], position: u32| {
+            minted[usize::try_from(position).expect("a bounded arena position fits a usize")]
+                .expect("an operand precedes the node naming it")
+        };
+        for (position, node) in arena.iter().enumerate() {
+            if !reachable[position] {
+                continue;
+            }
+            let id = match node {
+                ExprNode::Root(root) => builder.push_root(root.clone()),
+                ExprNode::Unary { op, operand } => {
+                    builder.push_unary(*op, resolve(&minted, *operand))
+                }
+                ExprNode::Binary { op, left, right } => {
+                    builder.push_binary(*op, resolve(&minted, *left), resolve(&minted, *right))
+                }
+                ExprNode::Select {
+                    condition,
+                    if_true,
+                    if_false,
+                } => builder.push_select(
+                    resolve(&minted, *condition),
+                    resolve(&minted, *if_true),
+                    resolve(&minted, *if_false),
+                ),
+            }
+            .expect("a well-typed compiler expression replays onto the artifact arena");
+            minted[position] = Some(id);
+        }
+        minted
+    }
+
+    /// Marks every arena position reachable from a set of use sites.
+    fn reachable_from(arena: &[ExprNode], roots: &[u32]) -> Vec<bool> {
+        let mut reached = vec![false; arena.len()];
+        let mut work: Vec<u32> = roots.to_vec();
+        while let Some(node) = work.pop() {
+            let at = usize::try_from(node).expect("a bounded arena position fits a usize");
+            if reached[at] {
+                continue;
+            }
+            reached[at] = true;
+            match &arena[at] {
+                ExprNode::Root(_) => {}
+                ExprNode::Unary { operand, .. } => work.push(*operand),
+                ExprNode::Binary { left, right, .. } => {
+                    work.push(*left);
+                    work.push(*right);
+                }
+                ExprNode::Select {
+                    condition,
+                    if_true,
+                    if_false,
+                } => {
+                    work.push(*condition);
+                    work.push(*if_true);
+                    work.push(*if_false);
+                }
+            }
+        }
+        reached
+    }
+
+    /// The accepted neighbour every refusal below is evidence against.
+    ///
+    /// Asserted first and separately because it is what the other cases borrow
+    /// their meaning from. A subject that never routed would refuse each
+    /// perturbation under some plausible class, and the suite would report a
+    /// fail-closed loader while measuring nothing at all.
+    #[test]
+    fn the_unperturbed_envelope_routes() {
+        let fixture = fixture();
+        let outcome =
+            probe_accepted_baseline(&fixture.subject()).expect("the assembled envelope routes");
+        // The geometry, not merely the fact of a route: it is evaluated from the
+        // artifact's own launch expression against the facts bound from the
+        // decoded interface, so one thread per reduced row is evidence that the
+        // preflight reached and answered that expression rather than stopping
+        // somewhere earlier with a `Preflight` that happens to exist.
+        assert!(
+            outcome.contains(&format!("{ROWS} thread(s)")),
+            "the reduction launches one thread per row: {outcome}",
+        );
+    }
+
+    /// A damaged section is an integrity failure, not a route miss.
+    #[test]
+    fn a_damaged_section_is_an_integrity_failure() {
+        let fixture = fixture();
+        let outcome = probe_damaged_section_content(&fixture.subject())
+            .expect("a flipped section byte is refused as an integrity failure");
+        assert!(
+            outcome.contains("artifact.integrity"),
+            "the refusal names the integrity class: {outcome}",
+        );
+    }
+
+    /// A flipped byte at an arbitrary offset is refused by the artifact layer.
+    ///
+    /// The exact class is deliberately not pinned here; see the probe for why.
+    #[test]
+    fn a_flipped_interior_byte_never_reaches_routing() {
+        let fixture = fixture();
+        let outcome = probe_damaged_interior_byte(&fixture.subject())
+            .expect("a flipped interior byte is refused by the artifact layer");
+        assert!(
+            outcome.contains("runtime.artifact"),
+            "the refusal is the artifact layer's own: {outcome}",
+        );
+    }
+
+    /// A truncated envelope is malformed, not damaged and not inapplicable.
+    #[test]
+    fn a_truncated_envelope_is_malformed() {
+        let fixture = fixture();
+        let outcome = probe_truncated_envelope(&fixture.subject())
+            .expect("a truncated envelope is refused as malformed");
+        assert!(
+            outcome.contains("artifact.malformed"),
+            "the refusal names the malformed class: {outcome}",
+        );
+    }
+
+    /// A valid artifact that is not the expected one is a program mismatch.
+    #[test]
+    fn a_foreign_expected_identity_is_a_program_mismatch() {
+        let fixture = fixture();
+        let outcome = probe_foreign_expected_identity(&fixture.subject())
+            .expect("a foreign expected identity is refused as a program mismatch");
+        assert!(
+            outcome.contains("runtime.program-mismatch"),
+            "the refusal names the program-mismatch class: {outcome}",
+        );
+    }
+
+    /// Another profile descriptor is an incompatible target on the variant.
+    #[test]
+    fn another_profile_descriptor_is_an_incompatible_target() {
+        let fixture = fixture();
+        let outcome = probe_other_profile_descriptor(&fixture.subject())
+            .expect("another profile descriptor is refused as an incompatible target");
+        assert!(
+            outcome.contains("runtime.incompatible-target"),
+            "the refusal names the incompatible-target class: {outcome}",
+        );
+        assert!(
+            outcome.contains("DescriptorMismatch"),
+            "the refusal separates a rebuild from a wrong artifact: {outcome}",
+        );
+    }
+
+    /// Another backend family is an unexecutable payload, not a profile problem.
+    #[test]
+    fn another_backend_family_is_an_unexecutable_payload() {
+        let fixture = fixture();
+        let outcome = probe_other_backend_family(&fixture.subject())
+            .expect("another backend family is refused as an unexecutable payload");
+        assert!(
+            outcome.contains("runtime.unexecutable-payload"),
+            "the refusal names the unexecutable-payload class: {outcome}",
+        );
     }
 }
