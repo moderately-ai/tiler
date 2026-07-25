@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0078-public-extension-seams
 title: Accept or reject ADR 0078, the public extension seam classification
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [draft-public-extension-seam-ownership-adr]
 related: []

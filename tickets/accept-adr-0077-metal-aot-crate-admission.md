@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0077-metal-aot-crate-admission
 title: Accept or reject ADR 0077, the tiler-metal-aot crate admission
-status: awaiting-decision
+status: in-progress
 priority: p1
 dependencies: [record-an-adr-for-the-metal-aot-crate-admission]
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: []
 paths: []
 tags: [decisions, governance, workspace]
+claimed_from: todo
+assignee: agent-dec3
+lease_expires_at: 1785005326
 ---
 **Only Tom closes this ticket.** No agent may set it `done`, and no agent may do its work. It is the graph node standing for a decision that has not been made, so that anything conditional on that decision is held out of the ready frontier by a dependency edge rather than by a worker noticing after being dispatched. Its permanent status is `awaiting-decision` — a `parked` category state that `tkt ready` excludes and that never satisfies a dependent.
 
