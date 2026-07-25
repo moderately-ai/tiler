@@ -7,7 +7,7 @@ topics: ["program-planning", "abi", "expressions", "rust"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "not-started"
+implementation_status: "implemented"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.architecture", "tiler.contract.ir", "tiler.contract.artifact-abi"]
 adopted_by: ["ADR-0068"]
@@ -19,10 +19,26 @@ ticket: "prototype-target-neutral-baseline-slice"
 **Status:** research complete; accepted by ADR 0068
 
 **Evidence boundary:** the dependency analysis below is primary-source
-synthesis. The current private compiler slice contains a compiler-local
-`HostExpr` precursor. It does not implement the accepted public
-`tiler-ir` `AbiExpr` ownership boundary, so this report records implementation
-as not started and claims no `executable-model` evidence.
+synthesis. It described a state in which the private compiler slice held a
+compiler-local `HostExpr` precursor and the accepted public `tiler-ir`
+`AbiExpr` ownership boundary was unimplemented.
+
+**Implemented 2026-07-25, in two steps.**
+`relocate-abi-expressions-into-tiler-ir` retired `HostExpr` and moved the
+domain type, roots, validation, canonical identity, and pure checked evaluator
+to `crates/tiler-ir/src/program/abi.rs`; `tiler_artifact::program::expr` is now
+a re-export of it. `complete-program-identity-with-abi-guards-and-routing` then
+moved the *uses* down as well: a `VerifiedKernelProgram` owns its own
+expression arena, applicability guard, per-stage launch geometry, and
+per-access accessible range, and folds each into `tiler.kernel-program.v2`
+identity. Binding live facts and enforcing the phase at which each could
+legally be queried stayed in `tiler_artifact::program::facts`, which is the
+half ADR 0068 assigns to that crate.
+
+The prediction this report made about the alternative — that keeping only
+opaque expression IDs in `KernelProgram` leaves the program non-self-contained
+— is therefore no longer a hypothetical about a rejected design; it is a
+description of the state the second step ended.
 
 ## Question
 

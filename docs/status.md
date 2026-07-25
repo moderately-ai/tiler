@@ -47,8 +47,12 @@ programs own one non-forgeable `SemanticIdentity` bundle with named accessors
 for graph meaning, definitions, admission provenance, and the registry snapshot;
 compiler requests and artifact-construction plans retain it atomically. Region occurrence,
 checked refinement,
-structural schedule/KIR, complete-plan, and artifact identities remain explicit
-obligations of their owning tickets rather than implemented support. The first
+structural schedule/KIR, and artifact identities remain explicit
+obligations of their owning tickets rather than implemented support. The
+complete-plan identity is implemented for the bounded profile:
+`tiler.kernel-program.v2` folds the semantic graph, bound implementations,
+coverage, materializations, buffers, the entry ABI, the applicability guard,
+and the routing-commit lifecycle. The first
 public static-extent `tiler_ir::index` builder/verifier is implemented, audited,
 and accepted. Its scalar-provider and authority boundary was explicitly
 reviewed at implementation commit `32e190f`; it uses generic typed scalar SSA,
@@ -56,8 +60,11 @@ canonical attributes, optional static fact views, complete semantic
 type-authority evidence, and a separate region-bound scalar-authority receipt.
 Semantic lowering equivalence remains a separate checked
 capability/refinement obligation. The private compiler proof still has
-graph-specific occurrence, normalization, fusion, scheduling, KIR, explain,
-and program structures; those are evidence fixtures, not the public compiler.
+graph-specific occurrence, normalization, fusion, scheduling, KIR, and explain
+structures; those are evidence fixtures, not the public compiler. Its program
+layer is no longer among them: it retains a verified `tiler_ir::program`
+product and the target profile it was assessed under, and owns no second copy
+of that program's ABI, guard, or routing contract.
 
 ## Authorized prototype
 

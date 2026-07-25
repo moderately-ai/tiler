@@ -4,8 +4,11 @@
 //! roots, validation, canonical identity, and pure checked evaluation belong to
 //! the executable-program IR; **binding runtime facts and enforcing the phase
 //! at which each could legally be queried belong to this crate**. This module
-//! is that half, and it stays here whichever way
-//! `complete-program-identity-with-abi-guards-and-routing` resolves.
+//! is that half, and it stayed here when
+//! `complete-program-identity-with-abi-guards-and-routing` moved the entry ABI,
+//! the applicability guard, and the routing-commit contract into
+//! `tiler_ir::program`: that move carried the *domain* half down and left this
+//! one where the ADR assigns it.
 //!
 //! A binder is monotonic in exactly one direction: it is opened at the phase
 //! preparation has actually reached, and it refuses any fact that could not

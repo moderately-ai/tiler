@@ -49,6 +49,10 @@ macro_rules! draft_handle {
 
 draft_handle!(StageId, "A builder-owned program stage.");
 draft_handle!(
+    AbiExprId,
+    "A builder-owned node of the program's ABI expression arena."
+);
+draft_handle!(
     MaterializedValueId,
     "A builder-owned materialized program value."
 );

@@ -515,31 +515,38 @@ mod tests {
         );
     }
 
-    /// The arena the fused variant names is a strict subset, and replaying the
-    /// whole of it is nonetheless safe *today* — for a reason worth pinning.
+    /// The arena a variant is handed names every one of its own nodes, so the
+    /// pruned and wholesale replays are the same artifact.
     ///
-    /// # A retraction, recorded rather than quietly fixed
+    /// # Two retractions, recorded rather than quietly fixed
     ///
     /// The prediction inherited from `carry-the-metal-payload-in-an-artifact-envelope`
     /// was that a wholesale replay fails whole-artifact verification with
     /// `ArtifactDiagnostic::UnusedExpression`, because the compiler's canonical
-    /// graph serves both alternatives and holds the materialized plan's stage-0
-    /// launch count, which the fused variant names nowhere. **The first half is
-    /// true and the conclusion is false.** `ArtifactProgramBuilder::push_node`
-    /// deduplicates by content key, and that unreachable node is
-    /// `UnsignedLiteral(input_elements)` — byte-for-byte the node the input
-    /// binding's byte range already multiplies. Replaying it returns the handle
-    /// already minted, so no unreferenced node ever enters the builder's arena.
+    /// graph served both alternatives and held the materialized plan's stage-0
+    /// launch count, which the fused variant named nowhere. **Both halves are
+    /// now false, and they stopped being true for different reasons.**
     ///
-    /// This case therefore asserts what is measurable rather than what was
-    /// predicted: the unreachable set is non-empty, every node in it duplicates
-    /// the content of a reachable one, and the two replays encode to the same
-    /// bytes. [`assemble`] still prunes, because the safety here is a property of
-    /// *this* nine-node graph rather than of the discipline — an arena holding a
-    /// node with unique content and no use site would fail, and pruning is what
-    /// makes the assembler independent of which of those it is handed.
+    /// The conclusion was already wrong before this ticket:
+    /// `ArtifactProgramBuilder::push_node` deduplicates by content key, and that
+    /// unreachable node was `UnsignedLiteral(input_elements)` — byte-for-byte
+    /// the node the input binding's byte range already multiplied. Replaying it
+    /// returned the handle already minted, so no unreferenced node ever entered
+    /// the builder's arena.
+    ///
+    /// The premise stopped being true with
+    /// `complete-program-identity-with-abi-guards-and-routing`. The arena is now
+    /// the *program's* rather than one canonical graph shared by both
+    /// alternatives, and `tiler_ir::program`'s verifier rejects an arena node no
+    /// use site reaches — because program identity folds each use site by
+    /// content key and would otherwise retain bytes it does not cover. So the
+    /// unreachable set is now provably empty rather than merely harmless.
+    ///
+    /// [`assemble`] still prunes. The reachability walk is what makes the
+    /// assembler independent of which arena it is handed, and this case pins
+    /// that it is currently a no-op rather than assuming it always will be.
     #[test]
-    fn the_pruned_and_wholesale_arena_replays_agree_because_the_builder_dedupes() {
+    fn the_pruned_and_wholesale_arena_replays_agree_because_a_program_names_its_whole_arena() {
         let compilations = compilations();
         let compilation = compilations.first().expect("one governed target");
         let selected = compilation.selected().expect("a selected alternative");
@@ -547,25 +554,10 @@ mod tests {
 
         let reached = reachable_from(arena, &variant_roots(selected.abi()))
             .expect("every root names a position in its own arena");
-        let unreachable: Vec<usize> = reached
-            .iter()
-            .enumerate()
-            .filter_map(|(position, hit)| (!*hit).then_some(position))
-            .collect();
         assert!(
-            !unreachable.is_empty(),
-            "the shared canonical graph holds a node this variant never names",
+            reached.iter().all(|hit| *hit),
+            "a verified kernel program names every node of its own ABI arena",
         );
-        for position in &unreachable {
-            assert!(
-                arena
-                    .iter()
-                    .enumerate()
-                    .any(|(other, node)| reached[other] && *node == arena[*position]),
-                "arena position {position} is unreachable and its content is unique, \
-                 so a wholesale replay would leave it unreferenced",
-            );
-        }
 
         let all: Vec<u32> =
             (0..u32::try_from(arena.len()).expect("a bounded arena fits u32")).collect();
@@ -583,11 +575,11 @@ mod tests {
             payload_for(selected),
             &all,
         )
-        .expect("content deduplication absorbs the unreachable node");
+        .expect("a wholesale replay of a fully reachable arena assembles");
         assert_eq!(
             pruned.encode().expect("the envelope encodes"),
             wholesale.encode().expect("the envelope encodes"),
-            "deduplication makes the two replays one artifact",
+            "pruning a fully reachable arena leaves one artifact",
         );
     }
 

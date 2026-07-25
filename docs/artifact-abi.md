@@ -21,9 +21,12 @@ The private compiler proof constructs provisional program portfolios and artifac
 ## Ownership boundary
 
 This document owns envelope framing, wire DTOs and encoding, compatibility,
-runtime fact binding, routing commit, digests, failure classification, and
-backend payload mappings. The IR contract owns program/portfolio meaning,
-canonical identity, ABI-expression semantics, and authoritative verification;
+runtime fact binding, the *execution* of the routing commit and a portfolio's
+variant priority, digests, failure classification, and backend payload
+mappings. The IR contract owns program/portfolio meaning, canonical identity,
+ABI-expression semantics, a program's applicability guard and entry ABI, the
+ordered routing-commit lifecycle each program declares, and authoritative
+verification;
 adapters own device-specific loading, binding, and execution. A decoder must
 reconstruct shared IR through its checked builders and cannot manufacture a
 verified value or retain a second editable authority. The implemented profile
@@ -314,10 +317,14 @@ evaluator.
 
 The domain type, admitted root vocabulary, validation, canonical identity, and
 authoritative pure checked evaluation semantics belong to the executable
-program IR in `tiler-ir`. This artifact contract owns their versioned wire
-encoding, runtime fact binding and phase checks, compatibility behavior, and
-failure classification; it must not recreate a second editable expression
-authority.
+program IR in `tiler-ir`, as do the program-level *uses* of that language: the
+applicability guard, each stage's launch geometry, and each access's accessible
+byte range, all folded into `tiler.kernel-program.v2` program identity. This
+artifact contract owns their versioned wire encoding, runtime fact binding and
+phase checks, compatibility behavior, and failure classification, plus the two
+use sites no single program can carry — a variant's launch preconditions and
+its deferred feasibility predicates. It must not recreate a second editable
+expression authority.
 
 ## Constraint, guard, and error outcomes
 

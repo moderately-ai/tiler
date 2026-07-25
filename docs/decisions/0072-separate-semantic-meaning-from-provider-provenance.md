@@ -89,7 +89,7 @@ semantic keys and descriptors -> semantic graph meaning
 registry providers -> admission and compilation-environment provenance
 region content + occurrence + index structure -> checked refinement
 index structure -> schedule structure -> structured kernel structure
-semantic graph + bound implementations + complete coverage -> kernel program
+semantic graph + bound implementations + complete coverage + buffers + ABI + guard + routing commit -> kernel program
 kernel program + selected provenance + target/toolchain/payload -> artifact
 artifact + live device/context/specialization -> runtime cache
 ```
@@ -118,8 +118,19 @@ artifact + live device/context/specialization -> runtime cache
   preserves a typed registry-error source;
   compiler requests and artifact-construction plans retain their non-forgeable
   four-subject bundle atomically. Region occurrence, semantic checked refinement,
-  schedule/KIR, complete-plan, and artifact identities remain obligations of
-  their owning implementation tickets.
+  schedule/KIR, and artifact identities remain obligations of their owning
+  implementation tickets.
+- The complete-program identity of this decision's list is implemented for the
+  bounded profile. `CanonicalKernelProgramIdentity` folds the semantic graph,
+  every stage's bound implementation, complete coverage, materializations,
+  buffers, the entry ABI, the applicability guard, and the routing-commit
+  lifecycle, under the domain tag `tiler.kernel-program.v2`. The tag was bumped
+  from `v1` by `complete-program-identity-with-abi-guards-and-routing` because
+  the last three subjects were previously invisible to it — a cache keyed on a
+  `v1` identity could not tell two programs apart by their guard. The
+  portfolio-level sense of "routing" is a different subject and is not folded
+  in: a variant's priority rank orders variants against each other, and one
+  program in isolation has no rank to carry.
 
 ## Alternatives considered
 

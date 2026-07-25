@@ -1,9 +1,24 @@
-//! Tests for the compiler-owned host, ABI, routing, and artifact layers.
+//! Tests for the compiler-owned target, budget, and artifact layers.
 //!
 //! The stage DAG, materialized values, views, allocations, lifetimes, typed
-//! dependencies, named outputs, and complete semantic coverage are verified by
-//! `tiler_ir::program` and tested there; a malformed one cannot be constructed
-//! here at all. These tests cover what this module still owns.
+//! dependencies, named outputs, complete semantic coverage, the ABI expression
+//! arena, the applicability guard, the entry ABI, and the routing-commit
+//! contract are all verified by `tiler_ir::program` and tested there; a
+//! malformed one cannot be constructed here at all. These tests cover what this
+//! module still owns.
+//!
+//! Several tests here used to forge a compiler-side copy of the ABI — a wrong
+//! accessible-byte node, a binding naming the wrong value, a routing step
+//! permitting fallback after commit — and assert that
+//! [`verify_kernel_program_layers`] caught it. Those copies no longer exist:
+//! the subjects moved into the opaque verified program, where the equivalent
+//! malformations are rejected at construction. Their successors are
+//! `tiler_ir::program::tests`'
+//! `an_accessible_range_the_declared_view_contradicts_is_rejected`,
+//! `a_workgroup_width_the_bound_kernel_contradicts_is_rejected`, and
+//! `a_routing_commit_step_that_breaks_the_lifecycle_is_rejected_at_insertion`.
+//! What remains forgeable at this layer — the target profile binding, and a
+//! program paired with the schedules of another strategy — is tested below.
 
 use super::*;
 
@@ -139,16 +154,42 @@ fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
     let covered: usize = core.stages().map(|stage| stage.coverage().len()).sum();
     assert_eq!(covered, semantic.operation_count());
 
+    // The cross-stage temporary is written by the first entry and read by the
+    // second, which is what makes it an intermediate rather than an interface
+    // component. The role now lives on the materialized value itself.
+    let stages: Vec<_> = core.stages().collect();
     assert_eq!(
-        program.entries[0].bindings[1].role,
-        ComponentRole::Intermediate
+        stages[0]
+            .accesses()
+            .nth(1)
+            .expect("write access")
+            .view()
+            .value(),
+        temporary
     );
     assert_eq!(
-        program.entries[1].bindings[0].role,
-        ComponentRole::Intermediate
+        stages[1]
+            .accesses()
+            .next()
+            .expect("read access")
+            .view()
+            .value(),
+        temporary
     );
-    assert!(!program.routing[1].fallback_permitted);
-    assert!(!program.routing[2].fallback_permitted);
+
+    // Fallback is admitted only before commit, over the whole lifecycle.
+    let routing = core.routing_commit_contract();
+    assert_eq!(routing.len(), 3);
+    assert!(routing[0].fallback_permitted);
+    assert!(!routing[1].fallback_permitted);
+    assert!(!routing[2].fallback_permitted);
+
+    // The guard is a declared node of the program's own arena, not a constant
+    // this layer assumes.
+    assert!(
+        usize::try_from(core.applicability_guard()).expect("host usize")
+            < core.abi_expressions().len()
+    );
     assert_eq!(artifact.entry_regions, [RegionId::new(0), RegionId::new(1)]);
     assert_eq!(
         artifact.numerical_realizations,
@@ -247,53 +288,7 @@ fn the_program_identity_is_the_shared_canonical_identity() {
 }
 
 #[test]
-fn compiler_layers_reject_abi_and_routing_failures() {
-    let (semantic, request, scheduled) = fixture();
-    let valid = build_kernel_program(&semantic, &request, &scheduled).unwrap();
-
-    let mut invalid_abi = valid.clone();
-    invalid_abi.entries[1].bindings[0].access = AbiAccess::Write;
-    assert_eq!(
-        verify_kernel_program_layers(&invalid_abi, &request, &scheduled),
-        Err(ProgramError::Abi {
-            rule: "binding",
-            stage: StageId(1),
-        })
-    );
-
-    let mut wrong_binding_value = valid.clone();
-    wrong_binding_value.entries[0].bindings[1].value = MaterializedValueId(2);
-    assert_eq!(
-        verify_kernel_program_layers(&wrong_binding_value, &request, &scheduled),
-        Err(ProgramError::Abi {
-            rule: "binding",
-            stage: StageId(0),
-        })
-    );
-
-    let mut extra_binding = valid.clone();
-    let duplicate = extra_binding.entries[0].bindings[0];
-    extra_binding.entries[0].bindings.push(duplicate);
-    assert_eq!(
-        verify_kernel_program_layers(&extra_binding, &request, &scheduled),
-        Err(ProgramError::Abi {
-            rule: "binding-cardinality",
-            stage: StageId(0),
-        })
-    );
-
-    let mut invalid_routing = valid;
-    invalid_routing.routing[1].fallback_permitted = true;
-    assert_eq!(
-        verify_kernel_program_layers(&invalid_routing, &request, &scheduled),
-        Err(ProgramError::Routing {
-            rule: "fallback-after-commit",
-        })
-    );
-}
-
-#[test]
-fn compiler_layers_recheck_the_target_and_the_host_expression_graph() {
+fn compiler_layers_recheck_the_target_and_the_planned_launch() {
     let (semantic, request, scheduled) = fixture();
     let valid = build_kernel_program(&semantic, &request, &scheduled).unwrap();
 
@@ -306,60 +301,50 @@ fn compiler_layers_recheck_the_target_and_the_host_expression_graph() {
         })
     );
 
-    let mut wrong_bytes = valid.clone();
-    wrong_bytes.host_expressions[2] = ExprNode::Root(AbiRoot::UnsignedLiteral(4));
+    // A program paired with fewer schedules than it has stages: the stage/region
+    // correspondence this layer verifies does not exist.
     assert_eq!(
-        verify_kernel_program_layers(&wrong_bytes, &request, &scheduled),
-        Err(ProgramError::HostExpression {
-            rule: "canonical-graph",
-            expression: HostExprId(0),
-        })
-    );
-
-    let mut wrong_launch = valid.clone();
-    wrong_launch.host_expressions[5] = ExprNode::Root(AbiRoot::UnsignedLiteral(5));
-    assert_eq!(
-        verify_kernel_program_layers(&wrong_launch, &request, &scheduled),
-        Err(ProgramError::HostExpression {
-            rule: "canonical-graph",
-            expression: HostExprId(0),
-        })
-    );
-
-    let mut missing_stage_entry = valid;
-    missing_stage_entry.entries.pop();
-    assert_eq!(
-        verify_kernel_program_layers(&missing_stage_entry, &request, &scheduled),
+        verify_kernel_program_layers(&valid, &request, &scheduled[..1]),
         Err(ProgramError::Structure {
             rule: "cardinality",
+        })
+    );
+
+    // The fused program's single stage launches over the *output* extent, so
+    // pairing it with the two-stage strategy's pointwise region — which is
+    // planned over the input extent — must be caught as a launch disagreement
+    // rather than accepted because both are individually verified.
+    let fused_region = build_fused_scheduled_region(&request).unwrap();
+    let fused = build_fused_kernel_program(&semantic, &request, &fused_region).unwrap();
+    assert_eq!(
+        verify_kernel_program_layers(&fused, &request, &scheduled[..1]),
+        Err(ProgramError::Abi {
+            rule: "launch-expression",
+            stage: StageId(0),
         })
     );
 }
 
 #[test]
 fn host_expression_overflow_is_a_hard_failure() {
-    let (semantic, request, scheduled) = fixture();
-    let mut program = build_kernel_program(&semantic, &request, &scheduled).unwrap();
-    program.host_expressions[0] = ExprNode::Root(AbiRoot::UnsignedLiteral(u64::MAX));
+    // The program's own arena cannot be forged, so the overflow is exercised on
+    // the shared evaluator this layer wraps: a checked multiply that leaves the
+    // 64-bit domain must be a typed failure at the exact node, never a wrapped
+    // byte count that a later binding would silently accept.
+    let overflowing = vec![
+        ExprNode::Root(AbiRoot::UnsignedLiteral(u64::MAX)),
+        ExprNode::Root(AbiRoot::UnsignedLiteral(2)),
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedMultiply,
+            left: 0,
+            right: 1,
+        },
+    ];
     assert_eq!(
-        evaluate_expressions(&program.host_expressions),
+        evaluate_expressions(&overflowing),
         Err(ProgramError::HostExpression {
             rule: "overflow",
             expression: HostExprId(2),
-        })
-    );
-
-    let mut malformed = build_kernel_program(&semantic, &request, &scheduled).unwrap();
-    malformed.host_expressions[2] = ExprNode::Binary {
-        op: AbiBinaryOp::CheckedMultiply,
-        left: 99,
-        right: 1,
-    };
-    assert_eq!(
-        verify_kernel_program_layers(&malformed, &request, &scheduled),
-        Err(ProgramError::HostExpression {
-            rule: "canonical-graph",
-            expression: HostExprId(0),
         })
     );
 }
@@ -450,7 +435,7 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
     )
     .unwrap();
     let mut forged = plan.clone();
-    forged.routing_guard = HostExprId(6);
+    forged.applicability_guard = forged.applicability_guard.wrapping_add(1);
     assert_eq!(
         verify_artifact_plan(
             &forged,

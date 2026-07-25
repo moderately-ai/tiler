@@ -44,16 +44,26 @@
 //! in. A provider that was available and never used cannot invalidate an
 //! otherwise identical artifact; a provider that was reached always can.
 //!
-//! # A live contract divergence this module works inside
+//! # What this layer declares that the program already states
 //!
 //! ADR 0068 and ADR 0070 place `AbiExpr` in `tiler_ir::program`, and ADR 0072
 //! says complete program identity covers buffers, ABI, guards, and routing.
-//! `tiler_ir::program` as merged covers none of ABI, guards, or routing:
-//! `prototype-kernel-program-ir` scoped them here. That divergence is real, is
-//! owned by the ticket `complete-program-identity-with-abi-guards-and-routing`,
-//! and is not resolved here. The expression domain is written so it can move
-//! wholesale; its own module documentation states exactly which half would move
-//! and which stays.
+//! `complete-program-identity-with-abi-guards-and-routing` moved the entry ABI,
+//! the applicability guard, and the routing-commit lifecycle down: a
+//! [`tiler_ir::program::VerifiedKernelProgram`] now carries its own expression
+//! arena, guard, per-stage launch, and per-access accessible range, and folds
+//! each into `tiler.kernel-program.v2` identity.
+//!
+//! This crate still declares its own [`VariantSpec`](crate::program::VariantSpec)
+//! ABI on its own arena,
+//! under the separately versioned `guard_and_routing` schema, and validates it
+//! against the same program facts. The two are not yet bound to each other:
+//! nothing checks that a variant's accessible-byte *expression* is the one the
+//! program states, only that both agree with the program's declared shapes. The
+//! ticket `bind-the-artifact-variant-abi-to-the-program-abi` owns closing that,
+//! and the reason it is separate is that the artifact layer additionally owns
+//! launch preconditions, deferred predicates, and a portfolio's variant
+//! priority — none of which a single target-neutral program can carry.
 //!
 //! ```
 //! use tiler_artifact::program::{
@@ -67,8 +77,8 @@
 //! use tiler_ir::kernel::{KernelType, lower_scheduled_region};
 //! use tiler_ir::program::{
 //!     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
-//!     MaterializedValueSpec, MemorySpace, SemanticOccurrence, StageAccess, StageAccessMode,
-//!     ValueRole,
+//!     MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
+//!     SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, ValueRole,
 //! };
 //! use tiler_ir::schedule::{
 //!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
@@ -205,15 +215,31 @@
 //! # )?;
 //! # let read = plan.push_whole_view(source)?;
 //! # let write = plan.push_whole_view(result)?;
+//! # let read_bytes = plan.push_abi_root(AbiRoot::UnsignedLiteral(24))?;
+//! # let write_bytes = plan.push_abi_root(AbiRoot::UnsignedLiteral(8))?;
+//! # let grid_threads = plan.push_abi_root(AbiRoot::UnsignedLiteral(2))?;
+//! # let threads_per_workgroup = plan.push_abi_root(AbiRoot::UnsignedLiteral(1))?;
+//! # let program_guard = plan.push_abi_root(AbiRoot::BooleanLiteral(true))?;
+//! # plan.applicability_guard(program_guard)?;
 //! # plan.push_stage(
 //! #     &kernel,
 //! #     &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
 //! #     &[
-//! #         StageAccess { view: read, mode: StageAccessMode::Read },
-//! #         StageAccess { view: write, mode: StageAccessMode::Write },
+//! #         StageAccess { view: read, mode: StageAccessMode::Read, accessible_bytes: read_bytes },
+//! #         StageAccess { view: write, mode: StageAccessMode::Write, accessible_bytes: write_bytes },
 //! #     ],
+//! #     StageLaunch { grid_threads, threads_per_workgroup },
 //! # )?;
 //! # plan.push_output(OutputKey::new("result")?, result)?;
+//! # for (from, to, fallback_permitted) in [
+//! #     (RoutingCommitState::Preflight, RoutingCommitState::Committed, true),
+//! #     (RoutingCommitState::Committed, RoutingCommitState::Executing, false),
+//! #     (RoutingCommitState::Executing, RoutingCommitState::Published, false),
+//! # ] {
+//! #     plan.push_routing_commit_transition(
+//! #         RoutingCommitTransition { from, to, fallback_permitted },
+//! #     )?;
+//! # }
 //! # let program = plan.build()?;
 //! // Package that verified program as a one-variant artifact portfolio.
 //! let provider = ProviderIdentity::new("tiler", "fused-serial-sum", 1)?;

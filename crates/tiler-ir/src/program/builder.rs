@@ -18,25 +18,33 @@
 use crate::kernel::{BufferAccess, VerifiedKernel};
 use crate::schedule::element_count;
 use crate::semantic::{InputKey, OutputKey, SemanticGraphIdentity, SemanticProgram};
-use crate::shape::Shape;
+use crate::shape::{Axis, Shape};
 
+use super::abi::{
+    AbiBinaryOp, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue, AvailabilityPhase, ExprNode,
+    binary_operand_type, evaluate, expr_key, node_is_interface_only, node_phase, node_type,
+    unary_operand_type,
+};
 use super::error::{
-    KernelProgramBuildError, KernelProgramVerificationError, ProgramEntityKind, ProgramLimitKind,
-    invalid_handle,
+    KernelProgramBuildError, KernelProgramVerificationError, ProgramAbiUse, ProgramEntityKind,
+    ProgramLimitKind, invalid_handle,
 };
 use super::handles::{
-    AllocationId, MaterializedValueId, ProgramBuilderId, StageId, ViewId, next_program_builder_id,
+    AbiExprId, AllocationId, MaterializedValueId, ProgramBuilderId, StageId, ViewId,
+    next_program_builder_id,
 };
 use super::model::{
     AllocationData, AllocationOwnership, AllocationSpec, ByteWindow, DependencyData,
     DependencyReasonData, KernelProgramData, MaterializedOrigin, MaterializedValueData,
-    MaterializedValueSpec, ProgramOutputData, SemanticOccurrence, StageAccess, StageAccessData,
-    StageAccessMode, StageData, ValueRole, VerifiedKernelProgram, ViewData, element_bytes,
-    encode_identity,
+    MaterializedValueSpec, ProgramOutputData, ROUTING_COMMIT_TRANSITIONS, RoutingCommitState,
+    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessData, StageAccessMode,
+    StageData, StageLaunch, StageLaunchData, ValueRole, VerifiedKernelProgram, ViewData,
+    element_bytes, encode_identity,
 };
 use super::{
-    MAX_PROGRAM_ALLOCATIONS, MAX_PROGRAM_DEPENDENCIES, MAX_PROGRAM_OUTPUTS, MAX_PROGRAM_STAGES,
-    MAX_PROGRAM_VALUES, MAX_PROGRAM_VIEWS, MAX_STAGE_ACCESSES, MAX_STAGE_COVERAGE,
+    MAX_PROGRAM_ABI_EXPRESSIONS, MAX_PROGRAM_ALLOCATIONS, MAX_PROGRAM_DEPENDENCIES,
+    MAX_PROGRAM_OUTPUTS, MAX_PROGRAM_STAGES, MAX_PROGRAM_VALUES, MAX_PROGRAM_VIEWS,
+    MAX_STAGE_ACCESSES, MAX_STAGE_COVERAGE,
 };
 
 /// The unforgeable semantic subject one kernel program must completely realize.
@@ -61,6 +69,13 @@ pub struct KernelProgramBuilder {
     outputs: Vec<ProgramOutputData>,
     covered: Vec<SemanticOccurrence>,
     claimed_inputs: Vec<InputKey>,
+    expressions: Vec<ExprNode>,
+    expression_keys: Vec<Vec<u8>>,
+    expression_types: Vec<AbiType>,
+    expression_phases: Vec<AvailabilityPhase>,
+    expression_interface_only: Vec<bool>,
+    applicability_guard: Option<u32>,
+    routing_commit: Vec<RoutingCommitTransition>,
 }
 
 impl KernelProgramBuilder {
@@ -100,7 +115,172 @@ impl KernelProgramBuilder {
             outputs: Vec::new(),
             covered: Vec::new(),
             claimed_inputs: Vec::new(),
+            expressions: Vec::new(),
+            expression_keys: Vec::new(),
+            expression_types: Vec::new(),
+            expression_phases: Vec::new(),
+            expression_interface_only: Vec::new(),
+            applicability_guard: None,
+            routing_commit: Vec::new(),
         })
+    }
+
+    /// Declares one typed root fact of the program's ABI expression arena.
+    ///
+    /// The arena is canonically deduplicated by content key: an identical
+    /// expression returns the handle already minted for it, so the arena is a
+    /// function of what the program says rather than of how often a producer
+    /// rebuilt the same formula.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structural-limit error.
+    pub fn push_abi_root(&mut self, root: AbiRoot) -> Result<AbiExprId, KernelProgramBuildError> {
+        self.push_abi_node(ExprNode::Root(root))
+    }
+
+    /// Declares one checked unary operation over an existing ABI expression.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle error,
+    /// [`KernelProgramBuildError::AbiOperandType`] for a mistyped operand, or a
+    /// structural-limit error.
+    pub fn push_abi_unary(
+        &mut self,
+        op: AbiUnaryOp,
+        operand: AbiExprId,
+    ) -> Result<AbiExprId, KernelProgramBuildError> {
+        let operand = self.resolve_expression(operand)?;
+        self.expect_abi_type(operand, unary_operand_type(op))?;
+        self.push_abi_node(ExprNode::Unary { op, operand })
+    }
+
+    /// Declares one checked binary operation over two existing ABI expressions.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle error,
+    /// [`KernelProgramBuildError::AbiOperandType`] for a mistyped operand, or a
+    /// structural-limit error.
+    pub fn push_abi_binary(
+        &mut self,
+        op: AbiBinaryOp,
+        left: AbiExprId,
+        right: AbiExprId,
+    ) -> Result<AbiExprId, KernelProgramBuildError> {
+        let left = self.resolve_expression(left)?;
+        let right = self.resolve_expression(right)?;
+        self.expect_abi_type(left, binary_operand_type(op))?;
+        self.expect_abi_type(right, binary_operand_type(op))?;
+        self.push_abi_node(ExprNode::Binary { op, left, right })
+    }
+
+    /// Declares one conditional selection between two equally typed branches.
+    ///
+    /// Only the selected branch is evaluated, so a branch that would fail on a
+    /// zero-sized bound is legal behind a guarding condition.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle error,
+    /// [`KernelProgramBuildError::AbiOperandType`] for a non-predicate
+    /// condition, [`KernelProgramBuildError::AbiSelectBranchType`] for
+    /// disagreeing branches, or a structural-limit error.
+    pub fn push_abi_select(
+        &mut self,
+        condition: AbiExprId,
+        if_true: AbiExprId,
+        if_false: AbiExprId,
+    ) -> Result<AbiExprId, KernelProgramBuildError> {
+        let condition = self.resolve_expression(condition)?;
+        let if_true = self.resolve_expression(if_true)?;
+        let if_false = self.resolve_expression(if_false)?;
+        self.expect_abi_type(condition, AbiType::Boolean)?;
+        let (left, right) = (
+            self.expression_types[as_position(if_true)],
+            self.expression_types[as_position(if_false)],
+        );
+        if left != right {
+            return Err(KernelProgramBuildError::AbiSelectBranchType {
+                if_true: left,
+                if_false: right,
+            });
+        }
+        self.push_abi_node(ExprNode::Select {
+            condition,
+            if_true,
+            if_false,
+        })
+    }
+
+    /// Declares the guard deciding whether this program may be routed to.
+    ///
+    /// The guard is a predicate over facts available no later than live-device
+    /// preflight, because routing commit happens after every phase in that
+    /// order: a guard that could only be read afterwards could not decide
+    /// anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle error,
+    /// [`KernelProgramBuildError::DuplicateApplicabilityGuard`],
+    /// [`KernelProgramBuildError::AbiUseType`], or
+    /// [`KernelProgramBuildError::AbiRootPhaseEscape`].
+    pub fn applicability_guard(&mut self, guard: AbiExprId) -> Result<(), KernelProgramBuildError> {
+        if self.applicability_guard.is_some() {
+            return Err(KernelProgramBuildError::DuplicateApplicabilityGuard);
+        }
+        let node = self.check_abi_use(
+            guard,
+            ProgramAbiUse::ApplicabilityGuard,
+            AbiType::Boolean,
+            false,
+        )?;
+        self.applicability_guard = Some(node);
+        Ok(())
+    }
+
+    /// Declares the next step of the program's routing-commit lifecycle.
+    ///
+    /// Steps are declared in lifecycle order from
+    /// [`RoutingCommitState::Preflight`]. A step is admitted only when it
+    /// leaves the state the previous one reached, and only the step leaving
+    /// `Preflight` may permit fallback — after commit the program owns work a
+    /// fallback would have to undo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelProgramBuildError::RoutingCommitOutOfOrder`],
+    /// [`KernelProgramBuildError::RoutingCommitFallbackAfterCommit`], or a
+    /// structural-limit error.
+    pub fn push_routing_commit_transition(
+        &mut self,
+        transition: RoutingCommitTransition,
+    ) -> Result<(), KernelProgramBuildError> {
+        limit(
+            self.routing_commit.len().saturating_add(1),
+            ROUTING_COMMIT_TRANSITIONS,
+            ProgramLimitKind::RoutingCommitTransitions,
+        )?;
+        let expected_from = self
+            .routing_commit
+            .last()
+            .map_or(RoutingCommitState::Preflight, |previous| previous.to);
+        let expected_to = expected_from.next();
+        if transition.from != expected_from || Some(transition.to) != expected_to {
+            return Err(KernelProgramBuildError::RoutingCommitOutOfOrder {
+                expected: expected_from,
+                actual: transition.from,
+            });
+        }
+        if transition.fallback_permitted && transition.from != RoutingCommitState::Preflight {
+            return Err(KernelProgramBuildError::RoutingCommitFallbackAfterCommit {
+                from: transition.from,
+            });
+        }
+        self.routing_commit.push(transition);
+        Ok(())
     }
 
     /// Declares one program storage allocation.
@@ -281,23 +461,30 @@ impl KernelProgramBuilder {
     ///
     /// The stage's accesses realize the kernel's buffer parameters in order:
     /// each access must match its buffer's access mode, tensor role, element
-    /// type, and addressed element count. The covered occurrences are the exact
-    /// operations of the bound semantic program this stage implements.
+    /// type, and addressed element count, and must state an ABI expression
+    /// computing exactly the byte count its own view addresses. The launch
+    /// geometry must likewise state a workgroup width the bound kernel
+    /// requires. The covered occurrences are the exact operations of the bound
+    /// semantic program this stage implements.
     ///
     /// # Errors
     ///
     /// Returns a handle error, a coverage range or disjointness violation, a
-    /// stage/kernel signature disagreement, or a structural-limit error.
+    /// stage/kernel signature disagreement, an ABI use-site type, phase,
+    /// interface-root, evaluation, accessible-range, or workgroup-width
+    /// rejection, or a structural-limit error.
     pub fn push_stage(
         &mut self,
         kernel: &VerifiedKernel,
         coverage: &[SemanticOccurrence],
         accesses: &[StageAccess],
+        launch: StageLaunch,
     ) -> Result<StageId, KernelProgramBuildError> {
         // Handle ownership and signature agreement are checked before coverage
         // so a forged or foreign handle names itself rather than being masked
         // by whichever occurrence the caller happened to claim.
         let accesses = self.check_stage_accesses(kernel, accesses)?;
+        let launch = self.check_stage_launch(kernel, launch)?;
         let coverage = self.check_coverage(coverage)?;
         limit(
             self.stages.len().saturating_add(1),
@@ -316,6 +503,7 @@ impl KernelProgramBuilder {
             kernel: kernel.clone(),
             coverage,
             accesses,
+            launch,
         });
         Ok(id)
     }
@@ -445,7 +633,133 @@ impl KernelProgramBuilder {
             allocations: self.allocations.clone(),
             dependencies: self.dependencies.clone(),
             outputs: self.outputs.clone(),
+            abi_expressions: self.expressions.clone(),
+            applicability_guard: self.applicability_guard,
+            routing_commit: self.routing_commit.clone(),
         }
+    }
+
+    /// Interns one ABI arena node, returning the handle of an equal earlier one.
+    fn push_abi_node(&mut self, node: ExprNode) -> Result<AbiExprId, KernelProgramBuildError> {
+        let key = expr_key(&node, &self.expression_keys);
+        if let Some(existing) = self.expression_keys.iter().position(|held| *held == key) {
+            return AbiExprId::from_len(self.owner, existing).ok_or(
+                KernelProgramBuildError::StructuralLimit {
+                    resource: ProgramLimitKind::AbiExpressions,
+                    actual: existing,
+                    limit: MAX_PROGRAM_ABI_EXPRESSIONS,
+                },
+            );
+        }
+        limit(
+            self.expressions.len().saturating_add(1),
+            MAX_PROGRAM_ABI_EXPRESSIONS,
+            ProgramLimitKind::AbiExpressions,
+        )?;
+        let id = AbiExprId::from_len(self.owner, self.expressions.len()).ok_or(
+            KernelProgramBuildError::StructuralLimit {
+                resource: ProgramLimitKind::AbiExpressions,
+                actual: self.expressions.len().saturating_add(1),
+                limit: MAX_PROGRAM_ABI_EXPRESSIONS,
+            },
+        )?;
+        self.expression_types
+            .push(node_type(&node, &self.expression_types));
+        self.expression_phases
+            .push(node_phase(&node, &self.expression_phases));
+        self.expression_interface_only.push(node_is_interface_only(
+            &node,
+            &self.expression_interface_only,
+        ));
+        self.expression_keys.push(key);
+        self.expressions.push(node);
+        Ok(id)
+    }
+
+    fn expect_abi_type(&self, node: u32, expected: AbiType) -> Result<(), KernelProgramBuildError> {
+        let actual = self.expression_types[as_position(node)];
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(KernelProgramBuildError::AbiOperandType { expected, actual })
+        }
+    }
+
+    /// Resolves one expression handle against a declared program use site.
+    ///
+    /// Every program use site admits roots through
+    /// [`AvailabilityPhase::LiveDevicePreflight`], the last phase before
+    /// routing commit. `interface_only` additionally forbids target and device
+    /// properties, so an accessible range or a launch geometry can be computed
+    /// from the bound interface before any device-dependent query.
+    fn check_abi_use(
+        &self,
+        id: AbiExprId,
+        use_site: ProgramAbiUse,
+        expected: AbiType,
+        interface_only: bool,
+    ) -> Result<u32, KernelProgramBuildError> {
+        let node = self.resolve_expression(id)?;
+        let actual = self.expression_types[as_position(node)];
+        if actual != expected {
+            return Err(KernelProgramBuildError::AbiUseType {
+                use_site,
+                expected,
+                actual,
+            });
+        }
+        let available_at = self.expression_phases[as_position(node)];
+        if available_at > AvailabilityPhase::LiveDevicePreflight {
+            return Err(KernelProgramBuildError::AbiRootPhaseEscape {
+                use_site,
+                available_at,
+                admitted_through: AvailabilityPhase::LiveDevicePreflight,
+            });
+        }
+        if interface_only && !self.expression_interface_only[as_position(node)] {
+            return Err(KernelProgramBuildError::AbiNonInterfaceRoot { use_site });
+        }
+        Ok(node)
+    }
+
+    /// Evaluates one interface-only expression against the program's own shapes.
+    ///
+    /// This is a compile-time consistency check, not a runtime evaluation. The
+    /// facts are the bound semantic program's declared input extents, which the
+    /// static-shape profile already knows, so a producer cannot declare an
+    /// accessible range or a launch geometry that its own program contradicts.
+    /// The phase the environment claims is `LiveDevicePreflight` because that
+    /// is the phase at which an `InputExtent` root becomes readable in general;
+    /// here the same values happen to be known earlier.
+    fn evaluate_static_abi(
+        &self,
+        node: u32,
+        use_site: ProgramAbiUse,
+    ) -> Result<u64, KernelProgramBuildError> {
+        match evaluate(&self.expressions, node, &self.static_facts()) {
+            Ok(AbiValue::Unsigned(value)) => Ok(value),
+            // Unreachable through the use sites that call this, each of which
+            // has already required `AbiType::Unsigned`; reported rather than
+            // asserted so a future unsigned-typed use site cannot reach a panic.
+            Ok(AbiValue::Boolean(_)) => Err(KernelProgramBuildError::AbiUseType {
+                use_site,
+                expected: AbiType::Unsigned,
+                actual: AbiType::Boolean,
+            }),
+            Err(cause) => Err(KernelProgramBuildError::AbiStaticEvaluation { use_site, cause }),
+        }
+    }
+
+    /// Binds the bound semantic program's declared input extents as ABI facts.
+    fn static_facts(&self) -> AbiFacts {
+        let mut extents = Vec::new();
+        for (key, shape) in &self.subject.inputs {
+            for (axis, extent) in shape.extents().iter().enumerate() {
+                let axis = u32::try_from(axis).expect("a governed shape rank fits u32");
+                extents.push((key.clone(), Axis::new(axis), extent.get()));
+            }
+        }
+        AbiFacts::new(AvailabilityPhase::LiveDevicePreflight, extents, Vec::new())
     }
 
     fn push_dependency(
@@ -595,12 +909,69 @@ impl KernelProgramBuilder {
                     actual: view.window.length / element_bytes(value.element_type),
                 });
             }
+            let accessible_bytes = self.check_abi_use(
+                access.accessible_bytes,
+                ProgramAbiUse::AccessibleBytes,
+                AbiType::Unsigned,
+                true,
+            )?;
+            let computed =
+                self.evaluate_static_abi(accessible_bytes, ProgramAbiUse::AccessibleBytes)?;
+            if computed != view.window.length {
+                return Err(KernelProgramBuildError::AccessibleBytesDisagreement {
+                    position,
+                    expected: view.window.length,
+                    actual: computed,
+                });
+            }
             resolved.push(StageAccessData {
                 view: access.view.index,
                 mode: access.mode,
+                accessible_bytes,
             });
         }
         Ok(resolved)
+    }
+
+    /// Proves one stage's declared launch geometry realizes its bound kernel.
+    ///
+    /// Only the workgroup width has a kernel-side counterpart to check against:
+    /// a verified kernel states the width its body requires in its resource
+    /// requirements, while the grid extent is a property of the launch and not
+    /// of the kernel. So the width is proven equal and the grid extent is
+    /// proven well-typed, phase-legal, interface-only, and evaluable — never
+    /// approximated against a number the kernel does not carry.
+    fn check_stage_launch(
+        &self,
+        kernel: &VerifiedKernel,
+        launch: StageLaunch,
+    ) -> Result<StageLaunchData, KernelProgramBuildError> {
+        let grid_threads = self.check_abi_use(
+            launch.grid_threads,
+            ProgramAbiUse::GridThreads,
+            AbiType::Unsigned,
+            true,
+        )?;
+        self.evaluate_static_abi(grid_threads, ProgramAbiUse::GridThreads)?;
+        let threads_per_workgroup = self.check_abi_use(
+            launch.threads_per_workgroup,
+            ProgramAbiUse::ThreadsPerWorkgroup,
+            AbiType::Unsigned,
+            true,
+        )?;
+        let declared =
+            self.evaluate_static_abi(threads_per_workgroup, ProgramAbiUse::ThreadsPerWorkgroup)?;
+        let required = u64::from(kernel.requirements().threads_per_workgroup);
+        if declared != required {
+            return Err(KernelProgramBuildError::ThreadsPerWorkgroupDisagreement {
+                expected: required,
+                actual: declared,
+            });
+        }
+        Ok(StageLaunchData {
+            grid_threads,
+            threads_per_workgroup,
+        })
     }
 
     /// Returns the value a declared view addresses.
@@ -643,6 +1014,16 @@ impl KernelProgramBuilder {
             .get(id.as_usize())
             .copied()
             .ok_or_else(|| invalid_handle(ProgramEntityKind::View, false))
+    }
+
+    fn resolve_expression(&self, id: AbiExprId) -> Result<u32, KernelProgramBuildError> {
+        if id.owner != self.owner {
+            return Err(invalid_handle(ProgramEntityKind::AbiExpression, true));
+        }
+        if id.as_usize() >= self.expressions.len() {
+            return Err(invalid_handle(ProgramEntityKind::AbiExpression, false));
+        }
+        Ok(id.index)
     }
 
     fn resolve_allocation(
@@ -688,6 +1069,11 @@ fn interface_output_shapes(semantic: &SemanticProgram) -> Vec<(OutputKey, Shape)
             (output.key().clone(), shape)
         })
         .collect()
+}
+
+/// Converts a checked arena ordinal into a host index.
+fn as_position(index: u32) -> usize {
+    usize::try_from(index).expect("u32 fits every supported host usize")
 }
 
 fn check_alignment(alignment: u32) -> Result<(), KernelProgramBuildError> {

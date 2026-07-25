@@ -13,6 +13,8 @@
 //! [`VerifiedKernelProgram`]. The verified wrapper exposes read-only meaning
 //! and never mutation, thawing, or unchecked construction.
 
+use std::fmt;
+
 use crate::identity::{push_len, push_slice};
 use crate::kernel::{KernelType, VerifiedKernel};
 use crate::schedule::TensorRole;
@@ -20,8 +22,9 @@ use crate::semantic::{InputKey, OutputKey, SemanticGraphIdentity};
 use crate::shape::Shape;
 
 use super::MAX_PROGRAM_IDENTITY_BYTES;
+use super::abi::{ExprNode, expr_key};
 use super::error::KernelProgramDiagnostic;
-use super::handles::ViewId;
+use super::handles::{AbiExprId, ViewId};
 
 /// Converts a stored compact arena ordinal into a host index.
 ///
@@ -172,14 +175,110 @@ pub struct ByteWindow {
     pub length: u64,
 }
 
-/// One stage access: the view it addresses and whether it reads or writes.
+/// One stage access: the view it addresses, whether it reads or writes, and the
+/// ABI expression computing the byte count the entry may address through it.
+///
+/// The accessible range travels with the access rather than beside it: a
+/// consumer that binds a buffer needs the range for exactly the access it is
+/// binding, and a parallel list would let the two drift apart.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct StageAccess {
     /// View the stage addresses.
     pub view: ViewId,
     /// Whether the stage reads or writes through it.
     pub mode: StageAccessMode,
+    /// ABI expression computing the addressable byte count of this access.
+    pub accessible_bytes: AbiExprId,
 }
+
+/// The launch geometry one program stage's entry declares.
+///
+/// Both are ABI expressions rather than resolved numbers because a program
+/// whose extents are not yet known must still state how its launch is computed;
+/// the bounded static-shape profile simply resolves them at compile time.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct StageLaunch {
+    /// ABI expression computing the total launch thread count.
+    pub grid_threads: AbiExprId,
+    /// ABI expression computing the per-workgroup thread count.
+    pub threads_per_workgroup: AbiExprId,
+}
+
+/// One ordered state of a program's routing-commit lifecycle.
+///
+/// This is the per-program contract ADR 0072 lists beside ABI and guards, and
+/// the one `AGENTS.md` states as "preflight before routing commit, fallback
+/// only before program work". It is **not**
+/// `tiler_artifact::program::RoutingPolicy`, which orders the variants of a
+/// portfolio against each other: a rank is a relation among variants, and one
+/// program in isolation has no rank to carry. The two concepts share the word
+/// "routing" and nothing else.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RoutingCommitState {
+    /// Applicability and feasibility are still being decided; no work is owned.
+    Preflight,
+    /// This program is the committed choice; alternatives are no longer live.
+    Committed,
+    /// The program's work has been submitted to a device.
+    Executing,
+    /// The program's results have been published to the caller.
+    Published,
+}
+
+impl RoutingCommitState {
+    /// Returns the governed wire tag of this variant.
+    ///
+    /// Written by an exhaustive match rather than read from the discriminant,
+    /// so inserting or reordering a variant is a build error here instead of a
+    /// silent re-encoding of every program identity ever produced (ADR 0074
+    /// convention 3).
+    #[must_use]
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Preflight => 0x01,
+            Self::Committed => 0x02,
+            Self::Executing => 0x03,
+            Self::Published => 0x04,
+        }
+    }
+
+    /// Returns the state this one advances to, or `None` for the final state.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self {
+            Self::Preflight => Some(Self::Committed),
+            Self::Committed => Some(Self::Executing),
+            Self::Executing => Some(Self::Published),
+            Self::Published => None,
+        }
+    }
+}
+
+impl fmt::Display for RoutingCommitState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+/// One declared step of a program's routing-commit lifecycle.
+///
+/// A program declares the whole ordered chain and, for each step, whether
+/// falling back to another program is still permitted while taking it. The
+/// verifier proves the chain is complete and that only the step leaving
+/// [`RoutingCommitState::Preflight`] may permit fallback, so a producer states
+/// its own fallback intent and cannot state an unsound one.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RoutingCommitTransition {
+    /// State the step leaves.
+    pub from: RoutingCommitState,
+    /// State the step reaches.
+    pub to: RoutingCommitState,
+    /// Whether abandoning this program for another is permitted at this step.
+    pub fallback_permitted: bool,
+}
+
+/// The complete ordered routing-commit lifecycle every program must span.
+pub(super) const ROUTING_COMMIT_TRANSITIONS: usize = 3;
 
 /// The declared facts of one materialized program value.
 ///
@@ -230,6 +329,7 @@ pub(super) struct StageData {
     /// Covered occurrences in ascending order.
     pub(super) coverage: Vec<SemanticOccurrence>,
     pub(super) accesses: Vec<StageAccessData>,
+    pub(super) launch: StageLaunchData,
 }
 
 /// Storage for one stage access.
@@ -237,6 +337,14 @@ pub(super) struct StageData {
 pub(super) struct StageAccessData {
     pub(super) view: u32,
     pub(super) mode: StageAccessMode,
+    pub(super) accessible_bytes: u32,
+}
+
+/// Storage for one stage's declared launch geometry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct StageLaunchData {
+    pub(super) grid_threads: u32,
+    pub(super) threads_per_workgroup: u32,
 }
 
 /// Storage for one materialized program value.
@@ -302,6 +410,12 @@ pub(super) struct KernelProgramData {
     pub(super) allocations: Vec<AllocationData>,
     pub(super) dependencies: Vec<DependencyData>,
     pub(super) outputs: Vec<ProgramOutputData>,
+    /// The shared ABI expression arena, in canonical arena order.
+    pub(super) abi_expressions: Vec<ExprNode>,
+    /// Arena position of the applicability guard, absent until declared.
+    pub(super) applicability_guard: Option<u32>,
+    /// The ordered routing-commit lifecycle this program declares.
+    pub(super) routing_commit: Vec<RoutingCommitTransition>,
 }
 
 /// The stage and ordered write position that fully initializes one value.
@@ -323,24 +437,29 @@ pub(super) struct DerivedProgramFacts {
 
 /// Opaque canonical bytes identifying one verified kernel program.
 ///
-/// The identity folds the three ADR 0072 layers a complete program owns: the
+/// The identity folds every ADR 0072 layer a complete program owns: the
 /// canonical [`SemanticGraphIdentity`] of the program it realizes, the exact
 /// bound implementation of every stage through each stage's
 /// [`CanonicalKernelIdentity`](crate::kernel::CanonicalKernelIdentity) (which
-/// itself folds the canonical scheduled
-/// region it refines), and the complete semantic coverage those stages claim.
-/// Program structure — materialized values, views, allocations, typed
-/// dependencies, and named outputs — is folded in alongside them.
+/// itself folds the canonical scheduled region it refines), the complete
+/// semantic coverage those stages claim, the materializations, buffers, typed
+/// dependencies and named outputs that structure them, the entry ABI, the
+/// applicability guard, and the routing-commit lifecycle.
+///
+/// The ABI expression arena is folded *transitively*: every use site is encoded
+/// by its canonical content key, a content key names the node's whole subtree,
+/// and whole-program verification rejects an arena node no use site reaches. So
+/// no retained expression escapes identity and no node is encoded twice.
 ///
 /// It excludes every transient ordinal: builder insertion order, the program's
-/// own stage/value/view/allocation positions, and the planning `RegionId`
+/// own stage/value/view/allocation/arena positions, and the planning `RegionId`
 /// already excluded by the kernel and schedule identities. Cross-references are
 /// encoded by canonical content key, never by position, so two structurally
 /// equal programs assembled in different orders share bytes.
 ///
-/// It also deliberately excludes what a later artifact-facing projection owns:
-/// packaged admission, selected-provider provenance, and the artifact's routing
-/// and ABI representation.
+/// It still deliberately excludes what a later artifact-facing projection owns:
+/// packaged admission, selected-provider provenance, the wire encoding of the
+/// ABI, and a portfolio's variant priority.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CanonicalKernelProgramIdentity(Vec<u8>);
 
@@ -457,6 +576,40 @@ impl VerifiedKernelProgram {
             output: index,
         })
     }
+
+    /// Returns the ABI expression arena in canonical arena order.
+    ///
+    /// Every operand position is strictly smaller than the node naming it, so a
+    /// consumer replaying the arena front to back always has its operands
+    /// already minted.
+    #[must_use]
+    pub fn abi_expressions(&self) -> &[ExprNode] {
+        &self.data.abi_expressions
+    }
+
+    /// Returns the arena position of the guard deciding whether to route here.
+    ///
+    /// The position indexes [`Self::abi_expressions`].
+    ///
+    /// # Panics
+    ///
+    /// Panics when the program declares no guard, which whole-program
+    /// verification rejects as
+    /// [`KernelProgramDiagnostic::MissingApplicabilityGuard`] before a verified
+    /// program exists. A panic here therefore means an unverified program was
+    /// constructed, not that a caller supplied a bad value.
+    #[must_use]
+    pub fn applicability_guard(&self) -> u32 {
+        self.data
+            .applicability_guard
+            .expect("verification proves a verified program declares its applicability guard")
+    }
+
+    /// Returns the declared routing-commit lifecycle in lifecycle order.
+    #[must_use]
+    pub fn routing_commit_contract(&self) -> &[RoutingCommitTransition] {
+        &self.data.routing_commit
+    }
 }
 
 /// A read-only view of one program stage.
@@ -477,6 +630,19 @@ impl<'a> StageRef<'a> {
     #[must_use]
     pub fn coverage(self) -> &'a [SemanticOccurrence] {
         &self.data().coverage
+    }
+
+    /// Returns the launch geometry this stage's entry declares.
+    ///
+    /// Both positions index
+    /// [`VerifiedKernelProgram::abi_expressions`].
+    #[must_use]
+    pub fn launch(self) -> StageLaunchView {
+        let launch = self.data().launch;
+        StageLaunchView {
+            grid_threads: launch.grid_threads,
+            threads_per_workgroup: launch.threads_per_workgroup,
+        }
     }
 
     /// Returns the stage's accesses in kernel buffer-parameter order.
@@ -528,9 +694,31 @@ impl<'a> StageAccessRef<'a> {
         self.data().mode
     }
 
+    /// Returns the arena position of this access's accessible-byte expression.
+    ///
+    /// The position indexes [`VerifiedKernelProgram::abi_expressions`].
+    #[must_use]
+    pub fn accessible_bytes(self) -> u32 {
+        self.data().accessible_bytes
+    }
+
     fn data(self) -> StageAccessData {
         self.program.data.stages[self.stage].accesses[self.position]
     }
+}
+
+/// A read-only view of one stage's declared launch geometry.
+///
+/// Each field is an arena position into
+/// [`VerifiedKernelProgram::abi_expressions`], never a resolved number: a
+/// consumer that resolved the geometry itself would be a second derivation of
+/// what the program already decided.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct StageLaunchView {
+    /// Arena position of the total launch thread count.
+    pub grid_threads: u32,
+    /// Arena position of the per-workgroup thread count.
+    pub threads_per_workgroup: u32,
 }
 
 /// A read-only view of one byte view of a materialized value.
@@ -793,11 +981,29 @@ impl<'a> ProgramOutputRef<'a> {
     }
 }
 
+/// Cross-reference key domains, unchanged at `v1`.
+///
+/// These keys are what dependency edges, value definitions and allocation
+/// bindings name each other by. `complete-program-identity-with-abi-guards-and-routing`
+/// added the entry ABI, the applicability guard and the routing-commit contract
+/// to *program* identity without changing what any of these keys means: a stage
+/// is still identified by the implementation it binds and the occurrences it
+/// covers, and its launch geometry is folded beside it in the program encoding
+/// rather than into the key other entities cross-reference it by.
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v1\0";
 const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v1\0";
+/// Program identity domain, bumped to `v2`.
+///
+/// What the identity *means* changed: `v1` folded the semantic graph, bound
+/// implementations, coverage and program structure only, and was blind to two
+/// programs that differed in their entry ABI, applicability guard, or
+/// routing-commit contract. `v2` folds all three, so a cache keyed on this
+/// identity can no longer serve one program's bytes for another's guard. The
+/// tag is versioned exactly so that change is explicit rather than a silent
+/// re-encoding of every subject ever produced.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v2\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -837,6 +1043,12 @@ pub(super) struct CanonicalKeys {
     pub(super) values: Vec<Vec<u8>>,
     pub(super) views: Vec<Vec<u8>>,
     pub(super) allocations: Vec<Vec<u8>>,
+    /// Canonical content key of every ABI expression arena node.
+    ///
+    /// Not a category the verifier proves pairwise distinct: the builder
+    /// deduplicates the arena by exactly these bytes, so distinctness is an
+    /// insertion-time invariant rather than a whole-program obligation.
+    pub(super) expressions: Vec<Vec<u8>>,
 }
 
 /// Derives the canonical content key of every entity.
@@ -872,7 +1084,22 @@ pub(super) fn canonical_keys(
         values,
         views,
         allocations,
+        expressions: expression_keys(&data.abi_expressions),
     }
+}
+
+/// Derives the canonical content key of every ABI expression arena node.
+///
+/// The recurrence is [`expr_key`]'s: each key names the node's whole subtree by
+/// content, so it is independent of where in the arena the node happens to sit.
+/// Operands always precede the node naming them, so one forward pass suffices.
+pub(super) fn expression_keys(nodes: &[ExprNode]) -> Vec<Vec<u8>> {
+    let mut keys: Vec<Vec<u8>> = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let key = expr_key(node, &keys);
+        keys.push(key);
+    }
+    keys
 }
 
 fn stage_key(stage: &StageData) -> Vec<u8> {
@@ -969,14 +1196,34 @@ pub(super) fn encode_identity(
     bytes.extend_from_slice(PROGRAM_DOMAIN);
     push_slice(&mut bytes, data.semantic_graph.as_bytes());
 
+    // The applicability guard is folded before the stages because it decides
+    // whether any of them run at all.
+    push_slice(
+        &mut bytes,
+        &keys.expressions[position(
+            data.applicability_guard
+                .expect("verification proves an applicability guard is declared"),
+        )],
+    );
+
     push_len(&mut bytes, data.stages.len());
     for stage in canonical_order(&keys.stages) {
         push_slice(&mut bytes, &keys.stages[stage]);
+        let launch = data.stages[stage].launch;
+        push_slice(&mut bytes, &keys.expressions[position(launch.grid_threads)]);
+        push_slice(
+            &mut bytes,
+            &keys.expressions[position(launch.threads_per_workgroup)],
+        );
         let accesses = &data.stages[stage].accesses;
         push_len(&mut bytes, accesses.len());
         for access in accesses {
             push_slice(&mut bytes, &keys.views[position(access.view)]);
             bytes.push(access.mode.tag());
+            push_slice(
+                &mut bytes,
+                &keys.expressions[position(access.accessible_bytes)],
+            );
         }
     }
 
@@ -1015,6 +1262,15 @@ pub(super) fn encode_identity(
     push_len(&mut bytes, outputs.len());
     for output in outputs {
         push_slice(&mut bytes, &output);
+    }
+
+    // Lifecycle order, not insertion order: verification proves the declared
+    // transitions form the one ordered chain, so this sequence is content.
+    push_len(&mut bytes, data.routing_commit.len());
+    for transition in &data.routing_commit {
+        bytes.push(transition.from.tag());
+        bytes.push(transition.to.tag());
+        bytes.push(u8::from(transition.fallback_permitted));
     }
 
     if bytes.len() > MAX_PROGRAM_IDENTITY_BYTES {

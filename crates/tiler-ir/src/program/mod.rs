@@ -11,15 +11,14 @@
 //!
 //! It is deliberately **not** the artifact manifest and not a codec. A later
 //! artifact-facing projection owns packaged admission, selected-provider
-//! provenance, and the artifact's routing and ABI representation; this layer
-//! owns only what a program *is*.
+//! provenance, the wire encoding of the ABI, and a portfolio's variant
+//! priority; this layer owns only what a program *is*.
 //!
 //! # Identity carries the ADR 0072 layers
 //!
 //! [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity)
-//! folds exactly three subjects, each of
-//! which ADR 0072 assigns to complete program identity, together with the
-//! program structure that binds them:
+//! folds every subject ADR 0072 assigns to complete program identity, together
+//! with the program structure that binds them:
 //!
 //! - **Semantic graph identity.** The canonical
 //!   [`SemanticGraphIdentity`](crate::semantic::SemanticGraphIdentity) of the
@@ -32,9 +31,24 @@
 //!   refinement changes, at any structural layer.
 //! - **Complete coverage.** The semantic occurrences each stage claims, proven
 //!   to be a disjoint partition of every operation of the bound graph.
+//! - **Materializations and buffers.** Values, byte views, allocations, typed
+//!   dependencies, and named outputs.
+//! - **The entry ABI.** Each stage's launch geometry and each access's
+//!   addressable byte range, as [`abi`](crate::program::abi) expressions rather than resolved
+//!   numbers.
+//! - **The applicability guard.** The predicate deciding whether this program
+//!   may be routed to at all.
+//! - **The routing-commit contract.** The ordered lifecycle from preflight to
+//!   publication and, for each step, whether fallback is still permitted.
+//!
+//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`,
+//! which bumped the identity domain to `tiler.kernel-program.v2` because what
+//! the bytes *mean* changed: a `v1` identity was blind to two programs that
+//! differed only in their guard, ABI, or fallback contract, which is exactly
+//! the "complete cache and artifact identity" hazard `AGENTS.md` singles out.
 //!
 //! Every transient ordinal is excluded: builder insertion order, the program's
-//! own stage/value/view/allocation positions, and the planning `RegionId`
+//! own stage/value/view/allocation/arena positions, and the planning `RegionId`
 //! already excluded below. Cross-references are encoded by canonical content
 //! key, so two structurally equal programs assembled in different orders share
 //! identity bytes.
@@ -44,15 +58,20 @@
 //! Insertion-time checks reject handle forgery, cross-builder handles,
 //! interface disagreement, invalid alignment, insufficient or mismatched
 //! allocations, out-of-range views, stage/kernel signature disagreement,
-//! out-of-range or repeated coverage, self and duplicate dependencies, and
-//! unknown or repeated output keys. Whole-program verification then proves
-//! unique writers, no write to an externally bound input, complete and disjoint
-//! semantic coverage, unambiguous canonical keys, an acyclic dependency graph
-//! with a data edge behind every read, dependency edges that state obligations
-//! their stages actually realize, no unused value, view, or allocation, the
-//! baseline aliasing contract, the conservative storage-reuse contract
-//! (non-overlapping lifetimes, an explicit handoff, and no live alias across
-//! it), and complete named-output coverage.
+//! out-of-range or repeated coverage, self and duplicate dependencies, unknown
+//! or repeated output keys, mistyped or phase-escaping ABI expressions, an
+//! accessible range or workgroup width the program's own view or kernel
+//! contradicts, a second applicability guard, and a routing-commit step that
+//! breaks the lifecycle order or permits fallback after commit. Whole-program
+//! verification then proves unique writers, no write to an externally bound
+//! input, complete and disjoint semantic coverage, unambiguous canonical keys,
+//! an acyclic dependency graph with a data edge behind every read, dependency
+//! edges that state obligations their stages actually realize, no unused value,
+//! view, allocation, or ABI expression, a declared applicability guard, a
+//! routing-commit contract carried to publication, the baseline aliasing
+//! contract, the conservative storage-reuse contract (non-overlapping
+//! lifetimes, an explicit handoff, and no live alias across it), and complete
+//! named-output coverage.
 //!
 //! It does **not** prove that a stage's kernel computes the semantic operations
 //! it covers. Coverage here is a structural completeness and disjointness
@@ -60,10 +79,11 @@
 //!
 //! ```
 //! use tiler_ir::kernel::{KernelType, lower_scheduled_region};
+//! use tiler_ir::program::abi::AbiRoot;
 //! use tiler_ir::program::{
 //!     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
-//!     MaterializedValueSpec, MemorySpace, SemanticOccurrence, StageAccess, StageAccessMode,
-//!     ValueRole,
+//!     MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
+//!     SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, ValueRole,
 //! };
 //! use tiler_ir::schedule::{
 //!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
@@ -205,20 +225,47 @@
 //! )?;
 //! let read = program.push_whole_view(source)?;
 //! let write = program.push_whole_view(result)?;
+//!
+//! // The entry ABI: what each access may address, and how the stage launches.
+//! // The bounded profile's shapes are static, so each is a literal; a dynamic
+//! // subject would name `AbiRoot::InputExtent` here instead, with no change to
+//! // the shape of this contract.
+//! let read_bytes = program.push_abi_root(AbiRoot::UnsignedLiteral(24))?;
+//! let write_bytes = program.push_abi_root(AbiRoot::UnsignedLiteral(8))?;
+//! let grid_threads = program.push_abi_root(AbiRoot::UnsignedLiteral(2))?;
+//! let threads_per_workgroup = program.push_abi_root(AbiRoot::UnsignedLiteral(1))?;
+//! let guard = program.push_abi_root(AbiRoot::BooleanLiteral(true))?;
+//! program.applicability_guard(guard)?;
+//!
 //! program.push_stage(
 //!     &kernel,
 //!     &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
 //!     &[
-//!         StageAccess { view: read, mode: StageAccessMode::Read },
-//!         StageAccess { view: write, mode: StageAccessMode::Write },
+//!         StageAccess { view: read, mode: StageAccessMode::Read, accessible_bytes: read_bytes },
+//!         StageAccess { view: write, mode: StageAccessMode::Write, accessible_bytes: write_bytes },
 //!     ],
+//!     StageLaunch { grid_threads, threads_per_workgroup },
 //! )?;
 //! program.push_output(OutputKey::new("result")?, result)?;
+//!
+//! // Fallback is still legal while nothing is committed, and never after.
+//! for (from, to, fallback_permitted) in [
+//!     (RoutingCommitState::Preflight, RoutingCommitState::Committed, true),
+//!     (RoutingCommitState::Committed, RoutingCommitState::Executing, false),
+//!     (RoutingCommitState::Executing, RoutingCommitState::Published, false),
+//! ] {
+//!     program.push_routing_commit_transition(
+//!         RoutingCommitTransition { from, to, fallback_permitted },
+//!     )?;
+//! }
 //! let program = program.build()?;
 //!
 //! assert_eq!(program.stages().len(), 1);
 //! assert_eq!(program.execution_order().len(), 1);
 //! assert_eq!(program.outputs().len(), 1);
+//! // Four distinct unsigned literals — 24, 8, 2, 1 — and the guard predicate.
+//! assert_eq!(program.abi_expressions().len(), 5);
+//! assert_eq!(program.routing_commit_contract().len(), 3);
 //! // The program retains the exact bound implementation it was verified against.
 //! assert_eq!(
 //!     program.stages().next().expect("one stage").kernel().canonical_identity(),
@@ -238,14 +285,15 @@ mod verify;
 pub use builder::KernelProgramBuilder;
 pub use error::{
     KernelProgramBuildError, KernelProgramDiagnostic, KernelProgramVerificationError,
-    ProgramEntityKind, ProgramLimitKind,
+    ProgramAbiUse, ProgramEntityKind, ProgramLimitKind,
 };
-pub use handles::{AllocationId, MaterializedValueId, StageId, ViewId};
+pub use handles::{AbiExprId, AllocationId, MaterializedValueId, StageId, ViewId};
 pub use model::{
     AllocationOwnership, AllocationRef, AllocationSpec, ByteWindow, CanonicalKernelProgramIdentity,
     DependencyReasonView, DependencyRef, MaterializedOrigin, MaterializedValueRef,
-    MaterializedValueSpec, MemorySpace, ProgramOutputRef, SemanticOccurrence, StageAccess,
-    StageAccessMode, StageAccessRef, StageRef, ValueRole, VerifiedKernelProgram, ViewRef,
+    MaterializedValueSpec, MemorySpace, ProgramOutputRef, RoutingCommitState,
+    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode, StageAccessRef,
+    StageLaunch, StageLaunchView, StageRef, ValueRole, VerifiedKernelProgram, ViewRef,
 };
 
 /// Maximum stages admitted by one kernel program.
@@ -264,6 +312,8 @@ pub const MAX_PROGRAM_OUTPUTS: usize = 4_096;
 pub const MAX_STAGE_ACCESSES: usize = 64;
 /// Maximum semantic occurrences one stage may cover.
 pub const MAX_STAGE_COVERAGE: usize = 65_536;
+/// Maximum ABI expression arena nodes admitted by one kernel program.
+pub const MAX_PROGRAM_ABI_EXPRESSIONS: usize = 4_096;
 /// Maximum size of the final canonical kernel-program identity.
 pub const MAX_PROGRAM_IDENTITY_BYTES: usize = 64 * 1024 * 1024;
 

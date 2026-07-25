@@ -15,11 +15,13 @@
 
 use std::collections::BTreeSet;
 
+use super::abi::ExprNode;
 use super::builder::SemanticSubject;
 use super::error::{KernelProgramDiagnostic, ProgramEntityKind};
 use super::model::{
-    CanonicalKeys, DependencyReasonData, DerivedProgramFacts, KernelProgramData, StageAccessMode,
-    ValueDefinition, ValueRole, canonical_keys,
+    CanonicalKeys, DependencyReasonData, DerivedProgramFacts, KernelProgramData,
+    ROUTING_COMMIT_TRANSITIONS, RoutingCommitState, StageAccessMode, ValueDefinition, ValueRole,
+    canonical_keys,
 };
 
 /// One stage access to one materialized value.
@@ -65,6 +67,12 @@ pub(super) fn verify_program(
     verify_reuse(data, &accesses, &definitions, &execution_order, &successors)?;
     verify_outputs(data, subject)?;
 
+    // Last, because a program whose structure does not hold has a more basic
+    // defect than an incomplete routing contract, and reporting the contract
+    // first would send a reader to the wrong place.
+    verify_abi(data)?;
+    verify_routing_commit(data)?;
+
     Ok((
         DerivedProgramFacts {
             definitions,
@@ -80,6 +88,77 @@ fn position(index: u32) -> usize {
 
 fn ordinal(index: usize) -> u32 {
     u32::try_from(index).expect("a bounded program arena fits u32")
+}
+
+/// Proves the program declares a guard and retains no unreachable ABI node.
+///
+/// Identity folds each ABI use site by content key, and a content key names the
+/// node's whole subtree, so an arena node no use site reaches would be retained
+/// bytes that identity does not cover. Rejecting it here is what lets the
+/// identity encoder fold the arena transitively instead of a second time.
+fn verify_abi(data: &KernelProgramData) -> Result<(), KernelProgramDiagnostic> {
+    let Some(guard) = data.applicability_guard else {
+        return Err(KernelProgramDiagnostic::MissingApplicabilityGuard);
+    };
+    let mut reached = vec![false; data.abi_expressions.len()];
+    let mut frontier = vec![guard];
+    for stage in &data.stages {
+        frontier.push(stage.launch.grid_threads);
+        frontier.push(stage.launch.threads_per_workgroup);
+        for access in &stage.accesses {
+            frontier.push(access.accessible_bytes);
+        }
+    }
+    while let Some(node) = frontier.pop() {
+        if reached[position(node)] {
+            continue;
+        }
+        reached[position(node)] = true;
+        match &data.abi_expressions[position(node)] {
+            ExprNode::Root(_) => {}
+            ExprNode::Unary { operand, .. } => frontier.push(*operand),
+            ExprNode::Binary { left, right, .. } => {
+                frontier.push(*left);
+                frontier.push(*right);
+            }
+            ExprNode::Select {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                frontier.push(*condition);
+                frontier.push(*if_true);
+                frontier.push(*if_false);
+            }
+        }
+    }
+    if reached.iter().any(|node| !node) {
+        return Err(KernelProgramDiagnostic::UnreferencedAbiExpression);
+    }
+    Ok(())
+}
+
+/// Proves the declared routing-commit steps span the whole ordered lifecycle.
+///
+/// The builder proves each step continues the chain and that only the step
+/// leaving [`RoutingCommitState::Preflight`] permits fallback. What only whole-
+/// program scope can see is that the chain was carried to its end: a program
+/// stopping at `Committed` would leave a runtime with no declared contract for
+/// the transitions it must still make.
+fn verify_routing_commit(data: &KernelProgramData) -> Result<(), KernelProgramDiagnostic> {
+    let complete = data.routing_commit.len() == ROUTING_COMMIT_TRANSITIONS
+        && data
+            .routing_commit
+            .last()
+            .is_some_and(|last| last.to == RoutingCommitState::Published);
+    if complete {
+        Ok(())
+    } else {
+        Err(KernelProgramDiagnostic::IncompleteRoutingCommitContract {
+            declared: data.routing_commit.len(),
+            required: ROUTING_COMMIT_TRANSITIONS,
+        })
+    }
 }
 
 /// Groups every stage access by the materialized value it addresses.
