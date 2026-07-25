@@ -92,7 +92,7 @@ ticket: "record-the-case-by-case-unsafe-boundary"
 
 **Resolved 2026-07-25.** The split ticket landed the check and chose the third option combined with the second: a `(path, item signature, reason)` triple. Its reasoning, the limits of its textual scan, and the mutation evidence are recorded in the Consequences bullet above rather than duplicated here. The count predicate this alternative listed was rejected for the reason the ticket predicted — it passes when a site moves.
 
-**Record the decision as `proposed` and wait for acceptance.** Rejected because it would misdescribe what happened. ADR 0077 is `proposed` because the workspace ran ahead of a decision Tom had not made; here Tom made the decision and wrote the code himself, and the only thing missing was the record. Marking it `proposed` would tell a reader that the divergence in the tree is unauthorized, which is false.
+**Record the decision as `proposed` and wait for acceptance.** Rejected because it would misdescribe what happened. ADR 0077 was drafted `proposed` because the workspace had run ahead of a decision Tom had not made, and it stayed that way until he took the decision on 2026-07-25; here Tom made the decision and wrote the code himself, and the only thing missing was the record. Marking it `proposed` would tell a reader that the divergence in the tree is unauthorized, which is false.
 
 ## Traceability
 

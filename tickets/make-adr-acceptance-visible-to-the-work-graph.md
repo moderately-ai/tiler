@@ -55,7 +55,7 @@ Option 1 landed here. Option 3 is scoped to `contracts/navigation`, which this t
 
 ### Blast radius
 
-**Measured, and it is smaller than the ticket's inference above predicted.** Two ADRs are `decision_status: "proposed"` (0077, 0078). Every ticket naming either was read in full, not grepped:
+**Measured, and it is smaller than the ticket's inference above predicted.** Two ADRs were `decision_status: "proposed"` when this landed (0077, 0078); Tom accepted both on 2026-07-25, so the counts below are the board as it stood, not as it stands. Every ticket naming either was read in full, not grepped:
 
 - **One true instance, the known one.** `propagate-extension-seam-classification-into-governed-contracts` — fixed here.
 - **No second graph instance.** `grep -n 'dependencies:.*record-an-adr-for-the-metal-aot-crate-admission' tickets/*.md` returns nothing, so ADR 0077 has no dependent to mis-schedule. Its acceptance ticket was still created, because the record's own status line says the crate is already implemented and pinned while ADR 0056's retained AOT-invocation clause still stands — an undischarged supersession is a standing authority conflict whether or not a ticket depends on it, and it now has a node on the board.
