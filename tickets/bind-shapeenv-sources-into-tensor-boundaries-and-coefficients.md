@@ -1,7 +1,7 @@
 ---
 id: bind-shapeenv-sources-into-tensor-boundaries-and-coefficients
 title: Extend sourced extents to tensor boundaries and semi-affine coefficients
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [implement-shapeenv-index-bindings, implement-index-domain-predicates]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, indexing, mature-product]
+claimed_from: todo
+assignee: agent-ir3
+lease_expires_at: 1785005316
 ---
 `implement-shapeenv-index-bindings` landed sourced extents for index **domain dimensions**. Two of the four things `docs/ir.md` assigns to the symbolic index profile remain literal-only, and they were split rather than half-implemented.
 
