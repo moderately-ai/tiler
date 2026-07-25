@@ -6,7 +6,7 @@ title: "Separate subnormal input and result handling"
 topics: ["numerics","floating-point","subnormals"]
 catalog_group: "numerical-operations"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.operation-conformance-matrix"]
 ticket: "numerical-policy-contract"
@@ -64,6 +64,24 @@ One flush-to-zero flag is compact but loses observable information. Treating
 all subnormal behavior as backend-defined makes fusion and fallback disagree.
 Requiring preservation in every conformance mode unnecessarily excludes
 explicitly requested fast execution.
+
+## Implementation boundary
+
+Added 2026-07-25 by [`re-audit-adr-0011-and-0019-status-after-the-vocabulary-widening`](../../tickets/re-audit-adr-0011-and-0019-status-after-the-vocabulary-widening.md), which moved `implementation_status` from `not-started` to `partial`. This section states which clauses that value rests on, read at `43f685f`, and adds no decision.
+
+**Realized — the two dimensions exist, are independent, and can differ.** `tiler_ir::schedule::NumericalRealization` carries `input_subnormals` and `result_subnormals` as separate `SubnormalMode` fields, and `SubnormalMode` is `Preserve | FlushToZero { zero_sign }`, so the four combinations the conformance matrix requires as adversarial coverage are all expressible and two realizations can differ on one dimension alone. Both dimensions are encoded independently into canonical scheduled-region and kernel identity through exhaustive matches.
+
+**Realized — the reject branch of the backend obligation, per declared dimension.** `crates/tiler-metal/src/emit.rs` matches each subnormal dimension exhaustively against the target's declared behaviour, and `crates/tiler-metal/src/record.rs` carries three typed gap variants — `SubnormalFlushInArithmetic`, `SubnormalPreservationInArithmetic`, and `UndeclaredFlushedZeroSign`. `MetalTranslationUnit::require_declared_realization` fails closed with `MetalEmitError::UnrealizableNumericalObligation`.
+
+**Realized — coupling in the target does not couple the semantic permissions.** The measured Apple row flushes both dimensions in one hardware behaviour, and the contract still carries two fields that the emitter compares separately against the target fact.
+
+**Partially realized — "relaxed operation contracts may permit either or both kinds of flushing".** Both is registrable: `StrictF32NumericalContract::governed_flush_to_zero` flushes input and result to the sign-preserving zero. *Either* — one dimension flushing while the other preserves — is expressible in the type and is not registrable, because `governed_profile` admits exactly the preserve/preserve and flush/flush contracts.
+
+**Unrealized — the emulate branch of the backend obligation.** A backend that cannot realize a requested combination natively must "emulate it, consume an already authorized relaxation, or reject the plan". Only the reject branch exists. `tiler-metal` emits no compensating operations for a dimension the target does not honour, which is deliberate honesty rather than an omission — emission there is pure source lowering — but it means one of the three stated outs is unbuilt.
+
+**Unrealized — the reference-evaluation consequence.** "Reference evaluation can distinguish input flushing from result flushing" is not realized. The exact check is `grep -rn 'SubnormalMode\|NumericalPermission\|NumericalRealization' crates/tiler-reference/src/`, which returns nothing: the reference evaluator names no part of the numerical realization vocabulary, so it cannot distinguish the two dimensions or evaluate either.
+
+**Unrealized — the gap record's granularity.** `record_subnormal_obligation` compares the input and the result dimension against the same target fact and inserts into one set, so a gap on either dimension yields the same variant and the record cannot say which dimension failed. The semantic dimensions stay separate; the *reporting* of a failure over them does not.
 
 ## Amendments
 
