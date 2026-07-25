@@ -248,7 +248,7 @@
 //! artifact.select_provider(SelectedProvider {
 //!     provider,
 //!     capability: CapabilityKey::new("tiler.capability.fused-serial-sum")?,
-//!     capability_api_version: 1,
+//!     capability_revision: 1,
 //! })?;
 //! let payload = artifact.push_payload(BackendPayloadDescriptor {
 //!     backend: BackendKey::new("tiler.metal")?,

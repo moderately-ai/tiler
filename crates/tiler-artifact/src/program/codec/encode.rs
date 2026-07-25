@@ -33,13 +33,17 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// Neutral manifest schema version this build writes and reads.
 ///
 /// Raised to `2.0` when the section descriptor grew its purpose disposition and
-/// content schema, and to `3.0` when each ABI binding row replaced its program
-/// role tag with the interface reference naming what the slot addresses. Both
-/// are deliberately **major** steps rather than the minor ones they might look
-/// like: the reader admits `minor <= implemented`, so a minor bump would have
-/// left it accepting an older manifest whose binding rows it can no longer
-/// parse. A field changed inside a record is not additive.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (3, 0);
+/// content schema, to `3.0` when each ABI binding row replaced its program
+/// role tag with the interface reference naming what the slot addresses, and to
+/// `4.0` when a selected provider row replaced its `u16` capability API version
+/// with the `u32` capability revision. All three are deliberately **major**
+/// steps rather than the minor ones they might look like: the reader admits
+/// `minor <= implemented`, so a minor bump would have left it accepting an older
+/// manifest whose rows it can no longer parse. A field changed inside a record
+/// is not additive, and the `4.0` step also moved a field's *width*, so a `3.0`
+/// reader would not merely misinterpret two bytes — it would lose framing for
+/// every row after them.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (4, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -211,7 +215,7 @@ fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
         push_slice(bytes, provider.provider.name().as_bytes());
         bytes.extend_from_slice(&provider.provider.revision().to_be_bytes());
         push_slice(bytes, provider.capability.as_str().as_bytes());
-        bytes.extend_from_slice(&provider.capability_api_version.to_be_bytes());
+        bytes.extend_from_slice(&provider.capability_revision.to_be_bytes());
     }
     push_len(bytes, envelope.payloads().len());
     // Indexed rather than zipped: a zip would silently stop at the shorter of

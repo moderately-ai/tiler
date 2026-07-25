@@ -53,10 +53,25 @@ use super::keys::{
 /// different artifacts could in principle produce equal bytes, and two artifacts
 /// that are not the same artifact must never share an identity. Separating the
 /// domains makes that impossible rather than unlikely.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v2\0";
+///
+/// Raised to `v3` when a selected provider's trailing fixed-width integer
+/// stopped being a `u16` capability API version and became the `u32` capability
+/// revision. The same argument applies with an additional edge: the width moved
+/// as well as the meaning, so a `v2` provider key and a `v3` provider key of two
+/// different selections can differ only in bytes a reader of either domain would
+/// have consumed as something else. Retagging the domain is what makes the two
+/// encodings incomparable instead of merely unlikely to collide.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v3\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
-const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v1\0";
+/// Versioned domain separator of one selected provider's canonical key.
+///
+/// `v2` for the same change that took [`ARTIFACT_DOMAIN`] to `v3`: this record's
+/// trailing integer changed both width and meaning. Retagged here as well as
+/// there because a provider key is also compared to its siblings on its own —
+/// `encode_identity` sorts and deduplicates these keys — so the record needs to
+/// be self-describing rather than relying on the enclosing domain.
+const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v2\0";
 const DEFERRED_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.deferred.v1\0";
 
 fn position(index: u32) -> usize {
@@ -281,8 +296,20 @@ pub struct SelectedProvider {
     pub provider: ProviderIdentity,
     /// Governed capability key the provider was selected for.
     pub capability: CapabilityKey,
-    /// Version of the capability API the selection was made against.
-    pub capability_api_version: u16,
+    /// Output-affecting revision of that capability, as the compiler minted it.
+    ///
+    /// Two revisions, not one. `docs/operation-extensions.md` fixes them as
+    /// independent — "one provider may register several capabilities that move
+    /// at different rates, and both revisions are retained wherever a lowering's
+    /// provenance is recorded" — so [`Self::provider`]'s revision does not
+    /// determine this one and folding only the first left a provider free to
+    /// change what it emits and produce an identical artifact identity.
+    ///
+    /// Received, not derived: this is `tiler-compiler`'s
+    /// `SelectedCapability::capability_revision`, carried whole. That crate
+    /// documents it nonzero and this layer does not re-check it, exactly as
+    /// [`FeasibilityRuleSetRef::revision`] beside it does not.
+    pub capability_revision: u32,
 }
 
 impl SelectedProvider {
@@ -293,7 +320,7 @@ impl SelectedProvider {
         push_slice(&mut bytes, self.provider.name().as_bytes());
         bytes.extend_from_slice(&self.provider.revision().to_be_bytes());
         push_slice(&mut bytes, self.capability.as_str().as_bytes());
-        bytes.extend_from_slice(&self.capability_api_version.to_be_bytes());
+        bytes.extend_from_slice(&self.capability_revision.to_be_bytes());
         bytes
     }
 }

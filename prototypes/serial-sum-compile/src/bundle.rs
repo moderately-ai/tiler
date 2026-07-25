@@ -10,7 +10,8 @@
 //! Every value that enters artifact identity is minted by the authority that
 //! owns it and handed over whole. The target profile key and its exact
 //! descriptor, the feasibility rule set key and revision, each selected
-//! capability's provider and governed key, the applicability guard, every
+//! capability's provider, governed key, and output-affecting revision, the
+//! applicability guard, every
 //! accessible byte range and launch formula — all are read from
 //! [`tiler_compiler::session`]. The payload's compilation subject is filled by
 //! [`super::payload`] from the emission and the toolchain, and its content digest
@@ -114,7 +115,7 @@ fn assemble_from(
         builder.select_provider(SelectedProvider {
             provider: selected.provider().clone(),
             capability: CapabilityKey::new(selected.capability_key())?,
-            capability_api_version: capability_version(selected.capability_revision())?,
+            capability_revision: selected.capability_revision(),
         })?;
     }
 
@@ -323,26 +324,6 @@ fn feasibility_rules(compilation: &Compilation) -> Result<FeasibilityRuleSetRef,
     })
 }
 
-/// Narrows the compiler's capability revision into the artifact's version slot.
-///
-/// **This carries a real value into an adjacent slot, and the mismatch is
-/// recorded rather than hidden.** `SelectedProvider::capability_api_version` is
-/// documented as "version of the capability API the selection was made against",
-/// and the compiler has no such notion — its `capability_revision` is the
-/// capability's *output-affecting* revision. `docs/operation-extensions.md` says
-/// a selected plan records the `{provider identity, capability revision}` pair,
-/// which is the value carried here; it also says compiler and capability-API
-/// versions participate in identity, and no producer can supply the latter
-/// today. `record-the-capability-revision-in-selected-provider-identity` owns
-/// closing that.
-///
-/// The narrowing is checked rather than truncating. A revision beyond `u16` is
-/// refused, because silently keeping the low half would put a wrong revision
-/// into artifact identity — worse than refusing, since it would look correct.
-fn capability_version(revision: u32) -> Result<u16, BundleError> {
-    u16::try_from(revision).map_err(|_| BundleError::CapabilityRevisionWidth { revision })
-}
-
 /// Why a compilation and its payload did not package into an artifact.
 #[derive(Debug)]
 pub enum BundleError {
@@ -361,11 +342,6 @@ pub enum BundleError {
     UnmintedExpression {
         /// The source arena position that had no handle.
         position: u32,
-    },
-    /// A capability revision does not fit the artifact's version field.
-    CapabilityRevisionWidth {
-        /// The revision the compiler minted.
-        revision: u32,
     },
 }
 
@@ -400,10 +376,6 @@ impl fmt::Display for BundleError {
             Self::UnmintedExpression { position } => write!(
                 formatter,
                 "arena position {position} was named before it was replayed",
-            ),
-            Self::CapabilityRevisionWidth { revision } => write!(
-                formatter,
-                "capability revision {revision} does not fit the artifact's version field",
             ),
         }
     }

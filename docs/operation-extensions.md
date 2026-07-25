@@ -172,6 +172,8 @@ attestation. Changing output-affecting behavior without changing the declared
 revision is a provider bug. Compiler and capability-API versions also
 participate in identity.
 
+**Fact — that last sentence is a requirement and not yet a description.** A packaged artifact records each selected provider's identity and revision and each resolved capability's key and revision; it records no compiler version and no capability-API version, because no component mints either. A `capability_api_version` field existed and had no producer, so the first assembler filled it by narrowing the capability revision into it — a real value in the wrong slot, which the [artifact contract](artifact-abi.md#canonical-manifest) records was removed rather than left for every producer to fill with something. `name-the-capability-api-version-authority-or-retire-the-requirement` owns deciding which component mints a capability-API version and what it versions, or retiring the requirement.
+
 Provider-independent semantic definitions, graph meaning, and provider
 provenance are separate identity subjects under ADR 0072. A provider-only
 revision does not change an otherwise identical `SemanticGraphIdentity` or its

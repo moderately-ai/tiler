@@ -587,6 +587,18 @@ admission authorities reached or capabilities selected by a packaged program.
 The complete frozen registry may remain compilation-request provenance outside
 the runtime artifact; unused registrations must not poison the artifact.
 
+**Superseded on the middle component.** The implemented record is
+`{ProviderIdentity and revision, CapabilityKey, capability revision}`: no
+component mints a capability-API version, so the field this proposal named was
+built, had to be filled by a producer with a value nothing established, and was
+removed rather than kept. What replaced it is the capability's own
+output-affecting revision, which `docs/operation-extensions.md` requires a
+selected plan to record and which is independent of the provider's. See
+[the artifact contract](../../artifact-abi.md#canonical-manifest) for the
+implemented record and
+`name-the-capability-api-version-authority-or-retire-the-requirement` for the
+open half. The rest of this proposal is unaffected.
+
 Compiler provenance includes normalized frontend/optimizer/scheduler/codegen
 versions, selected providers, generated-source/helper digests, compiler/linker
 executables or version fingerprints, target/options, SDK/header identity, and

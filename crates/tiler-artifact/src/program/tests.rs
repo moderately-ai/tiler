@@ -443,7 +443,7 @@ pub(super) fn selection(provider: ProviderIdentity) -> SelectedProvider {
     SelectedProvider {
         provider,
         capability: CapabilityKey::new("tiler.capability.fused-serial-sum").unwrap(),
-        capability_api_version: 1,
+        capability_revision: 1,
     }
 }
 
@@ -855,6 +855,53 @@ fn a_reached_capability_provider_revision_changes_identity() {
     let first = build_artifact(&semantic, &program, lowering_provider(1), &available);
     let second = build_artifact(&semantic, &program, lowering_provider(2), &available);
     assert_ne!(first.canonical_identity(), second.canonical_identity());
+}
+
+/// The capability's own revision reaches identity, independently of the provider's.
+///
+/// `docs/operation-extensions.md` makes the two revisions independent — one
+/// provider registers several capabilities that move at different rates — so
+/// folding only the provider's left a provider free to change what its lowering
+/// emits and produce a byte-identical artifact identity, which is exactly the
+/// drift the capability revision exists to catch. Both directions are asserted:
+/// the revision moving changes identity, and everything else held equal it is
+/// the only thing that did.
+#[test]
+fn a_reached_capability_revision_changes_identity() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let build = |capability_revision: u32| {
+        let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+        let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+        draft
+            .select_provider(SelectedProvider {
+                provider: provider.clone(),
+                capability: CapabilityKey::new("tiler.capability.fused-serial-sum").unwrap(),
+                capability_revision,
+            })
+            .unwrap();
+        let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+        let formulas = formulas(&mut draft);
+        draft
+            .push_variant(&program, variant(&formulas, descriptor, b"fused"))
+            .unwrap();
+        draft.build().unwrap()
+    };
+
+    let first = build(1);
+    let second = build(2);
+    assert_ne!(first.canonical_identity(), second.canonical_identity());
+    assert_eq!(
+        first.canonical_identity(),
+        build(1).canonical_identity(),
+        "nothing else in the fixture varies with the revision",
+    );
+    assert_eq!(
+        first.selected_providers()[0].provider,
+        second.selected_providers()[0].provider,
+        "the provider's own revision is unchanged; only the capability's moved",
+    );
 }
 
 #[test]

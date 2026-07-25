@@ -384,7 +384,7 @@ fn read_providers(cursor: &mut Cursor<'_>) -> Result<Vec<SelectedProvider>, Arti
                 provider: cursor.provider()?,
                 capability: CapabilityKey::from_owned(cursor.text()?)
                     .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
-                capability_api_version: cursor.u16()?,
+                capability_revision: cursor.u32()?,
             })
         },
     )?;
