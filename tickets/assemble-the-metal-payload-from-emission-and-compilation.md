@@ -34,3 +34,17 @@ That also settles what the golden-compilation canary means. `crates/tiler-metal/
 ## Closes when
 
 A bundle is assembled from a real emission and a real compilation, carried in the neutral envelope, and re-validated from bytes without a device; the target translation is total and lives where a dependency permits it; both `tiler-metal` target types have lost `#[non_exhaustive]` with Tom's review of that surface change; and `uv run --locked python scripts/check_repository.py` passes.
+
+## Progress — items 2 and 3 landed; item 1 is blocked on the public compiler boundary
+
+**Landed.** `prototypes/serial-sum-compile/src/target.rs` is the production `MetalTargetFacts` → `MetalTarget` translation, in the one place a dependency permits it: neither backend crate may depend on the other, and the producer is the first component that sees both vocabularies at once. `tiler_metal::target_correspondence` already said its orchestrator inherits that obligation; this is that orchestrator. Every map is total — a wildcard could only invent an `AppleSdk` or a `-std` token, which would let a bundle's provenance header and its actual compilation disagree with nothing able to detect it.
+
+Five tests, written so they cannot pass by repeating the map: the family assertion goes through `AppleSdk::platform()` rather than a second hand-written table; the standard assertion compares `-std` tokens rather than variant names; the deployment minimum is checked through the real target triple; the family map is required to be *onto* the full SDK set, which catches a collapsed arm that pointwise cases would miss; and the standard map is checked injective.
+
+`#[non_exhaustive]` is removed from `tiler_metal::target::{MslLanguageVersion, MetalPlatform}`, which the ticket assigned here. Both doc comments now record them as ADR 0074 convention 5b types and say why: an out-of-crate wildcard could only invent the counterpart, so the enums are deliberately exhaustive and a new family or standard is a build failure at every map. This is a *loosening* rather than an ADR 0075 breaking change — nothing that compiled before stops compiling — so it did not need approval; adding a variant later will.
+
+`scripts/check_workspace.py`'s pinned dependency contract gained the producer's `tiler-metal-aot` edge, with the reason recorded. The gate caught the omission.
+
+**Blocked, and this is the finding that matters.** Item 1 — filling the neutral payload from a real emission and a real compilation — cannot start. `tiler_compiler::pipeline` is a private `mod`, and both `compile` and `CompilationRequest` are `pub(crate)`, so **no caller outside `tiler-compiler` can compile a program at all**. Without a `VerifiedKernel` there is nothing to emit, nothing to compile, and nothing to assemble. The payload carrier's constructors are `pub(crate)` in `tiler-artifact` for the same reason, so even a caller holding a kernel could not build a `PayloadContent`.
+
+That makes `prototype-public-compiler-api` the true head of the critical path to first execution, ahead of every Metal ticket. The translation above is landed behind an ADR 0074 convention 7 `#![allow(dead_code, reason = …)]` naming exactly that blocker as the reason its production caller does not yet exist.
