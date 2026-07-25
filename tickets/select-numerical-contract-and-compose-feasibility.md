@@ -2,7 +2,7 @@
 id: select-numerical-contract-and-compose-feasibility
 title: Make the numerical contract a stated request input and compose its feasibility
 status: todo
-priority: p1
+priority: p0
 dependencies: [widen-numerical-vocabulary-and-complete-identity]
 related: [draft-target-honourable-numerical-contract-adr, prototype-optimizer-conformance-gate]
 scopes: [implementation/compiler, contracts/numerics]
@@ -52,3 +52,24 @@ Give `explain` the rejection shape item 5 requires. A rejection that reads `stri
 ## Boundaries
 
 Keep hard feasibility separate from estimated cost; never hide an infeasible plan behind an infinite cost. One contract per program — a preference list resolves to exactly one contract before planning begins, it does not become a per-region choice, and two regions of one program never honour different contracts.
+
+## This is now the hard blocker to first execution — measured, not predicted
+
+**Measurement, 2026-07-25, `29a26ba`, Apple M4 Max under macOS 27.0.** `cargo run -p tiler-prototype-compile` drives a `[4, 1]` scale-then-reduce program from a `SemanticProgram` through the public compiler boundary, selects the fused plan `selected-plan:59399b7f985a0859`, emits Metal source for it — and then stops:
+
+```text
+target profile: tiler.prototype-target-neutral-baseline.v1
+selected alternative: selected-plan:59399b7f985a0859 (fused)
+serial-sum offline producer failed: the target cannot honour the kernels'
+declared numerical contract: subnormal-flush-in-arithmetic
+```
+
+Everything before that line works. The compiler compiles, the emitter emits, and `MetalTranslationUnit::require_declared_realization` refuses because the governed contract declares subnormal **preservation** while `MetalSubnormalArithmetic::FlushesToZero` states the measured Apple fact that `f32` arithmetic flushes subnormal operands and results to zero on every governed family in every math mode.
+
+**Inference — no `metallib` can be produced for the governed contract on Apple hardware, so no execution proof can begin.** The offline path is not missing a component; it is complete and correctly refusing. Reaching hardware requires exactly what this ticket owns: making the resolved contract a stated request input with more than one expressible value, so a caller who accepts flushing can say so in advance as part of what the program means. `StrictF32NumericalContract::governed` is currently the only contract the compiler registers and it is not deliverable on the only backend that exists.
+
+**What must not be done instead.** Relaxing `require_declared_realization`, widening the emitter's honourability, or compiling under `strict_baseline` while declaring preservation would each reach hardware and return wrong numbers. ADR 0076 item 5 forbids delivering anything other than the declared contract, and the accepted goal names a shortcut that reaches hardware by hard-wiring the first profile as a *loss* rather than a win.
+
+`prototypes/serial-sum-compile/src/main.rs::the_governed_contract_is_not_honourable_on_the_governed_apple_target` pins the refusal and its exact gap key, and is deliberately written as an assertion of failure so that the day a contract becomes selectable, it breaks and forces its reasoning to be re-derived rather than passing silently under a new meaning.
+
+Raised to p0 on this evidence: every Metal and runtime p0 sits behind it.

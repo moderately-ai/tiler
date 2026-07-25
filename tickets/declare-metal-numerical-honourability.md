@@ -2,7 +2,7 @@
 id: declare-metal-numerical-honourability
 title: Declare Metal numerical honourability as a target profile fact
 status: todo
-priority: p1
+priority: p0
 dependencies: [select-numerical-contract-and-compose-feasibility]
 related: [draft-target-honourable-numerical-contract-adr, prototype-metal-numerical-realization]
 scopes: [implementation/metal, contracts/artifacts]
