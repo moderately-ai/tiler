@@ -213,6 +213,60 @@ def test_quotation_mining_skips_fences_without_swallowing_the_paragraph_above(tm
     assert "an invented rule" in errors[0]
 
 
+def test_superseded_marker_lets_a_correcting_document_quote_the_text_it_corrects(tmp_path: Path):
+    """A record of what a contract used to say cites the exact words, not a paraphrase of them."""
+    assert (
+        quoting(
+            tmp_path,
+            '[Contract](contract.md) said that a plan "remains the only checked proposal"'
+            "<!-- superseded-quotation -->, which stopped being true when a second one landed.\n",
+            contract="A plan is one of the checked proposals.\n",
+        )
+        == []
+    )
+
+
+def test_superseded_marker_fails_when_the_quoted_text_is_still_current(tmp_path: Path):
+    """The marker asserts absence, so it cannot silence a quotation whose attribution resolves."""
+    errors = quoting(
+        tmp_path,
+        '[Contract](contract.md) said that a plan "remains the only checked proposal"'
+        "<!-- superseded-quotation -->, which is no longer so.\n",
+        contract="A plan remains the only checked proposal.\n",
+    )
+
+    assert len(errors) == 1
+    assert "quotation marked superseded still appears in docs/contract.md" in errors[0]
+
+
+def test_superseded_marker_qualifying_nothing_is_itself_an_error(tmp_path: Path):
+    """A marker on an unchecked span gives false assurance, so it may not be written there."""
+    errors = quoting(
+        tmp_path,
+        'A "term in scare quotes"<!-- superseded-quotation --> names no source; see '
+        "[Contract](contract.md).\n\n"
+        "[Contract](contract.md) bounds the vocabulary<!-- superseded-quotation -->.\n",
+        contract="The vocabulary is bounded.\n",
+    )
+
+    assert len(errors) == 2
+    assert "the quotation 'term in scare quotes' before it carries no resolvable" in errors[0]
+    assert "no quotation ends where the marker begins" in errors[1]
+
+
+def test_superseded_marker_inside_a_code_span_is_mentioned_rather_than_used(tmp_path: Path):
+    """This document has to name the marker, so a code span must not flip a quotation's polarity."""
+    errors = quoting(
+        tmp_path,
+        '[Contract](contract.md) forbids "an invented rule", and the marker is spelled '
+        "`<!-- superseded-quotation -->`.\n",
+        contract="The vocabulary is bounded.\n",
+    )
+
+    assert len(errors) == 1
+    assert "appears in no document this paragraph links" in errors[0]
+
+
 def test_link_validation_rejects_duplicate_definitions_file_uris_and_html(tmp_path: Path):
     (tmp_path / "present.md").write_text("", encoding="utf-8")
     record = docs.Record(

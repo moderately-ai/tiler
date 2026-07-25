@@ -459,6 +459,8 @@ QUOTED = re.compile(r"“([^”]{2,400})”|\"([^\"]{2,400})\"")
 ELLIPSIS = re.compile(r"…|\.\.\.")
 SENTENCE_BREAK = re.compile(r"[.;:!?][\s)\]]")
 QUOTE_REACH = 220
+SUPERSEDED_QUOTATION = re.compile(r"<!--\s*superseded-quotation\s*-->")
+CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)*\1")
 
 
 def validate_local_target(record: Record, raw: str, root: Path) -> str | None:
@@ -563,6 +565,13 @@ def validate_quotations(records: list[Record], root: Path) -> list[str]:
     link in the same sentence. A term in scare quotes, a quotation of a document
     named in prose or of a ticket, and one placed a sentence away from its link
     carry no target this can resolve and are left to review.
+
+    A `superseded-quotation` marker directly after the closing quotation mark
+    inverts the obligation rather than lifting it: the marked span must appear in
+    none of those documents, which is what a document correcting or superseding
+    the words it quotes is asserting. One predicate serves both polarities, so a
+    marker cannot silence a quotation whose attribution still resolves, and a
+    marker qualifying nothing at all is itself an error.
     """
     base = root.resolve()
     corpus = {path.resolve() for path in governed(root)}
@@ -579,8 +588,17 @@ def validate_quotations(records: list[Record], root: Path) -> list[str]:
                 target = (root / record.path.parent / urllib.parse.unquote(parsed.path)).resolve()
                 if target in corpus and target != own:
                     linked.append((match.end(), target))
+            # A marker inside a code span is mentioned rather than used, so this
+            # document can name it. Blanking keeps every offset aligned.
+            mentioned = CODE_SPAN.sub(lambda m: " " * len(m.group()), paragraph)
+            markers = {match.start() for match in SUPERSEDED_QUOTATION.finditer(mentioned)}
+            marked: dict[int, str] = {}
+            qualified: set[int] = set()
             for match in QUOTED.finditer(paragraph):
                 quoted = match.group(1) or match.group(2)
+                marker = SUPERSEDED_QUOTATION.match(mentioned, match.end())
+                if marker:
+                    marked[marker.start()] = quoted
                 preceding = [pair for pair in linked if pair[0] <= match.start()]
                 if len(flatten(quoted).split()) < 2 or not preceding:
                     continue
@@ -590,17 +608,37 @@ def validate_quotations(records: list[Record], root: Path) -> list[str]:
                     continue
                 # One sentence may name two contracts and quote the second, so any
                 # document the paragraph links clears the quotation.
+                found = None
                 for candidate in dict.fromkeys([attributed, *(path for _, path in linked)]):
                     if candidate not in flattened:
                         flattened[candidate] = flatten(candidate.read_text(encoding="utf-8"))
                     if quotes(flattened[candidate], quoted):
+                        found = candidate
                         break
-                else:
+                if marker is None:
+                    if found is None:
+                        errors.append(
+                            f"{record.path}: quoted text attributed to "
+                            f"{attributed.relative_to(base).as_posix()} appears in no document "
+                            f"this paragraph links: {quoted!r}"
+                        )
+                    continue
+                qualified.add(marker.start())
+                if found is not None:
                     errors.append(
-                        f"{record.path}: quoted text attributed to "
-                        f"{attributed.relative_to(base).as_posix()} appears in no document this "
-                        f"paragraph links: {quoted!r}"
+                        f"{record.path}: quotation marked superseded still appears in "
+                        f"{found.relative_to(base).as_posix()}: {quoted!r}"
                     )
+            for start in sorted(markers - qualified):
+                quoted = marked.get(start)
+                errors.append(
+                    f"{record.path}: superseded-quotation marker qualifies nothing: "
+                    + (
+                        f"the quotation {quoted!r} before it carries no resolvable attribution"
+                        if quoted is not None
+                        else "no quotation ends where the marker begins"
+                    )
+                )
     return errors
 
 
