@@ -1,7 +1,7 @@
 ---
 id: widen-the-apple-numerical-probe-to-a-second-dtype
 title: Widen the Apple numerical probe to a second dtype
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [broaden-the-apple-numerical-probe-matrix, check-in-apple-numerical-behaviour-probe]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, metal, measurement]
+claimed_from: todo
+assignee: agent-dtype
+lease_expires_at: 1785016235
 ---
 `spikes/apple-targets/numerical_probe.py` measures `f32` and only `f32`. `broaden-the-apple-numerical-probe-matrix` widened the operation vocabulary to multiply, add, divide, and a source-level `fma`, and closed the `-fmetal-math-fp32-functions` and optimization-level boundaries, but it deliberately did not widen the *dtype*: `docs/research/apple-targets/numerical-behaviour.md` still records `half` and every other dtype as unmeasured.
 

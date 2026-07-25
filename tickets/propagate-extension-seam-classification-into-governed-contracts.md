@@ -1,7 +1,7 @@
 ---
 id: propagate-extension-seam-classification-into-governed-contracts
 title: Propagate the extension-seam classification into governed contracts
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [accept-adr-0078-public-extension-seams, draft-public-extension-seam-ownership-adr]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contracts, extensions, public-api]
+claimed_from: todo
+assignee: agent-seams
+lease_expires_at: 1785016235
 ---
 Conditional on Tom accepting ADR 0078. That record classifies which surfaces Tiler intends as public extension seams, which are permanently internal, the maturity rung each has reached, and — most of its content — what a seam is *not*. Until it is propagated, the classification lives only in a decision record and no governed contract states it, which is the state `implementation_status: "partial"` reports.
 
