@@ -74,15 +74,17 @@ use core::fmt;
 /// module's documentation for why they are separate types and
 /// `crate::target_correspondence` for the check that keeps them in step.
 ///
-/// **`#[non_exhaustive]` is ADR 0074 convention 5a here, and only while no
-/// consumer outside this crate maps it.** The correspondence lives in this
-/// crate, so the attribute does not obstruct it. The first out-of-crate total
-/// map — an orchestrator deriving a `MetalTarget` from [`MetalTargetFacts`] —
-/// makes this a 5b type, because its wildcard arm would have to invent a
-/// language standard the variant alone determines. That ticket owns removing
-/// the attribute; it is not free to add a wildcard instead.
+/// **This is an ADR 0074 convention 5b type and is deliberately exhaustive.**
+/// It was 5a — and carried `#[non_exhaustive]` — only while no consumer outside
+/// this crate mapped it. The bundle assembler now derives a `MetalTarget` from
+/// [`MetalTargetFacts`] out of crate, and a wildcard arm there could only invent
+/// a `-std` token the variant alone determines, which would let a bundle's
+/// provenance header and its actual compilation disagree about what it is. 5b
+/// resolves that against convention 3 by keeping the enum exhaustive, so adding
+/// a standard is a build failure at every out-of-crate map rather than a silent
+/// mistranslation. Adding a variant here is source-breaking for those maps by
+/// design; `cargo check` enumerates them.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum MslLanguageVersion {
     /// MSL 3.0, spelled `-std=metal3.0`.
     Metal3_0,
@@ -122,10 +124,11 @@ impl fmt::Display for MslLanguageVersion {
 /// deferred fourth family in both crates and must be added to both at once —
 /// `crate::target_correspondence` fails the build otherwise.
 ///
-/// The `#[non_exhaustive]` classification and its trigger are the same as
-/// [`MslLanguageVersion`]'s.
+/// The convention 5b classification and the reasoning are the same as
+/// [`MslLanguageVersion`]'s: an out-of-crate wildcard could only invent an
+/// `AppleSdk`, so this enum is deliberately exhaustive rather than
+/// `#[non_exhaustive]`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum MetalPlatform {
     /// macOS.
     MacOs,

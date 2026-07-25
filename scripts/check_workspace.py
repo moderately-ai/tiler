@@ -129,6 +129,12 @@ EXPECTED_DEPENDENCIES = {
         dependency("tiler-compiler", path="crates/tiler-compiler"),
         dependency("tiler-ir", path="crates/tiler-ir"),
         dependency("tiler-metal", path="crates/tiler-metal"),
+        # The producer is the one component that sees the emitter's and the
+        # driver's target vocabularies at once. Neither backend crate may depend
+        # on the other, so the production translation between them can only live
+        # here; `tiler_metal::target_correspondence` records that its
+        # orchestrator inherits the obligation its tests state.
+        dependency("tiler-metal-aot", path="crates/tiler-metal-aot"),
         dependency("tiler-reference", path="crates/tiler-reference"),
     ],
     "tiler-prototype-run": [dependency("tiler-artifact", path="crates/tiler-artifact")],

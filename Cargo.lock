@@ -217,6 +217,7 @@ dependencies = [
  "tiler-compiler",
  "tiler-ir",
  "tiler-metal",
+ "tiler-metal-aot",
  "tiler-reference",
 ]
 
