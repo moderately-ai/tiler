@@ -892,6 +892,8 @@ scalar operation. `ScalarOpKey` is deliberately distinct from semantic
 operations, and one fused scalar graph may implement several semantic
 operations.
 
+The two keys separate by namespace rather than by name component: `tiler::add-f32@1` is the semantic tensor family and `tiler.scalar::add-f32@1` is the scalar operation it lowers into. That is the general convention for operation names across layers of this contract, several of which are spelled identically in two layers while denoting different constructs. The [glossary](glossary.md#operation-names-shared-across-expression-layers) indexes which layer each shared name belongs to.
+
 A frozen scalar-definition registry supplies the checked schema and semantic
 authority for each `ScalarOpKey`. The schema owns operand and result arities,
 canonical attributes, normative identity, and deterministic result inference.
@@ -1247,6 +1249,8 @@ Load               Store              AtomicUpdate
 Unary              Binary             Convert            Bitcast
 CheckedNarrow      Barrier             Collective         Builtin
 ```
+
+These names are local to this layer. `Unary`, `Binary`, and `Constant` are also operation names in the ABI expression language of Layer 5, in the index and scalar expressions of Layer 2, or in both, and they denote different constructs there; `Constant` additionally names a governed address space within this layer rather than an operation. The [glossary](glossary.md#operation-names-shared-across-expression-layers) indexes every such name against its layer, construct, implementation spelling, and maturity.
 
 The initial form uses typed buffer references plus checked allocation-relative
 element/storage offsets instead of unrestricted pointers. Buffers state element
