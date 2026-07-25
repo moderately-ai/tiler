@@ -295,6 +295,7 @@ pub(crate) fn resolve_lowering(
             operation: occurrence.operation().clone(),
             provider: LoweringProviderIdentity::new(
                 resolved.provider().clone(),
+                governed_capability_key(&resolved),
                 resolved.revision(),
             ),
             evidence,
@@ -334,6 +335,7 @@ pub(crate) fn resolve_capabilities(
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
         providers.push(LoweringProviderIdentity::new(
             resolved.provider().clone(),
+            governed_capability_key(&resolved),
             resolved.revision(),
         ));
     }
@@ -506,4 +508,36 @@ fn occurrence_signature(
         rule: "signature-bound",
         member,
     })
+}
+
+/// Mints the governed key of one resolved lowering capability.
+///
+/// The spelling names the capability family and the exact semantic operation
+/// family it lowers, including that operation's semantic version, so two
+/// versions of one operation never share a key.
+///
+/// # What is deliberately not in the key, and what that costs
+///
+/// The resolved **signature** is excluded. A capability is registered under
+/// family, operation, signature, and provider (`capability.rs`'s
+/// `LoweringCapabilityKey`), so two capabilities from one provider differing
+/// only in signature would mint the same key here. Signatures are unbounded
+/// structural values and a governed key is bounded at 256 bytes, so folding one
+/// in would either truncate — silently colliding — or require a digest, which
+/// is a second identity to keep in agreement.
+///
+/// The provider and the capability revision are recorded *beside* this key by
+/// every consumer that stores it, so the conflation is only reachable when one
+/// provider registers two signatures for one operation family at one revision.
+/// `resolve-capability-key-signature-conflation` owns widening this if the
+/// profile makes that reachable; it is recorded rather than assumed away.
+fn governed_capability_key(resolved: &ResolvedLoweringCapability) -> String {
+    let operation = resolved.operation();
+    format!(
+        "tiler.capability.{}.{}.{}.v{}",
+        resolved.family().key_token(),
+        operation.namespace(),
+        operation.name(),
+        operation.semantic_version(),
+    )
 }

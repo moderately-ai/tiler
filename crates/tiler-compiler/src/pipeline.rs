@@ -2945,16 +2945,27 @@ mod tests {
         // resolved for the recognized occurrences. Both plan shapes cover the
         // same occurrences, so both name the same four governed providers: the
         // alternatives differ in their cover, not in who lowers each operation.
+        // Provider and operation are named separately rather than one derived
+        // from the other: they coincide by naming convention in the governed
+        // registry, and a test that split the provider name would assert the
+        // convention instead of the resolution.
         let expected_providers: Vec<_> = [
-            "governed-index-access.add-f32",
-            "governed-index-access.constant-f32",
-            "governed-index-access.multiply-f32",
-            "governed-index-access.strict-serial-sum-f32",
+            ("governed-index-access.add-f32", "add-f32"),
+            ("governed-index-access.constant-f32", "constant-f32"),
+            ("governed-index-access.multiply-f32", "multiply-f32"),
+            (
+                "governed-index-access.strict-serial-sum-f32",
+                "strict-serial-sum-f32",
+            ),
         ]
         .into_iter()
-        .map(|name| {
+        .map(|(provider, operation)| {
             crate::request::LoweringProviderIdentity::new(
-                tiler_ir::semantic::ProviderIdentity::new("tiler", name, 1).unwrap(),
+                tiler_ir::semantic::ProviderIdentity::new("tiler", provider, 1).unwrap(),
+                // The governed key names the capability family and the
+                // operation it lowers, never the provider, which is recorded
+                // beside it.
+                format!("tiler.capability.index-access.tiler.{operation}.v1"),
                 crate::capability::LoweringCapabilityRevision::new(1).unwrap(),
             )
         })
@@ -4642,6 +4653,7 @@ mod conformance {
 
         let external = crate::request::LoweringProviderIdentity::new(
             external_lowering_provider(),
+            "tiler.capability.index-access.tiler.multiply-f32.v1".to_owned(),
             LoweringCapabilityRevision::new(7).unwrap(),
         );
         for alternative in &target.portfolio.alternatives {

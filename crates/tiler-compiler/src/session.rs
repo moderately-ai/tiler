@@ -41,7 +41,7 @@
 use tiler_ir::kernel::VerifiedKernel;
 use tiler_ir::program::VerifiedKernelProgram;
 use tiler_ir::program::abi::ExprNode;
-use tiler_ir::semantic::SemanticProgram;
+use tiler_ir::semantic::{ProviderIdentity, SemanticProgram};
 
 use crate::explain::VerifiedExplainTrace;
 use crate::pipeline::{
@@ -49,7 +49,9 @@ use crate::pipeline::{
     compile as compile_internal,
 };
 use crate::program::{EntryContract, KernelProgram};
-use crate::request::{CompilationRequest, RequestError, StrictF32NumericalContract};
+use crate::request::{
+    CompilationRequest, LoweringProviderIdentity, RequestError, StrictF32NumericalContract,
+};
 
 /// Why a compilation did not produce plans.
 ///
@@ -156,6 +158,19 @@ impl PlanAlternative<'_> {
         &self.0.kernels
     }
 
+    /// Returns the lowering capabilities this alternative resolved.
+    ///
+    /// An artifact records which capabilities actually lowered its program;
+    /// ADR 0072 folds them into complete program identity, so this is evidence
+    /// rather than description.
+    pub fn selected_capabilities(&self) -> impl ExactSizeIterator<Item = SelectedCapability<'_>> {
+        self.0
+            .artifact_plan
+            .lowering_providers()
+            .iter()
+            .map(SelectedCapability)
+    }
+
     /// Returns this alternative's ABI construction inputs.
     ///
     /// This is what an artifact assembler needs beyond the kernels: the guard,
@@ -164,6 +179,35 @@ impl PlanAlternative<'_> {
     #[must_use]
     pub fn abi(&self) -> AbiConstruction<'_> {
         AbiConstruction(self.0.artifact_plan.verified_program())
+    }
+}
+
+/// One capability the compiler resolved to lower part of a program.
+///
+/// The governed key is minted by the compiler and handed over whole. A caller
+/// wraps it in its own key type rather than composing one from parts, because
+/// the key enters artifact identity and two places deriving one identity is the
+/// drift this boundary exists to prevent.
+#[derive(Clone, Copy, Debug)]
+pub struct SelectedCapability<'a>(&'a LoweringProviderIdentity);
+
+impl<'a> SelectedCapability<'a> {
+    /// Returns the identity of the provider that supplied the capability.
+    #[must_use]
+    pub fn provider(self) -> &'a ProviderIdentity {
+        self.0.provider()
+    }
+
+    /// Returns the governed key of the resolved capability.
+    #[must_use]
+    pub fn capability_key(self) -> &'a str {
+        self.0.capability_key()
+    }
+
+    /// Returns the capability's output-affecting revision.
+    #[must_use]
+    pub fn capability_revision(self) -> u32 {
+        self.0.capability_revision().get()
     }
 }
 
@@ -397,6 +441,7 @@ fn into_compilations(product: CompilationProduct) -> Vec<Compilation> {
 #[cfg(test)]
 mod tests {
     use super::{CompileFailure, NumericalContract, compile_governed};
+    use tiler_ir::program::abi::ExprNode;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -510,5 +555,91 @@ mod tests {
             CompileFailure::BudgetExhausted,
             CompileFailure::Unsupported { rule: "any" },
         );
+    }
+
+    /// The boundary names every capability that lowered, and its ABI inputs.
+    ///
+    /// Both halves are asserted together because they are the two things an
+    /// artifact assembler needs and neither was reachable before: a capability
+    /// key it can record without inventing one, and expressions it can replay
+    /// without re-deriving one.
+    #[test]
+    fn an_alternative_names_its_capabilities_and_exposes_its_abi_inputs() {
+        let program = semantic_program();
+        let compilations = compile_governed(&program, NumericalContract::StrictF32).unwrap();
+        let compilation = compilations.first().expect("one governed target");
+        let selected = compilation.selected().expect("a selected alternative");
+
+        // Every resolved capability is named by a governed key, never blank.
+        // The spelling is the family and the operation it lowers; the provider
+        // is recorded beside it rather than inside it, so two providers of one
+        // operation share a key and are still told apart.
+        let keys: Vec<_> = selected
+            .selected_capabilities()
+            .map(|capability| capability.capability_key().to_owned())
+            .collect();
+        assert!(!keys.is_empty(), "a compiled plan resolved some capability");
+        for key in &keys {
+            assert!(
+                key.starts_with("tiler.capability.index-access.tiler."),
+                "unexpected capability key spelling: {key}",
+            );
+            // Split rather than match a literal suffix: the assertion is that
+            // the key ends in a parseable operation version, not that this
+            // operation happens to be at version one.
+            let version = key.rsplit('.').next().expect("a key has segments");
+            assert!(
+                version
+                    .strip_prefix('v')
+                    .is_some_and(|digits| digits.parse::<u32>().is_ok()),
+                "key omits the operation version: {key}",
+            );
+        }
+        assert!(
+            keys.contains(
+                &"tiler.capability.index-access.tiler.strict-serial-sum-f32.v1".to_owned()
+            ),
+            "the reduction's capability is named: {keys:?}",
+        );
+        for capability in selected.selected_capabilities() {
+            assert_eq!(capability.provider().namespace(), "tiler");
+            assert!(capability.capability_revision() > 0);
+        }
+
+        // The ABI arena is replayable: every operand precedes the node naming
+        // it, which is what lets an assembler mint handles in one forward pass.
+        let abi = selected.abi();
+        let arena = abi.expressions();
+        assert!(!arena.is_empty());
+        for (position, node) in arena.iter().enumerate() {
+            let position = u32::try_from(position).unwrap();
+            match node {
+                ExprNode::Root(_) => {}
+                ExprNode::Unary { operand, .. } => assert!(*operand < position),
+                ExprNode::Binary { left, right, .. } => {
+                    assert!(*left < position && *right < position);
+                }
+                ExprNode::Select {
+                    condition,
+                    if_true,
+                    if_false,
+                } => {
+                    assert!(*condition < position);
+                    assert!(*if_true < position && *if_false < position);
+                }
+            }
+        }
+
+        // Every position the entries name is inside the arena they name it in.
+        let bound = u32::try_from(arena.len()).unwrap();
+        assert!(abi.applicability_guard() < bound);
+        assert_eq!(abi.entries().len(), selected.kernels().len());
+        for entry in abi.entries() {
+            assert!(entry.grid_threads() < bound);
+            assert!(entry.threads_per_workgroup() < bound);
+            for accessible in entry.accessible_bytes() {
+                assert!(accessible < bound);
+            }
+        }
     }
 }

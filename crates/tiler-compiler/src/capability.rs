@@ -73,6 +73,20 @@ pub enum LoweringFamily {
 }
 
 impl LoweringFamily {
+    /// Returns the governed token naming this family inside a capability key.
+    ///
+    /// Distinct from [`fmt::Display`], which renders prose for diagnostics. A
+    /// capability key is durable identity, so its spelling is written by an
+    /// exhaustive match here (ADR 0074 convention 3) and a new family is a
+    /// build error rather than a silently unnamed one.
+    #[must_use]
+    pub const fn key_token(self) -> &'static str {
+        match self {
+            Self::IndexAccess => "index-access",
+            Self::ScalarLowering => "scalar",
+        }
+    }
+
     /// Returns the stable discriminant shared by ordering and encoding.
     const fn tag(self) -> u8 {
         match self {
