@@ -208,6 +208,55 @@ impl<'a> Preflight<'a> {
     /// this point would mean an obligation was checked in the wrong stage.
     /// Consuming `self` is what makes the commit one-way: the caller cannot
     /// afterwards hold this value to fall back to.
+    ///
+    /// # The one-way property is checked by the compiler
+    ///
+    /// The three examples below are the evidence that ADR 0051's commit is
+    /// structural here rather than a rule a caller is trusted to follow. Each
+    /// is compiled by `cargo test`; the two negative ones pin the exact
+    /// diagnostic, so a change that made either *compile* — or that made it
+    /// fail for some unrelated reason — fails the gate.
+    ///
+    /// Committing once is the whole of what a caller may do with this value:
+    ///
+    /// ```
+    /// use tiler_runtime::load::{Preflight, RoutedDispatch};
+    ///
+    /// fn route(preflight: Preflight<'_>) -> RoutedDispatch<'_> {
+    ///     preflight.commit()
+    /// }
+    /// ```
+    ///
+    /// Committing a second time does not compile, because the first commit
+    /// moved the value the second one would need (`E0382`). This is what
+    /// "committed once" means:
+    ///
+    /// ```compile_fail,E0382
+    /// use tiler_runtime::load::Preflight;
+    ///
+    /// fn commit_twice(preflight: Preflight<'_>) {
+    ///     let _first = preflight.commit();
+    ///     let _second = preflight.commit();
+    /// }
+    /// ```
+    ///
+    /// Keeping a spare to fall back to after committing does not compile
+    /// either, because [`Preflight`] is deliberately not [`Clone`] (`E0277`).
+    /// Without that, a caller could duplicate the route, commit one copy, and
+    /// still hold an uncommitted one — which is exactly the state the commit
+    /// exists to make unreachable:
+    ///
+    /// ```compile_fail,E0277
+    /// use tiler_runtime::load::Preflight;
+    ///
+    /// fn duplicate<T: Clone>(value: T) -> (T, T) {
+    ///     (value.clone(), value)
+    /// }
+    ///
+    /// fn keep_a_fallback(preflight: Preflight<'_>) {
+    ///     let (_spare, _route) = duplicate(preflight);
+    /// }
+    /// ```
     #[must_use]
     pub fn commit(self) -> RoutedDispatch<'a> {
         let Self {

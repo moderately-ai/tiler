@@ -54,6 +54,23 @@
 //!
 //! [`decode_artifact`]: tiler_artifact::program::decode_artifact
 //!
+//! # Where the routing commit falls, and why it falls there
+//!
+//! ADR 0051 permits a fallback only before the commit, so every question this
+//! host can answer about whether it can *carry out* a route is answered while
+//! the [`Preflight`] is still held. [`plan_route`] resolves each routed ABI slot
+//! to storage this proof can supply and refuses a launch that covers no threads;
+//! only then is `commit` called. What stays after the commit is what needs a
+//! device — the pipeline's maximum threadgroup size and the length of an
+//! allocation actually made — and a refusal there is a failure reported, never a
+//! fallback taken. This binary has no fallback path at all: the direct path runs
+//! first and independently, as a control, and a refused envelope fails the whole
+//! proof rather than being quietly covered by it.
+//!
+//! [`probe_fail_closed`] establishes the other half before the positive route is
+//! claimed: a damaged, truncated, unexpected, or wrongly-targeted input is
+//! refused under its *own* class rather than as a variant that did not apply.
+//!
 //! # What makes the comparison worth anything
 //!
 //! The reference evaluator shares no code with the compiler's lowering, the
@@ -110,7 +127,10 @@ use tiler_metal_aot::input::{
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
-use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment, LoadRejection, RoutedDispatch};
+use tiler_runtime::load::{
+    DecodedProgram, ExecutionEnvironment, LoadRejection, Preflight, RoutedDispatch,
+    TargetCompatibility, TargetDeclaration,
+};
 
 /// Rows of the direct path's input; each row reduces to one output element.
 const ROWS: u64 = 4;
@@ -414,9 +434,20 @@ fn host_storage(device: &Device, bits: &[u32], rows: u64) -> (Buffer, Buffer, us
 /// Submits one encoded command buffer and reads the output back.
 ///
 /// The command buffer's terminal state is checked *before* the host reads
-/// anything. A failed submission leaves the output buffer holding whatever it
-/// held before, and comparing that against the reference would report a
-/// numerical disagreement for what is actually a dispatch failure.
+/// anything, and the accepted state is exactly `Completed`. A failed submission
+/// leaves the output buffer holding whatever it held before, and comparing that
+/// against the reference would report a numerical disagreement for what is
+/// actually a dispatch failure.
+///
+/// **The refusal names the status and not Metal's own error, and that is a
+/// limitation of the binding rather than a choice.** `metal` 0.33.0's
+/// `CommandBufferRef` exposes `commit`, `status`, `wait_until_completed` and the
+/// handler registrations, and no accessor for the buffer's `NSError`; the
+/// `MTLCommandBufferError` enum it declares is returned by nothing. Reading it
+/// would mean an `unsafe` `msg_send!`, and a new unsafe site is a decision under
+/// ADR 0079 rather than a convenience this proof may take. So a failed dispatch
+/// is reported as its exact terminal status, and no claim is made about *why*
+/// the device rejected it.
 fn submit(
     device: &Device,
     output: &Buffer,
@@ -465,15 +496,233 @@ fn dispatch_direct(
     })
 }
 
+/// Proves the loader fails closed on inputs that are not this artifact.
+///
+/// Run against the **real** envelope this process just read, not against a
+/// synthetic fixture, and run *before* the positive route is claimed. Each probe
+/// perturbs exactly one thing and asserts the class of the refusal, because the
+/// failure mode this guards against is not "it was accepted" — it is a refusal
+/// arriving under the wrong class. A damaged file reported as
+/// `NoApplicableVariant` reads as "this artifact does not apply to your host",
+/// which sends a reader to rebuild a plan when the actual repair is to re-fetch
+/// the bytes. That is the "corrupt artifacts must not become route misses"
+/// obligation, and it is only observable by asserting the variant.
+///
+/// The probes are decidable without a device. They run here rather than as unit
+/// tests because they need a valid artifact, and this workspace's only producer
+/// of one is a separate binary; a test in this crate would have to carry a
+/// fixture that goes stale against the encoder it is meant to exercise.
+fn probe_fail_closed(
+    bytes: &[u8],
+    expected: &[u8],
+    environment: &ExecutionEnvironment,
+    abi: &AbiFacts,
+) -> Result<(), ProofError> {
+    let refused =
+        |probe: &'static str, outcome: String| ProofError::NotFailedClosed { probe, outcome };
+
+    // A single flipped bit anywhere in the framed body must be caught by the
+    // envelope's own integrity or framing, never survive into routing.
+    let mut corrupt = bytes.to_vec();
+    let midpoint = corrupt.len() / 2;
+    corrupt[midpoint] ^= 0x01;
+    match DecodedProgram::decode(&corrupt) {
+        Err(rejection @ LoadRejection::Artifact(_)) => {
+            println!("  a flipped byte at offset {midpoint}: {rejection}");
+        }
+        Err(other) => return Err(refused("a flipped byte", other.to_string())),
+        Ok(_) => {
+            return Err(refused(
+                "a flipped byte",
+                "the envelope decoded as valid".to_owned(),
+            ));
+        }
+    }
+
+    // A truncated file is a different damage class and must also be refused by
+    // the artifact layer rather than routed against whatever survived.
+    match DecodedProgram::decode(&bytes[..midpoint]) {
+        Err(rejection @ LoadRejection::Artifact(_)) => {
+            println!("  truncated to {midpoint} byte(s): {rejection}");
+        }
+        Err(other) => return Err(refused("a truncated envelope", other.to_string())),
+        Ok(_) => {
+            return Err(refused(
+                "a truncated envelope",
+                "the envelope decoded as valid".to_owned(),
+            ));
+        }
+    }
+
+    // Everything below decodes: these are valid bytes refused for host reasons,
+    // and each must name its own reason rather than fall through to a later one.
+    let decoded = DecodedProgram::decode(bytes).map_err(ProofError::Load)?;
+
+    // An artifact that is not the one this process expected is a mismatch, not
+    // a variant that failed to apply.
+    let mut foreign = expected.to_vec();
+    if let Some(last) = foreign.last_mut() {
+        *last ^= 0x01;
+    }
+    match decoded.preflight(environment, &foreign, abi) {
+        Err(rejection @ LoadRejection::ProgramMismatch { .. }) => {
+            println!("  an expected identity that is not this artifact's: {rejection}");
+        }
+        Err(other) => return Err(refused("a foreign expected identity", other.to_string())),
+        Ok(_) => {
+            return Err(refused(
+                "a foreign expected identity",
+                "the route was accepted".to_owned(),
+            ));
+        }
+    }
+
+    // A host offering the same target family under a profile descriptor the
+    // artifact was not assessed against must be refused as an incompatible
+    // target naming *which* declaration refused, so a reader knows whether to
+    // rebuild the plan or the object.
+    let mut descriptor = environment.target_profile.descriptor.as_bytes().to_vec();
+    if let Some(last) = descriptor.last_mut() {
+        *last ^= 0x01;
+    }
+    let other_host = ExecutionEnvironment {
+        target_profile: TargetProfileRef {
+            key: environment.target_profile.key.clone(),
+            descriptor: TargetProfileDescriptorDigest::from_bytes(&descriptor)
+                .map_err(|_| ProofError::HostProfile)?,
+        },
+        backend: environment.backend.clone(),
+        representation: environment.representation.clone(),
+    };
+    match decoded.preflight(&other_host, expected, abi) {
+        Err(
+            rejection @ LoadRejection::IncompatibleTarget {
+                declaration: TargetDeclaration::Variant,
+                classification: TargetCompatibility::DescriptorMismatch { .. },
+            },
+        ) => println!("  a host offering another profile descriptor: {rejection}"),
+        Err(other) => return Err(refused("another profile descriptor", other.to_string())),
+        Ok(_) => {
+            return Err(refused(
+                "another profile descriptor",
+                "the route was accepted".to_owned(),
+            ));
+        }
+    }
+
+    // A host that cannot execute the packaged backend family must be refused on
+    // that ground rather than on the profile it happens to share.
+    let other_backend = ExecutionEnvironment {
+        target_profile: environment.target_profile.clone(),
+        backend: BackendKey::new("tiler.some-other-backend")
+            .map_err(|_| ProofError::HostProfile)?,
+        representation: environment.representation.clone(),
+    };
+    match decoded.preflight(&other_backend, expected, abi) {
+        Err(rejection @ LoadRejection::UnexecutablePayload { .. }) => {
+            println!("  a host stating another backend family: {rejection}");
+        }
+        Err(other) => return Err(refused("another backend family", other.to_string())),
+        Ok(_) => {
+            return Err(refused(
+                "another backend family",
+                "the route was accepted".to_owned(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Which storage this proof will supply for one routed ABI slot.
+///
+/// Resolved before the commit and carried as an owned decision, so the encoder
+/// never re-asks a question whose answer could have refused the route.
+#[derive(Clone, Copy, Debug)]
+enum Placement {
+    /// The buffer holding the program input the artifact names.
+    Input,
+    /// The buffer receiving the program output the artifact names.
+    Output,
+    /// Entry-internal storage: named by nothing, sized by its own
+    /// accessible-byte expression, and allocated rather than bound — which is
+    /// what the artifact layer says a loader does with one.
+    Internal,
+}
+
+/// One routed ABI slot, resolved to storage this host can actually supply.
+#[derive(Clone, Copy, Debug)]
+struct PlacedSlot {
+    transport: u32,
+    needed: u64,
+    placement: Placement,
+}
+
+/// Decides whether this host can carry out a route, while abandoning it is
+/// still permitted.
+///
+/// **Every refusal here is a refusal the host owes itself before the commit,
+/// and that is the whole point of the function.** `Preflight` publishes the
+/// launch geometry and the routed bindings precisely so a caller can judge them
+/// and decline; a host that instead committed and *then* discovered it binds no
+/// storage for some slot would have destroyed its own fallback authority for a
+/// reason that was decidable while it still held it. ADR 0051 permits a
+/// fallback only before the commit, so a check that could have run before it
+/// must not run after.
+///
+/// What deliberately stays *after* the commit is everything that needs a device:
+/// the pipeline's maximum threadgroup size, and the length of an allocation that
+/// has actually been made. Those are not decidable here, and reporting one after
+/// the commit is a failure reported rather than a fallback taken.
+fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<PlacedSlot>, ProofError> {
+    let launch = preflight.launch();
+    if launch.grid_threads() == 0 {
+        // The artifact states whether an empty launch is skipped or encoded, so
+        // the answer is read rather than assumed. Either way this proof has no
+        // output to compare and says so instead of reporting agreement on
+        // whatever the output buffer happened to hold.
+        return Err(ProofError::EmptyLaunch {
+            skipped: launch.zero_work_skips_dispatch(),
+        });
+    }
+
+    let mut plan = Vec::with_capacity(preflight.bindings().len());
+    for binding in preflight.bindings() {
+        let placement = match binding.binding().target() {
+            BindingTarget::ProgramInput(key) if key.as_str() == INPUT_KEY => Placement::Input,
+            BindingTarget::ProgramOutput(keys)
+                if keys.len() == 1 && keys[0].as_str() == OUTPUT_KEY =>
+            {
+                Placement::Output
+            }
+            BindingTarget::Internal => Placement::Internal,
+            other => {
+                return Err(ProofError::UnboundBinding {
+                    slot: binding.slot(),
+                    target: format!("{other:?}"),
+                });
+            }
+        };
+        plan.push(PlacedSlot {
+            transport: binding.transport_slot(),
+            needed: binding.accessible_bytes(),
+            placement,
+        });
+    }
+    Ok(plan)
+}
+
 /// Dispatches a committed route, using nothing this process compiled.
 ///
 /// The object image, the entry symbol, the argument-table index of every buffer,
 /// how many bytes each must reach, and the launch geometry are all read from the
 /// route. The only thing this function contributes is the host storage the
-/// artifact's own interface keys name.
+/// artifact's own interface keys name, following the placement decision
+/// [`plan_route`] already made and the commit already ratified.
 fn dispatch_routed(
     device: &Device,
     routed: &RoutedDispatch<'_>,
+    plan: &[PlacedSlot],
     bits: &[u32],
     rows: u64,
 ) -> Result<Vec<u32>, ProofError> {
@@ -482,38 +731,26 @@ fn dispatch_routed(
 
     // Retained until the command buffer completes: entry-internal storage is the
     // loader's to allocate, and dropping it at the end of this loop would leave
-    // the encoder holding a binding to a freed allocation.
-    let mut placements = Vec::with_capacity(routed.bindings().len());
-    for binding in routed.bindings() {
-        let needed = binding.accessible_bytes();
-        let storage = match binding.binding().target() {
-            BindingTarget::ProgramInput(key) if key.as_str() == INPUT_KEY => input.clone(),
-            BindingTarget::ProgramOutput(keys)
-                if keys.len() == 1 && keys[0].as_str() == OUTPUT_KEY =>
-            {
-                output.clone()
-            }
-            // Named by nothing, sized by its own accessible-byte expression, and
-            // allocated rather than bound — which is what the artifact layer
-            // says a loader does with one.
-            BindingTarget::Internal => {
-                device.new_buffer(needed.max(1), MTLResourceOptions::StorageModePrivate)
-            }
-            other => {
-                return Err(ProofError::UnboundBinding {
-                    slot: binding.slot(),
-                    target: format!("{other:?}"),
-                });
+    // the encoder holding a binding to a freed allocation. `placements` outlives
+    // the `submit` call below, which waits for the command buffer's terminal
+    // state, so every buffer is alive through its final device use.
+    let mut placements = Vec::with_capacity(plan.len());
+    for (slot, placed) in plan.iter().enumerate() {
+        let storage = match placed.placement {
+            Placement::Input => input.clone(),
+            Placement::Output => output.clone(),
+            Placement::Internal => {
+                device.new_buffer(placed.needed.max(1), MTLResourceOptions::StorageModePrivate)
             }
         };
-        if storage.length() < needed {
+        if storage.length() < placed.needed {
             return Err(ProofError::UndersizedBinding {
-                slot: binding.slot(),
-                needed,
+                slot,
+                needed: placed.needed,
                 held: storage.length(),
             });
         }
-        placements.push((binding.transport_slot(), storage));
+        placements.push((placed.transport, storage));
     }
 
     let launch = routed.launch();
@@ -523,15 +760,6 @@ fn dispatch_routed(
         return Err(ProofError::WorkgroupTooLarge {
             declared: workgroup,
             capacity,
-        });
-    }
-    if launch.grid_threads() == 0 {
-        // The artifact states whether an empty launch is skipped or encoded, so
-        // the answer is read rather than assumed. Either way this proof has no
-        // output to compare and says so instead of reporting agreement on
-        // whatever the output buffer happened to hold.
-        return Err(ProofError::EmptyLaunch {
-            skipped: launch.zero_work_skips_dispatch(),
         });
     }
 
@@ -613,6 +841,13 @@ fn run() -> Result<(), ProofError> {
     let (rows, columns, abi) = bind_interface(&decoded)?;
     println!("the artifact declares a {rows} by {columns} input");
     let environment = host_environment(compilation)?;
+
+    // Established before the positive route is claimed: a loader that accepted
+    // these bytes would say nothing about what it refuses, and the refusals are
+    // half of what makes the acceptance mean anything.
+    println!("fail-closed probes against these exact bytes:");
+    probe_fail_closed(&bytes, &expected, &environment, &abi)?;
+
     let preflight = decoded
         .preflight(&environment, &expected, &abi)
         .map_err(ProofError::Load)?;
@@ -649,6 +884,11 @@ fn run() -> Result<(), ProofError> {
         });
     }
 
+    // The last decision taken while a fallback is still permitted: everything
+    // this host can decide about whether it can *carry out* the route is decided
+    // from the preflight, and only then is the commit taken. See `plan_route`.
+    let plan = plan_route(&preflight)?;
+
     let routed = preflight.commit();
     println!(
         "routed: symbol {:?}, {} object byte(s), {} thread(s) in groups of {}",
@@ -668,7 +908,7 @@ fn run() -> Result<(), ProofError> {
     }
     let envelope_bits = input_bits(rows, columns);
     let envelope_reference = reference_bits(&envelope_program, &envelope_bits, rows, columns);
-    let envelope = dispatch_routed(device, &routed, &envelope_bits, rows)?;
+    let envelope = dispatch_routed(device, &routed, &plan, &envelope_bits, rows)?;
 
     // ---- numerical verification ------------------------------------------
     // Each path is compared against the oracle's evaluation of the program that
@@ -719,6 +959,10 @@ enum ProofError {
     NoDevice,
     HostProfile,
     Load(LoadRejection),
+    NotFailedClosed {
+        probe: &'static str,
+        outcome: String,
+    },
     Interface(String),
     ForeignProgram {
         packaged: usize,
@@ -770,6 +1014,10 @@ impl fmt::Display for ProofError {
             Self::HostProfile => formatter
                 .write_str("the compiler's target profile does not compose a host environment"),
             Self::Load(rejection) => write!(formatter, "the artifact was refused: {rejection}"),
+            Self::NotFailedClosed { probe, outcome } => write!(
+                formatter,
+                "the loader did not fail closed on {probe}: {outcome}",
+            ),
             Self::Interface(detail) => write!(
                 formatter,
                 "the artifact's interface is not this program's: {detail}",
