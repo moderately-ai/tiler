@@ -173,6 +173,13 @@ empirical evidence, normative guarantees, and `Unknown` as different classes.
   truncated diff) can split the construct being searched for. When a search
   result contradicts a documented claim, open the file before concluding the
   document is wrong.
+- Two types with the same shape are not the same concept. Do not conclude what a
+  value means from its field types, its name, or its resemblance to another
+  type; read where it is constructed. A `{key, u32}` matched against another
+  `{key, u32}` produced two confident wrong conclusions in one session, because
+  one carried a target profile key beside a rule version and the other a
+  rule-set key beside a revision. The construction site is the evidence; the
+  declaration is not.
 - When asserting absence, state the exact check so a reader can reproduce or
   refute it in one line. Treat a correction that cannot be reproduced that way
   as unverified, including one arriving from a reviewer.
@@ -195,6 +202,34 @@ collection reduces uncertainty. Give each agent a non-overlapping ticket scope
 and exact base commit. Ask agents to report conclusions, measurement boundaries,
 tests, and commit hashes. For synthesis, read the artifacts they surface rather
 than duplicating their entire research process.
+
+### Coordinating parallel workers
+
+These are failure modes observed in practice, not hypotheticals.
+
+- **State the board from the board.** Counts of running workers, merged
+  branches, ticket statuses, and whether a commit reached a remote are all
+  cheap to check and were all reported wrongly from memory. Check before
+  asserting.
+- **Push before dispatching.** A worker's worktree derives from the remote, so
+  local-only commits make every base you hand out unreachable. Push, confirm
+  `git rev-list --left-right --count origin/main...main` is `0 0`, then dispatch.
+- **Refill the scope a landing frees, in the same turn.** Reporting a merge and
+  waiting leaves dependency-satisfied work unclaimed for no reason.
+- **Two workers from one base can both be right and still not compose.** A
+  pinned identity digest rebaselined independently on two branches yields a
+  merged tree matching neither, and each branch's own tests pass. Recompute such
+  a value on the merged tree rather than taking either side, and never resolve a
+  conflict in a golden or pinned value by picking a branch.
+- **Integrate on the diff, not the report.** A worker's summary is a claim about
+  its work. The gate is real evidence and a correctness *argument* is not
+  checked by it.
+- **Do not delegate what is smaller than its brief.** Writing a dispatch for a
+  one-line status change costs more than the change and adds a merge.
+- **A question answerable by reading is research, not a decision to escalate.**
+  Escalating one stalls the work and moves your job to someone else. Routine
+  operations — pushing your own branch, closing a ticket whose remainder is
+  tracked — are not reserved boundaries.
 
 ## Experiments, prototypes, and evidence
 
@@ -230,6 +265,22 @@ index simultaneously. Before declaring it recorded:
 - remove an open question only after its answer is represented in the durable
   contract or an accepted ADR.
 
+**A decision recorded is not a decision applied.** Writing an outcome on a
+ticket, or a decision section in a record, changes nothing a reader or a check
+consults. Accepting an ADR means moving its `decision_status`, regenerating the
+catalogs that view it, correcting every contract sentence whose truth depended
+on the old status, and releasing whatever the work graph gated on it. Note the
+asymmetry: a disclosure required while a decision is proposed becomes *wrong*
+once it is accepted, and the check enforcing it stops applying at exactly that
+moment — so that staleness is invisible to the gate and has to be found by
+reading.
+
+**A doc comment is a claim, and it is load-bearing.** Text describing what a
+type exposes is read by the next worker as fact, and an overstated one makes
+unreachable work look reachable. Describe what the code does now rather than
+what it is intended to do; when a comment and the source disagree, the source
+wins and the comment is the defect.
+
 Examples are part of the design work. Prefer a small end-to-end tensor program
 that shows inputs, typed operations, multiple values or outputs when relevant,
 logical properties, candidate physical plans, rejected alternatives, and the
@@ -261,7 +312,13 @@ or rolling up research work.
   conflict-aware work.
 - Atomically claim the ticket first so another worker cannot win the same work,
   then immediately create or enter its dedicated worktree and `tkt/<id>` branch
-  from current `origin/main`. Do not edit scoped content between those steps.
+  from the exact base commit the dispatch names. Do not edit scoped content
+  between those steps. **Verify that commit is checked out before anything
+  else**, with `git log --oneline -1`: a worktree may be created from a stale
+  `origin/main` and land hundreds of commits behind, in which case the ticket
+  files the work depends on are simply absent. Treat a base you cannot resolve,
+  or one that proves to be an ancestor of the named commit, as a dispatch error
+  to report and correct rather than a starting point to work from.
 - Keep one ticket per branch when practical and stay within declared scopes.
 - Add a scope before touching a mapped contract area; `paths` do not substitute
   for scopes in scheduling.
@@ -271,6 +328,12 @@ or rolling up research work.
 - Mark a ticket `done` only when its stated outcome is actually supported.
   Split a remaining feasibility gate into a follow-up ticket instead of hiding
   it or overstating completion.
+- Once a remainder is split into its own live ticket, the parent's stated
+  outcome *is* supported and the parent closes. Leaving it in `review` while its
+  child waits on it creates a deadlock the graph cannot resolve: `review` does
+  not satisfy dependents, so the child is unclaimable and the parent has nothing
+  left to do. Splitting is what lets the parent close, not a reason to hold it
+  open.
 - Preserve other agents' and Tom's dirty changes. Stage and commit exact paths;
   never sweep unrelated modifications into a commit.
 
