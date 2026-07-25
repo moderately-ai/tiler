@@ -1,7 +1,7 @@
 ---
 id: probe-the-non-exhaustive-discriminant-cast-hole
 title: "Probe whether #[non_exhaustive] constrains a cross-crate discriminant cast"
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [reconcile-adr-records-with-the-widened-numerical-vocabulary, preserve-non-exhaustive-visibility-probe]
@@ -9,6 +9,9 @@ scopes: [research/extensions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, api-hardening, identity]
+claimed_from: todo
+assignee: agent-extensions
+lease_expires_at: 1784996299
 ---
 ADR 0074 convention 5b now carries an **Inference** that `#[non_exhaustive]` does not constrain an `as` cast, so marking a vocabulary would not have prevented the four discriminant casts convention 3 now forbids. Every neighbouring claim in that record is a **Measurement** with a retained `trybuild` fixture; this one is not, and the asymmetry is the gap.
 

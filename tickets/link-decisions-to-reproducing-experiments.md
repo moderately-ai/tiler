@@ -1,7 +1,7 @@
 ---
 id: link-decisions-to-reproducing-experiments
 title: Give a decision a metadata edge to the experiment that reproduces it
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [preserve-non-exhaustive-visibility-probe]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, metadata]
+claimed_from: todo
+assignee: agent-navigation
+lease_expires_at: 1784996387
 ---
 `scripts/docs.py` types the `evidence` relation so a `decision` may only cite a `research` record (`type_rules` in `validate_graph`), and `supports` so an `experiment` may only cite `research`. There is therefore no metadata edge from a decision to the experiment that reproduces its measurement.
 

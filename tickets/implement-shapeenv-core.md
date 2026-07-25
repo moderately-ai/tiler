@@ -1,7 +1,7 @@
 ---
 id: implement-shapeenv-core
 title: Implement the core ShapeEnv authority
-status: in-progress
+status: done
 priority: p1
 dependencies: [prototype-optimizer-conformance-gate]
 related: [shape-environment-contract]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, indexing, mature-product]
-claimed_from: todo
-assignee: agent-coordinator
-lease_expires_at: 1784994355
 ---
 Implement the accepted graph/session-owned ShapeEnv: typed root symbols,
 constraints, exact mathematical integers, binding/source phases, canonical

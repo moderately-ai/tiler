@@ -1,7 +1,7 @@
 ---
 id: disambiguate-select-across-ir-layers
 title: Disambiguate the four different Select constructs in the corpus
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, glossary, coherence]
+claimed_from: todo
+assignee: agent-foundation
+lease_expires_at: 1784996298
 ---
 The name `Select` denotes four unrelated constructs in this repository, and nothing tells a reader which one is meant.
 
