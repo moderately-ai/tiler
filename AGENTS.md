@@ -231,6 +231,11 @@ These are failure modes observed in practice, not hypotheticals.
 - **Push before dispatching.** A worker's worktree derives from the remote, so
   local-only commits make every base you hand out unreachable. Push, confirm
   `git rev-list --left-right --count origin/main...main` is `0 0`, then dispatch.
+- **Chain the gate to what follows it, not merely before it.** Running the gate
+  and then pushing in one shell line joined by `;` pushes whichever way the gate
+  went; `&&` is what makes the rule enforceable rather than aspirational. A red
+  commit reached `origin/main` this way after the gate had correctly reported the
+  failure, so "never commit on a red gate" needs its mechanism stated beside it.
 - **Gate the exact commit you hand out.** A base is a starting point several
   workers build on, so a red one multiplies. Running the gate on a later state
   does not cover it: a ticket-status edit made only to unblock a claim once left
