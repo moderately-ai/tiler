@@ -386,7 +386,7 @@ impl fmt::Display for LoadRejection {
                 "runtime.ambiguous-payload: {matching} payloads are {backend}/{representation}",
             ),
             Self::IncompatibleTarget { classification } => {
-                write!(formatter, "runtime.incompatible-target: {classification:?}",)
+                write!(formatter, "runtime.incompatible-target: {classification:?}")
             }
             Self::UndeliverableExecutionPolicy { policy } => write!(
                 formatter,

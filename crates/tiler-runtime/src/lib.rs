@@ -35,5 +35,4 @@
 //! reviewed as a whole, and it is not an accepted public facade until Tom
 //! accepts the exact interface.
 
-/// Device-free decoding, validation, and one-way routing of artifact bytes.
 pub mod load;
