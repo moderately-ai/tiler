@@ -178,13 +178,21 @@ impl DecodedProgram {
 
     /// Discharges every obligation this loader can decide, before any commit.
     ///
-    /// The order is chosen so that the first refusal is the most useful one.
-    /// Identity is checked first: if these are not the bytes of the artifact the
-    /// caller expects, no later answer about them is worth reporting. Variant
-    /// selection follows, then the target profiles the variant and its payload
-    /// separately declare, then how the object reaches an executable state, then
-    /// the object itself, and last the geometry and bindings, which are the only
-    /// obligations that depend on the caller's facts.
+    /// The order is chosen so that the first refusal is the most useful one,
+    /// and it is this, exactly: program identity; variant selection; the
+    /// profile the selected variant was assessed against; that variant's
+    /// deferred predicates and entry cardinality; the backend and
+    /// representation its payload declares; the profile that payload's own
+    /// bytes were built for; how that payload reaches an executable state;
+    /// whether the object is carried at all; and last the launch geometry and
+    /// the bindings.
+    ///
+    /// Identity is first because if these are not the bytes of the artifact the
+    /// caller expects, no later answer about them is worth reporting. The
+    /// geometry and the bindings are last because they are the only obligations
+    /// that depend on the caller's facts, so every refusal that is a property of
+    /// the artifact alone is reported before any that is a property of what the
+    /// caller bound.
     ///
     /// `expected` is the canonical identity bytes of the artifact the caller
     /// means to run — [`CanonicalArtifactProgramIdentity::as_bytes`] from
@@ -326,6 +334,16 @@ impl DecodedProgram {
     /// guard that evaluates true rather than scoring the survivors. A variant is
     /// never selected for being the only one: cardinality is not a guard, and an
     /// artifact whose every guard is false is refused.
+    ///
+    /// A guard that cannot be *evaluated* aborts the walk instead of being
+    /// skipped, and the distinction is load-bearing. A guard evaluating false
+    /// is the producer's own answer that this variant does not apply, so trying
+    /// the next one is what the ranking means. A guard that could not be
+    /// answered is a fact the caller did not bind, and skipping past it would
+    /// silently route to a variant the producer ranked lower — a real plan
+    /// substitution caused by an under-bound caller, reported as a successful
+    /// route. The rejection names the guard's own variant rank so the caller can
+    /// see which formula went unanswered.
     fn select_variant(&self, facts: &AbiFacts) -> Result<DecodedVariant<'_>, LoadRejection> {
         // Exhaustive rather than a wildcard: `RoutingPolicy` is deliberately not
         // `#[non_exhaustive]` (ADR 0074 convention 5b), so a policy added to the
