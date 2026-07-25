@@ -1,9 +1,10 @@
 #![allow(
     dead_code,
-    reason = "ADR 0074 convention 7 draft: this is the shape-symbol half of the ShapeEnv authority, and its consumers do not exist yet. `implement-shapeenv-index-bindings` is the ticket that makes index lowering read it, and until then nothing on the compile path can construct one — the bounded profile's shapes are static literals with no symbols at all. Wiring a premature consumer to satisfy the lint would make the authority look adopted while proving nothing"
+    reason = "ADR 0074 convention 7 draft: this is the ShapeEnv authority, and its consumers do not exist yet. `implement-shapeenv-index-bindings` is the ticket that makes index lowering read it, and until then nothing on the compile path can construct one — the bounded profile's shapes are static literals with no symbols and no constraints at all. Wiring a premature consumer to satisfy the lint would make the authority look adopted while proving nothing"
 )]
 
-//! The scoped shape-symbol authority: declarations, typed root bindings, identity.
+//! The `ShapeEnv` authority: scoped symbols, typed root bindings, semantic
+//! constraints, and identity.
 //!
 //! # Draft status
 //!
@@ -13,19 +14,17 @@
 //! here is reachable outside `tiler-ir` yet and promoting it is a separate
 //! reviewed step rather than a consequence of it compiling.
 //!
-//! # What this half owns
+//! # What this module owns
 //!
 //! `docs/ir.md`'s constraint-and-proof-context section specifies a `ShapeEnv`
 //! as scoped symbol declarations, source bindings, *and* a constraint
 //! environment over extent equalities, divisibility, nonnegativity, intervals,
-//! and factorization. This module implements the first two. The constraint
-//! environment is `implement-shapeenv-constraints`, split out rather than
-//! stubbed, because a constraint set without a contradiction check would be a
-//! type-system reservation wearing the name of an implemented authority — and
-//! the contract's rule that "contradictory semantic constraints reject the
-//! graph" is the substance of that half, not a later refinement of it.
+//! and factorization. This file owns the first two and the storage, identity,
+//! and lifecycle of the third; [`constraint`] owns the constraint vocabulary
+//! and the decision procedure, and its module documentation states the exact
+//! arithmetic fragment that procedure decides.
 //!
-//! # The invariants this half does establish
+//! # The invariants this module establishes
 //!
 //! **Scope is part of identity.** The contract states that "equal spelling in
 //! different scopes never implies equality". A [`ShapeSymbol`] therefore pairs a
@@ -50,6 +49,23 @@
 //! **Availability phases are ADR 0043's, not a second set.** [`AvailabilityPhase`]
 //! is the one in [`crate::program::abi`]. A shape-local copy would be the same
 //! defect `relocate-abi-expressions-into-tiler-ir` closed twice.
+//!
+//! **Contradiction is decided at `build`, not deferred to a checked step.** The
+//! contract says "contradictory semantic constraints reject the graph", so an
+//! environment the contract calls invalid must never exist as a verified
+//! product. ADR 0071 makes the consuming `build` the whole-object verification
+//! point precisely so that holding a verified value is sufficient evidence; a
+//! separate `check_constraints` step would reintroduce the second pass that
+//! rule exists to remove, and every consumer would then have to prove it ran.
+//! The cost is that a contradiction is found once, at construction, rather than
+//! amortized — which is the correct trade for a value that is built once and
+//! read by every later stage.
+//!
+//! **Root bindings participate in that decision.** A symbol bound to
+//! [`BindingSource::StaticValue`] enters the constraint system as a constant, so
+//! a constraint contradicting a statically bound extent is rejected here rather
+//! than surviving into index lowering. Bindings whose value is not known until a
+//! later phase contribute no value and constrain nothing.
 
 use core::fmt;
 use std::error::Error;
@@ -57,8 +73,20 @@ use std::error::Error;
 use crate::identity::{push_len, push_slice};
 use crate::program::abi::AvailabilityPhase;
 
+pub(crate) mod constraint;
+
+use constraint::{
+    ConstraintConflict, ExtentRelation, FragmentViolation, SemanticInputConstraint, VariantGuard,
+};
+
 /// Domain separator of a canonical shape-environment encoding.
-const SHAPE_ENV_DOMAIN: &[u8] = b"tiler.shape-env.v1\0";
+///
+/// `v2` rather than `v1`: the encoding now covers the semantic constraints as
+/// well as the declarations and bindings, so it is a different function of a
+/// larger subject. No durable artifact, cache, or cross-process reader ever
+/// observed `v1` — the module is `pub(crate)` and unreachable outside
+/// `tiler-ir` — so this states the change rather than migrating anything.
+const SHAPE_ENV_DOMAIN: &[u8] = b"tiler.shape-env.v2\0";
 
 /// Largest number of bytes a symbol name may occupy.
 const MAX_SYMBOL_NAME_BYTES: usize = 128;
@@ -371,6 +399,43 @@ pub(crate) enum ShapeEnvError {
         /// The earliest phase its source class admits.
         earliest: AvailabilityPhase,
     },
+    /// An interval relation was written with its bounds inverted.
+    EmptyInterval {
+        /// The rejected lower bound.
+        lower: u64,
+        /// The rejected upper bound.
+        upper: u64,
+    },
+    /// A factorization named fewer than two factors.
+    DegenerateFactorization {
+        /// How many factors the rejected relation named.
+        factors: usize,
+    },
+    /// A relation named a symbol that was never declared.
+    ConstraintOnUndeclaredSymbol {
+        /// The symbol the rejected relation named.
+        symbol: ShapeSymbol,
+    },
+    /// A relation lies outside the supported arithmetic fragment.
+    ///
+    /// Refused rather than admitted and under-decided: the contract's rule that
+    /// contradictory constraints reject the graph is only meaningful if
+    /// "no contradiction" is a decision, and an undecidable relation would make
+    /// it indistinguishable from an unexamined one.
+    UnsupportedRelation {
+        /// The refused relation.
+        relation: Box<ExtentRelation>,
+        /// Which part of the fragment boundary it crossed.
+        violation: FragmentViolation,
+    },
+    /// The semantic input constraints cannot all hold.
+    ///
+    /// The contract makes this reject the graph, so it fails `build` rather
+    /// than producing an environment a later stage would have to re-check.
+    ContradictoryConstraints {
+        /// The explained reason no assignment satisfies the set.
+        conflict: Box<ConstraintConflict>,
+    },
 }
 
 impl fmt::Display for ShapeEnvError {
@@ -396,6 +461,30 @@ impl fmt::Display for ShapeEnvError {
                 formatter,
                 "shape-env.phase-too-early: {declared} precedes {earliest}"
             ),
+            Self::EmptyInterval { lower, upper } => write!(
+                formatter,
+                "shape-env.empty-interval: lower {lower} exceeds upper {upper}"
+            ),
+            Self::DegenerateFactorization { factors } => write!(
+                formatter,
+                "shape-env.degenerate-factorization: {factors} factors, at least two required"
+            ),
+            Self::ConstraintOnUndeclaredSymbol { symbol } => {
+                write!(
+                    formatter,
+                    "shape-env.constraint-on-undeclared-symbol: {symbol}"
+                )
+            }
+            Self::UnsupportedRelation {
+                relation,
+                violation,
+            } => write!(
+                formatter,
+                "shape-env.unsupported-relation: `{relation}` is outside the supported fragment: {violation}"
+            ),
+            Self::ContradictoryConstraints { conflict } => {
+                write!(formatter, "shape-env.contradictory-constraints: {conflict}")
+            }
         }
     }
 }
@@ -418,11 +507,15 @@ impl ShapeEnvIdentity {
 
 /// An append-only draft shape environment.
 ///
-/// Declarations and bindings are separate steps because the contract separates
-/// them: a symbol exists once declared, and remains invalid until bound.
+/// Declarations, bindings, constraints, and guards are separate steps because
+/// the contract separates them: a symbol exists once declared, remains invalid
+/// until bound, and the constraints over it are a different kind of statement
+/// than the guards that only qualify one optimization.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ShapeEnvBuilder {
     entries: Vec<(ShapeSymbol, Option<RootBinding>)>,
+    constraints: Vec<SemanticInputConstraint>,
+    guards: Vec<VariantGuard>,
 }
 
 impl ShapeEnvBuilder {
@@ -471,13 +564,57 @@ impl ShapeEnvBuilder {
         Ok(())
     }
 
+    /// Records one semantic input constraint.
+    ///
+    /// Required for the program's expressions to be defined: a contradictory
+    /// set fails [`Self::build`]. Use [`Self::guard`] for a predicate that only
+    /// one optimization needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShapeEnvError::ConstraintOnUndeclaredSymbol`] when the relation
+    /// names a symbol this draft has not declared. The check leaves the draft
+    /// unchanged.
+    pub(crate) fn require(
+        &mut self,
+        constraint: SemanticInputConstraint,
+    ) -> Result<(), ShapeEnvError> {
+        self.check_declared(constraint.relation())?;
+        self.constraints.push(constraint);
+        Ok(())
+    }
+
+    /// Records one variant guard.
+    ///
+    /// Required only for the optimization it qualifies: an unsatisfiable guard
+    /// does not fail [`Self::build`], and is instead reported by
+    /// [`ShapeEnv::unsatisfiable_guards`] so planning selects another variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShapeEnvError::ConstraintOnUndeclaredSymbol`] when the relation
+    /// names a symbol this draft has not declared. The check leaves the draft
+    /// unchanged.
+    pub(crate) fn guard(&mut self, guard: VariantGuard) -> Result<(), ShapeEnvError> {
+        self.check_declared(guard.relation())?;
+        self.guards.push(guard);
+        Ok(())
+    }
+
     /// Verifies the draft and freezes it.
+    ///
+    /// Whole-object verification per ADR 0071: free symbols, the supported
+    /// arithmetic fragment, and constraint contradiction are all decided here,
+    /// so a returned [`ShapeEnv`] needs no second pass to be trustworthy.
     ///
     /// # Errors
     ///
     /// Returns [`ShapeEnvError::FreeSymbol`] naming the first declared symbol
     /// with no root binding, in canonical order so the diagnostic does not
-    /// depend on declaration order.
+    /// depend on declaration order; [`ShapeEnvError::UnsupportedRelation`] when
+    /// a constraint or guard lies outside the supported fragment; and
+    /// [`ShapeEnvError::ContradictoryConstraints`] when the semantic input
+    /// constraints and root bindings cannot all hold.
     pub(crate) fn build(self) -> Result<ShapeEnv, ShapeEnvError> {
         // Canonical order first, so both the rejection and the identity are
         // functions of the environment rather than of how it was authored.
@@ -492,9 +629,40 @@ impl ShapeEnvBuilder {
             bound.push((symbol, binding));
         }
 
-        let identity = ShapeEnvIdentity(encode_environment(&bound));
+        let mut constraints = self.constraints;
+        constraints.sort();
+        // Only an exact (relation, provenance) repeat is removed. Two
+        // assertions of one relation under different provenance stay two
+        // constraints: merging them would decide which reason survived, which
+        // is how a proven fact would silently become a required one.
+        constraints.dedup();
+
+        let mut guards = self.guards;
+        guards.sort();
+        guards.dedup();
+
+        let relations: Vec<&ExtentRelation> = constraints
+            .iter()
+            .map(SemanticInputConstraint::relation)
+            .collect();
+        constraint::decide(&bound, &relations)?;
+
+        // Guards are decided separately and only for decidability. Their
+        // failure is a planning outcome, not an invalid input, so a
+        // contradiction here is deliberately not propagated.
+        for guard in &guards {
+            if let Err(error @ ShapeEnvError::UnsupportedRelation { .. }) =
+                guard_verdict(&bound, &relations, guard)
+            {
+                return Err(error);
+            }
+        }
+
+        let identity = ShapeEnvIdentity(encode_environment(&bound, &constraints));
         Ok(ShapeEnv {
             entries: bound,
+            constraints,
+            guards,
             identity,
         })
     }
@@ -502,6 +670,33 @@ impl ShapeEnvBuilder {
     fn position(&self, symbol: &ShapeSymbol) -> Option<usize> {
         self.entries.iter().position(|(held, _)| held == symbol)
     }
+
+    fn check_declared(&self, relation: &ExtentRelation) -> Result<(), ShapeEnvError> {
+        let mut undeclared = None;
+        relation.for_each_symbol(|symbol| {
+            if undeclared.is_none() && self.position(symbol).is_none() {
+                undeclared = Some(symbol.clone());
+            }
+        });
+        match undeclared {
+            Some(symbol) => Err(ShapeEnvError::ConstraintOnUndeclaredSymbol { symbol }),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Decides one guard against the environment's semantic constraints.
+///
+/// The semantic set is known satisfiable by the time this runs, so any
+/// contradiction reported here is attributable to the guard alone.
+fn guard_verdict(
+    bound: &[(ShapeSymbol, RootBinding)],
+    relations: &[&ExtentRelation],
+    guard: &VariantGuard,
+) -> Result<(), ShapeEnvError> {
+    let mut with_guard = relations.to_vec();
+    with_guard.push(guard.relation());
+    constraint::decide(bound, &with_guard)
 }
 
 /// A verified shape environment: every symbol declared once and bound once.
@@ -511,19 +706,70 @@ impl ShapeEnvBuilder {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ShapeEnv {
     entries: Vec<(ShapeSymbol, RootBinding)>,
+    constraints: Vec<SemanticInputConstraint>,
+    guards: Vec<VariantGuard>,
     identity: ShapeEnvIdentity,
 }
 
 impl ShapeEnv {
     /// Returns the environment's canonical identity.
     ///
-    /// Derived from symbol declarations and root-binding provenance alone. The
-    /// contract excludes "derived solver caches" from identity, and this half
-    /// holds none — the constraint environment that would is
-    /// `implement-shapeenv-constraints`, which must fold its constraints in
-    /// here without folding anything derived from them.
+    /// Covers exactly what the contract names: "symbol declarations,
+    /// root-binding provenance, and semantic constraints". Two things are
+    /// deliberately outside it. Nothing derived from the constraints is stored
+    /// at all, so no solver cache can leak into identity by omission. And
+    /// variant guards are excluded because they are not semantic constraints:
+    /// two environments describing the same program must have the same identity
+    /// whether or not a planner happened to record predicates for optimizations
+    /// it was considering.
     pub(crate) const fn identity(&self) -> &ShapeEnvIdentity {
         &self.identity
+    }
+
+    /// Returns every semantic input constraint, in canonical order.
+    pub(crate) fn constraints(&self) -> impl ExactSizeIterator<Item = &SemanticInputConstraint> {
+        self.constraints.iter()
+    }
+
+    /// Returns only the constraints the frontend required.
+    ///
+    /// The contract forbids inferred or proven facts from "silently becoming
+    /// additional frontend-required semantics", so the set a consumer must
+    /// treat as frontend-imposed is read through provenance rather than assumed
+    /// from membership in the constraint list.
+    pub(crate) fn frontend_required_constraints(
+        &self,
+    ) -> impl Iterator<Item = &SemanticInputConstraint> {
+        self.constraints
+            .iter()
+            .filter(|constraint| constraint.provenance() == FactProvenance::FrontendRequired)
+    }
+
+    /// Returns every variant guard, in canonical order.
+    pub(crate) fn guards(&self) -> impl ExactSizeIterator<Item = &VariantGuard> {
+        self.guards.iter()
+    }
+
+    /// Returns the guards no assignment can satisfy alongside this environment.
+    ///
+    /// Recomputed rather than stored. The contract excludes "derived solver
+    /// caches" from canonical identity, and the simplest way to hold that is to
+    /// derive nothing that could be stored: the environment retains only what
+    /// was asserted.
+    ///
+    /// A guard listed here selects another valid plan or fallback; it does not
+    /// make the program invalid, which is the distinction the contract draws
+    /// between a variant guard and a semantic input constraint.
+    pub(crate) fn unsatisfiable_guards(&self) -> Vec<&VariantGuard> {
+        let relations: Vec<&ExtentRelation> = self
+            .constraints
+            .iter()
+            .map(SemanticInputConstraint::relation)
+            .collect();
+        self.guards
+            .iter()
+            .filter(|guard| guard_verdict(&self.entries, &relations, guard).is_err())
+            .collect()
     }
 
     /// Returns every symbol and its root binding, in canonical order.
@@ -555,10 +801,14 @@ impl ShapeEnv {
 
 /// Encodes one bound environment canonically.
 ///
-/// Domain-separated and length-prefixed per ADR 0074, over the entries in the
-/// canonical order `build` established, so the bytes are a function of the
-/// environment rather than of authoring order.
-fn encode_environment(entries: &[(ShapeSymbol, RootBinding)]) -> Vec<u8> {
+/// Domain-separated and length-prefixed per ADR 0074, over the entries and
+/// constraints in the canonical order `build` established, so the bytes are a
+/// function of the environment rather than of authoring order. Guards are not
+/// encoded and no derived state exists to encode.
+fn encode_environment(
+    entries: &[(ShapeSymbol, RootBinding)],
+    constraints: &[SemanticInputConstraint],
+) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, SHAPE_ENV_DOMAIN);
     push_len(&mut bytes, entries.len());
@@ -566,14 +816,22 @@ fn encode_environment(entries: &[(ShapeSymbol, RootBinding)]) -> Vec<u8> {
         symbol.encode(&mut bytes);
         binding.encode(&mut bytes);
     }
+    push_len(&mut bytes, constraints.len());
+    for constraint in constraints {
+        constraint.encode(&mut bytes);
+    }
     bytes
 }
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
+    use super::constraint::{ExtentTerm, GuardApplicability};
     use super::{
-        BindingSource, FactProvenance, RootBinding, ShapeEnvBuilder, ShapeEnvError, ShapeSymbol,
-        SymbolScope,
+        BindingSource, ConstraintConflict, ExtentRelation, FactProvenance, FragmentViolation,
+        RootBinding, SemanticInputConstraint, ShapeEnvBuilder, ShapeEnvError, ShapeSymbol,
+        SymbolScope, VariantGuard,
     };
     use crate::program::abi::AvailabilityPhase;
 
@@ -588,6 +846,41 @@ mod tests {
             FactProvenance::StaticallyProven,
         )
         .unwrap()
+    }
+
+    /// A binding whose value no compile-time reasoning can read.
+    fn dynamic_binding(key: &str) -> RootBinding {
+        RootBinding::new(
+            BindingSource::CallerParameter {
+                key: key.to_owned(),
+            },
+            AvailabilityPhase::LaunchPreflight,
+            FactProvenance::RuntimeValidated,
+        )
+        .unwrap()
+    }
+
+    fn term(name: &str) -> ExtentTerm {
+        ExtentTerm::Symbol(symbol("region/0", name))
+    }
+
+    fn divisor(value: u64) -> NonZeroU64 {
+        NonZeroU64::new(value).unwrap()
+    }
+
+    /// A draft whose named symbols are all declared and dynamically bound.
+    fn draft_over(names: &[&str]) -> ShapeEnvBuilder {
+        let mut draft = ShapeEnvBuilder::new();
+        for name in names {
+            let declared = symbol("region/0", name);
+            draft.declare(declared.clone()).unwrap();
+            draft.bind(&declared, dynamic_binding(name)).unwrap();
+        }
+        draft
+    }
+
+    fn required(relation: ExtentRelation) -> SemanticInputConstraint {
+        SemanticInputConstraint::new(relation, FactProvenance::FrontendRequired)
     }
 
     /// Equal spelling in two scopes is two symbols, everywhere it matters.
@@ -793,6 +1086,462 @@ mod tests {
         assert_eq!(
             draft.build().unwrap().latest_required_phase(),
             Some(AvailabilityPhase::LaunchPreflight),
+        );
+    }
+
+    /// "Contradictory semantic constraints reject the graph" — at `build`.
+    ///
+    /// The timing is the substance of the clause: asserting only that some
+    /// checked step reports the contradiction would leave a verified `ShapeEnv`
+    /// in existence that the contract calls invalid. `build` is the only
+    /// constructor, so a returned environment is never contradictory.
+    #[test]
+    fn contradictory_semantic_constraints_reject_the_environment_at_build() {
+        let mut draft = draft_over(&["n"]);
+        draft
+            .require(required(ExtentRelation::equal(
+                term("n"),
+                ExtentTerm::Constant(4),
+            )))
+            .unwrap();
+        draft
+            .require(required(ExtentRelation::equal(
+                term("n"),
+                ExtentTerm::Constant(5),
+            )))
+            .unwrap();
+        assert_eq!(
+            draft.build(),
+            Err(ShapeEnvError::ContradictoryConstraints {
+                conflict: Box::new(ConstraintConflict::ConflictingConstants {
+                    symbol: symbol("region/0", "n"),
+                    first: 4,
+                    second: 5,
+                }),
+            })
+        );
+
+        // A divisibility and an interval that no integer satisfies together is
+        // the same rejection, reached by the solver rather than by two literals
+        // disagreeing.
+        let mut narrowed = draft_over(&["n"]);
+        narrowed
+            .require(required(ExtentRelation::divisible(term("n"), divisor(4))))
+            .unwrap();
+        narrowed
+            .require(required(ExtentRelation::interval(term("n"), 3, 3).unwrap()))
+            .unwrap();
+        assert!(matches!(
+            narrowed.build(),
+            Err(ShapeEnvError::ContradictoryConstraints { .. })
+        ));
+
+        // The satisfiable neighbour is admitted, so the rejection above is a
+        // decision about the constraints rather than a refusal of the kind.
+        let mut widened = draft_over(&["n"]);
+        widened
+            .require(required(ExtentRelation::divisible(term("n"), divisor(4))))
+            .unwrap();
+        widened
+            .require(required(ExtentRelation::interval(term("n"), 3, 8).unwrap()))
+            .unwrap();
+        widened.build().unwrap();
+    }
+
+    /// A root binding is part of the environment the constraints are decided against.
+    ///
+    /// The contract puts declarations, bindings, and constraints in one
+    /// `ShapeEnv`; deciding the constraints in isolation would admit a set that
+    /// contradicts a statically known extent.
+    #[test]
+    fn a_statically_bound_extent_participates_in_the_decision() {
+        let n = symbol("region/0", "n");
+
+        let mut contradictory = ShapeEnvBuilder::new();
+        contradictory.declare(n.clone()).unwrap();
+        contradictory.bind(&n, static_binding(10)).unwrap();
+        contradictory
+            .require(required(ExtentRelation::divisible(term("n"), divisor(4))))
+            .unwrap();
+        assert!(matches!(
+            contradictory.build(),
+            Err(ShapeEnvError::ContradictoryConstraints { .. })
+        ));
+
+        let mut consistent = ShapeEnvBuilder::new();
+        consistent.declare(n.clone()).unwrap();
+        consistent.bind(&n, static_binding(12)).unwrap();
+        consistent
+            .require(required(ExtentRelation::divisible(term("n"), divisor(4))))
+            .unwrap();
+        consistent.build().unwrap();
+    }
+
+    /// A relation outside the supported fragment is refused, never under-decided.
+    ///
+    /// "The solver algorithm and exact supported arithmetic fragment remain
+    /// implementation choices" — but a chosen fragment only means anything if
+    /// what lies outside it fails loudly. A nonlinear factorization admitted and
+    /// reported as "no contradiction found" would be indistinguishable, to every
+    /// caller, from a decided satisfiable.
+    #[test]
+    fn a_relation_outside_the_supported_fragment_is_refused_rather_than_ignored() {
+        let mut nonlinear = draft_over(&["n", "a", "b"]);
+        nonlinear
+            .require(required(
+                ExtentRelation::factorization(term("n"), vec![term("a"), term("b")]).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(
+            nonlinear.build(),
+            Err(ShapeEnvError::UnsupportedRelation {
+                relation: Box::new(
+                    ExtentRelation::factorization(term("n"), vec![term("a"), term("b")]).unwrap()
+                ),
+                violation: FragmentViolation::UnderdeterminedFactorization { undetermined: 3 },
+            })
+        );
+
+        // An undecidable *guard* is refused for the same reason. Its failure
+        // would select another plan, but its undecidability leaves the variant's
+        // selectability unknown, which is not the same thing.
+        let mut guarded = draft_over(&["n", "a", "b"]);
+        guarded
+            .guard(VariantGuard::new(
+                ExtentRelation::factorization(term("n"), vec![term("a"), term("b")]).unwrap(),
+                GuardApplicability::Schedule,
+            ))
+            .unwrap();
+        assert!(matches!(
+            guarded.build(),
+            Err(ShapeEnvError::UnsupportedRelation { .. })
+        ));
+
+        // In-fragment, a factorization with one undetermined term is solved
+        // rather than merely stored: `128 == 8 * outer` forces `outer == 16`,
+        // which the interval then contradicts.
+        let n = symbol("region/0", "n");
+        let outer = symbol("region/0", "outer");
+        let mut solved = ShapeEnvBuilder::new();
+        solved.declare(n.clone()).unwrap();
+        solved.bind(&n, static_binding(128)).unwrap();
+        solved.declare(outer.clone()).unwrap();
+        solved.bind(&outer, dynamic_binding("outer")).unwrap();
+        solved
+            .require(required(
+                ExtentRelation::factorization(
+                    term("n"),
+                    vec![ExtentTerm::Constant(8), term("outer")],
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        solved
+            .require(required(
+                ExtentRelation::interval(term("outer"), 0, 10).unwrap(),
+            ))
+            .unwrap();
+        assert!(matches!(
+            solved.build(),
+            Err(ShapeEnvError::ContradictoryConstraints { .. })
+        ));
+    }
+
+    /// The relation kinds are decided together, not checked one at a time.
+    ///
+    /// The contradiction here belongs to no single relation: each is
+    /// individually satisfiable, and only the comparison chain carrying the
+    /// pinned lower bound into a divisibility-tightened interval refutes them.
+    #[test]
+    fn the_decision_covers_the_whole_constraint_set() {
+        let build = |ceiling: u64| {
+            let mut draft = draft_over(&["a", "b", "c"]);
+            draft
+                .require(required(ExtentRelation::non_negative_difference(
+                    term("a"),
+                    term("b"),
+                )))
+                .unwrap();
+            draft
+                .require(required(ExtentRelation::non_negative_difference(
+                    term("b"),
+                    term("c"),
+                )))
+                .unwrap();
+            draft
+                .require(required(ExtentRelation::equal(
+                    term("c"),
+                    ExtentTerm::Constant(10),
+                )))
+                .unwrap();
+            draft
+                .require(required(
+                    ExtentRelation::interval(term("a"), 0, ceiling).unwrap(),
+                ))
+                .unwrap();
+            draft
+                .require(required(ExtentRelation::divisible(term("a"), divisor(4))))
+                .unwrap();
+            draft.build()
+        };
+
+        // `a >= b >= c == 10` and `4 | a` force `a >= 12`.
+        assert!(matches!(
+            build(11),
+            Err(ShapeEnvError::ContradictoryConstraints { .. })
+        ));
+        build(12).unwrap();
+    }
+
+    /// A cycle of nonnegative differences is an equality and is decided as one.
+    ///
+    /// `a >= b` and `b >= a` force `a == b`, so the two symbols' divisibility
+    /// facts must meet. Treating the comparisons as independent bounds would
+    /// admit a set with no solution.
+    #[test]
+    fn a_comparison_cycle_meets_the_facts_of_both_symbols() {
+        let build = |ceiling: u64| {
+            let mut draft = draft_over(&["a", "b"]);
+            draft
+                .require(required(ExtentRelation::non_negative_difference(
+                    term("a"),
+                    term("b"),
+                )))
+                .unwrap();
+            draft
+                .require(required(ExtentRelation::non_negative_difference(
+                    term("b"),
+                    term("a"),
+                )))
+                .unwrap();
+            draft
+                .require(required(ExtentRelation::divisible(term("a"), divisor(2))))
+                .unwrap();
+            draft
+                .require(required(ExtentRelation::divisible(term("b"), divisor(3))))
+                .unwrap();
+            draft
+                .require(required(
+                    ExtentRelation::interval(term("a"), 1, ceiling).unwrap(),
+                ))
+                .unwrap();
+            draft.build()
+        };
+
+        // The merged class must be a multiple of six, and none lies in [1, 5].
+        assert!(matches!(
+            build(5),
+            Err(ShapeEnvError::ContradictoryConstraints { .. })
+        ));
+        build(7).unwrap();
+    }
+
+    /// A semantic input constraint and a variant guard are not interchangeable.
+    ///
+    /// The contract says so explicitly and says why: failure of the first is an
+    /// invalid-input diagnostic, failure of the second selects another valid
+    /// plan. One unsatisfiable relation, recorded each way, must therefore
+    /// produce two different outcomes.
+    #[test]
+    fn a_failing_constraint_rejects_where_a_failing_guard_selects_another_plan() {
+        let n = symbol("region/0", "n");
+        let unsatisfiable = ExtentRelation::divisible(term("n"), divisor(16));
+
+        let mut as_constraint = ShapeEnvBuilder::new();
+        as_constraint.declare(n.clone()).unwrap();
+        as_constraint.bind(&n, static_binding(24)).unwrap();
+        as_constraint
+            .require(required(unsatisfiable.clone()))
+            .unwrap();
+        assert!(matches!(
+            as_constraint.build(),
+            Err(ShapeEnvError::ContradictoryConstraints { .. })
+        ));
+
+        let mut as_guard = ShapeEnvBuilder::new();
+        as_guard.declare(n.clone()).unwrap();
+        as_guard.bind(&n, static_binding(24)).unwrap();
+        as_guard
+            .guard(VariantGuard::new(
+                unsatisfiable,
+                GuardApplicability::Storage,
+            ))
+            .unwrap();
+        // A satisfiable guard alongside it, so the report distinguishes rather
+        // than condemning every guard once one fails.
+        as_guard
+            .guard(VariantGuard::new(
+                ExtentRelation::divisible(term("n"), divisor(8)),
+                GuardApplicability::DispatchSafety,
+            ))
+            .unwrap();
+
+        let env = as_guard
+            .build()
+            .expect("a failing guard is not invalid input");
+        let unsatisfiable = env.unsatisfiable_guards();
+        assert_eq!(unsatisfiable.len(), 1);
+        assert_eq!(
+            unsatisfiable[0].applicability(),
+            GuardApplicability::Storage
+        );
+        assert_eq!(env.guards().len(), 2);
+    }
+
+    /// "Inferred or proven facts may not silently become additional
+    /// frontend-required semantics."
+    #[test]
+    fn a_proven_fact_never_becomes_a_frontend_required_one() {
+        let relation = ExtentRelation::divisible(term("n"), divisor(4));
+
+        let mut proven_only = draft_over(&["n"]);
+        proven_only
+            .require(SemanticInputConstraint::new(
+                relation.clone(),
+                FactProvenance::StaticallyProven,
+            ))
+            .unwrap();
+        let env = proven_only.build().unwrap();
+        assert_eq!(env.constraints().len(), 1);
+        assert_eq!(
+            env.constraints().next().unwrap().provenance(),
+            FactProvenance::StaticallyProven,
+        );
+        assert_eq!(env.frontend_required_constraints().count(), 0);
+
+        // The same relation asserted for two different reasons stays two
+        // constraints. Collapsing them would decide which reason survived, and
+        // whichever way it fell would rewrite one fact's provenance.
+        let mut both = draft_over(&["n"]);
+        both.require(SemanticInputConstraint::new(
+            relation.clone(),
+            FactProvenance::StaticallyProven,
+        ))
+        .unwrap();
+        both.require(SemanticInputConstraint::new(
+            relation.clone(),
+            FactProvenance::FrontendRequired,
+        ))
+        .unwrap();
+        let env = both.build().unwrap();
+        assert_eq!(env.constraints().len(), 2);
+        assert_eq!(env.frontend_required_constraints().count(), 1);
+
+        // An exact repeat is canonicalization, not a merge: nothing is lost.
+        let mut repeated = draft_over(&["n"]);
+        repeated
+            .require(SemanticInputConstraint::new(
+                relation.clone(),
+                FactProvenance::StaticallyProven,
+            ))
+            .unwrap();
+        repeated
+            .require(SemanticInputConstraint::new(
+                relation,
+                FactProvenance::StaticallyProven,
+            ))
+            .unwrap();
+        assert_eq!(repeated.build().unwrap().constraints().len(), 1);
+    }
+
+    /// "Canonical identity includes symbol declarations, root-binding
+    /// provenance, and semantic constraints but excludes derived solver caches."
+    #[test]
+    fn semantic_constraints_are_identity_and_guards_are_not() {
+        let interval = ExtentRelation::interval(term("n"), 1, 64).unwrap();
+        let divisible = ExtentRelation::divisible(term("n"), divisor(4));
+
+        let build = |reversed: bool, guarded: bool| {
+            let mut draft = draft_over(&["n"]);
+            let order = if reversed {
+                vec![divisible.clone(), interval.clone()]
+            } else {
+                vec![interval.clone(), divisible.clone()]
+            };
+            for relation in order {
+                draft.require(required(relation)).unwrap();
+            }
+            if guarded {
+                draft
+                    .guard(VariantGuard::new(
+                        ExtentRelation::divisible(term("n"), divisor(16)),
+                        GuardApplicability::TargetCompatibility,
+                    ))
+                    .unwrap();
+            }
+            draft.build().unwrap()
+        };
+
+        let base = build(false, false);
+        assert_eq!(
+            base.identity(),
+            build(true, false).identity(),
+            "the order constraints were authored in is not part of the environment",
+        );
+        assert_eq!(
+            base.identity(),
+            build(false, true).identity(),
+            "a variant guard is not a semantic constraint and does not name the program",
+        );
+
+        // Every field that distinguishes two constraint sets must distinguish
+        // their identities, or the identity would claim two subjects are one.
+        let mut fewer = draft_over(&["n"]);
+        fewer.require(required(interval.clone())).unwrap();
+        assert_ne!(fewer.build().unwrap().identity(), base.identity());
+
+        let mut reasoned_differently = draft_over(&["n"]);
+        reasoned_differently.require(required(interval)).unwrap();
+        reasoned_differently
+            .require(SemanticInputConstraint::new(
+                divisible,
+                FactProvenance::StaticallyProven,
+            ))
+            .unwrap();
+        assert_ne!(
+            reasoned_differently.build().unwrap().identity(),
+            base.identity(),
+            "provenance is part of identity, per the contract",
+        );
+    }
+
+    /// A relation over an undeclared symbol is refused where it is written.
+    ///
+    /// The contract makes free symbols invalid; a constraint naming one would
+    /// otherwise reach the solver as a symbol with no binding and no domain.
+    #[test]
+    fn a_relation_over_an_undeclared_symbol_is_refused_at_insertion() {
+        let mut draft = draft_over(&["n"]);
+        let stray = ExtentRelation::equal(term("n"), term("m"));
+        assert_eq!(
+            draft.require(required(stray.clone())),
+            Err(ShapeEnvError::ConstraintOnUndeclaredSymbol {
+                symbol: symbol("region/0", "m"),
+            })
+        );
+        assert_eq!(
+            draft.guard(VariantGuard::new(stray, GuardApplicability::Schedule)),
+            Err(ShapeEnvError::ConstraintOnUndeclaredSymbol {
+                symbol: symbol("region/0", "m"),
+            })
+        );
+
+        // Both rejections left the draft unchanged rather than partly applying.
+        let env = draft.build().unwrap();
+        assert_eq!(env.constraints().len(), 0);
+        assert_eq!(env.guards().len(), 0);
+    }
+
+    /// A malformed relation is refused where it is written, not carried to the solver.
+    #[test]
+    fn an_unwritable_relation_is_refused_at_construction() {
+        assert_eq!(
+            ExtentRelation::interval(term("n"), 5, 4),
+            Err(ShapeEnvError::EmptyInterval { lower: 5, upper: 4 })
+        );
+        assert_eq!(
+            ExtentRelation::factorization(term("n"), vec![ExtentTerm::Constant(8)]),
+            Err(ShapeEnvError::DegenerateFactorization { factors: 1 })
         );
     }
 }
