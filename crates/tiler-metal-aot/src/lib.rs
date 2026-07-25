@@ -61,6 +61,11 @@
 pub mod diagnostic;
 /// The offline toolchain driver and its resolution and compilation entry points.
 pub mod driver;
+// The canonical artifact-family selection ADR 0049 requires every inline AOT
+// request to carry. Crate-private under ADR 0074 convention 7 until its facade
+// is reviewed; its module documentation names what it reserves, and states which
+// half of ADR 0053 belongs to the frontend proc-macro crate instead.
+mod family;
 /// Explicit, strongly typed compilation inputs.
 pub mod input;
 /// Provenance, fingerprint, and compiled-artifact records.
