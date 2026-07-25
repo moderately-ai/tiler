@@ -133,7 +133,9 @@ Note this also means `ConversionBoundaryPreservation` — a separate obligation,
 
 The reverted prototype is not in the tree; this record is what it produced.
 
-## Outcome — the Selection half, delivered; composition split out
+## Outcome
+
+**The Selection half, delivered; composition split out.**
 
 **Delivered.** The resolved numerical contract is a stated request input with more than one expressible value. `StrictF32NumericalContract::governed_flush_to_zero()` registers `tiler.flush-f32.v1` — `FlushToZero { zero_sign: PreservesSign }` on both dimensions, contraction and reassociation still `Forbidden` — as a *different contract* with its own versioned key, so the same program under each has different canonical identities, artifacts, and cache entries. `governed_profile()` and `is_governed()` are the single admission authority; `governed_under()` takes the contract as a parameter with no `Default`, for the reason the ticket gave: a strict default would make every Apple compilation fail with a rejection the caller never asked for.
 
