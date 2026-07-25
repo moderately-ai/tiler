@@ -1,7 +1,7 @@
 ---
 id: decide-per-dtype-dispatchability-as-a-target-capability
 title: Decide whether per-dtype dispatchability is a stated target capability
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, carry-the-dtype-on-the-metal-subnormal-flush-fact]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: []
 paths: []
 tags: [research, metal, target-profiles, feasibility]
+claimed_from: todo
+assignee: agent-dispatchability
+lease_expires_at: 1785042783
 ---
 Finding 26 of [the Apple numerical-behaviour record](../docs/research/apple-targets/numerical-behaviour.md) measures a case the physical contracts have no name for: the iOS Simulator compiles every `bfloat` probe kernel to LLVM IR, to AIR, and links it to a metallib without a diagnostic, and its device then fails `newComputePipelineStateWithFunction:` with `XPC_ERROR_CONNECTION_INTERRUPTED` — on both the offline and runtime compilation paths, and for the arithmetic-free kernel as well as the arithmetic ones. The same simulator runs every `f32` and `f16` kernel in the same invocation.
 

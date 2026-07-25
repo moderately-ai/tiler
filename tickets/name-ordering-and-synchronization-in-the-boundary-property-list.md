@@ -1,7 +1,7 @@
 ---
 id: name-ordering-and-synchronization-in-the-boundary-property-list
 title: Name ordering and synchronization in the optimizer boundary-property list
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [implement-boundary-property-model, implement-boundary-property-enforcers]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer]
 shared_scopes: []
 paths: []
 tags: [contract, optimizer, boundary-properties]
+claimed_from: todo
+assignee: agent-optimizer-list
+lease_expires_at: 1785042783
 ---
 `implement-boundary-property-model` landed eight typed boundary-property dimensions in `crates/tiler-compiler/src/boundary.rs`. The accepted contract's list is shorter than what the model now implements.
 
