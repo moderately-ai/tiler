@@ -927,6 +927,33 @@ impl LoweringCapabilityRegistryBuilder {
                 provider: Box::new(key.provider),
             });
         }
+        // The governed capability key names family, operation, and operation
+        // version; a consumer records the provider beside it. That pair is a
+        // complete name only while it determines one signature, so a second
+        // signature from one provider for one family and operation is refused
+        // here rather than allowed to mint a key already in use. Two *different*
+        // providers may still register different signatures: the recorded
+        // provider tells those apart, and ADR 0072 requires that contended case
+        // to reach a deterministic resolution ambiguity rather than a
+        // registration failure.
+        //
+        // Scanned rather than indexed because the map is keyed by the whole
+        // four-tuple with the signature ahead of the provider, and because the
+        // registry is bounded by `MAX_LOWERING_CAPABILITIES` and built once.
+        if let Some(registered) = self.capabilities.keys().find(|existing| {
+            existing.family == key.family
+                && existing.operation == key.operation
+                && existing.provider == key.provider
+                && existing.signature != key.signature
+        }) {
+            return Err(LoweringRegistryError::ConflatedCapabilityKey {
+                family,
+                operation: Box::new(key.operation),
+                provider: Box::new(key.provider),
+                registered: Box::new(registered.signature.clone()),
+                rejected: Box::new(key.signature),
+            });
+        }
         let count = self.capabilities.len().saturating_add(1);
         if count > MAX_LOWERING_CAPABILITIES {
             return Err(LoweringRegistryError::ResourceExceeded {
@@ -1285,6 +1312,33 @@ pub enum LoweringRegistryError {
         /// Duplicating provider.
         provider: Box<ProviderIdentity>,
     },
+    /// One provider registered a second signature for one family and operation.
+    ///
+    /// The governed capability key `tiler.capability.<family>.<namespace>.<name>.v<version>`
+    /// (`lowering.rs`) deliberately excludes the resolved signature, and every
+    /// consumer records the *provider* beside it, so a key and a provider name
+    /// one capability exactly as long as that pair determines one signature.
+    /// This rejection is what keeps that true: without it a second signature
+    /// would mint a key already in use and two capabilities would become
+    /// indistinguishable in artifact identity, silently.
+    ///
+    /// It restricts what a provider may register, and that restriction is the
+    /// point. Per-shape or per-attribute signatures for one operation family are
+    /// a reasonable thing to want; they are refused here so that admitting them
+    /// is a decision someone makes about the key's encoding rather than a
+    /// property that quietly stops holding.
+    ConflatedCapabilityKey {
+        /// Family both registrations share.
+        family: LoweringFamily,
+        /// Operation both registrations share.
+        operation: Box<OpKey>,
+        /// Provider registering both.
+        provider: Box<ProviderIdentity>,
+        /// Signature already registered for that family and operation.
+        registered: Box<LoweringSignature>,
+        /// Signature this registration attempted to add.
+        rejected: Box<LoweringSignature>,
+    },
     /// The lowered operation or a signature type lacked semantic authority.
     OperationAuthority {
         /// Operation being lowered.
@@ -1330,6 +1384,15 @@ impl fmt::Display for LoweringRegistryError {
             } => write!(
                 formatter,
                 "duplicate {family} capability for operation {operation}"
+            ),
+            Self::ConflatedCapabilityKey {
+                family,
+                operation,
+                provider,
+                ..
+            } => write!(
+                formatter,
+                "provider {provider} already registered a different {family} signature for operation {operation}; the governed capability key cannot distinguish them"
             ),
             Self::OperationAuthority { operation, source } => write!(
                 formatter,
@@ -1557,6 +1620,15 @@ mod tests {
 
     fn binary_signature() -> LoweringSignature {
         LoweringSignature::new([f32_type(), f32_type()], [f32_type()]).unwrap()
+    }
+
+    /// A second signature over the same authority as [`binary_signature`].
+    ///
+    /// It reaches exactly the same types and operation, so it passes the same
+    /// authority projection; only the operand count differs. That is what makes
+    /// it the right probe for a key that excludes the signature.
+    fn unary_signature() -> LoweringSignature {
+        LoweringSignature::new([f32_type()], [f32_type()]).unwrap()
     }
 
     fn empty_record() -> CanonicalValue {
@@ -1845,6 +1917,112 @@ mod tests {
             error,
             LoweringRegistryError::DuplicateCapability { .. }
         ));
+    }
+
+    /// The registration boundary does not constrain one operation to one
+    /// signature, so the governed key's conflation is reachable, not hypothetical.
+    ///
+    /// `register` validates a signature by projecting the *authority* its types
+    /// and operation transitively reach — `project_operation_authority` closes
+    /// over the named types and the named operation and fails when one of them
+    /// is absent from the semantic registry. It does not compare the signature
+    /// against the operation's own arity or type contract, so a unary `f32`
+    /// signature for a binary `f32` multiply registers.
+    ///
+    /// That is the fact `resolve-capability-key-signature-conflation` recorded
+    /// as an inference in the opposite direction: the *governed* profile happens
+    /// to register one signature per operation, but nothing at this boundary
+    /// makes that so, and an externally registered provider reaches the second
+    /// signature today. The guard below is what keeps the exclusion of the
+    /// signature from the governed key safe.
+    #[test]
+    fn one_operation_admits_more_than_one_registrable_signature() {
+        let mut builder = empty_builder();
+        builder
+            .register_scalar_lowering(
+                provider("scalar-lowering", 1),
+                multiply_f32_op(),
+                unary_signature(),
+                &[scalar_key("multiply")],
+                revision(),
+                Arc::new(ScalarMultiplyLowering),
+            )
+            .expect("a unary signature for a binary operation registers");
+    }
+
+    /// One provider may register one signature per family and operation.
+    ///
+    /// The governed capability key `tiler.capability.<family>.<ns>.<name>.v<v>`
+    /// excludes the signature, and consumers record the provider beside it, so
+    /// the pair names one capability only while this holds. Without the guard
+    /// the second registration would mint a key already in use and the two
+    /// capabilities would be indistinguishable in artifact identity — with no
+    /// diagnostic, which is the failure mode the ticket exists to remove.
+    ///
+    /// The guard is deliberately scoped to one provider. Two providers claiming
+    /// one operation with different signatures still register, because the
+    /// recorded provider distinguishes them and ADR 0072 requires a contended
+    /// claim to reach a deterministic resolution ambiguity rather than a
+    /// registration failure.
+    #[test]
+    fn a_second_signature_for_one_family_and_operation_is_refused() {
+        let mut builder = empty_builder();
+        builder
+            .register_scalar_lowering(
+                provider("scalar-lowering", 1),
+                multiply_f32_op(),
+                binary_signature(),
+                &[scalar_key("multiply")],
+                revision(),
+                Arc::new(ScalarMultiplyLowering),
+            )
+            .unwrap();
+        let error = builder
+            .register_scalar_lowering(
+                provider("scalar-lowering", 1),
+                multiply_f32_op(),
+                unary_signature(),
+                &[scalar_key("multiply")],
+                revision(),
+                Arc::new(ScalarMultiplyLowering),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            LoweringRegistryError::ConflatedCapabilityKey {
+                family: LoweringFamily::ScalarLowering,
+                operation: Box::new(multiply_f32_op()),
+                provider: Box::new(provider("scalar-lowering", 1)),
+                registered: Box::new(binary_signature()),
+                rejected: Box::new(unary_signature()),
+            }
+        );
+
+        // A different provider registering the second signature is admitted:
+        // the recorded provider is what tells the two keys apart.
+        builder
+            .register_scalar_lowering(
+                provider("other-scalar-lowering", 1),
+                multiply_f32_op(),
+                unary_signature(),
+                &[scalar_key("multiply")],
+                revision(),
+                Arc::new(ScalarMultiplyLowering),
+            )
+            .expect("the guard is per provider, not per operation");
+
+        // So is a second *family* for one operation and provider: the family is
+        // in the key, so those two capabilities are already distinguishable.
+        builder
+            .register_index_access(
+                provider("scalar-lowering", 1),
+                multiply_f32_op(),
+                unary_signature(),
+                &[scalar_key("multiply")],
+                revision(),
+                Arc::new(PointwiseSquareLowering),
+            )
+            .expect("the guard is per family, and the family is in the key");
     }
 
     #[test]

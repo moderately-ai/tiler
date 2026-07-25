@@ -649,6 +649,84 @@ Target defaults such as TF32 input precision, reduced-precision accumulation,
 floating-point contraction, flush-to-zero, or conversion rounding cannot
 expand the program's permissions.
 
+### The contract is a required input, stated before planning
+
+The resolved numerical contract is a required, typed input at the compilation
+request boundary. It has no default, no ambient fallback, and no implicit
+strictest reading; a request that states none does not compile, and the
+diagnostic says the contract is unstated rather than naming a dimension the
+caller never chose. A strict default is the safe direction for results and the
+wrong direction here: on a target whose arithmetic cannot preserve subnormals it
+would make every compilation fail with a rejection the caller never asked for,
+teaching callers about the contract through refusals.
+
+A caller states one resolved contract, or an explicitly ordered preference list
+of contracts it declares equally acceptable. Resolution is by the caller's stated
+order and the first honourable entry wins. It is deterministic, it is recorded —
+the stated list participates in request identity alongside the entry that won, so
+two requests that resolve alike but declare different fallbacks stay distinct —
+and it is **never cost-ranked**. A single-entry list and a bare contract behave
+identically. This is the only point at which anything resembling selection over
+contracts occurs, and the choice is the caller's, stated before compilation, not
+a planner's. One contract governs the whole program: it does not become a
+per-region choice, and two regions of one program never honour different
+contracts. See [ADR 0076](decisions/0076-declare-target-honourable-numerical-realizations.md).
+
+### Per-dimension honourability, and how it composes with feasibility
+
+A target profile declares, for each dimension of the contract it can be asked
+about, which behaviour it honours and by which of the four means above. The
+declaration is a stated, versioned profile fact carrying the same provenance a
+capability bound does — an availability phase, a fact authority, a validity
+scope, and the declaring profile's identity — so a rejection can name where the
+claim came from, and it participates in the profile's canonical descriptor, so
+two profiles that honour different behaviours cannot share an identity.
+
+Honourability is a **distinct authority** from the quantitative capability axes
+of [ADR 0043](decisions/0043-use-typed-phased-target-feasibility.md),
+and it composes into that record's outcomes rather than joining its space.
+`SupportedWithExactEmulation` has no representation as a bound comparison —
+emulation is honoured by *emitting different operations*, so it changes the
+program rather than the verdict — and encoding it as a satisfied boolean
+predicate would discard the one outcome that carries work. The composition is:
+
+- a dimension honoured exactly or by exact emulation contributes a satisfied hard
+  predicate, and the means is retained rather than collapsed into the verdict;
+- a dimension honourable only under a relaxation the caller's stated contract
+  does not authorize contributes a **disproved** predicate, not a deferred or
+  unknown one, because that authorization is known when the contract is resolved
+  and cannot arrive at a later phase;
+- a dimension the profile declares unhonourable contributes a disproved
+  predicate; and
+- a dimension the profile does not speak to at all contributes `Unknown` in
+  ADR 0043's exact sense — no admissible proof path — so it may appear in search
+  and explain state and never in an executable frontier.
+
+That last clause is what makes an unenumerated dimension fail closed instead of
+defaulting to honoured, and it applies equally to a profile that enumerates a
+dimension but not the behaviour required: silence about a behaviour is silence,
+not a refusal, and nothing may be inferred from the profile having spoken about a
+neighbouring behaviour.
+
+### The honesty rule, in both directions
+
+The rule above states one direction: target defaults cannot expand the program's
+permissions. The converse holds too: **no authority may narrow, weaken, or
+substitute the caller's stated numerical contract in order to make a target
+feasible.** When no contract the caller stated is honourable, compilation rejects
+with a typed, explainable error naming the dimension, the required behaviour, the
+behaviour the target declares, the means the profile offers if any, and the
+declaring profile's identity. It never emits a program under a different
+contract, never falls back to a target default, and never reports the difference
+as a cost. A rejection may report which behaviour the target *would* honour, so a
+caller can see what contract this target accepts; only the caller may act on it.
+
+**The numerical contract is therefore not a search dimension.** Cost-based
+selection ranks implementations of one contract and may never rank contracts
+against each other, because doing so prices meaning. The neighbouring temptation
+this forbids by name is treating a flush-tolerant plan as a cheaper alternative
+to a preserving one.
+
 ## Conformance levels
 
 “Exact” is not synonymous with portable bitwise equality. A kernel declares a

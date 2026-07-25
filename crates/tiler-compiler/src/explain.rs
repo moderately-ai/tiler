@@ -104,7 +104,6 @@ pub(crate) enum ExplainDisposition {
     NotSelectedTradeoff,
     Selected,
     CompilerFailure,
-    Truncated,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -470,6 +469,29 @@ pub(crate) enum FeasibilityOutcome {
     Rejected(ReasonCode),
 }
 
+/// How one numerical dimension resolved against a target's declaration.
+///
+/// A distinct vocabulary from [`FeasibilityOutcome`], which is quantitative and
+/// two-valued. This one carries the *means*, which is what a bound comparison
+/// cannot express: an emulated dimension is admitted and changes the emitted
+/// program, and an unhonourable one names the behaviour the target does honour
+/// so a reader can see which contract this target would accept.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum HonourabilityOutcome {
+    /// The target honours the required behaviour by the named means.
+    Honoured { means: ReasonCode },
+    /// The target declares it cannot honour the required behaviour by the named
+    /// means, and honours the named behaviour instead when it honours one.
+    Unhonourable {
+        means: ReasonCode,
+        honoured: Option<ReasonCode>,
+    },
+    /// Nothing the profile declares speaks to the required behaviour. A third
+    /// class, never a rejection: no downstream reader may treat the absence of a
+    /// refusal as an admission.
+    Undeclared,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RejectionClass {
     IntrinsicInvalid,
@@ -495,6 +517,20 @@ pub(crate) enum ExplainEvent {
         required: Quantity,
         available: Quantity,
     },
+    /// One numerical dimension assessed against a target's declaration.
+    ///
+    /// This is the rejection shape ADR 0076 item 5 requires and the record that
+    /// replaces `feasibility:strict-f32:rejected:count=1:0`. It names the
+    /// dimension, the behaviour the caller's contract required, the means the
+    /// profile declares, the behaviour the target does honour, and the declaring
+    /// profile — none of which fits [`Self::Feasibility`], whose required and
+    /// available fields are quantities compared by magnitude.
+    NumericalHonourability {
+        dimension: PredicateKey,
+        required: ReasonCode,
+        outcome: HonourabilityOutcome,
+        profile: SubjectKey,
+    },
     DeferredCapability {
         predicate: PredicateKey,
         reason: ReasonCode,
@@ -513,14 +549,6 @@ pub(crate) enum ExplainEvent {
         stage: ExplainStage,
         reason: ReasonCode,
     },
-    CausalBridge {
-        stage: ExplainStage,
-        disposition: ExplainDisposition,
-    },
-    Truncated {
-        omitted_records: u64,
-        omitted_bytes: u64,
-    },
 }
 
 impl ExplainEvent {
@@ -528,12 +556,13 @@ impl ExplainEvent {
         match self {
             Self::Check { stage, .. }
             | Self::BudgetStop { stage, .. }
-            | Self::CompilerFailure { stage, .. }
-            | Self::CausalBridge { stage, .. } => *stage,
-            Self::Feasibility { .. } => ExplainStage::TargetFeasibility,
+            | Self::CompilerFailure { stage, .. } => *stage,
+            Self::Feasibility { .. } | Self::NumericalHonourability { .. } => {
+                ExplainStage::TargetFeasibility
+            }
             Self::DeferredCapability { .. } => ExplainStage::CapabilityResolution,
             Self::CostAssessment { .. } => ExplainStage::Costing,
-            Self::Selection { .. } | Self::Truncated { .. } => ExplainStage::Selection,
+            Self::Selection { .. } => ExplainStage::Selection,
         }
     }
 
@@ -549,6 +578,10 @@ impl ExplainEvent {
             }
             | Self::Feasibility {
                 outcome: FeasibilityOutcome::Admitted,
+                ..
+            }
+            | Self::NumericalHonourability {
+                outcome: HonourabilityOutcome::Honoured { .. },
                 ..
             } => ExplainDisposition::Admitted,
             Self::Check {
@@ -577,10 +610,20 @@ impl ExplainEvent {
                     },
                 ..
             }
-            | Self::DeferredCapability { .. } => ExplainDisposition::DeferredUnsupported,
+            | Self::DeferredCapability { .. }
+            // Undeclared is unknown, not rejected: the profile said nothing, so
+            // the trace must not read as a refusal a reader could act on.
+            | Self::NumericalHonourability {
+                outcome: HonourabilityOutcome::Undeclared,
+                ..
+            } => ExplainDisposition::DeferredUnsupported,
             Self::BudgetStop { .. } => ExplainDisposition::BudgetStopped,
             Self::Feasibility {
                 outcome: FeasibilityOutcome::Rejected(_),
+                ..
+            }
+            | Self::NumericalHonourability {
+                outcome: HonourabilityOutcome::Unhonourable { .. },
                 ..
             }
             | Self::Selection {
@@ -612,8 +655,6 @@ impl ExplainEvent {
                 ..
             } => ExplainDisposition::Selected,
             Self::CompilerFailure { .. } => ExplainDisposition::CompilerFailure,
-            Self::CausalBridge { disposition, .. } => *disposition,
-            Self::Truncated { .. } => ExplainDisposition::Truncated,
         }
     }
 
@@ -693,12 +734,14 @@ impl ExplainEvent {
             Self::BudgetStop { limit, actual, .. } if actual <= limit => {
                 return Err(ExplainError::InvalidQuantityRelation);
             }
+            // A honourability record has no magnitude relation to validate: its
+            // three outcomes are already disjoint, and the means it carries is a
+            // governed key rather than a comparable quantity.
             Self::BudgetStop { .. }
             | Self::DeferredCapability { .. }
+            | Self::NumericalHonourability { .. }
             | Self::Selection { .. }
-            | Self::CompilerFailure { .. }
-            | Self::CausalBridge { .. }
-            | Self::Truncated { .. } => {}
+            | Self::CompilerFailure { .. } => {}
         }
         Ok(())
     }
@@ -762,49 +805,16 @@ impl ExplainRecord {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ExplainLimits {
-    max_records: u32,
-    max_canonical_bytes: u32,
-}
-
-impl ExplainLimits {
-    pub(crate) const fn new(
-        max_records: u32,
-        max_canonical_bytes: u32,
-    ) -> Result<Self, ExplainError> {
-        if max_records > MAX_RECORDS || max_canonical_bytes > MAX_CANONICAL_BYTES {
-            return Err(ExplainError::InvalidLimits);
-        }
-        Ok(Self {
-            max_records,
-            max_canonical_bytes,
-        })
-    }
-}
-
-impl Default for ExplainLimits {
-    fn default() -> Self {
-        Self {
-            max_records: 256,
-            max_canonical_bytes: 64 * 1024,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct ExplainWriter {
     subject: CompilationSubject,
     authority: u64,
     request_qualifier: u64,
     allowed_providers: Vec<ProviderRef>,
-    limits: ExplainLimits,
     records: Vec<ExplainRecord>,
     retained_bytes: usize,
     retained_detail_records: usize,
     retained_detail_bytes: usize,
-    omitted_records: u64,
-    omitted_bytes: u64,
     selection_ledger: BTreeMap<SubjectKey, PendingSelection>,
     terminal_ledger_bytes: usize,
 }
@@ -816,52 +826,22 @@ struct PendingSelection {
     authoritative_infeasible: bool,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// A retained record a terminal record may cite as its cause.
+///
+/// Always a record identifier: a detail record is either retained or the
+/// compilation is refused, so there is no dropped cause to re-materialize.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct TerminalCause {
-    kind: TerminalCauseKind,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum TerminalCauseKind {
-    Record(ExplainRecordId),
-    Omitted {
-        rule: RuleRef,
-        subject_kind: SubjectKind,
-        subject_key: SubjectKey,
-        stage: ExplainStage,
-        disposition: ExplainDisposition,
-        causes: Vec<ExplainRecordId>,
-    },
+    record: ExplainRecordId,
 }
 
 impl TerminalCause {
     pub(crate) const fn from_record(record: ExplainRecordId) -> Self {
-        Self {
-            kind: TerminalCauseKind::Record(record),
-        }
+        Self { record }
     }
 
-    fn retained_bytes(&self) -> usize {
-        match &self.kind {
-            TerminalCauseKind::Record(_) => std::mem::size_of::<ExplainRecordId>(),
-            TerminalCauseKind::Omitted {
-                rule,
-                subject_key,
-                causes,
-                ..
-            } => rule
-                .key
-                .as_str()
-                .len()
-                .saturating_add(rule.provider.key.as_str().len())
-                .saturating_add(subject_key.as_str().len())
-                .saturating_add(
-                    causes
-                        .len()
-                        .saturating_mul(std::mem::size_of::<ExplainRecordId>()),
-                )
-                .saturating_add(16),
-        }
+    const fn retained_bytes() -> usize {
+        std::mem::size_of::<ExplainRecordId>()
     }
 }
 
@@ -933,10 +913,7 @@ impl FailureDescriptor {
 }
 
 impl ExplainWriter {
-    pub(crate) fn new(
-        request: &VerifiedTargetRequest,
-        limits: ExplainLimits,
-    ) -> Result<Self, ExplainError> {
+    pub(crate) fn new(request: &VerifiedTargetRequest) -> Result<Self, ExplainError> {
         let subject = CompilationSubject::from_request(request);
         // Every authority whose rules this compilation may attribute to a
         // provider: every provider the request's installed lowering registry
@@ -961,13 +938,10 @@ impl ExplainWriter {
             request_qualifier: stable_qualifier(&subject.canonical),
             subject,
             allowed_providers,
-            limits,
             records: Vec::new(),
             retained_bytes,
             retained_detail_records: 0,
             retained_detail_bytes: 0,
-            omitted_records: 0,
-            omitted_bytes: 0,
             selection_ledger: BTreeMap::new(),
             terminal_ledger_bytes: 0,
         })
@@ -991,13 +965,10 @@ impl ExplainWriter {
         subjects: Vec<SubjectRef>,
         event: ExplainEvent,
         causes: Vec<ExplainRecordId>,
-    ) -> Result<Option<ExplainRecordId>, ExplainError> {
+    ) -> Result<ExplainRecordId, ExplainError> {
         if matches!(
             event,
-            ExplainEvent::Selection { .. }
-                | ExplainEvent::CompilerFailure { .. }
-                | ExplainEvent::CausalBridge { .. }
-                | ExplainEvent::Truncated { .. }
+            ExplainEvent::Selection { .. } | ExplainEvent::CompilerFailure { .. }
         ) {
             return Err(ExplainError::InvalidEventClass);
         }
@@ -1012,25 +983,8 @@ impl ExplainWriter {
         mut causes: Vec<ExplainRecordId>,
     ) -> Result<TerminalCause, ExplainError> {
         causes.sort_unstable();
-        let retained = self.push_detail(
-            rule.clone(),
-            vec![subject.clone()],
-            event.clone(),
-            causes.clone(),
-        )?;
-        Ok(match retained {
-            Some(record) => TerminalCause::from_record(record),
-            None => TerminalCause {
-                kind: TerminalCauseKind::Omitted {
-                    rule,
-                    subject_kind: subject.kind,
-                    subject_key: subject.key,
-                    stage: event.stage(),
-                    disposition: event.disposition(),
-                    causes,
-                },
-            },
-        })
+        let record = self.push_detail(rule, vec![subject], event.clone(), causes)?;
+        Ok(TerminalCause::from_record(record))
     }
 
     fn push_terminal(
@@ -1042,15 +996,11 @@ impl ExplainWriter {
     ) -> Result<ExplainRecordId, ExplainError> {
         if !matches!(
             event,
-            ExplainEvent::Selection { .. }
-                | ExplainEvent::CompilerFailure { .. }
-                | ExplainEvent::CausalBridge { .. }
-                | ExplainEvent::Truncated { .. }
+            ExplainEvent::Selection { .. } | ExplainEvent::CompilerFailure { .. }
         ) {
             return Err(ExplainError::InvalidEventClass);
         }
-        self.push(rule, subjects, event, causes, true)?
-            .ok_or(ExplainError::TerminalCapacity)
+        self.push(rule, subjects, event, causes, true)
     }
 
     fn push(
@@ -1060,7 +1010,7 @@ impl ExplainWriter {
         mut event: ExplainEvent,
         mut causes: Vec<ExplainRecordId>,
         terminal: bool,
-    ) -> Result<Option<ExplainRecordId>, ExplainError> {
+    ) -> Result<ExplainRecordId, ExplainError> {
         canonicalize_record_parts(&mut subjects, &mut event, &mut causes)?;
         event.validate()?;
         if rule.provider != ProviderRef::builtin()
@@ -1129,6 +1079,12 @@ impl ExplainWriter {
         if terminal && bytes > usize::try_from(MAX_TERMINAL_RECORD_BYTES).unwrap_or(usize::MAX) {
             return Err(ExplainError::TerminalCapacity);
         }
+        // A trace is complete or it is refused. Exceeding a bound is a typed
+        // failure, never a silent drop: a reader who cannot tell which records
+        // are missing cannot rely on the ones that remain, and a summary naming
+        // only how many were lost does not recover which. The detail bound is
+        // the same `MAX_RECORDS`/`MAX_CANONICAL_BYTES` ceiling that
+        // `MAX_TRACE_*` is derived from, so the two accountings stay consistent.
         let exceeds = if terminal {
             self.records.len().saturating_add(1)
                 > usize::try_from(MAX_TRACE_RECORDS).unwrap_or(usize::MAX)
@@ -1136,19 +1092,16 @@ impl ExplainWriter {
                     > usize::try_from(MAX_TRACE_CANONICAL_BYTES).unwrap_or(usize::MAX)
         } else {
             self.retained_detail_records.saturating_add(1)
-                > usize::try_from(self.limits.max_records).unwrap_or(usize::MAX)
+                > usize::try_from(MAX_RECORDS).unwrap_or(usize::MAX)
                 || self.retained_detail_bytes.saturating_add(bytes)
-                    > usize::try_from(self.limits.max_canonical_bytes).unwrap_or(usize::MAX)
+                    > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX)
         };
-        if exceeds && !terminal {
-            self.omitted_records = self.omitted_records.saturating_add(1);
-            self.omitted_bytes = self
-                .omitted_bytes
-                .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
-            return Ok(None);
-        }
         if exceeds {
-            return Err(ExplainError::TerminalCapacity);
+            return Err(if terminal {
+                ExplainError::TerminalCapacity
+            } else {
+                ExplainError::DetailCapacity
+            });
         }
         self.retained_bytes += bytes;
         if !terminal {
@@ -1156,7 +1109,7 @@ impl ExplainWriter {
             self.retained_detail_bytes += bytes;
         }
         self.records.push(record);
-        Ok(Some(next))
+        Ok(next)
     }
 
     pub(crate) fn finish_success(
@@ -1193,10 +1146,10 @@ impl ExplainWriter {
                 return Err(ExplainError::InvalidTerminalLedger);
             }
         }
-        self.append_truncation_summary()?;
         for (key, pending) in std::mem::take(&mut self.selection_ledger) {
             let cause = pending
                 .cause
+                .as_ref()
                 .map(|cause| self.materialize_terminal_cause(cause))
                 .transpose()?;
             let subject = self.subject(SubjectKind::Alternative, key.as_str())?;
@@ -1219,14 +1172,13 @@ impl ExplainWriter {
     ) -> Result<VerifiedExplainTrace, ExplainError> {
         self.selection_ledger.clear();
         self.terminal_ledger_bytes = 0;
-        self.append_truncation_summary()?;
         for cause in failure.causes.as_slice() {
             self.validate_terminal_cause(Some(cause))?;
         }
         let admitted_causes = failure.causes.into_vec();
         let mut causes = Vec::with_capacity(admitted_causes.len());
         for cause in admitted_causes {
-            causes.push(self.materialize_terminal_cause(cause)?);
+            causes.push(self.materialize_terminal_cause(&cause)?);
         }
         let subject = self.subject(failure.subject_kind, failure.subject_key.as_str())?;
         self.push_terminal(
@@ -1297,7 +1249,7 @@ impl ExplainWriter {
         let entry_bytes = key
             .as_str()
             .len()
-            .saturating_add(cause.as_ref().map_or(0, TerminalCause::retained_bytes))
+            .saturating_add(cause.map_or(0, |_| TerminalCause::retained_bytes()))
             .saturating_add(16);
         let next_count = self.selection_ledger.len().saturating_add(1);
         let next_bytes = self.terminal_ledger_bytes.saturating_add(entry_bytes);
@@ -1315,24 +1267,10 @@ impl ExplainWriter {
     }
 
     fn validate_terminal_cause(&self, cause: Option<&TerminalCause>) -> Result<(), ExplainError> {
-        match cause.map(|cause| &cause.kind) {
-            Some(TerminalCauseKind::Record(cause))
-                if cause.writer_authority != self.authority
-                    || cause.request_qualifier != self.request_qualifier =>
-            {
-                Err(ExplainError::CrossWriterCause)
-            }
-            Some(TerminalCauseKind::Omitted { rule, .. })
-                if rule.provider != ProviderRef::builtin()
-                    && !self.allowed_providers.contains(&rule.provider) =>
-            {
-                Err(ExplainError::ProviderAuthorityMismatch)
-            }
-            Some(TerminalCauseKind::Omitted { causes, .. })
-                if causes.iter().any(|cause| {
-                    cause.writer_authority != self.authority
-                        || cause.request_qualifier != self.request_qualifier
-                }) =>
+        match cause {
+            Some(cause)
+                if cause.record.writer_authority != self.authority
+                    || cause.record.request_qualifier != self.request_qualifier =>
             {
                 Err(ExplainError::CrossWriterCause)
             }
@@ -1342,45 +1280,10 @@ impl ExplainWriter {
 
     fn materialize_terminal_cause(
         &mut self,
-        cause: TerminalCause,
+        cause: &TerminalCause,
     ) -> Result<ExplainRecordId, ExplainError> {
-        self.validate_terminal_cause(Some(&cause))?;
-        match cause.kind {
-            TerminalCauseKind::Record(record) => Ok(record),
-            TerminalCauseKind::Omitted {
-                rule,
-                subject_kind,
-                subject_key,
-                stage,
-                disposition,
-                causes,
-            } => {
-                let subject = self.subject(subject_kind, subject_key.as_str())?;
-                self.push_terminal(
-                    rule,
-                    vec![subject],
-                    ExplainEvent::CausalBridge { stage, disposition },
-                    causes,
-                )
-            }
-        }
-    }
-
-    fn append_truncation_summary(&mut self) -> Result<(), ExplainError> {
-        if self.omitted_records == 0 {
-            return Ok(());
-        }
-        let subject = self.subject(SubjectKind::KernelProgram, "explain-report")?;
-        self.push_terminal(
-            RuleRef::builtin("explain.retention")?,
-            vec![subject],
-            ExplainEvent::Truncated {
-                omitted_records: self.omitted_records,
-                omitted_bytes: self.omitted_bytes,
-            },
-            Vec::new(),
-        )?;
-        Ok(())
+        self.validate_terminal_cause(Some(cause))?;
+        Ok(cause.record)
     }
 
     fn seal(self) -> Result<VerifiedExplainTrace, ExplainError> {
@@ -1600,6 +1503,12 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 available.value()
             );
         }
+        ExplainEvent::NumericalHonourability {
+            dimension,
+            required,
+            outcome,
+            profile,
+        } => render_honourability(output, dimension, required, outcome, profile),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             let _ = write!(
                 output,
@@ -1613,27 +1522,7 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
             basis,
             terms,
             disposition,
-        } => {
-            let _ = write!(
-                output,
-                "cost:{}:{}:{}:",
-                model.as_str(),
-                basis_name(basis),
-                cost_disposition_name(*disposition)
-            );
-            for (index, term) in terms.iter().enumerate() {
-                if index != 0 {
-                    output.push(',');
-                }
-                let _ = write!(
-                    output,
-                    "{}:{}={}",
-                    term.metric.as_str(),
-                    quantity_name(term.quantity),
-                    term.quantity.value()
-                );
-            }
-        }
+        } => render_cost(output, model, basis, terms, *disposition),
         ExplainEvent::Selection { policy, outcome } => {
             let _ = write!(
                 output,
@@ -1645,16 +1534,71 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
         ExplainEvent::CompilerFailure { reason, .. } => {
             let _ = write!(output, "compiler-failure:{}", reason.as_str());
         }
-        ExplainEvent::CausalBridge { disposition, .. } => {
-            let _ = write!(output, "omitted-cause:{}", disposition_name(*disposition));
-        }
-        ExplainEvent::Truncated {
-            omitted_records,
-            omitted_bytes,
-        } => {
-            let _ = write!(output, "truncated:{omitted_records}:{omitted_bytes}");
-        }
     }
+}
+
+/// Renders one cost-assessment record and its comma-separated terms.
+fn render_cost(
+    output: &mut String,
+    model: &CostModelKey,
+    basis: &EvidenceBasis,
+    terms: &[CostTerm],
+    disposition: CostDisposition,
+) {
+    use fmt::Write as _;
+    let _ = write!(
+        output,
+        "cost:{}:{}:{}:",
+        model.as_str(),
+        basis_name(basis),
+        cost_disposition_name(disposition)
+    );
+    for (index, term) in terms.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        let _ = write!(
+            output,
+            "{}:{}={}",
+            term.metric.as_str(),
+            quantity_name(term.quantity),
+            term.quantity.value()
+        );
+    }
+}
+
+/// Renders one numerical-honourability record.
+///
+/// Every part is written, including the declaring profile, because a reader that
+/// saw only the dimension and the outcome could not tell which profile made the
+/// claim — and a rejection whose declarer is unnamed is not explainable.
+fn render_honourability(
+    output: &mut String,
+    dimension: &PredicateKey,
+    required: &ReasonCode,
+    outcome: &HonourabilityOutcome,
+    profile: &SubjectKey,
+) {
+    use fmt::Write as _;
+    let _ = write!(
+        output,
+        "honourability:{}:{}:",
+        dimension.as_str(),
+        required.as_str()
+    );
+    match outcome {
+        HonourabilityOutcome::Honoured { means } => {
+            let _ = write!(output, "honoured:{}", means.as_str());
+        }
+        HonourabilityOutcome::Unhonourable { means, honoured } => {
+            let _ = write!(output, "unhonourable:{}", means.as_str());
+            if let Some(honoured) = honoured {
+                let _ = write!(output, ":honours={}", honoured.as_str());
+            }
+        }
+        HonourabilityOutcome::Undeclared => output.push_str("undeclared"),
+    }
+    let _ = write!(output, ":profile={}", profile.as_str());
 }
 
 fn render_fact_value(output: &mut String, value: &FactValue) {
@@ -1713,7 +1657,6 @@ const fn disposition_name(disposition: ExplainDisposition) -> &'static str {
         ExplainDisposition::NotSelectedTradeoff => "not-selected-tradeoff",
         ExplainDisposition::Selected => "selected",
         ExplainDisposition::CompilerFailure => "compiler-failure",
-        ExplainDisposition::Truncated => "truncated",
     }
 }
 
@@ -1794,7 +1737,6 @@ pub(crate) enum ExplainError {
         kind: KeyKind,
         bytes: usize,
     },
-    InvalidLimits,
     InvalidTerminalLedger,
     TerminalLedgerCapacity,
     InvalidEventClass,
@@ -1822,6 +1764,12 @@ pub(crate) enum ExplainError {
     InvalidQuantityRelation,
     UnknownQuantityUnit,
     EmptyCostEvidence,
+    /// A detail record would have exceeded the retained-trace ceiling.
+    ///
+    /// The compilation is refused rather than the record dropped, so a trace
+    /// that exists is complete. Distinct from [`Self::TerminalCapacity`]:
+    /// that one bounds the terminal ledger, this one the explanation body.
+    DetailCapacity,
     TerminalCapacity,
     EmptyTrace,
     StaleIdentity,
@@ -1976,6 +1924,12 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             encode_quantity(bytes, *required);
             encode_quantity(bytes, *available);
         }
+        ExplainEvent::NumericalHonourability {
+            dimension,
+            required,
+            outcome,
+            profile,
+        } => encode_honourability(bytes, dimension, required, outcome, profile),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             bytes.push(4);
             encode_bytes(bytes, predicate.as_str().as_bytes());
@@ -1986,21 +1940,7 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             basis,
             terms,
             disposition,
-        } => {
-            bytes.push(5);
-            encode_bytes(bytes, model.as_str().as_bytes());
-            encode_basis(bytes, basis);
-            bytes.push(match disposition {
-                CostDisposition::Retained => 1,
-                CostDisposition::Dominated => 2,
-                CostDisposition::HigherCost => 3,
-            });
-            bytes.extend_from_slice(&u64::try_from(terms.len()).unwrap_or(u64::MAX).to_be_bytes());
-            for term in terms {
-                encode_bytes(bytes, term.metric.as_str().as_bytes());
-                encode_quantity(bytes, term.quantity);
-            }
-        }
+        } => encode_cost(bytes, model, basis, terms, *disposition),
         ExplainEvent::Selection { policy, outcome } => {
             bytes.push(6);
             encode_bytes(bytes, policy.as_str().as_bytes());
@@ -2015,19 +1955,68 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             bytes.extend_from_slice(&[7, stage_tag(*stage)]);
             encode_bytes(bytes, reason.as_str().as_bytes());
         }
-        ExplainEvent::CausalBridge { stage, disposition } => {
-            bytes.extend_from_slice(&[8, stage_tag(*stage)]);
-            bytes.push(disposition_tag(*disposition));
-        }
-        ExplainEvent::Truncated {
-            omitted_records,
-            omitted_bytes,
-        } => {
-            bytes.push(9);
-            bytes.extend_from_slice(&omitted_records.to_be_bytes());
-            bytes.extend_from_slice(&omitted_bytes.to_be_bytes());
-        }
     }
+}
+
+/// Canonically encodes one cost-assessment record: event tag `5`, then the
+/// model, the evidence basis, the disposition, and the length-framed terms.
+fn encode_cost(
+    bytes: &mut Vec<u8>,
+    model: &CostModelKey,
+    basis: &EvidenceBasis,
+    terms: &[CostTerm],
+    disposition: CostDisposition,
+) {
+    bytes.push(5);
+    encode_bytes(bytes, model.as_str().as_bytes());
+    encode_basis(bytes, basis);
+    bytes.push(match disposition {
+        CostDisposition::Retained => 1,
+        CostDisposition::Dominated => 2,
+        CostDisposition::HigherCost => 3,
+    });
+    bytes.extend_from_slice(&u64::try_from(terms.len()).unwrap_or(u64::MAX).to_be_bytes());
+    for term in terms {
+        encode_bytes(bytes, term.metric.as_str().as_bytes());
+        encode_quantity(bytes, term.quantity);
+    }
+}
+
+/// Canonically encodes one numerical-honourability record.
+///
+/// Event tag `10`, then the dimension, the required behaviour, a one-byte
+/// outcome discriminant with its payload, and the declaring profile. The
+/// declarer is inside the encoding because two traces that differ only in which
+/// profile made a claim are different traces.
+fn encode_honourability(
+    bytes: &mut Vec<u8>,
+    dimension: &PredicateKey,
+    required: &ReasonCode,
+    outcome: &HonourabilityOutcome,
+    profile: &SubjectKey,
+) {
+    bytes.push(10);
+    encode_bytes(bytes, dimension.as_str().as_bytes());
+    encode_bytes(bytes, required.as_str().as_bytes());
+    match outcome {
+        HonourabilityOutcome::Honoured { means } => {
+            bytes.push(1);
+            encode_bytes(bytes, means.as_str().as_bytes());
+        }
+        HonourabilityOutcome::Unhonourable { means, honoured } => {
+            bytes.push(2);
+            encode_bytes(bytes, means.as_str().as_bytes());
+            match honoured {
+                Some(honoured) => {
+                    bytes.push(1);
+                    encode_bytes(bytes, honoured.as_str().as_bytes());
+                }
+                None => bytes.push(0),
+            }
+        }
+        HonourabilityOutcome::Undeclared => bytes.push(3),
+    }
+    encode_bytes(bytes, profile.as_str().as_bytes());
 }
 
 fn encode_assessment(bytes: &mut Vec<u8>, assessment: &PredicateAssessment) {
@@ -2171,7 +2160,6 @@ const fn disposition_tag(disposition: ExplainDisposition) -> u8 {
         ExplainDisposition::NotSelectedTradeoff => 10,
         ExplainDisposition::Selected => 11,
         ExplainDisposition::CompilerFailure => 12,
-        ExplainDisposition::Truncated => 13,
     }
 }
 
@@ -2260,12 +2248,12 @@ mod tests {
     #[test]
     fn deterministic_trace_is_sealed_and_rendered_separately() {
         let request = request(2.0);
-        let mut first = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut first = ExplainWriter::new(&request).unwrap();
         let parts = admitted(&first, "candidate:a");
         first
             .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
             .unwrap();
-        let detail_only = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let detail_only = ExplainWriter::new(&request).unwrap();
         assert_eq!(
             detail_only.finish_success(&["alternative:test"], "alternative:test"),
             Err(ExplainError::InvalidTerminalLedger)
@@ -2282,8 +2270,22 @@ mod tests {
                 // covers the frozen scalar and lowering-capability authorities,
                 // so changing what a governed definition states must move this
                 // digest; a value that survived would mean the subject reached
-                // the operation keys without reaching their contracts.
-                "tiler-explain-v2 request=eeb25d3a45eebfd4\n",
+                // the operation keys without reaching their contracts, and
+                // growing the governed profile must move it for the same reason.
+                //
+                // Rebaselined again when the target profile's `supports_strict_f32`
+                // boolean was replaced by its per-dimension honourability
+                // declaration and the caller's stated contract preference joined
+                // the resolved contract in the subject (ADR 0076 items 2 and 3).
+                // Both changes are facts the subject must distinguish, so this
+                // digest moving is the assertion, not collateral damage.
+                //
+                // The value below is neither branch's: each rebaselined against
+                // its own change alone, so both were stale on the merged tree,
+                // where the subject carries the governed definitions' contracts
+                // *and* the per-dimension honourability declaration. Pinning
+                // either one would assert a subject this tree does not build.
+                "tiler-explain-v2 request=bb089e78b94e892c\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -2295,8 +2297,8 @@ mod tests {
     fn cross_request_subjects_causes_and_units_fail_closed() {
         let first_request = request(2.0);
         let second_request = request(3.0);
-        let mut first = ExplainWriter::new(&first_request, ExplainLimits::default()).unwrap();
-        let second = ExplainWriter::new(&second_request, ExplainLimits::default()).unwrap();
+        let mut first = ExplainWriter::new(&first_request).unwrap();
+        let second = ExplainWriter::new(&second_request).unwrap();
         let foreign = second.subject(SubjectKind::Region, "region:0").unwrap();
         assert_eq!(
             first.push_detail(
@@ -2357,10 +2359,8 @@ mod tests {
         let parts = admitted(&first, "candidate:first");
         let first_cause = first
             .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
-            .unwrap()
             .unwrap();
-        let mut same_request =
-            ExplainWriter::new(&first_request, ExplainLimits::default()).unwrap();
+        let mut same_request = ExplainWriter::new(&first_request).unwrap();
         let parts = admitted(&same_request, "candidate:other-writer-root");
         same_request
             .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
@@ -2414,7 +2414,7 @@ mod tests {
             Err(ExplainError::EvidenceEscalation)
         );
         let request = request(2.0);
-        let mut writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut writer = ExplainWriter::new(&request).unwrap();
         let subject = writer
             .subject(SubjectKind::Candidate, "candidate:a")
             .unwrap();
@@ -2510,7 +2510,7 @@ mod tests {
         let receipt =
             VerifiedEvidenceRef::from_fusion_numerical(&first_request, &proof, provider.clone())
                 .unwrap();
-        let mut writer = ExplainWriter::new(&second_request, ExplainLimits::default()).unwrap();
+        let mut writer = ExplainWriter::new(&second_request).unwrap();
         let subject = writer
             .subject(SubjectKind::Candidate, candidate.label())
             .unwrap();
@@ -2557,10 +2557,9 @@ mod tests {
     }
 
     #[test]
-    fn bounds_truncate_details_but_retain_terminal_selection() {
+    fn every_detail_is_retained_beside_the_terminal_selection() {
         let request = request(2.0);
-        let mut writer =
-            ExplainWriter::new(&request, ExplainLimits::new(1, 64 * 1024).unwrap()).unwrap();
+        let mut writer = ExplainWriter::new(&request).unwrap();
         for key in ["candidate:a", "candidate:b", "candidate:c"] {
             let parts = admitted(&writer, key);
             writer
@@ -2596,22 +2595,23 @@ mod tests {
                 ..
             }
         )));
-        assert!(
+        // Every pushed detail survives to the sealed trace. There is no
+        // retention or truncation record to look for, because a trace that
+        // could not hold its records is refused rather than shortened.
+        assert_eq!(
             trace
                 .records()
                 .iter()
-                .any(|record| matches!(record.event(), ExplainEvent::Truncated { .. }))
+                .filter(|record| record.rule().key().as_str() == "test.rule")
+                .count(),
+            3
         );
     }
 
     #[test]
-    fn truncation_is_a_sibling_and_omitted_terminal_causes_keep_exact_authority() {
+    fn a_causal_detail_is_cited_by_the_record_itself() {
         let request = request(2.0);
-        let mut writer = ExplainWriter::new(
-            &request,
-            ExplainLimits::new(1, MAX_CANONICAL_BYTES).unwrap(),
-        )
-        .unwrap();
+        let mut writer = ExplainWriter::new(&request).unwrap();
         let predecessor_parts = admitted(&writer, "candidate:predecessor");
         let predecessor = writer
             .push_detail(
@@ -2620,7 +2620,6 @@ mod tests {
                 predecessor_parts.event,
                 predecessor_parts.causes,
             )
-            .unwrap()
             .unwrap();
         let subject = writer
             .subject(SubjectKind::Alternative, "alternative:test")
@@ -2638,41 +2637,35 @@ mod tests {
                 vec![predecessor],
             )
             .unwrap();
-        assert!(matches!(cause.kind, TerminalCauseKind::Omitted { .. }));
         writer
             .note_selection(subject, SelectionOutcome::Selected, Some(cause))
             .unwrap();
         let trace = writer
             .finish_success(&["alternative:test"], "alternative:test")
             .unwrap();
-        let truncation = trace
+        // The cost record is retained, so the selection cites it directly.
+        // Nothing stands in for a dropped predecessor, because none is dropped.
+        let cost = trace
             .records()
             .iter()
-            .find(|record| matches!(record.event(), ExplainEvent::Truncated { .. }))
+            .find(|record| matches!(record.event(), ExplainEvent::CostAssessment { .. }))
             .unwrap();
-        assert!(truncation.causes().is_empty());
-        let bridge = trace
-            .records()
-            .iter()
-            .find(|record| matches!(record.event(), ExplainEvent::CausalBridge { .. }))
-            .unwrap();
-        assert_eq!(bridge.rule().key().as_str(), "cost.exact-cause");
-        assert_eq!(bridge.subjects()[0].key().as_str(), "alternative:test");
+        assert_eq!(cost.rule().key().as_str(), "cost.exact-cause");
+        assert_eq!(cost.subjects()[0].key().as_str(), "alternative:test");
+        assert_eq!(cost.causes(), &[predecessor]);
         let selection = trace
             .records()
             .iter()
             .find(|record| matches!(record.event(), ExplainEvent::Selection { .. }))
             .unwrap();
-        assert_eq!(selection.causes(), &[bridge.id()]);
-        assert_ne!(selection.causes(), &[truncation.id()]);
-        assert_eq!(bridge.causes(), &[predecessor]);
+        assert_eq!(selection.causes(), &[cost.id()]);
     }
 
     #[test]
-    fn failure_trace_has_one_terminal_failure_and_survives_zero_detail_limits() {
+    fn failure_trace_has_one_terminal_failure_citing_its_retained_detail() {
         let request = request(2.0);
-        let mut writer = ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
-        let parts = admitted(&writer, "candidate:omitted");
+        let mut writer = ExplainWriter::new(&request).unwrap();
+        let parts = admitted(&writer, "candidate:retained");
         let cause = writer
             .push_causal_detail(
                 parts.rule,
@@ -2701,44 +2694,29 @@ mod tests {
                 .count(),
             1
         );
-        assert!(trace.records().iter().any(|record| matches!(
-            record.event(),
-            ExplainEvent::Truncated {
-                omitted_records: 1,
-                ..
-            }
-        )));
-        let bridge = trace
+        let detail = trace
             .records()
             .iter()
-            .find(|record| matches!(record.event(), ExplainEvent::CausalBridge { .. }))
+            .find(|record| record.rule().key().as_str() == "test.rule")
             .unwrap();
         let failure = trace
             .records()
             .iter()
             .find(|record| matches!(record.event(), ExplainEvent::CompilerFailure { .. }))
             .unwrap();
-        assert_eq!(failure.causes(), &[bridge.id()]);
+        assert_eq!(failure.causes(), &[detail.id()]);
         assert!(matches!(
-            bridge.event(),
-            ExplainEvent::CausalBridge {
-                stage: ExplainStage::CandidateEnumeration,
-                disposition: ExplainDisposition::Admitted,
-            }
-        ));
-        assert_eq!(bridge.rule().key.as_str(), "test.rule");
-        assert!(matches!(
-            bridge.subjects(),
+            detail.subjects(),
             [subject]
                 if subject.kind == SubjectKind::Candidate
-                    && subject.key.as_str() == "candidate:omitted"
+                    && subject.key.as_str() == "candidate:retained"
         ));
     }
 
     #[test]
-    fn failure_cause_admission_rejects_retained_and_omitted_semantic_duplicates() {
+    fn failure_cause_admission_rejects_semantic_duplicates() {
         let request = request(2.0);
-        let mut retained_writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut retained_writer = ExplainWriter::new(&request).unwrap();
         let retained_parts = admitted(&retained_writer, "candidate:retained-duplicate");
         let retained = retained_writer
             .push_causal_detail(
@@ -2754,7 +2732,7 @@ mod tests {
                 "duplicate-retained",
                 SubjectKind::Kernel,
                 "failed-kernel",
-                vec![retained.clone(), retained.clone()],
+                vec![retained, retained],
             ),
             Err(ExplainError::DuplicateCause)
         ));
@@ -2770,60 +2748,13 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        assert!(
-            !retained_trace
-                .records()
-                .iter()
-                .any(|record| matches!(record.event(), ExplainEvent::CausalBridge { .. }))
-        );
-
-        let mut omitted_writer =
-            ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
-        let omitted_parts = admitted(&omitted_writer, "candidate:omitted-duplicate");
-        let omitted = omitted_writer
-            .push_causal_detail(
-                omitted_parts.rule,
-                omitted_parts.subjects.into_iter().next().unwrap(),
-                &omitted_parts.event,
-                omitted_parts.causes,
-            )
-            .unwrap();
-        assert!(matches!(
-            FailureDescriptor::with_causes(
-                ExplainStage::KernelRefinement,
-                "duplicate-omitted",
-                SubjectKind::Kernel,
-                "failed-kernel",
-                vec![omitted.clone(), omitted.clone()],
-            ),
-            Err(ExplainError::DuplicateCause)
-        ));
-        let omitted_trace = omitted_writer
-            .finish_failure(
-                FailureDescriptor::new(
-                    ExplainStage::KernelRefinement,
-                    "single-omitted",
-                    SubjectKind::Kernel,
-                    "failed-kernel",
-                    Some(omitted),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        assert_eq!(
-            omitted_trace
-                .records()
-                .iter()
-                .filter(|record| matches!(record.event(), ExplainEvent::CausalBridge { .. }))
-                .count(),
-            1
-        );
+        assert!(retained_trace.verify().is_ok());
     }
 
     #[test]
     fn terminal_ledger_rejects_duplicates_unknowns_and_max_detail_pressure() {
         let request = request(2.0);
-        let mut duplicate = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut duplicate = ExplainWriter::new(&request).unwrap();
         let subject = duplicate
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();
@@ -2840,7 +2771,7 @@ mod tests {
                 .is_ok()
         );
 
-        let mut infeasible = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut infeasible = ExplainWriter::new(&request).unwrap();
         assert_eq!(
             infeasible.note_selection(subject.clone(), SelectionOutcome::Infeasible, None),
             Err(ExplainError::InvalidTerminalLedger)
@@ -2849,7 +2780,7 @@ mod tests {
             .note_infeasible_alternative(subject, None)
             .unwrap();
 
-        let mut unknown = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut unknown = ExplainWriter::new(&request).unwrap();
         let subject = unknown
             .subject(SubjectKind::Alternative, "alternative:unknown")
             .unwrap();
@@ -2861,11 +2792,7 @@ mod tests {
             Err(ExplainError::InvalidTerminalLedger)
         );
 
-        let mut pressured = ExplainWriter::new(
-            &request,
-            ExplainLimits::new(MAX_RECORDS, MAX_CANONICAL_BYTES).unwrap(),
-        )
-        .unwrap();
+        let mut pressured = ExplainWriter::new(&request).unwrap();
         for index in 0..MAX_RECORDS {
             let key = format!("candidate:{index}");
             let parts = admitted(&pressured, &key);
@@ -2873,6 +2800,18 @@ mod tests {
                 .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
                 .unwrap();
         }
+        // One past the ceiling is refused, not dropped. This is the guarantee
+        // the whole retention design rests on: a sealed trace is complete.
+        let excess_parts = admitted(&pressured, "candidate:excess");
+        assert_eq!(
+            pressured.push_detail(
+                excess_parts.rule,
+                excess_parts.subjects,
+                excess_parts.event,
+                excess_parts.causes,
+            ),
+            Err(ExplainError::DetailCapacity)
+        );
         let subject = pressured
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();
@@ -2890,7 +2829,7 @@ mod tests {
             }
         )));
 
-        let mut bounded = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut bounded = ExplainWriter::new(&request).unwrap();
         for index in 0..MAX_TERMINAL_LEDGER_RECORDS {
             let subject = bounded
                 .subject(SubjectKind::Alternative, format!("alternative:{index}"))
@@ -2909,7 +2848,7 @@ mod tests {
 
         let mut alternatives = vec!["alternative:test"; MAX_TERMINAL_LEDGER_RECORDS as usize + 1];
         alternatives[0] = "alternative:selected";
-        let mut slice_bounded = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut slice_bounded = ExplainWriter::new(&request).unwrap();
         let selected = slice_bounded
             .subject(SubjectKind::Alternative, "alternative:selected")
             .unwrap();
@@ -2925,7 +2864,7 @@ mod tests {
     #[test]
     fn feasibility_and_budget_events_enforce_numeric_truth() {
         let request = request(2.0);
-        let mut writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut writer = ExplainWriter::new(&request).unwrap();
         let subject = writer.subject(SubjectKind::Region, "region:0").unwrap();
         for (outcome, required, available) in [
             (FeasibilityOutcome::Admitted, 2, 1),
@@ -2984,9 +2923,9 @@ mod tests {
     }
 
     #[test]
-    fn maximum_terminal_ledger_with_omitted_causes_seals_within_hard_trace_bounds() {
+    fn maximum_terminal_ledger_seals_within_hard_trace_bounds() {
         let request = request(2.0);
-        let mut writer = ExplainWriter::new(&request, ExplainLimits::new(0, 0).unwrap()).unwrap();
+        let mut writer = ExplainWriter::new(&request).unwrap();
         let keys = (0..MAX_TERMINAL_LEDGER_RECORDS)
             .map(|index| format!("alternative:{index}"))
             .collect::<Vec<_>>();
@@ -3019,9 +2958,12 @@ mod tests {
         }
         let alternatives = keys.iter().map(String::as_str).collect::<Vec<_>>();
         let trace = writer.finish_success(&alternatives, &keys[0]).unwrap();
+        // One retained cost detail and one selection per alternative. No
+        // truncation summary and no synthesized bridge: both existed only to
+        // stand in for records the writer had dropped.
         assert_eq!(
             trace.records().len(),
-            usize::try_from(MAX_TERMINAL_LEDGER_RECORDS * 2 + 1).unwrap()
+            usize::try_from(MAX_TERMINAL_LEDGER_RECORDS * 2).unwrap()
         );
         assert!(
             trace.identity().as_bytes().len()
@@ -3033,11 +2975,10 @@ mod tests {
     #[test]
     fn stale_identity_and_reordered_records_are_rejected() {
         let request = request(2.0);
-        let mut writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut writer = ExplainWriter::new(&request).unwrap();
         let parts = admitted(&writer, "candidate:a");
         let first = writer
             .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
-            .unwrap()
             .unwrap();
         let mut parts = admitted(&writer, "candidate:b");
         parts.causes.push(first);
@@ -3096,7 +3037,7 @@ mod tests {
         ));
 
         let request = request(2.0);
-        let mut writer = ExplainWriter::new(&request, ExplainLimits::default()).unwrap();
+        let mut writer = ExplainWriter::new(&request).unwrap();
         let subject = writer
             .subject(SubjectKind::Candidate, "candidate:a")
             .unwrap();

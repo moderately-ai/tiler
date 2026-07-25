@@ -30,6 +30,8 @@ versioned text renderer is presentation only. Retention is bounded across the
 complete canonical trace, preserves the current portfolio's terminal selection
 records, and emits a typed truncation record.
 
+**Superseded in one respect by [`never-truncate-the-governed-explain-trace`](never-truncate-the-governed-explain-trace.md).** The "emits a typed truncation record" behaviour described above, and the configurable detail budget, omitted-cause bridging, and `explain.retention` summary described below, no longer exist. A detail record that would exceed the retained-trace ceiling now fails the compilation closed with `ExplainError::DetailCapacity`, so a sealed trace is complete by construction. The rest of this handoff stands; only the retention half changed.
+
 Tom still needs to review these public-boundary choices before this ticket can
 be completed:
 
