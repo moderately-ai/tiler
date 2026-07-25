@@ -5,7 +5,7 @@ status: done
 priority: p0
 dependencies: []
 related: [prototype-runtime-artifact-validation, record-an-adr-for-the-metal-aot-crate-admission]
-scopes: [contracts/foundation, contracts/decisions, implementation/workspace]
+scopes: [contracts/foundation, contracts/decisions, implementation/workspace, contracts/navigation, implementation/cargo-lock, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, workspace, runtime, needs-tom]
