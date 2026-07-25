@@ -46,7 +46,7 @@ use crate::pipeline::{
     CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind,
     compile as compile_internal,
 };
-use crate::request::{CompilationRequest, RequestError};
+use crate::request::{CompilationRequest, RequestError, StrictF32NumericalContract};
 
 /// Why a compilation did not produce plans.
 ///
@@ -221,7 +221,44 @@ const fn rule_of(error: &RequestError) -> &'static str {
     }
 }
 
-/// Compiles one semantic program under the governed strict contract.
+/// A numerical contract this build registers.
+///
+/// Stating one is **required**, not defaulted. These are two different
+/// contracts rather than a strict setting and a relaxed one: each carries its
+/// own versioned key, so the same program under each has different canonical
+/// identities, artifacts, and cache entries. The choice belongs to the caller
+/// because it decides what the program *means*, and no authority below may
+/// narrow, weaken, or substitute it to make a target feasible.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum NumericalContract {
+    /// Subnormals preserved on both dimensions; no contraction, no
+    /// reassociation.
+    ///
+    /// Not deliverable on any governed Apple family, whose `f32` arithmetic
+    /// flushes subnormals in every math mode. A caller states it when it needs
+    /// preservation and would rather not run than run wrong.
+    StrictF32,
+    /// Subnormals flushed to the sign-preserving zero; no contraction, no
+    /// reassociation.
+    ///
+    /// This is what Apple hardware measurably delivers, so stating it makes
+    /// running there a choice the caller made rather than a compromise made on
+    /// its behalf. It widens exactly one dimension: accepting flushing does not
+    /// thereby accept reassociated sums.
+    FlushSubnormalsToZeroF32,
+}
+
+impl NumericalContract {
+    fn resolve(self) -> StrictF32NumericalContract {
+        match self {
+            Self::StrictF32 => StrictF32NumericalContract::governed(),
+            Self::FlushSubnormalsToZeroF32 => StrictF32NumericalContract::governed_flush_to_zero(),
+        }
+    }
+}
+
+/// Compiles one semantic program under a stated numerical contract.
 ///
 /// # Errors
 ///
@@ -229,8 +266,14 @@ const fn rule_of(error: &RequestError) -> &'static str {
 /// unsupported program, an infeasible target, an exhausted budget, and invalid
 /// compiler output are kept distinct: the first three are statements about the
 /// request, and the last is a defect in Tiler.
-pub fn compile_governed(program: &SemanticProgram) -> Result<Vec<Compilation>, CompileFailure> {
-    let product = compile_internal(CompilationRequest::governed(program))?;
+pub fn compile_governed(
+    program: &SemanticProgram,
+    contract: NumericalContract,
+) -> Result<Vec<Compilation>, CompileFailure> {
+    let product = compile_internal(CompilationRequest::governed_under(
+        program,
+        contract.resolve(),
+    ))?;
     Ok(into_compilations(product))
 }
 
@@ -249,7 +292,7 @@ fn into_compilations(product: CompilationProduct) -> Vec<Compilation> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompileFailure, compile_governed};
+    use super::{CompileFailure, NumericalContract, compile_governed};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -285,7 +328,8 @@ mod tests {
     #[test]
     fn a_governed_program_compiles_to_alternatives_carrying_kernels() {
         let program = semantic_program();
-        let compilations = compile_governed(&program).expect("the governed program compiles");
+        let compilations = compile_governed(&program, NumericalContract::StrictF32)
+            .expect("the governed program compiles");
         assert_eq!(compilations.len(), 1);
         let compilation = &compilations[0];
         assert!(!compilation.target_profile_key().is_empty());
@@ -326,7 +370,8 @@ mod tests {
     #[test]
     fn the_selection_names_a_retained_alternative() {
         let program = semantic_program();
-        let compilations = compile_governed(&program).expect("the governed program compiles");
+        let compilations = compile_governed(&program, NumericalContract::StrictF32)
+            .expect("the governed program compiles");
         let compilation = &compilations[0];
         let selected = compilation.selected().expect("a selected alternative");
         assert!(
@@ -340,7 +385,8 @@ mod tests {
     #[test]
     fn a_compilation_renders_its_explain_trace() {
         let program = semantic_program();
-        let compilations = compile_governed(&program).expect("the governed program compiles");
+        let compilations = compile_governed(&program, NumericalContract::StrictF32)
+            .expect("the governed program compiles");
         let rendered = compilations[0].explain().render();
         assert!(
             rendered.starts_with("tiler-explain-v2 "),

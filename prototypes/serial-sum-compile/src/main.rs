@@ -24,7 +24,7 @@ mod target;
 use std::fmt;
 use std::process::ExitCode;
 
-use tiler_compiler::session::{CompileFailure, compile_governed};
+use tiler_compiler::session::{CompileFailure, NumericalContract, compile_governed};
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
@@ -103,7 +103,11 @@ fn main() -> ExitCode {
 /// One offline pass: compile, emit, and translate to a `metallib`.
 fn run() -> Result<(), ProducerError> {
     let program = serial_sum_program();
-    let compilations = compile_governed(&program).map_err(ProducerError::Compile)?;
+    // Stated, not defaulted. The strict contract is unhonourable on every
+    // governed Apple family, so this producer says which contract its program
+    // means rather than discovering that by reading a rejection.
+    let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        .map_err(ProducerError::Compile)?;
     let compilation = compilations.first().ok_or(ProducerError::NoTarget)?;
     println!("target profile: {}", compilation.target_profile_key());
 
@@ -193,7 +197,7 @@ impl fmt::Display for ProducerError {
 #[cfg(test)]
 mod tests {
     use super::{serial_sum_program, target_facts};
-    use tiler_compiler::session::compile_governed;
+    use tiler_compiler::session::{NumericalContract, compile_governed};
     use tiler_metal::emit::emit_translation_unit;
 
     /// The offline path composes as far as deterministic MSL, without a
@@ -205,7 +209,8 @@ mod tests {
     #[test]
     fn the_selected_program_emits_deterministic_metal_source() {
         let program = serial_sum_program();
-        let compilations = compile_governed(&program).expect("the governed program compiles");
+        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed program compiles");
         let selected = compilations[0].selected().expect("a selected alternative");
         let kernels: Vec<_> = selected.kernels().iter().collect();
 
@@ -223,45 +228,55 @@ mod tests {
         );
     }
 
-    /// **The offline path stops here, and that is the correct behaviour.**
+    /// The contract a caller states decides whether this target can honour it.
     ///
-    /// The governed numerical contract declares subnormal *preservation*.
-    /// Apple `f32` arithmetic flushes subnormal operands and results to zero on
-    /// every governed family and in every math mode, which
-    /// `MetalSubnormalArithmetic::FlushesToZero` states as a target fact, now
-    /// naming the sign-preserving zero it produces. So the
-    /// target cannot honour the contract the kernels declare, and emission's
-    /// conformance check refuses — after producing perfectly good MSL, because
-    /// emission and conformance are deliberately separate steps.
+    /// This case previously asserted a *refusal*, because the strict contract
+    /// was the only one the compiler registered and Apple `f32` arithmetic
+    /// flushes subnormals in every math mode. It was deliberately written to
+    /// break the day a contract became selectable, so that its reasoning had to
+    /// be re-derived rather than silently passing under a new meaning. This is
+    /// that re-derivation.
     ///
-    /// This is ADR 0076's central inference reaching running code: honourability
-    /// has to be a stated target fact, and a contract the target cannot deliver
-    /// must fail closed rather than silently compute something else. Reaching
-    /// hardware requires making the numerical contract a stated request input
-    /// with more than one expressible value — `select-numerical-contract-and-
-    /// compose-feasibility`, then `declare-metal-numerical-honourability` — not
-    /// relaxing this check. Relaxing it would return wrong numbers.
-    ///
-    /// The case is written as an assertion of the refusal so that the day the
-    /// contract becomes selectable, it fails and forces this comment to be
-    /// re-derived rather than silently passing under a new meaning.
+    /// Both directions are asserted, because the point is that the caller's
+    /// statement is load-bearing: the strict contract is still refused on this
+    /// target — it is not deliverable and must not be emitted — and the
+    /// flush-accepting contract is honoured. Nothing was relaxed to reach the
+    /// second; a different contract was stated.
     #[test]
-    fn the_governed_contract_is_not_honourable_on_the_governed_apple_target() {
+    fn the_stated_contract_decides_whether_this_target_honours_it() {
         let program = serial_sum_program();
-        let compilations = compile_governed(&program).expect("the governed program compiles");
-        let selected = compilations[0].selected().expect("a selected alternative");
-        let kernels: Vec<_> = selected.kernels().iter().collect();
-        let unit = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
 
+        let strict = compile_governed(&program, NumericalContract::StrictF32)
+            .expect("the strict program still compiles");
+        let strict_plan = strict[0].selected().expect("a selected alternative");
+        let strict_kernels: Vec<_> = strict_plan.kernels().iter().collect();
+        let strict_unit =
+            emit_translation_unit(&strict_kernels, &target_facts()).expect("the kernels emit");
         assert!(
-            !unit.source().is_empty(),
-            "emission succeeds; conformance is the separate step that refuses",
+            strict_unit.require_declared_realization().is_err(),
+            "a subnormal-preserving contract is still unrealizable on a flushing target",
         );
+        assert_eq!(
+            strict_unit
+                .numerical_gaps()
+                .iter()
+                .map(|gap| gap.rule())
+                .collect::<Vec<_>>(),
+            ["subnormal-flush-in-arithmetic"],
+        );
+
+        let flushing = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the flush-accepting program compiles");
+        let flush_plan = flushing[0].selected().expect("a selected alternative");
+        let flush_kernels: Vec<_> = flush_plan.kernels().iter().collect();
+        let flush_unit =
+            emit_translation_unit(&flush_kernels, &target_facts()).expect("the kernels emit");
+        flush_unit
+            .require_declared_realization()
+            .expect("the target honours the contract the caller stated");
         assert!(
-            unit.require_declared_realization().is_err(),
-            "a subnormal-preserving contract is unrealizable on a flushing target",
+            flush_unit.numerical_gaps().is_empty(),
+            "an honoured contract leaves no gap",
         );
-        let gaps: Vec<&str> = unit.numerical_gaps().iter().map(|gap| gap.rule()).collect();
-        assert_eq!(gaps, ["subnormal-flush-in-arithmetic"]);
     }
 }

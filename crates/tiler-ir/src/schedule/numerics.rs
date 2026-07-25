@@ -40,7 +40,15 @@ pub enum FlushedZeroSign {
     AlwaysPositive,
 }
 
-/// Treatment of subnormal floating-point values crossing the region boundary.
+/// Treatment of subnormal floating-point values at each arithmetic operation.
+///
+/// Both dimensions are **per-operation** rules, not boundary rules, and
+/// `docs/numerical-semantics.md` is the authority: input flushing treats an
+/// existing subnormal operand as zero *before arithmetic*, and result flushing
+/// replaces a *newly produced* subnormal result with zero. A store and a load
+/// are neither, so a materialization boundary neither adds nor removes a flush
+/// — which is why fusing a region does not change exceptional-value behaviour
+/// under any resolution of these dimensions.
 ///
 /// The two dimensions of [`NumericalRealization`] that use this type — inputs
 /// and results — are resolved independently (ADR 0019).

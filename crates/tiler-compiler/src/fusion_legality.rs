@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use tiler_ir::schedule::{NumericalPermission, SubnormalMode};
+use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{
     F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
     add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
@@ -946,10 +946,35 @@ fn derive_obligations(
         },
     );
 
+    // Exceptional values: NaN canonicalization, signed zero, and subnormal
+    // handling must survive fusion.
+    //
+    // The subnormal dimensions do **not** constrain this, whatever their
+    // resolution. `docs/numerical-semantics.md` defines both as per-operation
+    // rules — "input flushing treats an existing subnormal operand as zero
+    // before arithmetic" and "result flushing replaces a newly produced
+    // subnormal result with zero". A materialization boundary is a store and a
+    // load: neither is arithmetic and neither produces a newly produced result,
+    // so removing one neither adds nor removes a flush. The fused and
+    // materialized forms perform the same arithmetic under the same
+    // per-operation rule, so their exceptional-value behaviour agrees.
+    //
+    // Requiring `Preserve` here was the strict contract's assumption rather
+    // than this obligation's content, and it deferred every fused candidate
+    // under any flush contract — costing the fused alternative for a reason the
+    // contract does not state.
+    //
+    // The canonical NaN pattern *is* constrained, and stays. It is a per-result
+    // rewrite the fused body must still apply at every arithmetic boundary,
+    // which `emit_reduction` and `emit_scale_bias` are what realize.
+    //
+    // A boundary that genuinely carries semantics is guarded separately:
+    // `ConversionBoundaryPreservation` above discharges only when every member
+    // is homogeneous, so a removed dtype-conversion boundary is refused there
+    // rather than here.
     let governed = StrictF32NumericalContract::governed();
-    let exceptional_ok = matches!(contract.input_subnormals, SubnormalMode::Preserve)
-        && matches!(contract.result_subnormals, SubnormalMode::Preserve)
-        && contract.canonical_arithmetic_nan_bits == governed.canonical_arithmetic_nan_bits;
+    let exceptional_ok =
+        contract.canonical_arithmetic_nan_bits == governed.canonical_arithmetic_nan_bits;
     obligations.push(if exceptional_ok {
         DerivedObligation::discharged(
             FusionObligation::ExceptionalValues,
