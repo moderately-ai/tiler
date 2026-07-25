@@ -33,3 +33,18 @@ The compiler's `HostExpr`/`HostExprId` is a second expression vocabulary coverin
 ## Closes when
 
 `AbiExpr` lives where ADR 0068 places it, `tiler-compiler` can construct one without a new dependency edge, the codec's encoding and adversarial cases pass unchanged, ADR 0068's `implementation_status` reflects reality, and `uv run --locked python scripts/check_repository.py` passes.
+
+## Measured scope, and a duplication the move must resolve
+
+**Size, read at `cbeedbb`.** `crates/tiler-artifact/src/program/expr.rs` is 821 lines. Thirteen files inside `tiler-artifact` reference `expr::` — `builder.rs`, `facts.rs`, `model.rs`, `verify.rs`, `error.rs`, `mod.rs`, and seven of the eight `codec/` modules including `encode.rs`, `decode.rs`, `validate.rs`, and both test modules. The expression arena is encoded, canonically ordered, closure-checked, and folded into artifact identity, so the codec is not incidentally affected — it is the main consumer.
+
+**Defect found while scoping: `AvailabilityPhase` is defined twice.**
+
+- `crates/tiler-compiler/src/feasibility.rs:43` — `pub(crate) enum AvailabilityPhase`, doc "Ordered capability availability phases (ADR 0043)".
+- `crates/tiler-artifact/src/program/expr.rs:111` — `pub enum AvailabilityPhase`, doc "These are ADR 0043's phases."
+
+Both carry the same five variants in the same order — `CompileProfile`, `ArtifactEvidence`, `LiveDevicePreflight`, `PreparedKernelPreflight`, `LaunchPreflight` — and both derive `Ord` with the ordering stated as load-bearing. They are one governed vocabulary with two definitions, and nothing checks that they agree. A phase added to one would not stop the build at the other; the compiler would defer to a phase the artifact layer cannot express, or the reverse, with no diagnostic.
+
+That is the same failure mode ADR 0068 exists to prevent, one layer down, and it is why this ticket is not merely tidying. **The relocation must resolve it rather than move one copy past the other**: with the domain in `tiler-ir`, both crates already depend on that crate and one definition serves both. Closing this ticket while two definitions survive would leave the defect in place under a rearranged layout.
+
+**Consequence for the closing condition.** Add to it: exactly one `AvailabilityPhase` exists in the workspace, and `crates/tiler-compiler/src/feasibility.rs` names the shared one. If a reason is found to keep two, state it in the ticket outcome and in both types' documentation — do not leave the duplication unexplained.
