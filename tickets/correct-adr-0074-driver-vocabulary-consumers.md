@@ -1,7 +1,7 @@
 ---
 id: correct-adr-0074-driver-vocabulary-consumers
 title: Amend ADR 0074 for the driver vocabulary's out-of-crate consumers
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [harden-public-enums-non-exhaustive, choose-one-owner-for-apple-target-vocabulary, record-an-adr-for-the-metal-aot-crate-admission]
@@ -23,3 +23,25 @@ Two factual claims inside accepted ADR 0074's convention 5 were falsified by a m
 **What closes this.** ADR 0074 already carries an "Amendments" section and was amended once before by `resolve-non-exhaustive-recognizer-hole`, so the mechanism exists and this is a factual correction inside it rather than a change to the normative rule — no clause of convention 5 changes meaning. Correct the premise sentence so it no longer claims `tiler-metal-aot` has no out-of-crate consumers, extend the 5b site enumeration to include `crates/tiler-metal/src/target_correspondence.rs`, and record the correction in "Amendments" with the two commits above so a reader who already applied the earlier text can see what moved. Check the rest of convention 5 for any further claim that depends on the false premise before concluding two sites is the whole of it — read the section in full rather than grepping for the crate name, since the premise is stated once and relied on implicitly.
 
 Do not change `decision_status`, and do not restate the classification reasoning that already lives on `crates/tiler-metal-aot/src/input.rs`, `crates/tiler-metal/src/target.rs`, and `crates/tiler-metal/src/target_correspondence.rs`.
+
+## Outcome
+
+ADR 0074 no longer disagrees with `harden-public-enums-non-exhaustive`. The withdrawn premise, both new sites, and the ordering are recorded in a dated "Amendments" entry; `decision_status` is untouched and no clause of any convention changes meaning.
+
+**Fact — both consumers were verified by reading the modules, not by trusting this ticket.** `crates/tiler-metal/src/target_correspondence.rs` imports `tiler_metal_aot::input::{ApplePlatform, DeploymentMinimum, MslVersion}` and maps the two enums onto `MslLanguageVersion` and `MetalPlatform` through index functions exhaustive in both directions, with pair tables declared at a matching count so a widened index without a new pair is an array-length error. Its module documentation already cites convention 5b by name. `crates/tiler-metal/src/golden_compilation.rs::resolved_toolchain` matches `DriverError` out of crate with **no wildcard**, splitting `ToolchainUnavailable | SdkUnavailable` (self-skip unless the require-toolchain variable is set) from `ToolFailure | Host | EmptyArtifact` (panic, because a failure that is not an absent toolchain is a defect).
+
+**Fact — the correction is narrower than "the driver's types have consumers".** `DeploymentMinimum` is also imported by the correspondence module and is **not** a convention 5 type at all: it is a `(major, minor)` pair rather than a variant set, and the module checks it with an equality test rather than a total map. The record says so, because a reader who took "the driver vocabulary has out-of-crate consumers" as covering everything the module imports would classify a non-enum.
+
+**Decision — 5c gains a site as well as 5b, which the ticket asked for only implicitly.** The ticket's "what closes this" names the 5b enumeration; its own facts name `DriverError` as a 5c type, and its instruction to read the rest of convention 5 is what surfaces that 5c's recognizer enumeration lists only `tiler_ir` vocabularies. Adding the 5b site without the 5c one would have left the section internally inconsistent in the same way it was inconsistent with the ticket. `DriverError` is now recorded under 5c with the exact failure a wildcard would cause: a new variant routing silently into whichever half it chose, turning a driver defect into a skipped test or an absent toolchain into a panic.
+
+**Fact — convention 5 was read in full and two further claims were checked rather than assumed.** The Context "known gap" fact observes `#[non_exhaustive]` appears zero times in `tiler-metal-aot` and routes remediation to `harden-public-enums-non-exhaustive`; that is about the attribute's absence rather than about consumers and survives unchanged, with the remediation ticket's own revision block correctly excluding the three types. Convention 5a's "records the same split for the concrete `tiler-metal-aot` inputs" is about caller-constructed input records, independent of who consumes them, and also survives. No third claim in the section rests on the withdrawn premise, so two sites is the whole of it — and that conclusion comes from reading the section, not from grepping the crate name, exactly as instructed.
+
+**Fact — the general rule was kept and only its application withdrawn.** 5a's statement that a type with no out-of-crate consumer is governed by 5a alone is correct and stays. What is added is the qualifier that made the error possible: a crate's own manifest never settles the question, because `#[non_exhaustive]` binds an out-of-crate consumer regardless of dependency kind, so a development edge is enough to end a crate's consumer-less status. Deleting the general rule would have overcorrected.
+
+**Fact — the four cited commits were re-verified.** `f6da4c4` amended conventions 4 and 5 at 2026-07-24 12:28:34; `45d9827` added the checked correspondence at 13:53:32 the same day, 85 minutes later; `fbe0b4f` and `8194c94` touched the record afterwards for the probe check-in and the presentation-label naming resolution and neither revisited these claims.
+
+**Observation, not acted on.** This is the third enumeration in ADR 0074 to decay because a consumer landed after it was written. The record's snapshot paragraph under 5b and `harden-public-enums-non-exhaustive`'s "the defect is the form, not the entries" both already name the pattern, and neither proposes a mechanism. Nothing new is filed for it here: the classification is a property of the consumers that exist, which the record already says, and the standing instruction that the ticket adding a consumer owns re-checking the classification is the mechanism — it was followed in both prior cases and in this one.
+
+**Scope.** All edits are inside the declared `contracts/decisions` and shared `project/tickets`. No `applies_to` edge or catalog metadata moved, so `docs/decisions/README.md` regenerated unchanged.
+
+**Measurement.** `uv run --locked python scripts/docs.py render` reported "documentation render passed (183 records)". `uv run --locked python scripts/check_repository.py` exited 0 with "complete repository validation passed". Host macOS arm64, toolchain `nightly-2026-07-19`.
