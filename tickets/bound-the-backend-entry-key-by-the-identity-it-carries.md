@@ -1,7 +1,7 @@
 ---
 id: bound-the-backend-entry-key-by-the-identity-it-carries
 title: Bound the backend entry key by the identity it carries
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [route-the-runtime-proof-through-the-artifact-envelope]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, needs-tom]
+claimed_from: todo
+assignee: agent-artifact
+lease_expires_at: 1785015441
 ---
 `prototypes/serial-sum-compile` cannot package the program `prototypes/serial-sum-run` dispatches. The artifact layer bounds every opaque identity at 1,024 bytes, and the canonical kernel identity of any non-degenerate serial reduction is larger. This is the one thing standing between the runtime proof's real program and the envelope, and the fix is a modelling choice rather than a number, which is why it is filed instead of applied.
 

@@ -1,7 +1,7 @@
 ---
 id: correct-the-surviving-stale-one-contract-claims
 title: Correct the surviving stale one-contract claims outside ADR 0080
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [restore-adr-0080-verbatim-quotation, correct-the-optimizer-one-variant-permission-claim]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics]
+claimed_from: todo
+assignee: agent-nav4
+lease_expires_at: 1785015441
 ---
 [ADR 0080](../docs/decisions/0080-treat-distributivity-as-a-third-numerical-dimension.md) corrected two citations of a fact that stopped being true on 2026-07-25 at 08:12, and said it did so "rather than leaving a fourth stale copy". Found while restoring that record's verbatim quotation: at least one governed copy survives outside the two it corrected, and it is not in `contracts/decisions`.
 
