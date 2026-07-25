@@ -343,6 +343,11 @@ mod facts;
 mod handles;
 mod keys;
 mod model;
+// Deliberately not re-exported. The delivered-realization record is a reviewed
+// draft staged under ADR 0074 convention 7: its constructor and its reader are
+// both public artifact surface that ADR 0075 reserves to Tom, and the module
+// documentation records what is staged and what the wiring slice still owes.
+mod realization;
 mod verify;
 
 pub use builder::{

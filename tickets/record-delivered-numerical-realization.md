@@ -1,17 +1,14 @@
 ---
 id: record-delivered-numerical-realization
 title: Record the delivered numerical realization in the artifact
-status: in-progress
+status: done
 priority: p1
 dependencies: [select-numerical-contract-and-compose-feasibility, declare-metal-numerical-honourability]
-related: [draft-target-honourable-numerical-contract-adr, prototype-artifact-program-model]
+related: [draft-target-honourable-numerical-contract-adr, prototype-artifact-program-model, accept-the-delivered-realization-artifact-surface, wire-the-delivered-realization-record-into-the-artifact, carry-the-honourability-fact-provenance-into-the-artifact-record]
 scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, numerics, needs-tom]
-claimed_from: todo
-assignee: agent-delivered-realization
-lease_expires_at: 1785043640
 ---
 ADR 0076 item 4. A produced artifact carries a first-class, **readable** record of the numerical realization actually delivered: the resolved contract complete over every dimension, each dimension's means of honouring it, the target facts relied on, and the identity of the profile that declared them.
 
@@ -80,3 +77,42 @@ Recorded rather than escalated: exactly one of the two options above survives th
 **What would reopen this.** A consumer of the artifact that must *reason over* the means rather than compare them — for example, choosing between two artifacts by how each honours a dimension. That consumer would need the vocabulary, and the right response would be to give the artifact layer a typed view of a key it still does not mint, not to relocate the authority.
 
 **Not attempted.** This ticket adds a public numerical surface to `tiler-artifact`, which its own "Boundary — this needs Tom" section reserves under ADR 0075, and no such approval exists. The homing decision above should be presented as the atomic question when it is picked up.
+
+## Outcome
+
+**The draft is built and staged crate-private; the surface is Tom's.** The record is implemented and tested in `crates/tiler-artifact/src/program/realization.rs`, as a private `mod realization;` whose items are all `pub(crate)` and none re-exported, under ADR 0074 convention 7 with the required `#![allow(dead_code, reason = …)]`. **No public API was merged.** `accept-the-delivered-realization-artifact-surface` is the review gate, and `wire-the-delivered-realization-record-into-the-artifact` depends on it.
+
+### Fact — the record's shape, and what each field is evidence of
+
+`DeliveredNumericalRealization` holds one `TargetProfileRef` and four `HonouredDimensionFact`s, one per behaviour dimension of `tiler_ir::schedule::NumericalRealization`. Each fact holds an opaque `HonouringMeansKey` and the `AvailabilityPhase` the declaration was readable from.
+
+- The **means key** is the part a caller cannot derive. It is bytes `HonouringMeans::key` mints, never re-derived or interpreted here, so the four terms stay in the one crate that decides them.
+- The **availability phase** is `tiler_ir::program::abi::AvailabilityPhase`, the same type `tiler-compiler` imports, so it is one shared vocabulary rather than a restatement.
+- The **profile reference** names the authority the means came from. It is the artifact's evidence that the declaration was made rather than assumed.
+
+**One record per artifact, not per variant**, and that is derived rather than chosen: `ArtifactProgramBuilder::check_subject` already rejects a variant whose numerical contract or target profile differs from its siblings (`NumericalContractMismatch`, `TargetProfileMismatch`), so both are artifact-wide facts and a per-variant record would be a copy that has to be kept in agreement with three others.
+
+**The record restates no behaviour.** ADR 0076's own evidence refresh says the contract's values are already carried and what item 4 still owns is the means, the target facts, and the declaring profile. So the behaviour each means was declared for *is* the artifact's resolved contract on that dimension, read from the artifact. There is no second copy that can disagree with the first, no "actual versus requested" shape, and nothing here is a second authority over what identity commits to.
+
+### Fact — completeness is structural and absence rejects
+
+Within a record, one field per dimension makes a partial record unrepresentable; `DeliveredNumericalRealization::honoured` is therefore total and there is no dimension a reader can ask about and get nothing for. `DeliveredRealizationBuilder::build` is what refuses to produce a partial one, naming the first undeclared dimension in canonical order, and `declare` refuses a restatement rather than taking it last-wins — restating is a dropped fact, not a correction.
+
+For a whole record that is absent, `require_recorded` is the only reader of an optional one and returns `UnrecordedRealization`. There is no `Default`, no `From`, and no accessor that manufactures a means, and `UnrecordedRealization` is deliberately *not* a variant of `DeliveredRealizationError`, so a caller matching on a malformed record cannot absorb an absent one. That is the third class `carry-the-dtype-on-the-metal-subnormal-flush-fact` established, for the same reason.
+
+### Inference — a means readable only after packaging is refused, and the boundary is not invented
+
+`declare` rejects any `AvailabilityPhase` later than `ArtifactEvidence`. This is the exact complement of the line the artifact layer already draws from the other side: `ArtifactBuildError::NonDeferredPredicatePhase` rejects a *deferred* predicate below `LiveDevicePreflight`, because a predicate decided at packaging is not deferred. A means declared readable only from live preflight onward was not relied on to produce these bytes, so recording it as delivered would claim evidence that does not exist.
+
+### Fact — the two claims in the dispatch brief that did not survive checking
+
+- **The means is not received through `keys.rs`'s `opaque_identity!` macro.** Doing so requires a new `ArtifactKeyKind` variant, and that enum is `pub`, so the "no public API" instruction and the reuse instruction were in direct conflict. The module carries its own bounded wrapping constructor and its own typed key error instead. `MAX_HONOURING_MEANS_KEY_BYTES` is deliberately not `MAX_OPAQUE_IDENTITY_BYTES`, because that constant's own documentation warns against sharing one bound across identities that share only a shape.
+- **No presentation `label()` exists, and adding one would be wrong.** ADR 0074 convention 2 offers a label so a wide digest can be read; a means key is already text a reader can render, so a label digesting it would make the record *less* readable. The convention is about the role of the value, and this value has the readable role already.
+
+### Deliberately not done, each with its blocker
+
+- **Nothing constructs or reads a record from outside the crate.** The constructor and the readers are public artifact surface. `accept-the-delivered-realization-artifact-surface` gates it, `wire-the-delivered-realization-record-into-the-artifact` does it.
+- **`canonical_bytes` is not folded into `CanonicalArtifactProgramIdentity`, and no envelope section carries the record.** Same blocker, same ticket; the identity fold also moves every pinned artifact identity, which is work that must be done on a merged tree rather than on a branch.
+- **The fact's authority and validity scope are not carried, and neither is the compiler build and execution environment ADR 0076 item 3 requires the scope to identify.** `FactAuthority` and `FactValidityScope` are `pub(crate)` in `tiler-compiler` with no minting API, and `grep -rn "compiler build\|CompilerBuild\|ExecutionEnvironment\|execution environment" crates/tiler-compiler/src/ crates/tiler-metal/src/` is empty, so nothing exists to be carried. No field is reserved for them. `carry-the-honourability-fact-provenance-into-the-artifact-record` owns it.
+- **The record is keyed by dimension alone, with no arithmetic type.** `carry-the-dtype-on-the-metal-subnormal-flush-fact` recorded on ADR 0076 boundary item 3 that a per-dimension declaration cannot express a row where `InputSubnormals` is `SupportedExactly` for `f16` and `Unsupported` for `f32`. `tiler_compiler::honourability::NumericalDimension` is dtype-free today, so this record projects a dtype-free authority; when the shared form carries the arithmetic type, this record's key widens with it, and the widening is a build error at `NumericalDimension::tag` and `CANONICAL_DIMENSIONS` rather than a silent inheritance.
+- **`NumericalDimension` now exists in two sibling crates.** Both are projections of one authority — `tiler_ir::schedule::NumericalRealization`'s four behaviour fields, which `tiler-artifact` already projects field by field in its envelope's `NumericalFacts` — rather than two authorities over the means, which stays opaque. The durable fix is one dimension vocabulary in `tiler-ir`, which is where the record they name lives; it was not done here because `implementation/ir` and `implementation/compiler` are outside this ticket's scope.
