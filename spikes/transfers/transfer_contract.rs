@@ -85,6 +85,33 @@ impl AliasProof {
     }
 }
 
+/// The four conditions that discharge a recomputation's value preservation.
+///
+/// Each is decidable from stated identities and stated target facts; none is an
+/// estimate and none needs a value model. The pair of identities is deliberately
+/// `RegionImplementation` and not `ScheduledRegion`, because the latter excludes
+/// the selected realization/provider that decides the delivered bits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RecomputeProof {
+    /// Equals the identity that produced, or would have produced, the reference.
+    same_implementation_identity: bool,
+    /// The two sites' stated delivered numerical realizations are equal.
+    same_delivered_realization: bool,
+    /// The selected plan carries the plan-deterministic guarantee at this scope.
+    plan_deterministic: bool,
+    /// Every operand carries a closure entry naming the same authoritative version.
+    operands_closed: bool,
+}
+
+impl RecomputeProof {
+    fn complete(self) -> bool {
+        self.same_implementation_identity
+            && self.same_delivered_realization
+            && self.plan_deterministic
+            && self.operands_closed
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Mechanism {
     BitPreservingCopy(CopyRoute),
@@ -96,6 +123,9 @@ enum Mechanism {
         staging: AllocationRole,
         first_leg_complete: DependencyToken,
     },
+    /// Re-derives the version rather than moving it, so it reads
+    /// `TransferPlan::recompute_operands` and never `TransferPlan::source`.
+    Recompute(RecomputeProof),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -120,8 +150,14 @@ struct ConcurrentAccess {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TransferPlan {
+    /// For every mechanism but `Recompute`, the authoritative version being
+    /// moved. For `Recompute` there is no source version: this endpoint
+    /// describes the reference placement the re-derived value must agree with,
+    /// which a plan that kept the producer's result would have delivered.
     source: Endpoint,
     destination: Endpoint,
+    /// Read by a `Recompute` in place of a source; empty for every other mechanism.
+    recompute_operands: Vec<Endpoint>,
     mechanism: Mechanism,
     source_ready: DependencyToken,
     waits_on_source: Vec<DependencyToken>,
@@ -147,6 +183,9 @@ enum VerifyError {
     IncompleteAliasProof,
     AliasUsesDistinctBacking,
     UnorderedHazard,
+    RecomputeValuePreservationUnproved,
+    RecomputeWithoutOperandClosure,
+    RecomputeOverwritesItsOwnOperand,
 }
 
 fn required_retention(mechanism: Mechanism) -> BTreeSet<RetainedRole> {
@@ -165,6 +204,8 @@ fn required_retention(mechanism: Mechanism) -> BTreeSet<RetainedRole> {
         Mechanism::AliasImport(_) | Mechanism::PeerAccess(_) => {
             required.insert(RetainedRole::ImportedBackingOwner);
         }
+        // `SourceAllocation` and `SourceView` denote the recomputed region's
+        // operands here; a recomputation retains no staging and no imported owner.
         _ => {
             required.insert(RetainedRole::CommandObject);
         }
@@ -250,6 +291,22 @@ fn verify(plan: &TransferPlan) -> Result<(), VerifyError> {
                 return Err(VerifyError::CopyAliasesBacking);
             }
         }
+        Mechanism::Recompute(proof) => {
+            if !proof.complete() {
+                return Err(VerifyError::RecomputeValuePreservationUnproved);
+            }
+            if plan.recompute_operands.is_empty() {
+                return Err(VerifyError::RecomputeWithoutOperandClosure);
+            }
+            for operand in &plan.recompute_operands {
+                verify_endpoint(*operand)?;
+                if operand.allocation == plan.destination.allocation
+                    && operand.touched_range.overlaps(plan.destination.touched_range)
+                {
+                    return Err(VerifyError::RecomputeOverwritesItsOwnOperand);
+                }
+            }
+        }
         Mechanism::ManagedMigration => {}
     }
 
@@ -257,14 +314,22 @@ fn verify(plan: &TransferPlan) -> Result<(), VerifyError> {
         Mechanism::AliasImport(_) | Mechanism::PeerAccess(_) => AccessMode::Read,
         _ => AccessMode::Write,
     };
+    // A recomputation reads its operands rather than a source version, so its
+    // read-side hazards are over those endpoints.
+    let read_endpoints: Vec<Endpoint> = match plan.mechanism {
+        Mechanism::Recompute(_) => plan.recompute_operands.clone(),
+        _ => vec![plan.source],
+    };
     for access in &plan.concurrent_accesses {
-        let source_hazard = access.allocation == plan.source.allocation
-            && access.range.overlaps(plan.source.touched_range)
-            && conflicts(AccessMode::Read, *access);
+        let read_hazard = read_endpoints.iter().any(|read| {
+            access.allocation == read.allocation
+                && access.range.overlaps(read.touched_range)
+                && conflicts(AccessMode::Read, *access)
+        });
         let destination_hazard = access.allocation == plan.destination.allocation
             && access.range.overlaps(plan.destination.touched_range)
             && conflicts(destination_mode, *access);
-        if source_hazard || destination_hazard {
+        if read_hazard || destination_hazard {
             return Err(VerifyError::UnorderedHazard);
         }
     }
@@ -417,6 +482,7 @@ mod tests {
         TransferPlan {
             source: endpoint(source_affinity, "src", 128, 1024),
             destination: endpoint(destination_affinity, "dst", 256, 1024),
+            recompute_operands: vec![],
             mechanism: Mechanism::BitPreservingCopy(route),
             source_ready: DependencyToken("producer"),
             waits_on_source: vec![DependencyToken("producer")],
@@ -514,6 +580,81 @@ mod tests {
             .push(DependencyToken("download-complete"));
         plan.retained.insert(RetainedRole::StagingAllocation);
         assert_eq!(verify(&plan), Ok(()));
+    }
+
+    fn complete_recompute_proof() -> RecomputeProof {
+        RecomputeProof {
+            same_implementation_identity: true,
+            same_delivered_realization: true,
+            plan_deterministic: true,
+            operands_closed: true,
+        }
+    }
+
+    /// A recomputation at `gpu0` standing in for a version produced at `cpu`.
+    ///
+    /// The `source` endpoint is the reference placement, not a version this plan
+    /// reads: the stage reads `recompute_operands` instead.
+    fn recompute_plan(proof: RecomputeProof) -> TransferPlan {
+        let mut plan = copy_plan(CopyRoute::CpuToAccelerator, "cpu", "gpu0");
+        plan.mechanism = Mechanism::Recompute(proof);
+        plan.recompute_operands = vec![endpoint("gpu0", "operand", 0, 512)];
+        plan
+    }
+
+    #[test]
+    fn verifies_recompute_carrying_a_complete_value_preservation_record() {
+        assert_eq!(verify(&recompute_plan(complete_recompute_proof())), Ok(()));
+    }
+
+    #[test]
+    fn rejects_recompute_missing_any_one_of_the_four_conditions() {
+        // Each condition is independently load-bearing, so each is asserted:
+        // dropping any one leaves a recomputation whose delivered bits are
+        // unproved, and all four must therefore fail closed the same way.
+        let mut without_identity = complete_recompute_proof();
+        without_identity.same_implementation_identity = false;
+        let mut without_realization = complete_recompute_proof();
+        without_realization.same_delivered_realization = false;
+        let mut without_determinism = complete_recompute_proof();
+        without_determinism.plan_deterministic = false;
+        let mut without_closure = complete_recompute_proof();
+        without_closure.operands_closed = false;
+
+        for proof in [
+            without_identity,
+            without_realization,
+            without_determinism,
+            without_closure,
+        ] {
+            assert_eq!(
+                verify(&recompute_plan(proof)),
+                Err(VerifyError::RecomputeValuePreservationUnproved)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_recompute_that_names_no_operand_to_close_over() {
+        let mut plan = recompute_plan(complete_recompute_proof());
+        plan.recompute_operands.clear();
+        assert_eq!(
+            verify(&plan),
+            Err(VerifyError::RecomputeWithoutOperandClosure)
+        );
+    }
+
+    #[test]
+    fn rejects_recompute_whose_destination_overwrites_an_operand_it_reads() {
+        let mut plan = recompute_plan(complete_recompute_proof());
+        plan.recompute_operands = vec![Endpoint {
+            allocation: plan.destination.allocation,
+            ..plan.destination
+        }];
+        assert_eq!(
+            verify(&plan),
+            Err(VerifyError::RecomputeOverwritesItsOwnOperand)
+        );
     }
 
     #[test]
