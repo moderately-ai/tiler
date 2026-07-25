@@ -57,3 +57,22 @@ That ticket widened `SubnormalMode` to `Preserve | FlushToZero { zero_sign }` an
 - `UndeclaredFlushedZeroSign` — the contract flushes to a stated zero and the target names no zero. This is a placeholder for exactly this ticket: once the profile declares honourability per dimension including the sign, a sign-matching flush becomes a positive conformance claim and only a sign *mismatch* stays a gap. Retire the variant rather than keeping it alongside the declaration.
 
 Behaviour on the governed path is unchanged: the registered contract is still `Preserve`/`Preserve`, so the four `crates/tiler-metal/goldens/*.metal` still record `subnormal-flush-in-arithmetic` and only that. Their identity digests moved, because the scheduled-region and kernel identities were re-baselined; the emitted bodies did not.
+
+## The target fact is under-specified, and that is the second half of the execution blocker
+
+**Fact — verified by reading `crates/tiler-metal/src/emit.rs::subnormal_gap` at `065a9b8`.** The gap rule is total over `(declared, target)` and produces a gap in *three* of its four arms:
+
+| declared | target | result |
+| --- | --- | --- |
+| `Preserve` | `PreservesSubnormals` | no gap |
+| `Preserve` | `FlushesToZero` | `SubnormalFlushInArithmetic` |
+| `FlushToZero { .. }` | `PreservesSubnormals` | `SubnormalPreservationInArithmetic` |
+| `FlushToZero { .. }` | `FlushesToZero` | `UndeclaredFlushedZeroSign` |
+
+**Inference — making the numerical contract selectable is necessary and not sufficient.** `select-numerical-contract-and-compose-feasibility` lets a caller state a flush-accepting contract instead of the strict one. That moves the governed Apple row from row two to row four of the table above, which is still a gap. `SubnormalMode::FlushToZero` names *which* zero it produces via `FlushedZeroSign`, and `MetalSubnormalArithmetic::FlushesToZero` carries no such field, so the target states that it flushes and not what it flushes to. The emitter is right to refuse: a contract that specifies a zero sign cannot be honoured by a target that does not state one.
+
+**The measurement needed to close it already exists**, recorded on `tiler_ir::schedule::FlushedZeroSign::PreservesSign`: on an Apple M4 Max under macOS 27.0 with Metal 32023.883, an emitted `x * 2.0f` returns `0x80000000` for the operand `0x80400000`, not `0x00000000`. Apple's flush is sign-preserving. What is missing is not evidence but expressiveness — `MetalSubnormalArithmetic::FlushesToZero` needs to carry the zero sign it produces so `subnormal_gap` can compare the declared sign against the declared target sign and return no gap when they agree.
+
+**Consequence for sequencing.** First execution needs *both* changes, and neither alone produces a `metallib`: the contract must become selectable, and the target fact must state its zero sign. This ticket is no longer merely blocked behind `select-numerical-contract-and-compose-feasibility` — the two are the two halves of one gate, and the gate is what every Metal and runtime p0 waits on.
+
+**Do not close the gap by widening the rule.** Making the fourth arm return no gap regardless of sign, or dropping `zero_sign` from `SubnormalMode`, would let a program that specifies positive-zero flushing run on a sign-preserving target and return `0x80000000` where it asked for `0x00000000`. That is a wrong answer, not a relaxed one.
