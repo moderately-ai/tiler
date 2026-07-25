@@ -123,6 +123,25 @@ def drop_claim_field(field: str) -> Callable[[Path], None]:
     return mutate
 
 
+def empty_claim_field(field: str) -> Callable[[Path], None]:
+    """Empty one recorded field on the first compile-fail claim without removing it.
+
+    The quieter half of `drop_claim_field`, and the one a type check alone lets
+    through: `[]` is a list of strings, so a claim emptied rather than deleted
+    goes on satisfying every structural predicate while asserting nothing. This
+    is the form the gated sibling spike already refused and this one did not.
+    """
+
+    def mutate(root: Path) -> None:
+        path = verify.sole_record(root)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        claim = next(entry for entry in record["claims"] if entry["outcome"] == "fails")
+        claim[field] = []
+        path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+    return mutate
+
+
 TAMPERS: tuple[tuple[str, Callable[[Path], object], str], ...] = (
     (
         "no record at all",
@@ -190,12 +209,22 @@ TAMPERS: tuple[tuple[str, Callable[[Path], object], str], ...] = (
     (
         "a claim that dropped its diagnostic codes",
         drop_claim_field("diagnostic_codes"),
-        "tests/ui/fail/axis_out_of_range.rs records no diagnostic code list",
+        "tests/ui/fail/axis_out_of_range.rs records no diagnostic_codes list",
     ),
     (
         "a claim that dropped its required fragments",
         drop_claim_field("required_fragments"),
         "tests/ui/fail/axis_out_of_range.rs records no required_fragments list",
+    ),
+    (
+        "a claim that emptied its diagnostic codes",
+        empty_claim_field("diagnostic_codes"),
+        "tests/ui/fail/axis_out_of_range.rs records an empty diagnostic_codes list",
+    ),
+    (
+        "a claim that emptied its required fragments",
+        empty_claim_field("required_fragments"),
+        "tests/ui/fail/axis_out_of_range.rs records an empty required_fragments list",
     ),
     (
         "a dropped required fragment",
