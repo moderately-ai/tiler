@@ -19,11 +19,13 @@ use crate::semantic::{
 };
 use crate::shape::{Axis, Shape};
 
+use super::abi::{AbiBinaryOp, AbiRoot, AbiType, AbiUnaryOp, AvailabilityPhase, TargetPropertyKey};
 use super::{
-    AllocationId, AllocationOwnership, AllocationSpec, ByteWindow, KernelProgramBuildError,
-    KernelProgramBuilder, KernelProgramDiagnostic, MaterializedOrigin, MaterializedValueId,
-    MaterializedValueSpec, MemorySpace, ProgramEntityKind, SemanticOccurrence, StageAccess,
-    StageAccessMode, StageId, ValueRole, VerifiedKernelProgram, ViewId,
+    AbiExprId, AllocationId, AllocationOwnership, AllocationSpec, ByteWindow,
+    KernelProgramBuildError, KernelProgramBuilder, KernelProgramDiagnostic, MaterializedOrigin,
+    MaterializedValueId, MaterializedValueSpec, MemorySpace, ProgramAbiUse, ProgramEntityKind,
+    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
+    StageId, StageLaunch, ValueRole, VerifiedKernelProgram, ViewId,
 };
 
 const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
@@ -304,17 +306,153 @@ fn program_input(key: &str) -> MaterializedOrigin {
     }
 }
 
-fn read(view: ViewId) -> StageAccess {
+fn read(view: ViewId, accessible_bytes: AbiExprId) -> StageAccess {
     StageAccess {
         view,
         mode: StageAccessMode::Read,
+        accessible_bytes,
     }
 }
 
-fn write(view: ViewId) -> StageAccess {
+fn write(view: ViewId, accessible_bytes: AbiExprId) -> StageAccess {
     StageAccess {
         view,
         mode: StageAccessMode::Write,
+        accessible_bytes,
+    }
+}
+
+/// The bounded profile's shapes are static, so every ABI quantity a fixture
+/// needs is a literal. A dynamic subject would name an input extent instead.
+fn literal(builder: &mut KernelProgramBuilder, value: u64) -> AbiExprId {
+    builder
+        .push_abi_root(AbiRoot::UnsignedLiteral(value))
+        .expect("abi literal")
+}
+
+/// The ABI quantities every fixture in this file shares.
+///
+/// The arena deduplicates by content, so minting these once per builder and
+/// once per fixture produce the same arena.
+#[derive(Clone, Copy, Debug)]
+struct FixtureAbi {
+    /// Byte count of a whole `[2, 3]` `f32` value.
+    input_bytes: AbiExprId,
+    /// Byte count of a whole `[2]` `f32` value.
+    output_bytes: AbiExprId,
+    /// Launch extent of a stage iterating the `[2, 3]` shape.
+    pointwise_threads: AbiExprId,
+    /// Launch extent of a stage iterating the `[2]` shape.
+    reduction_threads: AbiExprId,
+    /// Workgroup width every fixture kernel requires.
+    threads_per_workgroup: AbiExprId,
+}
+
+/// Mints the shared ABI quantities every fixture stage names.
+fn fixture_abi(builder: &mut KernelProgramBuilder) -> FixtureAbi {
+    FixtureAbi {
+        input_bytes: literal(builder, 24),
+        output_bytes: literal(builder, 8),
+        pointwise_threads: literal(builder, 6),
+        reduction_threads: literal(builder, 2),
+        threads_per_workgroup: literal(builder, 1),
+    }
+}
+
+/// Mints the same ABI quantities, writing each byte count as a product.
+///
+/// Every value equals [`fixture_abi`]'s, so a program built with this differs
+/// from the canonical one in the *form* of its ABI and in nothing else. That is
+/// what makes it a usable probe of whether identity folds the expression rather
+/// than only the number it happens to evaluate to.
+fn computed_fixture_abi(builder: &mut KernelProgramBuilder) -> FixtureAbi {
+    let element_bytes = literal(builder, 4);
+    let pointwise_threads = literal(builder, 6);
+    let reduction_threads = literal(builder, 2);
+    let product = |builder: &mut KernelProgramBuilder, elements: AbiExprId| {
+        builder
+            .push_abi_binary(AbiBinaryOp::CheckedMultiply, element_bytes, elements)
+            .expect("checked byte product")
+    };
+    FixtureAbi {
+        input_bytes: product(builder, pointwise_threads),
+        output_bytes: product(builder, reduction_threads),
+        pointwise_threads,
+        reduction_threads,
+        threads_per_workgroup: literal(builder, 1),
+    }
+}
+
+/// Declares the always-true applicability guard.
+fn declare_guard(builder: &mut KernelProgramBuilder) {
+    let guard = builder
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("guard predicate");
+    builder
+        .applicability_guard(guard)
+        .expect("applicability guard");
+}
+
+/// Declares the whole program contract a verified fixture must state.
+fn declare_program_contract(builder: &mut KernelProgramBuilder) {
+    declare_guard(builder);
+    declare_routing_commit(builder);
+}
+
+impl FixtureAbi {
+    fn pointwise_launch(self) -> StageLaunch {
+        StageLaunch {
+            grid_threads: self.pointwise_threads,
+            threads_per_workgroup: self.threads_per_workgroup,
+        }
+    }
+
+    fn reduction_launch(self) -> StageLaunch {
+        StageLaunch {
+            grid_threads: self.reduction_threads,
+            threads_per_workgroup: self.threads_per_workgroup,
+        }
+    }
+}
+
+/// The one lifecycle every verified program must span, with fallback admitted
+/// exactly while nothing is committed.
+const ROUTING_COMMIT_LIFECYCLE: [(RoutingCommitState, RoutingCommitState, bool); 3] = [
+    (
+        RoutingCommitState::Preflight,
+        RoutingCommitState::Committed,
+        true,
+    ),
+    (
+        RoutingCommitState::Committed,
+        RoutingCommitState::Executing,
+        false,
+    ),
+    (
+        RoutingCommitState::Executing,
+        RoutingCommitState::Published,
+        false,
+    ),
+];
+
+fn declare_routing_commit(builder: &mut KernelProgramBuilder) {
+    declare_routing_commit_with_fallback(builder, true);
+}
+
+/// Declares the whole lifecycle, choosing whether pre-commit fallback is
+/// permitted. Every later step forbids it, which is the rule the builder proves.
+fn declare_routing_commit_with_fallback(
+    builder: &mut KernelProgramBuilder,
+    fallback_before_commit: bool,
+) {
+    for (from, to, fallback_permitted) in ROUTING_COMMIT_LIFECYCLE {
+        builder
+            .push_routing_commit_transition(RoutingCommitTransition {
+                from,
+                to,
+                fallback_permitted: fallback_permitted && fallback_before_commit,
+            })
+            .expect("routing-commit transition");
     }
 }
 
@@ -335,6 +473,7 @@ struct TwoStage {
     output_allocation: AllocationId,
     source_view: ViewId,
     temporary_view: ViewId,
+    abi: FixtureAbi,
 }
 
 /// How one two-stage fixture deviates from the canonical program.
@@ -350,34 +489,38 @@ enum TwoStageShape {
     ReservedCoverage,
     /// Stages are declared in reverse order and arenas are declared last-first.
     ReversedDeclaration,
+    /// The identical accessible byte counts, written as products rather than
+    /// literals.
+    ComputedAccessibleBytes,
 }
 
-/// Wires the two-stage program without declaring dependencies or named outputs.
-fn wire_two_stage(
-    semantic: &SemanticProgram,
-    pointwise_kernel: &VerifiedKernel,
-    reduction_kernel: &VerifiedKernel,
-    shape: TwoStageShape,
-) -> TwoStage {
-    let (pointwise_coverage, reduction_coverage) = match shape {
-        TwoStageShape::ShiftedCoverage => (occurrences(0..3), occurrences(3..5)),
-        TwoStageShape::ReservedCoverage => (occurrences(0..2), occurrences(2..4)),
-        TwoStageShape::Canonical
-        | TwoStageShape::SharedOutputStorage
-        | TwoStageShape::ReversedDeclaration => (occurrences(0..4), occurrences(4..5)),
-    };
-    let mut builder = KernelProgramBuilder::new(semantic).expect("builder");
-    let reversed = shape == TwoStageShape::ReversedDeclaration;
-    let shared_output = shape == TwoStageShape::SharedOutputStorage;
+/// The allocations, values, and views of the two-stage fixture.
+struct TwoStageStorage {
+    temporary_allocation: AllocationId,
+    output_allocation: AllocationId,
+    source: MaterializedValueId,
+    temporary: MaterializedValueId,
+    output: MaterializedValueId,
+    source_view: ViewId,
+    temporary_view: ViewId,
+    output_view: ViewId,
+}
 
+/// Declares the externally bound input, the temporary, and the program output.
+fn wire_two_stage_storage(
+    builder: &mut KernelProgramBuilder,
+    shape: TwoStageShape,
+) -> TwoStageStorage {
     // Slot 0 is the externally bound input, slot 1 the temporary, slot 2 the
     // output. The shared-storage fixture declares no separate output storage.
-    let mut requested = vec![(0_usize, device(24, AllocationOwnership::External))];
-    requested.push((1, device(24, AllocationOwnership::Program)));
-    if !shared_output {
+    let mut requested = vec![
+        (0_usize, device(24, AllocationOwnership::External)),
+        (1, device(24, AllocationOwnership::Program)),
+    ];
+    if shape != TwoStageShape::SharedOutputStorage {
         requested.push((2, device(8, AllocationOwnership::Program)));
     }
-    if reversed {
+    if shape == TwoStageShape::ReversedDeclaration {
         requested.reverse();
     }
     let mut slots: [Option<AllocationId>; 3] = [None; 3];
@@ -414,16 +557,61 @@ fn wire_two_stage(
             output_allocation,
         )
         .expect("output value");
-    let source_view = builder.push_whole_view(source).expect("input view");
-    let temporary_view = builder.push_whole_view(temporary).expect("temporary view");
-    let output_view = builder.push_whole_view(output).expect("output view");
+    TwoStageStorage {
+        temporary_allocation,
+        output_allocation,
+        source,
+        temporary,
+        output,
+        source_view: builder.push_whole_view(source).expect("input view"),
+        temporary_view: builder.push_whole_view(temporary).expect("temporary view"),
+        output_view: builder.push_whole_view(output).expect("output view"),
+    }
+}
+
+/// Wires the two-stage program without declaring dependencies or named outputs.
+fn wire_two_stage(
+    semantic: &SemanticProgram,
+    pointwise_kernel: &VerifiedKernel,
+    reduction_kernel: &VerifiedKernel,
+    shape: TwoStageShape,
+) -> TwoStage {
+    let (pointwise_coverage, reduction_coverage) = match shape {
+        TwoStageShape::ShiftedCoverage => (occurrences(0..3), occurrences(3..5)),
+        TwoStageShape::ReservedCoverage => (occurrences(0..2), occurrences(2..4)),
+        TwoStageShape::Canonical
+        | TwoStageShape::SharedOutputStorage
+        | TwoStageShape::ReversedDeclaration
+        | TwoStageShape::ComputedAccessibleBytes => (occurrences(0..4), occurrences(4..5)),
+    };
+    let mut builder = KernelProgramBuilder::new(semantic).expect("builder");
+    let abi = if shape == TwoStageShape::ComputedAccessibleBytes {
+        computed_fixture_abi(&mut builder)
+    } else {
+        fixture_abi(&mut builder)
+    };
+    let reversed = shape == TwoStageShape::ReversedDeclaration;
+    let TwoStageStorage {
+        temporary_allocation,
+        output_allocation,
+        source,
+        temporary,
+        output,
+        source_view,
+        temporary_view,
+        output_view,
+    } = wire_two_stage_storage(&mut builder, shape);
 
     let push_pointwise = |builder: &mut KernelProgramBuilder| {
         builder
             .push_stage(
                 pointwise_kernel,
                 &pointwise_coverage,
-                &[read(source_view), write(temporary_view)],
+                &[
+                    read(source_view, abi.input_bytes),
+                    write(temporary_view, abi.input_bytes),
+                ],
+                abi.pointwise_launch(),
             )
             .expect("pointwise stage")
     };
@@ -432,7 +620,11 @@ fn wire_two_stage(
             .push_stage(
                 reduction_kernel,
                 &reduction_coverage,
-                &[read(temporary_view), write(output_view)],
+                &[
+                    read(temporary_view, abi.input_bytes),
+                    write(output_view, abi.output_bytes),
+                ],
+                abi.reduction_launch(),
             )
             .expect("reduction stage")
     };
@@ -455,11 +647,13 @@ fn wire_two_stage(
         output_allocation,
         source_view,
         temporary_view,
+        abi,
     }
 }
 
-/// Completes the two-stage program with its data dependency and named output.
-fn complete_two_stage(mut wired: TwoStage) -> KernelProgramBuilder {
+/// Completes the two-stage program's structure, leaving its program contract
+/// undeclared so a test can state exactly the contract it is probing.
+fn wire_two_stage_structure(mut wired: TwoStage) -> KernelProgramBuilder {
     wired
         .builder
         .push_data_dependency(wired.pointwise, wired.reduction, wired.temporary)
@@ -469,6 +663,14 @@ fn complete_two_stage(mut wired: TwoStage) -> KernelProgramBuilder {
         .push_output(OutputKey::new("result").expect("key"), wired.output)
         .expect("named output");
     wired.builder
+}
+
+/// Completes the two-stage program with its data dependency, named output,
+/// applicability guard, and routing-commit contract.
+fn complete_two_stage(wired: TwoStage) -> KernelProgramBuilder {
+    let mut builder = wire_two_stage_structure(wired);
+    declare_program_contract(&mut builder);
+    builder
 }
 
 fn two_stage(semantic: &SemanticProgram, shape: TwoStageShape) -> TwoStage {
@@ -679,6 +881,7 @@ fn identity_changes_when_complete_coverage_is_partitioned_differently() {
 fn incomplete_coverage_of_the_bound_graph_is_rejected() {
     let semantic = serial_sum_program(SCALE_BITS);
     let mut builder = KernelProgramBuilder::new(&semantic).expect("builder");
+    let abi = fixture_abi(&mut builder);
     let external = builder
         .push_allocation(device(24, AllocationOwnership::External))
         .expect("external allocation");
@@ -722,14 +925,22 @@ fn incomplete_coverage_of_the_bound_graph_is_rejected() {
             &pointwise_kernel(0, SCALE_BITS),
             // One graph operation is left uncovered.
             &occurrences(0..3),
-            &[read(source_view), write(temporary_view)],
+            &[
+                read(source_view, abi.input_bytes),
+                write(temporary_view, abi.input_bytes),
+            ],
+            abi.pointwise_launch(),
         )
         .expect("pointwise stage");
     let reduction = builder
         .push_stage(
             &reduction_kernel(1),
             &occurrences(3..4),
-            &[read(temporary_view), write(output_view)],
+            &[
+                read(temporary_view, abi.input_bytes),
+                write(output_view, abi.output_bytes),
+            ],
+            abi.reduction_launch(),
         )
         .expect("reduction stage");
     builder
@@ -738,6 +949,7 @@ fn incomplete_coverage_of_the_bound_graph_is_rejected() {
     builder
         .push_output(OutputKey::new("result").expect("key"), output)
         .expect("named output");
+    declare_program_contract(&mut builder);
 
     assert_eq!(
         diagnostic(builder),
@@ -758,7 +970,11 @@ fn covering_one_occurrence_twice_is_rejected_at_insertion() {
             .push_stage(
                 &pointwise_kernel(2, OTHER_SCALE_BITS),
                 &occurrences(3..5),
-                &[read(wired.source_view), write(wired.temporary_view)],
+                &[
+                    read(wired.source_view, wired.abi.input_bytes),
+                    write(wired.temporary_view, wired.abi.input_bytes),
+                ],
+                wired.abi.pointwise_launch(),
             )
             .expect_err("repeated coverage is rejected"),
         KernelProgramBuildError::DuplicateCoverage {
@@ -866,6 +1082,7 @@ fn a_value_with_no_writer_or_two_writers_is_rejected() {
 
     // No writer: the reduction stage alone reads a temporary nobody defines.
     let mut builder = KernelProgramBuilder::new(&semantic).expect("builder");
+    let abi = fixture_abi(&mut builder);
     let owned = builder
         .push_allocation(device(24, AllocationOwnership::Program))
         .expect("temporary allocation");
@@ -898,12 +1115,17 @@ fn a_value_with_no_writer_or_two_writers_is_rejected() {
         .push_stage(
             &reduction_kernel(1),
             &occurrences(0..5),
-            &[read(temporary_view), write(output_view)],
+            &[
+                read(temporary_view, abi.input_bytes),
+                write(output_view, abi.output_bytes),
+            ],
+            abi.reduction_launch(),
         )
         .expect("reduction stage");
     builder
         .push_output(OutputKey::new("result").expect("key"), output)
         .expect("named output");
+    declare_program_contract(&mut builder);
     assert_eq!(diagnostic(builder), KernelProgramDiagnostic::MissingWriter);
 
     // Two writers: a third stage redefines the temporary the pointwise stage
@@ -914,7 +1136,11 @@ fn a_value_with_no_writer_or_two_writers_is_rejected() {
         .push_stage(
             &pointwise_kernel(2, OTHER_SCALE_BITS),
             &occurrences(4..5),
-            &[read(wired.source_view), write(wired.temporary_view)],
+            &[
+                read(wired.source_view, wired.abi.input_bytes),
+                write(wired.temporary_view, wired.abi.input_bytes),
+            ],
+            wired.abi.pointwise_launch(),
         )
         .expect("second writing stage");
     assert_eq!(
@@ -971,11 +1197,41 @@ fn a_handle_minted_by_another_program_builder_is_rejected() {
             .push_stage(
                 &pointwise_kernel(3, SCALE_BITS),
                 &occurrences(4..5),
-                &[read(foreign.source_view), write(foreign.temporary_view)],
+                &[
+                    read(foreign.source_view, wired.abi.input_bytes),
+                    write(foreign.temporary_view, wired.abi.input_bytes),
+                ],
+                wired.abi.pointwise_launch(),
             )
             .expect_err("a foreign view handle is rejected"),
         KernelProgramBuildError::ForeignHandle {
             entity: ProgramEntityKind::View,
+        }
+    );
+    assert_eq!(
+        wired
+            .builder
+            .push_stage(
+                &pointwise_kernel(3, SCALE_BITS),
+                &occurrences(4..5),
+                &[
+                    read(wired.source_view, foreign.abi.input_bytes),
+                    write(wired.temporary_view, wired.abi.input_bytes),
+                ],
+                wired.abi.pointwise_launch(),
+            )
+            .expect_err("a foreign ABI expression handle is rejected"),
+        KernelProgramBuildError::ForeignHandle {
+            entity: ProgramEntityKind::AbiExpression,
+        }
+    );
+    assert_eq!(
+        wired
+            .builder
+            .applicability_guard(foreign.abi.input_bytes)
+            .expect_err("a foreign ABI expression handle is rejected"),
+        KernelProgramBuildError::ForeignHandle {
+            entity: ProgramEntityKind::AbiExpression,
         }
     );
 }
@@ -986,10 +1242,17 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
     let mut wired = two_stage(&semantic, TwoStageShape::ShiftedCoverage);
     let kernel = pointwise_kernel(2, OTHER_SCALE_BITS);
 
+    let bytes = wired.abi.input_bytes;
+    let launch = wired.abi.pointwise_launch();
     assert_eq!(
         wired
             .builder
-            .push_stage(&kernel, &occurrences(3..4), &[read(wired.source_view)])
+            .push_stage(
+                &kernel,
+                &occurrences(3..4),
+                &[read(wired.source_view, bytes)],
+                launch,
+            )
             .expect_err("access arity is checked"),
         KernelProgramBuildError::StageAccessArity {
             expected: 2,
@@ -1002,7 +1265,11 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .push_stage(
                 &kernel,
                 &occurrences(3..4),
-                &[read(wired.temporary_view), write(wired.temporary_view)],
+                &[
+                    read(wired.temporary_view, bytes),
+                    write(wired.temporary_view, bytes),
+                ],
+                launch,
             )
             .expect_err("tensor roles are checked"),
         KernelProgramBuildError::StageTensorRole {
@@ -1017,7 +1284,11 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .push_stage(
                 &kernel,
                 &occurrences(3..4),
-                &[write(wired.source_view), write(wired.temporary_view)],
+                &[
+                    write(wired.source_view, bytes),
+                    write(wired.temporary_view, bytes),
+                ],
+                launch,
             )
             .expect_err("access modes are checked"),
         KernelProgramBuildError::StageAccessMode {
@@ -1043,7 +1314,8 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .push_stage(
                 &kernel,
                 &occurrences(3..4),
-                &[read(partial), write(wired.temporary_view)],
+                &[read(partial, bytes), write(wired.temporary_view, bytes)],
+                launch,
             )
             .expect_err("addressed extents are checked"),
         KernelProgramBuildError::StageElementCount {
@@ -1082,6 +1354,7 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
     let pointwise = pointwise_kernel(0, SCALE_BITS);
     let reduction = reduction_kernel(1);
     let mut builder = KernelProgramBuilder::new(semantic).expect("builder");
+    let abi = fixture_abi(&mut builder);
     let storage = wire_chain_storage(&mut builder);
 
     let first_map = builder
@@ -1089,9 +1362,10 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
             &pointwise,
             &occurrences(0..4),
             &[
-                read(storage.first_source_view),
-                write(storage.first_temporary_view),
+                read(storage.first_source_view, abi.input_bytes),
+                write(storage.first_temporary_view, abi.input_bytes),
             ],
+            abi.pointwise_launch(),
         )
         .expect("first map stage");
     let first_reduce = builder
@@ -1099,9 +1373,10 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
             &reduction,
             &occurrences(4..5),
             &[
-                read(storage.first_temporary_view),
-                write(storage.first_output_view),
+                read(storage.first_temporary_view, abi.input_bytes),
+                write(storage.first_output_view, abi.output_bytes),
             ],
+            abi.reduction_launch(),
         )
         .expect("first reduce stage");
     let second_map = builder
@@ -1109,9 +1384,10 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
             &pointwise,
             &occurrences(5..7),
             &[
-                read(storage.second_source_view),
-                write(storage.second_temporary_view),
+                read(storage.second_source_view, abi.input_bytes),
+                write(storage.second_temporary_view, abi.input_bytes),
             ],
+            abi.pointwise_launch(),
         )
         .expect("second map stage");
     let second_reduce = builder
@@ -1119,9 +1395,10 @@ fn two_chain(semantic: &SemanticProgram, handoff: bool) -> TwoChain {
             &reduction,
             &occurrences(7..8),
             &[
-                read(storage.second_temporary_view),
-                write(storage.second_output_view),
+                read(storage.second_temporary_view, abi.input_bytes),
+                write(storage.second_output_view, abi.output_bytes),
             ],
+            abi.reduction_launch(),
         )
         .expect("second reduce stage");
 
@@ -1243,6 +1520,7 @@ fn publish_two_chain(mut chains: TwoChain) -> KernelProgramBuilder {
         .builder
         .push_output(OutputKey::new("sum_b").expect("key"), chains.second_output)
         .expect("second named output");
+    declare_program_contract(&mut chains.builder);
     chains.builder
 }
 
@@ -1349,4 +1627,296 @@ fn an_output_key_outside_the_bound_interface_is_rejected() {
             role: ValueRole::Temporary,
         }
     );
+}
+
+#[test]
+fn identity_changes_when_the_applicability_guard_changes() {
+    // One semantic graph, one pair of bound implementations, one structure and
+    // one routing contract: only the predicate deciding whether this program
+    // may be routed to differs. Under `tiler.kernel-program.v1` these two were
+    // the same bytes, which is the cache hazard the domain bump closes.
+    let semantic = serial_sum_program(SCALE_BITS);
+    let canonical = canonical_program(&semantic);
+
+    let mut builder = wire_two_stage_structure(two_stage(&semantic, TwoStageShape::Canonical));
+    let two = literal(&mut builder, 2);
+    let guard = builder
+        .push_abi_binary(AbiBinaryOp::Equal, two, two)
+        .expect("a differently spelled predicate");
+    builder.applicability_guard(guard).expect("guard");
+    declare_routing_commit(&mut builder);
+    let guarded = builder.build().expect("verified kernel program");
+
+    assert_ne!(
+        canonical.canonical_identity().as_bytes(),
+        guarded.canonical_identity().as_bytes()
+    );
+    assert_ne!(canonical, guarded);
+}
+
+#[test]
+fn identity_changes_when_the_entry_abi_changes() {
+    // The two programs agree on every byte count and every launch extent; they
+    // disagree only on how those quantities are *computed*. A dynamic subject
+    // computes them from bound input extents, so an identity blind to the
+    // expression would collapse two programs whose ABI differs at run time.
+    let semantic = serial_sum_program(SCALE_BITS);
+    let canonical = canonical_program(&semantic);
+    let computed = complete_two_stage(two_stage(&semantic, TwoStageShape::ComputedAccessibleBytes))
+        .build()
+        .expect("verified kernel program");
+
+    let accesses = |program: &VerifiedKernelProgram| {
+        program
+            .stages()
+            .map(|stage| stage.accesses().len())
+            .sum::<usize>()
+    };
+    assert_eq!(accesses(&canonical), accesses(&computed));
+    assert_ne!(
+        canonical.canonical_identity().as_bytes(),
+        computed.canonical_identity().as_bytes()
+    );
+}
+
+#[test]
+fn identity_changes_when_pre_commit_fallback_permission_changes() {
+    // A program that may still be abandoned before commit and one that may not
+    // are different execution contracts over identical work.
+    let semantic = serial_sum_program(SCALE_BITS);
+    let permitted = canonical_program(&semantic);
+
+    let mut builder = wire_two_stage_structure(two_stage(&semantic, TwoStageShape::Canonical));
+    declare_guard(&mut builder);
+    declare_routing_commit_with_fallback(&mut builder, false);
+    let forbidden = builder.build().expect("verified kernel program");
+
+    assert!(permitted.routing_commit_contract()[0].fallback_permitted);
+    assert!(!forbidden.routing_commit_contract()[0].fallback_permitted);
+    assert_ne!(
+        permitted.canonical_identity().as_bytes(),
+        forbidden.canonical_identity().as_bytes()
+    );
+}
+
+#[test]
+fn a_program_without_an_applicability_guard_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let mut builder = wire_two_stage_structure(two_stage(&semantic, TwoStageShape::Canonical));
+    declare_routing_commit(&mut builder);
+    assert_eq!(
+        diagnostic(builder),
+        KernelProgramDiagnostic::MissingApplicabilityGuard
+    );
+}
+
+#[test]
+fn a_routing_commit_contract_that_stops_short_of_publication_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let mut builder = wire_two_stage_structure(two_stage(&semantic, TwoStageShape::Canonical));
+    declare_guard(&mut builder);
+    builder
+        .push_routing_commit_transition(RoutingCommitTransition {
+            from: RoutingCommitState::Preflight,
+            to: RoutingCommitState::Committed,
+            fallback_permitted: true,
+        })
+        .expect("the first transition is well formed");
+    assert_eq!(
+        diagnostic(builder),
+        KernelProgramDiagnostic::IncompleteRoutingCommitContract {
+            declared: 1,
+            required: 3,
+        }
+    );
+}
+
+#[test]
+fn a_routing_commit_step_that_breaks_the_lifecycle_is_rejected_at_insertion() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let mut wired = two_stage(&semantic, TwoStageShape::Canonical);
+    wired
+        .builder
+        .push_routing_commit_transition(RoutingCommitTransition {
+            from: RoutingCommitState::Preflight,
+            to: RoutingCommitState::Committed,
+            fallback_permitted: true,
+        })
+        .expect("the first transition is well formed");
+    assert_eq!(
+        wired
+            .builder
+            .push_routing_commit_transition(RoutingCommitTransition {
+                from: RoutingCommitState::Committed,
+                to: RoutingCommitState::Executing,
+                fallback_permitted: true,
+            })
+            .expect_err("fallback after commit is rejected"),
+        KernelProgramBuildError::RoutingCommitFallbackAfterCommit {
+            from: RoutingCommitState::Committed,
+        }
+    );
+    // A step that skips the state the previous one reached is rejected too.
+    assert_eq!(
+        wired
+            .builder
+            .push_routing_commit_transition(RoutingCommitTransition {
+                from: RoutingCommitState::Executing,
+                to: RoutingCommitState::Published,
+                fallback_permitted: false,
+            })
+            .expect_err("the lifecycle order is checked"),
+        KernelProgramBuildError::RoutingCommitOutOfOrder {
+            expected: RoutingCommitState::Committed,
+            actual: RoutingCommitState::Executing,
+        }
+    );
+}
+
+#[test]
+fn an_abi_expression_no_use_site_reaches_is_rejected() {
+    // Identity folds each use site by content key and nothing else, so an arena
+    // node no use site reaches would be retained bytes identity does not cover.
+    let semantic = serial_sum_program(SCALE_BITS);
+    let mut builder = complete_two_stage(two_stage(&semantic, TwoStageShape::Canonical));
+    literal(&mut builder, 4_096);
+    assert_eq!(
+        diagnostic(builder),
+        KernelProgramDiagnostic::UnreferencedAbiExpression
+    );
+}
+
+#[test]
+fn an_accessible_range_the_declared_view_contradicts_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let mut wired = two_stage(&semantic, TwoStageShape::ShiftedCoverage);
+    let wrong = literal(&mut wired.builder, 25);
+    let abi = wired.abi;
+    assert_eq!(
+        wired
+            .builder
+            .push_stage(
+                &pointwise_kernel(2, OTHER_SCALE_BITS),
+                &occurrences(3..4),
+                &[
+                    read(wired.source_view, wrong),
+                    write(wired.temporary_view, abi.input_bytes),
+                ],
+                abi.pointwise_launch(),
+            )
+            .expect_err("an accessible range must equal the view it addresses"),
+        KernelProgramBuildError::AccessibleBytesDisagreement {
+            position: 0,
+            expected: 24,
+            actual: 25,
+        }
+    );
+}
+
+#[test]
+fn a_workgroup_width_the_bound_kernel_contradicts_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let mut wired = two_stage(&semantic, TwoStageShape::ShiftedCoverage);
+    let wrong_width = literal(&mut wired.builder, 32);
+    let abi = wired.abi;
+    assert_eq!(
+        wired
+            .builder
+            .push_stage(
+                &pointwise_kernel(2, OTHER_SCALE_BITS),
+                &occurrences(3..4),
+                &[
+                    read(wired.source_view, abi.input_bytes),
+                    write(wired.temporary_view, abi.input_bytes),
+                ],
+                StageLaunch {
+                    grid_threads: abi.pointwise_threads,
+                    threads_per_workgroup: wrong_width,
+                },
+            )
+            .expect_err("a declared workgroup width must be the kernel's"),
+        KernelProgramBuildError::ThreadsPerWorkgroupDisagreement {
+            expected: 1,
+            actual: 32,
+        }
+    );
+}
+
+#[test]
+fn an_abi_use_site_rejects_a_mistyped_or_target_dependent_expression() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let mut wired = two_stage(&semantic, TwoStageShape::Canonical);
+
+    // A size is not a guard.
+    assert_eq!(
+        wired
+            .builder
+            .applicability_guard(wired.abi.input_bytes)
+            .expect_err("a guard must be a predicate"),
+        KernelProgramBuildError::AbiUseType {
+            use_site: ProgramAbiUse::ApplicabilityGuard,
+            expected: AbiType::Boolean,
+            actual: AbiType::Unsigned,
+        }
+    );
+    // A guard is not a size.
+    let predicate = wired
+        .builder
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("predicate");
+    assert_eq!(
+        wired
+            .builder
+            .push_abi_unary(AbiUnaryOp::NarrowU32, predicate)
+            .expect_err("a narrowing operand must be unsigned"),
+        KernelProgramBuildError::AbiOperandType {
+            expected: AbiType::Unsigned,
+            actual: AbiType::Boolean,
+        }
+    );
+
+    // A launch extent must be computable before any device-dependent query, so
+    // a governed target property is refused at that use site.
+    let property = wired
+        .builder
+        .push_abi_root(AbiRoot::TargetProperty {
+            key: TargetPropertyKey::new("tiler.test.max-threads").expect("property key"),
+            phase: AvailabilityPhase::LiveDevicePreflight,
+        })
+        .expect("target property root");
+    let abi = wired.abi;
+    assert_eq!(
+        wired
+            .builder
+            .push_stage(
+                &pointwise_kernel(2, OTHER_SCALE_BITS),
+                &occurrences(0..1),
+                &[
+                    read(wired.source_view, abi.input_bytes),
+                    write(wired.temporary_view, abi.input_bytes),
+                ],
+                StageLaunch {
+                    grid_threads: property,
+                    threads_per_workgroup: abi.threads_per_workgroup,
+                },
+            )
+            .expect_err("a launch extent must read only interface facts"),
+        KernelProgramBuildError::AbiNonInterfaceRoot {
+            use_site: ProgramAbiUse::GridThreads,
+        }
+    );
+}
+
+#[test]
+fn the_abi_arena_is_deduplicated_by_content() {
+    // The canonical fixture names the same input byte count at three accesses
+    // and the same workgroup width at both stages; the arena keeps one node per
+    // distinct formula, so it stays a function of what the program says.
+    let semantic = serial_sum_program(SCALE_BITS);
+    let program = canonical_program(&semantic);
+    // 24, 8, 6, 2, 1, and the guard predicate.
+    assert_eq!(program.abi_expressions().len(), 6);
+
+    let mut wired = two_stage(&semantic, TwoStageShape::Canonical);
+    assert_eq!(literal(&mut wired.builder, 24), wired.abi.input_bytes);
 }

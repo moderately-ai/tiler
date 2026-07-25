@@ -206,8 +206,9 @@ structural content. A compiler-owned checked refinement binds index structure
 to a particular region occurrence, exact boundary/access mappings, reached
 semantic definitions, selected provider provenance, and evidence. Complete
 program identity—not a nested whole-graph digest inside every structural
-object—proves occurrence coverage and executable composition. ADR 0072 owns
-this identity layering.
+object—proves occurrence coverage, executable composition, and the executable
+contract a program commits to: its buffers, its entry ABI, its applicability
+guard, and its routing-commit lifecycle. ADR 0072 owns this identity layering.
 
 Selected provider provenance is derived, not declared. An artifact plan's lowering providers are re-derived from the request's own installed registry and compared against what the plan recorded, so a receipt naming an authority the registry never resolved fails closed rather than being carried into a compilation product.
 
@@ -233,9 +234,12 @@ cover is not schedule evidence, a frontier is not whole-program coverage, and
 neither substitutes for checked complete-plan selection.
 
 The selected `KernelProgram` is an executable dependency DAG of kernel stages,
-materializations, temporaries, and opaque calls. A guarded `ProgramPortfolio`
-may retain several complete programs for different runtime applicability
-regions.
+materializations, temporaries, and opaque calls, together with the entry ABI
+each stage dispatches under, the guard deciding whether it may be routed to at
+all, and the routing-commit lifecycle stating where fallback stops being legal.
+A `ProgramPortfolio` may retain several complete programs for different runtime
+applicability regions, ordered by the priority in which their guards are tried;
+that priority is the portfolio's and never a program's.
 
 Whole-program verification checks semantic-result coverage, dependency
 acyclicity, producer completeness, deliberate duplication of pure work,
@@ -280,7 +284,7 @@ The `tiler-metal-aot` row previously read "Expansion-time Apple tool invocation,
 
 | Component | Responsibility | Forbidden dependencies |
 | --- | --- | --- |
-| `tiler-ir` | Public semantic graph and operation-extension contracts; experimental index, schedule, kernel, executable-program, `BufferPlan`, and `AbiExpr` representations; authoritative IR verifiers and pure checked expression semantics | Frontend syntax, reference execution, artifact encoding, runtime fact binding, Candle, and Metal runtime APIs |
+| `tiler-ir` | Public semantic graph and operation-extension contracts; experimental index, schedule, kernel, executable-program, `BufferPlan`, and `AbiExpr` representations, including a program's entry ABI, applicability guard, and routing-commit lifecycle; authoritative IR verifiers and pure checked expression semantics | Frontend syntax, reference execution, artifact encoding, runtime fact binding, Candle, and Metal runtime APIs |
 | `tiler-reference` | Host reference values, executable semantic-operation capabilities, interpreter traversal, and conformance utilities | Optimizer, scheduler, backend, and live device APIs |
 | `tiler-compiler` | Normalization, rule engine, fusion planning, index lowering, schedule search, costing, typed explain infrastructure | Candle |
 | `tiler-artifact` | Versioned target-neutral artifact/ABI encoding, compatibility, runtime fact binding, failure classification, and backend-payload mappings | Candle, optimizer, and Metal device APIs |

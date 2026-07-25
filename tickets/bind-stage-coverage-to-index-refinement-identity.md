@@ -5,7 +5,7 @@ status: todo
 priority: p1
 dependencies: [correct-adr-0071-retained-lower-layer-identity-cardinality]
 related: [bind-the-scheduled-region-to-the-verified-index-region-identity]
-scopes: [implementation/ir, implementation/compiler]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, identity]
@@ -43,3 +43,15 @@ The tags differ, so these are two deliberately separated subjects and **not** a 
 **Consequence for scheduling.** Add `implementation/artifact` to this ticket's scopes before dispatching it, and give it to a worker holding all three. At the time of this finding `implementation/artifact` was held by `prototype-artifact-family-delivery` (in-progress) and `carry-the-metal-payload-in-an-artifact-envelope` (review), so the scope was contended; check `tkt guard` again rather than trusting that snapshot.
 
 **Unverified.** Whether the change also moves any `tiler-metal` golden was not established. `crates/tiler-metal/goldens/*.metal` embed the *kernel* identity digest and the *scheduled region* identity digest, neither of which folds program stage coverage, so the expectation is that it does not — but that is an inference from what the goldens contain, not a compiled result.
+
+## Base correction 2026-07-25: `push_stage` moved, so this must not be based on `568682b`
+
+`complete-program-identity-with-abi-guards-and-routing` landed on `tkt/complete-program-identity-with-abi-guards-and-routing` and changed the same function this ticket changes. `KernelProgramBuilder::push_stage` now takes four parameters — `(&VerifiedKernel, &[SemanticOccurrence], &[StageAccess], StageLaunch)` — and `StageAccess` gained an `accessible_bytes: AbiExprId` field. Basing this ticket on `568682b` and changing the coverage parameter would produce two edits to one signature that no merge can reconcile mechanically. **Base it on the merged result of that ticket, not on `568682b`.**
+
+Three consequences for what is written above.
+
+**The declared-scope finding is applied.** `implementation/artifact` is now on this ticket's `scopes`. The two contended holders named above — `prototype-artifact-family-delivery` and `carry-the-metal-payload-in-an-artifact-envelope` — both show expired claims as of this note; re-check `tkt claims` rather than trusting that.
+
+**The `push_stage` call-site count is now larger and its distribution has changed.** The three sites named above are still the artifact ones, but `crates/tiler-ir/src/program/tests.rs` grew a `wire_two_stage_storage` helper and a `FixtureAbi` fixture, and the `read`/`write` helpers now take an ABI handle. The reproducible check is unchanged — `grep -rn "push_stage" crates/ prototypes/ spikes/` — but run it against the new base, because its answer moved.
+
+**The two `stage_key` encoders are still two, and still deliberately so.** That ticket folded the entry ABI, the applicability guard and the routing-commit contract into *program* identity and bumped `tiler.kernel-program.v1` to `v2`, but left `tiler.kernel-program.stage.v1` and `tiler.artifact-program.stage.v1` both at `v1` and both folding exactly the bound kernel's identity and the covered occurrences — the launch geometry went beside the stage key in the program encoding rather than into it, so the cross-reference key would keep meaning what it meant. The decision this ticket forces, whether refinement evidence enters artifact-program stage identity, is therefore untouched and still owned here.

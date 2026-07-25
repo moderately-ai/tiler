@@ -10,8 +10,9 @@ use std::sync::Arc;
 use tiler_ir::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
 use tiler_ir::program::{
     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
-    MaterializedValueSpec, MemorySpace, SemanticOccurrence, StageAccess, StageAccessMode,
-    ValueRole, VerifiedKernelProgram,
+    MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
+    SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, ValueRole,
+    VerifiedKernelProgram, ViewId,
 };
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
@@ -58,6 +59,80 @@ pub(super) const ELEMENT_BYTES: u64 = 4;
 // -------------------------------------------------------------------------
 // Shared-IR fixtures
 // -------------------------------------------------------------------------
+
+/// Declares the ABI, applicability guard, and routing-commit contract that both
+/// single-stage kernel-program fixtures in this file share.
+///
+/// A verified kernel program states its own entry ABI since
+/// `complete-program-identity-with-abi-guards-and-routing`, and folds it into
+/// its canonical identity. The quantities are the fused kernel's: a whole
+/// `[2, 3]` `f32` read, a whole `[2]` `f32` write, and a launch of two threads
+/// at one thread per workgroup.
+///
+/// This is deliberately *not* the artifact-side ABI a `VariantSpec` declares.
+/// That one lives on the artifact's own arena, under its own separately
+/// versioned schema, and is asserted against the same program facts.
+fn declare_program_contract(
+    plan: &mut KernelProgramBuilder,
+    read: ViewId,
+    write: ViewId,
+) -> ([StageAccess; 2], StageLaunch) {
+    let mut literal = |value: u64| {
+        plan.push_abi_root(AbiRoot::UnsignedLiteral(value))
+            .expect("abi literal")
+    };
+    let read_bytes = literal(ELEMENT_BYTES * 6);
+    let write_bytes = literal(ELEMENT_BYTES * 2);
+    let grid_threads = literal(2);
+    let threads_per_workgroup = literal(1);
+    let guard = plan
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("guard predicate");
+    plan.applicability_guard(guard)
+        .expect("applicability guard");
+    for (from, to, fallback_permitted) in [
+        (
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            true,
+        ),
+        (
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            false,
+        ),
+        (
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+            false,
+        ),
+    ] {
+        plan.push_routing_commit_transition(RoutingCommitTransition {
+            from,
+            to,
+            fallback_permitted,
+        })
+        .expect("routing-commit transition");
+    }
+    (
+        [
+            StageAccess {
+                view: read,
+                mode: StageAccessMode::Read,
+                accessible_bytes: read_bytes,
+            },
+            StageAccess {
+                view: write,
+                mode: StageAccessMode::Write,
+                accessible_bytes: write_bytes,
+            },
+        ],
+        StageLaunch {
+            grid_threads,
+            threads_per_workgroup,
+        },
+    )
+}
 
 pub(super) fn strict() -> NumericalRealization {
     NumericalRealization::new(
@@ -183,19 +258,12 @@ fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
         .unwrap();
     let read = plan.push_whole_view(source).unwrap();
     let write = plan.push_whole_view(result).unwrap();
+    let (accesses, launch) = declare_program_contract(&mut plan, read, write);
     plan.push_stage(
         &kernel,
         &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
-        &[
-            StageAccess {
-                view: read,
-                mode: StageAccessMode::Read,
-            },
-            StageAccess {
-                view: write,
-                mode: StageAccessMode::Write,
-            },
-        ],
+        &accesses,
+        launch,
     )
     .unwrap();
     plan.push_output(OutputKey::new("result").unwrap(), result)
@@ -344,19 +412,12 @@ pub(crate) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> Veri
         .unwrap();
     let read = plan.push_whole_view(source).unwrap();
     let write = plan.push_whole_view(result).unwrap();
+    let (accesses, launch) = declare_program_contract(&mut plan, read, write);
     plan.push_stage(
         &kernel,
         &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
-        &[
-            StageAccess {
-                view: read,
-                mode: StageAccessMode::Read,
-            },
-            StageAccess {
-                view: write,
-                mode: StageAccessMode::Write,
-            },
-        ],
+        &accesses,
+        launch,
     )
     .unwrap();
     plan.push_output(OutputKey::new("result").unwrap(), result)

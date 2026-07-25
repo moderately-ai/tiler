@@ -78,6 +78,14 @@ not a `KernelProgram`.
 - Runtime and artifact code can validate executable programs without linking
   optimizer internals.
 - Compiler strategies may evolve without becoming artifact schemas.
+- `program` owns one subject this decision's enumeration does not name: the
+  per-program routing-commit lifecycle. It arrived with the ABI and the
+  applicability guard, because ADR 0072 lists all three together as complete
+  program identity and a program that carried two of them would still have
+  needed an external side table for the third. This is a completion of the
+  enumeration and not a widening of the boundary: the portfolio-level sense of
+  routing — a variant's priority rank — stays in `tiler-artifact`, since a rank
+  is a relation among variants that one program cannot state.
 - IR extraction proceeds in dependency order; private proof-specific structs
   remain private until replaced by their generic verified representation.
 - An empty module or public type alias is not implemented support. Each layer

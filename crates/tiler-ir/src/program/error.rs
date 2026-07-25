@@ -19,9 +19,43 @@ use crate::schedule::TensorRole;
 use crate::semantic::{InputKey, OutputKey};
 
 use super::KernelProgramBuilder;
+use super::abi::{AbiEvaluationError, AbiType, AvailabilityPhase};
 use super::model::{
-    AllocationOwnership, MemorySpace, SemanticOccurrence, StageAccessMode, ValueRole,
+    AllocationOwnership, MemorySpace, RoutingCommitState, SemanticOccurrence, StageAccessMode,
+    ValueRole,
 };
+
+/// One site at which a kernel program uses an ABI expression.
+///
+/// A use site fixes the value type an expression must produce, the latest
+/// availability phase its roots may require, and whether it must be computable
+/// from the bound semantic interface alone.
+///
+/// This names the use sites of a *program*. It is deliberately not
+/// `tiler_artifact::program::AbiExprUse`, which names the use sites of an
+/// artifact *variant* — that vocabulary additionally covers launch
+/// preconditions and deferred feasibility predicates, neither of which a
+/// target-neutral program owns. The two enumerations share three spellings and
+/// are not the same subject; this crate is downstream of neither, so it names
+/// the other in text rather than linking to it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum ProgramAbiUse {
+    /// The guard deciding whether this program may be routed to.
+    ApplicabilityGuard,
+    /// The byte count one stage access may address through its view.
+    AccessibleBytes,
+    /// The total launch thread count of one stage.
+    GridThreads,
+    /// The per-workgroup thread count of one stage.
+    ThreadsPerWorkgroup,
+}
+
+impl fmt::Display for ProgramAbiUse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
 
 /// A program-owned entity category used by typed handle and ambiguity errors.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -35,6 +69,8 @@ pub enum ProgramEntityKind {
     Allocation,
     /// One byte view of a materialized value.
     View,
+    /// One node of the program's ABI expression arena.
+    AbiExpression,
 }
 
 impl fmt::Display for ProgramEntityKind {
@@ -63,6 +99,10 @@ pub enum ProgramLimitKind {
     StageAccesses,
     /// Covered semantic occurrence count of one stage.
     StageCoverage,
+    /// ABI expression arena node count of one program.
+    AbiExpressions,
+    /// Routing-commit transition count of one program.
+    RoutingCommitTransitions,
     /// Canonical identity bytes retained for one program.
     IdentityBytes,
 }
@@ -253,6 +293,85 @@ pub enum KernelProgramBuildError {
         /// Rejected role.
         role: ValueRole,
     },
+    /// An ABI operand does not have the value type its operation requires.
+    AbiOperandType {
+        /// Value type the operation requires.
+        expected: AbiType,
+        /// Value type the operand produces.
+        actual: AbiType,
+    },
+    /// The two branches of an ABI conditional disagree in value type.
+    AbiSelectBranchType {
+        /// Value type of the branch taken when the condition holds.
+        if_true: AbiType,
+        /// Value type of the branch taken otherwise.
+        if_false: AbiType,
+    },
+    /// An ABI expression does not have the value type its use site requires.
+    AbiUseType {
+        /// Rejected use site.
+        use_site: ProgramAbiUse,
+        /// Value type the use site requires.
+        expected: AbiType,
+        /// Value type the expression produces.
+        actual: AbiType,
+    },
+    /// An ABI expression names a root later than its use site admits.
+    AbiRootPhaseEscape {
+        /// Rejected use site.
+        use_site: ProgramAbiUse,
+        /// Earliest phase at which the whole subtree becomes readable.
+        available_at: AvailabilityPhase,
+        /// Latest phase the use site admits.
+        admitted_through: AvailabilityPhase,
+    },
+    /// An ABI expression reads a target fact where only interface facts are admitted.
+    AbiNonInterfaceRoot {
+        /// Rejected use site.
+        use_site: ProgramAbiUse,
+    },
+    /// An interface-only ABI expression could not be evaluated against the
+    /// program's own declared input shapes.
+    AbiStaticEvaluation {
+        /// Rejected use site.
+        use_site: ProgramAbiUse,
+        /// Typed evaluation failure.
+        cause: AbiEvaluationError,
+    },
+    /// A stage access declares an accessible range its own view contradicts.
+    AccessibleBytesDisagreement {
+        /// Ordered access position.
+        position: usize,
+        /// Bytes the declared view addresses.
+        expected: u64,
+        /// Bytes the declared expression computes.
+        actual: u64,
+    },
+    /// A stage's launch declares a workgroup width its own kernel contradicts.
+    ThreadsPerWorkgroupDisagreement {
+        /// Width the bound kernel requires.
+        expected: u64,
+        /// Width the declared expression computes.
+        actual: u64,
+    },
+    /// A second applicability guard was declared for one program.
+    DuplicateApplicabilityGuard,
+    /// A routing-commit transition did not continue the ordered lifecycle.
+    RoutingCommitOutOfOrder {
+        /// State the next transition must leave.
+        expected: RoutingCommitState,
+        /// State the declared transition leaves.
+        actual: RoutingCommitState,
+    },
+    /// A routing-commit transition permits fallback at or after commit.
+    ///
+    /// Fallback is admissible only while the program has done no work a
+    /// fallback would have to undo, which is exactly the transition leaving
+    /// [`RoutingCommitState::Preflight`].
+    RoutingCommitFallbackAfterCommit {
+        /// State the rejected transition leaves.
+        from: RoutingCommitState,
+    },
 }
 
 impl fmt::Display for KernelProgramBuildError {
@@ -315,6 +434,21 @@ pub enum KernelProgramDiagnostic {
         /// Category of the colliding entities.
         entity: ProgramEntityKind,
     },
+    /// The program declares no applicability guard.
+    MissingApplicabilityGuard,
+    /// An ABI expression is reachable from no use site of the program.
+    ///
+    /// Identity folds each use site by content key, and a content key names its
+    /// whole subtree, so a node no use site reaches would be retained bytes
+    /// that identity does not cover.
+    UnreferencedAbiExpression,
+    /// The routing-commit transitions do not span the whole ordered lifecycle.
+    IncompleteRoutingCommitContract {
+        /// Transitions the program declares.
+        declared: usize,
+        /// Transitions the ordered lifecycle requires.
+        required: usize,
+    },
     /// The fully encoded canonical identity exceeded its bound.
     IdentityLimit {
         /// Encoded byte count.
@@ -347,6 +481,9 @@ impl KernelProgramDiagnostic {
             Self::MissingNamedOutput => "missing-named-output",
             Self::UnboundOutputValue => "unbound-output-value",
             Self::AmbiguousCanonicalKey { .. } => "ambiguous-canonical-key",
+            Self::MissingApplicabilityGuard => "missing-applicability-guard",
+            Self::UnreferencedAbiExpression => "unreferenced-abi-expression",
+            Self::IncompleteRoutingCommitContract { .. } => "incomplete-routing-commit-contract",
             Self::IdentityLimit { .. } => "identity-limit",
         }
     }

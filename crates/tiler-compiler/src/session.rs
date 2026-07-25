@@ -54,8 +54,8 @@
 use std::fmt;
 
 use tiler_ir::kernel::VerifiedKernel;
-use tiler_ir::program::VerifiedKernelProgram;
 use tiler_ir::program::abi::ExprNode;
+use tiler_ir::program::{StageRef, VerifiedKernelProgram};
 use tiler_ir::semantic::{ProviderIdentity, SemanticProgram};
 
 use crate::explain::VerifiedExplainTrace;
@@ -64,7 +64,7 @@ use crate::pipeline::{
     CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind,
     compile as compile_internal,
 };
-use crate::program::{EntryContract, KernelProgram};
+use crate::program::KernelProgram;
 use crate::request::{
     CompilationRequest, LoweringProviderIdentity, RequestError, StrictF32NumericalContract,
 };
@@ -385,7 +385,16 @@ impl<'a> SelectedCapability<'a> {
 /// into it, so these nodes are transliterated onto that arena rather than moved.
 /// That replay is mechanical and position-preserving — it introduces no second
 /// derivation, because the *decision* about what each expression says was made
-/// here.
+/// upstream of here.
+///
+/// # Where the decision is actually made
+///
+/// Since `complete-program-identity-with-abi-guards-and-routing`, every
+/// accessor below reads the *verified program's* own ABI rather than a
+/// compiler-side copy of it, and each is folded into
+/// `CanonicalKernelProgramIdentity`. So this type is a convenience over
+/// [`AbiConstruction::kernel_program`] and not a second authority: a consumer
+/// that already holds the program can read the same facts from it directly.
 ///
 /// The vocabulary is `tiler_ir::program::abi`, which both crates already
 /// depend on, so nothing compiler-internal crosses this boundary and packaging
@@ -400,14 +409,14 @@ impl<'a> AbiConstruction<'a> {
     /// so replaying front to back always has its operands already minted.
     #[must_use]
     pub fn expressions(self) -> &'a [ExprNode] {
-        self.0.host_expressions()
+        self.0.core().abi_expressions()
     }
 
     /// Returns the arena position of the guard deciding whether this
     /// alternative may be routed to.
     #[must_use]
     pub fn applicability_guard(self) -> u32 {
-        self.0.applicability_guard().index()
+        self.0.core().applicability_guard()
     }
 
     /// Returns the verified target-neutral program this alternative packages.
@@ -421,7 +430,7 @@ impl<'a> AbiConstruction<'a> {
 
     /// Returns one entry view per program stage, in stage order.
     pub fn entries(self) -> impl ExactSizeIterator<Item = AbiEntry<'a>> {
-        self.0.entries().iter().map(AbiEntry)
+        self.0.core().stages().map(AbiEntry)
     }
 }
 
@@ -430,32 +439,32 @@ impl<'a> AbiConstruction<'a> {
 /// Each accessor returns an arena position into the same arena
 /// [`AbiConstruction::expressions`] returns, never a resolved number.
 #[derive(Clone, Copy, Debug)]
-pub struct AbiEntry<'a>(&'a EntryContract);
+pub struct AbiEntry<'a>(StageRef<'a>);
 
 impl<'a> AbiEntry<'a> {
     /// Returns the accessible byte range of each binding, in kernel
     /// buffer-parameter order.
     ///
     /// The order is the contract: `push_variant` matches bindings to kernel
-    /// buffer parameters positionally.
+    /// buffer parameters positionally, and a program stage's accesses are
+    /// already in that order.
     #[must_use]
     pub fn accessible_bytes(self) -> impl ExactSizeIterator<Item = u32> + 'a {
         self.0
-            .bindings
-            .iter()
-            .map(|binding| binding.accessible_bytes.index())
+            .accesses()
+            .map(tiler_ir::program::StageAccessRef::accessible_bytes)
     }
 
     /// Returns the total launch thread count of this entry.
     #[must_use]
     pub fn grid_threads(self) -> u32 {
-        self.0.launch_threads.index()
+        self.0.launch().grid_threads
     }
 
     /// Returns the workgroup width of this entry.
     #[must_use]
     pub fn threads_per_workgroup(self) -> u32 {
-        self.0.threads_per_workgroup.index()
+        self.0.launch().threads_per_workgroup
     }
 }
 

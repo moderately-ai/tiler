@@ -234,7 +234,11 @@ Benchmarks are not substitutes for these correctness cases.
 - Unknown operation keys cannot enter a verified/compilable semantic graph.
 - Equivalent canonical programs hash identically where promised.
 - Semantically different guards, schedules, ABIs, or numerical contracts hash
-  differently.
+  differently. The guard and the ABI are proven at the kernel-program layer and
+  not only at the artifact layer, because both are folded into complete program
+  identity; two programs differing only in their applicability guard, only in
+  the *expression* computing an accessible byte range, or only in whether
+  fallback is permitted before commit must produce different identity bytes.
 - Malformed control flow, types, pointers, and effects are rejected.
 - Kernel refinement tests reject missing or mismatched bounds/ownership
   witnesses, undeclared invocation coordinates, divergent barriers, nonuniform

@@ -2,23 +2,33 @@
 //!
 //! The stage DAG, the exact selected scheduled/KIR refinements, the checked
 //! materialized values, views, allocations, lifetimes and handoffs, the typed
-//! dependencies, the named outputs, and complete semantic coverage all live in
-//! [`tiler_ir::program`] (ADR 0070), where they are constructed through the
-//! ADR 0071 checked builder and carry a canonical identity folding the ADR 0072
-//! layers. This module owns only the compiler-specific layers the shared IR
-//! deliberately excludes for now: the host preflight expression graph, the
-//! bounded entry ABI, the routing-commit contract, and the artifact
-//! construction plan that binds them to a compilation request.
+//! dependencies, the named outputs, complete semantic coverage, the host
+//! preflight expression arena, the entry ABI, the applicability guard, and the
+//! routing-commit contract all live in [`tiler_ir::program`] (ADR 0070), where
+//! they are constructed through the ADR 0071 checked builder and carry a
+//! canonical identity folding the ADR 0072 layers.
+//!
+//! `complete-program-identity-with-abi-guards-and-routing` moved the last four
+//! of those down. This module previously held a second copy of each, verified
+//! against the shared core; the copies are gone rather than re-checked, because
+//! two representations of one ABI that nothing keeps in agreement is the drift
+//! ADR 0068 exists to prevent.
+//!
+//! What remains here is what only a *compilation* can decide: the target
+//! binding, the request budgets, the compile-time truth of the applicability
+//! guard, the agreement between each stage's declared launch and the scheduled
+//! region it was planned from, and the artifact construction plan that binds
+//! all of it to one compilation request.
 
 use std::error::Error;
 use std::fmt;
 
 use tiler_ir::kernel::KernelType;
 use tiler_ir::program::{
-    AllocationOwnership, AllocationSpec, KernelProgramBuildError, KernelProgramBuilder,
-    KernelProgramDiagnostic, MaterializedOrigin, MaterializedValueRef, MaterializedValueSpec,
-    MemorySpace, SemanticOccurrence, StageAccess, StageAccessMode, ValueRole,
-    VerifiedKernelProgram,
+    AbiExprId, AllocationOwnership, AllocationSpec, KernelProgramBuildError, KernelProgramBuilder,
+    KernelProgramDiagnostic, MaterializedOrigin, MaterializedValueSpec, MemorySpace,
+    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
+    StageLaunch, StageRef, ValueRole, VerifiedKernelProgram, ViewId,
 };
 use tiler_ir::semantic::{F32, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
@@ -30,7 +40,7 @@ use tiler_ir::program::abi::{
 
 use crate::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 use crate::physical::{
-    NumericalRealization, RegionId, ResourceRequirements, VerifiedKernel, VerifiedScheduledRegion,
+    NumericalRealization, RegionId, VerifiedKernel, VerifiedScheduledRegion,
     lower_structured_kernel, target_profile_descriptor,
 };
 use crate::region::SemanticMemberId;
@@ -41,15 +51,20 @@ const ELEMENT_BYTES: u64 = 4;
 /// Byte alignment every bounded-profile value and allocation requires.
 const ELEMENT_ALIGNMENT: u32 = 4;
 
-/// Arena position of one node of the host preflight ABI expression graph.
+/// Arena position of one node of the program's ABI expression arena.
 ///
-/// This is a reference into [`ExprNode`]'s arena, not a second expression
+/// This is a reference into the [`ExprNode`] arena
+/// [`VerifiedKernelProgram::abi_expressions`] retains, not a second expression
 /// vocabulary. `relocate-abi-expressions-into-tiler-ir` replaced the compiler's
 /// own `HostExpr` — a nine-node table of `U64`/`Bool`/`CheckedMultiply` — with
 /// the shared `AbiExpr` domain, because the two covered the same three facts
 /// (guards, accessible byte counts, launch geometry) with two vocabularies that
 /// nothing kept in agreement. That is the drift hazard ADR 0068 exists to
 /// prevent, and it is why the width widened from `u8` to the arena's own `u32`.
+///
+/// It survives `complete-program-identity-with-abi-guards-and-routing` — which
+/// moved the arena itself into the program — only as the spelling this crate's
+/// typed errors and explain subjects use to name a rejected node.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct HostExprId(u32);
 
@@ -68,71 +83,17 @@ impl StageId {
     }
 }
 
-/// Declaration-order position of one materialized value of the shared program.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct MaterializedValueId(pub(crate) u8);
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct EntryBindingId(u8);
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AbiAccess {
-    Read,
-    Write,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ComponentRole {
-    Input,
-    Intermediate,
-    Output,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct EntryBinding {
-    pub(crate) id: EntryBindingId,
-    pub(crate) value: MaterializedValueId,
-    pub(crate) role: ComponentRole,
-    pub(crate) access: AbiAccess,
-    pub(crate) alignment: u32,
-    pub(crate) accessible_bytes: HostExprId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct EntryContract {
-    pub(crate) stage: StageId,
-    pub(crate) bindings: Vec<EntryBinding>,
-    pub(crate) launch_threads: HostExprId,
-    pub(crate) threads_per_workgroup: HostExprId,
-    pub(crate) requirements: ResourceRequirements,
-    pub(crate) numerical: NumericalRealization,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RoutingState {
-    Preflight,
-    Committed,
-    Executing,
-    Published,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RoutingTransition {
-    pub(crate) from: RoutingState,
-    pub(crate) to: RoutingState,
-    pub(crate) fallback_permitted: bool,
-}
-
-/// One target-bound executable program: a verified shared kernel program plus
-/// the compiler-owned host, ABI, and routing layers that dispatch it.
+/// One target-bound executable program: a verified shared kernel program and
+/// the target profile whose feasibility it was assessed under.
+///
+/// The ABI arena, the applicability guard, the entry ABI, and the
+/// routing-commit contract are all inside `core` and inside its canonical
+/// identity. This wrapper adds the one fact the target-neutral program
+/// deliberately does not carry: which target profile it was planned for.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct KernelProgram {
     target_profile_key: &'static str,
-    host_expressions: Vec<ExprNode>,
-    applicability_guard: HostExprId,
     core: VerifiedKernelProgram,
-    entries: Vec<EntryContract>,
-    routing: Vec<RoutingTransition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -154,7 +115,12 @@ pub(crate) struct ArtifactConstructionPlan {
     /// layer records them as two references for exactly that reason.
     feasibility_rule_set: FeasibilityRuleSetIdentity,
     entry_regions: Vec<RegionId>,
-    routing_guard: HostExprId,
+    /// Arena position of the guard deciding whether this plan may be routed to.
+    ///
+    /// Named for what it decides rather than for "routing": the portfolio-level
+    /// sense of that word orders variants against each other, and this guard
+    /// orders nothing.
+    applicability_guard: u32,
     lowering_providers: Vec<LoweringProviderIdentity>,
     request_subject: crate::request::VerifiedRequestSubject,
     verified_program: KernelProgram,
@@ -171,21 +137,6 @@ impl KernelProgram {
     /// program `push_variant` binds against.
     pub(crate) const fn core(&self) -> &VerifiedKernelProgram {
         &self.core
-    }
-
-    /// Returns the host preflight expression arena in canonical arena order.
-    pub(crate) fn host_expressions(&self) -> &[ExprNode] {
-        &self.host_expressions
-    }
-
-    /// Returns the arena position of the guard deciding whether to route here.
-    pub(crate) const fn applicability_guard(&self) -> HostExprId {
-        self.applicability_guard
-    }
-
-    /// Returns the per-stage entry contracts in stage order.
-    pub(crate) fn entries(&self) -> &[EntryContract] {
-        &self.entries
     }
 
     pub(crate) fn stage_count(&self) -> usize {
@@ -325,11 +276,7 @@ pub(crate) fn build_kernel_program(
     let core = build_materialized_core(semantic, request, pointwise, reduction)?;
     let program = KernelProgram {
         target_profile_key: request.target_profile().key,
-        host_expressions: host_expressions(request)?,
-        applicability_guard: HostExprId(7),
         core,
-        entries: entry_contracts(scheduled, HostExprId(2), HostExprId(4)),
-        routing: routing_policy(),
     };
     verify_kernel_program_layers(&program, request, scheduled)?;
     Ok(program)
@@ -344,20 +291,7 @@ pub(crate) fn build_fused_kernel_program(
     let core = build_fused_core(semantic, request, scheduled)?;
     let program = KernelProgram {
         target_profile_key: request.target_profile().key,
-        host_expressions: host_expressions(request)?,
-        applicability_guard: HostExprId(7),
         core,
-        entries: vec![entry(
-            0,
-            vec![
-                binding(0, 0, ComponentRole::Input, AbiAccess::Read, HostExprId(2)),
-                binding(1, 1, ComponentRole::Output, AbiAccess::Write, HostExprId(4)),
-            ],
-            HostExprId(6),
-            scheduled.requirements(),
-            scheduled.region().index.numerical,
-        )],
-        routing: routing_policy(),
     };
     verify_kernel_program_layers(&program, request, std::slice::from_ref(scheduled))?;
     Ok(program)
@@ -379,6 +313,11 @@ fn build_materialized_core(
     let input_bytes = byte_count(subject.input_elements)?;
     let output_bytes = byte_count(subject.output_elements)?;
     let mut builder = open_core_builder(semantic, request)?;
+    let abi = declare_host_abi(
+        &mut builder,
+        subject.input_elements,
+        subject.output_elements,
+    )?;
     let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
     let temporary_storage =
         builder.push_allocation(storage(input_bytes, AllocationOwnership::Program))?;
@@ -402,15 +341,24 @@ fn build_materialized_core(
     let map_stage = builder.push_stage(
         &lower(pointwise)?,
         &covered(subject.members.pointwise()),
-        &[read(input_view), write(temporary_view)],
+        &[
+            read(input_view, abi.input_bytes),
+            write(temporary_view, abi.input_bytes),
+        ],
+        abi.launch(abi.input_elements),
     )?;
     let reduce_stage = builder.push_stage(
         &lower(reduction)?,
         &covered(subject.members.reduction()),
-        &[read(temporary_view), write(output_view)],
+        &[
+            read(temporary_view, abi.input_bytes),
+            write(output_view, abi.output_bytes),
+        ],
+        abi.launch(abi.output_elements),
     )?;
     builder.push_data_dependency(map_stage, reduce_stage, temporary)?;
     builder.push_output(subject.output_key.clone(), output)?;
+    declare_routing_commit(&mut builder)?;
     finish_core(builder)
 }
 
@@ -424,6 +372,11 @@ fn build_fused_core(
     let input_bytes = byte_count(subject.input_elements)?;
     let output_bytes = byte_count(subject.output_elements)?;
     let mut builder = open_core_builder(semantic, request)?;
+    let abi = declare_host_abi(
+        &mut builder,
+        subject.input_elements,
+        subject.output_elements,
+    )?;
     let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
     let output_storage =
         builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
@@ -440,10 +393,115 @@ fn build_fused_core(
     builder.push_stage(
         &lower(scheduled)?,
         &covered(&subject.members.all()),
-        &[read(input_view), write(output_view)],
+        &[
+            read(input_view, abi.input_bytes),
+            write(output_view, abi.output_bytes),
+        ],
+        abi.launch(abi.output_elements),
     )?;
     builder.push_output(subject.output_key.clone(), output)?;
+    declare_routing_commit(&mut builder)?;
     finish_core(builder)
+}
+
+/// The ABI quantities the bounded serial-sum profile's programs name.
+///
+/// Every extent is an `UnsignedLiteral` because the bounded profile's shapes
+/// are static, so each is already known at `CompileProfile`. The domain also
+/// admits an `InputExtent` root that resolves at `LiveDevicePreflight`, which is
+/// what a dynamic-shape subject would name instead; promoting these literals is
+/// a capability question tied to dynamic shapes, not a property of the
+/// vocabulary, and nothing in this contract has to change shape for it.
+#[derive(Clone, Copy, Debug)]
+struct HostAbi {
+    input_bytes: AbiExprId,
+    output_bytes: AbiExprId,
+    input_elements: AbiExprId,
+    output_elements: AbiExprId,
+    threads_per_workgroup: AbiExprId,
+}
+
+impl HostAbi {
+    /// Returns the launch of a stage whose work items are `grid_threads`.
+    ///
+    /// Every region of this profile is a serial subject, so the workgroup width
+    /// is shared; the width the *kernel* requires is what the program builder
+    /// proves the declared expression against.
+    const fn launch(self, grid_threads: AbiExprId) -> StageLaunch {
+        StageLaunch {
+            grid_threads,
+            threads_per_workgroup: self.threads_per_workgroup,
+        }
+    }
+}
+
+/// Declares the ABI arena and applicability guard of one bounded-profile program.
+///
+/// The arena is deduplicated by content inside the builder, so declaring the
+/// same formula at several use sites yields one node. Operands always precede
+/// their use, which is the arena's acyclicity invariant.
+fn declare_host_abi(
+    builder: &mut KernelProgramBuilder,
+    input_elements: u64,
+    output_elements: u64,
+) -> Result<HostAbi, ProgramError> {
+    // The element byte width every accessible range scales by.
+    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(ELEMENT_BYTES))?;
+    let input_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(input_elements))?;
+    let output_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(output_elements))?;
+    let abi = HostAbi {
+        input_bytes: builder.push_abi_binary(
+            AbiBinaryOp::CheckedMultiply,
+            element_bytes,
+            input_elements,
+        )?,
+        output_bytes: builder.push_abi_binary(
+            AbiBinaryOp::CheckedMultiply,
+            element_bytes,
+            output_elements,
+        )?,
+        input_elements,
+        output_elements,
+        threads_per_workgroup: builder.push_abi_root(AbiRoot::UnsignedLiteral(1))?,
+    };
+    // The bounded profile admits every governed target unconditionally, so the
+    // guard is a constant. It is still declared rather than assumed, because a
+    // program identity blind to its guard is the hazard ADR 0072 names.
+    let guard = builder.push_abi_root(AbiRoot::BooleanLiteral(true))?;
+    builder.applicability_guard(guard)?;
+    Ok(abi)
+}
+
+/// Declares the routing-commit lifecycle every compiled program shares.
+///
+/// Fallback to another plan is admitted only while nothing is committed. The
+/// shared builder proves that rule rather than trusting it, so this states an
+/// intent instead of re-deriving a policy.
+fn declare_routing_commit(builder: &mut KernelProgramBuilder) -> Result<(), ProgramError> {
+    for (from, to, fallback_permitted) in [
+        (
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            true,
+        ),
+        (
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            false,
+        ),
+        (
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+            false,
+        ),
+    ] {
+        builder.push_routing_commit_transition(RoutingCommitTransition {
+            from,
+            to,
+            fallback_permitted,
+        })?;
+    }
+    Ok(())
 }
 
 /// Opens a shared program builder bound to the request's exact semantic program.
@@ -515,17 +573,19 @@ fn internal(role: ValueRole, shape: Shape) -> MaterializedValueSpec {
     }
 }
 
-const fn read(view: tiler_ir::program::ViewId) -> StageAccess {
+const fn read(view: ViewId, accessible_bytes: AbiExprId) -> StageAccess {
     StageAccess {
         view,
         mode: StageAccessMode::Read,
+        accessible_bytes,
     }
 }
 
-const fn write(view: tiler_ir::program::ViewId) -> StageAccess {
+const fn write(view: ViewId, accessible_bytes: AbiExprId) -> StageAccess {
     StageAccess {
         view,
         mode: StageAccessMode::Write,
+        accessible_bytes,
     }
 }
 
@@ -537,82 +597,20 @@ fn byte_count(elements: u64) -> Result<u64, ProgramError> {
         })
 }
 
-fn entry_contracts(
-    scheduled: &[VerifiedScheduledRegion],
-    input_bytes: HostExprId,
-    output_bytes: HostExprId,
-) -> Vec<EntryContract> {
-    vec![
-        entry(
-            0,
-            vec![
-                binding(0, 0, ComponentRole::Input, AbiAccess::Read, input_bytes),
-                binding(
-                    1,
-                    1,
-                    ComponentRole::Intermediate,
-                    AbiAccess::Write,
-                    input_bytes,
-                ),
-            ],
-            HostExprId(5),
-            scheduled[0].requirements(),
-            scheduled[0].region().index.numerical,
-        ),
-        entry(
-            1,
-            vec![
-                binding(
-                    0,
-                    1,
-                    ComponentRole::Intermediate,
-                    AbiAccess::Read,
-                    input_bytes,
-                ),
-                binding(1, 2, ComponentRole::Output, AbiAccess::Write, output_bytes),
-            ],
-            HostExprId(6),
-            scheduled[1].requirements(),
-            scheduled[1].region().index.numerical,
-        ),
-    ]
-}
-
-fn routing_policy() -> Vec<RoutingTransition> {
-    vec![
-        RoutingTransition {
-            from: RoutingState::Preflight,
-            to: RoutingState::Committed,
-            fallback_permitted: true,
-        },
-        RoutingTransition {
-            from: RoutingState::Committed,
-            to: RoutingState::Executing,
-            fallback_permitted: false,
-        },
-        RoutingTransition {
-            from: RoutingState::Executing,
-            to: RoutingState::Published,
-            fallback_permitted: false,
-        },
-    ]
-}
-
 /// Verifies the compiler-owned layers of one program against its shared core.
 ///
-/// The shared core is already verified by construction, so this proves only
-/// what the core deliberately does not model: the canonical host preflight
-/// graph and its budgets, the request/target binding, the entry ABI's agreement
-/// with the stages and values the core retains, and the routing contract.
+/// The shared core is already verified by construction — including its ABI
+/// arena, guard, entry ABI and routing-commit contract — so this proves only
+/// what a target-neutral program cannot: the request and target binding, the
+/// request's budgets, the compile-time truth of the guard, and the agreement
+/// between each stage's declared launch and the scheduled region it was planned
+/// from.
 pub(crate) fn verify_kernel_program_layers(
     program: &KernelProgram,
     request: &VerifiedTargetRequest,
     scheduled: &[VerifiedScheduledRegion],
 ) -> Result<(), ProgramError> {
-    if scheduled.is_empty()
-        || program.core.stages().len() != scheduled.len()
-        || program.entries.len() != scheduled.len()
-    {
+    if scheduled.is_empty() || program.core.stages().len() != scheduled.len() {
         return Err(ProgramError::Structure {
             rule: "cardinality",
         });
@@ -635,12 +633,21 @@ pub(crate) fn verify_kernel_program_layers(
         });
     }
     let values = verify_host_contract(program, request)?;
-    for (index, entry) in program.entries.iter().enumerate() {
-        verify_entry(program, entry, index, &scheduled[index], &values)?;
+    for (position, (stage, region)) in program.core.stages().zip(scheduled).enumerate() {
+        verify_entry(stage, region, position, &values)?;
     }
-    if program.routing != routing_policy() {
+    // Fallback before commit is what makes preflight rejection recoverable, so
+    // a governed compilation states it. The complementary rule — that no later
+    // step permits fallback — is proven by the shared builder, which rejects
+    // such a step as `RoutingCommitFallbackAfterCommit`.
+    if !program
+        .core
+        .routing_commit_contract()
+        .first()
+        .is_some_and(|first| first.fallback_permitted)
+    {
         return Err(ProgramError::Routing {
-            rule: "fallback-after-commit",
+            rule: "pre-commit-fallback",
         });
     }
     Ok(())
@@ -650,16 +657,8 @@ fn verify_host_contract(
     program: &KernelProgram,
     request: &VerifiedTargetRequest,
 ) -> Result<Vec<AbiValue>, ProgramError> {
-    let subject = request.serial_sum();
-    let expected_expressions =
-        canonical_host_expressions(subject.input_elements, subject.output_elements);
-    if program.host_expressions != expected_expressions {
-        return Err(ProgramError::HostExpression {
-            rule: "canonical-graph",
-            expression: HostExprId(0),
-        });
-    }
-    if program.host_expressions.len()
+    let expressions = program.core.abi_expressions();
+    if expressions.len()
         > usize::try_from(request.budgets().host_expression_nodes).map_err(|_| {
             ProgramError::Structure {
                 rule: "host-expression-budget",
@@ -679,8 +678,8 @@ fn verify_host_contract(
             rule: "buffer-budget",
         });
     }
-    let values = evaluate_expressions(&program.host_expressions)?;
-    if values.get(program.applicability_guard.0 as usize) != Some(&AbiValue::Boolean(true)) {
+    let values = evaluate_expressions(expressions)?;
+    if values.get(position(program.core.applicability_guard())) != Some(&AbiValue::Boolean(true)) {
         return Err(ProgramError::Structure {
             rule: "applicability-guard",
         });
@@ -688,95 +687,62 @@ fn verify_host_contract(
     Ok(values)
 }
 
-/// Proves one entry contract realizes the exact stage the core retains.
+/// Proves one stage's entry ABI realizes the region it was planned from.
+///
+/// The shared program already proves the structural half — that each access
+/// binds the view its kernel buffer names, that its accessible range equals
+/// that view's window, and that the declared workgroup width is the bound
+/// kernel's. What only a compilation can add is the *planning* half: the region
+/// this stage was scheduled from, whose launch extent and numerical realization
+/// the entry must not contradict.
 fn verify_entry(
-    program: &KernelProgram,
-    entry: &EntryContract,
-    position: usize,
+    stage: StageRef<'_>,
     scheduled: &VerifiedScheduledRegion,
+    position_of_stage: usize,
     values: &[AbiValue],
 ) -> Result<(), ProgramError> {
-    let index = u8::try_from(position).map_err(|_| ProgramError::Structure {
+    let index = u8::try_from(position_of_stage).map_err(|_| ProgramError::Structure {
         rule: "stage-id-overflow",
     })?;
-    let stage = program
-        .core
-        .stages()
-        .nth(position)
-        .ok_or(ProgramError::Abi {
-            rule: "entry-stage",
-            stage: entry.stage,
-        })?;
-    if entry.stage != StageId(index)
-        || entry.requirements != scheduled.requirements()
-        || entry.numerical != scheduled.region().index.numerical
-        || entry.threads_per_workgroup != HostExprId(8)
-        || entry.launch_threads
-            != if position == 0 && program.core.stages().len() == 2 {
-                HostExprId(5)
-            } else {
-                HostExprId(6)
-            }
+    let stage_id = StageId(index);
+    if stage.kernel().requirements() != scheduled.requirements()
+        || stage.kernel().numerical() != scheduled.region().index.numerical
     {
         return Err(ProgramError::Abi {
             rule: "entry-contract",
-            stage: entry.stage,
+            stage: stage_id,
         });
     }
-    if values.get(entry.launch_threads.0 as usize)
+    let launch = stage.launch();
+    if values.get(position(launch.grid_threads))
         != Some(&AbiValue::Unsigned(scheduled.region().schedule.work_items))
-        || values.get(entry.threads_per_workgroup.0 as usize)
+        || values.get(position(launch.threads_per_workgroup))
             != Some(&AbiValue::Unsigned(u64::from(
                 scheduled.region().schedule.threads_per_workgroup,
             )))
     {
         return Err(ProgramError::Abi {
             rule: "launch-expression",
-            stage: entry.stage,
+            stage: stage_id,
         });
     }
-    if entry.bindings.len() != stage.accesses().len() {
-        return Err(ProgramError::Abi {
-            rule: "binding-cardinality",
-            stage: entry.stage,
-        });
-    }
-    for (position, (binding, access)) in entry.bindings.iter().zip(stage.accesses()).enumerate() {
-        let bound = program
-            .core
-            .values()
-            .nth(usize::from(binding.value.0))
-            .ok_or(ProgramError::Abi {
-                rule: "binding-value",
-                stage: entry.stage,
-            })?;
-        let expected_access = match access.mode() {
-            StageAccessMode::Read => AbiAccess::Read,
-            StageAccessMode::Write => AbiAccess::Write,
-        };
-        let expected_bytes = AbiValue::Unsigned(bound.required_bytes());
-        if binding.id != EntryBindingId(u8::try_from(position).expect("bounded binding count"))
-            || bound != access.view().value()
-            || binding.access != expected_access
-            || binding.alignment != bound.alignment()
-            || binding.role != component_role(bound)
-            || values.get(binding.accessible_bytes.0 as usize) != Some(&expected_bytes)
-        {
+    // The shared layer permits a partial view; a bounded-profile entry binds a
+    // whole materialized value, so its accessible range is that value's bytes.
+    for access in stage.accesses() {
+        let expected = AbiValue::Unsigned(access.view().value().required_bytes());
+        if values.get(position(access.accessible_bytes())) != Some(&expected) {
             return Err(ProgramError::Abi {
                 rule: "binding",
-                stage: entry.stage,
+                stage: stage_id,
             });
         }
     }
     Ok(())
 }
 
-fn component_role(value: MaterializedValueRef<'_>) -> ComponentRole {
-    match value.role() {
-        ValueRole::Input => ComponentRole::Input,
-        ValueRole::Temporary => ComponentRole::Intermediate,
-        ValueRole::Output => ComponentRole::Output,
-    }
+/// Converts a checked ABI arena ordinal into a host index.
+fn position(index: u32) -> usize {
+    usize::try_from(index).expect("u32 fits every supported host usize")
 }
 
 pub(crate) fn build_artifact_plan(
@@ -806,9 +772,9 @@ pub(crate) fn build_artifact_plan(
         semantic_identity: request.semantic_identity().clone(),
         numerical_contract_key: request.numerical_contract().key,
         numerical_realizations: program
-            .entries
-            .iter()
-            .map(|entry| entry.numerical)
+            .core
+            .stages()
+            .map(|stage| stage.kernel().numerical())
             .collect(),
         target_profile_key: program.target_profile_key,
         // Derived from the request's profile, which `verify_request` proves is
@@ -832,7 +798,7 @@ pub(crate) fn build_artifact_plan(
             .stages()
             .map(|stage| stage.kernel().scheduled_region())
             .collect(),
-        routing_guard: program.applicability_guard,
+        applicability_guard: program.core.applicability_guard(),
         lowering_providers: providers,
         request_subject: request.subject(),
         verified_program: program.clone(),
@@ -909,9 +875,9 @@ fn verify_artifact_refinements(
     }
     if program.target_profile_key != request.target_profile().key
         || program
-            .entries
-            .iter()
-            .any(|entry| entry.numerical != request.numerical_contract().realization())
+            .core
+            .stages()
+            .any(|stage| stage.kernel().numerical() != request.numerical_contract().realization())
     {
         return Err(ProgramError::Structure {
             rule: "artifact-numerical-realization",
@@ -938,74 +904,14 @@ pub(crate) fn verify_artifact_plan(
     Ok(())
 }
 
-fn host_expressions(request: &VerifiedTargetRequest) -> Result<Vec<ExprNode>, ProgramError> {
-    let expressions = canonical_host_expressions(
-        request.serial_sum().input_elements,
-        request.serial_sum().output_elements,
-    );
-    let actual = expressions.len();
-    if actual
-        > usize::try_from(request.budgets().host_expression_nodes).map_err(|_| {
-            ProgramError::Structure {
-                rule: "host-expression-budget",
-            }
-        })?
-    {
-        return Err(ProgramError::Structure {
-            rule: "host-expression-budget",
-        });
-    }
-    Ok(expressions)
-}
-
-/// Builds the canonical host preflight graph for one bounded-profile subject.
-///
-/// Every extent enters as an `UnsignedLiteral` because the bounded profile's
-/// shapes are static, so each is already known at `CompileProfile`. The domain
-/// also admits an `InputExtent` root that resolves at `LiveDevicePreflight`,
-/// which is what a dynamic-shape subject would name here instead; promoting
-/// these literals is a capability question tied to dynamic shapes, not a
-/// property of the vocabulary, and nothing in this graph has to change shape
-/// for it.
-///
-/// Positions are load-bearing and are named by the `HostExprId` constants at
-/// the construction sites. Operands always precede their use, which is the
-/// arena's acyclicity invariant.
-fn canonical_host_expressions(input_elements: u64, output_elements: u64) -> Vec<ExprNode> {
-    vec![
-        // 0: the element byte width every accessible range scales by.
-        ExprNode::Root(AbiRoot::UnsignedLiteral(ELEMENT_BYTES)),
-        // 1..=2: input elements, and the input's accessible byte count.
-        ExprNode::Root(AbiRoot::UnsignedLiteral(input_elements)),
-        ExprNode::Binary {
-            op: AbiBinaryOp::CheckedMultiply,
-            left: 0,
-            right: 1,
-        },
-        // 3..=4: output elements, and the output's accessible byte count.
-        ExprNode::Root(AbiRoot::UnsignedLiteral(output_elements)),
-        ExprNode::Binary {
-            op: AbiBinaryOp::CheckedMultiply,
-            left: 0,
-            right: 3,
-        },
-        // 5..=6: per-stage launch thread counts.
-        ExprNode::Root(AbiRoot::UnsignedLiteral(input_elements)),
-        ExprNode::Root(AbiRoot::UnsignedLiteral(output_elements)),
-        // 7: the applicability guard, which must evaluate true.
-        ExprNode::Root(AbiRoot::BooleanLiteral(true)),
-        // 8: threads per workgroup for the serial subject.
-        ExprNode::Root(AbiRoot::UnsignedLiteral(1)),
-    ]
-}
-
-/// Evaluates every node of the host preflight graph in arena order.
+/// Evaluates every node of the program's ABI arena in arena order.
 ///
 /// The shared evaluator is the authority for what each node means, so this
 /// function owns only the mapping from its typed failures onto this crate's
-/// rules. Every node is evaluated rather than only the roots the entries name,
-/// because an unreferenced node that cannot evaluate is still a malformed graph
-/// and the arena is nine nodes.
+/// rules. Every node is evaluated rather than only the roots the entries name:
+/// the program layer proves every node is *reachable* from a use site, and this
+/// proves every node is *evaluable* at compile time, which the bounded profile
+/// requires but a program in general does not.
 ///
 /// The bound environment is empty and reaches only `CompileProfile`: the
 /// bounded profile's graph is entirely literals, so binding a device fact here
@@ -1044,40 +950,6 @@ fn host_expression_error(error: &AbiEvaluationError, at: HostExprId) -> ProgramE
     }
 }
 
-fn binding(
-    id: u8,
-    value: u8,
-    role: ComponentRole,
-    access: AbiAccess,
-    bytes: HostExprId,
-) -> EntryBinding {
-    EntryBinding {
-        id: EntryBindingId(id),
-        value: MaterializedValueId(value),
-        role,
-        access,
-        alignment: ELEMENT_ALIGNMENT,
-        accessible_bytes: bytes,
-    }
-}
-
-fn entry(
-    stage: u8,
-    bindings: Vec<EntryBinding>,
-    launch_threads: HostExprId,
-    requirements: ResourceRequirements,
-    numerical: NumericalRealization,
-) -> EntryContract {
-    EntryContract {
-        stage: StageId(stage),
-        bindings,
-        launch_threads,
-        threads_per_workgroup: HostExprId(8),
-        requirements,
-        numerical,
-    }
-}
-
 /// Proves the separately retained kernels are exactly the ones the program binds.
 ///
 /// The shared program already holds each stage's verified kernel, so this
@@ -1091,7 +963,6 @@ pub(crate) fn assert_kernels_match_program(
 ) -> Result<(), ProgramError> {
     if kernels.len() != scheduled.len()
         || kernels.len() != program.core.stages().len()
-        || kernels.len() != program.entries.len()
         || scheduled
             .iter()
             .any(|region| !region.matches_request(request))
