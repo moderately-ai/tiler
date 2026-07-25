@@ -277,6 +277,22 @@ def fixture_names(root: Path, directory: str) -> set[str]:
     return {f"{directory}/{path.name}" for path in (root / directory).glob("*.rs")}
 
 
+def trybuild_case_names(root: Path) -> list[str]:
+    """Name every trybuild case a run of this workspace must report compiling.
+
+    The paths are relative to the consuming crate, which is how trybuild prints
+    them, so each is a fragment the transcript must contain.
+    """
+    names = sorted(
+        f"tests/ui/{path.parent.name}/{path.name}"
+        for directory in (VISIBILITY_FAIL_DIR, VISIBILITY_PASS_DIR)
+        for path in (root / directory).glob("*.rs")
+    )
+    if not names:
+        raise ProbeFailure(f"{root.name} retains no trybuild case to require")
+    return names
+
+
 def verify_visibility_evidence(root: Path, channel: str) -> dict[str, object]:
     """Check the retained `#[non_exhaustive]` diagnostics against their record.
 
@@ -472,14 +488,13 @@ def run_non_exhaustive_visibility(deadline: float, records: list[CommandResult])
     require_success(result)
     # Naming each compile-fail case rejects a run whose trybuild glob silently
     # matched nothing, which would otherwise report success having compiled the
-    # passing direction alone.
-    require_output(
-        result,
-        "tests/ui/fail/cross_crate_total_map.rs",
-        "tests/ui/fail/omitted_patterns_denied.rs",
-        "tests/ui/fail/omitted_patterns_inert_without_feature.rs",
-        "test result: ok",
-    )
+    # passing direction alone. The names are derived rather than listed here
+    # because a hand-maintained list decays in the one direction that matters:
+    # a case added and not listed is never asserted, and nothing reports it.
+    # Deriving them is not circular — the record above already required the
+    # fixture set on disk to equal the recorded set in both directions, so this
+    # asserts the recorded set reached the compiler.
+    require_output(result, *trybuild_case_names(VISIBILITY_ROOT), "test result: ok")
 
 
 def run_semantic_foundation(deadline: float, records: list[CommandResult]) -> None:

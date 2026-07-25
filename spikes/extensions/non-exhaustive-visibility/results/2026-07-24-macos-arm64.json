@@ -1,6 +1,17 @@
 {
   "schema": "tiler-non-exhaustive-visibility/v1",
   "recorded": "2026-07-24",
+  "amended": {
+    "date": "2026-07-25",
+    "ticket": "probe-the-non-exhaustive-discriminant-cast-hole",
+    "claims_added": [
+      "cross-crate-discriminant-cast-compiles",
+      "cross-crate-discriminant-tag-match-fails-e0004",
+      "denied-omitted-patterns-does-not-reach-a-cast",
+      "crate-level-deny-fires-on-the-match-and-not-on-the-cast"
+    ],
+    "note": "The four claims added on 2026-07-25 were captured on the same toolchain, host, and operating-system build recorded below, verified identical before the run: rustc eff8269f797067c30555e77f160ec84c0ed15cd9, cargo 3efb1f477e99b42974b982d939fd100303cdf7db, aarch64-apple-darwin, macOS 27.0 (26A5388g). The record stays one file because the verifier requires the recorded fixture set to equal the set on disk in both directions, so a second record would have to restate every claim in this one."
+  },
   "procedure": "cargo test --locked --manifest-path spikes/extensions/non-exhaustive-visibility/Cargo.toml",
   "toolchain": {
     "channel": "nightly-2026-07-19",
@@ -99,6 +110,62 @@
       "outcome": "compiles",
       "cases": [
         "consuming/tests/ui/pass/omitted_patterns_all_variants_listed.rs"
+      ]
+    },
+    {
+      "id": "cross-crate-discriminant-cast-compiles",
+      "recorded": "2026-07-25",
+      "adr": "ADR-0074 convention 5b",
+      "statement": "A discriminant cast of a #[non_exhaustive] enum written outside the defining crate compiles. The attribute does not constrain `as`, so it cannot reach an encoder that reads a tag from ordinal position.",
+      "outcome": "compiles",
+      "cases": [
+        "consuming/tests/ui/pass/cross_crate_discriminant_cast.rs"
+      ]
+    },
+    {
+      "id": "cross-crate-discriminant-tag-match-fails-e0004",
+      "recorded": "2026-07-25",
+      "adr": "ADR-0074 convention 5b",
+      "statement": "The same total map written as the convention-3 match, deriving the same tag for the same variant across the same crate boundary, fails E0004. The pair is the measurement: the attribute reaches the written match and not the cast, so convention 3 rather than convention 5 is what closes a discriminant-cast encoder.",
+      "outcome": "fails",
+      "case": "consuming/tests/ui/fail/cross_crate_discriminant_tag_match.rs",
+      "diagnostic_code": "E0004",
+      "first_line": "error[E0004]: non-exhaustive patterns: `_` not covered",
+      "required_fragments": [
+        "`Growing` is marked as non-exhaustive, so a wildcard `_` is necessary to match exhaustively",
+        "the matched value is of type `Growing`"
+      ],
+      "forbidden_fragments": [
+        "pattern `&_` not covered"
+      ]
+    },
+    {
+      "id": "denied-omitted-patterns-does-not-reach-a-cast",
+      "recorded": "2026-07-25",
+      "adr": "ADR-0074 convention 5b",
+      "statement": "A crate that enables non_exhaustive_omitted_patterns_lint and denies the lint crate-wide still compiles a cross-crate discriminant cast. The escape hatch ADR 0074 records as the alternative to dropping #[non_exhaustive] is a lint about match arms, and a cast writes none, so a stricter lint level does not close the hole either.",
+      "outcome": "compiles",
+      "cases": [
+        "consuming/tests/ui/pass/cast_ignores_denied_omitted_patterns.rs"
+      ]
+    },
+    {
+      "id": "crate-level-deny-fires-on-the-match-and-not-on-the-cast",
+      "recorded": "2026-07-25",
+      "adr": "ADR-0074 convention 5b",
+      "statement": "The control for the claim above. A compiling fixture cannot distinguish a lint that does not reach a cast from a crate-level lint level the compiler accepts and never consults, and the pre-existing denied case only rules that out for a #[deny] written on the match itself, which no cast site has. This fixture denies the lint at crate level and contains both constructs: the retained diagnostic reports the omitting match, names the crate-level attribute as the level that fired, and says nothing about the cast beside it.",
+      "outcome": "fails",
+      "case": "consuming/tests/ui/fail/omitted_patterns_denied_at_crate_level.rs",
+      "diagnostic_code": null,
+      "first_line": "error: some variants are not matched explicitly",
+      "required_fragments": [
+        "pattern `&Growing::B` not covered",
+        "the `non_exhaustive_omitted_patterns` attribute was found",
+        "note: the lint level is defined here",
+        "#![deny(non_exhaustive_omitted_patterns)]"
+      ],
+      "forbidden_fragments": [
+        "value as u8"
       ]
     }
   ]
