@@ -48,6 +48,7 @@
 
 use core::fmt;
 
+use crate::identity::{push_len, push_str};
 use crate::input::{ApplePlatform, AppleSdk, DeploymentMinimum, MetalTarget, MslVersion};
 
 /// Versioned domain tag opening the canonical selection bytes.
@@ -315,6 +316,14 @@ impl ArtifactFamilySelection {
     /// be a second identity authority over the same subject; a caller that
     /// already owns the governed algorithm digests these bytes instead
     /// (ADR 0074 convention 2).
+    ///
+    /// The framing is [`crate::identity::push_len`], this crate's sole admitted
+    /// copy of the workspace's canonical eight-byte big-endian prefix. It is not
+    /// merely shared for tidiness: this function previously carried a private
+    /// four-byte `u32` framing while `identity.rs` framed the compilation
+    /// subject in eight, so one crate held two widths under one name, and a
+    /// reader comparing the two encoders had nothing but the `u32` literal to
+    /// tell them apart.
     pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(SELECTION_DOMAIN);
@@ -329,27 +338,15 @@ impl ArtifactFamilySelection {
                 bytes.push(0x01);
                 push_len(&mut bytes, families.len());
                 for selected in families {
-                    push_slice(&mut bytes, selected.family.as_str().as_bytes());
+                    push_str(&mut bytes, selected.family.as_str());
                     bytes.extend_from_slice(&selected.deployment_minimum.major().to_be_bytes());
                     bytes.extend_from_slice(&selected.deployment_minimum.minor().to_be_bytes());
-                    push_slice(&mut bytes, selected.msl_version.std_token().as_bytes());
+                    push_str(&mut bytes, selected.msl_version.std_token());
                 }
             }
         }
         bytes
     }
-}
-
-/// Writes a fixed-width big-endian count before a repeated run.
-fn push_len(bytes: &mut Vec<u8>, len: usize) {
-    let len = u32::try_from(len).expect("a governed family selection holds at most three families");
-    bytes.extend_from_slice(&len.to_be_bytes());
-}
-
-/// Writes a fixed-width big-endian length before a variable-length run.
-fn push_slice(bytes: &mut Vec<u8>, value: &[u8]) {
-    push_len(bytes, value.len());
-    bytes.extend_from_slice(value);
 }
 
 /// Why one artifact-family selection is not a valid compilation request.
@@ -665,6 +662,29 @@ mod tests {
         assert_ne!(fallback, macos);
         assert!(fallback.starts_with(super::SELECTION_DOMAIN));
         assert!(macos.starts_with(super::SELECTION_DOMAIN));
+    }
+
+    /// The family count is framed in the workspace's eight bytes, not four.
+    ///
+    /// The prefix is spelled out here rather than produced by
+    /// `crate::identity::push_len`, because checking the encoder with the
+    /// encoder's own helper is exactly what cannot catch the width changing.
+    /// This crate carried a private four-byte `u32` framing in this file while
+    /// framing its compilation subject in eight, so the two encoders in one
+    /// crate disagreed on the one thing a canonical form has to fix. Nothing
+    /// consumed these bytes yet, so consolidating them moved no identity — this
+    /// test is what makes the width a stated property rather than a byte a
+    /// reader has to derive from a literal.
+    #[test]
+    fn the_family_count_carries_the_eight_byte_framing() {
+        let bytes = selection(vec![selected(ApplePlatform::MacOs, 13, 0)]).canonical_bytes();
+        // The policy tag and its requirement mode precede the count.
+        let count_at = super::SELECTION_DOMAIN.len() + 2;
+        assert_eq!(
+            &bytes[count_at..count_at + 8],
+            &[0, 0, 0, 0, 0, 0, 0, 1],
+            "one selected family must be framed as eight big-endian bytes",
+        );
     }
 
     /// The canonical bytes open with their versioned domain tag.

@@ -344,10 +344,13 @@ fn encode_operation(output: &mut Vec<u8>, operation: &OperationData) {
     operation.attributes.encode(output);
 }
 
+/// Frames one string as the UTF-8 byte run it already is.
+///
+/// `str::len` is the UTF-8 byte length, so this is exactly the run
+/// [`push_slice`] frames: the wrapper exists for the `&str` conversion and not
+/// for a second framing rule. `scripts/check_workspace.py` pins it on that
+/// basis, so a body that stopped delegating would have to be re-admitted.
 fn encode_string(output: &mut Vec<u8>, value: &str) {
-    // `str::len` is already the UTF-8 byte length, so this is the byte run
-    // `push_slice` frames — the wrapper exists for the `&str` conversion, not
-    // for a second framing rule.
     push_slice(output, value.as_bytes());
 }
 

@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::identity::push_len;
+
 use num_bigint::{BigInt, Sign};
 
 /// Canonical sign of an exact index integer.
@@ -98,11 +100,7 @@ impl IndexInteger {
             IndexIntegerSign::Zero => 1,
             IndexIntegerSign::Positive => 2,
         });
-        output.extend_from_slice(
-            &u64::try_from(magnitude.len())
-                .expect("supported integer magnitude fits u64")
-                .to_be_bytes(),
-        );
+        push_len(output, magnitude.len());
         output.extend_from_slice(&magnitude);
     }
 }

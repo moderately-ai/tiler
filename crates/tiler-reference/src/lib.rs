@@ -23,6 +23,7 @@ pub use oracle::{
     UnsupportedRegionFeature,
 };
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::semantic::{
     CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalIntegerWidth, CanonicalValueView, Definition, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, FrozenSemanticRegistry, InputKey, MAX_OPERATION_OPERANDS,
@@ -2077,14 +2078,14 @@ fn compute_reference_identity(
 ) -> CanonicalReferenceRegistryIdentity {
     let mut bytes = Vec::with_capacity(exact_len);
     bytes.extend_from_slice(b"tiler.reference-registry.v2\0");
-    encode_bytes(&mut bytes, semantic_registry.snapshot_identity().as_bytes());
-    encode_len(&mut bytes, value_validators.len());
+    push_slice(&mut bytes, semantic_registry.snapshot_identity().as_bytes());
+    push_len(&mut bytes, value_validators.len());
     for (resolved_type, validator) in value_validators {
-        encode_bytes(&mut bytes, resolved_type.canonical_encoding().as_bytes());
+        push_slice(&mut bytes, resolved_type.canonical_encoding().as_bytes());
         encode_reference_authority(&mut bytes, &validator.semantic_authority);
         encode_provider_capability(&mut bytes, &validator.provider, validator.revision);
     }
-    encode_len(&mut bytes, capabilities.len());
+    push_len(&mut bytes, capabilities.len());
     for (key, capability) in capabilities {
         encode_op_key(&mut bytes, &key.operation);
         encode_signature(&mut bytes, &key.signature);
@@ -2096,9 +2097,9 @@ fn compute_reference_identity(
 }
 
 fn encode_reference_authority(output: &mut Vec<u8>, authority: &SemanticCapabilityAuthority) {
-    encode_bytes(output, authority.reached_definitions().as_bytes());
-    encode_bytes(output, authority.admission_provenance().as_bytes());
-    encode_bytes(output, authority.registry_snapshot().as_bytes());
+    push_slice(output, authority.reached_definitions().as_bytes());
+    push_slice(output, authority.admission_provenance().as_bytes());
+    push_slice(output, authority.registry_snapshot().as_bytes());
 }
 
 pub(crate) fn encode_provider_capability(
@@ -2106,24 +2107,24 @@ pub(crate) fn encode_provider_capability(
     provider: &ProviderIdentity,
     revision: ReferenceCapabilityRevision,
 ) {
-    encode_bytes(output, provider.namespace().as_bytes());
-    encode_bytes(output, provider.name().as_bytes());
+    push_slice(output, provider.namespace().as_bytes());
+    push_slice(output, provider.name().as_bytes());
     output.extend_from_slice(&provider.revision().to_be_bytes());
     output.extend_from_slice(&revision.get().to_be_bytes());
 }
 
 fn encode_op_key(output: &mut Vec<u8>, key: &OpKey) {
-    encode_bytes(output, key.namespace().as_bytes());
-    encode_bytes(output, key.name().as_bytes());
+    push_slice(output, key.namespace().as_bytes());
+    push_slice(output, key.name().as_bytes());
     output.extend_from_slice(&key.semantic_version().to_be_bytes());
 }
 
 pub(crate) fn encode_signature(output: &mut Vec<u8>, signature: &ReferenceSignature) {
     for values in [signature.operands(), signature.results()] {
-        encode_len(output, values.len());
+        push_len(output, values.len());
         for value in values {
             let canonical = value.canonical_encoding();
-            encode_bytes(output, canonical.as_bytes());
+            push_slice(output, canonical.as_bytes());
         }
     }
 }
@@ -2221,19 +2222,6 @@ fn collect_signature_types(
         retained.push(value);
     }
     Ok(retained)
-}
-
-pub(crate) fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(
-        &u64::try_from(value)
-            .expect("supported usize fits u64")
-            .to_be_bytes(),
-    );
-}
-
-pub(crate) fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
 }
 
 /// Replaces any NaN produced by a binary32 arithmetic operation with the one

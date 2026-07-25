@@ -13,6 +13,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
     AccessMode, CanonicalScalarDefinitionProjection, DomainRole, FrozenScalarRegistry,
     IndexExprView, MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView, ReductionTraversal,
@@ -36,8 +37,8 @@ use crate::{
     MAX_REFERENCE_REGISTRY_IDENTITY_BYTES, MAX_REFERENCE_TENSOR_ELEMENTS,
     ReferenceCapabilityRevision, ReferenceElement, ReferenceOperationError, ReferenceRegistryError,
     ReferenceRegistryResource, ReferenceSignature, Tensor, TensorPayloadView,
-    canonicalize_arithmetic_f32, decode_f32, encode_bytes, encode_len, encode_provider_capability,
-    encode_signature, encoded_bytes_len, f32_element, reference_provider_identity_len,
+    canonicalize_arithmetic_f32, decode_f32, encode_provider_capability, encode_signature,
+    encoded_bytes_len, f32_element, reference_provider_identity_len,
     reference_signature_identity_len,
 };
 
@@ -736,9 +737,9 @@ fn project_capability_authority(
 
 /// Encodes the reached scalar definition and its admitting scalar provider.
 fn encode_scalar_authority(output: &mut Vec<u8>, authority: &ScalarCapabilityAuthority) {
-    encode_bytes(output, authority.definitions.as_bytes());
-    encode_bytes(output, authority.provider.namespace().as_bytes());
-    encode_bytes(output, authority.provider.name().as_bytes());
+    push_slice(output, authority.definitions.as_bytes());
+    push_slice(output, authority.provider.namespace().as_bytes());
+    push_slice(output, authority.provider.name().as_bytes());
     output.extend_from_slice(&authority.provider.revision().to_be_bytes());
 }
 
@@ -769,11 +770,11 @@ fn compute_scalar_reference_identity(
 ) -> CanonicalScalarReferenceRegistryIdentity {
     let mut bytes = Vec::with_capacity(exact_len);
     bytes.extend_from_slice(SCALAR_REFERENCE_IDENTITY_TAG);
-    encode_bytes(&mut bytes, scalar_registry.snapshot_identity().as_bytes());
-    encode_len(&mut bytes, capabilities.len());
+    push_slice(&mut bytes, scalar_registry.snapshot_identity().as_bytes());
+    push_len(&mut bytes, capabilities.len());
     for (key, capability) in capabilities {
-        encode_bytes(&mut bytes, key.operation.namespace().as_bytes());
-        encode_bytes(&mut bytes, key.operation.name().as_bytes());
+        push_slice(&mut bytes, key.operation.namespace().as_bytes());
+        push_slice(&mut bytes, key.operation.name().as_bytes());
         bytes.extend_from_slice(&key.operation.semantic_version().to_be_bytes());
         encode_signature(&mut bytes, &key.signature);
         encode_scalar_authority(&mut bytes, &capability.authority);

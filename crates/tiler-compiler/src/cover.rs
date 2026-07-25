@@ -45,6 +45,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::semantic::{SemanticProgram, ValueId};
 
 use crate::region::{
@@ -977,17 +978,17 @@ fn encode_cover_identity(
     materializations: &[MaterializationEdge],
 ) -> RegionCoverIdentity {
     let mut bytes = COVER_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, graph_identity);
-    encode_len(&mut bytes, regions.len());
+    push_slice(&mut bytes, graph_identity);
+    push_len(&mut bytes, regions.len());
     for region in regions {
-        encode_bytes(&mut bytes, region.occurrence.as_bytes());
+        push_slice(&mut bytes, region.occurrence.as_bytes());
     }
     // Producer duplication is disabled in this profile, so no member positions are
     // emitted. A future duplication-enabled profile must encode canonical
     // positions here rather than transient graph-local ordinals.
-    encode_len(&mut bytes, duplication.duplicated.len());
+    push_len(&mut bytes, duplication.duplicated.len());
     debug_assert!(duplication.duplicated.is_empty());
-    encode_len(&mut bytes, materializations.len());
+    push_len(&mut bytes, materializations.len());
     for edge in materializations {
         encode_materialization(&mut bytes, edge);
     }
@@ -997,24 +998,15 @@ fn encode_cover_identity(
 fn encode_materialization(output: &mut Vec<u8>, edge: &MaterializationEdge) {
     output.extend_from_slice(&edge.producer_position.to_be_bytes());
     output.extend_from_slice(&edge.result_position.to_be_bytes());
-    encode_bytes(output, edge.producer.as_bytes());
-    encode_len(output, edge.consumers.len());
+    push_slice(output, edge.producer.as_bytes());
+    push_len(output, edge.consumers.len());
     for consumer in &edge.consumers {
-        encode_bytes(output, consumer.as_bytes());
+        push_slice(output, consumer.as_bytes());
     }
 }
 
 fn member_index(member: SemanticMemberId) -> usize {
     usize::try_from(member.0).unwrap_or(usize::MAX)
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
-}
-
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(&count(value).to_be_bytes());
 }
 
 fn count(value: usize) -> u64 {

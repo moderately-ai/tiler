@@ -248,6 +248,147 @@ ADMITTED_UNSAFE_SITES: dict[tuple[str, str], str] = {
     ),
 }
 
+# Every definition of canonical length framing the workspace is permitted,
+# keyed by `(package-relative path, item signature)`.
+#
+# Identity in this workspace is a digest over a canonical encoding, so two
+# encoders disagreeing by one byte name the same subject with two different
+# identities and nothing downstream can tell that from two genuinely different
+# subjects. `tiler_ir::identity` therefore owns the framing, and a crate that
+# can reach it has no permitted copy of its own.
+#
+# The pin exists because a *convention* did not hold this. `tiler_ir::identity`
+# stated the rule in its own module documentation while five copies grew inside
+# that crate; two more then grew in `tiler-compiler`; and the crate-local test
+# that replaced the prose could not see any other crate. This table is the
+# workspace-wide form, and it is a table rather than a bare "zero copies
+# outside `tiler-ir`" rule because one crate genuinely may not import the
+# framing: ADR 0077 item 2 pins `tiler-metal-aot`'s dependency closure empty, so
+# its copy is forced by an accepted decision rather than being a defect.
+#
+# Each value states why the site is admitted, and names a `citation` the site's
+# own documentation must contain. The reason is Python-side and the citation is
+# source-verified, which is the one deliberate difference from
+# `ADMITTED_UNSAFE_SITES` above: an admitted `unsafe` site carries a
+# `reason = "..."` attribute the compiler already requires, and a framing helper
+# has no such attribute — only a doc comment, whose rustdoc structure would
+# churn this table on edits that change nothing about the admission. Pinning the
+# citation keeps the load-bearing half checked: a copy whose documentation stops
+# naming the decision that forces it stops being admitted.
+FRAMING_SITE_CITATIONS: dict[tuple[str, str], tuple[str, str]] = {
+    (
+        "crates/tiler-ir/src/identity.rs",
+        "pub fn push_len(bytes: &mut Vec<u8>, len: usize)",
+    ): (
+        "the workspace's sole canonical length framing. Every crate that can reach "
+        "`tiler-ir` calls this and defines none of its own.",
+        "sole definition of canonical length framing",
+    ),
+    (
+        "crates/tiler-ir/src/identity.rs",
+        "pub fn push_slice(bytes: &mut Vec<u8>, value: &[u8])",
+    ): (
+        "the length-prefixed byte run built from `push_len`, admitted beside it as "
+        "one primitive pair rather than a second framing.",
+        "one primitive pair",
+    ),
+    (
+        "crates/tiler-ir/src/semantic/identity.rs",
+        "fn encode_string(output: &mut Vec<u8>, value: &str)",
+    ): (
+        "a `&str`-to-`&[u8]` adapter, not a framing: `str::len` is already the UTF-8 "
+        "byte length and the body delegates to `push_slice`. Pinned rather than "
+        "exempted by shape, so a later edit that puts a real framing in this body is "
+        "a diff someone must look at.",
+        "not for a second framing rule",
+    ),
+    (
+        "crates/tiler-cache/src/expansion/subject.rs",
+        "fn push_count(bytes: &mut Vec<u8>, count: usize)",
+    ): (
+        "forced by ADR 0082 item 2, which decides this crate's closure is exactly "
+        "`tiler-artifact` — and states in terms that `tiler-ir` is 'an edge this "
+        "record decides the crate does not have'. `ComposedSubject` is a genuine "
+        "canonical identity preimage, so this is the same admission as the driver's "
+        "and not a classification of the framing as something else.",
+        "ADR 0082 item 2",
+    ),
+    (
+        "crates/tiler-cache/src/expansion/subject.rs",
+        "fn push_run(bytes: &mut Vec<u8>, run: &[u8])",
+    ): (
+        "the length-prefixed run built from the `push_count` above, admitted with it "
+        "under the same ADR 0082 item 2 closure.",
+        "Admitted alongside",
+    ),
+    (
+        "crates/tiler-artifact/src/program/codec/encode.rs",
+        "bytes.extend_from_slice(&ordinal(envelope.sections().len()).to_be_bytes());",
+    ): (
+        "not canonical identity framing but a four-byte field of the envelope's "
+        "fixed-width header, read back as `cursor.u32()` by `decode.rs` and sized by "
+        "the `u32` ordinal space the envelope's tables are indexed in. Widening it "
+        "to the eight-byte framing beside it on the previous line would change the "
+        "artifact ABI, not remove a duplicate.",
+        "not `tiler_ir::identity` framing",
+    ),
+    (
+        "crates/tiler-metal-aot/src/identity.rs",
+        "pub(crate) fn push_len(bytes: &mut Vec<u8>, len: usize)",
+    ): (
+        "forced by ADR 0077 item 2, which pins this crate's dependency closure "
+        "empty: it declares no workspace dependency, so `tiler_ir::identity` is not "
+        "importable here and the framing has to be restated. Admitted once, so a "
+        "second copy in this crate is a diff someone must look at — which is how "
+        "`family.rs` came to frame its own subject in four bytes while this one "
+        "framed the compilation subject in eight.",
+        "ADR 0077 item 2",
+    ),
+    (
+        "crates/tiler-metal-aot/src/identity.rs",
+        "pub(crate) fn push_str(bytes: &mut Vec<u8>, value: &str)",
+    ): (
+        "the textual run built from the `push_len` above, admitted with it under the "
+        "same ADR 0077 item 2 closure.",
+        "Admitted alongside",
+    ),
+    (
+        "crates/tiler-cache/src/expansion/bundle.rs",
+        "bytes.extend_from_slice(&(sections.len() as u64).to_be_bytes());",
+    ): (
+        "not canonical identity framing but a fixed-offset field of a decodable "
+        "container: it is written at `SECTION_COUNT_AT` and read back by "
+        "`read_u64`, the section bytes it counts are located by explicit descriptor "
+        "offsets rather than by following a prefix, and the bundle bytes are never "
+        "digested into an identity. `tiler-cache` therefore does not acquire "
+        "`tiler-ir` to write it; its closure stays exactly `tiler-artifact` under "
+        "ADR 0082, for the same reason `tiler-runtime` keeps `tiler-ir` out as a "
+        "direct edge.",
+        "not `tiler_ir::identity` framing",
+    ),
+}
+
+# A canonical-encoding primitive's structural shape: a `&mut Vec<u8>` sink plus
+# exactly one payload it frames.
+#
+# Recognizing the *signature* rather than a name is deliberate. Every copy this
+# check exists to catch was found by name, and every name list has been
+# incomplete: the crate-local test that preceded this one listed `push_len`,
+# `push_slice`, `encode_len`, and `encode_bytes`, and `tiler-compiler`'s
+# `region.rs` held an `encode_count` none of them matched.
+FRAMING_SINK = "&mutVec<u8>"
+FRAMING_PAYLOADS = frozenset({"usize", "&[u8]", "&str"})
+FRAMING_FN = re.compile(r"\bfn\s+[A-Za-z_][A-Za-z0-9_]*\s*[(<]")
+# The helper-less shape: a length converted and written in one statement. The
+# fifth copy inside `tiler-ir` was written this way, with no helper at all.
+FRAMING_LENGTH_SOURCE = re.compile(r"\.(?:len|rank)\s*\(\s*\)")
+FRAMING_FIXED_WIDTH = re.compile(r"\bto_(?:be|le)_bytes\s*\(\s*\)")
+CFG_TEST_ATTRIBUTE = re.compile(r"#\[cfg\(test\)\]")
+MODULE_DECLARATION = re.compile(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
+RAW_STRING_OPENING = re.compile(r"b?r(#*)\"")
+STRING_OPENING = re.compile(r"b?\"")
+CHAR_LITERAL = re.compile(r"b?'(?:\\[^']*|[^'\\])'")
+
 # `unsafe_code` as a whole token, so `unsafe_codegen` or a longer identifier
 # does not match.
 UNSAFE_CODE_TOKEN = re.compile(r"\bunsafe_code\b")
@@ -501,6 +642,373 @@ def validate_unsafe_site_pins(
             errors.append(
                 f"unsafe-sites.{path}: `{item}` is pinned in a package that inherits the "
                 'workspace `unsafe_code = "forbid"`, where no allow attribute can apply'
+            )
+    return errors
+
+
+def rust_code_only(text: str) -> str:
+    """Return `text` with comment and literal *contents* replaced by spaces.
+
+    Offsets and line breaks are preserved, so a match found in the result can be
+    sliced out of the original. Everything downstream — brace balancing, `fn`
+    recognition, and the length-write search — runs over this rather than raw
+    source, so a `#[cfg(test)]` quoted in prose, a `.len()` inside a doc comment,
+    or a brace inside a string literal cannot steer the scan.
+
+    Rust's lexical cases are handled explicitly: line comments, *nesting* block
+    comments, byte and ordinary strings, raw strings at any hash count, and
+    character literals. The last needs care because `'` also opens a lifetime:
+    a tick is treated as a literal only when a complete one closes it, so
+    `&'static str` is left as code rather than swallowing to the next quote.
+    """
+    result: list[str] = []
+    index = 0
+    length = len(text)
+
+    def blanked(span: str) -> str:
+        return "".join(" " if character != "\n" else "\n" for character in span)
+
+    while index < length:
+        character = text[index]
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            end = length if end < 0 else end
+            result.append(blanked(text[index:end]))
+            index = end
+        elif text.startswith("/*", index):
+            depth = 0
+            cursor = index
+            while cursor < length:
+                if text.startswith("/*", cursor):
+                    depth += 1
+                    cursor += 2
+                elif text.startswith("*/", cursor):
+                    depth -= 1
+                    cursor += 2
+                    if depth == 0:
+                        break
+                else:
+                    cursor += 1
+            result.append(blanked(text[index:cursor]))
+            index = cursor
+        elif (raw := RAW_STRING_OPENING.match(text, index)) is not None:
+            terminator = '"' + raw.group(1)
+            end = text.find(terminator, raw.end())
+            end = length if end < 0 else end + len(terminator)
+            result.append(blanked(text[index:end]))
+            index = end
+        elif (quoted := STRING_OPENING.match(text, index)) is not None:
+            cursor = quoted.end()
+            while cursor < length and text[cursor] != '"':
+                cursor += 2 if text[cursor] == "\\" else 1
+            end = min(cursor + 1, length)
+            result.append(blanked(text[index:end]))
+            index = end
+        elif (literal := CHAR_LITERAL.match(text, index)) is not None:
+            # Only a *complete* character literal blanks; a bare tick is a
+            # lifetime, so `&'static str` stays code instead of swallowing
+            # source to the next quote.
+            result.append(blanked(literal.group()))
+            index = literal.end()
+        else:
+            result.append(character)
+            index += 1
+    return "".join(result)
+
+
+def balanced_end(code: str, start: int, opening: str, closing: str) -> int:
+    """Return the index just past the group `code[start]` opens, or `len(code)`."""
+    depth = 0
+    cursor = start
+    while cursor < len(code):
+        if code[cursor] == opening:
+            depth += 1
+        elif code[cursor] == closing:
+            depth -= 1
+            if depth == 0:
+                return cursor + 1
+        cursor += 1
+    return len(code)
+
+
+def without_test_items(code: str) -> str:
+    """Return `code` with every `#[cfg(test)]` item blanked out.
+
+    The span is found by balancing the item's own braces rather than by cutting
+    the file at its first `#[cfg(test)]` line. The cheaper cut is what the
+    crate-local test this check replaces did, and it carries a bound that does
+    not survive being generalized: production code placed *after* a test module
+    in the same file would stop being scanned, and `tiler-compiler`'s
+    `pipeline.rs` already holds two `#[cfg(test)]` modules with source between
+    them.
+
+    Test code is excluded rather than checked because two assertions depend on
+    it. `tiler-ir`'s `shape/env.rs` and `tiler-compiler`'s `feasibility.rs` each
+    assert an identity begins with its domain's length by spelling the eight-byte
+    prefix out by hand, and that independence from the encoder is exactly what
+    would catch the framing width changing — a test written with the encoder's
+    own helper could not. They are skipped for that reason, not by accident.
+    """
+    result = code
+    while (attribute := CFG_TEST_ATTRIBUTE.search(result)) is not None:
+        cursor = attribute.end()
+        while cursor < len(result) and result[cursor] not in "{;":
+            cursor += 1
+        end = (
+            len(result)
+            if cursor >= len(result)
+            else (balanced_end(result, cursor, "{", "}") if result[cursor] == "{" else cursor + 1)
+        )
+        span = result[attribute.start() : end]
+        result = (
+            result[: attribute.start()]
+            + "".join(" " if c != "\n" else "\n" for c in span)
+            + result[end:]
+        )
+    return result
+
+
+def module_directory(source: Path) -> Path:
+    """Return the directory a module's `mod name;` declarations resolve against."""
+    if source.stem in {"lib", "main", "mod"}:
+        return source.parent
+    return source.parent / source.stem
+
+
+def test_only_sources(sources: list[Path]) -> tuple[set[Path], list[str]]:
+    """Return every source reachable only under `#[cfg(test)]`, and any failure.
+
+    A whole-file test module — `#[cfg(test)] mod tests;` beside `tests.rs` — is
+    invisible from inside the file it names, which holds no `#[cfg(test)]` of its
+    own. Nine such files exist across the workspace, so resolving the declaration
+    is required rather than an edge case. A declaration whose file cannot be
+    found stops the gate instead of leaving the file scanned as production.
+    """
+    excluded: set[Path] = set()
+    errors: list[str] = []
+    for source in sources:
+        code = rust_code_only(source.read_text(encoding="utf-8"))
+        for attribute in CFG_TEST_ATTRIBUTE.finditer(code):
+            declaration = MODULE_DECLARATION.match(code, attribute.end())
+            if declaration is None:
+                continue
+            directory = module_directory(source)
+            name = declaration.group(1)
+            single = directory / f"{name}.rs"
+            nested = directory / name / "mod.rs"
+            if single.is_file():
+                excluded.add(single)
+            elif nested.is_file():
+                excluded.update(path for path in sources if path.is_relative_to(directory / name))
+            else:
+                errors.append(
+                    f"length-framing.{source}: `#[cfg(test)] mod {name};` resolves to no file"
+                )
+    return excluded, errors
+
+
+def statement_spans(code: str) -> list[tuple[int, int]]:
+    """Return each top-level statement's `(start, end)` offsets in `code`.
+
+    Statements rather than lines, because `rustfmt` wraps at 100 columns and one
+    copy of the framing already spans four lines: `encode_explain_shape` in
+    `tiler-compiler`'s `request.rs` reads `shape.rank()` on one line and writes
+    `to_be_bytes()` on another, which a per-line search cannot see.
+
+    A span ends at a `;` or a brace outside every paren and bracket. Only parens
+    and brackets carry depth, so the `;` in an array type such as `[u8; 4]` does
+    not end a span while a brace does — which keeps a span from running across
+    unrelated items and joining one item's `.len()` to another's `to_be_bytes`.
+    Every write this recognizer targets is an argument inside a call, so no
+    framing statement is split by that rule.
+    """
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    start = 0
+    for index, character in enumerate(code):
+        if character in "([":
+            depth += 1
+        elif character in ")]":
+            depth -= 1
+        elif character in ";{}" and depth == 0:
+            spans.append((start, index + 1))
+            start = index + 1
+    if start < len(code):
+        spans.append((start, len(code)))
+    return spans
+
+
+def framing_payload(parameters: str) -> bool:
+    """Return whether a parameter list is a byte sink plus one framed payload."""
+    depth = 0
+    fields: list[str] = []
+    current: list[str] = []
+    for character in parameters:
+        if character in "(<[":
+            depth += 1
+        elif character in ")>]":
+            depth -= 1
+        if character == "," and depth == 0:
+            fields.append("".join(current))
+            current = []
+            continue
+        current.append(character)
+    fields.append("".join(current))
+    typed = [field.split(":", 1)[1] for field in fields if ":" in field]
+    if len(typed) != len(fields) or len(typed) != 2:
+        return False
+    sink = "".join(typed[0].split())
+    payload = "".join(typed[1].split())
+    return sink == FRAMING_SINK and payload in FRAMING_PAYLOADS
+
+
+def item_documentation(lines: list[str], line_number: int) -> str:
+    """Return the justification above the site at `line_number`, normalized.
+
+    Doc comments and ordinary comments both count, because an admitted site is
+    sometimes a statement rather than an item and a statement carries no doc
+    comment. Attribute lines are stepped over so a site carrying `#[must_use]`
+    beneath its documentation still finds it.
+    """
+    collected: list[str] = []
+    cursor = line_number - 1
+    while cursor >= 0:
+        stripped = lines[cursor].strip()
+        if stripped.startswith("//"):
+            collected.append(stripped.removeprefix("//").removeprefix("/").strip())
+        elif stripped.startswith("#[") or stripped.endswith(","):
+            pass
+        else:
+            break
+        cursor -= 1
+    return " ".join(reversed(collected))
+
+
+def scan_length_framing_sites(
+    root: Path, package_dirs: dict[str, str]
+) -> tuple[dict[tuple[str, str], str], list[str], dict[str, int]]:
+    """Return every canonical length-framing site, failures, and the population.
+
+    The population is returned rather than inferred so a caller can reject a scan
+    that reached nothing. This check exists partly because a sweep for these
+    copies returned six clean results after `zsh` expanded an unquoted
+    `--include` glob: finding nothing is also what a broken search does, so a
+    predicate whose only success signal is an empty result set has an unreachable
+    failure path.
+
+    Two recognizers run over production code:
+
+    - a `fn` whose parameters are a `&mut Vec<u8>` sink and exactly one `usize`,
+      `&[u8]`, or `&str` payload — the structural shape of every copy found so
+      far, recognized without a name list because every name list has been
+      incomplete; and
+    - one statement that both reads a `.len()`/`.rank()` and writes it with
+      `to_be_bytes`/`to_le_bytes` — the helper-less shape one `tiler-ir` copy
+      took.
+
+    Two bounds are stated rather than left to be discovered. A framing helper
+    written as a method, or over a sink type other than `&mut Vec<u8>`, is not
+    matched by the first recognizer. A length bound to a local by one statement
+    and written by another is not matched by the second; `bundle.rs` writes its
+    section-descriptor lengths that way, and they are classified in
+    `FRAMING_SITE_CITATIONS` as container fields on the same evidence as the
+    section count that *is* matched.
+    """
+    found: dict[tuple[str, str], str] = {}
+    errors: list[str] = []
+    population: dict[str, int] = {}
+    for package, package_dir in sorted(package_dirs.items()):
+        sources = sorted((root / package_dir / "src").rglob("*.rs"))
+        excluded, resolution_errors = test_only_sources(sources)
+        errors.extend(resolution_errors)
+        production = [source for source in sources if source not in excluded]
+        population[package] = len(production)
+        for source in production:
+            relative_path = source.relative_to(root).as_posix()
+            text = source.read_text(encoding="utf-8")
+            lines = text.splitlines()
+            code = without_test_items(rust_code_only(text))
+            for keyword in FRAMING_FN.finditer(code):
+                opening = code.find("(", keyword.start())
+                if opening < 0:
+                    continue
+                end = balanced_end(code, opening, "(", ")")
+                if not framing_payload(code[opening + 1 : end - 1]):
+                    continue
+                line_number = code.count("\n", 0, keyword.start())
+                start = code.rfind("\n", 0, keyword.start()) + 1
+                subject = " ".join(text[start:end].split())
+                key = (relative_path, subject)
+                if key in found:
+                    errors.append(f"length-framing.{relative_path}: `{subject}` is defined twice")
+                    continue
+                found[key] = item_documentation(lines, line_number)
+            for start, end in statement_spans(code):
+                statement = code[start:end]
+                if not FRAMING_LENGTH_SOURCE.search(statement):
+                    continue
+                if not FRAMING_FIXED_WIDTH.search(statement):
+                    continue
+                # A span opens where the previous one closed, so it carries any
+                # comment between them. Comments are already blanked in `code`,
+                # so its first non-space column is the statement's real start and
+                # the subject is sliced from the original text there — keeping
+                # the literals a blanked slice would have lost.
+                start += len(statement) - len(statement.lstrip())
+                subject = " ".join(text[start:end].split())
+                key = (relative_path, subject)
+                if key not in found:
+                    found[key] = item_documentation(lines, code.count("\n", 0, start))
+    return found, errors, population
+
+
+def validate_length_framing_pins(
+    root: Path,
+    *,
+    package_dirs: dict[str, str] | None = None,
+    admitted: dict[tuple[str, str], tuple[str, str]] | None = None,
+) -> list[str]:
+    """Return typed violations of the one-definition-per-permitted-crate rule."""
+    package_dirs = PACKAGE_DIRS if package_dirs is None else package_dirs
+    admitted = FRAMING_SITE_CITATIONS if admitted is None else admitted
+
+    found, errors, population = scan_length_framing_sites(root, package_dirs)
+
+    # The population half: a scan that read nothing reports no violations for the
+    # same reason a clean tree does, so the counts are checked before the sites.
+    if not population:
+        errors.append(
+            "length-framing.population: no package was scanned, so the sites below are "
+            "a comparison against nothing"
+        )
+    for package in sorted(package for package, count in population.items() if count == 0):
+        errors.append(
+            f"length-framing.population: `{package}` contributed no production source; "
+            "a package that reads as empty has not been checked"
+        )
+    if not admitted:
+        errors.append(
+            "length-framing.population: the admitted table is empty, so every site would "
+            "be reported and none could be right"
+        )
+
+    for key in sorted(found.keys() - admitted.keys()):
+        errors.append(
+            f"length-framing.{key[0]}: `{key[1]}` frames a length and is not admitted. "
+            "Use `tiler_ir::identity::{push_len, push_slice}` instead, or pin the site with "
+            "the decision that forbids reaching them"
+        )
+    for key in sorted(admitted.keys() - found.keys()):
+        errors.append(
+            f"length-framing.{key[0]}: pinned site `{key[1]}` is gone; remove its pin in the "
+            "same change that removes it"
+        )
+    for key in sorted(found.keys() & admitted.keys()):
+        citation = admitted[key][1]
+        if citation not in found[key]:
+            errors.append(
+                f"length-framing.{key[0]}: `{key[1]}` is admitted on the strength of "
+                f"{citation!r}, which its own documentation no longer states"
             )
     return errors
 
@@ -811,7 +1319,11 @@ def main() -> int:
         # The site pins read Rust source rather than manifests or resolved
         # metadata, so they are a separate phase composed here instead of a
         # clause of the manifest contract.
-        errors = validate_manifest_contract(ROOT, metadata) + validate_unsafe_site_pins(ROOT)
+        errors = (
+            validate_manifest_contract(ROOT, metadata)
+            + validate_unsafe_site_pins(ROOT)
+            + validate_length_framing_pins(ROOT)
+        )
     except (OSError, ValueError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         print(f"workspace.validation: {error}", file=sys.stderr)
         return 1

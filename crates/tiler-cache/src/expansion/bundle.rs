@@ -169,6 +169,12 @@ pub(crate) fn encode(
     bytes.extend_from_slice(&[0, 0, 0]);
     bytes.extend_from_slice(&total_length.to_be_bytes());
     bytes.extend_from_slice(key.as_bytes());
+    // A fixed-offset header field and not `tiler_ir::identity` framing: it is
+    // written at `SECTION_COUNT_AT`, read back by `read_u64`, and the sections
+    // it counts are found through the descriptor table's explicit offsets rather
+    // than by following a prefix. These bytes are never digested into an
+    // identity — the key derives from the subject, and each section carries its
+    // own digest. `ComposedSubject` is where this crate does frame an identity.
     bytes.extend_from_slice(&(sections.len() as u64).to_be_bytes());
     debug_assert_eq!(
         bytes.len(),

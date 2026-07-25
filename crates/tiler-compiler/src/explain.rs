@@ -8,6 +8,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use tiler_ir::identity::{push_len, push_slice};
+
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
@@ -1838,12 +1840,8 @@ fn encode_trace(schema: u32, subject: &CompilationSubject, records: &[ExplainRec
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"tiler.explain.trace.v1\0");
     bytes.extend_from_slice(&schema.to_be_bytes());
-    encode_bytes(&mut bytes, &subject.canonical);
-    bytes.extend_from_slice(
-        &u64::try_from(records.len())
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
+    push_slice(&mut bytes, &subject.canonical);
+    push_len(&mut bytes, records.len());
     for record in records {
         bytes.extend_from_slice(&encode_record(record));
     }
@@ -1853,25 +1851,17 @@ fn encode_trace(schema: u32, subject: &CompilationSubject, records: &[ExplainRec
 fn encode_record(record: &ExplainRecord) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&record.id.local.to_be_bytes());
-    encode_bytes(&mut bytes, record.rule.key.as_str().as_bytes());
+    push_slice(&mut bytes, record.rule.key.as_str().as_bytes());
     bytes.extend_from_slice(&record.rule.revision.to_be_bytes());
-    encode_bytes(&mut bytes, record.rule.provider.key.as_str().as_bytes());
+    push_slice(&mut bytes, record.rule.provider.key.as_str().as_bytes());
     bytes.extend_from_slice(&record.rule.provider.revision.to_be_bytes());
-    bytes.extend_from_slice(
-        &u64::try_from(record.subjects.len())
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
+    push_len(&mut bytes, record.subjects.len());
     for subject in &record.subjects {
         bytes.push(subject_kind_tag(subject.kind));
-        encode_bytes(&mut bytes, subject.key.as_str().as_bytes());
+        push_slice(&mut bytes, subject.key.as_str().as_bytes());
     }
     encode_event(&mut bytes, &record.event);
-    bytes.extend_from_slice(
-        &u64::try_from(record.causes.len())
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
+    push_len(&mut bytes, record.causes.len());
     for cause in &record.causes {
         bytes.extend_from_slice(&cause.local.to_be_bytes());
     }
@@ -1902,7 +1892,7 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             actual,
         } => {
             bytes.extend_from_slice(&[2, stage_tag(*stage)]);
-            encode_bytes(bytes, resource.as_str().as_bytes());
+            push_slice(bytes, resource.as_str().as_bytes());
             bytes.extend_from_slice(&limit.to_be_bytes());
             bytes.extend_from_slice(&actual.to_be_bytes());
         }
@@ -1913,12 +1903,12 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             available,
         } => {
             bytes.push(3);
-            encode_bytes(bytes, predicate.as_str().as_bytes());
+            push_slice(bytes, predicate.as_str().as_bytes());
             match outcome {
                 FeasibilityOutcome::Admitted => bytes.push(1),
                 FeasibilityOutcome::Rejected(reason) => {
                     bytes.push(2);
-                    encode_bytes(bytes, reason.as_str().as_bytes());
+                    push_slice(bytes, reason.as_str().as_bytes());
                 }
             }
             encode_quantity(bytes, *required);
@@ -1932,8 +1922,8 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
         } => encode_honourability(bytes, dimension, required, outcome, profile),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             bytes.push(4);
-            encode_bytes(bytes, predicate.as_str().as_bytes());
-            encode_bytes(bytes, reason.as_str().as_bytes());
+            push_slice(bytes, predicate.as_str().as_bytes());
+            push_slice(bytes, reason.as_str().as_bytes());
         }
         ExplainEvent::CostAssessment {
             model,
@@ -1943,7 +1933,7 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
         } => encode_cost(bytes, model, basis, terms, *disposition),
         ExplainEvent::Selection { policy, outcome } => {
             bytes.push(6);
-            encode_bytes(bytes, policy.as_str().as_bytes());
+            push_slice(bytes, policy.as_str().as_bytes());
             bytes.push(match outcome {
                 SelectionOutcome::Selected => 1,
                 SelectionOutcome::Dominated => 2,
@@ -1953,7 +1943,7 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
         }
         ExplainEvent::CompilerFailure { stage, reason } => {
             bytes.extend_from_slice(&[7, stage_tag(*stage)]);
-            encode_bytes(bytes, reason.as_str().as_bytes());
+            push_slice(bytes, reason.as_str().as_bytes());
         }
     }
 }
@@ -1968,16 +1958,16 @@ fn encode_cost(
     disposition: CostDisposition,
 ) {
     bytes.push(5);
-    encode_bytes(bytes, model.as_str().as_bytes());
+    push_slice(bytes, model.as_str().as_bytes());
     encode_basis(bytes, basis);
     bytes.push(match disposition {
         CostDisposition::Retained => 1,
         CostDisposition::Dominated => 2,
         CostDisposition::HigherCost => 3,
     });
-    bytes.extend_from_slice(&u64::try_from(terms.len()).unwrap_or(u64::MAX).to_be_bytes());
+    push_len(bytes, terms.len());
     for term in terms {
-        encode_bytes(bytes, term.metric.as_str().as_bytes());
+        push_slice(bytes, term.metric.as_str().as_bytes());
         encode_quantity(bytes, term.quantity);
     }
 }
@@ -1996,54 +1986,50 @@ fn encode_honourability(
     profile: &SubjectKey,
 ) {
     bytes.push(10);
-    encode_bytes(bytes, dimension.as_str().as_bytes());
-    encode_bytes(bytes, required.as_str().as_bytes());
+    push_slice(bytes, dimension.as_str().as_bytes());
+    push_slice(bytes, required.as_str().as_bytes());
     match outcome {
         HonourabilityOutcome::Honoured { means } => {
             bytes.push(1);
-            encode_bytes(bytes, means.as_str().as_bytes());
+            push_slice(bytes, means.as_str().as_bytes());
         }
         HonourabilityOutcome::Unhonourable { means, honoured } => {
             bytes.push(2);
-            encode_bytes(bytes, means.as_str().as_bytes());
+            push_slice(bytes, means.as_str().as_bytes());
             match honoured {
                 Some(honoured) => {
                     bytes.push(1);
-                    encode_bytes(bytes, honoured.as_str().as_bytes());
+                    push_slice(bytes, honoured.as_str().as_bytes());
                 }
                 None => bytes.push(0),
             }
         }
         HonourabilityOutcome::Undeclared => bytes.push(3),
     }
-    encode_bytes(bytes, profile.as_str().as_bytes());
+    push_slice(bytes, profile.as_str().as_bytes());
 }
 
 fn encode_assessment(bytes: &mut Vec<u8>, assessment: &PredicateAssessment) {
-    encode_bytes(bytes, assessment.predicate.as_str().as_bytes());
+    push_slice(bytes, assessment.predicate.as_str().as_bytes());
     match &assessment.assessment {
         Assessment::Proven => bytes.push(1),
         Assessment::Disproved(reason) => {
             bytes.push(2);
-            encode_bytes(bytes, reason.as_str().as_bytes());
+            push_slice(bytes, reason.as_str().as_bytes());
         }
         Assessment::Unknown(reason) => {
             bytes.push(3);
-            encode_bytes(bytes, reason.as_str().as_bytes());
+            push_slice(bytes, reason.as_str().as_bytes());
         }
         Assessment::Deferred(reason) => {
             bytes.push(4);
-            encode_bytes(bytes, reason.as_str().as_bytes());
+            push_slice(bytes, reason.as_str().as_bytes());
         }
     }
     encode_basis(bytes, &assessment.basis);
-    bytes.extend_from_slice(
-        &u64::try_from(assessment.facts.len())
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
+    push_len(bytes, assessment.facts.len());
     for fact in &assessment.facts {
-        encode_bytes(bytes, fact.key.as_str().as_bytes());
+        push_slice(bytes, fact.key.as_str().as_bytes());
         match &fact.value {
             FactValue::Count(value) => {
                 bytes.push(1);
@@ -2066,7 +2052,7 @@ fn encode_assessment(bytes: &mut Vec<u8>, assessment: &PredicateAssessment) {
             }
             FactValue::Identity(value) => {
                 bytes.push(6);
-                encode_bytes(bytes, value.as_str().as_bytes());
+                push_slice(bytes, value.as_str().as_bytes());
             }
         }
     }
@@ -2081,11 +2067,11 @@ fn encode_basis(bytes: &mut Vec<u8>, basis: &EvidenceBasis) {
             bytes.push(match receipt.kind {
                 EvidenceReceiptKind::FusionNumerical => 1,
             });
-            encode_bytes(bytes, &receipt.compilation);
-            encode_bytes(bytes, receipt.candidate.as_str().as_bytes());
-            encode_bytes(bytes, receipt.provider.key.as_str().as_bytes());
+            push_slice(bytes, &receipt.compilation);
+            push_slice(bytes, receipt.candidate.as_str().as_bytes());
+            push_slice(bytes, receipt.provider.key.as_str().as_bytes());
             bytes.extend_from_slice(&receipt.provider.revision.to_be_bytes());
-            encode_bytes(bytes, &receipt.proof);
+            push_slice(bytes, &receipt.proof);
             return;
         }
         EvidenceBasis::ExhaustiveFinite => 4,
@@ -2098,11 +2084,6 @@ fn encode_basis(bytes: &mut Vec<u8>, basis: &EvidenceBasis) {
 fn encode_quantity(bytes: &mut Vec<u8>, quantity: Quantity) {
     bytes.push(quantity.kind());
     bytes.extend_from_slice(&quantity.value().to_be_bytes());
-}
-
-fn encode_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
-    bytes.extend_from_slice(&u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
-    bytes.extend_from_slice(value);
 }
 
 fn stable_qualifier(bytes: &[u8]) -> u64 {

@@ -96,6 +96,11 @@ pub(crate) fn encode(envelope: &ArtifactEnvelope) -> Result<Vec<u8>, ArtifactCod
     let total_length_at = bytes.len();
     bytes.extend_from_slice(&0_u64.to_be_bytes());
     push_len(&mut bytes, manifest.len());
+    // Four bytes rather than the eight framed on the line above, and not
+    // `tiler_ir::identity` framing at all: a fixed-width header field that
+    // `decode.rs` reads back as `cursor.u32()`, sized by the `u32` ordinal space
+    // the envelope's section and expression tables are indexed in. Widening it
+    // would change the artifact ABI rather than remove a duplicate.
     bytes.extend_from_slice(&ordinal(envelope.sections().len()).to_be_bytes());
     bytes.extend_from_slice(
         algorithm
