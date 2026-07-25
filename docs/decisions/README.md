@@ -62,6 +62,7 @@ accepted. Unresolved questions are collected in
 - [0025: Separate reduction empty results from physical padding](0025-reduction-empty-results-and-padding.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Reduction semantics and legality](../research/numerics/reduction-semantics-and-legality.md)
 - [0019: Separate subnormal input and result handling](0019-split-subnormal-handling.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Initial operation conformance matrix](../research/numerics/operation-conformance-matrix.md)
 - [0040: Specialize integer division and remainder families](0040-specialize-integer-division-families.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Integer division and remainder precedents](../research/numerics/integer-division-precedents.md)
+- [0080: Treat distributivity as a third numerical dimension](0080-treat-distributivity-as-a-third-numerical-dimension.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md), [Optimizer model](../compiler/optimizer.md), [Fusion and scheduling](../compiler/fusion-and-scheduling.md); evidence: [Reduction semantics and legality](../research/numerics/reduction-semantics-and-legality.md), [Initial operation conformance matrix](../research/numerics/operation-conformance-matrix.md)
 - [0024: Use round-to-nearest ties-to-even for initial arithmetic](0024-initial-arithmetic-rounding.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Initial operation conformance matrix](../research/numerics/operation-conformance-matrix.md)
 - [0042: Use typed transcendental accuracy contracts](0042-use-typed-transcendental-accuracy-contracts.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Transcendental accuracy precedents](../research/numerics/transcendental-accuracy-precedents.md)
 - [0020: Use value-only floating-point exceptions initially](0020-value-only-floating-point-exceptions.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Initial operation conformance matrix](../research/numerics/operation-conformance-matrix.md)
@@ -199,6 +200,7 @@ accepted. Unresolved questions are collected in
 - [0077: Admit tiler-metal-aot as a dependency-free offline driver](0077-admit-tiler-metal-aot-as-a-dependency-free-driver.md) — proposed
 - [0078: Name the intended public extension seams](0078-name-the-intended-public-extension-seams.md) — proposed
 - [0079: Permit unsafe code case by case at named sites](0079-permit-unsafe-code-case-by-case-at-named-sites.md) — accepted
+- [0080: Treat distributivity as a third numerical dimension](0080-treat-distributivity-as-a-third-numerical-dimension.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template
