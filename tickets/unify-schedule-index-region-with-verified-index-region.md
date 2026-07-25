@@ -1,7 +1,7 @@
 ---
 id: unify-schedule-index-region-with-verified-index-region
 title: Unify schedule bounded index region with tiler_ir::index::VerifiedIndexRegion
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [prototype-scheduled-region-ir]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, refactor]
-claimed_from: todo
-assignee: agent-ir2
-lease_expires_at: 1784999164
 ---
 `tiler_ir::schedule` introduced its own bounded `IndexRegion` (iteration domain,
 accesses, bounds/ownership proofs, scalar program, numerical realization) rather

@@ -1,7 +1,7 @@
 ---
 id: carry-reconstructable-kernel-programs-in-the-neutral-envelope
 title: Decide what a decoded artifact envelope must reconstruct
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [prototype-neutral-artifact-codec, prototype-metal-bundle-assembly, settle-adr-0071-artifact-decoding-through-ir-builders, prototype-runtime-artifact-validation, route-the-runtime-proof-through-the-artifact-envelope]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, serialization, ir, needs-tom]
-claimed_from: todo
-assignee: agent-sidecar
-lease_expires_at: 1784999937
 ---
 `prototype-neutral-artifact-codec` framed a neutral program section carrying one packaged variant's *canonical kernel-program identity*, not the program. A decoder therefore proves which program an artifact names and cannot resurrect it.
 
@@ -108,3 +105,13 @@ Full IR reconstruction was excluded on evidence rather than preference: `KernelP
 **The cost is accepted with its weakness stated.** A decoded envelope currently cannot say which buffer a slot addresses: `BindingData` carries no value or view reference, and the stage reaches the envelope only as an opaque content key. So this needs a new encoded fact plus a schema step, not an accessor — the ticket's earlier 'only a projection' inference was retracted for exactly this reason. A carried value reference is asserted by the producer rather than re-derived by the decoder, and that asymmetry must be stated wherever the record is documented rather than left for a reader to discover.
 
 This is what lets a loader dispatch without linking `tiler-compiler` or rebuilding a semantic graph, which is the artifact layer's stated purpose.
+
+## Outcome
+
+**Decided by Tom, 2026-07-25: a decoded envelope is a dispatch record, not a reconstruction.** Recorded in full in the Decision section above.
+
+Full IR reconstruction was excluded on evidence rather than preference — `KernelProgramBuilder::new` requires a `SemanticProgram`, which requires a frozen registry of `Arc<dyn OperationInferencer>`: behaviour, not data, which no serialization format carries. So the option was impossible at any encoding cost.
+
+The accepted cost is stated rather than buried: a decoded envelope cannot yet say which buffer a slot addresses, because `BindingData` carries no value or view reference and the stage reaches the envelope only as an opaque content key. That is a missing encoded fact plus a schema step, not an accessor — the ticket's earlier 'only a projection' inference was retracted for exactly this. A carried value reference is asserted by the producer rather than re-derived by the decoder, and that asymmetry belongs wherever the record is documented.
+
+Implementing the record is `prototype-runtime-artifact-validation`, now unblocked.

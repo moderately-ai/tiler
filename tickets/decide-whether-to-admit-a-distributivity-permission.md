@@ -1,7 +1,7 @@
 ---
 id: decide-whether-to-admit-a-distributivity-permission
 title: Decide whether to admit a distributivity numerical permission
-status: awaiting-decision
+status: deferred
 priority: p3
 dependencies: []
 related: [settle-contraction-chain-distributivity-permission, scope-einsum-contraction-support, qualify-contraction-association-reassociation-permission]

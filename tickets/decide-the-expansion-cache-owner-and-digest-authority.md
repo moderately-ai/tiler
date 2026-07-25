@@ -1,7 +1,7 @@
 ---
 id: decide-the-expansion-cache-owner-and-digest-authority
 title: Decide the expansion cache owner and its digest authority
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -55,3 +55,11 @@ The cache *key subject* is settled and landed: `crates/tiler-metal-aot/src/ident
 **Amend the ownership table in the same change.** The accepted profile deliberately omits "generalized cache" crates, so this decision amends it rather than fitting inside it, and that amendment is part of the work rather than a follow-up.
 
 **Carry the five correctness properties `AGENTS.md` names as the specification**: complete cache identity, validation on EVERY hit, immutable entries, atomic publication, and defined crash/race behaviour. The identity half already landed as canonical bytes in `tiler-metal-aot`; a corrupt or unreadable entry must fail loud rather than silently becoming a miss, unless you can argue otherwise and say so.
+
+## Outcome
+
+**Decided by Tom, 2026-07-25: a dedicated cache crate depending on `tiler-artifact` for the governed digest.** Recorded in full in the Decision section above.
+
+The alternative was not merely worse, it was unsatisfiable: `docs/architecture.md`'s ownership row assigns `tiler-metal-aot` the cross-process cache while the same row forbids it every dependency, and `check_workspace.py` pins its closure empty, yet ADR 0050 requires section-digest validation on every hit against a digest that is `pub(crate)` in `tiler-artifact`. `tiler-metal-aot` therefore keeps the dependency-free property ADR 0077 admitted it for.
+
+`implement-the-expansion-cache-protocol` is unblocked. The ownership table is amended as part of that work rather than deferred, and the five correctness properties `AGENTS.md` names are its specification.

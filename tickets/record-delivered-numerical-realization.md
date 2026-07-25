@@ -1,7 +1,7 @@
 ---
 id: record-delivered-numerical-realization
 title: Record the delivered numerical realization in the artifact
-status: blocked
+status: todo
 priority: p1
 dependencies: [select-numerical-contract-and-compose-feasibility, declare-metal-numerical-honourability]
 related: [draft-target-honourable-numerical-contract-adr, prototype-artifact-program-model]

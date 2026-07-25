@@ -1,7 +1,7 @@
 ---
 id: widen-shapeenv-factorization-fragment
 title: Widen the ShapeEnv fragment to nonlinear split-axis factorizations
-status: awaiting-decision
+status: todo
 priority: p2
 dependencies: []
 related: [implement-shapeenv-constraints, implement-shapeenv-index-bindings]

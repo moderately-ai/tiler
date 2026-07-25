@@ -1,7 +1,7 @@
 ---
 id: measure-apple-numerics-on-physical-ios-device
 title: Measure Apple f32 numerics on a physical iOS device
-status: blocked
+status: deferred
 priority: p3
 dependencies: []
 related: [measure-numerics-across-apple-artifact-families, declare-metal-numerical-honourability, broaden-the-apple-numerical-probe-matrix]

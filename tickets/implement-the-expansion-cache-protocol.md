@@ -1,7 +1,7 @@
 ---
 id: implement-the-expansion-cache-protocol
 title: Implement the expansion cache protocol
-status: blocked
+status: todo
 priority: p1
 dependencies: [decide-the-expansion-cache-owner-and-digest-authority]
 related: [prototype-expansion-content-cache]
