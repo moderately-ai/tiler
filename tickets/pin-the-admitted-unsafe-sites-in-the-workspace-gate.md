@@ -1,14 +1,17 @@
 ---
 id: pin-the-admitted-unsafe-sites-in-the-workspace-gate
 title: Pin the admitted unsafe sites in the workspace gate
-status: todo
+status: review
 priority: p2
 dependencies: []
 related: [record-the-case-by-case-unsafe-boundary, prototype-metal-runtime-execution]
-scopes: [implementation/workspace]
-shared_scopes: []
+scopes: [implementation/workspace, contracts/navigation, contracts/decisions]
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, workspace, gate, rust-api]
+claimed_from: todo
+assignee: agent-cache
+lease_expires_at: 1785003790
 ---
 ADR 0079 admits unsafe code case by case at an individual function or module, and records that exactly one half of that boundary is mechanically checked. This ticket closes the other half.
 
@@ -31,3 +34,40 @@ Whichever is chosen, decide and record whether the check reads Rust source textu
 ## Closes when
 
 `scripts/check_workspace.py` fails when an `#[allow(unsafe_code)]` site is added, moved, or removed without updating its pin; a mutation test proves that failure the way the script's existing checks are proven; ADR 0079's Consequences bullet naming this gap is amended to record that it is closed (that edit is `contracts/decisions` and needs the scope added or a split); and the full gate passes.
+
+## Outcome
+
+### The predicate chosen, and why
+
+**The `(package-relative path, item signature) -> reason` triple**, combining the ticket's second and third options. `ADMITTED_UNSAFE_SITES` in `scripts/check_workspace.py` holds the two landed sites; `validate_unsafe_site_pins` scans and compares, and `main` composes it with the manifest contract as a separate phase — it reads Rust source rather than manifests or resolved metadata, so folding it into `validate_manifest_contract` would have made that function's tmp-root mutation tests report site errors about a tree that has no sources.
+
+The count predicate is rejected for the reason the ticket predicts: it passes when a site moves, and when one is added while another is deleted. `test_a_moved_site_fails_even_though_the_count_is_unchanged` is that case, pinned.
+
+The `reason` is pinned as well as the location, which the ticket lists as the strongest and most brittle option. It is worth the brittleness because the reason **is** ADR 0079 item 3's second condition; a check that pinned only the location would establish where the permission sits and nothing about what it claims, so weakening a justification would remain a diff nobody has to look at. The accepted cost is that a rename, a signature change, or a rewording churns the table — and each of those genuinely changes what was admitted. `rustfmt` does not reflow string literals without `format_strings`, and `rustfmt.toml` sets only `edition` and `max_width`, so ordinary reformatting does not churn it.
+
+### Textual scan, and the limits stated in the script
+
+The scan is textual, as the ticket permits, and both limits are in `scan_unsafe_allow_sites`' own docstring rather than left to be discovered:
+
+- It recognizes `unsafe_code` only inside an `#[allow(…)]`/`#![allow(…)]` group that begins a line, and ignores the token on a comment line — which is what keeps `buffer.rs`'s own module documentation, which names the lint, from registering as a site.
+- **Every other occurrence is reported as unaccounted-for.** A `cfg_attr`, a macro-generated attribute, a block comment, or a string literal holding the token stops the gate until someone decides what it is. That is the fail-closed direction, and it means the scan's inability to parse Rust cannot silently admit a site; it can only produce a failure that has to be resolved.
+
+Two robustness properties are implemented and tested rather than assumed. Bracket balance is counted with double-quoted runs removed, so a `reason` containing `(` or `[` does not end the attribute early; and an attribute skipped while looking for the admitted item is skipped by its whole span, so a multi-line `#[cfg_attr(…)]` between the `#[allow]` and the signature does not leave its continuation mistaken for the item.
+
+**Only `#[allow]` sites are pinned, and that is sufficient rather than partial.** ADR 0079 item 2 keeps `unsafe_code` at `deny` or `forbid` in every member, so an `unsafe` block that no attribute admits does not compile. The attributes are the complete set by construction, and the compiler is what makes that true.
+
+The check additionally asserts that every pinned path lies inside a member `UNINHERITED_LINT_MEMBERS` names. A pin outside one would record a permission that cannot exist, and this is what keeps ADR 0079's crate half and site half from drifting apart.
+
+Spike workspaces are out of range: they are Cargo workspaces excluded from this one, none is a shipping component, and `grep -rn "unsafe" --include="*.rs" spikes/` returns three lines, all `#![forbid(unsafe_code)]`.
+
+### A finding worth recording
+
+The obvious search for this work, `grep -rn "allow(unsafe_code" crates/ prototypes/`, returns **nothing** — both landed attributes are four lines, with `unsafe_code` on its own. That is exactly the multi-line-attribute failure `AGENTS.md`'s research standard names, encountered on the first search of the ticket, and it is why the scanner accumulates a bracket-balanced span instead of matching lines.
+
+### Tests
+
+Ten mutation tests in `scripts/tests/test_rust_gate_integrity.py`, each against a synthetic package tree and a synthetic pin: the admitted multi-line form is one site; an added site fails; a moved site fails while the count is unchanged; a removed site fails; a weakened reason fails; a site with no reason is rejected; a `cfg_attr` occurrence is reported; prose is not a site; a bracket inside a reason does not end the attribute; a multi-line trailing attribute is skipped whole; and a pin outside a diverging member is rejected. `test_the_checked_in_unsafe_sites_match_their_pins` asserts the real tree conforms **and** that the scan found exactly the two pinned sites — without the second assertion, a scan that reached nothing would report no violations against a table it never opened.
+
+### Records updated
+
+ADR 0079's Consequences bullet naming this gap is struck through and replaced with a dated closure recording the predicate, the scan limits, and the mutation evidence; its Implementation boundary now names three of item 3's four conditions as review-only rather than four, because the `reason` condition's presence and stability are now checked (whether the reason is *true* is still review's, and no check can decide that); and the "Enumerate the admitted sites" alternative records that the split ticket landed it and which option it chose. `AGENTS.md`'s unsafe clause gains the pin. `implementation_status` stays `implemented`.

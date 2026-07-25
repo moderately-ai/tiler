@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -174,6 +175,53 @@ EXPECTED_DEPENDENCIES = {
     ],
 }
 
+# Every site admitted under ADR 0079, keyed by `(package-relative path, item)`
+# with the exact `reason` the attribute states.
+#
+# ADR 0079 permits unsafe "case by case, at an individual function or module",
+# and says in terms that a third site is a new decision rather than an
+# application of the existing one. `UNINHERITED_LINT_MEMBERS` above pins the
+# *crate* half of that boundary; this table pins the *site* half, which is the
+# half the record's Consequences name as unchecked.
+#
+# The pin is a `(path, item, reason)` triple rather than a count or a bare
+# location. A count passes when a site moves or when one is added while another
+# is deleted. A location alone checks where the permission sits but not what it
+# claims, and the `reason` is the whole substance of ADR 0079 item 3's second
+# condition — weakening a justification is exactly the change a reviewer is
+# meant to see. The accepted cost is that renaming a function, changing its
+# signature, or rewording a reason churns this table; each of those genuinely
+# changes what was admitted.
+ADMITTED_UNSAFE_SITES: dict[tuple[str, str], str] = {
+    (
+        "prototypes/serial-sum-run/src/buffer.rs",
+        "pub fn write_f32(buffer: &Buffer, values: &[f32])",
+    ): (
+        "MTLBuffer storage is reachable only through the raw pointer "
+        "`Buffer::contents` returns; no Metal binding exposes it safely. The write "
+        "is bounded by an asserted length check against the buffer's own byte "
+        "length, copies a plain-old-data type with no destructor, and retains no "
+        "borrow."
+    ),
+    (
+        "prototypes/serial-sum-run/src/buffer.rs",
+        "pub fn read_f32(buffer: &Buffer, count: usize) -> Vec<f32>",
+    ): (
+        "the read half of the same constraint: MTLBuffer storage is reachable only "
+        "through `Buffer::contents`. Bounded by an asserted length check, reads a "
+        "plain-old-data type, and copies out rather than retaining a borrow of "
+        "device memory."
+    ),
+}
+
+# `unsafe_code` as a whole token, so `unsafe_codegen` or a longer identifier
+# does not match.
+UNSAFE_CODE_TOKEN = re.compile(r"\bunsafe_code\b")
+ALLOW_ATTRIBUTE_START = re.compile(r"^#!?\[allow\(")
+ATTRIBUTE_START = re.compile(r"^#!?\[")
+REASON_LITERAL = re.compile(r'\breason\s*=\s*"((?:[^"\\]|\\.)*)"')
+STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
+
 EXPECTED_TESTS = {
     "tiler-ir": {
         "index_region": "crates/tiler-ir/tests/index_region.rs",
@@ -229,6 +277,198 @@ def expected_member_manifest(name: str) -> dict[str, object]:
         manifest["dev-dependencies"] = development
     manifest["lints"] = UNINHERITED_LINT_MEMBERS.get(name, {"workspace": True})
     return manifest
+
+
+def outside_string_literals(line: str) -> str:
+    """Return `line` with every double-quoted run removed.
+
+    Brackets are counted to find where an attribute ends, and a `reason` string
+    may legitimately contain one. Counting them would end the group early and
+    report a confusing violation of a site that is in fact well formed.
+
+    Bounded to a literal that opens and closes on one line, which is the form
+    both admitted sites use and the form `rustfmt` preserves — it does not
+    reflow string literals unless `format_strings` is enabled, and
+    `rustfmt.toml` sets only `edition` and `max_width`. A literal deliberately
+    written across lines would be miscounted, and the resulting failure is a
+    stopped gate rather than an accepted site.
+    """
+    return STRING_LITERAL.sub("", line)
+
+
+def attribute_span(lines: list[str], start: int) -> int:
+    """Return the exclusive end index of the attribute beginning at `start`.
+
+    An attribute is accumulated until its bracket balance closes, so a
+    multi-line attribute is one span — the form a substring search over single
+    lines splits and misses.
+    """
+    depth = 0
+    cursor = start
+    while cursor < len(lines):
+        bare = outside_string_literals(lines[cursor])
+        depth += bare.count("[") + bare.count("(")
+        depth -= bare.count("]") + bare.count(")")
+        cursor += 1
+        if depth <= 0:
+            break
+    return cursor
+
+
+def attribute_groups(lines: list[str]) -> list[tuple[int, int, str]]:
+    """Return every `#[allow(...)]`/`#![allow(...)]` group as `(start, end, text)`.
+
+    Indices are 0-based and `end` is exclusive.
+    """
+    groups: list[tuple[int, int, str]] = []
+    index = 0
+    while index < len(lines):
+        if not ALLOW_ATTRIBUTE_START.match(lines[index].strip()):
+            index += 1
+            continue
+        end = attribute_span(lines, index)
+        groups.append((index, end, "\n".join(lines[index:end])))
+        index = end
+    return groups
+
+
+def following_item(lines: list[str], start: int) -> str | None:
+    """Return the normalized signature of the item an attribute group precedes.
+
+    Further attributes, doc comments, ordinary comments, and blank lines are
+    skipped, so a site carrying `#[must_use]` beneath its `#[allow]` still names
+    its function; an attribute skipped this way is skipped by its whole span, so
+    a multi-line one does not leave its continuation mistaken for a signature. A
+    trailing brace is dropped and interior whitespace collapsed, so the pin does
+    not churn on reformatting that leaves the signature unchanged.
+    """
+    cursor = start
+    while cursor < len(lines):
+        stripped = lines[cursor].strip()
+        if not stripped or stripped.startswith("//"):
+            cursor += 1
+            continue
+        if ATTRIBUTE_START.match(stripped):
+            cursor = attribute_span(lines, cursor)
+            continue
+        return " ".join(stripped.removesuffix("{").split())
+    return None
+
+
+def scan_unsafe_allow_sites(
+    root: Path, package_dirs: dict[str, str]
+) -> tuple[dict[tuple[str, str], str], list[str]]:
+    """Return every admitted-unsafe site found under the governed packages.
+
+    The scan is textual and its limits are stated rather than left to be
+    discovered. It recognizes `unsafe_code` only inside an `#[allow(...)]` or
+    `#![allow(...)]` group that begins a line, and it ignores the token on a
+    line-comment line so this file's own prose and `buffer.rs`'s module
+    documentation do not register as sites. Every *other* occurrence is reported
+    as unaccounted-for, which is the fail-closed direction: a `cfg_attr`, a
+    macro-generated attribute, a block comment, or a string literal holding the
+    token stops the gate until someone decides what it is, rather than passing
+    unseen.
+
+    Spike workspaces are deliberately out of range. They are Cargo workspaces
+    excluded from this one, none is a shipping component, and the three that
+    mention the lint at all declare `#![forbid(unsafe_code)]`.
+
+    Only `#[allow]` sites are pinned, because the compiler already guarantees
+    they are the complete set: ADR 0079 item 2 keeps `unsafe_code` at `deny` or
+    `forbid` in every member, so an `unsafe` block that no attribute admits does
+    not build.
+    """
+    sites: dict[tuple[str, str], str] = {}
+    errors: list[str] = []
+    for package_dir in sorted(set(package_dirs.values())):
+        base = root / package_dir
+        for source in sorted(base.rglob("*.rs")):
+            relative_path = source.relative_to(root).as_posix()
+            try:
+                lines = source.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeError) as error:
+                errors.append(f"unsafe-sites.{relative_path}: cannot read: {error}")
+                continue
+            accounted: set[int] = set()
+            for start, end, text in attribute_groups(lines):
+                if not UNSAFE_CODE_TOKEN.search(text):
+                    continue
+                accounted.update(range(start, end))
+                item = following_item(lines, end)
+                if item is None:
+                    errors.append(
+                        f"unsafe-sites.{relative_path}:{start + 1}: the attribute admits "
+                        "unsafe_code but precedes no item"
+                    )
+                    continue
+                reason = REASON_LITERAL.search(text)
+                if reason is None:
+                    errors.append(
+                        f"unsafe-sites.{relative_path}:{start + 1}: `{item}` admits "
+                        "unsafe_code without the `reason` ADR 0079 item 3 requires"
+                    )
+                    continue
+                key = (relative_path, item)
+                if key in sites:
+                    errors.append(
+                        f"unsafe-sites.{relative_path}: `{item}` admits unsafe_code twice"
+                    )
+                    continue
+                sites[key] = " ".join(reason.group(1).split())
+            for number, line in enumerate(lines):
+                if number in accounted or line.strip().startswith("//"):
+                    continue
+                if UNSAFE_CODE_TOKEN.search(line):
+                    errors.append(
+                        f"unsafe-sites.{relative_path}:{number + 1}: `unsafe_code` appears "
+                        "outside a recognized `#[allow(...)]` attribute"
+                    )
+    return sites, errors
+
+
+def validate_unsafe_site_pins(
+    root: Path,
+    *,
+    package_dirs: dict[str, str] | None = None,
+    admitted: dict[tuple[str, str], str] | None = None,
+    diverging_members: dict[str, object] | None = None,
+) -> list[str]:
+    """Return typed violations of the per-site half of ADR 0079."""
+    package_dirs = PACKAGE_DIRS if package_dirs is None else package_dirs
+    admitted = ADMITTED_UNSAFE_SITES if admitted is None else admitted
+    diverging = UNINHERITED_LINT_MEMBERS if diverging_members is None else diverging_members
+
+    found, errors = scan_unsafe_allow_sites(root, package_dirs)
+    for key in sorted(found.keys() - admitted.keys()):
+        errors.append(
+            f"unsafe-sites.{key[0]}: `{key[1]}` admits unsafe_code and is not pinned; "
+            "ADR 0079 makes a new site a new decision"
+        )
+    for key in sorted(admitted.keys() - found.keys()):
+        errors.append(
+            f"unsafe-sites.{key[0]}: pinned site `{key[1]}` is gone; remove its pin in the "
+            "same change that removes it"
+        )
+    for key in sorted(found.keys() & admitted.keys()):
+        if found[key] != admitted[key]:
+            errors.append(
+                f"unsafe-sites.{key[0]}: `{key[1]}` states reason {found[key]!r}, pinned "
+                f"as {admitted[key]!r}"
+            )
+
+    # A site can only compile inside a member that replaced the workspace
+    # `forbid`, so a pin naming any other package records a permission that does
+    # not exist. Checking it here keeps ADR 0079's crate half and site half from
+    # drifting apart.
+    permitted_dirs = {package_dirs[name] for name in diverging if name in package_dirs}
+    for path, item in sorted(admitted):
+        if not any(path.startswith(f"{directory}/") for directory in permitted_dirs):
+            errors.append(
+                f"unsafe-sites.{path}: `{item}` is pinned in a package that inherits the "
+                'workspace `unsafe_code = "forbid"`, where no allow attribute can apply'
+            )
+    return errors
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -534,7 +774,10 @@ def main() -> int:
     try:
         toolchain = configured_toolchain(ROOT)
         metadata = cargo_metadata(ROOT, toolchain)
-        errors = validate_manifest_contract(ROOT, metadata)
+        # The site pins read Rust source rather than manifests or resolved
+        # metadata, so they are a separate phase composed here instead of a
+        # clause of the manifest contract.
+        errors = validate_manifest_contract(ROOT, metadata) + validate_unsafe_site_pins(ROOT)
     except (OSError, ValueError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         print(f"workspace.validation: {error}", file=sys.stderr)
         return 1
