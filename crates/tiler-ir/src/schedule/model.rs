@@ -5,7 +5,7 @@
 //! value data; only [`super::ScheduledRegionBuilder::build`] can bind a region
 //! into an opaque [`VerifiedScheduledRegion`] after intrinsic verification.
 
-use crate::identity::push_len;
+use crate::identity::{push_len, push_slice};
 use crate::shape::{Axis, Shape};
 
 use super::error::{ContributorError, ElementCountOverflow};
@@ -543,9 +543,14 @@ fn push_permission(bytes: &mut Vec<u8>, permission: NumericalPermission) {
 /// is encoded alongside them and never in place of them: a key names a contract
 /// but does not carry its field values, so relying on the key to distinguish
 /// two realizations would be an unstated invariant (ADR 0076 item 6).
+///
+/// The key is length-prefixed through [`push_slice`], the one framing form the
+/// workspace uses before a variable-length run (ADR 0074 convention 3). It was
+/// NUL-terminated here alone. That was unambiguous while the key is a
+/// crate-chosen `&'static str` containing no NUL, but the uniform form is what
+/// removes the need to re-derive that argument at each site.
 fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
-    bytes.extend_from_slice(numerical.profile_key.as_bytes());
-    bytes.push(0x00);
+    push_slice(bytes, numerical.profile_key.as_bytes());
     bytes.extend_from_slice(&numerical.canonical_arithmetic_nan_bits.to_be_bytes());
     push_subnormal(bytes, numerical.input_subnormals);
     push_subnormal(bytes, numerical.result_subnormals);
@@ -672,9 +677,13 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 ///
 /// The encoding excludes the transient [`RegionId`] so equivalent normalized
 /// schedules produced by different planning histories share identity.
+///
+/// The domain tag is NUL-terminated, which is the workspace's one form for a
+/// versioned domain separator (ADR 0074 convention 3). This encoder was the
+/// only site that omitted the terminator.
 pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledRegionIdentity {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.schedule.v1");
+    bytes.extend_from_slice(b"tiler.schedule.v1\0");
     push_shape(&mut bytes, &region.index.iteration_shape);
     push_len(&mut bytes, region.index.accesses.len());
     for access in &region.index.accesses {

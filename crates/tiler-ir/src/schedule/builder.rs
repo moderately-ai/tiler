@@ -467,18 +467,31 @@ mod tests {
 
     /// Recorded canonical identity of the strict-`f32` pointwise test region.
     ///
-    /// 194 bytes. The encoding this replaced was 192 bytes and ended
-    /// `…007fc0000000000100000000000000060000000101000000003100000000000000060000000101`,
-    /// carrying neither subnormal dimension and both permissions as derived
-    /// booleans.
+    /// 202 bytes, after the second deliberate re-baseline. Two tag-form
+    /// deviations closed together, each adding bytes at a known place, so the
+    /// shift is attributable rather than opaque:
+    ///
+    /// - the domain tag gained its NUL terminator, `74696c65722e7363686564756c652e7631` →
+    ///   `…7631` + `00`, one byte, making this encoder use the same versioned
+    ///   domain separator as every other in the workspace; and
+    /// - `profile_key` moved from NUL-terminated to length-prefixed, so the
+    ///   21-byte `tiler.test.strict-f32` costs an eight-byte prefix instead of
+    ///   a one-byte terminator, seven bytes.
+    ///
+    /// 194 + 1 + 7 = 202. The 194-byte encoding this replaced ended
+    /// `…7fc000000074696c65722e746573742e7374726963742d663332007fc00000…`,
+    /// with the key run terminated rather than framed.
+    ///
+    /// The first re-baseline took it from 192 bytes, which carried neither
+    /// subnormal dimension and both permissions as derived booleans.
     const STRICT_F32_REGION_IDENTITY_HEX: &str = concat!(
-        "74696c65722e7363686564756c652e7631000000000000000200000000000000",
-        "0200000000000000030000000000000002010101000000000002020100000001",
-        "0100000000000000000000000200000000011100000000000000060000000102",
-        "1100000000000000060000000002000000000000000621400000003f8000007f",
-        "c000000074696c65722e746573742e7374726963742d663332007fc000000101",
-        "0101010000000000000006000000010100000000310000000000000006000000",
-        "0101",
+        "74696c65722e7363686564756c652e7631000000000000000002000000000000",
+        "0002000000000000000300000000000000020101010000000000020201000000",
+        "0101000000000000000000000002000000000111000000000000000600000001",
+        "021100000000000000060000000002000000000000000621400000003f800000",
+        "7fc0000000000000000000001574696c65722e746573742e7374726963742d66",
+        "33327fc000000101010101000000000000000600000001010000000031000000",
+        "00000000060000000101",
     );
 
     fn strict_numerical() -> NumericalRealization {

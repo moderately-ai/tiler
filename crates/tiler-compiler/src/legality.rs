@@ -1146,13 +1146,16 @@ fn encode_occurrence_identity(
     IndexRefinementIdentity(bytes)
 }
 
+/// Encodes one observable effect class into refinement content identity.
+///
+/// The sibling of `fusion_legality::effect_tag`, and exhaustive for the same
+/// reason (ADR 0074 convention 3). Refinement rejects every non-pure effect
+/// before content is assembled, so no non-pure tag can enter an accepted
+/// identity today; that is a property of the caller and not of the encoder, and
+/// it is exactly the kind of reasoning a wildcard arm would silently outlive.
 const fn effect_tag(effect: OperationEffect) -> u8 {
     match effect {
         OperationEffect::Pure => 1,
-        // Refinement rejects every non-pure effect before content is assembled,
-        // so this reserved tag never enters an accepted identity. It stays
-        // distinct from `Pure` so a future indexable effect must choose its own.
-        _ => u8::MAX,
     }
 }
 
