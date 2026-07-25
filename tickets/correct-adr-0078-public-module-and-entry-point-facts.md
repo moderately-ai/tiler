@@ -1,7 +1,7 @@
 ---
 id: correct-adr-0078-public-module-and-entry-point-facts
 title: Correct ADR 0078's stale lib.rs and entry-point facts
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [propagate-extension-seam-classification-into-governed-contracts, prototype-public-compiler-api]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contracts, extensions]
+claimed_from: todo
+assignee: agent-adr0078
+lease_expires_at: 1785041166
 ---
 ADR 0078 was drafted against base `412ceae` and accepted unamended on 2026-07-25. Four of its source facts about `crates/tiler-compiler/src/lib.rs` were true at that base and are false at `c173ed3`, because `pub mod session` landed in between and Tom approved it on the same day the record was accepted. The classification the record decides is unaffected; what is stale is the evidence it cites for item 4, which is exactly the item a reader consults to learn whether the lowering seam is reachable.
 

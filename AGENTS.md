@@ -264,6 +264,16 @@ These are failure modes observed in practice, not hypotheticals.
   Escalating one stalls the work and moves your job to someone else. Routine
   operations — pushing your own branch, closing a ticket whose remainder is
   tracked — are not reserved boundaries.
+- **Merge the branch the worker committed to, and prove the merge moved `main`.**
+  An agent worktree carries two branch names — the harness's own
+  `worktree-agent-<id>` and the ticket's `tkt/<id>` — and which one holds the
+  work varies by worker. Merging the wrong one reports `Already up to date` and
+  exits zero, so the gate then passes on an unchanged tree and the push says
+  `Everything up-to-date`: three green signals for work that never landed.
+  Capture `git rev-parse HEAD` before and after, and treat an unmoved `HEAD` as
+  a failure rather than a no-op. Confirm the worker's reported commit is an
+  ancestor of `main` by its hash — the branch name is a claim and the hash is
+  the evidence.
 - **A verdict is only as good as the check's ability to say no.** Before acting
   on a check you wrote yourself, confirm its failure path is reachable — run it
   against a case that must fail and watch it fail. A survey of forty-three

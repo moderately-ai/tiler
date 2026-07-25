@@ -1,7 +1,7 @@
 ---
 id: derive-the-pre-compilation-artifact-program-subject
 title: Derive the pre-compilation artifact program subject
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [compose-the-complete-expansion-cache-subject, bind-the-cache-subject-to-the-carried-payload-provenance]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: []
 paths: []
 tags: [cache, identity, correctness, artifacts]
+claimed_from: todo
+assignee: agent-derive-subject
+lease_expires_at: 1785041166
 ---
 The expansion cache now composes its key from a declared facet set, and one facet has no producer. `tiler_cache::expansion::SubjectFacets::artifact_program` requires the canonical subject of the artifact program a bundle carries — its plan portfolio, ABI bindings, routing, declared target requirements, and selected capability providers — and `ComposedSubject::compose` refuses an empty one, so **no caller can key an entry today**. That is deliberate: a loud stop rather than the silent under-key that preceded it.
 
