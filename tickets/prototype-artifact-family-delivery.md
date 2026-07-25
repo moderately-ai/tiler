@@ -1,7 +1,7 @@
 ---
 id: prototype-artifact-family-delivery
 title: Implement Apple artifact-family delivery selection
-status: in-progress
+status: done
 priority: p1
 dependencies: [prototype-neutral-artifact-codec, prototype-apple-aot-driver]
 related: [generate-cfg-gated-artifact-family-delivery]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/metal-aot, implementation/artif
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, apple-targets, inline-dx]
-claimed_from: todo
-assignee: agent-targets
-lease_expires_at: 1784995760
 ---
 Implement explicit family selection and generated routing for supported Apple artifact families, initially macOS, iOS device, iOS simulator, and explicit fallback-only behavior as contracted. Nonmatching targets must not silently select incompatible bytes; target facts belong in identity and diagnostics.
 

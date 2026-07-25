@@ -1,7 +1,7 @@
 ---
 id: never-truncate-the-governed-explain-trace
 title: The governed compile path now truncates its explain trace
-status: review
+status: done
 priority: p0
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, explain, correctness]
-claimed_from: todo
-assignee: agent-integrate
-lease_expires_at: 1785000222
 ---
 **Fact — found while integrating two branches, on a merged tree, not hypothesised.** `pipeline::tests::every_wired_authority_emits_its_typed_explain_records` fails with one extra rule key in the actual set: `explain.retention` at count 1. That test's own comment calls itself an exhaustive snapshot where "a new authority that stays explain-silent, or one that becomes chatty, fails here", so it caught this by design.
 

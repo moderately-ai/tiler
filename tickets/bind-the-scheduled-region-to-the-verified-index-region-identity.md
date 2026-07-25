@@ -1,7 +1,7 @@
 ---
 id: bind-the-scheduled-region-to-the-verified-index-region-identity
 title: Bind the scheduled region to the verified index region's identity
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [update-adr-0071-schedule-builder-boundary, prototype-scheduled-region-ir, prototype-canonical-index-region-slice]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: []
 paths: []
 tags: [implementation, ir, identity, scheduling]
-claimed_from: todo
-assignee: agent-shapes2
-lease_expires_at: 1785004839
 ---
 ADR 0071's Decision requires that "each verified structural layer retains the exact identity of the lower structural layer it refines: schedule to index region and kernel to schedule". One of those two edges exists and one does not.
 
