@@ -1,7 +1,7 @@
 ---
 id: declare-metal-numerical-honourability
 title: Declare Metal numerical honourability as a target profile fact
-status: in-progress
+status: todo
 priority: p0
 dependencies: [select-numerical-contract-and-compose-feasibility]
 related: [draft-target-honourable-numerical-contract-adr, prototype-metal-numerical-realization]
@@ -9,9 +9,6 @@ scopes: [implementation/metal, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, numerics]
-claimed_from: todo
-assignee: agent-coordinator
-lease_expires_at: 1784994096
 ---
 ADR 0076 item 3, on the one target that has a measured unhonourable dimension. This is the ticket that gives the Apple row a positive conformance story for the first time: a flush-tolerant `f32` contract compiles and conforms, a preserving one rejects with a named cause.
 
