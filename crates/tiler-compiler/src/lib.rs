@@ -11,6 +11,7 @@ mod frontier;
 mod fusion;
 mod fusion_legality;
 mod governed;
+mod honourability;
 pub mod legality;
 mod lowering;
 mod normalize;

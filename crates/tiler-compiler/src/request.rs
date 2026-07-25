@@ -18,6 +18,10 @@ use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
 };
 use crate::governed::{governed_lowering_capabilities, governed_scalars};
+use crate::honourability::{
+    DeclaredBehaviour, DeferredDimension, DimensionBehaviour, HonouringMeans, NumericalDimension,
+    NumericalRequirement, UndeclaredDimension, UnhonouredDimension,
+};
 use crate::region::SemanticMemberId;
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
@@ -116,6 +120,40 @@ impl StrictF32NumericalContract {
             .any(|admitted| admitted == self)
     }
 
+    /// Projects this contract into the per-dimension requirements a target
+    /// profile's honourability declaration is assessed against.
+    ///
+    /// One requirement per governed dimension, complete and in canonical order.
+    /// Completeness is what makes an unenumerated dimension fail closed: a
+    /// contract that simply omitted a dimension would place no requirement on
+    /// it, and no requirement is trivially satisfiable rather than `Unknown`.
+    ///
+    /// `key` and `canonical_arithmetic_nan_bits` are deliberately not projected.
+    /// The first names the governing contract and the second is a produced
+    /// value; neither is a behaviour a target declares honourability for, and
+    /// letting the key stand in for the dimensions it names is exactly the
+    /// projection ADR 0076 item 6 forbids.
+    pub(crate) fn dimension_requirements(&self) -> Vec<NumericalRequirement> {
+        vec![
+            NumericalRequirement::new(
+                NumericalDimension::InputSubnormals,
+                DimensionBehaviour::Subnormals(self.input_subnormals),
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::ResultSubnormals,
+                DimensionBehaviour::Subnormals(self.result_subnormals),
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::Contraction,
+                DimensionBehaviour::Transform(self.contraction),
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::Reassociation,
+                DimensionBehaviour::Transform(self.reassociation),
+            ),
+        ]
+    }
+
     /// Projects this contract into the target-neutral numerical realization the
     /// scheduled-region IR preserves.
     pub(crate) const fn realization(&self) -> tiler_ir::schedule::NumericalRealization {
@@ -127,6 +165,60 @@ impl StrictF32NumericalContract {
             self.contraction,
             self.reassociation,
         )
+    }
+}
+
+/// An ordered, nonempty caller preference over numerical contracts.
+///
+/// ADR 0076 item 2. A caller states one resolved contract, or an explicitly
+/// ordered list of contracts it declares equally acceptable. Resolution is by
+/// the caller's stated order, the first honourable entry wins, and it is
+/// **never** cost-ranked: cost may rank implementations of one contract and may
+/// never rank contracts against each other, because that would price meaning.
+///
+/// A single-entry list and a bare contract behave identically, so the list is an
+/// additive generalization rather than a second mechanism.
+///
+/// The stated order participates in the request subject even though only the
+/// resolved entry drives compilation, because the caller's fallback intent is
+/// the thing the list exists to record: two requests whose lists differ but
+/// resolve alike are different requests, and an explain trace that could not
+/// tell them apart would attribute a resolution to a preference it never saw.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NumericalContractPreference {
+    stated: Vec<StrictF32NumericalContract>,
+}
+
+impl NumericalContractPreference {
+    /// States exactly one acceptable contract.
+    pub(crate) fn exactly(contract: StrictF32NumericalContract) -> Self {
+        Self {
+            stated: vec![contract],
+        }
+    }
+
+    /// States an ordered preference over several acceptable contracts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestError::UnstatedNumericalContract`] for an empty list.
+    /// There is no default and no implicit strictest reading: a request that
+    /// states no contract does not compile, and the diagnostic says the contract
+    /// is unstated rather than naming a dimension.
+    #[allow(
+        dead_code,
+        reason = "the multi-entry constructor of the caller preference list; its only in-crate callers are this boundary's own tests until the reviewed public facade exposes a preference list, which `expose-the-numerical-contract-preference-list` owns"
+    )]
+    pub(crate) fn ordered(stated: Vec<StrictF32NumericalContract>) -> Result<Self, RequestError> {
+        if stated.is_empty() {
+            return Err(RequestError::UnstatedNumericalContract);
+        }
+        Ok(Self { stated })
+    }
+
+    /// The stated contracts, in the caller's order.
+    pub(crate) fn stated(&self) -> &[StrictF32NumericalContract] {
+        &self.stated
     }
 }
 
@@ -339,6 +431,75 @@ impl PartialEq for CompilerCapabilitySnapshot {
 
 impl Eq for CompilerCapabilitySnapshot {}
 
+/// The target-neutral baseline's per-dimension numerical honourability.
+///
+/// It replaces the retired `supports_strict_f32` boolean (ADR 0076 item 3),
+/// which could say only *whether* one summary obligation was met and never which
+/// dimension failed or by what means a target would honour it.
+///
+/// **What is declared and why.** This is a target-*neutral* prototype profile,
+/// so it declares exactly the behaviours the contracts this build registers ask
+/// for, and no more. Preservation and sign-preserving flushing are both honoured
+/// exactly on both subnormal dimensions, which is what makes both registered
+/// contracts compile here. Both transform dimensions honour `Forbidden` and
+/// `Permitted` exactly: forbidding a transform is an obligation a neutral
+/// profile meets by not performing it, and permitting one places no obligation
+/// at all, so a target honours it whatever it does.
+///
+/// **What is deliberately absent.** `FlushToZero { AlwaysPositive }` is not
+/// declared on either subnormal dimension. Nothing has measured a target that
+/// produces a positive zero for a negative subnormal, and a neutral baseline
+/// must not claim a behaviour on no evidence. A contract requiring it therefore
+/// resolves to [`crate::feasibility::FeasibilityOutcome::Unknown`] rather than
+/// being admitted — the fail-closed direction, and the case that shows an
+/// unenumerated behaviour does not default to honoured.
+const GOVERNED_TARGET_HONOURABILITY: &[DeclaredBehaviour] = &[
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::InputSubnormals,
+        DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::InputSubnormals,
+        DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        }),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::ResultSubnormals,
+        DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::ResultSubnormals,
+        DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        }),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::Contraction,
+        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::Contraction,
+        DimensionBehaviour::Transform(NumericalPermission::Permitted),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::Reassociation,
+        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::Reassociation,
+        DimensionBehaviour::Transform(NumericalPermission::Permitted),
+        HonouringMeans::SupportedExactly,
+    ),
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PrototypeTargetProfile {
     pub(crate) key: &'static str,
@@ -347,7 +508,12 @@ pub(crate) struct PrototypeTargetProfile {
     pub(crate) max_buffer_bindings_per_entry: u32,
     pub(crate) index_bits: u8,
     pub(crate) supports_device_memory: bool,
-    pub(crate) supports_strict_f32: bool,
+    /// What this target declares it honours on each numerical dimension.
+    ///
+    /// A `&'static` slice rather than an owned collection, so the profile stays
+    /// a `Copy` value that participates in the request subject and in equality
+    /// exactly as its quantitative bounds do.
+    pub(crate) numerical: &'static [DeclaredBehaviour],
 }
 
 impl PrototypeTargetProfile {
@@ -359,7 +525,7 @@ impl PrototypeTargetProfile {
             max_buffer_bindings_per_entry: 2,
             index_bits: 64,
             supports_device_memory: true,
-            supports_strict_f32: true,
+            numerical: GOVERNED_TARGET_HONOURABILITY,
         }
     }
 }
@@ -368,7 +534,9 @@ impl PrototypeTargetProfile {
 pub(crate) struct CompilationRequest<'a> {
     pub(crate) program: &'a SemanticProgram,
     pub(crate) shape_environment: StaticShapeEnvironment,
-    pub(crate) numerical_contract: StrictF32NumericalContract,
+    /// The caller's ordered numerical-contract preference. Required, with no
+    /// `Default` and no ambient fallback (ADR 0076 item 2).
+    pub(crate) numerical_contracts: NumericalContractPreference,
     pub(crate) budgets: DeterministicBudgets,
     pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
     pub(crate) capabilities: CompilerCapabilitySnapshot,
@@ -399,10 +567,25 @@ impl CompilationRequest<'_> {
         program: &SemanticProgram,
         numerical_contract: StrictF32NumericalContract,
     ) -> CompilationRequest<'_> {
+        Self::governed_preferring(
+            program,
+            NumericalContractPreference::exactly(numerical_contract),
+        )
+    }
+
+    /// Builds the governed request under a caller-stated ordered preference.
+    ///
+    /// The list is resolved by the caller's stated order against each target's
+    /// declared honourability; the first honourable entry wins. No authority
+    /// below this boundary may reorder it, and none may rank the entries by cost.
+    pub(crate) fn governed_preferring(
+        program: &SemanticProgram,
+        numerical_contracts: NumericalContractPreference,
+    ) -> CompilationRequest<'_> {
         CompilationRequest {
             program,
             shape_environment: StaticShapeEnvironment::governed(),
-            numerical_contract,
+            numerical_contracts,
             budgets: DeterministicBudgets::governed(),
             target_profiles: vec![PrototypeTargetProfile::governed()],
             capabilities: CompilerCapabilitySnapshot::governed(),
@@ -506,7 +689,10 @@ impl NormalizedProgram {
 pub(crate) struct VerifiedCompilationRequest {
     normalized: NormalizedProgram,
     semantic_identity: SemanticIdentity,
-    numerical_contract: StrictF32NumericalContract,
+    numerical_contracts: NumericalContractPreference,
+    /// The contract resolved for each target profile, positionally aligned with
+    /// `target_profiles`. Resolution happens once, here, before any planning.
+    resolved_contracts: Vec<StrictF32NumericalContract>,
     budgets: DeterministicBudgets,
     target_profiles: Vec<PrototypeTargetProfile>,
     capabilities: CompilerCapabilitySnapshot,
@@ -517,6 +703,7 @@ pub(crate) struct VerifiedCompilationRequest {
 pub(crate) struct VerifiedTargetRequest {
     normalized: NormalizedProgram,
     semantic_identity: SemanticIdentity,
+    numerical_contracts: NumericalContractPreference,
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
     target_profile: PrototypeTargetProfile,
@@ -534,6 +721,13 @@ pub(crate) struct VerifiedTargetRequest {
 pub(crate) struct VerifiedRequestSubject {
     normalized: NormalizedSerialSumSubject,
     semantic_identity: SemanticIdentity,
+    /// The caller's stated preference, retained beside the resolved contract.
+    ///
+    /// Both are bound because they answer different questions: the list is what
+    /// the caller declared acceptable, and the resolved entry is what this
+    /// target compiles under. Binding only the second would let two requests
+    /// with different fallback intents share one subject.
+    numerical_contracts: NumericalContractPreference,
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
     target_profile: PrototypeTargetProfile,
@@ -564,6 +758,7 @@ impl VerifiedTargetRequest {
         request_subject(
             &self.normalized,
             &self.semantic_identity,
+            &self.numerical_contracts,
             self.numerical_contract,
             self.budgets,
             self.target_profile,
@@ -575,8 +770,23 @@ impl VerifiedTargetRequest {
         self.subject() == self.authority
     }
 
+    /// The one contract this target compiles under, resolved from the caller's
+    /// stated preference before any planning began.
     pub(crate) const fn numerical_contract(&self) -> StrictF32NumericalContract {
         self.numerical_contract
+    }
+
+    /// The caller's stated preference, in the caller's order.
+    ///
+    /// It is bound into the request subject, and therefore into every explain
+    /// record and receipt, already; this accessor exists so a consumer can *read*
+    /// the fallback intent rather than only distinguish two requests by it.
+    #[allow(
+        dead_code,
+        reason = "the stated-preference read accessor; the compile path reads the one resolved contract, and the caller's fallback intent becomes readable to a consumer when the reviewed public facade exposes a preference list"
+    )]
+    pub(crate) fn numerical_contracts(&self) -> &NumericalContractPreference {
+        &self.numerical_contracts
     }
 
     pub(crate) const fn budgets(&self) -> DeterministicBudgets {
@@ -650,17 +860,17 @@ impl VerifiedRequestSubject {
         }
         bytes.extend_from_slice(&self.normalized.input_elements.to_be_bytes());
         bytes.extend_from_slice(&self.normalized.output_elements.to_be_bytes());
-        encode_explain_bytes(&mut bytes, self.numerical_contract.key.as_bytes());
+        encode_contract(&mut bytes, self.numerical_contract);
+        // The stated preference follows the resolved contract, length-framed and
+        // in the caller's order, so a reordered list is a different subject.
         bytes.extend_from_slice(
-            &self
-                .numerical_contract
-                .canonical_arithmetic_nan_bits
+            &u64::try_from(self.numerical_contracts.stated().len())
+                .unwrap_or(u64::MAX)
                 .to_be_bytes(),
         );
-        bytes.push(subnormal_tag(self.numerical_contract.input_subnormals));
-        bytes.push(subnormal_tag(self.numerical_contract.result_subnormals));
-        bytes.push(permission_tag(self.numerical_contract.contraction));
-        bytes.push(permission_tag(self.numerical_contract.reassociation));
+        for contract in self.numerical_contracts.stated() {
+            encode_contract(&mut bytes, *contract);
+        }
         for budget in [
             self.budgets.semantic_values,
             self.budgets.semantic_operations,
@@ -694,11 +904,36 @@ impl VerifiedRequestSubject {
         );
         bytes.push(self.target_profile.index_bits);
         bytes.push(u8::from(self.target_profile.supports_device_memory));
-        bytes.push(u8::from(self.target_profile.supports_strict_f32));
+        // The honourability declaration replaces the retired `supports_strict_f32`
+        // byte. It is encoded per line rather than summarized, because that is
+        // exactly what the boolean could not say: which dimension, which
+        // behaviour, and by what means.
+        bytes.extend_from_slice(
+            &u64::try_from(self.target_profile.numerical.len())
+                .unwrap_or(u64::MAX)
+                .to_be_bytes(),
+        );
+        for declared in self.target_profile.numerical {
+            declared.encode_declaration(&mut bytes);
+        }
         bytes.extend_from_slice(&self.capability_schema_version.to_be_bytes());
         encode_explain_bytes(&mut bytes, self.lowering_registry.as_bytes());
         bytes
     }
+}
+
+/// Appends one numerical contract's complete canonical encoding.
+///
+/// Complete over every dimension and exhaustive per dimension through
+/// [`subnormal_tag`] and [`permission_tag`]: the contract key is encoded beside
+/// the field values it names and never in place of them (ADR 0076 item 6).
+fn encode_contract(bytes: &mut Vec<u8>, contract: StrictF32NumericalContract) {
+    encode_explain_bytes(bytes, contract.key.as_bytes());
+    bytes.extend_from_slice(&contract.canonical_arithmetic_nan_bits.to_be_bytes());
+    bytes.push(subnormal_tag(contract.input_subnormals));
+    bytes.push(subnormal_tag(contract.result_subnormals));
+    bytes.push(permission_tag(contract.contraction));
+    bytes.push(permission_tag(contract.reassociation));
 }
 
 /// Returns the canonical tag of one subnormal dimension.
@@ -782,9 +1017,24 @@ impl VerifiedCompilationRequest {
         self.budgets
     }
 
-    /// Returns the verified numerical contract bound to this request.
-    pub(crate) const fn numerical_contract(&self) -> StrictF32NumericalContract {
-        self.numerical_contract
+    /// Returns the caller's stated numerical-contract preference.
+    pub(crate) fn numerical_contracts(&self) -> &NumericalContractPreference {
+        &self.numerical_contracts
+    }
+
+    /// Returns the one contract every target resolved to, when they agree.
+    ///
+    /// A program-scoped stage that runs before per-target compilation — semantic
+    /// normalization is the only one — needs exactly one contract, and there is
+    /// no defensible way to pick among several: a rewrite legal under one
+    /// contract may be illegal under another, so normalizing under either would
+    /// apply to one target a licence the other never granted. Returning [`None`]
+    /// when the targets disagree makes the caller fail closed instead.
+    pub(crate) fn uniform_resolved_contract(&self) -> Option<StrictF32NumericalContract> {
+        let (first, rest) = self.resolved_contracts.split_first()?;
+        rest.iter()
+            .all(|resolved| resolved == first)
+            .then_some(*first)
     }
 
     pub(crate) fn for_target(
@@ -798,10 +1048,14 @@ impl VerifiedCompilationRequest {
         else {
             return Err(RequestError::UnverifiedTargetSelection);
         };
+        let Some(numerical_contract) = self.resolved_contracts.get(index).copied() else {
+            return Err(RequestError::UnverifiedTargetSelection);
+        };
         let current_authority = request_subject(
             &self.normalized,
             &self.semantic_identity,
-            self.numerical_contract,
+            &self.numerical_contracts,
+            numerical_contract,
             self.budgets,
             target_profile,
             &self.capabilities,
@@ -811,7 +1065,7 @@ impl VerifiedCompilationRequest {
                 .target_profiles
                 .iter()
                 .any(|profile| *profile != PrototypeTargetProfile::governed())
-            || !self.numerical_contract.is_governed()
+            || !numerical_contract.is_governed()
             || self.authorities.get(index) != Some(&current_authority)
         {
             return Err(RequestError::UnverifiedTargetSelection);
@@ -819,7 +1073,8 @@ impl VerifiedCompilationRequest {
         Ok(VerifiedTargetRequest {
             normalized: self.normalized.clone(),
             semantic_identity: self.semantic_identity.clone(),
-            numerical_contract: self.numerical_contract,
+            numerical_contracts: self.numerical_contracts.clone(),
+            numerical_contract,
             budgets: self.budgets,
             target_profile,
             capabilities: self.capabilities.clone(),
@@ -831,6 +1086,7 @@ impl VerifiedCompilationRequest {
 fn request_subject(
     normalized: &NormalizedProgram,
     semantic_identity: &SemanticIdentity,
+    numerical_contracts: &NumericalContractPreference,
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
     target_profile: PrototypeTargetProfile,
@@ -851,11 +1107,95 @@ fn request_subject(
             output_elements: normalized.output_elements,
         },
         semantic_identity: semantic_identity.clone(),
+        numerical_contracts: numerical_contracts.clone(),
         numerical_contract,
         budgets,
         target_profile,
         capability_schema_version: capabilities.schema_version,
         lowering_registry: capabilities.registry_identity().clone(),
+    }
+}
+
+/// Why one stated numerical contract could not be resolved on one target.
+///
+/// The three arms are three different claims and are deliberately not collapsed:
+/// a declared refusal, an absent declaration, and a declaration that has not yet
+/// become available are not the same thing, and reporting the second or third as
+/// a rejection would assert knowledge the profile never supplied.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ContractRejection {
+    /// The target declares it cannot honour a required behaviour.
+    Unhonourable {
+        contract_key: &'static str,
+        cause: UnhonouredDimension,
+    },
+    /// Nothing the profile declares speaks to a required behaviour, so the
+    /// dimension is `Unknown` in ADR 0043's sense and fails closed.
+    Undeclared {
+        contract_key: &'static str,
+        cause: UndeclaredDimension,
+    },
+    /// The declaration exists only from a later availability phase, so it cannot
+    /// resolve the contract at the compile profile.
+    Deferred {
+        contract_key: &'static str,
+        cause: DeferredDimension,
+    },
+}
+
+impl ContractRejection {
+    /// The contract whose resolution this rejection explains.
+    pub(crate) const fn contract_key(self) -> &'static str {
+        match self {
+            Self::Unhonourable { contract_key, .. }
+            | Self::Undeclared { contract_key, .. }
+            | Self::Deferred { contract_key, .. } => contract_key,
+        }
+    }
+
+    /// The dimension the resolution failed on.
+    pub(crate) const fn dimension(self) -> NumericalDimension {
+        match self {
+            Self::Unhonourable { cause, .. } => cause.dimension(),
+            Self::Undeclared { cause, .. } => cause.dimension(),
+            Self::Deferred { cause, .. } => cause.dimension(),
+        }
+    }
+
+    /// The behaviour the contract required on that dimension.
+    pub(crate) const fn required(self) -> DimensionBehaviour {
+        match self {
+            Self::Unhonourable { cause, .. } => cause.required(),
+            Self::Undeclared { cause, .. } => cause.required(),
+            Self::Deferred { cause, .. } => cause.required(),
+        }
+    }
+}
+
+impl fmt::Display for ContractRejection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}: {} requires {}",
+            self.contract_key(),
+            self.dimension().key(),
+            self.required().key()
+        )?;
+        match self {
+            Self::Unhonourable { cause, .. } => {
+                write!(formatter, ", target declares {}", cause.means().key())?;
+                if let Some(honoured) = cause.honoured() {
+                    write!(formatter, " and honours {}", honoured.key())?;
+                }
+                write!(formatter, " (profile {})", cause.profile().key())
+            }
+            Self::Undeclared { .. } => formatter.write_str(", target declares nothing"),
+            Self::Deferred { cause, .. } => write!(
+                formatter,
+                ", target declares it only from a later phase ({:?})",
+                cause.phase()
+            ),
+        }
     }
 }
 
@@ -865,6 +1205,22 @@ pub(crate) enum RequestError {
     EmptyTargetSet,
     DuplicateTargetProfile,
     UnverifiedTargetSelection,
+    /// The caller stated no numerical contract at all.
+    ///
+    /// Distinct from every rejection that names a dimension: there is no default
+    /// and no implicit strictest reading, so the diagnostic says the contract is
+    /// unstated rather than reporting a dimension the caller never chose.
+    UnstatedNumericalContract,
+    /// No contract in the caller's stated order resolves on this target.
+    ///
+    /// Every stated entry's first canonical failure is retained, in the caller's
+    /// order, so the diagnostic explains the whole preference rather than only
+    /// its last entry. Nothing here proposes a substitute contract: only the
+    /// caller may change what its program means.
+    NoResolvableNumericalContract {
+        target_profile: &'static str,
+        rejections: Vec<ContractRejection>,
+    },
     BudgetExceeded {
         resource: &'static str,
         limit: u32,
@@ -892,6 +1248,22 @@ impl fmt::Display for RequestError {
             Self::UnverifiedTargetSelection => formatter.write_str(
                 "compile.request.targets.selection: target was not verified by the request",
             ),
+            Self::UnstatedNumericalContract => formatter.write_str(
+                "compile.request.numerics.unstated: a resolved numerical contract is required",
+            ),
+            Self::NoResolvableNumericalContract {
+                target_profile,
+                rejections,
+            } => {
+                write!(
+                    formatter,
+                    "compile.request.numerics.unhonourable: target {target_profile} honours no stated contract"
+                )?;
+                for rejection in rejections {
+                    write!(formatter, "; {rejection}")?;
+                }
+                Ok(())
+            }
             Self::BudgetExceeded {
                 resource,
                 limit,
@@ -938,7 +1310,15 @@ pub(crate) fn verify_request(
     if request.target_profiles.is_empty() {
         return Err(RequestError::EmptyTargetSet);
     }
-    if !request.numerical_contract.is_governed() {
+    if request.numerical_contracts.stated().is_empty() {
+        return Err(RequestError::UnstatedNumericalContract);
+    }
+    if request
+        .numerical_contracts
+        .stated()
+        .iter()
+        .any(|contract| !contract.is_governed())
+    {
         // Names the profile rather than one contract: a caller stating an
         // unadmitted contract has not violated the strict one, it has named a
         // contract this build does not register.
@@ -980,14 +1360,25 @@ pub(crate) fn verify_request(
 
     let normalized = select_supported_strategy(request.program)?;
     let semantic_identity = request.program.semantic_identity().clone();
+    // Resolve the caller's preference once, per target, before any planning
+    // begins. Resolution is the honourability authority applied to the contract
+    // alone — no region, no schedule, and no cost participates, because the
+    // contract is not a search dimension (ADR 0076 item 5).
+    let resolved_contracts = request
+        .target_profiles
+        .iter()
+        .map(|target| resolve_numerical_contract(&request.numerical_contracts, target))
+        .collect::<Result<Vec<_>, _>>()?;
     let authorities = request
         .target_profiles
         .iter()
-        .map(|target| {
+        .zip(&resolved_contracts)
+        .map(|(target, resolved)| {
             request_subject(
                 &normalized,
                 &semantic_identity,
-                request.numerical_contract,
+                &request.numerical_contracts,
+                *resolved,
                 request.budgets,
                 *target,
                 &request.capabilities,
@@ -997,11 +1388,76 @@ pub(crate) fn verify_request(
     Ok(VerifiedCompilationRequest {
         normalized,
         semantic_identity,
-        numerical_contract: request.numerical_contract,
+        numerical_contracts: request.numerical_contracts,
+        resolved_contracts,
         budgets: request.budgets,
         target_profiles: request.target_profiles,
         capabilities: request.capabilities,
         authorities,
+    })
+}
+
+/// Resolves a caller's ordered preference against one target's declaration.
+///
+/// The first stated entry every one of whose dimensions the target honours wins.
+/// The order is the caller's; nothing here reorders, scores, or blends the
+/// entries, and no entry is admitted on a weakened reading of itself.
+///
+/// # Errors
+///
+/// Returns [`RequestError::NoResolvableNumericalContract`] carrying one
+/// canonical-first cause per stated entry, in the caller's order, when no entry
+/// resolves. A malformed profile is an intrinsic contract violation rather than
+/// a resolution outcome and surfaces as
+/// [`RequestError::UnsupportedCapability`].
+fn resolve_numerical_contract(
+    preference: &NumericalContractPreference,
+    target: &PrototypeTargetProfile,
+) -> Result<StrictF32NumericalContract, RequestError> {
+    let mut rejections = Vec::new();
+    for contract in preference.stated() {
+        let outcome = crate::physical::assess_contract(target, *contract).map_err(|_| {
+            RequestError::UnsupportedCapability {
+                phase: "numerics",
+                rule: "target-profile-malformed",
+            }
+        })?;
+        match outcome {
+            crate::feasibility::FeasibilityOutcome::Proven(_) => return Ok(*contract),
+            crate::feasibility::FeasibilityOutcome::Rejected(rejection) => {
+                // The representative is the canonical-first unhonourable
+                // dimension; a contract-only proposal has no capability
+                // requirements, so it is always a numerical cause.
+                if let crate::feasibility::RejectionCause::Numerical(cause) =
+                    rejection.representative()
+                {
+                    rejections.push(ContractRejection::Unhonourable {
+                        contract_key: contract.key,
+                        cause,
+                    });
+                }
+            }
+            crate::feasibility::FeasibilityOutcome::Unknown(unknown) => {
+                rejections.extend(unknown.dimensions().first().map(|cause| {
+                    ContractRejection::Undeclared {
+                        contract_key: contract.key,
+                        cause: *cause,
+                    }
+                }));
+            }
+            crate::feasibility::FeasibilityOutcome::Deferred(deferred) => {
+                rejections.extend(deferred.dimensions().first().map(|cause| {
+                    ContractRejection::Deferred {
+                        contract_key: contract.key,
+                        cause: *cause,
+                    }
+                }));
+            }
+        }
+    }
+    Err(RequestError::NoResolvableNumericalContract {
+        target_profile: target.key,
+        rejections,
     })
 }
 
@@ -1544,6 +2000,217 @@ mod tests {
                 rule: "signature",
             })
         );
+    }
+
+    /// A single-entry list and a bare contract behave identically.
+    ///
+    /// The list is an additive generalization, not a second mechanism, so the
+    /// two spellings must produce the same verified request — including the same
+    /// request subject, which is what binds the caller's stated intent into
+    /// every explain record and receipt.
+    #[test]
+    fn a_single_entry_preference_and_a_bare_contract_are_the_same_request() {
+        let program = program();
+        let bare = verify_request(CompilationRequest::governed_under(
+            &program,
+            StrictF32NumericalContract::governed(),
+        ))
+        .unwrap();
+        let listed = verify_request(CompilationRequest::governed_preferring(
+            &program,
+            NumericalContractPreference::ordered(vec![StrictF32NumericalContract::governed()])
+                .unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(bare, listed);
+        let target = PrototypeTargetProfile::governed();
+        assert_eq!(
+            bare.for_target(target).unwrap().subject(),
+            listed.for_target(target).unwrap().subject(),
+        );
+    }
+
+    /// Resolution follows the caller's stated order, never a ranking of its own.
+    ///
+    /// The governed baseline honours both registered contracts, so whichever
+    /// entry the caller put first is the one that wins. That is the whole
+    /// property: nothing here prefers the strict entry because it is stricter or
+    /// the flushing entry because it is cheaper, because a cost may never rank
+    /// contracts against each other.
+    #[test]
+    fn a_preference_list_resolves_by_the_callers_order_and_never_by_rank() {
+        let program = program();
+        for (first, second) in [
+            (
+                StrictF32NumericalContract::governed(),
+                StrictF32NumericalContract::governed_flush_to_zero(),
+            ),
+            (
+                StrictF32NumericalContract::governed_flush_to_zero(),
+                StrictF32NumericalContract::governed(),
+            ),
+        ] {
+            let verified = verify_request(CompilationRequest::governed_preferring(
+                &program,
+                NumericalContractPreference::ordered(vec![first, second]).unwrap(),
+            ))
+            .unwrap();
+            assert_eq!(verified.uniform_resolved_contract(), Some(first));
+            let target = verified
+                .for_target(PrototypeTargetProfile::governed())
+                .unwrap();
+            assert_eq!(target.numerical_contract(), first);
+            // The whole stated list is retained, not only the winner: the
+            // caller's fallback intent is what the list exists to record.
+            assert_eq!(
+                target.numerical_contracts().stated(),
+                [first, second].as_slice()
+            );
+        }
+    }
+
+    /// Two lists that resolve alike but state different fallbacks are different
+    /// requests.
+    ///
+    /// If the subject bound only the resolved contract, an explain trace and an
+    /// artifact would attribute one resolution to a preference they never saw.
+    #[test]
+    fn the_stated_preference_separates_requests_that_resolve_alike() {
+        let program = program();
+        let target = PrototypeTargetProfile::governed();
+        let alone = verify_request(CompilationRequest::governed_preferring(
+            &program,
+            NumericalContractPreference::ordered(vec![StrictF32NumericalContract::governed()])
+                .unwrap(),
+        ))
+        .unwrap();
+        let with_fallback = verify_request(CompilationRequest::governed_preferring(
+            &program,
+            NumericalContractPreference::ordered(vec![
+                StrictF32NumericalContract::governed(),
+                StrictF32NumericalContract::governed_flush_to_zero(),
+            ])
+            .unwrap(),
+        ))
+        .unwrap();
+        let alone = alone.for_target(target).unwrap();
+        let with_fallback = with_fallback.for_target(target).unwrap();
+        assert_eq!(
+            alone.numerical_contract(),
+            with_fallback.numerical_contract()
+        );
+        assert_ne!(
+            alone.subject().canonical_explain_subject_bytes(),
+            with_fallback.subject().canonical_explain_subject_bytes(),
+        );
+    }
+
+    /// A request that states no contract does not compile, and says so.
+    ///
+    /// The diagnostic names the contract as unstated rather than naming a
+    /// dimension: there is no default and no implicit strictest reading, so
+    /// there is no dimension the caller chose to report against.
+    #[test]
+    fn an_unstated_numerical_contract_is_refused_by_name() {
+        let program = program();
+        assert_eq!(
+            NumericalContractPreference::ordered(Vec::new()),
+            Err(RequestError::UnstatedNumericalContract)
+        );
+        let mut request = CompilationRequest::governed(&program);
+        request.numerical_contracts.stated.clear();
+        assert_eq!(
+            verify_request(request),
+            Err(RequestError::UnstatedNumericalContract)
+        );
+    }
+
+    /// A target that honours no stated entry rejects, naming every entry's cause.
+    ///
+    /// The governed baseline deliberately declares nothing about the
+    /// always-positive flush, so a contract requiring it is `Undeclared` — the
+    /// fail-closed direction — rather than admitted. The rejection retains one
+    /// cause per stated entry, in the caller's order, so a two-entry preference
+    /// explains both entries rather than only the last.
+    #[test]
+    fn a_target_that_honours_no_stated_contract_rejects_with_a_cause_per_entry() {
+        let program = program();
+        let mut positive_flush = StrictF32NumericalContract::governed_flush_to_zero();
+        positive_flush.input_subnormals = SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        };
+        positive_flush.result_subnormals = SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        };
+        // The contract must still be one this build registers, or the request
+        // would be refused earlier for a different reason. It is not, so this
+        // asserts the earlier refusal and then drives resolution directly.
+        assert!(!positive_flush.is_governed());
+        assert_eq!(
+            verify_request(CompilationRequest::governed_under(&program, positive_flush)),
+            Err(RequestError::UnsupportedCapability {
+                phase: "numerics",
+                rule: "governed-contract-profile",
+            })
+        );
+
+        let target = PrototypeTargetProfile::governed();
+        let error = resolve_numerical_contract(
+            &NumericalContractPreference::ordered(vec![
+                positive_flush,
+                StrictF32NumericalContract::governed(),
+            ])
+            .unwrap(),
+            &PrototypeTargetProfile {
+                // A profile that declares nothing at all: every dimension of
+                // every entry is undeclared, so nothing may be admitted.
+                numerical: &[],
+                ..target
+            },
+        )
+        .unwrap_err();
+        let RequestError::NoResolvableNumericalContract {
+            target_profile,
+            rejections,
+        } = error
+        else {
+            panic!("an unhonourable preference rejects by name");
+        };
+        assert_eq!(target_profile, target.key);
+        assert_eq!(rejections.len(), 2, "one cause per stated entry");
+        assert_eq!(rejections[0].contract_key(), positive_flush.key);
+        assert_eq!(
+            rejections[1].contract_key(),
+            StrictF32NumericalContract::governed().key
+        );
+        for rejection in &rejections {
+            assert!(matches!(rejection, ContractRejection::Undeclared { .. }));
+            assert_eq!(
+                rejection.dimension(),
+                crate::honourability::NumericalDimension::InputSubnormals
+            );
+        }
+    }
+
+    /// The governed baseline resolves both registered contracts, and its
+    /// declaration is what admits them.
+    #[test]
+    fn the_governed_baseline_honours_both_registered_contracts() {
+        let target = PrototypeTargetProfile::governed();
+        for contract in StrictF32NumericalContract::governed_profile() {
+            let outcome = crate::physical::assess_contract(&target, contract).unwrap();
+            let crate::feasibility::FeasibilityOutcome::Proven(evidence) = outcome else {
+                panic!("the baseline honours {}", contract.key);
+            };
+            assert_eq!(evidence.honoured().len(), 4, "one per governed dimension");
+            for honoured in evidence.honoured() {
+                assert_eq!(
+                    honoured.means(),
+                    crate::honourability::HonouringMeans::SupportedExactly
+                );
+                assert_eq!(honoured.profile().key(), target.key);
+            }
+        }
     }
 
     #[test]

@@ -21,6 +21,27 @@
 //! otherwise, with no remaining checks, the candidate is proven. A proposal with
 //! no requirements is vacuously [`FeasibilityOutcome::Proven`].
 //!
+//! # Two kinds of predicate, one verdict
+//!
+//! A proposal carries typed [`AxisRequirement`]s over the quantitative
+//! [`CapabilityAxis`] space *and* typed
+//! [`crate::honourability::NumericalRequirement`]s over the per-dimension
+//! numerical-honourability space (ADR 0076 item 3). They are different
+//! authorities — [`crate::honourability`] owns the second vocabulary, and
+//! numerical honourability is deliberately not a `CapabilityAxis`, because
+//! `SupportedWithExactEmulation` has no representation as a bound comparison —
+//! but a candidate has exactly one feasibility verdict, so the two compose here
+//! into one [`FeasibilityOutcome`] under the same precedence. The composition is
+//! stated rather than implicit: a dimension honoured exactly or by emulation is a
+//! satisfied hard predicate; a dimension honourable only under a relaxation the
+//! caller's contract does not authorize is *disproved*, not deferred and not
+//! unknown, because that authorization is known at
+//! [`AvailabilityPhase::CompileProfile`] and cannot arrive later; a dimension
+//! declared unhonourable is disproved; and a dimension the profile does not
+//! speak to is [`FeasibilityOutcome::Unknown`] in ADR 0043's exact sense, which
+//! is what makes an unenumerated dimension fail closed rather than default to
+//! honoured.
+//!
 //! Two governed identities meet here and are kept apart. A
 //! [`TargetProfileIdentity`] names *what* a target declares, distinguished by
 //! [`CheckedTargetProfile::canonical_descriptor`]; a
@@ -45,38 +66,56 @@
 use tiler_ir::identity::{push_len, push_slice};
 
 use crate::explain::Quantity;
+use crate::honourability::{
+    DeferredDimension, DimensionBehaviour, HonouredDimension, HonouringMeans, NumericalDimension,
+    NumericalHonourabilityFact, NumericalRequirement, UndeclaredDimension, UnhonouredDimension,
+};
 
 /// Domain separator of a canonical target profile descriptor.
 ///
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
 ///
-/// `v2` because the encoding changed when the feasibility rule version left the
-/// profile's identity: a descriptor is durable identity, so an encoding that no
-/// longer means what `v1` meant must not be able to collide with one that does.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v2\0";
+/// `v3` because the encoding grew the profile's per-dimension numerical
+/// honourability declaration when `CapabilityAxis::StrictF32Arithmetic` was
+/// retired (ADR 0076 item 3). A descriptor is durable identity, so an encoding
+/// that no longer means what `v2` meant must not be able to collide with one
+/// that does — and `v2` could not distinguish two profiles that declare
+/// different honourable behaviours, which is exactly what the retired boolean
+/// axis was unable to say.
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v3\0";
 
 /// Governed key of the feasibility rule set this authority applies.
 ///
-/// The `.v1` suffix names the governed *vocabulary* the rules range over — the
+/// The version suffix names the governed *vocabulary* the rules range over — the
 /// ADR 0043 capability axes, availability phases, fact authorities, and validity
-/// scopes — not an output-affecting revision within it. Widening that vocabulary
+/// scopes, and now the ADR 0076 numerical dimensions, behaviours, and honouring
+/// means — not an output-affecting revision within it. Widening that vocabulary
 /// mints a new key because the rules would then decide predicates the old key
 /// could not express; changing how the same terms are compared bumps
 /// [`GOVERNED_FEASIBILITY_RULE_SET_REVISION`] instead. That is why the artifact
 /// layer's `FeasibilityRuleSetRef` carries both a key and a revision rather than
 /// one number.
-const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str = "tiler.feasibility.phased-capability-bounds.v1";
+///
+/// This key replaces `tiler.feasibility.phased-capability-bounds.v1`, whose
+/// vocabulary was capability bounds alone: it could neither express a
+/// per-dimension numerical predicate nor decide one, and it named an axis
+/// (`strict-f32`) this rule set no longer has.
+const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str =
+    "tiler.feasibility.phased-capability-and-numerical-honourability.v1";
 
 /// Nonzero output-affecting revision of the governed feasibility rule set.
 ///
 /// Bumped when this module changes *how* a requirement is compared against a
-/// bound — an axis [`Relation`], [`satisfies`], [`CapabilityAxis::admits`],
-/// [`authority_matches_phase`], [`CheckedTargetProfile::resolve`]'s preference
-/// for the most refined available fact, or the outcome precedence in
+/// bound or a declaration — an axis [`Relation`], [`satisfies`],
+/// [`CapabilityAxis::admits`], [`authority_matches_phase`],
+/// [`CheckedTargetProfile::resolve`]'s preference for the most refined available
+/// fact, the mapping of a [`HonouringMeans`] onto a verdict in
+/// [`CheckedTargetProfile::resolve_dimension`], or the outcome precedence in
 /// [`CheckedTargetProfile::assess`]. It is deliberately *not* bumped when a
-/// target profile's declared bounds change: a bound is the profile's claim, and
-/// the profile's canonical descriptor already distinguishes it.
+/// target profile's declared bounds or honourability change: those are the
+/// profile's claims, and the profile's canonical descriptor already
+/// distinguishes them.
 const GOVERNED_FEASIBILITY_RULE_SET_REVISION: u32 = 1;
 
 /// The one feasibility rule set every [`CheckedTargetProfile::assess`] applies.
@@ -113,6 +152,12 @@ pub(crate) use tiler_ir::program::abi::AvailabilityPhase;
 /// range over these typed axes rather than a free-form backend property bag,
 /// which per ADR 0043 cannot prove correctness. The derived ordering is the
 /// canonical evaluation and reporting order.
+///
+/// This space is *quantitative*: every axis has a `u64` bound, a
+/// [`Quantity`] unit, and a comparison [`Relation`]. Numerical behaviour is
+/// deliberately not in it — see [`crate::honourability`] — because a bound
+/// comparison can report whether an obligation is met and never by what means,
+/// and the means is what an emulated dimension's emitted operations depend on.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CapabilityAxis {
     /// Threads dispatched along the launch grid axis.
@@ -125,8 +170,6 @@ pub(crate) enum CapabilityAxis {
     IndexWidthBits,
     /// Availability of an explicitly addressable device memory space.
     DeviceAddressSpace,
-    /// Availability of strict IEEE-754 binary32 arithmetic.
-    StrictF32Arithmetic,
     /// Explicitly staged local memory, in bytes.
     LocalMemoryBytes,
     /// Barrier/collective synchronization operations.
@@ -142,6 +185,11 @@ impl CapabilityAxis {
     /// (ADR 0074 convention 3). A descriptor is durable identity: a profile
     /// whose descriptor changed without its facts changing would claim to be a
     /// different profile.
+    ///
+    /// `0x06` is a retired tag, not a free one. It named the withdrawn
+    /// `StrictF32Arithmetic` axis, and reassigning it would let a `v3`
+    /// descriptor produced after some future widening mean something a reader of
+    /// the retirement would not expect. New axes take the next unused value.
     const fn tag(self) -> u8 {
         match self {
             Self::GridAxisThreads => 0x01,
@@ -149,7 +197,6 @@ impl CapabilityAxis {
             Self::BufferBindings => 0x03,
             Self::IndexWidthBits => 0x04,
             Self::DeviceAddressSpace => 0x05,
-            Self::StrictF32Arithmetic => 0x06,
             Self::LocalMemoryBytes => 0x07,
             Self::Barriers => 0x08,
         }
@@ -170,13 +217,12 @@ enum Relation {
 
 /// The canonical axis order. This is the single source of truth for evaluation
 /// and reporting order, matching the derived [`CapabilityAxis`] ordering.
-const CANONICAL_AXES: [CapabilityAxis; 8] = [
+const CANONICAL_AXES: [CapabilityAxis; 7] = [
     CapabilityAxis::GridAxisThreads,
     CapabilityAxis::WorkgroupThreads,
     CapabilityAxis::BufferBindings,
     CapabilityAxis::IndexWidthBits,
     CapabilityAxis::DeviceAddressSpace,
-    CapabilityAxis::StrictF32Arithmetic,
     CapabilityAxis::LocalMemoryBytes,
     CapabilityAxis::Barriers,
 ];
@@ -190,7 +236,6 @@ impl CapabilityAxis {
             Self::BufferBindings => "buffer-bindings",
             Self::IndexWidthBits => "index-bits",
             Self::DeviceAddressSpace => "device-memory",
-            Self::StrictF32Arithmetic => "strict-f32",
             Self::LocalMemoryBytes => "local-memory-bytes",
             Self::Barriers => "barriers",
         }
@@ -204,7 +249,7 @@ impl CapabilityAxis {
             | Self::LocalMemoryBytes
             | Self::Barriers => Relation::AtMost,
             Self::IndexWidthBits => Relation::Exact,
-            Self::DeviceAddressSpace | Self::StrictF32Arithmetic => Relation::Implies,
+            Self::DeviceAddressSpace => Relation::Implies,
         }
     }
 
@@ -214,10 +259,9 @@ impl CapabilityAxis {
             Self::GridAxisThreads | Self::WorkgroupThreads => Quantity::Threads(value),
             Self::BufferBindings => Quantity::Bindings(value),
             Self::LocalMemoryBytes => Quantity::Bytes(value),
-            Self::IndexWidthBits
-            | Self::DeviceAddressSpace
-            | Self::StrictF32Arithmetic
-            | Self::Barriers => Quantity::Count(value),
+            Self::IndexWidthBits | Self::DeviceAddressSpace | Self::Barriers => {
+                Quantity::Count(value)
+            }
         }
     }
 
@@ -261,7 +305,7 @@ impl FactAuthority {
     /// Returns the governed tag naming this authority in a canonical descriptor.
     ///
     /// Exhaustive for the same reason as [`CapabilityAxis::tag`].
-    const fn tag(self) -> u8 {
+    pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::GovernedProfile => 0x01,
             Self::ArtifactEvidence => 0x02,
@@ -289,7 +333,7 @@ impl FactValidityScope {
     /// Returns the governed tag naming this scope in a canonical descriptor.
     ///
     /// Exhaustive for the same reason as [`CapabilityAxis::tag`].
-    const fn tag(self) -> u8 {
+    pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::PortableProfile => 0x01,
             Self::DeviceInstance => 0x02,
@@ -453,6 +497,8 @@ pub(crate) struct CheckedTargetProfile {
     identity: TargetProfileIdentity,
     /// Canonical: sorted by `(axis, phase)`, unique per `(axis, phase)`.
     facts: Vec<CapabilityFact>,
+    /// Canonical: sorted by `(dimension, behaviour, phase)`, unique per triple.
+    honourability: Vec<NumericalHonourabilityFact>,
 }
 
 impl CheckedTargetProfile {
@@ -461,11 +507,23 @@ impl CheckedTargetProfile {
     /// Rejects an empty identity key, a fact whose bound is inadmissible for its
     /// axis, a fact whose provenance names another profile, a fact whose declared
     /// authority contradicts its phase, and duplicate facts for the same
-    /// `(axis, phase)`.
+    /// `(axis, phase)`. Honourability facts are validated on the same terms: a
+    /// behaviour outside its dimension's space, a foreign provenance, an
+    /// authority contradicting its phase, and a duplicate
+    /// `(dimension, behaviour, phase)` are all malformed.
+    ///
+    /// The two declarations live on one profile and share one identity because
+    /// they are one target's claims about itself; the *authorities* that decide
+    /// them are separate, which is what ADR 0076 item 3 requires. Splitting the
+    /// declaration into two profile objects would mint a second identity that
+    /// has to be kept in agreement with the first.
     pub(crate) fn new(
         identity: TargetProfileIdentity,
-        mut facts: Vec<CapabilityFact>,
+        facts: Vec<CapabilityFact>,
+        honourability: Vec<NumericalHonourabilityFact>,
     ) -> Result<Self, FeasibilityError> {
+        let mut facts = facts;
+        let mut honourability = honourability;
         if identity.key().is_empty() {
             return Err(FeasibilityError::MalformedProfile { rule: "identity" });
         }
@@ -484,6 +542,31 @@ impl CheckedTargetProfile {
                 });
             }
         }
+        for fact in &honourability {
+            if !fact.dimension().admits(fact.behaviour()) {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "declaration-behaviour",
+                });
+            }
+            if let HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { relaxation } =
+                fact.means()
+                && !relaxation.dimension().admits(relaxation.behaviour())
+            {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "declaration-relaxation",
+                });
+            }
+            if fact.provenance().profile != identity {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "declaration-provenance",
+                });
+            }
+            if !authority_matches_phase(fact.authority(), fact.phase()) {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "declaration-authority",
+                });
+            }
+        }
         facts.sort_by(|left, right| {
             left.axis
                 .cmp(&right.axis)
@@ -497,7 +580,20 @@ impl CheckedTargetProfile {
                 rule: "duplicate-fact",
             });
         }
-        Ok(Self { identity, facts })
+        honourability.sort_by_key(|fact| fact.sort_key());
+        if honourability
+            .windows(2)
+            .any(|pair| pair[0].sort_key() == pair[1].sort_key())
+        {
+            return Err(FeasibilityError::MalformedProfile {
+                rule: "duplicate-declaration",
+            });
+        }
+        Ok(Self {
+            identity,
+            facts,
+            honourability,
+        })
     }
 
     /// The governed identity of this profile.
@@ -508,6 +604,11 @@ impl CheckedTargetProfile {
     /// The checked capability facts, in canonical order.
     pub(crate) fn facts(&self) -> &[CapabilityFact] {
         &self.facts
+    }
+
+    /// The checked numerical honourability declaration, in canonical order.
+    pub(crate) fn honourability(&self) -> &[NumericalHonourabilityFact] {
+        &self.honourability
     }
 
     /// Returns this profile's canonical descriptor bytes.
@@ -526,11 +627,21 @@ impl CheckedTargetProfile {
     ///
     /// # What it covers, and what it deliberately does not
     ///
-    /// The identity key and every fact's axis, bound, phase, authority, and
-    /// validity scope — the whole of what makes one profile admit a candidate
-    /// another rejects. Facts are already in the canonical `(axis, phase)` order
-    /// the constructor enforces and are unique per pair, so the encoding is a
-    /// function of the profile rather than of the order it was declared in.
+    /// The identity key; every capability fact's axis, bound, phase, authority,
+    /// and validity scope; and every honourability fact's dimension, behaviour,
+    /// means, phase, authority, and validity scope — the whole of what makes one
+    /// profile admit a candidate another rejects. Both declarations are already
+    /// in the canonical order the constructor enforces and are unique per key,
+    /// so the encoding is a function of the profile rather than of the order it
+    /// was declared in.
+    ///
+    /// The honourability declaration is *inside* the descriptor, not beside it,
+    /// because it decides verdicts exactly as a capability bound does: two
+    /// profiles sharing a key and differing only in which subnormal behaviour
+    /// they honour admit different requests, and a descriptor that could not
+    /// tell them apart would let one artifact claim it was assessed against the
+    /// other. That is the same defect the descriptor exists to prevent for
+    /// bounds.
     ///
     /// A fact's [`FactProvenance`] is excluded: it cites this profile's own
     /// identity, so folding it in would make the descriptor depend on a value
@@ -558,6 +669,10 @@ impl CheckedTargetProfile {
             bytes.push(fact.phase.tag());
             bytes.push(fact.authority.tag());
             bytes.push(fact.validity.tag());
+        }
+        push_len(&mut bytes, self.honourability.len());
+        for fact in &self.honourability {
+            fact.encode_declaration(&mut bytes);
         }
         bytes
     }
@@ -588,12 +703,114 @@ impl CheckedTargetProfile {
         }
     }
 
+    /// Resolves one required behaviour against the honourability declaration
+    /// available through `available_phase`.
+    ///
+    /// `authorized` is the caller's own contract, projected per dimension. It is
+    /// read for exactly one purpose: deciding whether a
+    /// [`HonouringMeans::SupportedOnlyUnderDeclaredRelaxation`] declaration is
+    /// satisfied by a relaxation the caller has *already stated*. Nothing here
+    /// may add, widen, or substitute an authorization — the caller's contract is
+    /// an input to this decision, never an output of it (ADR 0076 item 5).
+    fn resolve_dimension(
+        &self,
+        requirement: NumericalRequirement,
+        authorized: &[NumericalRequirement],
+        available_phase: AvailabilityPhase,
+    ) -> DimensionResolution {
+        let dimension = requirement.dimension();
+        let required = requirement.behaviour();
+        let mut now: Option<NumericalHonourabilityFact> = None;
+        let mut later: Option<AvailabilityPhase> = None;
+        for fact in self
+            .honourability
+            .iter()
+            .filter(|fact| fact.dimension() == dimension && fact.behaviour() == required)
+        {
+            if fact.phase() <= available_phase {
+                // Prefer the most refined declaration already available.
+                now = Some(match now {
+                    Some(current) if current.phase() >= fact.phase() => current,
+                    _ => *fact,
+                });
+            } else {
+                later = Some(match later {
+                    Some(phase) if phase <= fact.phase() => phase,
+                    _ => fact.phase(),
+                });
+            }
+        }
+        let Some(fact) = now else {
+            return match later {
+                Some(phase) => {
+                    DimensionResolution::Later(DeferredDimension::new(dimension, required, phase))
+                }
+                None => DimensionResolution::NoPath(UndeclaredDimension::new(dimension, required)),
+            };
+        };
+        let honoured = match fact.means() {
+            HonouringMeans::SupportedExactly | HonouringMeans::SupportedWithExactEmulation => true,
+            // The authorization is known now and cannot arrive later, so an
+            // unauthorized relaxation disproves rather than defers.
+            HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { relaxation } => {
+                authorized.iter().any(|stated| {
+                    stated.dimension() == relaxation.dimension()
+                        && stated.behaviour() == relaxation.behaviour()
+                })
+            }
+            HonouringMeans::Unsupported => false,
+        };
+        if honoured {
+            DimensionResolution::Honoured(HonouredDimension::new(
+                dimension,
+                required,
+                fact.means(),
+                self.identity,
+            ))
+        } else {
+            DimensionResolution::Unhonoured(UnhonouredDimension::new(
+                dimension,
+                required,
+                fact.means(),
+                self.honoured_alternative(dimension, available_phase),
+                self.identity,
+            ))
+        }
+    }
+
+    /// The canonical-first behaviour on `dimension` this profile honours
+    /// unconditionally, when it honours one at all.
+    ///
+    /// Reported in a rejection so a caller can see which contract this target
+    /// would accept. A conditional means is excluded because whether it honours
+    /// anything depends on the request, so it is not an alternative the profile
+    /// offers on its own.
+    fn honoured_alternative(
+        &self,
+        dimension: NumericalDimension,
+        available_phase: AvailabilityPhase,
+    ) -> Option<DimensionBehaviour> {
+        self.honourability
+            .iter()
+            .find(|fact| {
+                fact.dimension() == dimension
+                    && fact.phase() <= available_phase
+                    && fact.is_unconditionally_honoured()
+            })
+            .map(|fact| fact.behaviour())
+    }
+
     /// Assesses one candidate proposal against this profile.
     ///
     /// `available_phase` is the phase up to which facts are known; the compiler's
     /// static assessment uses [`AvailabilityPhase::CompileProfile`]. The result is
     /// always exactly one of the four outcomes; malformed inputs cannot reach here
     /// because both the profile and the proposal are validated at construction.
+    ///
+    /// Capability predicates and numerical-honourability predicates are assessed
+    /// by their own rules and then composed under one precedence, so a candidate
+    /// that is both too large and numerically unhonourable has one verdict rather
+    /// than two.
     pub(crate) fn assess(
         &self,
         proposal: &FeasibilityProposal,
@@ -627,26 +844,51 @@ impl CheckedTargetProfile {
                 AxisResolution::NoPath => unknown.push(UnknownPredicate { axis, required }),
             }
         }
-        // Precedence: rejected, then unknown, then deferred, then proven.
-        if !disproved.is_empty() {
-            return FeasibilityOutcome::Rejected(Rejection { disproved });
+        let mut honoured = Vec::new();
+        let mut unhonoured = Vec::new();
+        let mut undeclared = Vec::new();
+        let mut deferred_dimensions = Vec::new();
+        for requirement in &proposal.numerical {
+            match self.resolve_dimension(*requirement, &proposal.numerical, available_phase) {
+                DimensionResolution::Honoured(record) => honoured.push(record),
+                DimensionResolution::Unhonoured(record) => unhonoured.push(record),
+                DimensionResolution::Later(record) => deferred_dimensions.push(record),
+                DimensionResolution::NoPath(record) => undeclared.push(record),
+            }
         }
-        if !unknown.is_empty() {
-            return FeasibilityOutcome::Unknown(UnknownSet {
-                predicates: unknown,
+        // Precedence: rejected, then unknown, then deferred, then proven.
+        if !disproved.is_empty() || !unhonoured.is_empty() {
+            return FeasibilityOutcome::Rejected(Rejection {
+                disproved,
+                unhonourable: unhonoured,
             });
         }
-        if !deferred.is_empty() {
+        if !unknown.is_empty() || !undeclared.is_empty() {
+            return FeasibilityOutcome::Unknown(UnknownSet {
+                predicates: unknown,
+                dimensions: undeclared,
+            });
+        }
+        if !deferred.is_empty() || !deferred_dimensions.is_empty() {
             deferred.sort_by(|left, right| {
                 left.phase
                     .cmp(&right.phase)
                     .then(left.axis.cmp(&right.axis))
             });
+            deferred_dimensions.sort_by(|left, right| {
+                left.phase()
+                    .cmp(&right.phase())
+                    .then(left.dimension().cmp(&right.dimension()))
+            });
             return FeasibilityOutcome::Deferred(DeferredSet {
                 predicates: deferred,
+                dimensions: deferred_dimensions,
             });
         }
-        FeasibilityOutcome::Proven(proven)
+        FeasibilityOutcome::Proven(ProvenEvidence {
+            predicates: proven,
+            honoured,
+        })
     }
 
     /// Assesses a set of candidate proposals, partitioning them by outcome.
@@ -662,8 +904,8 @@ impl CheckedTargetProfile {
         let mut set = FeasibleSet::default();
         for proposal in proposals {
             match self.assess(proposal, available_phase) {
-                FeasibilityOutcome::Proven(predicates) => {
-                    set.proven.push((proposal.candidate, predicates));
+                FeasibilityOutcome::Proven(evidence) => {
+                    set.proven.push((proposal.candidate, evidence));
                 }
                 FeasibilityOutcome::Deferred(deferred) => {
                     set.deferred.push((proposal.candidate, deferred));
@@ -712,6 +954,19 @@ enum AxisResolution {
     NoPath,
 }
 
+/// The four ways one numerical dimension resolves against a declaration.
+enum DimensionResolution {
+    /// A declaration available now honours the required behaviour.
+    Honoured(HonouredDimension),
+    /// A declaration available now refuses the required behaviour, either
+    /// outright or because a relaxation it names is unauthorized.
+    Unhonoured(UnhonouredDimension),
+    /// No declaration is available now, but one is admissible from a later phase.
+    Later(DeferredDimension),
+    /// Nothing declares the required behaviour at any phase.
+    NoPath(UndeclaredDimension),
+}
+
 /// A candidate requirement: a bound the candidate needs on one axis.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AxisRequirement {
@@ -728,22 +983,34 @@ impl AxisRequirement {
 
 /// A candidate proposal: the typed requirements one implementation places on a
 /// target. This is the concrete, bounded predicate form the authority evaluates.
+///
+/// The numerical requirements are the caller's resolved contract projected per
+/// dimension, not a preference or a ceiling to negotiate against. Exactly one
+/// behaviour per dimension may be required, which is what makes the set usable
+/// as the authorization a conditional honouring means is checked against.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FeasibilityProposal {
     candidate: &'static str,
     /// Canonical: sorted by axis, unique per axis.
     requirements: Vec<AxisRequirement>,
+    /// Canonical: sorted by dimension, unique per dimension.
+    numerical: Vec<NumericalRequirement>,
 }
 
 impl FeasibilityProposal {
     /// Builds a checked proposal, validating it as an intrinsic contract.
     ///
     /// Rejects an empty candidate identity, a requirement whose amount is
-    /// inadmissible for its axis, and duplicate requirements for the same axis.
+    /// inadmissible for its axis, a numerical requirement whose behaviour is
+    /// outside its dimension's space, and duplicate requirements for the same
+    /// axis or the same dimension.
     pub(crate) fn new(
         candidate: &'static str,
-        mut requirements: Vec<AxisRequirement>,
+        requirements: Vec<AxisRequirement>,
+        numerical: Vec<NumericalRequirement>,
     ) -> Result<Self, FeasibilityError> {
+        let mut requirements = requirements;
+        let mut numerical = numerical;
         if candidate.is_empty() {
             return Err(FeasibilityError::MalformedProposal {
                 rule: "candidate-id",
@@ -756,6 +1023,13 @@ impl FeasibilityProposal {
                 });
             }
         }
+        for requirement in &numerical {
+            if !requirement.dimension().admits(requirement.behaviour()) {
+                return Err(FeasibilityError::MalformedProposal {
+                    rule: "requirement-behaviour",
+                });
+            }
+        }
         requirements.sort_by_key(|requirement| requirement.axis);
         if requirements
             .windows(2)
@@ -765,9 +1039,19 @@ impl FeasibilityProposal {
                 rule: "duplicate-requirement",
             });
         }
+        numerical.sort_by_key(|requirement| requirement.dimension());
+        if numerical
+            .windows(2)
+            .any(|pair| pair[0].dimension() == pair[1].dimension())
+        {
+            return Err(FeasibilityError::MalformedProposal {
+                rule: "duplicate-dimension",
+            });
+        }
         Ok(Self {
             candidate,
             requirements,
+            numerical,
         })
     }
 
@@ -846,23 +1130,80 @@ impl UnknownPredicate {
     }
 }
 
+/// The evidence a proven candidate carries.
+///
+/// Both halves are retained because they are different claims: the resolved
+/// predicates say a bound was met, and the honoured dimensions say *by what
+/// means* the numerical contract was honoured. The means cannot be recovered
+/// from the predicates, and an emulated dimension is honoured by emitted
+/// operations, so a consumer that kept only the verdict would lose the work.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ProvenEvidence {
+    predicates: Vec<ResolvedPredicate>,
+    honoured: Vec<HonouredDimension>,
+}
+
+impl ProvenEvidence {
+    /// The resolved capability predicates, in canonical axis order.
+    pub(crate) fn predicates(&self) -> &[ResolvedPredicate] {
+        &self.predicates
+    }
+
+    /// The honoured numerical dimensions, in canonical dimension order.
+    pub(crate) fn honoured(&self) -> &[HonouredDimension] {
+        &self.honoured
+    }
+
+    /// Whether this evidence records no check at all.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.predicates.is_empty() && self.honoured.is_empty()
+    }
+}
+
 /// The nonempty disproved predicates that reject a candidate, canonical order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rejection {
     disproved: Vec<ResolvedPredicate>,
+    unhonourable: Vec<UnhonouredDimension>,
+}
+
+/// The canonical representative cause of one rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RejectionCause {
+    /// A numerical dimension the target declares it cannot honour as required.
+    Numerical(UnhonouredDimension),
+    /// A capability bound the candidate exceeds.
+    Capability(ResolvedPredicate),
 }
 
 impl Rejection {
-    /// The canonical representative disproved predicate (first in axis order).
+    /// The canonical representative cause: the first unhonourable dimension when
+    /// there is one, otherwise the first disproved capability predicate.
     ///
-    /// The disproved set is nonempty by construction, so this never panics.
-    pub(crate) fn representative(&self) -> ResolvedPredicate {
-        self.disproved[0]
+    /// Numerical rejections come first deliberately. A capability rejection says
+    /// this *plan* does not fit and another plan might; an unhonourable
+    /// dimension says the target cannot compute what the caller asked for, which
+    /// no amount of re-planning changes, because the numerical contract is not a
+    /// search dimension. Reporting the cause that re-planning cannot fix is the
+    /// more useful of the two.
+    ///
+    /// At least one of the two sets is nonempty by construction, so this never
+    /// panics.
+    pub(crate) fn representative(&self) -> RejectionCause {
+        self.unhonourable.first().map_or_else(
+            || RejectionCause::Capability(self.disproved[0]),
+            |cause| RejectionCause::Numerical(*cause),
+        )
     }
 
-    /// All disproved predicates, in canonical axis order.
+    /// All disproved capability predicates, in canonical axis order.
     pub(crate) fn disproved(&self) -> &[ResolvedPredicate] {
         &self.disproved
+    }
+
+    /// All unhonourable numerical dimensions, in canonical dimension order.
+    pub(crate) fn unhonourable(&self) -> &[UnhonouredDimension] {
+        &self.unhonourable
     }
 }
 
@@ -871,12 +1212,19 @@ impl Rejection {
 pub(crate) struct DeferredSet {
     /// Canonical: sorted by `(phase, axis)`.
     predicates: Vec<DeferredPredicate>,
+    /// Canonical: sorted by `(phase, dimension)`.
+    dimensions: Vec<DeferredDimension>,
 }
 
 impl DeferredSet {
-    /// The deferred predicates, canonical `(phase, axis)` order.
+    /// The deferred capability predicates, canonical `(phase, axis)` order.
     pub(crate) fn predicates(&self) -> &[DeferredPredicate] {
         &self.predicates
+    }
+
+    /// The deferred numerical dimensions, canonical `(phase, dimension)` order.
+    pub(crate) fn dimensions(&self) -> &[DeferredDimension] {
+        &self.dimensions
     }
 
     /// The distinct phases the deferred checks resolve at, ascending.
@@ -885,7 +1233,9 @@ impl DeferredSet {
             .predicates
             .iter()
             .map(|predicate| predicate.phase())
+            .chain(self.dimensions.iter().map(|dimension| dimension.phase()))
             .collect();
+        phases.sort_unstable();
         phases.dedup();
         phases
     }
@@ -895,12 +1245,18 @@ impl DeferredSet {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UnknownSet {
     predicates: Vec<UnknownPredicate>,
+    dimensions: Vec<UndeclaredDimension>,
 }
 
 impl UnknownSet {
-    /// The unknown predicates, in canonical axis order.
+    /// The unknown capability predicates, in canonical axis order.
     pub(crate) fn predicates(&self) -> &[UnknownPredicate] {
         &self.predicates
+    }
+
+    /// The numerical dimensions the profile does not speak to, canonical order.
+    pub(crate) fn dimensions(&self) -> &[UndeclaredDimension] {
+        &self.dimensions
     }
 }
 
@@ -908,8 +1264,9 @@ impl UnknownSet {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FeasibilityOutcome {
     /// Every check resolved and is satisfied; the candidate may enter the
-    /// executable frontier. Carries the resolved predicates in canonical order.
-    Proven(Vec<ResolvedPredicate>),
+    /// executable frontier. Carries the resolved predicates and the honoured
+    /// numerical dimensions in canonical order.
+    Proven(ProvenEvidence),
     /// Some checks are unresolved but admissible from a later phase.
     Deferred(DeferredSet),
     /// At least one hard predicate is disproved.
@@ -926,15 +1283,15 @@ pub(crate) enum FeasibilityOutcome {
 /// result distinct from a malformed-input error and from an unknown candidate.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FeasibleSet {
-    proven: Vec<(&'static str, Vec<ResolvedPredicate>)>,
+    proven: Vec<(&'static str, ProvenEvidence)>,
     deferred: Vec<(&'static str, DeferredSet)>,
     rejected: Vec<(&'static str, Rejection)>,
     unknown: Vec<(&'static str, UnknownSet)>,
 }
 
 impl FeasibleSet {
-    /// The proven (admitted) candidates and their resolved predicates.
-    pub(crate) fn proven(&self) -> &[(&'static str, Vec<ResolvedPredicate>)] {
+    /// The proven (admitted) candidates and their evidence.
+    pub(crate) fn proven(&self) -> &[(&'static str, ProvenEvidence)] {
         &self.proven
     }
 
@@ -974,8 +1331,24 @@ pub(crate) enum FeasibilityError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::honourability::{DeclaredBehaviour, RelaxationRequirement};
+    use tiler_ir::schedule::{FlushedZeroSign, NumericalPermission, SubnormalMode};
 
     const BASELINE_KEY: &str = "tiler.test.baseline.v1";
+
+    const PRESERVE: DimensionBehaviour = DimensionBehaviour::Subnormals(SubnormalMode::Preserve);
+    const FLUSH_SIGNED: DimensionBehaviour =
+        DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        });
+    const FLUSH_POSITIVE: DimensionBehaviour =
+        DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        });
+    const FORBIDDEN: DimensionBehaviour =
+        DimensionBehaviour::Transform(NumericalPermission::Forbidden);
+    const PERMITTED: DimensionBehaviour =
+        DimensionBehaviour::Transform(NumericalPermission::Permitted);
 
     fn identity() -> TargetProfileIdentity {
         TargetProfileIdentity::new(BASELINE_KEY)
@@ -992,6 +1365,45 @@ mod tests {
         )
     }
 
+    fn declares(
+        id: TargetProfileIdentity,
+        dimension: NumericalDimension,
+        behaviour: DimensionBehaviour,
+        means: HonouringMeans,
+    ) -> NumericalHonourabilityFact {
+        DeclaredBehaviour::compile_profile(dimension, behaviour, means).attributed_to(id)
+    }
+
+    /// The baseline's honourability declaration: strict everywhere, exactly.
+    fn baseline_honourability(id: TargetProfileIdentity) -> Vec<NumericalHonourabilityFact> {
+        vec![
+            declares(
+                id,
+                NumericalDimension::InputSubnormals,
+                PRESERVE,
+                HonouringMeans::SupportedExactly,
+            ),
+            declares(
+                id,
+                NumericalDimension::ResultSubnormals,
+                PRESERVE,
+                HonouringMeans::SupportedExactly,
+            ),
+            declares(
+                id,
+                NumericalDimension::Contraction,
+                FORBIDDEN,
+                HonouringMeans::SupportedExactly,
+            ),
+            declares(
+                id,
+                NumericalDimension::Reassociation,
+                FORBIDDEN,
+                HonouringMeans::SupportedExactly,
+            ),
+        ]
+    }
+
     /// The bounded serial-Sum baseline: every axis resolvable at compile time.
     fn baseline_profile() -> CheckedTargetProfile {
         let id = identity();
@@ -1003,12 +1415,27 @@ mod tests {
                 compile_fact(id, CapabilityAxis::BufferBindings, 2),
                 compile_fact(id, CapabilityAxis::IndexWidthBits, 64),
                 compile_fact(id, CapabilityAxis::DeviceAddressSpace, 1),
-                compile_fact(id, CapabilityAxis::StrictF32Arithmetic, 1),
                 compile_fact(id, CapabilityAxis::LocalMemoryBytes, 0),
                 compile_fact(id, CapabilityAxis::Barriers, 0),
             ],
+            baseline_honourability(id),
         )
         .unwrap()
+    }
+
+    /// The strict contract, projected per dimension.
+    fn strict_requirements() -> Vec<NumericalRequirement> {
+        vec![
+            NumericalRequirement::new(NumericalDimension::InputSubnormals, PRESERVE),
+            NumericalRequirement::new(NumericalDimension::ResultSubnormals, PRESERVE),
+            NumericalRequirement::new(NumericalDimension::Contraction, FORBIDDEN),
+            NumericalRequirement::new(NumericalDimension::Reassociation, FORBIDDEN),
+        ]
+    }
+
+    /// A profile with no honourability declaration at all.
+    fn capability_only_profile(facts: Vec<CapabilityFact>) -> CheckedTargetProfile {
+        CheckedTargetProfile::new(identity(), facts, Vec::new()).unwrap()
     }
 
     /// The descriptor distinguishes profiles a key alone cannot tell apart.
@@ -1020,6 +1447,7 @@ mod tests {
     fn the_canonical_profile_descriptor_separates_profiles_sharing_a_key() {
         let baseline = baseline_profile();
         let descriptor = baseline.canonical_descriptor();
+        let id = identity();
 
         assert_eq!(
             descriptor,
@@ -1032,10 +1460,9 @@ mod tests {
         );
 
         // A differing bound on one axis: same key, same axes, different profile.
-        let id = identity();
         let mut facts: Vec<_> = baseline.facts().to_vec();
         facts[0] = compile_fact(id, CapabilityAxis::GridAxisThreads, 1_024);
-        let narrower = CheckedTargetProfile::new(id, facts).unwrap();
+        let narrower = CheckedTargetProfile::new(id, facts, baseline_honourability(id)).unwrap();
         assert_eq!(narrower.identity().key(), baseline.identity().key());
         assert_ne!(
             narrower.canonical_descriptor(),
@@ -1056,7 +1483,8 @@ mod tests {
             FactValidityScope::DeviceInstance,
             FactProvenance::declared_by(id),
         );
-        let later = CheckedTargetProfile::new(id, deferred_facts).unwrap();
+        let later =
+            CheckedTargetProfile::new(id, deferred_facts, baseline_honourability(id)).unwrap();
         assert_eq!(later.identity().key(), baseline.identity().key());
         assert_ne!(
             later.canonical_descriptor(),
@@ -1070,6 +1498,37 @@ mod tests {
             ),
             FeasibilityOutcome::Deferred(_),
         ));
+
+        // The honourability declaration is *inside* the descriptor. These three
+        // profiles share a key and every capability bound, and differ only in
+        // what they say about one numerical dimension. Each admits a different
+        // set of contracts, so none may share a descriptor with another — the
+        // defect the retired boolean axis could not even express.
+        let mut emulated = baseline_honourability(id);
+        emulated[0] = declares(
+            id,
+            NumericalDimension::InputSubnormals,
+            PRESERVE,
+            HonouringMeans::SupportedWithExactEmulation,
+        );
+        let mut refusing = baseline_honourability(id);
+        refusing[0] = declares(
+            id,
+            NumericalDimension::InputSubnormals,
+            PRESERVE,
+            HonouringMeans::Unsupported,
+        );
+        let mut descriptors = vec![descriptor.clone()];
+        for declaration in [emulated, refusing] {
+            let variant =
+                CheckedTargetProfile::new(id, baseline.facts().to_vec(), declaration).unwrap();
+            assert_eq!(variant.identity().key(), baseline.identity().key());
+            assert!(
+                !descriptors.contains(&variant.canonical_descriptor()),
+                "profiles declaring different honouring means must not share a descriptor",
+            );
+            descriptors.push(variant.canonical_descriptor());
+        }
 
         // The consumer wraps these bytes directly rather than hashing them, so
         // they must fit the artifact layer's opaque-identity bound. If a profile
@@ -1091,10 +1550,10 @@ mod tests {
                 AxisRequirement::new(CapabilityAxis::BufferBindings, 2),
                 AxisRequirement::new(CapabilityAxis::IndexWidthBits, 64),
                 AxisRequirement::new(CapabilityAxis::DeviceAddressSpace, 1),
-                AxisRequirement::new(CapabilityAxis::StrictF32Arithmetic, 1),
                 AxisRequirement::new(CapabilityAxis::LocalMemoryBytes, 0),
                 AxisRequirement::new(CapabilityAxis::Barriers, 0),
             ],
+            strict_requirements(),
         )
         .unwrap()
     }
@@ -1115,25 +1574,373 @@ mod tests {
             &baseline_proposal("candidate:baseline", 6),
             AvailabilityPhase::CompileProfile,
         );
-        let FeasibilityOutcome::Proven(predicates) = outcome else {
+        let FeasibilityOutcome::Proven(evidence) = outcome else {
             panic!("baseline candidate must prove feasible");
         };
         assert_eq!(
-            predicates.iter().map(|p| p.axis()).collect::<Vec<_>>(),
+            evidence
+                .predicates()
+                .iter()
+                .map(|p| p.axis())
+                .collect::<Vec<_>>(),
             CANONICAL_AXES.to_vec()
         );
-        let grid = predicates[0];
+        let grid = evidence.predicates()[0];
         assert_eq!(grid.required(), Quantity::Threads(6));
         assert_eq!(grid.available(), Quantity::Threads(65_535));
+        // Composition case 1: every dimension honoured exactly is a satisfied
+        // hard predicate, and the *means* survives into the evidence rather than
+        // collapsing into the verdict.
+        assert_eq!(
+            evidence
+                .honoured()
+                .iter()
+                .map(|honoured| (honoured.dimension(), honoured.means()))
+                .collect::<Vec<_>>(),
+            crate::honourability::CANONICAL_DIMENSIONS
+                .iter()
+                .map(|dimension| (*dimension, HonouringMeans::SupportedExactly))
+                .collect::<Vec<_>>(),
+        );
+        for honoured in evidence.honoured() {
+            assert_eq!(honoured.profile(), identity());
+        }
+    }
+
+    /// Composition case 1b: emulation is proven, and says so.
+    ///
+    /// This is the outcome a boolean capability axis cannot carry. An emulated
+    /// dimension is *satisfied* — the candidate is proven — but it is honoured by
+    /// emitting different operations, so the verdict alone would discard the
+    /// work. The assertion is that the evidence distinguishes it from native
+    /// support while both prove.
+    #[test]
+    fn an_emulated_dimension_proves_and_retains_its_means() {
+        let id = identity();
+        let mut declaration = baseline_honourability(id);
+        declaration[1] = declares(
+            id,
+            NumericalDimension::ResultSubnormals,
+            PRESERVE,
+            HonouringMeans::SupportedWithExactEmulation,
+        );
+        let profile =
+            CheckedTargetProfile::new(id, baseline_profile().facts().to_vec(), declaration)
+                .unwrap();
+        let outcome = profile.assess(
+            &baseline_proposal("candidate:emulated", 6),
+            AvailabilityPhase::CompileProfile,
+        );
+        let FeasibilityOutcome::Proven(evidence) = outcome else {
+            panic!("an emulated dimension is honoured, so the candidate proves");
+        };
+        let result = evidence
+            .honoured()
+            .iter()
+            .find(|honoured| honoured.dimension() == NumericalDimension::ResultSubnormals)
+            .copied()
+            .expect("the result-subnormal dimension is honoured");
+        assert_eq!(result.means(), HonouringMeans::SupportedWithExactEmulation);
+        let input = evidence
+            .honoured()
+            .iter()
+            .find(|honoured| honoured.dimension() == NumericalDimension::InputSubnormals)
+            .copied()
+            .expect("the input-subnormal dimension is honoured");
+        assert_eq!(input.means(), HonouringMeans::SupportedExactly);
+        assert_ne!(input.means(), result.means());
+    }
+
+    /// Composition case 2: a declared refusal is a disproved hard predicate, and
+    /// the rejection names the five things a boolean axis could not.
+    #[test]
+    fn a_declared_unhonourable_dimension_rejects_with_the_full_shape() {
+        let id = identity();
+        let mut declaration = baseline_honourability(id);
+        declaration[0] = declares(
+            id,
+            NumericalDimension::InputSubnormals,
+            PRESERVE,
+            HonouringMeans::Unsupported,
+        );
+        // The target does honour sign-preserving flushing, so the rejection can
+        // report a behaviour this target would accept without ever substituting
+        // it for the one the caller stated.
+        declaration.push(declares(
+            id,
+            NumericalDimension::InputSubnormals,
+            FLUSH_SIGNED,
+            HonouringMeans::SupportedExactly,
+        ));
+        let profile =
+            CheckedTargetProfile::new(id, baseline_profile().facts().to_vec(), declaration)
+                .unwrap();
+        let outcome = profile.assess(
+            &baseline_proposal("candidate:preserving", 6),
+            AvailabilityPhase::CompileProfile,
+        );
+        let FeasibilityOutcome::Rejected(rejection) = outcome else {
+            panic!("a declared-unhonourable dimension disproves a hard predicate");
+        };
+        let RejectionCause::Numerical(cause) = rejection.representative() else {
+            panic!("the representative cause is the numerical one");
+        };
+        assert_eq!(cause.dimension(), NumericalDimension::InputSubnormals);
+        assert_eq!(cause.required(), PRESERVE);
+        assert_eq!(cause.means(), HonouringMeans::Unsupported);
+        assert_eq!(cause.honoured(), Some(FLUSH_SIGNED));
+        assert_eq!(cause.profile(), identity());
+        assert!(rejection.disproved().is_empty());
+        assert_eq!(rejection.unhonourable(), [cause]);
+    }
+
+    /// Composition case 3: a relaxation the caller did not authorize is
+    /// *disproved*, never deferred and never unknown.
+    ///
+    /// The caller's authorization is known at the compile profile and cannot
+    /// arrive later, so deferring it would promise a resolution that no later
+    /// phase can supply. The same declaration proves once the caller states the
+    /// relaxation, which is what makes this a check of the caller's contract
+    /// rather than a permission the authority granted itself.
+    #[test]
+    fn an_unauthorized_relaxation_is_disproved_and_authorizing_it_proves() {
+        let id = identity();
+        let mut declaration = baseline_honourability(id);
+        declaration[0] = declares(
+            id,
+            NumericalDimension::InputSubnormals,
+            PRESERVE,
+            HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
+                relaxation: RelaxationRequirement::new(
+                    NumericalDimension::Reassociation,
+                    PERMITTED,
+                ),
+            },
+        );
+        declaration.push(declares(
+            id,
+            NumericalDimension::Reassociation,
+            PERMITTED,
+            HonouringMeans::SupportedExactly,
+        ));
+        let profile =
+            CheckedTargetProfile::new(id, baseline_profile().facts().to_vec(), declaration)
+                .unwrap();
+
+        // Reassociation forbidden: the relaxation is unauthorized.
+        let strict = baseline_proposal("candidate:strict", 6);
+        let FeasibilityOutcome::Rejected(rejection) =
+            profile.assess(&strict, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("an unauthorized relaxation disproves rather than defers");
+        };
+        let RejectionCause::Numerical(cause) = rejection.representative() else {
+            panic!("the cause is numerical");
+        };
+        assert_eq!(cause.dimension(), NumericalDimension::InputSubnormals);
+        assert_eq!(
+            cause.means(),
+            HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
+                relaxation: RelaxationRequirement::new(
+                    NumericalDimension::Reassociation,
+                    PERMITTED,
+                ),
+            }
+        );
+
+        // The same declaration, with the caller stating the relaxation.
+        let mut numerical = strict_requirements();
+        numerical[3] = NumericalRequirement::new(NumericalDimension::Reassociation, PERMITTED);
+        let authorized = FeasibilityProposal::new(
+            "candidate:authorized",
+            vec![
+                AxisRequirement::new(CapabilityAxis::GridAxisThreads, 6),
+                AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 1),
+                AxisRequirement::new(CapabilityAxis::BufferBindings, 2),
+                AxisRequirement::new(CapabilityAxis::IndexWidthBits, 64),
+                AxisRequirement::new(CapabilityAxis::DeviceAddressSpace, 1),
+                AxisRequirement::new(CapabilityAxis::LocalMemoryBytes, 0),
+                AxisRequirement::new(CapabilityAxis::Barriers, 0),
+            ],
+            numerical,
+        )
+        .unwrap();
+        assert!(matches!(
+            profile.assess(&authorized, AvailabilityPhase::CompileProfile),
+            FeasibilityOutcome::Proven(_),
+        ));
+    }
+
+    /// Composition case 4, and the one most likely to be an accidental pass: a
+    /// dimension the profile does not speak to is `Unknown`, not honoured.
+    ///
+    /// Three shapes of silence are checked, because they fail closed for the
+    /// same reason and an implementation could easily get one right and another
+    /// wrong: a profile with no declaration at all, a profile that declares
+    /// three of the four dimensions, and a profile that declares the dimension
+    /// but not the behaviour required. None may prove, and none may reject —
+    /// `Unknown` is a third class, and reporting it as a rejection would assert
+    /// knowledge the profile never supplied.
+    #[test]
+    fn an_unenumerated_dimension_is_unknown_and_never_honoured_by_default() {
+        let id = identity();
+        let facts = baseline_profile().facts().to_vec();
+
+        // (a) Nothing declared at all.
+        let silent = capability_only_profile(facts.clone());
+        let outcome = silent.assess(
+            &baseline_proposal("candidate:silent", 6),
+            AvailabilityPhase::CompileProfile,
+        );
+        let FeasibilityOutcome::Unknown(unknown) = outcome else {
+            panic!("a profile that declares no honourability cannot prove a contract");
+        };
+        assert!(unknown.predicates().is_empty());
+        assert_eq!(
+            unknown
+                .dimensions()
+                .iter()
+                .map(|dimension| dimension.dimension())
+                .collect::<Vec<_>>(),
+            crate::honourability::CANONICAL_DIMENSIONS.to_vec(),
+        );
+
+        // (b) Three of four dimensions declared: the fourth is unknown alone.
+        let mut partial = baseline_honourability(id);
+        partial.remove(2);
+        let partial = CheckedTargetProfile::new(id, facts.clone(), partial).unwrap();
+        let FeasibilityOutcome::Unknown(unknown) = partial.assess(
+            &baseline_proposal("candidate:partial", 6),
+            AvailabilityPhase::CompileProfile,
+        ) else {
+            panic!("an undeclared dimension outranks every proven one");
+        };
+        assert_eq!(
+            unknown
+                .dimensions()
+                .iter()
+                .map(|dimension| dimension.dimension())
+                .collect::<Vec<_>>(),
+            vec![NumericalDimension::Contraction],
+        );
+
+        // (c) The dimension is declared, but not for the behaviour required.
+        // Silence about a behaviour is silence, not a refusal: the profile has
+        // said nothing about preservation, so nothing may be inferred from its
+        // having spoken about flushing.
+        let mut behaviour_gap = baseline_honourability(id);
+        behaviour_gap[0] = declares(
+            id,
+            NumericalDimension::InputSubnormals,
+            FLUSH_SIGNED,
+            HonouringMeans::SupportedExactly,
+        );
+        let behaviour_gap = CheckedTargetProfile::new(id, facts, behaviour_gap).unwrap();
+        let FeasibilityOutcome::Unknown(unknown) = behaviour_gap.assess(
+            &baseline_proposal("candidate:behaviour-gap", 6),
+            AvailabilityPhase::CompileProfile,
+        ) else {
+            panic!("an undeclared behaviour is unknown, not honoured and not refused");
+        };
+        assert_eq!(
+            unknown
+                .dimensions()
+                .iter()
+                .map(|dimension| (dimension.dimension(), dimension.required()))
+                .collect::<Vec<_>>(),
+            vec![(NumericalDimension::InputSubnormals, PRESERVE)],
+        );
+    }
+
+    /// A honourability declaration available only from a later phase defers.
+    ///
+    /// The governed compile-profile declaration never reaches this, but the
+    /// phase machinery is the same one the capability axes use, and a profile
+    /// whose device runtime supplies the declaration must not be treated as
+    /// silent. Deferred and `Unknown` are different claims.
+    #[test]
+    fn a_later_phase_honourability_declaration_defers_then_resolves() {
+        let id = identity();
+        let mut declaration = baseline_honourability(id);
+        declaration[0] = DeclaredBehaviour::new(
+            NumericalDimension::InputSubnormals,
+            PRESERVE,
+            HonouringMeans::SupportedExactly,
+            AvailabilityPhase::LiveDevicePreflight,
+            FactAuthority::DeviceRuntime,
+            FactValidityScope::DeviceInstance,
+        )
+        .attributed_to(id);
+        let profile =
+            CheckedTargetProfile::new(id, baseline_profile().facts().to_vec(), declaration)
+                .unwrap();
+        let proposal = baseline_proposal("candidate:late-declaration", 6);
+        let FeasibilityOutcome::Deferred(deferred) =
+            profile.assess(&proposal, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("a later-phase declaration defers");
+        };
+        assert!(deferred.predicates().is_empty());
+        assert_eq!(
+            deferred
+                .dimensions()
+                .iter()
+                .map(|dimension| (dimension.dimension(), dimension.phase()))
+                .collect::<Vec<_>>(),
+            vec![(
+                NumericalDimension::InputSubnormals,
+                AvailabilityPhase::LiveDevicePreflight
+            )],
+        );
+        assert_eq!(
+            deferred.phases(),
+            vec![AvailabilityPhase::LiveDevicePreflight]
+        );
+        assert!(matches!(
+            profile.assess(&proposal, AvailabilityPhase::LiveDevicePreflight),
+            FeasibilityOutcome::Proven(_),
+        ));
+    }
+
+    /// A rejection reports the numerical cause first, because it is the one
+    /// re-planning cannot fix.
+    #[test]
+    fn a_numerical_cause_represents_a_rejection_that_is_also_capability_infeasible() {
+        let id = identity();
+        let mut declaration = baseline_honourability(id);
+        declaration[3] = declares(
+            id,
+            NumericalDimension::Reassociation,
+            FORBIDDEN,
+            HonouringMeans::Unsupported,
+        );
+        let profile =
+            CheckedTargetProfile::new(id, baseline_profile().facts().to_vec(), declaration)
+                .unwrap();
+        let FeasibilityOutcome::Rejected(rejection) = profile.assess(
+            &baseline_proposal("candidate:both", 10_000_000),
+            AvailabilityPhase::CompileProfile,
+        ) else {
+            panic!("both predicates are disproved, so the candidate rejects");
+        };
+        assert_eq!(rejection.disproved().len(), 1);
+        assert_eq!(rejection.unhonourable().len(), 1);
+        let RejectionCause::Numerical(cause) = rejection.representative() else {
+            panic!("the numerical cause represents the rejection");
+        };
+        assert_eq!(cause.dimension(), NumericalDimension::Reassociation);
     }
 
     #[test]
     fn empty_proposal_is_vacuously_proven() {
         let outcome = baseline_profile().assess(
-            &FeasibilityProposal::new("candidate:empty", Vec::new()).unwrap(),
+            &FeasibilityProposal::new("candidate:empty", Vec::new(), Vec::new()).unwrap(),
             AvailabilityPhase::CompileProfile,
         );
-        assert_eq!(outcome, FeasibilityOutcome::Proven(Vec::new()));
+        let FeasibilityOutcome::Proven(evidence) = outcome else {
+            panic!("a proposal with no requirements is vacuously proven");
+        };
+        assert!(evidence.is_empty());
     }
 
     #[test]
@@ -1145,18 +1952,12 @@ mod tests {
         let FeasibilityOutcome::Rejected(rejection) = outcome else {
             panic!("oversized grid must reject");
         };
-        assert_eq!(
-            rejection.representative().axis(),
-            CapabilityAxis::GridAxisThreads
-        );
-        assert_eq!(
-            rejection.representative().required(),
-            Quantity::Threads(140_000)
-        );
-        assert_eq!(
-            rejection.representative().available(),
-            Quantity::Threads(65_535)
-        );
+        let RejectionCause::Capability(predicate) = rejection.representative() else {
+            panic!("no numerical dimension is unhonourable here");
+        };
+        assert_eq!(predicate.axis(), CapabilityAxis::GridAxisThreads);
+        assert_eq!(predicate.required(), Quantity::Threads(140_000));
+        assert_eq!(predicate.available(), Quantity::Threads(65_535));
     }
 
     #[test]
@@ -1177,6 +1978,7 @@ mod tests {
                     FactProvenance::declared_by(id),
                 ),
             ],
+            Vec::new(),
         )
         .unwrap();
         let proposal = FeasibilityProposal::new(
@@ -1186,6 +1988,7 @@ mod tests {
                 AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 1),
                 AxisRequirement::new(CapabilityAxis::BufferBindings, 2),
             ],
+            Vec::new(),
         )
         .unwrap();
         assert!(matches!(
@@ -1207,6 +2010,7 @@ mod tests {
                 FactValidityScope::DeviceInstance,
                 FactProvenance::declared_by(id),
             )],
+            Vec::new(),
         )
         .unwrap();
         let proposal = FeasibilityProposal::new(
@@ -1217,6 +2021,7 @@ mod tests {
                 // BufferBindings only at a later phase -> deferred.
                 AxisRequirement::new(CapabilityAxis::BufferBindings, 2),
             ],
+            Vec::new(),
         )
         .unwrap();
         let outcome = profile.assess(&proposal, AvailabilityPhase::CompileProfile);
@@ -1258,6 +2063,7 @@ mod tests {
                     FactProvenance::declared_by(id),
                 ),
             ],
+            Vec::new(),
         )
         .unwrap();
         let proposal = FeasibilityProposal::new(
@@ -1266,6 +2072,7 @@ mod tests {
                 AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 64),
                 AxisRequirement::new(CapabilityAxis::BufferBindings, 2),
             ],
+            Vec::new(),
         )
         .unwrap();
         let outcome = profile.assess(&proposal, AvailabilityPhase::CompileProfile);
@@ -1307,11 +2114,13 @@ mod tests {
                 FactValidityScope::DeviceInstance,
                 FactProvenance::declared_by(id),
             )],
+            Vec::new(),
         )
         .unwrap();
         let proposal = FeasibilityProposal::new(
             "candidate:resolves-later",
             vec![AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 64)],
+            Vec::new(),
         )
         .unwrap();
         assert!(matches!(
@@ -1330,11 +2139,13 @@ mod tests {
         let profile = CheckedTargetProfile::new(
             id,
             vec![compile_fact(id, CapabilityAxis::GridAxisThreads, 4)],
+            Vec::new(),
         )
         .unwrap();
         let proposal = FeasibilityProposal::new(
             "candidate:unprovable",
             vec![AxisRequirement::new(CapabilityAxis::Barriers, 1)],
+            Vec::new(),
         )
         .unwrap();
         assert!(matches!(
@@ -1372,7 +2183,7 @@ mod tests {
     fn malformed_profiles_are_intrinsic_errors_not_outcomes() {
         let id = identity();
         assert_eq!(
-            CheckedTargetProfile::new(TargetProfileIdentity::new(""), Vec::new()),
+            CheckedTargetProfile::new(TargetProfileIdentity::new(""), Vec::new(), Vec::new()),
             Err(FeasibilityError::MalformedProfile { rule: "identity" })
         );
         // A boolean-capability axis with a non-boolean bound is malformed.
@@ -1380,6 +2191,7 @@ mod tests {
             CheckedTargetProfile::new(
                 id,
                 vec![compile_fact(id, CapabilityAxis::DeviceAddressSpace, 2)],
+                Vec::new(),
             ),
             Err(FeasibilityError::MalformedProfile { rule: "fact-bound" })
         );
@@ -1391,6 +2203,7 @@ mod tests {
                     compile_fact(id, CapabilityAxis::GridAxisThreads, 4),
                     compile_fact(id, CapabilityAxis::GridAxisThreads, 8),
                 ],
+                Vec::new(),
             ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "duplicate-fact"
@@ -1408,6 +2221,7 @@ mod tests {
                     FactValidityScope::PortableProfile,
                     FactProvenance::declared_by(id),
                 )],
+                Vec::new(),
             ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "fact-authority"
@@ -1416,17 +2230,103 @@ mod tests {
         // A fact whose provenance names a different profile is malformed.
         let other = TargetProfileIdentity::new("tiler.test.other.v1");
         assert_eq!(
-            CheckedTargetProfile::new(id, vec![compile_fact(other, CapabilityAxis::Barriers, 0)]),
+            CheckedTargetProfile::new(
+                id,
+                vec![compile_fact(other, CapabilityAxis::Barriers, 0)],
+                Vec::new()
+            ),
             Err(FeasibilityError::MalformedProfile {
                 rule: "fact-provenance"
             })
         );
     }
 
+    /// A malformed honourability declaration is an intrinsic error too.
+    ///
+    /// Each rule below is a way a declaration could claim something the
+    /// vocabulary cannot mean. None is a verdict about a candidate: a profile
+    /// that pairs a subnormal behaviour with a transform dimension has not
+    /// declared a target unable to honour anything, it has failed to declare.
+    #[test]
+    fn malformed_honourability_declarations_are_intrinsic_errors() {
+        let id = identity();
+        let other = TargetProfileIdentity::new("tiler.test.other.v1");
+        for (declaration, rule) in [
+            (
+                vec![declares(
+                    id,
+                    NumericalDimension::Contraction,
+                    FLUSH_POSITIVE,
+                    HonouringMeans::SupportedExactly,
+                )],
+                "declaration-behaviour",
+            ),
+            (
+                vec![declares(
+                    id,
+                    NumericalDimension::InputSubnormals,
+                    PRESERVE,
+                    HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
+                        relaxation: RelaxationRequirement::new(
+                            NumericalDimension::Reassociation,
+                            PRESERVE,
+                        ),
+                    },
+                )],
+                "declaration-relaxation",
+            ),
+            (
+                vec![declares(
+                    other,
+                    NumericalDimension::InputSubnormals,
+                    PRESERVE,
+                    HonouringMeans::SupportedExactly,
+                )],
+                "declaration-provenance",
+            ),
+            (
+                vec![
+                    DeclaredBehaviour::new(
+                        NumericalDimension::InputSubnormals,
+                        PRESERVE,
+                        HonouringMeans::SupportedExactly,
+                        AvailabilityPhase::LiveDevicePreflight,
+                        FactAuthority::GovernedProfile,
+                        FactValidityScope::PortableProfile,
+                    )
+                    .attributed_to(id),
+                ],
+                "declaration-authority",
+            ),
+            (
+                vec![
+                    declares(
+                        id,
+                        NumericalDimension::InputSubnormals,
+                        PRESERVE,
+                        HonouringMeans::SupportedExactly,
+                    ),
+                    declares(
+                        id,
+                        NumericalDimension::InputSubnormals,
+                        PRESERVE,
+                        HonouringMeans::Unsupported,
+                    ),
+                ],
+                "duplicate-declaration",
+            ),
+        ] {
+            assert_eq!(
+                CheckedTargetProfile::new(id, Vec::new(), declaration),
+                Err(FeasibilityError::MalformedProfile { rule }),
+            );
+        }
+    }
+
     #[test]
     fn malformed_proposals_are_intrinsic_errors() {
         assert_eq!(
-            FeasibilityProposal::new("", Vec::new()),
+            FeasibilityProposal::new("", Vec::new(), Vec::new()),
             Err(FeasibilityError::MalformedProposal {
                 rule: "candidate-id"
             })
@@ -1438,6 +2338,7 @@ mod tests {
                     AxisRequirement::new(CapabilityAxis::GridAxisThreads, 4),
                     AxisRequirement::new(CapabilityAxis::GridAxisThreads, 8),
                 ],
+                Vec::new(),
             ),
             Err(FeasibilityError::MalformedProposal {
                 rule: "duplicate-requirement"
@@ -1446,10 +2347,39 @@ mod tests {
         assert_eq!(
             FeasibilityProposal::new(
                 "candidate:bad-bool",
-                vec![AxisRequirement::new(CapabilityAxis::StrictF32Arithmetic, 5)],
+                vec![AxisRequirement::new(CapabilityAxis::DeviceAddressSpace, 5)],
+                Vec::new(),
             ),
             Err(FeasibilityError::MalformedProposal {
                 rule: "requirement-amount"
+            })
+        );
+        assert_eq!(
+            FeasibilityProposal::new(
+                "candidate:bad-behaviour",
+                Vec::new(),
+                vec![NumericalRequirement::new(
+                    NumericalDimension::Contraction,
+                    PRESERVE
+                )],
+            ),
+            Err(FeasibilityError::MalformedProposal {
+                rule: "requirement-behaviour"
+            })
+        );
+        // One behaviour per dimension: a proposal stating two would make the
+        // authorization set a contract can be checked against ambiguous.
+        assert_eq!(
+            FeasibilityProposal::new(
+                "candidate:two-behaviours",
+                Vec::new(),
+                vec![
+                    NumericalRequirement::new(NumericalDimension::Contraction, FORBIDDEN),
+                    NumericalRequirement::new(NumericalDimension::Contraction, PERMITTED),
+                ],
+            ),
+            Err(FeasibilityError::MalformedProposal {
+                rule: "duplicate-dimension"
             })
         );
     }
@@ -1462,6 +2392,15 @@ mod tests {
         // Facts are sorted into canonical axis order regardless of input order.
         let axes: Vec<_> = profile.facts().iter().map(|fact| fact.axis()).collect();
         assert_eq!(axes, CANONICAL_AXES.to_vec());
+        let dimensions: Vec<_> = profile
+            .honourability()
+            .iter()
+            .map(|fact| fact.dimension())
+            .collect();
+        assert_eq!(
+            dimensions,
+            crate::honourability::CANONICAL_DIMENSIONS.to_vec()
+        );
     }
 
     /// The two identities are separate values a consumer records separately.
@@ -1507,25 +2446,30 @@ mod tests {
     /// version". Nothing enforced it — a declarer could reuse a version for a
     /// changed profile. The descriptor discharges it structurally, because
     /// assessment reads exactly the axis, phase, and bound the descriptor
-    /// encodes and otherwise only `CapabilityAxis::relation`, which is a
+    /// encodes, the dimension, behaviour, means, and phase it encodes for each
+    /// declaration, and otherwise only `CapabilityAxis::relation`, which is a
     /// function of the axis rather than of the profile.
     #[test]
     fn profiles_sharing_a_descriptor_return_the_same_verdicts() {
         let id = identity();
+        let baseline = baseline_profile();
+        let mut reversed_declaration = baseline.honourability().to_vec();
+        reversed_declaration.reverse();
         let rebuilt = CheckedTargetProfile::new(
             id,
             // Declared in a deliberately different order from `baseline_profile`.
-            baseline_profile()
+            baseline
                 .facts()
                 .iter()
                 .rev()
                 .map(|fact| compile_fact(id, fact.axis, fact.bound))
                 .collect(),
+            reversed_declaration,
         )
         .unwrap();
         assert_eq!(
             rebuilt.canonical_descriptor(),
-            baseline_profile().canonical_descriptor(),
+            baseline.canonical_descriptor(),
         );
         for threads in [0, 6, 65_535, 65_536, 10_000_000] {
             let proposal = baseline_proposal("candidate:probe", threads);
@@ -1536,7 +2480,7 @@ mod tests {
             ] {
                 assert_eq!(
                     rebuilt.assess(&proposal, phase),
-                    baseline_profile().assess(&proposal, phase),
+                    baseline.assess(&proposal, phase),
                 );
             }
         }

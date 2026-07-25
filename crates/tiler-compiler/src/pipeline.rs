@@ -257,13 +257,20 @@ impl From<RequestError> for CompileError {
     fn from(value: RequestError) -> Self {
         match value {
             RequestError::UnsupportedCapability { .. } => Self::UnsupportedCapability(value),
-            RequestError::ShapeProductOverflow { .. } => {
+            // A shape product that overflows, and a target that honours no
+            // stated numerical contract, are both hard refusals about the
+            // request rather than malformed requests — and neither is a cost.
+            RequestError::ShapeProductOverflow { .. }
+            | RequestError::NoResolvableNumericalContract { .. } => {
                 Self::NoFeasiblePlan(NoFeasiblePlanError::Request(value))
             }
             RequestError::BudgetExceeded { .. } => Self::BudgetExhausted(value),
             RequestError::UnsupportedRequestVersion
             | RequestError::EmptyTargetSet
             | RequestError::DuplicateTargetProfile
+            // Stating no contract at all is a malformed request, distinct from
+            // stating one the target cannot honour.
+            | RequestError::UnstatedNumericalContract
             | RequestError::UnverifiedTargetSelection => Self::InvalidRequest(value),
         }
     }
@@ -277,7 +284,7 @@ impl From<PhysicalError> for CompileError {
             | PhysicalError::ShapeProductOverflow { .. } => {
                 Self::InvalidCompilerOutput(CompilerOutputError::Physical(value))
             }
-            PhysicalError::Target { .. } => {
+            PhysicalError::Target { .. } | PhysicalError::Numerical { .. } => {
                 Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(value))
             }
         }
@@ -347,19 +354,34 @@ pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProd
     verify_semantic_output_type(semantic)?;
     // `NormalizeSemantics` runs after request verification and before region
     // formation. It observes only the verified program and never mutates it.
-    let normalization =
-        normalize_semantics(semantic, verified.budgets(), verified.numerical_contract())?;
+    // Normalization observes the contract this compilation actually resolved to,
+    // not the caller's preference list: a rewrite's legality depends on the one
+    // contract in force, and the alternatives the caller would also have accepted
+    // grant it nothing. It is program-scoped and runs before any per-target work,
+    // so it fails closed rather than choosing when two targets resolved
+    // differently.
+    let resolved_contract =
+        verified
+            .uniform_resolved_contract()
+            .ok_or(RequestError::UnsupportedCapability {
+                phase: "numerics",
+                rule: "divergent-resolved-contracts",
+            })?;
+    let normalization = normalize_semantics(semantic, verified.budgets(), resolved_contract)?;
     let Some(normalized) = normalization.normalized_program() else {
         return compile_verified(semantic, &verified, &normalization);
     };
     // A committed rewrite is a new program, so it must independently re-enter
     // the request boundary rather than inheriting the input's verification.
     // Rejection here is invalid compiler output, not an unsupported user
-    // program: the input was already admitted.
+    // program: the input was already admitted. The caller's *stated* preference
+    // is what re-enters, not the contract this run resolved: readmission must
+    // repeat the resolution rather than inherit its answer, so a rewrite that
+    // changed what the program requires cannot keep a resolution it invalidated.
     let readmitted = verify_request(CompilationRequest {
         program: normalized,
         shape_environment,
-        numerical_contract: verified.numerical_contract(),
+        numerical_contracts: verified.numerical_contracts().clone(),
         budgets: verified.budgets(),
         target_profiles,
         capabilities,
@@ -526,7 +548,13 @@ fn failure_at_source_with_causes(
 
 const fn physical_error_stage(error: &PhysicalError) -> ExplainStage {
     match error {
-        PhysicalError::Target { .. } => ExplainStage::TargetFeasibility,
+        // A numerical honourability rejection is a target-feasibility verdict,
+        // not a numerical-legality one: `NumericalLegality` is where a *rewrite*
+        // is judged against the contract, and this is the target being judged
+        // against the same contract.
+        PhysicalError::Target { .. } | PhysicalError::Numerical { .. } => {
+            ExplainStage::TargetFeasibility
+        }
         PhysicalError::Intrinsic { .. } | PhysicalError::ShapeProductOverflow { .. } => {
             ExplainStage::IntrinsicScheduling
         }
@@ -605,6 +633,7 @@ const fn target_axis(error: &PhysicalError) -> &'static str {
         PhysicalError::Target { rule, .. }
         | PhysicalError::Intrinsic { rule, .. }
         | PhysicalError::Refinement { rule, .. } => rule,
+        PhysicalError::Numerical { cause, .. } => cause.dimension().key(),
         PhysicalError::ShapeProductOverflow { .. } => "shape-product-overflow",
     }
 }
@@ -963,19 +992,31 @@ fn enumerate_complete_plans(
             if first_sighting {
                 frontier_cause = record_frontier(explain, role, &frontier, frontier_cause)?;
                 for rejection in frontier.rejections() {
-                    if let crate::frontier::FrontierRejection::Infeasible {
-                        axis,
-                        required,
-                        available,
-                        ..
-                    } = rejection
-                    {
-                        let error = PhysicalError::Target {
+                    let error = match rejection {
+                        crate::frontier::FrontierRejection::Infeasible {
+                            axis,
+                            required,
+                            available,
+                            ..
+                        } => Some(PhysicalError::Target {
                             rule: axis,
                             region: region_id_of(cover, region),
                             required: *required,
                             available: *available,
-                        };
+                        }),
+                        crate::frontier::FrontierRejection::Unhonourable { cause, .. } => {
+                            Some(PhysicalError::Numerical {
+                                region: region_id_of(cover, region),
+                                cause: *cause,
+                            })
+                        }
+                        // A reserved body variant and an inapplicable proposal
+                        // are not target verdicts and carry no rejection to
+                        // attribute to this region.
+                        crate::frontier::FrontierRejection::UnsupportedVariant { .. }
+                        | crate::frontier::FrontierRejection::NotApplicable { .. } => None,
+                    };
+                    if let Some(error) = error {
                         let cause = record_target_rejection(explain, &error, role, frontier_cause)?;
                         recorded_roles.insert(role, Some(cause.clone()));
                         rejections.push(TargetRejection { role, error, cause })?;
@@ -1287,6 +1328,24 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
             SubjectKind::Region,
             format!("failed-region:{}", region.get()),
         ),
+        // The reason names the dimension and the required behaviour, not a pair
+        // of numbers: `numerics-input-subnormals-preserve` is what replaces
+        // `target-strict-f32`, and it is readable without the profile in hand.
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Numerical {
+            cause,
+            region,
+        }))
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Numerical { cause, region },
+        )) => (
+            format!(
+                "{}-{}",
+                cause.dimension().key().replace('.', "-"),
+                cause.required().key()
+            ),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.get()),
+        ),
         CompileError::InvalidCompilerOutput(
             CompilerOutputError::Region(error)
             | CompilerOutputError::Fusion(FusionError::Region(error)),
@@ -1383,6 +1442,23 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
         RequestError::EmptyTargetSet => "target-set-empty".to_owned(),
         RequestError::DuplicateTargetProfile => "target-profile-duplicate".to_owned(),
         RequestError::UnverifiedTargetSelection => "target-selection-unverified".to_owned(),
+        RequestError::UnstatedNumericalContract => "numerics-contract-unstated".to_owned(),
+        // The reason names the first stated entry's first failing dimension. The
+        // whole per-entry list is on the error's `Display`; a reason code is one
+        // stable token, and truncating it to the caller's first choice keeps it
+        // stable as the list grows.
+        RequestError::NoResolvableNumericalContract { rejections, .. } => {
+            rejections.first().map_or_else(
+                || "numerics-contract-unresolvable".to_owned(),
+                |rejection| {
+                    format!(
+                        "numerics-unhonourable-{}-{}",
+                        rejection.dimension().key().replace('.', "-"),
+                        rejection.required().key()
+                    )
+                },
+            )
+        }
         RequestError::BudgetExceeded {
             resource,
             limit,
@@ -1911,36 +1987,67 @@ fn record_plan_selection(
 }
 
 /// Records one region subject's hard-infeasible target rejection.
+///
+/// A capability rejection keeps the quantitative feasibility record; a numerical
+/// one takes the honourability record, which is the only shape that can carry a
+/// dimension, a required behaviour, a declared means, an honoured alternative,
+/// and a declaring profile.
 fn record_target_rejection(
     explain: &mut ExplainWriter,
     error: &PhysicalError,
     role: &'static str,
     cause: Option<ExplainRecordId>,
 ) -> Result<TerminalCause, TargetFailure> {
-    let PhysicalError::Target {
-        rule,
-        required,
-        available,
-        ..
-    } = error
-    else {
-        unreachable!("target rejection records require a target-feasibility error")
-    };
     let key = format!("region:{role}");
-    explain_step(
-        (|| -> Result<_, CompileError> {
-            let subject = explain.subject(SubjectKind::Region, &key)?;
-            Ok(explain.push_causal_detail(
-                RuleRef::builtin(format!("target.{rule}"))?,
-                subject,
-                &ExplainEvent::Feasibility {
+    let (rule_key, event) = match error {
+        PhysicalError::Target {
+            rule,
+            required,
+            available,
+            ..
+        } => (
+            format!("target.{rule}"),
+            (|| -> Result<_, CompileError> {
+                Ok(ExplainEvent::Feasibility {
                     predicate: PredicateKey::new(*rule)?,
                     outcome: crate::explain::FeasibilityOutcome::Rejected(ReasonCode::new(
                         "target-infeasible",
                     )?),
                     required: target_quantity(rule, *required)?,
                     available: target_quantity(rule, *available)?,
-                },
+                })
+            })(),
+        ),
+        PhysicalError::Numerical { cause, .. } => (
+            format!("target.{}", cause.dimension().key()),
+            (|| -> Result<_, CompileError> {
+                Ok(ExplainEvent::NumericalHonourability {
+                    dimension: PredicateKey::new(cause.dimension().key())?,
+                    required: ReasonCode::new(cause.required().key())?,
+                    outcome: crate::explain::HonourabilityOutcome::Unhonourable {
+                        means: ReasonCode::new(cause.means().key())?,
+                        honoured: cause
+                            .honoured()
+                            .map(|honoured| ReasonCode::new(honoured.key()))
+                            .transpose()?,
+                    },
+                    profile: crate::explain::SubjectKey::new(cause.profile().key())?,
+                })
+            })(),
+        ),
+        PhysicalError::Intrinsic { .. }
+        | PhysicalError::Refinement { .. }
+        | PhysicalError::ShapeProductOverflow { .. } => {
+            unreachable!("target rejection records require a target-feasibility error")
+        }
+    };
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(SubjectKind::Region, &key)?;
+            Ok(explain.push_causal_detail(
+                RuleRef::builtin(rule_key)?,
+                subject,
+                &event?,
                 optional_cause(cause),
             )?)
         })(),
@@ -1994,8 +2101,8 @@ fn record_target_admissions(
             let stage = physical_error_stage(&error);
             failure_at_source(error.into(), stage, record_cause(cause))
         })?;
-        for predicate in admitted {
-            let key = format!("{}/region:{}", alternative.stable_id, region.index.id.get());
+        let key = format!("{}/region:{}", alternative.stable_id, region.index.id.get());
+        for predicate in admitted.predicates() {
             cause = explain_step(
                 (|| -> Result<_, CompileError> {
                     let subject = explain.subject(SubjectKind::Region, &key)?;
@@ -2017,6 +2124,34 @@ fn record_target_admissions(
                 record_cause(cause),
             )?;
         }
+        // The admitted trace records the *means* of each honoured dimension, not
+        // only that it was honoured. An emulated dimension is admitted and emits
+        // different operations, so a trace that carried only the verdict would
+        // leave a reader unable to tell one from native support.
+        for honoured in admitted.honoured() {
+            cause = explain_step(
+                (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(SubjectKind::Region, &key)?;
+                    Ok(explain.push_detail(
+                        RuleRef::builtin(format!("target.{}", honoured.dimension().key()))?,
+                        vec![subject],
+                        ExplainEvent::NumericalHonourability {
+                            dimension: PredicateKey::new(honoured.dimension().key())?,
+                            required: ReasonCode::new(honoured.behaviour().key())?,
+                            outcome: crate::explain::HonourabilityOutcome::Honoured {
+                                means: ReasonCode::new(honoured.means().key())?,
+                            },
+                            profile: crate::explain::SubjectKey::new(honoured.profile().key())?,
+                        },
+                        optional_cause(cause),
+                    )?)
+                })(),
+                ExplainStage::TargetFeasibility,
+                SubjectKind::Region,
+                &key,
+                record_cause(cause),
+            )?;
+        }
     }
     Ok(cause)
 }
@@ -2026,7 +2161,7 @@ fn target_quantity(rule: &str, value: u64) -> Result<Quantity, ExplainError> {
         "grid-axis" | "threads-per-workgroup" => Ok(Quantity::Threads(value)),
         "buffer-bindings" => Ok(Quantity::Bindings(value)),
         "local-memory-bytes" => Ok(Quantity::Bytes(value)),
-        "index-bits" | "device-memory" | "strict-f32" | "barriers" => Ok(Quantity::Count(value)),
+        "index-bits" | "device-memory" | "barriers" => Ok(Quantity::Count(value)),
         _ => Err(ExplainError::UnknownQuantityUnit),
     }
 }
@@ -3028,7 +3163,14 @@ mod tests {
                 ("target.grid-axis", 3),
                 ("target.index-bits", 3),
                 ("target.local-memory-bytes", 3),
-                ("target.strict-f32", 3),
+                // The four per-dimension honourability records replace the one
+                // `target.strict-f32` predicate, which is the whole point of
+                // retiring it: three regions each now report which dimension was
+                // assessed and by what means, where one boolean reported neither.
+                ("target.numerics.contraction", 3),
+                ("target.numerics.input-subnormals", 3),
+                ("target.numerics.reassociation", 3),
+                ("target.numerics.result-subnormals", 3),
                 ("target.threads-per-workgroup", 3),
                 ("tiler.cost.structural.v1", 2),
                 ("tiler.selection.structural-pareto.v1", 2),
@@ -3104,6 +3246,54 @@ mod tests {
         assert!(trace.render().starts_with("tiler-explain-v2 request="));
     }
 
+    /// Asserts the honourability half of the end-to-end explain conformance.
+    ///
+    /// The numerical dimensions left the quantitative predicate space when
+    /// `strict-f32` was retired, so they are counted through their own typed
+    /// record. Each names the dimension, the behaviour the resolved contract
+    /// required, the means the profile declares, and the declaring profile — and
+    /// the admitted trace asserts the *means*, because a proven verdict alone
+    /// would not distinguish native support from emulation.
+    fn assert_honoured_dimensions_are_exhaustive(trace: &crate::explain::VerifiedExplainTrace) {
+        let mut honoured = BTreeMap::new();
+        for record in trace.records() {
+            let ExplainEvent::NumericalHonourability {
+                dimension,
+                required,
+                outcome,
+                profile,
+            } = record.event()
+            else {
+                continue;
+            };
+            assert_eq!(
+                outcome,
+                &crate::explain::HonourabilityOutcome::Honoured {
+                    means: crate::explain::ReasonCode::new("supported-exactly").unwrap(),
+                }
+            );
+            assert_eq!(
+                profile.as_str(),
+                "tiler.prototype-target-neutral-baseline.v1"
+            );
+            *honoured
+                .entry((dimension.as_str(), required.as_str()))
+                .or_insert(0_usize) += 1;
+        }
+        assert_eq!(
+            honoured,
+            BTreeMap::from([
+                (("numerics.contraction", "forbidden"), 3),
+                (("numerics.input-subnormals", "preserve"), 3),
+                (("numerics.reassociation", "forbidden"), 3),
+                (("numerics.result-subnormals", "preserve"), 3),
+            ])
+        );
+        assert!(trace.render().contains(
+            "honourability:numerics.input-subnormals:preserve:honoured:supported-exactly:profile=tiler.prototype-target-neutral-baseline.v1"
+        ));
+    }
+
     #[test]
     fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
         let semantic = semantic(false);
@@ -3138,7 +3328,7 @@ mod tests {
                         (Quantity::Bytes(_), Quantity::Bytes(_))
                     )
                 }
-                "index-bits" | "device-memory" | "strict-f32" | "barriers" => {
+                "index-bits" | "device-memory" | "barriers" => {
                     matches!(
                         (required, available),
                         (Quantity::Count(_), Quantity::Count(_))
@@ -3160,10 +3350,11 @@ mod tests {
                 ("grid-axis", 3),
                 ("index-bits", 3),
                 ("local-memory-bytes", 3),
-                ("strict-f32", 3),
                 ("threads-per-workgroup", 3),
             ])
         );
+
+        assert_honoured_dimensions_are_exhaustive(trace);
 
         let selections = trace
             .records()

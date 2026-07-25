@@ -470,6 +470,29 @@ pub(crate) enum FeasibilityOutcome {
     Rejected(ReasonCode),
 }
 
+/// How one numerical dimension resolved against a target's declaration.
+///
+/// A distinct vocabulary from [`FeasibilityOutcome`], which is quantitative and
+/// two-valued. This one carries the *means*, which is what a bound comparison
+/// cannot express: an emulated dimension is admitted and changes the emitted
+/// program, and an unhonourable one names the behaviour the target does honour
+/// so a reader can see which contract this target would accept.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum HonourabilityOutcome {
+    /// The target honours the required behaviour by the named means.
+    Honoured { means: ReasonCode },
+    /// The target declares it cannot honour the required behaviour by the named
+    /// means, and honours the named behaviour instead when it honours one.
+    Unhonourable {
+        means: ReasonCode,
+        honoured: Option<ReasonCode>,
+    },
+    /// Nothing the profile declares speaks to the required behaviour. A third
+    /// class, never a rejection: no downstream reader may treat the absence of a
+    /// refusal as an admission.
+    Undeclared,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RejectionClass {
     IntrinsicInvalid,
@@ -494,6 +517,20 @@ pub(crate) enum ExplainEvent {
         outcome: FeasibilityOutcome,
         required: Quantity,
         available: Quantity,
+    },
+    /// One numerical dimension assessed against a target's declaration.
+    ///
+    /// This is the rejection shape ADR 0076 item 5 requires and the record that
+    /// replaces `feasibility:strict-f32:rejected:count=1:0`. It names the
+    /// dimension, the behaviour the caller's contract required, the means the
+    /// profile declares, the behaviour the target does honour, and the declaring
+    /// profile — none of which fits [`Self::Feasibility`], whose required and
+    /// available fields are quantities compared by magnitude.
+    NumericalHonourability {
+        dimension: PredicateKey,
+        required: ReasonCode,
+        outcome: HonourabilityOutcome,
+        profile: SubjectKey,
     },
     DeferredCapability {
         predicate: PredicateKey,
@@ -530,7 +567,9 @@ impl ExplainEvent {
             | Self::BudgetStop { stage, .. }
             | Self::CompilerFailure { stage, .. }
             | Self::CausalBridge { stage, .. } => *stage,
-            Self::Feasibility { .. } => ExplainStage::TargetFeasibility,
+            Self::Feasibility { .. } | Self::NumericalHonourability { .. } => {
+                ExplainStage::TargetFeasibility
+            }
             Self::DeferredCapability { .. } => ExplainStage::CapabilityResolution,
             Self::CostAssessment { .. } => ExplainStage::Costing,
             Self::Selection { .. } | Self::Truncated { .. } => ExplainStage::Selection,
@@ -549,6 +588,10 @@ impl ExplainEvent {
             }
             | Self::Feasibility {
                 outcome: FeasibilityOutcome::Admitted,
+                ..
+            }
+            | Self::NumericalHonourability {
+                outcome: HonourabilityOutcome::Honoured { .. },
                 ..
             } => ExplainDisposition::Admitted,
             Self::Check {
@@ -577,10 +620,20 @@ impl ExplainEvent {
                     },
                 ..
             }
-            | Self::DeferredCapability { .. } => ExplainDisposition::DeferredUnsupported,
+            | Self::DeferredCapability { .. }
+            // Undeclared is unknown, not rejected: the profile said nothing, so
+            // the trace must not read as a refusal a reader could act on.
+            | Self::NumericalHonourability {
+                outcome: HonourabilityOutcome::Undeclared,
+                ..
+            } => ExplainDisposition::DeferredUnsupported,
             Self::BudgetStop { .. } => ExplainDisposition::BudgetStopped,
             Self::Feasibility {
                 outcome: FeasibilityOutcome::Rejected(_),
+                ..
+            }
+            | Self::NumericalHonourability {
+                outcome: HonourabilityOutcome::Unhonourable { .. },
                 ..
             }
             | Self::Selection {
@@ -693,8 +746,12 @@ impl ExplainEvent {
             Self::BudgetStop { limit, actual, .. } if actual <= limit => {
                 return Err(ExplainError::InvalidQuantityRelation);
             }
+            // A honourability record has no magnitude relation to validate: its
+            // three outcomes are already disjoint, and the means it carries is a
+            // governed key rather than a comparable quantity.
             Self::BudgetStop { .. }
             | Self::DeferredCapability { .. }
+            | Self::NumericalHonourability { .. }
             | Self::Selection { .. }
             | Self::CompilerFailure { .. }
             | Self::CausalBridge { .. }
@@ -1600,6 +1657,12 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 available.value()
             );
         }
+        ExplainEvent::NumericalHonourability {
+            dimension,
+            required,
+            outcome,
+            profile,
+        } => render_honourability(output, dimension, required, outcome, profile),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             let _ = write!(
                 output,
@@ -1613,27 +1676,7 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
             basis,
             terms,
             disposition,
-        } => {
-            let _ = write!(
-                output,
-                "cost:{}:{}:{}:",
-                model.as_str(),
-                basis_name(basis),
-                cost_disposition_name(*disposition)
-            );
-            for (index, term) in terms.iter().enumerate() {
-                if index != 0 {
-                    output.push(',');
-                }
-                let _ = write!(
-                    output,
-                    "{}:{}={}",
-                    term.metric.as_str(),
-                    quantity_name(term.quantity),
-                    term.quantity.value()
-                );
-            }
-        }
+        } => render_cost(output, model, basis, terms, *disposition),
         ExplainEvent::Selection { policy, outcome } => {
             let _ = write!(
                 output,
@@ -1655,6 +1698,70 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
             let _ = write!(output, "truncated:{omitted_records}:{omitted_bytes}");
         }
     }
+}
+
+/// Renders one cost-assessment record and its comma-separated terms.
+fn render_cost(
+    output: &mut String,
+    model: &CostModelKey,
+    basis: &EvidenceBasis,
+    terms: &[CostTerm],
+    disposition: CostDisposition,
+) {
+    use fmt::Write as _;
+    let _ = write!(
+        output,
+        "cost:{}:{}:{}:",
+        model.as_str(),
+        basis_name(basis),
+        cost_disposition_name(disposition)
+    );
+    for (index, term) in terms.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        let _ = write!(
+            output,
+            "{}:{}={}",
+            term.metric.as_str(),
+            quantity_name(term.quantity),
+            term.quantity.value()
+        );
+    }
+}
+
+/// Renders one numerical-honourability record.
+///
+/// Every part is written, including the declaring profile, because a reader that
+/// saw only the dimension and the outcome could not tell which profile made the
+/// claim — and a rejection whose declarer is unnamed is not explainable.
+fn render_honourability(
+    output: &mut String,
+    dimension: &PredicateKey,
+    required: &ReasonCode,
+    outcome: &HonourabilityOutcome,
+    profile: &SubjectKey,
+) {
+    use fmt::Write as _;
+    let _ = write!(
+        output,
+        "honourability:{}:{}:",
+        dimension.as_str(),
+        required.as_str()
+    );
+    match outcome {
+        HonourabilityOutcome::Honoured { means } => {
+            let _ = write!(output, "honoured:{}", means.as_str());
+        }
+        HonourabilityOutcome::Unhonourable { means, honoured } => {
+            let _ = write!(output, "unhonourable:{}", means.as_str());
+            if let Some(honoured) = honoured {
+                let _ = write!(output, ":honours={}", honoured.as_str());
+            }
+        }
+        HonourabilityOutcome::Undeclared => output.push_str("undeclared"),
+    }
+    let _ = write!(output, ":profile={}", profile.as_str());
 }
 
 fn render_fact_value(output: &mut String, value: &FactValue) {
@@ -1976,6 +2083,12 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             encode_quantity(bytes, *required);
             encode_quantity(bytes, *available);
         }
+        ExplainEvent::NumericalHonourability {
+            dimension,
+            required,
+            outcome,
+            profile,
+        } => encode_honourability(bytes, dimension, required, outcome, profile),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             bytes.push(4);
             encode_bytes(bytes, predicate.as_str().as_bytes());
@@ -1986,21 +2099,7 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             basis,
             terms,
             disposition,
-        } => {
-            bytes.push(5);
-            encode_bytes(bytes, model.as_str().as_bytes());
-            encode_basis(bytes, basis);
-            bytes.push(match disposition {
-                CostDisposition::Retained => 1,
-                CostDisposition::Dominated => 2,
-                CostDisposition::HigherCost => 3,
-            });
-            bytes.extend_from_slice(&u64::try_from(terms.len()).unwrap_or(u64::MAX).to_be_bytes());
-            for term in terms {
-                encode_bytes(bytes, term.metric.as_str().as_bytes());
-                encode_quantity(bytes, term.quantity);
-            }
-        }
+        } => encode_cost(bytes, model, basis, terms, *disposition),
         ExplainEvent::Selection { policy, outcome } => {
             bytes.push(6);
             encode_bytes(bytes, policy.as_str().as_bytes());
@@ -2028,6 +2127,67 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             bytes.extend_from_slice(&omitted_bytes.to_be_bytes());
         }
     }
+}
+
+/// Canonically encodes one cost-assessment record: event tag `5`, then the
+/// model, the evidence basis, the disposition, and the length-framed terms.
+fn encode_cost(
+    bytes: &mut Vec<u8>,
+    model: &CostModelKey,
+    basis: &EvidenceBasis,
+    terms: &[CostTerm],
+    disposition: CostDisposition,
+) {
+    bytes.push(5);
+    encode_bytes(bytes, model.as_str().as_bytes());
+    encode_basis(bytes, basis);
+    bytes.push(match disposition {
+        CostDisposition::Retained => 1,
+        CostDisposition::Dominated => 2,
+        CostDisposition::HigherCost => 3,
+    });
+    bytes.extend_from_slice(&u64::try_from(terms.len()).unwrap_or(u64::MAX).to_be_bytes());
+    for term in terms {
+        encode_bytes(bytes, term.metric.as_str().as_bytes());
+        encode_quantity(bytes, term.quantity);
+    }
+}
+
+/// Canonically encodes one numerical-honourability record.
+///
+/// Event tag `10`, then the dimension, the required behaviour, a one-byte
+/// outcome discriminant with its payload, and the declaring profile. The
+/// declarer is inside the encoding because two traces that differ only in which
+/// profile made a claim are different traces.
+fn encode_honourability(
+    bytes: &mut Vec<u8>,
+    dimension: &PredicateKey,
+    required: &ReasonCode,
+    outcome: &HonourabilityOutcome,
+    profile: &SubjectKey,
+) {
+    bytes.push(10);
+    encode_bytes(bytes, dimension.as_str().as_bytes());
+    encode_bytes(bytes, required.as_str().as_bytes());
+    match outcome {
+        HonourabilityOutcome::Honoured { means } => {
+            bytes.push(1);
+            encode_bytes(bytes, means.as_str().as_bytes());
+        }
+        HonourabilityOutcome::Unhonourable { means, honoured } => {
+            bytes.push(2);
+            encode_bytes(bytes, means.as_str().as_bytes());
+            match honoured {
+                Some(honoured) => {
+                    bytes.push(1);
+                    encode_bytes(bytes, honoured.as_str().as_bytes());
+                }
+                None => bytes.push(0),
+            }
+        }
+        HonourabilityOutcome::Undeclared => bytes.push(3),
+    }
+    encode_bytes(bytes, profile.as_str().as_bytes());
 }
 
 fn encode_assessment(bytes: &mut Vec<u8>, assessment: &PredicateAssessment) {
@@ -2280,7 +2440,14 @@ mod tests {
                 // covers the frozen scalar and lowering-capability authorities,
                 // so growing the governed profile must move this digest; a
                 // value that survived would mean the subject was incomplete.
-                "tiler-explain-v2 request=315e14544407d942\n",
+                //
+                // Rebaselined again when the target profile's `supports_strict_f32`
+                // boolean was replaced by its per-dimension honourability
+                // declaration and the caller's stated contract preference joined
+                // the resolved contract in the subject (ADR 0076 items 2 and 3).
+                // Both changes are facts the subject must distinguish, so this
+                // digest moving is the assertion, not collateral damage.
+                "tiler-explain-v2 request=3f85f807b74dae1a\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

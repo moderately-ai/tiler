@@ -70,6 +70,7 @@ use crate::frontier::{
     AdmittedImplementation, BoundaryAvailability, BoundaryProduction, FrontierRegionSubject,
     ImplementationFrontier,
 };
+use crate::honourability::HonouredDimension;
 use crate::region::RegionOccurrenceIdentity;
 use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 
@@ -328,6 +329,14 @@ pub(crate) struct SelectedPlan {
     selections: Vec<RegionSelection>,
     handoffs: Vec<SatisfiedHandoff>,
     guards: Vec<ResolvedPredicate>,
+    /// The honoured numerical dimensions the plan rests on, deduplicated and in
+    /// canonical order.
+    ///
+    /// Retained beside the capability guards rather than folded into them
+    /// because the *means* is part of the guard: two plans that honour one
+    /// dimension by different means emit different operations, so collapsing
+    /// them would give two different programs one plan identity.
+    honoured: Vec<HonouredDimension>,
     cost: PlanStructuralCost,
     identity: SelectedPlanIdentity,
 }
@@ -355,6 +364,11 @@ impl SelectedPlan {
     /// Returns the aggregate feasibility guards the plan rests on, canonical.
     pub(crate) fn guards(&self) -> &[ResolvedPredicate] {
         &self.guards
+    }
+
+    /// Returns the aggregate honoured numerical dimensions, canonical order.
+    pub(crate) fn honoured(&self) -> &[HonouredDimension] {
+        &self.honoured
     }
 
     /// Returns the exact aggregate structural cost of the plan.
@@ -1129,15 +1143,17 @@ fn assemble_plan(
 
     let cost = aggregate_cost(cover, &selections)?;
     let guards = aggregate_guards(&selections);
+    let honoured = aggregate_honoured(&selections);
 
     let mut ordered = selections;
     ordered.sort_by(|left, right| left.occurrence.as_bytes().cmp(right.occurrence.as_bytes()));
-    let identity = encode_plan_identity(cover, &ordered, &handoffs, &guards, cost);
+    let identity = encode_plan_identity(cover, &ordered, &handoffs, &guards, &honoured, cost);
     Ok(SelectedPlan {
         cover: cover.clone(),
         selections: ordered,
         handoffs,
         guards,
+        honoured,
         cost,
         identity,
     })
@@ -1367,11 +1383,18 @@ fn aggregate_cost(
     })
 }
 
-/// Aggregates the deduplicated feasibility guards of one complete plan.
+/// Aggregates the deduplicated capability guards of one complete plan.
 fn aggregate_guards(selections: &[RegionSelection]) -> Vec<ResolvedPredicate> {
     let mut guards: Vec<ResolvedPredicate> = selections
         .iter()
-        .flat_map(|selection| selection.implementation.feasibility().iter().copied())
+        .flat_map(|selection| {
+            selection
+                .implementation
+                .feasibility()
+                .predicates()
+                .iter()
+                .copied()
+        })
         .collect();
     guards.sort_by(|left, right| {
         (
@@ -1389,11 +1412,41 @@ fn aggregate_guards(selections: &[RegionSelection]) -> Vec<ResolvedPredicate> {
     guards
 }
 
+/// Aggregates the deduplicated honoured numerical dimensions of one plan.
+///
+/// Sorted by dimension, then behaviour, then means, then declaring profile —
+/// every field, because two entries agreeing on a dimension and disagreeing on
+/// how it was honoured are two different claims and must both survive.
+fn aggregate_honoured(selections: &[RegionSelection]) -> Vec<HonouredDimension> {
+    let mut honoured: Vec<HonouredDimension> = selections
+        .iter()
+        .flat_map(|selection| {
+            selection
+                .implementation
+                .feasibility()
+                .honoured()
+                .iter()
+                .copied()
+        })
+        .collect();
+    honoured.sort_by_key(|entry| {
+        (
+            entry.dimension(),
+            entry.behaviour().tag(),
+            entry.means().key(),
+            entry.profile().key(),
+        )
+    });
+    honoured.dedup();
+    honoured
+}
+
 fn encode_plan_identity(
     cover: &RegionCover,
     selections: &[RegionSelection],
     handoffs: &[SatisfiedHandoff],
     guards: &[ResolvedPredicate],
+    honoured: &[HonouredDimension],
     cost: PlanStructuralCost,
 ) -> SelectedPlanIdentity {
     let mut bytes = SELECTED_PLAN_IDENTITY_TAG.to_vec();
@@ -1410,6 +1463,10 @@ fn encode_plan_identity(
     encode_len(&mut bytes, guards.len());
     for guard in guards {
         encode_guard(&mut bytes, *guard);
+    }
+    encode_len(&mut bytes, honoured.len());
+    for entry in honoured {
+        encode_honoured(&mut bytes, *entry);
     }
     cost.encode(&mut bytes);
     SelectedPlanIdentity(bytes)
@@ -1429,6 +1486,19 @@ fn encode_guard(output: &mut Vec<u8>, guard: ResolvedPredicate) {
     encode_bytes(output, guard.axis().key().as_bytes());
     output.extend_from_slice(&guard.required().value().to_be_bytes());
     output.extend_from_slice(&guard.available().value().to_be_bytes());
+}
+
+/// Encodes one honoured numerical dimension into a plan identity.
+///
+/// The means and the declaring profile are both encoded. Two plans that honour
+/// one behaviour natively and by emulation emit different operations, and two
+/// that rely on declarations from different profiles rest on different evidence;
+/// either omission would give distinguishable plans one identity.
+fn encode_honoured(output: &mut Vec<u8>, honoured: HonouredDimension) {
+    encode_bytes(output, honoured.dimension().key().as_bytes());
+    output.extend_from_slice(&honoured.behaviour().tag());
+    encode_bytes(output, honoured.means().key().as_bytes());
+    encode_bytes(output, honoured.profile().key().as_bytes());
 }
 
 fn member_key(members: &[crate::region::SemanticMemberId]) -> Vec<u32> {
