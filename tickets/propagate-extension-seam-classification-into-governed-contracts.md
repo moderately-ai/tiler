@@ -3,8 +3,8 @@ id: propagate-extension-seam-classification-into-governed-contracts
 title: Propagate the extension-seam classification into governed contracts
 status: todo
 priority: p2
-dependencies: [accept-adr-0078-public-extension-seams]
-related: []
+dependencies: []
+related: [accept-adr-0078-public-extension-seams, draft-public-extension-seam-ownership-adr]
 scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
@@ -21,16 +21,18 @@ Do not restate ADR 0078's reasoning or its open questions in either contract; ci
 
 Run `uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py` before completion.
 
-## Not started — awaiting Tom's decision on ADR 0078
+## Released 2026-07-25 — Tom accepted ADR 0078
 
-**Fact.** `docs/decisions/0078-name-the-intended-public-extension-seams.md` is `decision_status: "proposed"`, and its own status line reads "proposed. Tom accepts; nothing here is operative until he does." Reproduce: `grep -n decision_status docs/decisions/0078-name-the-intended-public-extension-seams.md`.
+**Fact.** `docs/decisions/0078-name-the-intended-public-extension-seams.md` is `decision_status: "accepted"`. Reproduce: `grep -n decision_status docs/decisions/0078-name-the-intended-public-extension-seams.md`. It was accepted unamended, so this ticket's body needs no revision — the instruction in the paragraph before this section still holds exactly as written, including its refusal to propagate the two surfaces ADR 0078 leaves as open questions.
 
-**Why no part of this ticket landed.** Every deliverable it names is conditional — "On acceptance, represent the classification in the contracts that own the affected areas". Writing the classification into `docs/operation-extensions.md` and `docs/architecture.md` while the record is proposed would convert a proposal into fact inside two governed contracts, which `AGENTS.md` forbids directly ("do not silently convert a proposal into fact") and which is the specific failure the record itself guards against. There is no unconditional remainder to split out: the ticket has no deliverable that survives the ADR being rejected or amended.
+**The dependency edge is retired rather than satisfied.** [`accept-adr-0078-public-extension-seams`](accept-adr-0078-public-extension-seams.md) is a node only Tom closes, and Tom's decision on it directs this ticket to be repointed off it rather than to wait for that closure. It moves to `related` so the reason this work was parked stays legible; nothing schedules against it any more.
 
-**The precedent is explicit.** `propagate-accepted-api-conventions-into-governed-contracts` is the same shape one ADR earlier, and it propagated only after ADR 0074 reached `decision_status: "accepted"` — its title names the accepted state. ADRs 0072, 0074, and 0075, which 0078 depends on, are all `accepted`; 0078 is the only one that is not.
+**Why no part of this ticket landed before now.** Every deliverable it names is conditional — "On acceptance, represent the classification in the contracts that own the affected areas". Writing the classification into `docs/operation-extensions.md` and `docs/architecture.md` while the record was proposed would have converted a proposal into fact inside two governed contracts, which `AGENTS.md` forbids directly ("do not silently convert a proposal into fact") and which is the specific failure the record itself guards against. There was no unconditional remainder to split out: the ticket has no deliverable that would have survived the ADR being rejected or amended.
+
+**The precedent is explicit.** `propagate-accepted-api-conventions-into-governed-contracts` is the same shape one ADR earlier, and it propagated only after ADR 0074 reached `decision_status: "accepted"` — its title names the accepted state. ADRs 0072, 0074, and 0075, which 0078 depends on, are all `accepted`, and 0078 now is too, so this ticket is in the same posture that one was when it propagated.
 
 **This ticket was scheduled as ready, and that was wrong.** Its one dependency was `draft-public-extension-seam-ownership-adr`, which is `done` — correctly, since drafting a *proposed* ADR was its whole outcome. The dependency graph had no node representing Tom's acceptance, so nothing separated "the ADR has been written" from "the ADR has been decided", and the ticket surfaced in `tkt ready`. It reached a worker's queue that way, and the worker parked it by hand.
 
-**How that is now prevented.** [`make-adr-acceptance-visible-to-the-work-graph`](make-adr-acceptance-visible-to-the-work-graph.md) replaced the drafting dependency with [`accept-adr-0078-public-extension-seams`](accept-adr-0078-public-extension-seams.md), a node that only Tom closes and that sits permanently in `awaiting-decision`. A parked dependency never satisfies a dependent, so this ticket stays out of the ready frontier structurally rather than by its own status, and `tkt rollup` names the acceptance node as the reason it is blocked. Its status is `todo` again because the ticket itself is not awaiting a decision — its prerequisite is, and that distinction is now the graph's rather than a reader's.
+**How that was prevented while the decision was outstanding.** [`make-adr-acceptance-visible-to-the-work-graph`](make-adr-acceptance-visible-to-the-work-graph.md) replaced the drafting dependency with [`accept-adr-0078-public-extension-seams`](accept-adr-0078-public-extension-seams.md), a node that only Tom closes and that sat in `awaiting-decision`. A parked dependency never satisfies a dependent, so this ticket stayed out of the ready frontier structurally rather than by its own status, and `tkt rollup` named the acceptance node as the reason it was blocked. That mechanism did its job: the ticket was held until the decision existed, and it is released by the decision rather than by a worker's judgement.
 
-**Trigger for reconsideration.** ADR 0078 reaching `decision_status: "accepted"`, at which point Tom closes the acceptance ticket and this one becomes ready automatically. Nothing in its body needs revision on acceptance. If Tom amends the classification before accepting it, re-read items 4 and 5 first — the ticket forbids propagating the physical-implementation provider and the mature fusion numerical capability, which the record leaves as open questions, and an amendment is the most likely way that instruction would go stale.
+**The trigger fired on 2026-07-25.** It was ADR 0078 reaching `decision_status: "accepted"`, and it did, unamended. Items 4 and 5 were re-read against the accepted text before the edge was retired: nothing in them moved, so the instruction above still forbids propagating the physical-implementation provider and the mature per-operation fusion numerical capability, both of which the accepted record still carries as open questions rather than classifications.

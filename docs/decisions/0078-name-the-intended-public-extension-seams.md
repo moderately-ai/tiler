@@ -5,7 +5,7 @@ kind: "decision"
 title: "Name the intended public extension seams"
 topics: ["extensions", "api", "capability", "governance", "identity"]
 catalog_group: "foundation-semantics-extensions"
-decision_status: "proposed"
+decision_status: "accepted"
 implementation_status: "partial"
 applies_to: ["tiler.contract.operation-extensions", "tiler.contract.architecture"]
 evidence: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.semantic-foundation-api-v2", "tiler.research.extensions.proc-macro-extension-visibility"]
@@ -15,7 +15,7 @@ ticket: "draft-public-extension-seam-ownership-adr"
 
 # 0078: Name the intended public extension seams
 
-**Status:** proposed. Tom accepts; nothing here is operative until he does. This record classifies surfaces and changes no visibility, no signature, and no behaviour. Promoting or demoting any surface named below is separate work that must satisfy [ADR 0074](0074-use-explicit-public-api-conventions.md) and [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md).
+**Status:** accepted on 2026-07-25. The decision is unchanged from the proposed text and nothing was amended at acceptance. This record classifies surfaces and changes no visibility, no signature, and no behaviour. Promoting or demoting any surface named below is separate work that must satisfy [ADR 0074](0074-use-explicit-public-api-conventions.md) and [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md). Acceptance settles the classification and settles none of the five open questions below, two of which are marked as Tom's; in particular `frontier::PhysicalImplementationProvider` and the mature per-operation fusion numerical capability remain deliberately unassigned, and nothing may acquire an intent by being propagated out of this record.
 
 ## Context
 
@@ -120,7 +120,7 @@ Two qualifications keep this from over-claiming. **Explain** is internal as an a
 
 **This record retrofits nothing.** No visibility changes, no signature changes, no behaviour changes. `implementation_status` is `partial` and describes the decided behaviour rather than this document: the governing principle in item 1 is realized without exception by every seam in item 2, while the classification itself is stated in no governed contract, and items 4 and 5 name two surfaces whose posture is recorded as unresolved rather than implemented.
 
-Propagating an accepted classification into [the operation-extension contract](../operation-extensions.md) and [the architecture contract](../architecture.md) is deliberate follow-up work owned by [`propagate-extension-seam-classification-into-governed-contracts`](../../tickets/propagate-extension-seam-classification-into-governed-contracts.md), conditional on acceptance, so that a proposed ADR never becomes the operative rule by default. That contract already owns the public capability surface and the provider trust, identity, registration, and diagnostic obligations; this record adds the classification and the negative space, and must not restate what that contract states.
+Propagating this classification into [the operation-extension contract](../operation-extensions.md) and [the architecture contract](../architecture.md) is deliberate follow-up work owned by [`propagate-extension-seam-classification-into-governed-contracts`](../../tickets/propagate-extension-seam-classification-into-governed-contracts.md). It was conditional on acceptance, so that a proposed ADR never became the operative rule by default; acceptance released it, and until it lands, neither contract states the classification. That contract already owns the public capability surface and the provider trust, identity, registration, and diagnostic obligations; this record adds the classification and the negative space, and must not restate what that contract states.
 
 ## Open questions
 

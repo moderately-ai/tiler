@@ -90,7 +90,7 @@ gate before completion.
 
 ## Outcome
 
-[ADR 0078](../docs/decisions/0078-name-the-intended-public-extension-seams.md) is drafted at `decision_status: "proposed"`, `implementation_status: "partial"`, against base `412ceae`. Tom accepts; nothing in it is operative until he does. It changes no visibility, no signature, and no behaviour.
+[ADR 0078](../docs/decisions/0078-name-the-intended-public-extension-seams.md) was drafted at `decision_status: "proposed"`, `implementation_status: "partial"`, against base `412ceae`. Delivering a proposed record was this ticket's whole outcome; Tom accepted it unamended on 2026-07-25 under [`accept-adr-0078-public-extension-seams`](accept-adr-0078-public-extension-seams.md), which is a separate node and not this one. It changes no visibility, no signature, and no behaviour.
 
 **What moved since this ticket was filed.** The seams stopped being hypothetical. `pipeline::compile` now calls `lowering::resolve_lowering` unconditionally, `governed.rs` registers Tiler's four families through the same public `LoweringCapabilityRegistryBuilder` an external provider uses, `GovernedPhysicalProvider` is an ordinary implementor of `frontier::PhysicalImplementationProvider`, and the conformance block in `pipeline.rs` drives both an externally registered semantic operation set and an externally registered index-access lowering provider through `compile()`. The record therefore describes what exists rather than proposing a shape.
 
