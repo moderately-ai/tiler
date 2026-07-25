@@ -3,7 +3,7 @@ id: route-the-runtime-proof-through-the-artifact-envelope
 title: Route the runtime proof through the artifact envelope
 status: blocked
 priority: p0
-dependencies: [prototype-runtime-artifact-validation, share-the-serial-sum-artifact-assembler]
+dependencies: [prototype-runtime-artifact-validation, share-the-serial-sum-artifact-assembler, expose-the-dispatch-record-on-a-decoded-artifact]
 related: [prototype-metal-runtime-proof, prototype-metal-aot-slice, assemble-the-metal-payload-from-emission-and-compilation]
 scopes: [implementation/runtime, implementation/artifact]
 shared_scopes: [project/tickets]
