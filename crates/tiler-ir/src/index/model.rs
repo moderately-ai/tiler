@@ -5,7 +5,7 @@ use crate::semantic::ResolvedValueType;
 use crate::shape::{Extent, Shape};
 
 use super::handles::VerifiedRegionOwner;
-use super::sourced::{ExtentSources, SourcedExtent};
+use super::sourced::{ExtentSources, SourcedExtent, SourcedShape};
 use super::{
     IndexEntityKind, IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex,
     VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError,
@@ -89,7 +89,7 @@ pub(super) struct DimensionData {
 pub(super) struct TensorData {
     pub role: TensorRole,
     pub value_type: ResolvedValueType,
-    pub shape: Shape,
+    pub shape: SourcedShape,
 }
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(super) struct AccessData {
@@ -610,12 +610,36 @@ impl<'a> TensorRef<'a> {
     pub const fn value_type(self) -> &'a ResolvedValueType {
         &self.data.value_type
     }
-    /// Returns the exact static tensor shape in this bounded profile.
+    /// Returns the exact static tensor shape, when this boundary has one.
     ///
-    /// A future symbolic boundary returns `None` here and exposes shape expressions separately.
+    /// `None` for a boundary any of whose extents is sourced from a `ShapeEnv`
+    /// symbol, which is the case `docs/ir.md` reserved for it beside
+    /// [`DomainDimensionRef::static_extent`]: static dimensions and tensor
+    /// boundaries "return `Some` throughout this bounded profile. A future
+    /// symbolic profile can return `None` and expose its `ShapeEnv` expression
+    /// through an additive borrowed view instead of changing the meaning of an
+    /// existing accessor."
+    ///
+    /// No public constructor produces a symbolic boundary yet, so every region
+    /// a public caller can build still answers `Some` for every boundary. The
+    /// borrowed view that exposes the symbols is the reserved additive step.
     #[must_use]
     pub const fn static_shape(self) -> Option<&'a Shape> {
-        Some(&self.data.shape)
+        self.data.shape.as_static()
+    }
+    /// Returns the boundary's extents together with where each one comes from.
+    ///
+    /// The additive borrowed view `docs/ir.md` reserved beside
+    /// [`Self::static_shape`], kept `pub(crate)` while the symbolic profile is a
+    /// draft. Resolve a symbolic extent through
+    /// [`VerifiedIndexRegion::extent_sources`], which is the one environment
+    /// this region's symbols are declared in.
+    #[allow(
+        dead_code,
+        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
+    )]
+    pub(crate) const fn sourced_shape(self) -> &'a SourcedShape {
+        &self.data.shape
     }
 }
 

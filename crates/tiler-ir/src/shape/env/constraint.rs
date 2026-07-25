@@ -702,6 +702,21 @@ impl Solution {
         let upper = u64::try_from(self.domains.upper[root]).ok()?;
         Some(ExtentInterval { lower, upper })
     }
+
+    /// Returns whether two slots were forced into one equality class.
+    ///
+    /// Sound as a proof of equality because a class is only ever merged by
+    /// something that forces it: [`merge_equalities`] unions on an asserted
+    /// `left == right` between two symbols, and [`merge_comparison_cycles`]
+    /// unions a `>=` cycle, which the module documentation records as forcing
+    /// equality. Nothing merges on a coincidence of bounds.
+    ///
+    /// The converse does not hold and no caller may assume it: two symbols in
+    /// different classes may still be equal in every model — pinned to the same
+    /// constant, for instance — so `false` means *not proved here*.
+    pub(super) fn same_class(&mut self, left: usize, right: usize) -> bool {
+        self.classes.find(left) == self.classes.find(right)
+    }
 }
 
 /// Decides one relation set and retains the per-class domains it established.
