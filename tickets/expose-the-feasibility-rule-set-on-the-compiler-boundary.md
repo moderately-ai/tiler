@@ -1,7 +1,7 @@
 ---
 id: expose-the-feasibility-rule-set-on-the-compiler-boundary
 title: Expose the feasibility rule set identity on the public compiler boundary
-status: todo
+status: in-progress
 priority: p1
 dependencies: [split-profile-and-feasibility-rule-identity]
 related: [carry-the-target-profile-descriptor-identity-into-the-plan, prototype-public-compiler-api]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, feasibility, identity, public-surface]
+claimed_from: todo
+assignee: agent-spine
+lease_expires_at: 1785004834
 ---
 The compiler now derives the feasibility rule set identity but no caller outside the crate can read it, so an artifact assembler still cannot build `FeasibilityRuleSetRef` without inventing a value.
 

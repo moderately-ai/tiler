@@ -1,7 +1,7 @@
 ---
 id: carry-the-metal-payload-in-an-artifact-envelope
 title: Carry the Metal payload in an artifact envelope and round-trip it
-status: todo
+status: in-progress
 priority: p0
 dependencies: [assemble-the-metal-payload-from-emission-and-compilation, relocate-abi-expressions-into-tiler-ir, name-the-resolved-lowering-capability, carry-the-target-profile-descriptor-identity-into-the-plan, split-profile-and-feasibility-rule-identity]
 related: [route-the-runtime-proof-through-the-artifact-envelope, prototype-public-compiler-api]
@@ -9,6 +9,9 @@ scopes: [implementation/metal-aot, implementation/artifact, implementation/compi
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, artifact, aot]
+claimed_from: todo
+assignee: agent-spine
+lease_expires_at: 1785004848
 ---
 `assemble-the-metal-payload-from-emission-and-compilation` produced a real `PayloadContent` from a real emission and compilation, and stopped there. This ticket carries it into an envelope and proves the envelope round-trips.
 

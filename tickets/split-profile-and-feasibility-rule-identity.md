@@ -1,7 +1,7 @@
 ---
 id: split-profile-and-feasibility-rule-identity
 title: Split ProfileIdentity into a target profile identity and a feasibility rule set identity
-status: review
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, feasibility, identity]
-claimed_from: todo
-assignee: agent-compiler
-lease_expires_at: 1784995760
 ---
 `tiler-compiler` fuses two governed vocabularies into one struct where `tiler-artifact` keeps them apart.
 
