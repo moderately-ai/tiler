@@ -4,6 +4,7 @@ use super::registry::{
     SemanticAdmissionProvenanceIdentity, SemanticDefinitionProjectionIdentity,
     SemanticRegistrySnapshotIdentity,
 };
+use crate::identity::{push_len, push_slice};
 use crate::shape::Shape;
 
 pub(super) const MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES: usize = 16 * 1024 * 1024;
@@ -92,25 +93,25 @@ pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIden
     );
     let mut bytes = Vec::with_capacity(encoded_len);
     bytes.extend_from_slice(GRAPH_DOMAIN);
-    encode_len(&mut bytes, program.inputs.len());
+    push_len(&mut bytes, program.inputs.len());
     for input in &program.inputs {
         encode_string(&mut bytes, input.key.as_str());
         let value = &program.values[input.value.as_usize()];
         value.resolved_type.encode(&mut bytes);
         encode_shape(&mut bytes, &value.shape);
     }
-    encode_len(&mut bytes, traversal.operation_order.len());
+    push_len(&mut bytes, traversal.operation_order.len());
     for operation_index in traversal.operation_order {
         let operation = &program.operations[operation_index.as_usize()];
-        encode_len(&mut bytes, operation_record_encoded_len(program, operation));
+        push_len(&mut bytes, operation_record_encoded_len(program, operation));
         encode_operation(&mut bytes, operation);
-        encode_len(&mut bytes, operation.operands.len());
+        push_len(&mut bytes, operation.operands.len());
         for operand in &operation.operands {
             let operand_id = traversal.canonical_ids[operand.as_usize()]
                 .expect("canonical traversal assigns every reached operand");
             bytes.extend_from_slice(&operand_id.to_be_bytes());
         }
-        encode_len(&mut bytes, operation.results.len());
+        push_len(&mut bytes, operation.results.len());
         for result in &operation.results {
             let value_data = &program.values[result.as_usize()];
             let ValueDefinition::OperationResult { result_index, .. } = value_data.definition
@@ -122,7 +123,7 @@ pub(super) fn compute_graph_identity(program: &ProgramData) -> SemanticGraphIden
             encode_shape(&mut bytes, &value_data.shape);
         }
     }
-    encode_len(&mut bytes, program.outputs.len());
+    push_len(&mut bytes, program.outputs.len());
     for (output, canonical_id) in program.outputs.iter().zip(traversal.output_ids) {
         encode_string(&mut bytes, output.key.as_str());
         bytes.extend_from_slice(&canonical_id.to_be_bytes());
@@ -343,21 +344,15 @@ fn encode_operation(output: &mut Vec<u8>, operation: &OperationData) {
     operation.attributes.encode(output);
 }
 
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(
-        &u64::try_from(value)
-            .expect("supported usize fits u64")
-            .to_be_bytes(),
-    );
-}
-
 fn encode_string(output: &mut Vec<u8>, value: &str) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value.as_bytes());
+    // `str::len` is already the UTF-8 byte length, so this is the byte run
+    // `push_slice` frames — the wrapper exists for the `&str` conversion, not
+    // for a second framing rule.
+    push_slice(output, value.as_bytes());
 }
 
 fn encode_shape(output: &mut Vec<u8>, shape: &Shape) {
-    encode_len(output, shape.rank());
+    push_len(output, shape.rank());
     for extent in shape.extents() {
         output.extend_from_slice(&extent.get().to_be_bytes());
     }

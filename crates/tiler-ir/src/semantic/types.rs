@@ -2,6 +2,8 @@ use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
 
+use crate::identity::{push_len, push_slice};
+
 /// Maximum UTF-8 byte length of one canonical identity component.
 pub const MAX_IDENTITY_COMPONENT_BYTES: usize = 255;
 /// Maximum nesting depth of a resolved value type and its arguments.
@@ -179,8 +181,8 @@ pub(super) fn validate_key(
 
 impl Key {
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
-        encode_bytes(output, self.namespace.as_bytes());
-        encode_bytes(output, self.name.as_bytes());
+        push_slice(output, self.namespace.as_bytes());
+        push_slice(output, self.name.as_bytes());
         output.extend_from_slice(&self.semantic_version.to_be_bytes());
     }
 
@@ -530,7 +532,7 @@ impl ResolvedValueType {
                 arguments,
             } => {
                 constructor.0.encode(output);
-                encode_len(output, arguments.values.len());
+                push_len(output, arguments.values.len());
                 for argument in &arguments.values {
                     argument.encode(output);
                 }
@@ -962,26 +964,26 @@ impl CanonicalValue {
             CanonicalValueData::FloatBits { format, bits } => {
                 output.push(5);
                 format.encode(output);
-                encode_bytes(output, bits);
+                push_slice(output, bits);
             }
             CanonicalValueData::Bytes(value) => {
                 output.push(6);
-                encode_bytes(output, value);
+                push_slice(output, value);
             }
             CanonicalValueData::Utf8(value) => {
                 output.push(7);
-                encode_bytes(output, value.as_bytes());
+                push_slice(output, value.as_bytes());
             }
             CanonicalValueData::Sequence(values) => {
                 output.push(8);
-                encode_len(output, values.len());
+                push_len(output, values.len());
                 for value in values {
                     value.encode(output);
                 }
             }
             CanonicalValueData::Record(fields) => {
                 output.push(9);
-                encode_len(output, fields.len());
+                push_len(output, fields.len());
                 for field in fields {
                     output.extend_from_slice(&field.id.get().to_be_bytes());
                     field.value.encode(output);
@@ -1113,7 +1115,7 @@ impl EncodedNumericContract {
     }
 
     fn encode(&self, output: &mut Vec<u8>) {
-        encode_len(output, self.fields.len());
+        push_len(output, self.fields.len());
         for field in &self.fields {
             output.extend_from_slice(&field.id.get().to_be_bytes());
             field.value.encode(output);
@@ -1345,19 +1347,6 @@ fn validate_argument_at(
         | CanonicalValueData::Signed { .. }
         | CanonicalValueData::Unsigned { .. } => Ok(()),
     }
-}
-
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(
-        &u64::try_from(value)
-            .expect("bounded canonical collection length fits u64")
-            .to_be_bytes(),
-    );
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
+use crate::identity::{push_len, push_slice};
 use crate::shape::Axis;
 
 use super::operation::{
@@ -171,8 +172,8 @@ impl ProviderIdentity {
     }
 
     fn encode(&self, output: &mut Vec<u8>) {
-        encode_bytes(output, self.namespace.as_bytes());
-        encode_bytes(output, self.name.as_bytes());
+        push_slice(output, self.namespace.as_bytes());
+        push_slice(output, self.name.as_bytes());
         output.extend_from_slice(&self.revision.to_be_bytes());
     }
 }
@@ -294,8 +295,8 @@ impl ValueTypeDefinitionKey {
         match self {
             Self::Nominal(key) | Self::Parameterized(key) => encode_type_key(output, key),
             Self::EncodedNumeric(key) => {
-                encode_bytes(output, key.namespace().as_bytes());
-                encode_bytes(output, key.name().as_bytes());
+                push_slice(output, key.namespace().as_bytes());
+                push_slice(output, key.name().as_bytes());
                 output.extend_from_slice(&key.semantic_version().to_be_bytes());
             }
         }
@@ -1467,7 +1468,7 @@ impl FrozenSemanticRegistry {
         closure: &SemanticAuthorityClosure,
     ) -> SemanticDefinitionProjectionIdentity {
         let mut bytes = b"tiler.semantic-definition-projection.v3\0".to_vec();
-        encode_len(&mut bytes, closure.type_keys.len());
+        push_len(&mut bytes, closure.type_keys.len());
         for key in &closure.type_keys {
             let registered = self
                 .0
@@ -1476,7 +1477,7 @@ impl FrozenSemanticRegistry {
                 .expect("a frozen authority closure contains only registered types");
             encode_type_definition(&mut bytes, key, &registered.definition);
         }
-        encode_len(&mut bytes, closure.operation_keys.len());
+        push_len(&mut bytes, closure.operation_keys.len());
         for key in &closure.operation_keys {
             let registered = self
                 .0
@@ -1493,7 +1494,7 @@ impl FrozenSemanticRegistry {
         closure: &SemanticAuthorityClosure,
     ) -> SemanticAdmissionProvenanceIdentity {
         let mut bytes = b"tiler.semantic-admission-provenance.v1\0".to_vec();
-        encode_len(&mut bytes, closure.type_keys.len());
+        push_len(&mut bytes, closure.type_keys.len());
         for key in &closure.type_keys {
             let registered = self
                 .0
@@ -1503,7 +1504,7 @@ impl FrozenSemanticRegistry {
             key.encode(&mut bytes);
             registered.provider.encode(&mut bytes);
         }
-        encode_len(&mut bytes, closure.operation_keys.len());
+        push_len(&mut bytes, closure.operation_keys.len());
         for key in &closure.operation_keys {
             let registered = self
                 .0
@@ -2211,11 +2212,11 @@ fn compute_identity(
     operations: &BTreeMap<OpKey, RegisteredOperation>,
 ) -> SemanticRegistrySnapshotIdentity {
     let mut bytes = b"tiler.semantic-registry.v5\0".to_vec();
-    encode_len(&mut bytes, definitions.len());
+    push_len(&mut bytes, definitions.len());
     for (key, registered) in definitions {
         encode_registered_type(&mut bytes, key, registered);
     }
-    encode_len(&mut bytes, operations.len());
+    push_len(&mut bytes, operations.len());
     for (key, registered) in operations {
         encode_registered_operation(&mut bytes, key, registered);
     }
@@ -2351,7 +2352,7 @@ fn encode_type_definition(
     definition: &ValueTypeDefinition,
 ) {
     key.encode(output);
-    encode_bytes(output, definition.normative_definition.as_str().as_bytes());
+    push_slice(output, definition.normative_definition.as_str().as_bytes());
     definition.canonical_facts.0.encode(output);
 }
 
@@ -2370,7 +2371,7 @@ fn encode_operation_definition(
     definition: &OperationDefinition,
 ) {
     key.encode(output);
-    encode_bytes(
+    push_slice(
         output,
         definition.normative_definition().as_str().as_bytes(),
     );
@@ -2383,22 +2384,9 @@ fn encode_operation_definition(
 }
 
 fn encode_type_key(output: &mut Vec<u8>, key: &TypeKey) {
-    encode_bytes(output, key.namespace().as_bytes());
-    encode_bytes(output, key.name().as_bytes());
+    push_slice(output, key.namespace().as_bytes());
+    push_slice(output, key.name().as_bytes());
     output.extend_from_slice(&key.semantic_version().to_be_bytes());
-}
-
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(
-        &u64::try_from(value)
-            .expect("supported usize fits u64")
-            .to_be_bytes(),
-    );
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
 }
 
 #[cfg(test)]
