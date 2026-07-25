@@ -1,7 +1,7 @@
 ---
 id: compose-the-complete-expansion-cache-subject
 title: Compose the complete expansion cache subject
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [implement-the-expansion-cache-protocol, derive-the-pre-compilation-artifact-program-subject]
@@ -9,9 +9,6 @@ scopes: [implementation/cache, implementation/metal-aot, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, identity, correctness]
-claimed_from: todo
-assignee: agent-subject
-lease_expires_at: 1785015441
 ---
 `tiler-cache` keys an entry by the governed digest of a canonical subject the producer supplies, and a bundle carries a **whole artifact envelope**. A conforming subject must therefore determine every byte of that envelope, which is what `docs/backends/metal.md` already requires when it says "full artifact identity is the key".
 
