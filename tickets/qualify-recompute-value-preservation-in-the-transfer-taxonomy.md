@@ -1,7 +1,7 @@
 ---
 id: qualify-recompute-value-preservation-in-the-transfer-taxonomy
 title: Qualify recompute value preservation in the transfer taxonomy
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [reconcile-the-transfer-taxonomy-convertdtype-label-with-the-enforcer-definition, transfer-synchronization-and-resource-lifetime-contract]
@@ -9,6 +9,9 @@ scopes: [research/transfers]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, transfers, numerics]
+claimed_from: todo
+assignee: agent-qualify-recompute
+lease_expires_at: 1785039083
 ---
 `reconcile-the-transfer-taxonomy-convertdtype-label-with-the-enforcer-definition` checked every `PlacementEnforcer` variant in `docs/research/transfers/transfer-synchronization-and-resource-lifetime.md` against the accepted definition in `docs/compiler/optimizer.md` — that an enforcer "may change only how a boundary value is stored, addressed, placed, or delivered, never which values that boundary carries". Eight of the nine settled immediately. `Recompute(RecomputeStage)` did not, and it is the one variant the memo's "Enforcer and mechanism taxonomy" table never describes at all.
 
