@@ -25,3 +25,9 @@ Both IR layers publish their numerical facts as readable canonical records while
 3. If the vocabulary stays private, say so in the accessor documentation, so a consumer learns from the API that the record is opaque to it rather than discovering it by reading the crate.
 
 Requires an owner decision on the public boundary before implementation; ADR 0075 scopes public-boundary approval by change category.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: promote.** ADR 0075 reserves public-surface promotions to the owner; this one is granted.
+
+`facts()` is publicly readable while its field IDs are private at both layers, so a reader can obtain facts it cannot interpret. Publishing the vocabulary makes it a durable identity surface: state that renumbering is thereafter a breaking change, so nobody treats the IDs as internal later.

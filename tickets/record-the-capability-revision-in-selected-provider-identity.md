@@ -33,3 +33,9 @@ If the API version survives, name its authority: which component mints it, and w
 ## Closes when
 
 An out-of-crate assembler records everything `docs/operation-extensions.md` requires a selected plan to record, with no conflated and no invented value; `prototypes/serial-sum-compile/src/bundle.rs::capability_version` and its retraction comment are gone; the encoding change is versioned; and `uv run --locked python scripts/check_repository.py` passes.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: promote.** ADR 0075 reserves public-surface promotions to the owner; this one is granted.
+
+`SelectedProvider` gains a slot for the capability revision. The assembler currently carries the real `u32` through a checked narrowing into a `u16` that refuses rather than truncates, with the conflation named at the call site — honest, but still a conflation, and artifact identity should record which capability revision actually lowered rather than a narrowed proxy.

@@ -1,7 +1,7 @@
 ---
 id: admit-the-device-free-runtime-validation-crate
 title: Admit the device-free runtime validation crate
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [prototype-runtime-artifact-validation, record-an-adr-for-the-metal-aot-crate-admission]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, contracts/decisions, implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, workspace, runtime, needs-tom]
+claimed_from: todo
+assignee: agent-runtime2
+lease_expires_at: 1785006883
 ---
 `prototype-runtime-artifact-validation` says "if the owning production crate is absent, this ticket owns its atomic workspace admission and lockfile update." Attempting that admission established that it cannot be done from `implementation/workspace` alone, and that the accepted contract currently withholds the crate. This ticket owns the part that is not a workspace edit.
 
@@ -37,3 +40,13 @@ The admission is only coherent if three things move together: the workspace memb
 ## What closes this
 
 Tom decides whether the device-free validation crate is admitted now or waits for the runtime proof. If admitted: add `crates/tiler-runtime` to `Cargo.toml` members and `[workspace.dependencies]`, add its rows to `scripts/check_workspace.py`'s `EXPECTED_MEMBERS`, `PACKAGE_DESCRIPTIONS`, `PACKAGE_DIRS`, and `EXPECTED_DEPENDENCIES`, move `[scope_crates]`'s `implementation/runtime` mapping off `tiler-prototype-run` onto it, restate the packaging block in `docs/architecture.md`, and record the decision — including whether "device-free" is the operative line that distinguishes it from the withheld Metal-runtime crate. If deferred: say so on `prototype-runtime-artifact-validation` and give that ticket a trigger for reconsideration, because it is currently a p0 whose stated deliverable is unreachable.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: admit the device-free runtime validation crate.** It decodes and validates artifacts and binds by program identity; it never touches a live device, an `MTLDevice`, or a pipeline state.
+
+**Why ADR 0077's non-precedent clause does not bar it.** That clause withholds "reusable Metal-runtime crates until the proof reaches those boundaries". By ADR 0077's own test a crate that touches no device object is not one of those, so this is admitted on the clause's own terms rather than in spite of it. Record that reasoning in the admitting ADR — a future reader must be able to see that the non-precedent clause was applied rather than waived.
+
+**This is the last structural piece of the spine.** `prototype-runtime-artifact-validation` (p0) unblocks, and behind it `route-the-runtime-proof-through-the-artifact-envelope` — which removes the bypass. The runtime proof currently loads a `metallib` directly, so the envelope that round-trips today is still not in the execution path. Two descriptions of one compilation exist and only one is load-bearing; this is what collapses them.
+
+The accepted packaging profile must be amended in the same change, not left to disagree with the workspace.

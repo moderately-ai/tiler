@@ -1,7 +1,7 @@
 ---
 id: decide-the-expansion-cache-owner-and-digest-authority
 title: Decide the expansion cache owner and its digest authority
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: []
 related: []
@@ -43,3 +43,15 @@ Whether `docs/architecture.md`'s `tiler-metal-aot` row is corrected to drop "cro
 ## Not part of this question
 
 The cache *key subject* is settled and landed: `crates/tiler-metal-aot/src/identity.rs` emits the driver's complete canonical compilation subject as bytes and leaves digesting to whichever component owns the governed algorithm, following `family.rs`'s precedent. That placement is correct under every option above, because the subject is a fact about the driver's own inputs.
+
+## Decision — Tom, 2026-07-25
+
+**Decided: a dedicated cache crate, depending on `tiler-artifact` for the governed digest.**
+
+**The alternative was not merely worse, it was unsatisfiable.** `docs/architecture.md`'s ownership row assigns `tiler-metal-aot` the "cross-process content cache, atomic publication, byte embedding" while the *same row* forbids it "every workspace and third-party dependency", and `check_workspace.py` pins its closure empty. ADR 0050 requires section-digest validation on every hit, and the governed digest (`tiler.digest.sha-256.v1`) is `pub(crate)` in `tiler-artifact`. No implementation can satisfy that row as written.
+
+`tiler-metal-aot` therefore stays dependency-free, which is the property ADR 0077 admitted it for.
+
+**Amend the ownership table in the same change.** The accepted profile deliberately omits "generalized cache" crates, so this decision amends it rather than fitting inside it, and that amendment is part of the work rather than a follow-up.
+
+**Carry the five correctness properties `AGENTS.md` names as the specification**: complete cache identity, validation on EVERY hit, immutable entries, atomic publication, and defined crash/race behaviour. The identity half already landed as canonical bytes in `tiler-metal-aot`; a corrupt or unreadable entry must fail loud rather than silently becoming a miss, unless you can argue otherwise and say so.

@@ -29,3 +29,9 @@ Decide what it returns. `CanonicalArtifactProgramIdentity` is already public and
 ## Closes when
 
 An out-of-crate producer can assert that the identity of the artifact it built equals the identity re-derived from the bytes it encoded; the `bundle` round-trip case makes that assertion directly rather than through byte equality; and `uv run --locked python scripts/check_repository.py` passes.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: promote.** ADR 0075 reserves public-surface promotions to the owner; this one is granted.
+
+One accessor over a value `build` already derives and already folds into the envelope. Without it a producer cannot say "the artifact I built is the artifact these bytes name" — a gap in exactly the identity discipline enforced everywhere else this session.

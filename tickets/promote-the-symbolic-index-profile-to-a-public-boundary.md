@@ -21,3 +21,9 @@ Every module involved carries a `dead_code` allow whose stated reason is exactly
 ## Closes when
 
 Tom has reviewed the exact boundary, the accepted subset is `pub` with its documentation and `#[non_exhaustive]` decisions made, the draft `dead_code` allowances are gone rather than relocated, and `uv run --locked python scripts/check_repository.py` passes.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: promote.** ADR 0075 reserves public-surface promotions to the owner; this one is granted.
+
+Covers all three ShapeEnv drafts — `shape::env`, `env::constraint`, and `index::sourced`. The authority, its constraint environment, and its first consumer are complete and tested, and were unreachable outside `tiler-ir`. Note the fragment boundary is still being widened by `bind-shapeenv-sources-into-tensor-boundaries-and-coefficients`, so promote the surface that is settled and say plainly which parts are still moving.
