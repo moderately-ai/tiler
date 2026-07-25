@@ -264,6 +264,18 @@ These are failure modes observed in practice, not hypotheticals.
   Escalating one stalls the work and moves your job to someone else. Routine
   operations — pushing your own branch, closing a ticket whose remainder is
   tracked — are not reserved boundaries.
+- **A verdict is only as good as the check's ability to say no.** Before acting
+  on a check you wrote yourself, confirm its failure path is reachable — run it
+  against a case that must fail and watch it fail. A survey of forty-three
+  worktrees reported every one of them clean immediately before thirty-seven
+  were to be deleted; `head` was unresolvable inside the loop, so the
+  dirty-check pipeline produced empty output and "no modifications" was
+  indistinguishable from "the check did not run". A uniform pass over a
+  heterogeneous population is the signature to distrust, and it is the same
+  hazard the `trybuild` case-naming rule already covers for a glob that stops
+  matching: silence is reported as success by anything that does not
+  independently know how many answers to expect. Prefer a check that names its
+  population and counts it.
 
 ## Experiments, prototypes, and evidence
 
