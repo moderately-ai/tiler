@@ -39,6 +39,20 @@ it. That is what `source_fragments` is for. It states what the fixture must stil
 contain to be the case it is recorded as, which survives cosmetic edits that a
 digest would reject and refuses semantic ones that a digest would only report as
 "something changed".
+
+**Why this file duplicates its sibling instead of importing one.** Settled by
+`share-the-spike-diagnostic-claims-verifier`, and recorded at length in
+`../shape-evidence/verify_evidence.py`'s module docstring rather than twice. In
+short: the seven functions the two files genuinely share are file reading with no
+posture in them, and sharing them would mean threading each caller's exception
+type through every one, because both adversarial suites assert on their own
+class. The four that carry posture — `verify_toolchain`, `verify_claims`,
+`verify_failing_case`, `verify_compiling_case` — are not near-identical and would
+need about seven flags to unify, each settable backwards by a later edit. The
+trigger for revisiting is a *rule* about what a claim must assert, rather than a
+file-reading helper, having to change in more than one verifier at once;
+`required_fragment_list` here was copied to the off-pin spike for exactly that
+reason once, and a second occurrence is the evidence for paying the cost.
 """
 
 from __future__ import annotations

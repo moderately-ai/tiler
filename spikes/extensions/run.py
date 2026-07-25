@@ -308,6 +308,14 @@ def verify_visibility_evidence(root: Path, channel: str) -> dict[str, object]:
     is an unstable lint, so a measurement is only evidence for the compiler that
     produced it; moving the pin must demand a fresh run rather than inherit the
     old conclusion.
+
+    This is the third retained-claims custodian in the repository and the one
+    that is not a copy of the other two: it checks *every* record under
+    `results/` and requires the running compiler to be among those they name,
+    where both shape spikes require exactly one record. Why the three are not
+    one shared module is settled by `share-the-spike-diagnostic-claims-verifier`
+    and recorded in `spikes/shapes/shape-evidence/verify_evidence.py`'s module
+    docstring, which also states the condition that should reopen it.
     """
     measurements = sorted((root / "results").glob("*.json"))
     if not measurements:

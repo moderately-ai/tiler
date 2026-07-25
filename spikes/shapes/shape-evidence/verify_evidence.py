@@ -32,6 +32,41 @@ compilation ever happens, so nothing but the record can notice that a fixture
 source or `src/lib.rs` changed under a diagnostic that quotes it. Editing any
 of those inputs therefore fails until the suite is re-run on the recorded
 toolchain and the record is refreshed in the same commit.
+
+**Why this file duplicates its sibling instead of importing one.** Settled by
+`share-the-spike-diagnostic-claims-verifier`; recorded here so a third spike's
+author does not re-derive it. Measured across this file and
+`../nightly-dependent-static-shapes/verify_claims.py`: four functions are
+byte-identical apart from the exception class — `read_text`,
+`read_pinned_channel`, `locked_package_version`, `fixture_names` — and
+`read_record`, `sole_record`, and `main` differ only in a message string. All
+seven are file reading with no posture in them. The four that carry posture are
+not near-identical and cannot be shared without becoming configurable:
+`verify_toolchain` differs in essentially every line (the channel comparison is
+inverted, and the two spikes cross-check entirely different things against it),
+`verify_failing_case` in 32 lines, `verify_claims` in 23, and
+`verify_compiling_case` takes a different signature. Folding those into one
+predicate needs about seven flags — comparison direction, digesting,
+`source_fragments`, ADR attribution, claim-id uniqueness, singular-versus-plural
+case form, empty-list strictness — each of which a later edit can set backwards,
+in place of two files that each state their own rule in prose.
+
+Lifting only the seven posture-free helpers was rejected on its own terms: each
+would have to take the caller's exception type as a parameter, because both
+adversarial suites assert on the spike's own class, so it trades ~70 duplicated
+lines for the same number of wrappers and makes the sole custodian of evidence
+nothing recompiles no longer readable in one file.
+
+**The trigger, restated.** The original one — "a third spike needs a
+retained-claims record" — is already spent and did not fire:
+`spikes/extensions/run.py` is that third custodian and is a different design
+again, checking many records rather than requiring exactly one. The condition
+that should fire instead is a *rule* about what a claim must assert, rather than
+a file-reading helper, having to be changed in more than one verifier at once.
+That has now happened once: `required_fragment_list` below was copied from the
+gated sibling to close a divergence this duplication produced, where an emptied
+`required_fragments` type-checked and asserted nothing. A second occurrence is
+the evidence for paying the sharing cost.
 """
 
 from __future__ import annotations
@@ -238,6 +273,24 @@ def verify_toolchain(root: Path, label: str, record: dict[str, object], pinned: 
     return channel
 
 
+def required_fragment_list(label: str, case: str, claim: dict[str, object], key: str) -> list[str]:
+    """Read one fragment list, refusing a claim that decayed into asserting nothing.
+
+    Absent and empty are the same failure. A claim whose `required_fragments`
+    became `[]` still type-checks as a list, so a check that only rejects a
+    missing key keeps passing while the claim asserts nothing beyond an error
+    code that several cases here share. `forbidden_fragments` is deliberately
+    not read through this: two cases legitimately forbid nothing, because they
+    share no diagnostic code with another case.
+    """
+    fragments = claim.get(key)
+    if not isinstance(fragments, list) or not all(isinstance(item, str) for item in fragments):
+        raise EvidenceFailure(f"{label}: {case} records no {key} list")
+    if not fragments:
+        raise EvidenceFailure(f"{label}: {case} records an empty {key} list")
+    return list(fragments)
+
+
 def claim_cases(label: str, claim: dict[str, object]) -> list[str]:
     """Return the fixture paths one claim names, in either singular or plural form."""
     raw = claim["case"] if "case" in claim else claim.get("cases")
@@ -269,27 +322,20 @@ def verify_failing_case(root: Path, label: str, claim: dict[str, object], case: 
         raise EvidenceFailure(
             f"{label}: {case} now reports {first!r}, recorded {claim.get('first_line')!r}"
         )
-    recorded_codes = claim.get("diagnostic_codes")
-    if not isinstance(recorded_codes, list) or not all(isinstance(c, str) for c in recorded_codes):
-        raise EvidenceFailure(f"{label}: {case} records no diagnostic code list")
+    recorded_codes = required_fragment_list(label, case, claim, "diagnostic_codes")
     codes = ERROR_CODE.findall(text)
     if codes != recorded_codes:
         raise EvidenceFailure(
             f"{label}: {case} now reports diagnostic codes {codes}, recorded {recorded_codes}"
         )
-    if recorded_codes and not first.startswith(f"error[{recorded_codes[0]}]"):
+    if not first.startswith(f"error[{recorded_codes[0]}]"):
         raise EvidenceFailure(f"{label}: {case} no longer reports {recorded_codes[0]} first")
-    # Both fragment lists are required rather than defaulted. A claim that lost
-    # its `required_fragments` would otherwise keep passing while asserting
-    # nothing beyond an error code that several cases here share.
-    required = claim.get("required_fragments")
-    forbidden = claim.get("forbidden_fragments")
-    for key, fragments in (("required_fragments", required), ("forbidden_fragments", forbidden)):
-        if not isinstance(fragments, list) or not all(isinstance(f, str) for f in fragments):
-            raise EvidenceFailure(f"{label}: {case} records no {key} list")
-    for fragment in required:
+    for fragment in required_fragment_list(label, case, claim, "required_fragments"):
         if fragment not in text:
             raise EvidenceFailure(f"{label}: {case} no longer reports {fragment!r}")
+    forbidden = claim.get("forbidden_fragments")
+    if not isinstance(forbidden, list) or not all(isinstance(item, str) for item in forbidden):
+        raise EvidenceFailure(f"{label}: {case} records no forbidden_fragments list")
     for fragment in forbidden:
         if fragment in text:
             raise EvidenceFailure(f"{label}: {case} now reports {fragment!r}, which it must not")
