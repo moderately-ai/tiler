@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use tiler_ir::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
+use tiler_ir::kernel::{
+    KernelType, MAX_KERNEL_IDENTITY_BYTES, VerifiedKernel, lower_scheduled_region,
+};
 use tiler_ir::program::{
     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
     MaterializedValueSpec, MemorySpace, SemanticOccurrence, StageAccess, StageAccessMode,
@@ -37,12 +39,12 @@ use tiler_ir::shape::{Axis, Shape};
 use super::{
     AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiExprUse, AbiFactBinder, AbiRoot, AbiType,
     AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
-    ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey,
-    BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
-    CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, PayloadId, RepresentationKey, SchemaVersion,
-    SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-    TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
+    ArtifactExecutionPolicy, ArtifactKeyKind, ArtifactProgramBuilder, AvailabilityPhase,
+    BackendEntryKey, BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind,
+    BindingSpec, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
+    FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, PayloadId,
+    RepresentationKey, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
 };
 
 // The seven items this suite shares with `crate::proof::tests` are `pub(crate)`
@@ -1472,6 +1474,101 @@ fn checked_narrowing_rejects_a_value_that_does_not_fit() {
             op: AbiUnaryOp::NarrowU32,
             value: u64::from(u32::MAX) + 1,
         }),
+    );
+}
+
+// -------------------------------------------------------------------------
+// Received opaque identities are bounded by whoever mints them
+// -------------------------------------------------------------------------
+
+/// Each opaque identity is bounded by the authority that derives its subject.
+///
+/// The 1,121-byte case is the measured one, not a chosen one: it is the
+/// canonical kernel identity of a serial `f32` sum reducing two or more
+/// contributors, which the shared bound refused while admitting only the
+/// degenerate one-contributor reduction. The two digest-shaped identities keep
+/// the smaller bound, which is the whole point of separating them — raising one
+/// bound for all three would have discarded a real one.
+#[test]
+fn an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it() {
+    let measured_kernel_identity = vec![0x5a; 1_121];
+    BackendEntryKey::from_bytes(&measured_kernel_identity)
+        .expect("a real reduction's kernel identity is a legal backend entry key");
+    assert!(
+        measured_kernel_identity.len() > super::MAX_OPAQUE_IDENTITY_BYTES,
+        "the case is only a regression test while it exceeds the shared bound",
+    );
+
+    assert_eq!(
+        BackendEntryKey::from_bytes(vec![0x5a; MAX_KERNEL_IDENTITY_BYTES + 1]),
+        Err(ArtifactBuildError::KeyTooLong {
+            kind: ArtifactKeyKind::BackendEntry,
+            bytes: MAX_KERNEL_IDENTITY_BYTES + 1,
+            limit: MAX_KERNEL_IDENTITY_BYTES,
+        }),
+        "beyond what the shared IR can mint, the refusal is still loud",
+    );
+
+    for (bytes, expected) in [
+        (
+            PayloadDigest::from_bytes(vec![0x5a; super::MAX_OPAQUE_IDENTITY_BYTES + 1]).err(),
+            ArtifactKeyKind::PayloadDigest,
+        ),
+        (
+            TargetProfileDescriptorDigest::from_bytes(vec![
+                0x5a;
+                super::MAX_OPAQUE_IDENTITY_BYTES + 1
+            ])
+            .err(),
+            ArtifactKeyKind::TargetProfileDescriptor,
+        ),
+    ] {
+        assert_eq!(
+            bytes,
+            Some(ArtifactBuildError::KeyTooLong {
+                kind: expected,
+                bytes: super::MAX_OPAQUE_IDENTITY_BYTES + 1,
+                limit: super::MAX_OPAQUE_IDENTITY_BYTES,
+            }),
+        );
+    }
+}
+
+/// The bound admits every entry key the packaged program itself carries.
+///
+/// An artifact carries one entry's kernel identity twice — as the entry key,
+/// and inside the stage subject `stage_key` derives — so the two bounds have to
+/// admit the same values or an artifact could be built and not encoded. This
+/// asserts the first half against the second at a length the old bound refused.
+#[test]
+fn an_artifact_encodes_an_entry_key_longer_than_the_digest_bound() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let long_key = vec![0x5a; 1_121];
+    draft
+        .push_variant(&program, variant(&formulas, descriptor, &long_key))
+        .unwrap();
+    let artifact = draft.build().unwrap();
+
+    let bytes = artifact.encode().expect("the envelope encodes");
+    let decoded = super::decode_artifact(&bytes).expect("the envelope decodes");
+    assert_eq!(
+        decoded
+            .variants()
+            .next()
+            .expect("one variant")
+            .entries()
+            .next()
+            .expect("one entry")
+            .backend_entry_key()
+            .as_bytes(),
+        long_key.as_slice(),
     );
 }
 

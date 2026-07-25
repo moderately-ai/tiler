@@ -118,10 +118,9 @@ const ROWS: u64 = 4;
 ///
 /// The direct path fixes its own shape because its job is the *numerical*
 /// claim, and three contributors per row is what makes a serial reduction's
-/// ordering observable. The envelope path deliberately does not fix one: it
-/// takes whatever shape the artifact declares, so that when the artifact layer
-/// can carry this shape the two coincide with no code change. See
-/// [`bind_interface`] for why they do not coincide yet.
+/// ordering observable. The envelope path still does not fix one — it takes
+/// whatever shape the artifact declares — and the two now coincide, which is
+/// the property [`bind_interface`] proves rather than assumes.
 const COLUMNS: u64 = 3;
 /// Buffer argument-table capacity Apple states per compute function.
 const BUFFER_BINDING_LIMIT: u32 = 31;
@@ -288,15 +287,19 @@ fn read_artifact(path: &Path) -> Result<(Vec<u8>, Vec<u8>), ProofError> {
 /// would surface as a bit disagreement, which is why the direct path exists.
 ///
 /// **The declared shape is read rather than asserted equal to [`COLUMNS`], and
-/// that is a limitation being tracked rather than a design.** The artifact layer
-/// bounds a `BackendEntryKey` at `MAX_OPAQUE_IDENTITY_BYTES` = 1,024, and the
-/// canonical kernel identity of any serial sum with two or more contributors
-/// measures 1,113 bytes, so the producer can package only the degenerate
-/// single-contributor reduction. Fixing the shape here would make this path
-/// unreachable rather than make it stronger.
-/// `bound-the-backend-entry-key-by-the-identity-it-carries` records the exact
-/// measurement; when it closes, the producer packages the direct path's own
-/// shape and the two coincide with no change here.
+/// that is the design rather than a gap.** What this runner may take from an
+/// artifact is what the artifact says; asserting a shape here would replace the
+/// artifact's declaration with this build's expectation, and the two paths would
+/// then agree because they were told to rather than because one packaged what
+/// the other runs.
+///
+/// They do agree today. They did not until
+/// `bound-the-backend-entry-key-by-the-identity-it-carries`, because the
+/// artifact layer bounded a `BackendEntryKey` at 1,024 bytes while a
+/// two-or-more-contributor serial sum's kernel identity measures 1,121, so the
+/// producer could package only the degenerate single-contributor reduction and
+/// this path ran a `4x1` against the direct path's `4x3`. Nothing here changed
+/// when that closed, which is what reading rather than asserting bought.
 fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), ProofError> {
     let inputs: Vec<_> = decoded.inputs().collect();
     let [input] = inputs.as_slice() else {
