@@ -1,17 +1,14 @@
 ---
 id: carry-the-metal-payload-in-an-artifact-envelope
 title: Carry the Metal payload in an artifact envelope and round-trip it
-status: in-progress
+status: todo
 priority: p0
-dependencies: [assemble-the-metal-payload-from-emission-and-compilation]
+dependencies: [assemble-the-metal-payload-from-emission-and-compilation, relocate-abi-expressions-into-tiler-ir]
 related: [route-the-runtime-proof-through-the-artifact-envelope, prototype-public-compiler-api]
 scopes: [implementation/metal-aot, implementation/artifact, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, artifact, aot]
-claimed_from: todo
-assignee: agent-coordinator
-lease_expires_at: 1784988717
 ---
 `assemble-the-metal-payload-from-emission-and-compilation` produced a real `PayloadContent` from a real emission and compilation, and stopped there. This ticket carries it into an envelope and proves the envelope round-trips.
 
@@ -49,4 +46,28 @@ Two options were weighed and one was **recommended and then withdrawn**, so the 
 
 **Fact — no artifact assembler exists anywhere.** `ArtifactProgramBuilder` has no consumer outside `crates/tiler-artifact/src`. So this ticket writes the first one, and the ABI-expression derivation it needs is the same work `complete-program-identity-with-abi-guards-and-routing` describes; the two meet here and should not produce two derivations.
 
-**Sizing is an argument, not a measurement, until the gap between what `push_variant` requires and what the compiler can supply is read field by field.** That reading is in progress; do not commit to an approach in code before it lands.
+## The decision above is RETRACTED — accepted ADR 0068 assigns this to the compiler
+
+The reading landed and it overturns the decision, which is recorded rather than quietly replaced.
+
+**Fact — `docs/decisions/0068-co-locate-abi-expressions-with-executable-program-ir.md:41-42`, `decision_status: accepted`:** "`tiler-compiler` owns lowering into and construction of `AbiExpr`; it is not the runtime expression authority."
+
+That is directly on point and more specific than the `docs/artifact-abi.md` "construction inputs" phrasing the retracted decision rested on. The compiler is *supposed* to construct ABI expressions. So the withdrawn option was right and the recorded reasoning against it was wrong.
+
+**But it cannot be done today, and the reason is a second divergence.** The same ADR decides: "Place the public `AbiExpr` domain type, admitted roots, validation, canonical identity, and authoritative pure checked evaluation semantics ... in `tiler-ir`." **It is not there.** `AbiRoot` is defined at `crates/tiler-artifact/src/program/expr.rs:159`, and `crates/tiler-ir/src/program/` contains no ABI expression module. The ADR's `implementation_status` is `spike-only`, which is consistent — it is accepted and unimplemented.
+
+**Inference — the whole difficulty is downstream of that one divergence.** With `AbiExpr` where the ADR puts it, `tiler-compiler` constructs ABI expressions over `tiler-ir`, which it already depends on, and **no new dependency edge is needed at all**. The dilemma that produced the retracted decision — expose a plan record, or add `tiler-compiler → tiler-artifact` — exists only because the type is in the wrong crate. Neither option is right; the ordering is.
+
+## Measured gap, for whoever sequences this
+
+**What `push_variant` requires** (`crates/tiler-artifact/src/program/builder.rs:437`), taking `&VerifiedKernelProgram`: a boolean `applicability_guard`, `TargetProfileRef`, `FeasibilityRuleSetRef`, deferred predicates, and one `EntrySpec` per program stage — each with one `BindingSpec` per kernel buffer parameter (`accessible_bytes`, which must statically equal `access.view().window().length`) and a `LaunchSpec` (`grid_threads`, `threads_per_workgroup` which must statically equal `stage.kernel().requirements().threads_per_workgroup`, `zero_work_skips_dispatch`, preconditions).
+
+**What a caller outside `tiler-compiler` can obtain today:** `PlanAlternative::kernels() -> &[VerifiedKernel]` and `Compilation::target_profile_key() -> &str`. That is the entire list. `ArtifactConstructionPlan` is `pub(crate)` in a private `mod program` with **every field private and exactly one accessor** (`lowering_providers`, `program.rs:183`). `KernelProgram::core()` — the only path to a `VerifiedKernelProgram` — is `#[cfg(test)]` (`program.rs:164`), so **no non-test path to the `push_variant` argument exists at all**.
+
+**`grid_threads` is not on a kernel.** `VerifiedKernel::requirements()` gives `threads_per_workgroup`; total grid size lives only on `ScheduledRegion::schedule.launch.grid_threads`, behind the `pub(crate)` compiler wrapper. This is why `prototypes/serial-sum-run/src/main.rs` hardcodes its dispatch geometry and buffer indices instead of deriving them.
+
+**No ABI derivation exists anywhere.** The only constructions of `accessible_bytes` and launch geometry as expressions are hand-written fixtures: `crates/tiler-artifact/src/program/tests.rs:321` `formulas()` and `:358` `entry()`, cloned in the `program/mod.rs:243` doctest and once more in `codec/tests.rs:278`. All assume the two-dimensional serial-sum shape, a hardcoded 4-byte element, and `grid_threads = rows`. The artifact layer *checks* these expressions and never mints one; it does not check `grid_threads` against anything at all.
+
+The scalar truths to lift into expression form already exist and should not be re-derived: grid threads = iteration-shape product (`crates/tiler-compiler/src/physical.rs:424`, invariant at `crates/tiler-ir/src/schedule/builder.rs:286`), bytes = elements x element width (`crates/tiler-compiler/src/program.rs:490`), window length = required bytes (`crates/tiler-ir/src/program/builder.rs:276`).
+
+**Blocked on `relocate-abi-expressions-into-tiler-ir`.** Building either option now would build on a divergence from an accepted decision.
