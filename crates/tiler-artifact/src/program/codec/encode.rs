@@ -42,16 +42,16 @@ pub(super) const MANIFEST_SCHEMA: (u16, u16) = (2, 0);
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
 /// Domain separator of the manifest digest carried in the framing header.
-pub(super) const MANIFEST_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest-digest.v1\0";
+pub(crate) const MANIFEST_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest-digest.v1\0";
 /// Domain separator of one section's exact-content digest.
 ///
 /// The pre-image is the separator, the section's purpose tag, its content
 /// schema, and then its exact bytes. Binding the purpose is what lets a section
 /// digest serve as a *standalone* content address: without it, two sections
 /// with equal bytes under different purposes would share one address.
-pub(super) const SECTION_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.section-digest.v1\0";
+pub(crate) const SECTION_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.section-digest.v1\0";
 /// Domain separator of the external digest over a complete encoded envelope.
-pub(super) const ENVELOPE_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.envelope-digest.v1\0";
+pub(crate) const ENVELOPE_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.envelope-digest.v1\0";
 
 /// Maximum bytes of one complete encoded envelope.
 pub(super) const MAX_ENVELOPE_BYTES: usize = 256 * 1024 * 1024;

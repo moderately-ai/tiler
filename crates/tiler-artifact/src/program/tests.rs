@@ -45,8 +45,12 @@ use super::{
     TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
 };
 
-pub(super) const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
-pub(super) const OTHER_SCALE_BITS: u32 = 0x4040_0000; // 3.0f32
+// The seven items this suite shares with `crate::proof::tests` are `pub(crate)`
+// rather than `pub(super)`; the rest of the fixture set stays module-local. The
+// proof sidecar associates with a *real* verified artifact, and a second
+// hand-built one would be a second thing to keep correct.
+pub(crate) const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
+pub(crate) const OTHER_SCALE_BITS: u32 = 0x4040_0000; // 3.0f32
 pub(super) const BIAS_BITS: u32 = 0x3f80_0000; // 1.0f32
 pub(super) const CANONICAL_NAN: u32 = 0x7fc0_0000;
 pub(super) const ELEMENT_BYTES: u64 = 4;
@@ -83,7 +87,7 @@ pub(super) fn build_graph(draft: SemanticProgramBuilder) -> SemanticProgram {
 /// The scale is the cheapest way to obtain a genuinely different semantic graph
 /// that keeps the same named interface: an unreached extra input would be
 /// compacted away at commit (ADR 0064) and would not change graph identity.
-pub(super) fn build_graph_scaled(
+pub(crate) fn build_graph_scaled(
     mut draft: SemanticProgramBuilder,
     scale_value: f32,
 ) -> SemanticProgram {
@@ -101,7 +105,7 @@ pub(super) fn build_graph_scaled(
     draft.build().unwrap()
 }
 
-pub(super) fn semantic_program() -> SemanticProgram {
+pub(crate) fn semantic_program() -> SemanticProgram {
     build_graph(SemanticProgramBuilder::try_standard().unwrap())
 }
 
@@ -195,7 +199,7 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
 }
 
 /// Builds the single-stage kernel program the artifact packages.
-pub(super) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> VerifiedKernelProgram {
+pub(crate) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> VerifiedKernelProgram {
     let kernel = fused_kernel(scale_bits);
     let mut plan = KernelProgramBuilder::new(semantic).unwrap();
     let external = plan
@@ -268,7 +272,7 @@ pub(super) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> Veri
 // Artifact fixtures
 // -------------------------------------------------------------------------
 
-pub(super) fn lowering_provider(revision: u32) -> ProviderIdentity {
+pub(crate) fn lowering_provider(revision: u32) -> ProviderIdentity {
     ProviderIdentity::new("tiler-test", "fused-serial-sum", revision).unwrap()
 }
 
@@ -391,7 +395,7 @@ pub(super) fn variant(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> Va
 }
 
 /// Assembles the canonical one-variant artifact over one packaged program.
-pub(super) fn build_artifact(
+pub(crate) fn build_artifact(
     semantic: &SemanticProgram,
     program: &VerifiedKernelProgram,
     selected: ProviderIdentity,
@@ -408,7 +412,7 @@ pub(super) fn build_artifact(
     draft.build().unwrap()
 }
 
-pub(super) fn default_artifact() -> VerifiedArtifactProgram {
+pub(crate) fn default_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);

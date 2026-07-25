@@ -22,3 +22,9 @@
 
 /// Public target-neutral artifact program model, verifier, and identity.
 pub mod program;
+// The proof-case evidence sidecar. Crate-private under ADR 0074 convention 7
+// until its facade is reviewed; its module documentation names what it reserves
+// and states why it is deliberately *not* artifact semantics — a sidecar names
+// an artifact, an artifact never names a sidecar, and an artifact decodes,
+// validates, and dispatches with no sidecar present.
+mod proof;

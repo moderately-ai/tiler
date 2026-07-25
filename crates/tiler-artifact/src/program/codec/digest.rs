@@ -24,7 +24,7 @@
 use std::fmt;
 
 /// Byte width of one governed artifact digest.
-pub(super) const DIGEST_BYTES: usize = 32;
+pub(crate) const DIGEST_BYTES: usize = 32;
 
 /// The governed digest algorithm one envelope was written with.
 ///
@@ -33,31 +33,31 @@ pub(super) const DIGEST_BYTES: usize = 32;
 /// have to invent a hash function — so a second admitted algorithm must be a
 /// compile error at every such site rather than a silently wrong digest.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(super) enum DigestAlgorithm {
+pub(crate) enum DigestAlgorithm {
     /// FIPS 180-4 SHA-256, governed as `tiler.digest.sha-256.v1`.
     Sha256,
 }
 
 impl DigestAlgorithm {
     /// The algorithm this build of the crate writes.
-    pub(super) const GOVERNED: Self = Self::Sha256;
+    pub(crate) const GOVERNED: Self = Self::Sha256;
 
     /// Returns the governed wire tag of this algorithm.
-    pub(super) const fn tag(self) -> u8 {
+    pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::Sha256 => 0x01,
         }
     }
 
     /// Returns the governed algorithm key, for diagnostics and explain output.
-    pub(super) const fn governed_key(self) -> &'static str {
+    pub(crate) const fn governed_key(self) -> &'static str {
         match self {
             Self::Sha256 => "tiler.digest.sha-256.v1",
         }
     }
 
     /// Resolves a governed wire tag, or `None` for an unrecognized algorithm.
-    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+    pub(crate) const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             0x01 => Some(Self::Sha256),
             _ => None,
@@ -65,7 +65,7 @@ impl DigestAlgorithm {
     }
 
     /// Digests `bytes` under an explicit domain separator.
-    pub(super) fn digest(self, domain: &[u8], bytes: &[u8]) -> Digest {
+    pub(crate) fn digest(self, domain: &[u8], bytes: &[u8]) -> Digest {
         self.digest_parts(&[domain, bytes])
     }
 
@@ -75,7 +75,7 @@ impl DigestAlgorithm {
     /// separator and follows it with fixed-width qualifiers before any
     /// variable-length run, so no two distinct part sequences can produce one
     /// pre-image.
-    pub(super) fn digest_parts(self, parts: &[&[u8]]) -> Digest {
+    pub(crate) fn digest_parts(self, parts: &[&[u8]]) -> Digest {
         match self {
             Self::Sha256 => {
                 let mut state = Sha256::new();
@@ -100,24 +100,24 @@ impl fmt::Display for DigestAlgorithm {
 /// public constructor, so no caller can assemble a digest naming bytes that
 /// were never hashed (ADR 0074 convention 2).
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(super) struct Digest([u8; DIGEST_BYTES]);
+pub(crate) struct Digest([u8; DIGEST_BYTES]);
 
 impl Digest {
     /// Wraps digest bytes read from an envelope being validated.
     ///
     /// The result is a *claim* until it is compared with a digest this crate
     /// derived; decoding never treats a read digest as evidence on its own.
-    pub(super) const fn from_wire(bytes: [u8; DIGEST_BYTES]) -> Self {
+    pub(crate) const fn from_wire(bytes: [u8; DIGEST_BYTES]) -> Self {
         Self(bytes)
     }
 
     /// Returns the exact digest bytes.
-    pub(super) const fn as_bytes(&self) -> &[u8; DIGEST_BYTES] {
+    pub(crate) const fn as_bytes(&self) -> &[u8; DIGEST_BYTES] {
         &self.0
     }
 
     /// Returns the lowercase hexadecimal rendering, for diagnostics and fixtures.
-    pub(super) fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         let mut rendered = String::with_capacity(DIGEST_BYTES * 2);
         for byte in self.0 {
             rendered.push(char::from_digit(u32::from(byte >> 4), 16).expect("nibble is hex"));
