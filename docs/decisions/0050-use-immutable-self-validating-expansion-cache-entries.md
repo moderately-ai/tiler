@@ -68,12 +68,22 @@ component that implements this record — `tiler-cache` — after the previously
 assigned owner proved unable to reach the governed digest this decision requires
 it to validate against. `implementation_status` is `partial` rather than
 `complete`: the namespace, locking, bundle, validation, publication, replacement,
-reporting, and the composition of the complete key are implemented and tested,
-and two things this record implies are not. The cross-process crash and race
-behaviour is exercised only against the spike's miniature frame
-(`port-the-cache-harness-to-the-production-bundle`), and the durability default
-is this record's recommendation rather than a measured one
-(`measure-expansion-cache-durability-policies`).
+reporting, the composition of the complete key, and the cross-process crash and
+race behaviour are implemented and tested, and one thing this record implies is
+not — the durability default is this record's recommendation rather than a
+measured one (`measure-expansion-cache-durability-policies`).
+
+The crash and race behaviour is now measured against the bundle `tiler-cache`
+publishes, not only against the spike's miniature frame. `expansion::harness`
+re-executes the crate's own test binary so a child is a real process, and a
+`cfg(test)` seam makes it abort inside the real publication path at each of nine
+named phases. It is a bounded measurement on one host, recorded in
+`spikes/cache/results/`, and it substitutes a stand-in payload validator for
+`decode_artifact` because a real artifact envelope needs `tiler-ir`, which
+[ADR 0082](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) item 2 decides
+this crate does not depend on. That substitution sits inside an envelope the
+frame has already delimited and does not reach these properties; a positive
+end-to-end hit carrying a real compiled artifact remains the orchestrator's.
 
 The complete key is now composed as one canonical byte run:
 `tiler_cache::expansion::ComposedSubject` frames the backend compilations and the

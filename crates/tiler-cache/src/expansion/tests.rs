@@ -11,11 +11,9 @@
 //! thread that returns is not a process that was killed: it unwinds, it closes
 //! its descriptors on its own, and it never leaves a half-written file behind
 //! with no owner. Those properties need real processes stopped at each
-//! publication phase, which
-//! [`spikes/cache/cache_harness.rs`](https://github.com/moderately-ai/tiler/blob/main/spikes/cache/cache_harness.rs)
-//! does for its own miniature frame and *not* for the bundle this crate
-//! publishes. Nothing below is offered as a substitute, and no test here is
-//! named as if it were.
+//! publication phase, which [`super::harness`] does — against this crate's own
+//! bundle, by re-executing this test binary. Nothing below is offered as a
+//! substitute for it, and no test here is named as if it were.
 //!
 //! Two mechanisms are used to make the protocol reachable without a real
 //! artifact envelope. Framing tests call the bundle encoder and decoder

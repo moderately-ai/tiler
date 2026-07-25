@@ -9,6 +9,8 @@ use std::time::SystemTime;
 use tiler_artifact::program::{ArtifactCodecFailure, DecodedArtifact, decode_artifact};
 
 use super::bundle::{self, BundleRejection};
+#[cfg(test)]
+use super::fault;
 use super::key::CacheKey;
 use super::layout::Layout;
 use super::limits::Limits;
@@ -466,6 +468,8 @@ impl ExpansionCache {
                 None
             }
         };
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterLock);
 
         // The recheck is the whole reason the lock is taken before compiling:
         // another process may have published while this one waited for it.
@@ -485,6 +489,8 @@ impl ExpansionCache {
                 }
             }
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterRecheck);
 
         let envelope = build().map_err(PublishFailure::Build)?;
         // A build failure and an invalid generated artifact are hard errors that
@@ -626,20 +632,21 @@ impl ExpansionCache {
         );
 
         let (temporary, mut file) = self.create_temporary(key)?;
-        let write = file
-            .write_all(&encoded)
-            .and_then(|()| file.flush())
-            .map_err(|error| {
-                PublicationRefusal::Unavailable(CacheUnavailable::new(
-                    CacheOperation::WriteTemporary,
-                    temporary.clone(),
-                    error,
-                ))
-            });
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterTempCreate);
+        let write = write_encoded(&mut file, &encoded).map_err(|error| {
+            PublicationRefusal::Unavailable(CacheUnavailable::new(
+                CacheOperation::WriteTemporary,
+                temporary.clone(),
+                error,
+            ))
+        });
         if let Err(refusal) = write {
             remove_abandoned(&temporary);
             return Err(refusal);
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterWrite);
 
         // Read the bytes back through a *separate* descriptor. Validating the
         // buffer this process just wrote would prove only that the encoder
@@ -649,6 +656,8 @@ impl ExpansionCache {
             remove_abandoned(&temporary);
             return Err(refusal);
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterTempValidation);
 
         if self.durability == Durability::Fsync
             && let Err(error) = file.sync_all()
@@ -660,6 +669,8 @@ impl ExpansionCache {
                 error,
             )));
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterFileSync);
         drop(file);
 
         let entry = self.layout.entry_path(key);
@@ -680,6 +691,8 @@ impl ExpansionCache {
                 error,
             )));
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterRename);
 
         if self.durability == Durability::Fsync {
             let directory = entry
@@ -698,6 +711,8 @@ impl ExpansionCache {
                 )));
             }
         }
+        #[cfg(test)]
+        fault::reach(fault::Phase::AfterDirectorySync);
         Ok(quarantine)
     }
 
@@ -891,6 +906,33 @@ pub(crate) enum ProtocolOutcome<T> {
 /// The validator the public API pins: no caller can substitute a weaker one.
 fn artifact_validator(bytes: &[u8]) -> Result<DecodedArtifact, ArtifactCodecFailure> {
     decode_artifact(bytes)
+}
+
+/// Writes the encoded bundle to the temporary and flushes it.
+#[cfg(not(test))]
+fn write_encoded(file: &mut File, encoded: &[u8]) -> io::Result<()> {
+    file.write_all(encoded)?;
+    file.flush()
+}
+
+/// Writes the encoded bundle in two halves, so a writer can be killed with a
+/// partial temporary on disk.
+///
+/// The split point is artificial and exists only in a test build. A real crash
+/// lands wherever the operating system happened to be, which no test can
+/// schedule; simulating the window by flushing half the bytes is the same thing
+/// `spikes/cache/cache_harness.rs` does for its own frame, so this is the
+/// evidence class that spike already established rather than a new one. What is
+/// *not* simulated is the recovery: nothing below the fault knows it happened,
+/// and the next reader runs the ordinary validated read.
+#[cfg(test)]
+fn write_encoded(file: &mut File, encoded: &[u8]) -> io::Result<()> {
+    let middle = encoded.len() / 2;
+    file.write_all(&encoded[..middle])?;
+    file.flush()?;
+    fault::reach(fault::Phase::MidWrite);
+    file.write_all(&encoded[middle..])?;
+    file.flush()
 }
 
 /// Removes a temporary file this call created and will not publish.
