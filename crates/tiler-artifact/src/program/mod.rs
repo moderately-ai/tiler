@@ -315,6 +315,20 @@ pub use codec::{
     PayloadProvenance, PayloadSdkIdentity, PayloadTargetObligation, SectionPurpose, SectionView,
     ToolComponent, decode_artifact,
 };
+// The two things `crate::proof` shares with the envelope codec and nothing
+// else: the governed digest algorithm, which `docs/artifact-abi.md` requires
+// every digest use in this crate to name explicitly rather than choose locally,
+// and [`envelope_digest`], which *is* the proof sidecar's association with an
+// envelope. Named re-exports rather than a crate-visible `mod codec`, so the
+// codec's working vocabulary stays confined to this module.
+pub(crate) use codec::{DIGEST_BYTES, Digest, DigestAlgorithm, envelope_digest};
+// The envelope's three governed digest domains, reachable only under test.
+// `crate::proof::tests` checks the no-domain-prefixes-another property over the
+// *union* of both containers' domains rather than per container, because the
+// property is global: one algorithm hashes both, so a domain added to either
+// one could silently merge two subjects across the boundary.
+#[cfg(test)]
+pub(crate) use codec::{ENVELOPE_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN};
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
     ArtifactLimitKind, ArtifactVerificationError, ForeignEnumSubject,
@@ -360,5 +374,8 @@ pub const MAX_LAUNCH_PRECONDITIONS: usize = 32;
 /// Maximum size of the final canonical artifact-program identity.
 pub const MAX_ARTIFACT_IDENTITY_BYTES: usize = 64 * 1024 * 1024;
 
+// Crate-visible under `cfg(test)` so `crate::proof`'s tests can package the
+// same real verified artifact these fixtures build, instead of growing a second
+// copy of a 400-line semantic-and-kernel fixture that could drift from this one.
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
