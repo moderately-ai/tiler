@@ -1,7 +1,7 @@
 ---
 id: prototype-runtime-routing-commit
 title: Implement one-way runtime routing commit
-status: in-progress
+status: done
 priority: p0
 dependencies: [prototype-runtime-artifact-validation]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, routing, correctness]
-claimed_from: todo
-assignee: agent-commit
-lease_expires_at: 1785015441
 ---
 Implement a state boundary preserving fallback authority only before one-way commit and consuming it before allocation, encoding or submission. Demonstrate fallback is uncallable afterward; semantic invalidity and corrupt artifacts fail closed rather than becoming route misses.
 
@@ -69,7 +66,7 @@ Verified by reading, not by grep. Deferred feasibility predicates: `accept_entry
 ### What is implemented and what is tested — three different claims
 
 - **Implemented and tested by the compiler, in the gate:** the one-way commit, no second commit, no duplicated `Preflight`.
-- **Implemented and measured, but only under the proof invocation:** every fail-closed class above, and the pre-commit ordering. These need a valid artifact and a device; the gate has neither, and a checked-in fixture would go stale against the encoder it exists to exercise. They are a measurement on a named host, not a gate-enforced property.
+- **Implemented and measured, but only under the proof invocation:** every fail-closed class above, and the pre-commit ordering. These need a valid artifact and a device; the gate has neither, and a checked-in fixture would go stale against the encoder it exists to exercise. They are a measurement on a named host, not a gate-enforced property. Split into [`gate-the-runtime-fail-closed-probes`](gate-the-runtime-fail-closed-probes.md), which carries the two candidate closures and why choosing between them is a boundary question rather than test plumbing.
 - **Implemented and not tested, asserted as nothing more:** retention of asynchronous resources through their final device use. `placements` outlives the `submit` call that waits for the command buffer's terminal state, so every buffer is alive through its last device use by construction — but no test provokes a premature release, and none is claimed.
 - **Not claimed at all:** no crash, race, or submission-failure property is tested. Nothing here forces a command buffer into `Error`, so "exact terminal success before host readback" is implemented (`status()` compared against exactly `Completed` before any readback) and exercised only on the success path.
 
