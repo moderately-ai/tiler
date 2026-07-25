@@ -22,6 +22,7 @@ use super::scalar::{
     ScalarApplyError, ScalarInferenceCapacity, ScalarInferenceHostFailure, encode_bytes,
     encode_canonical, encode_key, encode_len,
 };
+use super::sourced::{ExtentSourceError, ExtentSources, SourcedExtent, SymbolicExtentError};
 use super::{
     AccessMode, CanonicalIndexRegionIdentity, DimensionId, DomainRole, FrozenScalarRegistry,
     IndexBuildError, IndexEntityKind, IndexExprClass, IndexExprId, IndexInteger, IndexLimitKind,
@@ -35,6 +36,16 @@ use super::{
     ScalarAttributes, ScalarOpKey, ScalarOperationId, ScalarResultIndex, ScalarValueId,
     TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
 };
+use crate::shape::env::{ShapeEnv, ShapeSymbol};
+
+/// What interval propagation concluded about one access's coordinates.
+#[derive(Clone, Copy, Debug)]
+struct IntervalVerdict {
+    /// Every coordinate provably lies inside its axis.
+    interval_proved: bool,
+    /// Some coordinate provably lies outside its axis for every domain point.
+    definitely_outside: bool,
+}
 
 #[derive(Clone, Debug)]
 struct DraftIndexExpr {
@@ -513,6 +524,12 @@ impl<'a> ScalarReducerBodyBuilder<'a> {
 pub struct IndexRegionBuilder {
     owner: BuilderId,
     registry: FrozenScalarRegistry,
+    /// The one environment every symbolic extent in this region resolves against.
+    ///
+    /// One per region rather than one per extent: a region whose extents were
+    /// resolved against two environments would have an identity naming neither,
+    /// and a consumer would have no way to bind its symbols.
+    sources: Option<ExtentSources>,
     dimensions: Vec<DimensionData>,
     tensors: Vec<TensorData>,
     boundary_bytes: usize,
@@ -542,6 +559,7 @@ impl IndexRegionBuilder {
         Ok(Self {
             owner,
             registry,
+            sources: None,
             dimensions: Vec::new(),
             tensors: Vec::new(),
             boundary_bytes: 0,
@@ -613,6 +631,69 @@ impl IndexRegionBuilder {
         role: DomainRole,
         extent: Extent,
     ) -> Result<DimensionId, IndexBuildError> {
+        self.push_dimension(role, SourcedExtent::Static(extent))
+    }
+
+    /// Binds this region's symbolic extents to one verified shape environment.
+    ///
+    /// Draft, `pub(crate)`: promoting it is the reviewed step this ticket does
+    /// not take. A region has exactly one environment for the whole of its
+    /// life, so this is a constructor-shaped step rather than a setter — a
+    /// second environment would silently reinterpret extents already authored
+    /// against the first.
+    #[allow(
+        dead_code,
+        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
+    )]
+    pub(crate) fn with_shape_environment(mut self, environment: Arc<ShapeEnv>) -> Self {
+        self.sources = Some(ExtentSources::new(environment));
+        self
+    }
+
+    /// Adds a half-open dimension whose extent is a declared `ShapeEnv` symbol.
+    ///
+    /// The symbol is resolved through this region's environment and nowhere
+    /// else; there is no index-local declaration, so a symbol that environment
+    /// does not declare has no meaning here and is refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SymbolicExtentError::Source`] when no environment is bound,
+    /// when the environment does not declare the symbol, or when the symbol's
+    /// root binding arrives later than an index extent may be sourced from, and
+    /// [`SymbolicExtentError::Structural`] when the dimension-count limit is
+    /// exceeded.
+    #[allow(
+        dead_code,
+        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
+    )]
+    pub(crate) fn symbolic_dimension(
+        &mut self,
+        role: DomainRole,
+        symbol: ShapeSymbol,
+    ) -> Result<DimensionId, SymbolicExtentError> {
+        let Some(sources) = self.sources.as_ref() else {
+            // No environment can declare the symbol, so it is undeclared here
+            // for exactly the reason the variant names.
+            return Err(SymbolicExtentError::Source(
+                ExtentSourceError::UndeclaredSymbol { symbol },
+            ));
+        };
+        let extent = SourcedExtent::Symbol(symbol);
+        // Admitted before the dimension exists, so a refused source leaves the
+        // draft exactly as it was rather than half-applied.
+        sources
+            .admit(&extent)
+            .map_err(SymbolicExtentError::Source)?;
+        self.push_dimension(role, extent)
+            .map_err(SymbolicExtentError::Structural)
+    }
+
+    fn push_dimension(
+        &mut self,
+        role: DomainRole,
+        extent: SourcedExtent,
+    ) -> Result<DimensionId, IndexBuildError> {
         limit(
             self.dimensions.len() + 1,
             MAX_DOMAIN_DIMENSIONS,
@@ -623,11 +704,58 @@ impl IndexRegionBuilder {
                 entity: IndexEntityKind::Dimension,
             },
         )?;
-        self.dimensions.push(DimensionData {
-            role,
-            extent: extent.get(),
-        });
+        self.dimensions.push(DimensionData { role, extent });
         Ok(id)
+    }
+
+    /// Returns the one extent this region's environment fixes for `dimension`.
+    ///
+    /// `None` means the environment admits more than one value, which is a
+    /// different answer from zero and must never be substituted for one: it is
+    /// what makes an exhaustive enumeration or a permutation argument
+    /// unavailable rather than false.
+    fn determined_extent(&self, dimension: u32) -> Option<u64> {
+        let extent = &self.dimensions[dimension as usize].extent;
+        match (extent, self.sources.as_ref()) {
+            (SourcedExtent::Static(value), _) => Some(value.get()),
+            (SourcedExtent::Symbol(_), Some(sources)) => {
+                sources.determined(extent).map(Extent::get)
+            }
+            (SourcedExtent::Symbol(_), None) => None,
+        }
+    }
+
+    /// Returns the largest extent any binding admits for `dimension`.
+    ///
+    /// Sound to bound a coordinate against: the interval contains every model,
+    /// so a coordinate below it is below every admissible extent.
+    fn extent_upper_bound(&self, dimension: u32) -> Option<u64> {
+        let extent = &self.dimensions[dimension as usize].extent;
+        match (extent, self.sources.as_ref()) {
+            (SourcedExtent::Static(value), _) => Some(value.get()),
+            (SourcedExtent::Symbol(_), Some(sources)) => {
+                sources.interval(extent).map(|interval| interval.upper)
+            }
+            (SourcedExtent::Symbol(_), None) => None,
+        }
+    }
+
+    /// Returns whether every dimension of `domain` is proved to have a point.
+    ///
+    /// A conclusion that a coordinate is *definitely* out of bounds is only
+    /// sound over a domain that is visited at all, and a symbolic extent whose
+    /// lower bound is zero may not be.
+    fn domain_is_nonempty(&self, domain: &[u32]) -> bool {
+        domain.iter().all(|dimension| {
+            let extent = &self.dimensions[*dimension as usize].extent;
+            match (extent, self.sources.as_ref()) {
+                (SourcedExtent::Static(value), _) => value.get() >= 1,
+                (SourcedExtent::Symbol(_), Some(sources)) => {
+                    sources.interval(extent).is_some_and(|it| it.lower >= 1)
+                }
+                (SourcedExtent::Symbol(_), None) => false,
+            }
+        })
     }
     /// Creates or reuses an exact constant expression.
     ///
@@ -657,11 +785,20 @@ impl IndexRegionBuilder {
         let data = self.resolve_dimension(dimension)?;
         let mut dimensions = BTreeSet::new();
         dimensions.insert(dimension.index);
+        let _ = data;
+        // `0 <= d < extent`, so the largest extent the environment admits is
+        // the largest coordinate plus one. An extent with no admitted upper
+        // bound leaves the interval unknown rather than guessed, which is what
+        // later makes the access fall to a proof it cannot complete.
+        let interval = self
+            .extent_upper_bound(dimension.index)
+            .filter(|upper| *upper != 0)
+            .map(|upper| (BigInt::zero(), BigInt::from(upper - 1)));
         self.intern_index(
             IndexNode::Dimension(dimension.index),
             dimensions,
             IndexExprClass::Affine,
-            (data.extent != 0).then(|| (BigInt::zero(), BigInt::from(data.extent - 1))),
+            interval,
             0,
         )
     }
@@ -1714,7 +1851,7 @@ impl IndexRegionBuilder {
             let access = &self.accesses[*access_index as usize];
             let shape = &self.tensors[access.tensor as usize].shape;
             let points = self.domain_points(&access.domain);
-            if points == 0 {
+            if points == Some(0) {
                 if access.mode == AccessMode::Write && shape.element_count() != Some(0) {
                     diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
                         access: TensorAccessId {
@@ -1725,22 +1862,16 @@ impl IndexRegionBuilder {
                 }
                 continue;
             }
-            let mut interval_proved = true;
-            let mut definitely_outside = false;
-            for (coordinate, extent) in access.coordinates.iter().zip(shape.extents()) {
-                let Some((min, max)) = &self.expressions[*coordinate as usize].interval else {
-                    interval_proved = false;
-                    continue;
-                };
-                let extent = BigInt::from(extent.get());
-                if max < &BigInt::zero() || min >= &extent {
-                    definitely_outside = true;
-                }
-                if min < &BigInt::zero() || max >= &extent {
-                    interval_proved = false;
-                }
-            }
-            if definitely_outside {
+            let IntervalVerdict {
+                interval_proved,
+                definitely_outside,
+            } = self.interval_verdict(access, shape);
+            // A coordinate outside every axis is only a refutation over a
+            // domain that is visited. A symbolic extent whose environment
+            // admits zero may not be, so the stronger claim needs the stronger
+            // premise; a static domain reaching here always satisfies it,
+            // because an empty one was answered above.
+            if definitely_outside && self.domain_is_nonempty(&access.domain) {
                 diagnostics.push(IndexRegionDiagnostic::CoordinateOutOfBounds {
                     access: TensorAccessId {
                         owner: self.owner,
@@ -1752,6 +1883,30 @@ impl IndexRegionBuilder {
             if !interval_proved
                 || (access.mode == AccessMode::Write && !self.write_is_permutation(access, shape))
             {
+                let Some(points) = points else {
+                    // The environment does not determine this domain's size, so
+                    // there is no enumeration to budget for and no interval
+                    // that closed the question. Refusing here is what keeps a
+                    // symbolic extent from becoming an unproved escape hatch;
+                    // it is a refusal, deliberately not the proof-resource
+                    // diagnostic, which would mean an enumeration stopped.
+                    diagnostics.push(if access.mode == AccessMode::Write {
+                        IndexRegionDiagnostic::WriteOwnershipNotProven {
+                            access: TensorAccessId {
+                                owner: self.owner,
+                                index: *access_index,
+                            },
+                        }
+                    } else {
+                        IndexRegionDiagnostic::BoundsNotProven {
+                            access: TensorAccessId {
+                                owner: self.owner,
+                                index: *access_index,
+                            },
+                        }
+                    });
+                    continue;
+                };
                 let (plan_len, bytes_per_point) = self.proof_plan_size(&access.coordinates);
                 cells = cells.saturating_add(u128::from(points).saturating_mul(plan_len as u128));
                 let coordinate_bytes = u128::from(points).saturating_mul(bytes_per_point.max(1));
@@ -1775,8 +1930,13 @@ impl IndexRegionBuilder {
                 for access_index in accesses {
                     let access = &self.accesses[*access_index as usize];
                     let shape = &self.tensors[access.tensor as usize].shape;
-                    let points = self.domain_points(&access.domain);
-                    if points == 0 || !self.access_needs_exhaustive_proof(access, shape) {
+                    // An undetermined domain was already refused above; it has
+                    // no extent vector to walk, so it is skipped rather than
+                    // enumerated with a substituted size.
+                    let Some(extents) = self.domain_extents(&access.domain) else {
+                        continue;
+                    };
+                    if extents.contains(&0) || !self.access_needs_exhaustive_proof(access, shape) {
                         continue;
                     }
                     let mut reached = BTreeSet::new();
@@ -1784,13 +1944,39 @@ impl IndexRegionBuilder {
                         self.mark_expr(*coordinate, &mut reached);
                     }
                     let plan = reached.into_iter().collect::<Vec<_>>();
-                    self.verify_access_exhaustively(*access_index, &plan, diagnostics);
+                    self.verify_access_exhaustively(*access_index, &plan, &extents, diagnostics);
                 }
             },
         );
         if let Err(excess) = admitted {
             diagnostics.push(excess.diagnostic());
         }
+    }
+
+    /// Reads one access's coordinate intervals against its tensor's axes.
+    ///
+    /// The two answers are independent and neither implies the other's
+    /// negation: an interval that overlaps a boundary proves nothing either
+    /// way, while one lying wholly outside refutes the access.
+    fn interval_verdict(&self, access: &AccessData, shape: &Shape) -> IntervalVerdict {
+        let mut verdict = IntervalVerdict {
+            interval_proved: true,
+            definitely_outside: false,
+        };
+        for (coordinate, extent) in access.coordinates.iter().zip(shape.extents()) {
+            let Some((min, max)) = &self.expressions[*coordinate as usize].interval else {
+                verdict.interval_proved = false;
+                continue;
+            };
+            let extent = BigInt::from(extent.get());
+            if max < &BigInt::zero() || min >= &extent {
+                verdict.definitely_outside = true;
+            }
+            if min < &BigInt::zero() || max >= &extent {
+                verdict.interval_proved = false;
+            }
+        }
+        verdict
     }
 
     fn access_needs_exhaustive_proof(&self, access: &AccessData, shape: &Shape) -> bool {
@@ -1835,15 +2021,36 @@ impl IndexRegionBuilder {
         (count, integer_bytes)
     }
 
-    fn domain_points(&self, domain: &[u32]) -> u64 {
+    /// Returns the exact number of points a domain visits, when that is known.
+    ///
+    /// `None` for a domain with a symbolic extent the environment does not
+    /// determine. That is not zero and not "very many": it is the case where no
+    /// enumeration exists, and collapsing it into either would be the silent
+    /// approximation the contract forbids.
+    /// Returns each domain dimension's exact extent, when all of them are known.
+    ///
+    /// This is what an enumeration walks. It exists separately from
+    /// [`Self::domain_points`] because a point count that saturated would still
+    /// let a caller enumerate, and an extent vector that is missing one entry
+    /// must not.
+    fn domain_extents(&self, domain: &[u32]) -> Option<Vec<u64>> {
+        domain
+            .iter()
+            .map(|dimension| self.determined_extent(*dimension))
+            .collect()
+    }
+
+    fn domain_points(&self, domain: &[u32]) -> Option<u64> {
+        // One empty dimension makes the domain empty whatever the others are,
+        // so it is answered before every extent is required to be determined.
         if domain
             .iter()
-            .any(|dimension| self.dimensions[*dimension as usize].extent == 0)
+            .any(|dimension| self.determined_extent(*dimension) == Some(0))
         {
-            return 0;
+            return Some(0);
         }
-        domain.iter().fold(1_u64, |points, dimension| {
-            points.saturating_mul(self.dimensions[*dimension as usize].extent)
+        domain.iter().try_fold(1_u64, |points, dimension| {
+            Some(points.saturating_mul(self.determined_extent(*dimension)?))
         })
     }
 
@@ -1883,6 +2090,7 @@ impl IndexRegionBuilder {
         &self,
         access_index: u32,
         expression_plan: &[u32],
+        extents: &[u64],
         diagnostics: &mut Vec<IndexRegionDiagnostic>,
     ) {
         let access = &self.accesses[access_index as usize];
@@ -1903,11 +2111,6 @@ impl IndexRegionBuilder {
         };
         let mut seen =
             (access.mode == AccessMode::Write).then(|| vec![0_u64; elements.div_ceil(64)]);
-        let extents: Vec<_> = access
-            .domain
-            .iter()
-            .map(|d| self.dimensions[*d as usize].extent)
-            .collect();
         let mut point = vec![0_u64; extents.len()];
         loop {
             let assignments: BTreeMap<_, _> = access
@@ -1964,7 +2167,7 @@ impl IndexRegionBuilder {
                 }
                 bits[word] |= mask;
             }
-            if !advance_point(&mut point, &extents) {
+            if !advance_point(&mut point, extents) {
                 break;
             }
         }
@@ -2019,7 +2222,7 @@ impl IndexRegionBuilder {
                 return false;
             };
             if !access.domain.contains(&d)
-                || self.dimensions[d as usize].extent != extent.get()
+                || self.determined_extent(d) != Some(extent.get())
                 || !seen.insert(d)
             {
                 return false;
@@ -2223,22 +2426,14 @@ impl IndexRegionBuilder {
         &self,
         compacted: CompactedRegion,
     ) -> Result<VerifiedIndexRegion, IndexRegionDiagnostic> {
-        let identity_bytes = encoded_region_len(
-            &compacted.dimensions,
-            &compacted.tensors,
-            &compacted.expressions,
-            &compacted.accesses,
-            &compacted.operations,
-            &compacted.values,
-            &compacted.outputs,
-        );
+        let identity_bytes = encoded_region_len(&compacted, self.sources.as_ref());
         if identity_bytes > MAX_INDEX_REGION_IDENTITY_BYTES {
             return Err(IndexRegionDiagnostic::CanonicalIdentityLimit {
                 bytes: identity_bytes,
                 limit: MAX_INDEX_REGION_IDENTITY_BYTES,
             });
         }
-        let identity = encode_region(&compacted, identity_bytes);
+        let identity = encode_region(&compacted, self.sources.as_ref(), identity_bytes);
         let CompactedRegion {
             dimensions,
             tensors,
@@ -2251,6 +2446,7 @@ impl IndexRegionBuilder {
         Ok(VerifiedIndexRegion {
             data: Arc::new(VerifiedIndexRegionData {
                 owner: self.owner.verified_owner(),
+                sources: self.sources.clone(),
                 dimensions,
                 tensors,
                 expressions,
@@ -2272,7 +2468,7 @@ impl IndexRegionBuilder {
     ) -> VerifiedAccessData {
         let access = &self.accesses[old as usize];
         let points = self.domain_points(&access.domain);
-        let interval = points != 0
+        let interval = points != Some(0)
             && access
                 .coordinates
                 .iter()
@@ -2302,18 +2498,22 @@ impl IndexRegionBuilder {
                 .iter()
                 .map(|expression| expression_map[expression])
                 .collect(),
-            bounds_proof: if points == 0 {
+            bounds_proof: if points == Some(0) {
                 BoundsProof::VacuousEmptyDomain
             } else if interval {
                 BoundsProof::Interval
             } else {
-                BoundsProof::Exhaustive { points }
+                BoundsProof::Exhaustive {
+                    points: enumerated_points(points),
+                }
             },
             ownership_proof: (access.mode == AccessMode::Write).then(|| {
                 if self.write_is_permutation(access, &self.tensors[access.tensor as usize].shape) {
                     WriteOwnershipProof::CoordinatePermutation
                 } else {
-                    WriteOwnershipProof::Exhaustive { points }
+                    WriteOwnershipProof::Exhaustive {
+                        points: enumerated_points(points),
+                    }
                 }
             }),
         }
@@ -2381,9 +2581,10 @@ impl IndexRegionBuilder {
         let mut remaining: Vec<_> = (0..bounded_index(self.dimensions.len()))
             .filter(|dimension| !assigned.contains(dimension))
             .collect();
-        remaining.sort_by_key(|dimension| {
-            let data = &self.dimensions[*dimension as usize];
-            (data.role, data.extent)
+        remaining.sort_by(|left, right| {
+            let left = &self.dimensions[*left as usize];
+            let right = &self.dimensions[*right as usize];
+            (left.role, &left.extent).cmp(&(right.role, &right.extent))
         });
         order.extend(remaining);
         order
@@ -2435,9 +2636,10 @@ impl IndexRegionBuilder {
             }
         }
         let mut free: Vec<_> = data.free_dimensions.iter().copied().collect();
-        free.sort_by_key(|dimension| {
-            let data = &self.dimensions[*dimension as usize];
-            (data.role, data.extent)
+        free.sort_by(|left, right| {
+            let left = &self.dimensions[*left as usize];
+            let right = &self.dimensions[*right as usize];
+            (left.role, &left.extent).cmp(&(right.role, &right.extent))
         });
         for dimension in free {
             assign_dimension(dimension, order, assigned);
@@ -2460,9 +2662,10 @@ impl IndexRegionBuilder {
             self.visit_expression_dimensions(*coordinate, order, assigned, visited_expressions);
         }
         let mut domain = access.domain.clone();
-        domain.sort_by_key(|dimension| {
-            let data = &self.dimensions[*dimension as usize];
-            (data.role, data.extent)
+        domain.sort_by(|left, right| {
+            let left = &self.dimensions[*left as usize];
+            let right = &self.dimensions[*right as usize];
+            (left.role, &left.extent).cmp(&(right.role, &right.extent))
         });
         for dimension in domain {
             assign_dimension(dimension, order, assigned);
@@ -2946,6 +3149,18 @@ fn map_order(order: &[u32]) -> BTreeMap<u32, u32> {
         .map(|(new, old)| (*old, bounded_index(new)))
         .collect()
 }
+/// Returns the point count an enumeration actually walked.
+///
+/// Compaction runs only after `verify_accesses` admitted every access, and an
+/// access it neither bounded by interval nor enumerated is refused there. A
+/// retained `Exhaustive` proof therefore always has a determined domain, and
+/// this states that invariant rather than substituting a plausible count into a
+/// proof record — a retained proof claiming zero enumerated points would be a
+/// false statement about evidence.
+fn enumerated_points(points: Option<u64>) -> u64 {
+    points.expect("a retained exhaustive proof enumerated a determined domain")
+}
+
 fn bounded_index(index: usize) -> u32 {
     u32::try_from(index).expect("governed region limits fit u32")
 }
@@ -3389,7 +3604,7 @@ fn alpha_expr_key_impl(
                     DomainRole::Parallel => 1,
                     DomainRole::Reduction => 2,
                 });
-                output.extend_from_slice(&data.extent.to_be_bytes());
+                data.extent.encode(&mut output);
             }
         }
         IndexNode::LinearCombination { constant, terms } => {
@@ -3501,6 +3716,7 @@ fn remap_operation(
 
 fn encode_region(
     compacted: &CompactedRegion,
+    sources: Option<&ExtentSources>,
     exact_capacity: usize,
 ) -> CanonicalIndexRegionIdentity {
     let CompactedRegion {
@@ -3513,14 +3729,25 @@ fn encode_region(
         outputs,
     } = compacted;
     let mut out = Vec::with_capacity(exact_capacity);
-    out.extend_from_slice(b"tiler.index-region.v4\0");
+    out.extend_from_slice(b"tiler.index-region.v5\0");
+    // The environment a symbolic extent resolves against is part of what this
+    // region is. Two regions spelling the same symbol against differently bound
+    // environments are different regions, and folding the environment's own
+    // identity is what keeps them apart without re-encoding its content here.
+    match sources {
+        Some(sources) => {
+            out.push(1);
+            encode_bytes(&mut out, sources.environment_identity().as_bytes());
+        }
+        None => out.push(0),
+    }
     encode_len(&mut out, dimensions.len());
     for d in dimensions {
         out.push(match d.role {
             DomainRole::Parallel => 1,
             DomainRole::Reduction => 2,
         });
-        out.extend_from_slice(&d.extent.to_be_bytes());
+        d.extent.encode(&mut out);
     }
     encode_len(&mut out, tensors.len());
     for t in tensors {
@@ -3582,17 +3809,28 @@ fn encode_region(
     CanonicalIndexRegionIdentity(out)
 }
 
-fn encoded_region_len(
-    dimensions: &[DimensionData],
-    tensors: &[TensorData],
-    expressions: &[IndexExprData],
-    accesses: &[VerifiedAccessData],
-    operations: &[ScalarOperationData],
-    values: &[ScalarValueData],
-    outputs: &[OutputData],
-) -> usize {
-    let mut bytes = b"tiler.index-region.v4\0".len() + 8;
-    bytes = bytes.saturating_add(dimensions.len().saturating_mul(9));
+fn encoded_region_len(compacted: &CompactedRegion, sources: Option<&ExtentSources>) -> usize {
+    let CompactedRegion {
+        dimensions,
+        tensors,
+        expressions,
+        accesses,
+        operations,
+        values,
+        outputs,
+    } = compacted;
+    let mut bytes = b"tiler.index-region.v5\0".len() + 1;
+    if let Some(sources) = sources {
+        bytes = bytes.saturating_add(encoded_bytes_len(
+            sources.environment_identity().as_bytes().len(),
+        ));
+    }
+    bytes = bytes.saturating_add(8);
+    for dimension in dimensions {
+        bytes = bytes
+            .saturating_add(1)
+            .saturating_add(dimension.extent.encoded_len());
+    }
     bytes = bytes.saturating_add(8);
     for tensor in tensors {
         bytes = bytes

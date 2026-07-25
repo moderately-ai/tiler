@@ -56,7 +56,7 @@
 //! from a decided *satisfiable*. It is [`FragmentViolation::UnderdeterminedFactorization`]
 //! instead. A term counts as **determined** when its equality class holds a
 //! constant — from a literal, from an `Equal` against a literal, or from a
-//! [`BindingSource::StaticValue`] root binding. Determination is deliberately
+//! [`Static`](super::BindingSource::Static) root binding. Determination is deliberately
 //! *not* read off a narrowed interval, so fragment membership is a syntactic,
 //! order-free property of the environment rather than a consequence of how far
 //! propagation happened to get.
@@ -78,7 +78,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::num::NonZeroU64;
 
-use super::{BindingSource, FactProvenance, RootBinding, ShapeEnvError, ShapeSymbol};
+use super::{FactProvenance, RootBinding, ShapeEnvError, ShapeSymbol};
 
 /// One past the largest representable extent.
 ///
@@ -649,7 +649,7 @@ fn extent_product(factors: &[u64]) -> u128 {
 /// Decides whether one relation set is satisfiable over the bound environment.
 ///
 /// The entries are the environment's symbols with their root bindings, in the
-/// canonical order `build` established; a [`BindingSource::StaticValue`] binding
+/// canonical order `build` established; a [`Static`](super::BindingSource::Static) binding
 /// participates as a constant pin, so a constraint that contradicts a statically
 /// bound extent is caught here rather than by a later consumer.
 ///
@@ -663,6 +663,52 @@ pub(super) fn decide(
     entries: &[(ShapeSymbol, RootBinding)],
     relations: &[&ExtentRelation],
 ) -> Result<(), ShapeEnvError> {
+    solve(entries, relations).map(|_| ())
+}
+
+/// The implied closed interval one symbol's extent is confined to.
+///
+/// Every admitted value of the symbol lies inside it: the lower bound is only
+/// ever raised by an implied step and the upper bound is only ever met with an
+/// asserted one. It is therefore sound to prove a bound against, and it is
+/// deliberately not a claim that every value inside it is admissible — a
+/// congruence can exclude interior values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExtentInterval {
+    /// Smallest value any model may assign.
+    pub(crate) lower: u64,
+    /// Largest value any model may assign.
+    pub(crate) upper: u64,
+}
+
+/// The per-symbol result of one satisfiable constraint set.
+///
+/// Recomputed by every caller rather than stored on the environment: the
+/// contract excludes "derived solver caches" from canonical identity, and
+/// deriving nothing that could be stored is the simplest way to hold that.
+pub(super) struct Solution {
+    classes: Classes,
+    domains: Domains,
+}
+
+impl Solution {
+    /// Returns the implied interval of the symbol at `slot`.
+    ///
+    /// `None` when the class bound exceeds the extent domain, which carries no
+    /// information a consumer can prove anything against.
+    pub(super) fn interval(&mut self, slot: usize) -> Option<ExtentInterval> {
+        let root = self.classes.find(slot);
+        let lower = u64::try_from(self.domains.lower[root]).ok()?;
+        let upper = u64::try_from(self.domains.upper[root]).ok()?;
+        Some(ExtentInterval { lower, upper })
+    }
+}
+
+/// Decides one relation set and retains the per-class domains it established.
+pub(super) fn solve(
+    entries: &[(ShapeSymbol, RootBinding)],
+    relations: &[&ExtentRelation],
+) -> Result<Solution, ShapeEnvError> {
     let index: BTreeMap<&ShapeSymbol, usize> = entries
         .iter()
         .enumerate()
@@ -678,7 +724,8 @@ pub(super) fn decide(
     let mut domains = seed_domains(&mut classes, &constants, entries.len());
     let edges = apply_relations(&mut classes, &index, &constants, relations, &mut domains)?;
     propagate(&mut classes, entries.len(), &edges, &mut domains);
-    report_empty_domain(&mut classes, entries, &domains)
+    report_empty_domain(&mut classes, entries, &domains)?;
+    Ok(Solution { classes, domains })
 }
 
 /// Resolves one symbol to its slot, failing closed on an undeclared one.
@@ -826,8 +873,8 @@ fn resolve_constants(
     let mut constants = vec![None; entries.len()];
 
     for (position, (_, binding)) in entries.iter().enumerate() {
-        if let BindingSource::StaticValue(value) = binding.source() {
-            pin(classes, entries, &mut constants, position, *value)?;
+        if let Some(extent) = binding.source().static_extent() {
+            pin(classes, entries, &mut constants, position, extent.get())?;
         }
     }
 

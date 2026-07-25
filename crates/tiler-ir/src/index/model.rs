@@ -5,6 +5,7 @@ use crate::semantic::ResolvedValueType;
 use crate::shape::{Extent, Shape};
 
 use super::handles::VerifiedRegionOwner;
+use super::sourced::{ExtentSources, SourcedExtent};
 use super::{
     IndexEntityKind, IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex,
     VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError,
@@ -82,7 +83,7 @@ pub(super) struct IndexExprData {
 #[derive(Clone, Debug)]
 pub(super) struct DimensionData {
     pub role: DomainRole,
-    pub extent: u64,
+    pub extent: SourcedExtent,
 }
 #[derive(Clone, Debug)]
 pub(super) struct TensorData {
@@ -210,6 +211,18 @@ pub struct VerifiedIndexRegion {
 #[derive(Clone, Debug)]
 pub(super) struct VerifiedIndexRegionData {
     pub owner: VerifiedRegionOwner,
+    /// The environment every symbolic extent in this region resolves against.
+    ///
+    /// `None` for a wholly static region, which is every region a public
+    /// caller can currently author. Retained rather than consulted once and
+    /// dropped, because a consumer that reads a symbolic extent needs the same
+    /// environment the verifier used, and because the region's identity names
+    /// that environment's identity.
+    #[allow(
+        dead_code,
+        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
+    )]
+    pub sources: Option<ExtentSources>,
     pub dimensions: Vec<DimensionData>,
     pub tensors: Vec<TensorData>,
     pub expressions: Vec<IndexExprData>,
@@ -225,6 +238,17 @@ impl VerifiedIndexRegion {
     #[must_use]
     pub fn canonical_identity(&self) -> &CanonicalIndexRegionIdentity {
         &self.data.identity
+    }
+    /// Returns the environment this region's symbolic extents resolve against.
+    ///
+    /// `None` for a wholly static region. Draft, `pub(crate)`, like the
+    /// symbolic profile it belongs to.
+    #[allow(
+        dead_code,
+        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
+    )]
+    pub(crate) fn extent_sources(&self) -> Option<&ExtentSources> {
+        self.data.sources.as_ref()
     }
     /// Returns dimensions in canonical order.
     #[must_use]
@@ -523,7 +547,7 @@ pub struct DomainDimensionRef<'a> {
     id: VerifiedDimensionId,
     data: &'a DimensionData,
 }
-impl DomainDimensionRef<'_> {
+impl<'a> DomainDimensionRef<'a> {
     /// Returns the verified dimension identity.
     #[must_use]
     pub const fn id(self) -> VerifiedDimensionId {
@@ -534,12 +558,34 @@ impl DomainDimensionRef<'_> {
     pub const fn role(self) -> DomainRole {
         self.data.role
     }
-    /// Returns the static half-open extent in this bounded profile.
+    /// Returns the static half-open extent, when this dimension has one.
     ///
-    /// A future symbolic dimension returns `None` here and exposes its expression separately.
+    /// `None` for a dimension sourced from a `ShapeEnv` symbol, which is the
+    /// case `docs/ir.md` reserved for it: static extents "return `Some`
+    /// throughout this bounded profile. A future symbolic profile can return
+    /// `None` and expose its `ShapeEnv` expression through an additive borrowed
+    /// view instead of changing the meaning of an existing accessor."
+    ///
+    /// No public constructor produces a symbolic dimension yet, so every region
+    /// a public caller can build still answers `Some` for every dimension. The
+    /// borrowed view that exposes the symbol is the reserved additive step.
     #[must_use]
     pub const fn static_extent(self) -> Option<Extent> {
-        Some(Extent::new(self.data.extent))
+        self.data.extent.as_static()
+    }
+    /// Returns the extent together with where its value comes from.
+    ///
+    /// The additive borrowed view `docs/ir.md` reserved beside
+    /// [`Self::static_extent`], kept `pub(crate)` while the symbolic profile is
+    /// a draft. Resolve a symbolic extent through
+    /// [`VerifiedIndexRegion::extent_sources`], which is the one environment
+    /// this region's symbols are declared in.
+    #[allow(
+        dead_code,
+        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
+    )]
+    pub(crate) const fn sourced_extent(self) -> &'a SourcedExtent {
+        &self.data.extent
     }
 }
 /// Borrowed tensor inspection.
