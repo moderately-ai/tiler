@@ -61,8 +61,8 @@ pub(crate) enum TagSubject {
     AddressSpace,
     /// The access mode of one binding.
     BufferAccess,
-    /// The program role of one bound value.
-    ValueRole,
+    /// What one ABI binding slot addresses.
+    BindingTarget,
     /// The subnormal treatment of one numerical realization.
     SubnormalMode,
     /// A numerical transform permission of one numerical realization.
@@ -112,6 +112,8 @@ pub(crate) enum OrderedSubject {
     LaunchPrecondition,
     /// The executable entries of one plan variant.
     Entry,
+    /// The named program outputs one ABI binding's target publishes.
+    BindingTargetKey,
     /// The framed envelope sections.
     Section,
     /// The entry mappings of one carried backend payload.
@@ -168,6 +170,8 @@ pub(crate) enum CodecLimitKind {
     Entries,
     /// ABI binding count of one executable entry.
     EntryBindings,
+    /// Named-output count of one ABI binding's target.
+    BindingTargetKeys,
     /// Node count of the shared ABI expression arena.
     Expressions,
     /// Backend payload descriptor count.
@@ -397,6 +401,49 @@ pub(crate) enum ArtifactCodecError {
         /// Ordered section identifier.
         section: u32,
     },
+    /// A binding addressing program output storage names no output.
+    ///
+    /// An empty list would read as "bind nothing" to a slot the kernel writes
+    /// through, which is a silently unwritten output rather than a refusal.
+    EmptyBindingTarget,
+    /// A binding's target names an interface entry the artifact does not declare.
+    ///
+    /// The target is the one dispatch fact a decoder cannot re-derive, because
+    /// the program that established it is carried only as identity bytes. What
+    /// *is* decidable from the manifest alone is that the name it uses exists,
+    /// and checking it is what stops a forged envelope directing a slot at a
+    /// buffer the interface never mentions.
+    UnknownBindingTargetKey {
+        /// Governed interface key the target named.
+        key: String,
+        /// Whether the target claimed a program input rather than an output.
+        input: bool,
+    },
+    /// A carried payload maps no backend entry for an executable entry it realizes.
+    ///
+    /// The mapping is what turns a neutral backend entry key into the symbol a
+    /// loader resolves, so an entry whose key is unmapped is one a consumer
+    /// holding only these bytes cannot dispatch. Refusing at load is the
+    /// fail-closed form; returning a record with an unreachable entry would
+    /// move the failure to the loader with less to say about it.
+    UnmappedBackendEntry {
+        /// Ordered payload identifier.
+        payload: u32,
+    },
+    /// An entry mapping declares a different transport count than the entry's bindings.
+    ///
+    /// `transports[i]` is the backend transport slot ABI binding `i` occupies,
+    /// so a shorter list leaves bindings unplaceable and a longer one places
+    /// bindings that do not exist. Either way the correspondence a loader binds
+    /// through is not total, which is not a thing to approximate.
+    EntryTransportCardinality {
+        /// Ordered payload identifier.
+        payload: u32,
+        /// ABI binding count the executable entry declares.
+        bindings: usize,
+        /// Transport-slot count the payload's entry mapping declares.
+        transports: usize,
+    },
     /// The declared required-feature set is not the one the content implies.
     ///
     /// The set is derived, never asserted, so a producer cannot understate what
@@ -528,6 +575,10 @@ impl Error for ArtifactCodecError {
             | Self::DuplicateItem { .. }
             | Self::NonCanonicalManifest
             | Self::UnreferencedSection { .. }
+            | Self::EmptyBindingTarget
+            | Self::UnknownBindingTargetKey { .. }
+            | Self::UnmappedBackendEntry { .. }
+            | Self::EntryTransportCardinality { .. }
             | Self::DeclaredFeatureMismatch
             | Self::ArtifactIdentityMismatch
             | Self::UnknownTag { .. }

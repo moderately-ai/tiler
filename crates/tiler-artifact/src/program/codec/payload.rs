@@ -52,9 +52,24 @@
 //!
 //! An entry mapping likewise carries the neutral
 //! [`BackendEntryKey`](super::super::BackendEntryKey), the backend's own symbol
-//! text, and the ordered transport slots its bindings occupy. The artifact
-//! layer never interprets a symbol or a slot; it proves the mapping covers
-//! exactly the backend entry keys the artifact's executable entries name.
+//! text, and the ordered transport slots its bindings occupy. The artifact layer
+//! never interprets a symbol or a slot; what it proves is that the mapping
+//! *covers* every backend entry key the artifact's executable entries name, and
+//! that each mapping places exactly as many transport slots as its entry has
+//! bindings. Both live in [`super::validate`]'s `check_entry_mappings` and run
+//! on every decode.
+//!
+//! The obligation is coverage rather than exhaustion: a compiled object may
+//! export a symbol no entry dispatches, and a mapping for one costs a reader
+//! nothing because it is folded into the compilation subject and therefore into
+//! artifact identity.
+//!
+//! This paragraph previously claimed the mapping was proven to cover "exactly"
+//! the entry keys, and nothing proved it at all — neither the builder nor the
+//! decoder correlated the two tables, so an artifact could carry a payload that
+//! mapped none of the entries it realized and still decode. The check exists as
+//! of `expose-the-dispatch-record-on-a-decoded-artifact`, because a decoded
+//! entry that cannot reach its symbol is not a dispatch record.
 
 use super::super::error::ArtifactBuildError;
 use super::super::keys::{BackendEntryKey, PayloadDigest, RepresentationKey};

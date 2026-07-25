@@ -14,7 +14,7 @@ use super::super::error::ArtifactDiagnostic;
 use super::super::expr::ExprNode;
 use super::super::model::{address_space_tag, buffer_access_tag};
 use super::super::model::{
-    element_type_tag, push_numerical, push_resources, push_shape, value_role_tag,
+    element_type_tag, push_binding_target, push_numerical, push_resources, push_shape,
 };
 use super::budget::check_budgets;
 use super::digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
@@ -33,11 +33,13 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// Neutral manifest schema version this build writes and reads.
 ///
 /// Raised to `2.0` when the section descriptor grew its purpose disposition and
-/// content schema. That is deliberately a **major** step rather than the minor
-/// one it might look like: the reader admits `minor <= implemented`, so a minor
-/// bump would have left it accepting a `1.0` manifest whose descriptors it can
-/// no longer parse. A field added inside a fixed-width record is not additive.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (2, 0);
+/// content schema, and to `3.0` when each ABI binding row replaced its program
+/// role tag with the interface reference naming what the slot addresses. Both
+/// are deliberately **major** steps rather than the minor ones they might look
+/// like: the reader admits `minor <= implemented`, so a minor bump would have
+/// left it accepting an older manifest whose binding rows it can no longer
+/// parse. A field changed inside a record is not additive.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (3, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -294,7 +296,7 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) -> Result<(), ArtifactDia
         bytes.push(address_space_tag(binding.address_space)?);
         bytes.push(buffer_access_tag(binding.access)?);
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());
-        bytes.push(value_role_tag(binding.value_role));
+        push_binding_target(bytes, &binding.target);
         bytes.extend_from_slice(&binding.accessible_bytes.to_be_bytes());
     }
     bytes.extend_from_slice(&entry.launch.grid_threads.to_be_bytes());

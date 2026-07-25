@@ -109,6 +109,102 @@ pub(crate) fn semantic_program() -> SemanticProgram {
     build_graph(SemanticProgramBuilder::try_standard().unwrap())
 }
 
+/// Builds the fixture graph publishing its one reduction under two names.
+///
+/// `SemanticProgramBuilder::output_resolved` rejects a repeated *key* and not a
+/// repeated *value*, so two named outputs may name one value all the way down to
+/// one materialized program value and one buffer. That is the case a binding
+/// target carrying a single output key would encode wrongly, so the fixture
+/// exists to make it reachable rather than argued about.
+fn dual_output_semantic_program() -> SemanticProgram {
+    let mut draft = SemanticProgramBuilder::try_standard().unwrap();
+    let input = draft
+        .input::<F32>(InputKey::new("input").unwrap(), input_shape())
+        .unwrap();
+    let scale = F32Constant::apply(&mut draft, SCALE_BITS).unwrap();
+    let bias = F32Constant::apply(&mut draft, BIAS_BITS).unwrap();
+    let product = F32Multiply::apply(&mut draft, input, scale).unwrap();
+    let mapped = F32Add::apply(&mut draft, product, bias).unwrap();
+    let sum = StrictSerialF32Sum::apply(&mut draft, mapped, [Axis::new(1)]).unwrap();
+    draft
+        .output(OutputKey::new("result").unwrap(), sum)
+        .unwrap();
+    draft.output(OutputKey::new("copy").unwrap(), sum).unwrap();
+    draft.build().unwrap()
+}
+
+/// Builds the single-stage plan that publishes one value under both names.
+fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+    let kernel = fused_kernel(SCALE_BITS);
+    let mut plan = KernelProgramBuilder::new(semantic).unwrap();
+    let external = plan
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 24,
+            alignment: 4,
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::External,
+        })
+        .unwrap();
+    let owned = plan
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 8,
+            alignment: 4,
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::Program,
+        })
+        .unwrap();
+    let source = plan
+        .push_value(
+            MaterializedValueSpec {
+                origin: MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("input").unwrap(),
+                },
+                role: ValueRole::Input,
+                shape: input_shape(),
+                element_type: KernelType::F32,
+                alignment: 4,
+                memory_space: MemorySpace::Device,
+            },
+            external,
+        )
+        .unwrap();
+    let result = plan
+        .push_value(
+            MaterializedValueSpec {
+                origin: MaterializedOrigin::Internal,
+                role: ValueRole::Output,
+                shape: output_shape(),
+                element_type: KernelType::F32,
+                alignment: 4,
+                memory_space: MemorySpace::Device,
+            },
+            owned,
+        )
+        .unwrap();
+    let read = plan.push_whole_view(source).unwrap();
+    let write = plan.push_whole_view(result).unwrap();
+    plan.push_stage(
+        &kernel,
+        &(0..5).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+        &[
+            StageAccess {
+                view: read,
+                mode: StageAccessMode::Read,
+            },
+            StageAccess {
+                view: write,
+                mode: StageAccessMode::Write,
+            },
+        ],
+    )
+    .unwrap();
+    plan.push_output(OutputKey::new("result").unwrap(), result)
+        .unwrap();
+    plan.push_output(OutputKey::new("copy").unwrap(), result)
+        .unwrap();
+    plan.build().unwrap()
+}
+
 /// Builds the one fused reduction kernel the packaged plans dispatch.
 pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
     let axes = vec![Axis::new(1)];
@@ -470,9 +566,55 @@ fn an_entry_reads_its_plan_through_the_shared_ir_alone() {
     assert_eq!(bindings[0].window().length, 24);
     assert_eq!(bindings[1].value_role(), ValueRole::Output);
     assert_eq!(bindings[1].window().length, 8);
+    // The same correspondence the shared-IR walk above reads, spelled as the
+    // interface reference the artifact carries — this is the one a consumer
+    // holding only bytes can follow.
+    let result = OutputKey::new("result").unwrap();
+    assert_eq!(
+        bindings[0].target(),
+        super::BindingTarget::ProgramInput(&InputKey::new("input").unwrap()),
+    );
+    assert_eq!(
+        bindings[1].target(),
+        super::BindingTarget::ProgramOutput(std::slice::from_ref(&result)),
+    );
     // The plan itself is reachable through the shared IR's own views.
     assert_eq!(variant.program().stages().len(), 1);
     assert_eq!(bindings[0].value().required_bytes(), 24);
+}
+
+/// One buffer published under two names carries both, rather than one of them.
+///
+/// The failure this excludes is not a missing accessor. A target carrying a
+/// single output key would name whichever the producer's declaration order put
+/// first, and a loader would bind a second buffer for the other name — two
+/// buffers for one value, with the unbound one never written. Carrying the
+/// complete set is what makes "one buffer, two names" expressible at all.
+#[test]
+fn a_value_published_under_two_names_carries_both_in_its_binding_target() {
+    let semantic = dual_output_semantic_program();
+    let program = dual_output_program(&semantic);
+    let provider = lowering_provider(1);
+    let artifact = build_artifact(&semantic, &program, provider.clone(), &[provider]);
+    let bindings: Vec<_> = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry")
+        .bindings()
+        .collect();
+    let super::BindingTarget::ProgramOutput(keys) = bindings[1].target() else {
+        panic!("the written binding addresses published output storage");
+    };
+    // Canonically ordered rather than in declaration order, so the artifact's
+    // identity does not fold the order a producer happened to publish in.
+    assert_eq!(
+        keys.iter().map(OutputKey::as_str).collect::<Vec<_>>(),
+        ["copy", "result"],
+    );
+    assert_eq!(bindings[1].value_role(), ValueRole::Output);
 }
 
 #[test]

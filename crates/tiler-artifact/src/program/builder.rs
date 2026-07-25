@@ -20,7 +20,9 @@
 //! and deferred predicates — and each is proven against the program it claims
 //! to describe.
 
-use tiler_ir::program::{MaterializedOrigin, StageRef, VerifiedKernelProgram};
+use tiler_ir::program::{
+    MaterializedOrigin, MaterializedValueRef, StageRef, ValueRole, VerifiedKernelProgram,
+};
 use tiler_ir::schedule::NumericalRealization;
 use tiler_ir::semantic::{
     InputKey, OutputKey, ProviderIdentity, SemanticIdentity, SemanticProgram,
@@ -44,8 +46,8 @@ use super::handles::{
 use super::keys::{BackendKey, FeasibilityRuleSetRef, RepresentationKey, TargetProfileRef};
 use super::model::{
     ArtifactExecutionPolicy, ArtifactProgramData, ArtifactSchema, BackendEntryRef,
-    BackendPayloadDescriptor, BindingData, BindingKind, DeferredPredicateData, EntryData,
-    InterfaceEntryData, LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider,
+    BackendPayloadDescriptor, BindingData, BindingKind, BindingTargetData, DeferredPredicateData,
+    EntryData, InterfaceEntryData, LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider,
     StoredBackendEntry, VariantData, VerifiedArtifactProgram, encode_identity,
 };
 use super::{
@@ -671,7 +673,7 @@ impl ArtifactProgramBuilder {
     ) -> Result<Vec<EntryData>, ArtifactBuildError> {
         let mut resolved = Vec::with_capacity(specs.len());
         for (index, (spec, stage)) in specs.iter().zip(program.stages()).enumerate() {
-            let bindings = self.check_bindings(index, spec, stage, facts)?;
+            let bindings = self.check_bindings(program, index, spec, stage, facts)?;
             let launch = self.check_launch(index, &spec.launch, stage, facts)?;
             let payload = self.resolve_payload(spec.implementation.payload)?;
             resolved.push(EntryData {
@@ -688,6 +690,7 @@ impl ArtifactProgramBuilder {
 
     fn check_bindings(
         &self,
+        program: &VerifiedKernelProgram,
         entry: usize,
         spec: &EntrySpec,
         stage: StageRef<'_>,
@@ -707,6 +710,10 @@ impl ArtifactProgramBuilder {
             ArtifactLimitKind::EntryBindings,
         )?;
         let mut resolved = Vec::with_capacity(spec.bindings.len());
+        // Retained so a repeated internal target can name the earlier slot it
+        // aliases. Values compare by program identity and position, so this is
+        // the addressed value itself rather than a structural resemblance to it.
+        let mut internal: Vec<(usize, MaterializedValueRef<'_>)> = Vec::new();
         for (slot, ((binding, buffer), access)) in spec
             .bindings
             .iter()
@@ -732,13 +739,26 @@ impl ArtifactProgramBuilder {
                 });
             }
             let value = access.view().value();
+            let target = binding_target(program, entry, slot, access.view())?;
+            if matches!(target, BindingTargetData::Internal)
+                && let Some((earlier, _)) = internal.iter().find(|(_, held)| *held == value)
+            {
+                return Err(ArtifactBuildError::AliasedInternalBinding {
+                    entry,
+                    binding: slot,
+                    aliases: *earlier,
+                });
+            }
+            if matches!(target, BindingTargetData::Internal) {
+                internal.push((slot, value));
+            }
             resolved.push(BindingData {
                 kind: binding.kind,
                 element_type: buffer.element_type,
                 address_space: buffer.address_space,
                 access: buffer.access,
                 alignment: value.alignment(),
-                value_role: value.role(),
+                target,
                 accessible_bytes: node,
             });
         }
@@ -994,6 +1014,78 @@ fn project_interface(
         });
     }
     Ok((inputs, outputs))
+}
+
+/// Derives what one binding slot addresses, from the plan rather than the producer.
+///
+/// This is the fact a decoded envelope cannot re-derive, so it is the one fact
+/// most worth taking from the program instead of accepting as a claim. It reads
+/// the same stage access the binding's element type, address space, access mode
+/// and alignment already come from, so a producer cannot state a correspondence
+/// its own plan contradicts.
+///
+/// # Errors
+///
+/// Returns [`ArtifactBuildError::PartialBindingView`] when the access addresses
+/// part of its value, or [`ArtifactBuildError::UnnameableBindingTarget`] when
+/// the addressed value's role and origin disagree about whether its bytes cross
+/// the program interface.
+fn binding_target(
+    program: &VerifiedKernelProgram,
+    entry: usize,
+    binding: usize,
+    view: tiler_ir::program::ViewRef<'_>,
+) -> Result<BindingTargetData, ArtifactBuildError> {
+    let value = view.value();
+    let window = view.window();
+    if window.offset != 0 || window.length != value.required_bytes() {
+        return Err(ArtifactBuildError::PartialBindingView {
+            entry,
+            binding,
+            offset: window.offset,
+            length: window.length,
+            value_bytes: value.required_bytes(),
+        });
+    }
+    let unnameable = |role| ArtifactBuildError::UnnameableBindingTarget {
+        entry,
+        binding,
+        role,
+        external_origin: matches!(value.origin(), MaterializedOrigin::ProgramInput { .. }),
+    };
+    // Every combination of origin and role is written out rather than collapsed
+    // behind a wildcard. The three rejecting arms are unreachable for a verified
+    // program — `KernelProgramBuilder::push_value`'s `check_origin` admits only
+    // the other three pairs — but that is another crate's builder rule rather
+    // than something this match can rely on the type system to keep true, and
+    // neither vocabulary is `#[non_exhaustive]`, so widening either must stop the
+    // build here instead of falling into an arm chosen for a different case.
+    match (value.origin(), value.role()) {
+        (MaterializedOrigin::ProgramInput { key }, ValueRole::Input) => {
+            Ok(BindingTargetData::ProgramInput(key.clone()))
+        }
+        (MaterializedOrigin::Internal, ValueRole::Output) => {
+            let mut keys: Vec<OutputKey> = program
+                .outputs()
+                .filter(|output| output.value() == value)
+                .map(|output| output.key().clone())
+                .collect();
+            if keys.is_empty() {
+                // `verify_outputs` proves every output-role value is published,
+                // so this is unreachable for a verified program. Refusing is
+                // still the only fail-closed answer: the alternative is
+                // encoding an empty key list a loader would read as "bind
+                // nothing to a slot the kernel writes through".
+                return Err(unnameable(ValueRole::Output));
+            }
+            keys.sort_unstable();
+            Ok(BindingTargetData::ProgramOutput(keys))
+        }
+        (MaterializedOrigin::Internal, ValueRole::Temporary) => Ok(BindingTargetData::Internal),
+        (MaterializedOrigin::ProgramInput { .. }, role @ ValueRole::Temporary)
+        | (MaterializedOrigin::ProgramInput { .. }, role @ ValueRole::Output)
+        | (MaterializedOrigin::Internal, role @ ValueRole::Input) => Err(unnameable(role)),
+    }
 }
 
 /// Builds the declared-shape fact environment one program's ABI is checked in.
