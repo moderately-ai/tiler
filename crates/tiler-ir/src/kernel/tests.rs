@@ -332,6 +332,66 @@ fn canonical_lowering_produces_a_verified_backend_consumable_kernel() {
     assert_eq!(effects, 2);
 }
 
+/// Collects every buffer handle a block's effects reference, descending into
+/// predicated bodies.
+fn referenced_buffers(block: BlockRef<'_>) -> Vec<VerifiedBufferId> {
+    let mut found = Vec::new();
+    for operation in block.operations() {
+        match operation.view() {
+            OperationView::Load { buffer, .. } | OperationView::Store { buffer, .. } => {
+                found.push(buffer);
+            }
+            OperationView::Predicated { body, .. } => found.extend(referenced_buffers(body)),
+            _ => {}
+        }
+    }
+    found
+}
+
+/// The buffer handles a body references recover the signature, in handle order.
+///
+/// This is evidence for `pair-verified-buffer-handles-with-signature-ordinals`,
+/// not a public guarantee. A backend that must emit an argument-table index per
+/// load and store can today only recover the pairing by *sorting handles*,
+/// which works solely because a verified handle is `(owner, index)` and every
+/// handle of one kernel shares an owner — a private representation detail the
+/// derived `Ord` exposes and no contract promises.
+///
+/// The test pins that the fact is already true, so publishing it is exposing an
+/// invariant rather than computing a new one. It deliberately does not assert a
+/// *position*, because no public accessor yields one; that is precisely the gap
+/// the ticket asks the IR to close.
+#[test]
+fn referenced_buffer_handles_recover_the_signature_in_handle_order() {
+    let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
+    let kernel = lower_scheduled_region(&scheduled).unwrap();
+
+    let mut referenced = referenced_buffers(kernel.body());
+    referenced.sort_unstable();
+    referenced.dedup();
+
+    // Every signature parameter is referenced exactly once by this lowering, so
+    // the recovered sequence is the whole signature rather than a prefix of it.
+    assert_eq!(referenced.len(), kernel.buffers().len());
+    let recovered: Vec<_> = referenced
+        .iter()
+        .map(|id| kernel.buffer(*id).unwrap())
+        .collect();
+    assert_eq!(recovered, kernel.buffers().collect::<Vec<_>>());
+
+    // A handle from another kernel is rejected rather than silently resolving
+    // to the same ordinal, which is what makes the pairing kernel-scoped.
+    let other = lower_scheduled_region(&pointwise_region(
+        RegionId::new(1),
+        &Shape::from_dims([2, 3]),
+    ))
+    .unwrap();
+    assert!(matches!(
+        other.buffer(referenced[0]),
+        Err(VerifiedKernelHandleError::ForeignKernel { .. })
+    ));
+}
+
 #[test]
 fn a_producer_built_canonical_kernel_verifies_and_equals_the_lowering() {
     let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
