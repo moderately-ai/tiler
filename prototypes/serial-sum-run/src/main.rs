@@ -121,8 +121,9 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
-    MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
+    MetalPlatform, MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
+    MslLanguageVersion,
 };
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{
@@ -190,15 +191,25 @@ fn input_bits(rows: u64, columns: u64) -> Vec<u32> {
     bits
 }
 
+/// The measured Apple row, one subnormal behaviour per arithmetic type: `f32`
+/// flushes and `f16` preserves on the same hardware in the same math modes.
 fn target_facts() -> MetalTargetFacts {
     MetalTargetFacts::new(
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(13, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
-        MetalSubnormalArithmetic::FlushesToZero {
-            zero_sign: MetalFlushedZeroSign::PreservesSign,
-        },
+        MetalSubnormalArithmeticFacts::unmeasured()
+            .stating(
+                MetalFloatArithmeticType::F32,
+                MetalSubnormalArithmetic::FlushesToZero {
+                    zero_sign: MetalFlushedZeroSign::PreservesSign,
+                },
+            )
+            .stating(
+                MetalFloatArithmeticType::F16,
+                MetalSubnormalArithmetic::PreservesSubnormals,
+            ),
         BUFFER_BINDING_LIMIT,
     )
 }

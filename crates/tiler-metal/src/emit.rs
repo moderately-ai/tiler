@@ -75,7 +75,9 @@ use crate::record::{
     MetalBufferBinding, MetalEntryPoint, MetalNumericalGap, MetalNumericalRequirement,
     MetalTranslationUnit,
 };
-use crate::target::{MetalFlushedZeroSign, MetalSubnormalArithmetic, MetalTargetFacts};
+use crate::target::{
+    MetalFloatArithmeticType, MetalFlushedZeroSign, MetalSubnormalArithmetic, MetalTargetFacts,
+};
 
 /// One level of emitted indentation.
 const INDENT: &str = "    ";
@@ -131,12 +133,20 @@ pub fn emit_translation_unit(
     let mut helpers = BTreeSet::new();
     let mut numerical = BTreeSet::new();
     let mut gaps = BTreeSet::new();
+    let mut unstated = BTreeSet::new();
     let mut symbols: BTreeMap<String, &[u8]> = BTreeMap::new();
     let mut entry_points = Vec::with_capacity(ordered.len());
     let mut bodies = Vec::with_capacity(ordered.len());
 
     for kernel in ordered {
-        let emitted = emit_entry_point(kernel, target, &mut helpers, &mut numerical, &mut gaps)?;
+        let emitted = emit_entry_point(
+            kernel,
+            target,
+            &mut helpers,
+            &mut numerical,
+            &mut gaps,
+            &mut unstated,
+        )?;
         reserve_symbol(
             &mut symbols,
             emitted.entry.symbol(),
@@ -146,12 +156,13 @@ pub fn emit_translation_unit(
         bodies.push(emitted.text);
     }
 
-    let source = assemble(target, &helpers, &gaps, &bodies);
+    let source = assemble(target, &helpers, &gaps, &unstated, &bodies);
     Ok(MetalTranslationUnit::new(
         source,
         entry_points,
         numerical.into_iter().collect(),
         gaps.into_iter().collect(),
+        unstated.into_iter().collect(),
     ))
 }
 
@@ -194,6 +205,7 @@ fn assemble(
     target: &MetalTargetFacts,
     helpers: &BTreeSet<u32>,
     gaps: &BTreeSet<MetalNumericalGap>,
+    unstated: &BTreeSet<MetalFloatArithmeticType>,
     bodies: &[String],
 ) -> String {
     let mut source = String::new();
@@ -222,11 +234,19 @@ fn assemble(
         "// Launch precondition: no invocation index may exceed {}.\n",
         target.launch_index.maximum_index()
     );
-    emit!(
-        source,
-        "// f32 arithmetic subnormals: {}\n",
-        target.subnormal_arithmetic
-    );
+    // One line per arithmetic type rather than one for the target: the measured
+    // Apple row flushes in `f32` and preserves in `f16`, so a single line would
+    // be false for one of them whichever way it read. Every type the vocabulary
+    // names is listed, including the ones this target states nothing about, so
+    // a reader of the text alone can tell an unmeasured type from an absent
+    // one.
+    source.push_str("// Arithmetic subnormals, per floating-point type:\n");
+    for arithmetic_type in MetalFloatArithmeticType::ALL {
+        match target.subnormal_arithmetic.behaviour(arithmetic_type) {
+            Ok(behaviour) => emit!(source, "//   {arithmetic_type}: {behaviour}\n"),
+            Err(_) => emit!(source, "//   {arithmetic_type}: not stated\n"),
+        }
+    }
     source.push_str("//\n");
     source.push_str("// Carried by these operations under every math mode: every f32 immediate\n");
     source.push_str("// is its exact bit pattern, every arithmetic operation is one statement,\n");
@@ -239,6 +259,18 @@ fn assemble(
         for gap in gaps {
             emit!(source, "//   {gap}\n");
         }
+    }
+    // Stated separately from the gaps above because it is a different claim: a
+    // gap says the target cannot honour the obligation, this says nothing is
+    // known either way, and it also means the gap list above is incomplete.
+    if unstated.is_empty() {
+        source.push_str("// Arithmetic types used with no stated subnormal fact: none.\n");
+    } else {
+        source.push_str("// Arithmetic types used with no stated subnormal fact:\n");
+        for arithmetic_type in unstated {
+            emit!(source, "//   {arithmetic_type}\n");
+        }
+        source.push_str("// The obligations above are therefore incomplete.\n");
     }
     source.push('\n');
     source.push_str("#include <metal_stdlib>\n");
@@ -340,6 +372,7 @@ fn emit_entry_point(
     helpers: &mut BTreeSet<u32>,
     numerical: &mut BTreeSet<MetalNumericalRequirement>,
     gaps: &mut BTreeSet<MetalNumericalGap>,
+    unstated: &mut BTreeSet<MetalFloatArithmeticType>,
 ) -> Result<EmittedEntryPoint, MetalEmitError> {
     let declared = kernel.buffers().len();
     if u64::try_from(declared).unwrap_or(u64::MAX) > u64::from(target.buffer_binding_limit) {
@@ -360,6 +393,7 @@ fn emit_entry_point(
         helpers,
         numerical,
         gaps,
+        unstated,
         names: BTreeMap::new(),
         next: 0,
         buffers: BTreeMap::new(),
@@ -528,13 +562,18 @@ pub(crate) fn msl_type(value_type: KernelType) -> Result<&'static str, MetalEmit
 /// **Neither subnormal behaviour names a compiler selection, and the two
 /// reasons differ.** Preservation names none because no `-fmetal-math-mode`,
 /// `-ffp-contract`, `-fmetal-math-fp32-functions`, or `-O` selection preserves
-/// subnormals through `f32` arithmetic on a flushing target — the front end
-/// emits `air.compile.denorms_disable` under all of them — so naming a flag
+/// subnormals through `f32` arithmetic on the measured flushing row — the front
+/// end emits `air.compile.denorms_disable` under all of them — so naming a flag
 /// would assert a guarantee it does not deliver. Flushing names none because
 /// that same measurement makes the flush unconditional: no selection has to be
-/// made to obtain it. Whether the target actually honours the declared
-/// behaviour is a target fact, not a flag choice, and is routed to
-/// [`KernelEmitter::record_subnormal_obligation`] as a [`MetalNumericalGap`].
+/// made to obtain it. That `air.compile.denorms_disable` is emitted identically
+/// for a dtype whose subnormals are *not* disabled is a further reason no flag
+/// belongs here — the module declaration is a compile-side record of what was
+/// requested, not of what the hardware does. Whether the target actually
+/// honours the declared behaviour is a target fact, not a flag choice, and is
+/// routed to [`KernelEmitter::record_subnormal_obligation`] as a
+/// [`MetalNumericalGap`] or, where no fact is stated for the arithmetic type,
+/// as an unstated type.
 fn realization_requirements(
     realization: NumericalRealization,
 ) -> BTreeSet<MetalNumericalRequirement> {
@@ -560,6 +599,13 @@ fn realization_requirements(
 }
 
 /// Returns the gap one declared subnormal behaviour has against a target fact.
+///
+/// `target` is the behaviour stated for the arithmetic type the operation is
+/// performed in, resolved by the caller. Nothing here can reach a fact stated
+/// for another type, which is the point: the measured Apple row flushes in
+/// `f32` and preserves in `f16`, so a comparison that took the target's
+/// behaviour without a type would answer for whichever one happened to be
+/// stated.
 ///
 /// The comparison is total in both arguments and every arm is a decision the
 /// measurement supports, so a widened contract vocabulary or a widened target
@@ -625,6 +671,7 @@ struct KernelEmitter<'a> {
     helpers: &'a mut BTreeSet<u32>,
     numerical: &'a mut BTreeSet<MetalNumericalRequirement>,
     gaps: &'a mut BTreeSet<MetalNumericalGap>,
+    unstated: &'a mut BTreeSet<MetalFloatArithmeticType>,
     names: BTreeMap<VerifiedValueId, String>,
     next: u32,
     buffers: BTreeMap<VerifiedBufferId, u32>,
@@ -844,24 +891,27 @@ impl KernelEmitter<'_> {
         let [result] = results else {
             return Err(arity("binary-result"));
         };
-        // Whether the operation is f32 arithmetic is an operation-vocabulary
-        // fact, not a recognized shape: it decides which numerical obligations
-        // this statement can expose, and nothing about how it is emitted.
-        let (operator, f32_arithmetic) = match op {
-            BinaryOp::IndexAdd => ("+", false),
-            BinaryOp::IndexMultiply => ("*", false),
-            BinaryOp::IndexDivide => ("/", false),
-            BinaryOp::IndexModulo => ("%", false),
-            BinaryOp::F32Add => ("+", true),
-            BinaryOp::F32Multiply => ("*", true),
+        // Whether the operation is floating-point arithmetic, and in which
+        // type, is an operation-vocabulary fact rather than a recognized shape.
+        // The type is carried rather than reduced to a boolean because the
+        // subnormal fact it selects differs by type: reading `f32`'s fact for a
+        // `f16` operation would report a flush against a value the measured
+        // Apple hardware carries exactly.
+        let (operator, arithmetic_type) = match op {
+            BinaryOp::IndexAdd => ("+", None),
+            BinaryOp::IndexMultiply => ("*", None),
+            BinaryOp::IndexDivide => ("/", None),
+            BinaryOp::IndexModulo => ("%", None),
+            BinaryOp::F32Add => ("+", Some(MetalFloatArithmeticType::F32)),
+            BinaryOp::F32Multiply => ("*", Some(MetalFloatArithmeticType::F32)),
             _ => {
                 return Err(MetalEmitError::UnsupportedOperation {
                     family: MetalOperationFamily::Binary,
                 });
             }
         };
-        if f32_arithmetic {
-            self.record_subnormal_obligation();
+        if let Some(arithmetic_type) = arithmetic_type {
+            self.record_subnormal_obligation(arithmetic_type);
         }
         // Defence in depth on an invariant the kernel builder already proves: a
         // zero divisor would be emitted as undefined behaviour on device.
@@ -884,21 +934,28 @@ impl KernelEmitter<'_> {
         Ok(())
     }
 
-    /// Records any subnormal obligation this target cannot realize.
+    /// Records any subnormal obligation this target cannot realize, or the
+    /// fact that it states none for this arithmetic type.
     ///
-    /// Called once per emitted `f32` arithmetic statement. A kernel that only
-    /// materializes values never reaches here, which matches the measurement:
-    /// a load/store round trip returns every subnormal bit pattern unchanged,
-    /// while `f32` arithmetic flushes subnormal operands and results to zero
-    /// under every governed compiler selection. The target states which
-    /// behaviour it has, so the fact is checked rather than assumed.
+    /// Called once per emitted floating-point arithmetic statement, with that
+    /// statement's own arithmetic type. A kernel that only materializes values
+    /// never reaches here, which matches the measurement: a load/store round
+    /// trip returns every subnormal bit pattern unchanged, while the flush is a
+    /// property of arithmetic. The target states which behaviour it has *per
+    /// arithmetic type*, so the fact is looked up rather than assumed, and a
+    /// type it says nothing about is recorded as unstated instead of falling
+    /// back to another type's fact — the two measured types disagree, so there
+    /// is no fallback that is merely less precise.
     ///
     /// Each dimension is compared independently. A target that couples input
     /// and result flushing in one execution mode does not couple the contract's
     /// semantic dimensions (ADR 0019), so a divergence on either is recorded on
     /// its own.
-    fn record_subnormal_obligation(&mut self) {
-        let target = self.target.subnormal_arithmetic;
+    fn record_subnormal_obligation(&mut self, arithmetic_type: MetalFloatArithmeticType) {
+        let Ok(target) = self.target.subnormal_arithmetic.behaviour(arithmetic_type) else {
+            self.unstated.insert(arithmetic_type);
+            return;
+        };
         let realization = self.kernel.numerical();
         for mode in [realization.input_subnormals, realization.result_subnormals] {
             if let Some(gap) = subnormal_gap(mode, target) {

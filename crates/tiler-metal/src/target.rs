@@ -43,8 +43,9 @@
 //!
 //! **Why the two records are not one type in disguise.**
 //! [`MetalTargetFacts`](crate::target::MetalTargetFacts)
-//! also carries a launch-index realization, a subnormal-arithmetic fact, and a
-//! binding capacity, none of which a compiler invocation has any use for. The
+//! also carries a launch-index realization, a per-dtype subnormal-arithmetic
+//! record, and a binding capacity, none of which a compiler invocation has any
+//! use for. The
 //! driver's `MetalTarget` carries an `AppleSdk`, which selects `xcrun --sdk` and
 //! builds the `air64-apple-*` triple — tool-discovery knowledge this crate must
 //! never acquire. Neither record subsumes the other; they overlap in exactly the
@@ -250,32 +251,137 @@ impl LaunchIndexRealization {
     }
 }
 
-/// How the target's `f32` arithmetic treats subnormal operands and results.
+/// One floating-point arithmetic type whose subnormal behaviour is a fact of
+/// its own.
+///
+/// Subnormal behaviour is *not* a single property of a target. On the measured
+/// Apple row `f32` arithmetic flushes and `f16` arithmetic preserves, on the
+/// same GPU, in the same math modes, from modules that declare
+/// `air.compile.denorms_disable` identically — so one dtype-free declaration is
+/// false for one of the two whichever way it is set. This enum is the key of
+/// [`MetalSubnormalArithmeticFacts`], which states one behaviour per type and
+/// answers `Unknown` for a type nothing has measured.
+///
+/// The set is deliberately open. `bf16`, `f64` where a target has it, and every
+/// other format are unmeasured; two dtypes disagreeing establishes that the
+/// flush *depends on* the dtype and establishes nothing about which dtypes
+/// flush. Adding a variant is a build error at this type's private `index` map
+/// and at [`Self::ALL`], never a silent inheritance of another type's fact.
+///
+/// These are MSL arithmetic types, not [`tiler_ir::kernel::KernelType`] values.
+/// The structured kernel IR resolves one floating-point element type today;
+/// this vocabulary is the target's, and it is what the *measurements* are
+/// indexed by.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum MetalFloatArithmeticType {
+    /// MSL `float`, IEEE-754 binary32.
+    F32,
+    /// MSL `half`, IEEE-754 binary16.
+    F16,
+}
+
+impl MetalFloatArithmeticType {
+    /// Every arithmetic type this vocabulary names, in canonical order.
+    ///
+    /// The order is the derived one, so it agrees with the `Ord` a `BTreeSet`
+    /// of these uses and with the order emission reports them in.
+    pub const ALL: [Self; 2] = [Self::F32, Self::F16];
+
+    /// How many arithmetic types this vocabulary names.
+    pub const COUNT: usize = Self::ALL.len();
+
+    /// Returns a stable lowercase identifier for this arithmetic type.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::F32 => "f32",
+            Self::F16 => "f16",
+        }
+    }
+
+    /// Returns this type's position in [`Self::ALL`].
+    ///
+    /// Written as an exhaustive match rather than read from the discriminant,
+    /// so adding or reordering a variant is a build error here instead of a
+    /// silent re-keying of every stated fact.
+    /// `every_arithmetic_type_indexes_to_its_own_slot` proves the map is a
+    /// bijection onto `0..COUNT`.
+    const fn index(self) -> usize {
+        match self {
+            Self::F32 => 0,
+            Self::F16 => 1,
+        }
+    }
+}
+
+impl fmt::Display for MetalFloatArithmeticType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A query for a subnormal-arithmetic fact the target has not stated.
+///
+/// This is the `Unknown` class, and it is neither of the two behaviours. A
+/// consumer that holds a fact for one arithmetic type and needs another must
+/// fail closed on this rather than read the fact it does have: the two measured
+/// types disagree, so substituting one for the other is a guess wearing a
+/// measurement's clothes.
+///
+/// Kept as a reason type rather than folded into a behaviour variant for the
+/// same purpose [`MetalSubnormalArithmetic`] separates a flush from
+/// preservation — an unmeasured type has no behaviour to report, and an
+/// `Unknown` that could be pattern-matched as a behaviour would be honoured by
+/// something.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MetalUnstatedSubnormalArithmetic {
+    arithmetic_type: MetalFloatArithmeticType,
+}
+
+impl MetalUnstatedSubnormalArithmetic {
+    pub(crate) const fn for_type(arithmetic_type: MetalFloatArithmeticType) -> Self {
+        Self { arithmetic_type }
+    }
+
+    /// Returns the arithmetic type no fact was stated for.
+    #[must_use]
+    pub const fn arithmetic_type(self) -> MetalFloatArithmeticType {
+        self.arithmetic_type
+    }
+
+    /// Returns the stable rule identifier for this unstated fact.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        "unstated-subnormal-arithmetic"
+    }
+}
+
+impl fmt::Display for MetalUnstatedSubnormalArithmetic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.rule(), self.arithmetic_type)
+    }
+}
+
+/// How one arithmetic type treats subnormal operands and results on a target.
 ///
 /// This is a hard feasibility fact about the target, not a compiler-flag
 /// choice, so it belongs beside the binding capacity rather than in the
 /// numerical requirement set. A realization that demands subnormal preservation
-/// is unrealizable on a flushing target for any kernel that performs `f32`
-/// arithmetic, and emission reports that as a
+/// is unrealizable on a target that flushes *that arithmetic type*, for any
+/// kernel that performs arithmetic in it, and emission reports that as a
 /// [`MetalNumericalGap`](crate::record::MetalNumericalGap) instead of quietly
 /// naming a compiler flag that does not deliver it.
 ///
-/// **Measurement.** On an Apple M4 Max under macOS 27.0 (build 26A5388g) with
-/// Metal 32023.883, an emitted `x * 1.0` returns `0x00000000` for the operand
-/// `0x00000001`, and an emitted `x * 0.5` returns `0x00000000` for the operand
-/// `0x00800000`. Both hold for every `-fmetal-math-mode` (`safe`, `relaxed`,
-/// `fast`), every `-O` level (`0`, `1`, `2`, `3`, `s`), and through both the
-/// offline `xcrun metal` driver and runtime `MTLCompileOptions` compilation. A
-/// load/store round trip with no arithmetic returns every subnormal input
-/// unchanged, so the flush is a property of arithmetic, not of materialization.
-/// The front end emits `air.compile.denorms_disable` under every one of those
-/// flag combinations, and no `metal` driver flag was found that clears it.
+/// The behaviour carries no dtype of its own: it is the *value* of a
+/// [`MetalSubnormalArithmeticFacts`] entry, and the entry's
+/// [`MetalFloatArithmeticType`] key is the dtype. See that record for the
+/// per-type measurements.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum MetalSubnormalArithmetic {
-    /// `f32` arithmetic flushes subnormal operands and subnormal results to
-    /// the stated zero. This is the measured behaviour of every governed Apple
-    /// family.
+    /// Arithmetic in this type flushes subnormal operands and subnormal
+    /// results to the stated zero.
     ///
     /// The zero is a field rather than an implied `+0.0` because a flush that
     /// does not say which zero it produces cannot establish a declared
@@ -286,11 +392,8 @@ pub enum MetalSubnormalArithmetic {
         /// The zero this target's flush produces.
         zero_sign: MetalFlushedZeroSign,
     },
-    /// `f32` arithmetic preserves subnormal operands and results exactly.
-    ///
-    /// No governed Apple family has been measured to do this. The variant
-    /// exists so the flushing fact is a stated target property that emission
-    /// checks, rather than an assumption compiled into the backend.
+    /// Arithmetic in this type preserves subnormal operands and results
+    /// exactly.
     PreservesSubnormals,
 }
 
@@ -306,6 +409,131 @@ impl MetalSubnormalArithmetic {
                 zero_sign: MetalFlushedZeroSign::AlwaysPositive,
             } => "flushes-to-zero-always-positive",
             Self::PreservesSubnormals => "preserves-subnormals",
+        }
+    }
+}
+
+/// The target's subnormal-arithmetic behaviour, stated per arithmetic type.
+///
+/// A type with no entry is `Unknown`, which is a third class beside the two
+/// behaviours and never a default for either. [`Self::behaviour`] returns
+/// [`MetalUnstatedSubnormalArithmetic`] for it, and emission carries that
+/// through to a fail-closed conformance rejection rather than reading a
+/// neighbouring type's fact.
+///
+/// # Measurement — `f32`
+///
+/// On an Apple M4 Max under macOS 27.0 (build 26A5388g) with Metal 32023.883,
+/// an emitted `x * 2.0f` returns `0x00000000` for the operand `0x00400000`, and
+/// an emitted `x * 0.5f` returns `0x00000000` for the operand `0x00800000`.
+/// Both hold for every `-fmetal-math-mode` (`safe`, `relaxed`, `fast`), every
+/// `-O` level (`0`, `1`, `2`, `3`, `s`), and through both the offline `xcrun
+/// metal` driver and runtime `MTLCompileOptions` compilation. A load/store
+/// round trip with no arithmetic returns every subnormal input unchanged, so
+/// the flush is a property of arithmetic, not of materialization.
+///
+/// # Measurement — `f16`
+///
+/// On the same host, GPU, and toolchain row, every dimension the `f32` kernels
+/// isolate returns the **preserved** value when the identical kernel is spelled
+/// at `f16` width: `multiply_two_f16` returns `0400` for `0200`,
+/// `multiply_half_f16` returns `0200` for `0400`, `add_smallest_normal_f16`
+/// returns `0200` for `8200`, and `divide_by_three_f16` returns `0155` for
+/// `0400`. Each holds under `safe`, `relaxed`, and `fast`, on both compilation
+/// paths, and on both dispatchable families (`MacOs`, `IOsSimulator`). Each
+/// `f16` kernel carries an execution witness on a non-subnormal operand that
+/// reports `executed` in every configuration, which matters here in a way it
+/// does not at `f32` width: `preserved` is also what a kernel whose arithmetic
+/// was optimized away would report, so without the witness the observation and
+/// the trap are the same word. Finding 21 of the [Apple numerical behaviour
+/// record](../../../docs/research/apple-targets/numerical-behaviour.md) owns
+/// both rows.
+///
+/// # Fact — the modules do not predict this
+///
+/// `air.compile.denorms_disable` is emitted for the `f16` kernels and the `f32`
+/// kernels alike, under all three math modes and for all three families. The
+/// declaration is a compile-side fact about what was *requested*; only a
+/// witnessed dispatch says what was delivered. Nothing readable on the compile
+/// side would have caught the divergence.
+///
+/// # Fact — what two dtypes establish
+///
+/// That the flush depends on the dtype. Not which dtypes flush. `bf16`, `f64`,
+/// and every integer and quantized format are unmeasured, and a third dtype
+/// could agree with either measured one, so they are `Unknown` here rather than
+/// assumed. The `IOsDevice` family's arithmetic is unmeasured for both types
+/// alike — its compile side agrees and nothing dispatched it — so a caller
+/// stating facts for that family states them from the same inference it already
+/// makes for `f32`.
+///
+/// # Fact — which way a wrong reading errs
+///
+/// Reading the `f32` fact for `f16` arithmetic **over-rejects**: it reports a
+/// [`SubnormalFlushInArithmetic`](crate::record::MetalNumericalGap::SubnormalFlushInArithmetic)
+/// gap against a subnormal the device carries exactly, refusing a plan that is
+/// correct. It becomes a *wrong tensor* only where a reference evaluation
+/// flushes to match a device that does not — so the reference-side reading is
+/// the dangerous one, and this record's job is to stop either side inheriting a
+/// fact it was not given.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MetalSubnormalArithmeticFacts {
+    stated: [Option<MetalSubnormalArithmetic>; MetalFloatArithmeticType::COUNT],
+}
+
+impl MetalSubnormalArithmeticFacts {
+    /// A record that states nothing: every arithmetic type is `Unknown`.
+    ///
+    /// This is the starting point for [`Self::stating`], and it is also the
+    /// honest record for a target whose subnormal behaviour nobody has
+    /// measured. Emission refuses to claim conformance for arithmetic in any
+    /// type it does not find here.
+    #[must_use]
+    pub const fn unmeasured() -> Self {
+        Self {
+            stated: [None; MetalFloatArithmeticType::COUNT],
+        }
+    }
+
+    /// Returns this record with one arithmetic type's measured behaviour added.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `arithmetic_type` was already stated. Two statements about one
+    /// type are two claims, and silently keeping either would drop a
+    /// measurement; a caller assembling a target profile from more than one
+    /// source must reconcile them before stating. In a `const` context this is
+    /// a compile error.
+    #[must_use]
+    pub const fn stating(
+        mut self,
+        arithmetic_type: MetalFloatArithmeticType,
+        behaviour: MetalSubnormalArithmetic,
+    ) -> Self {
+        let index = arithmetic_type.index();
+        assert!(
+            self.stated[index].is_none(),
+            "a subnormal-arithmetic fact was stated twice for one arithmetic type"
+        );
+        self.stated[index] = Some(behaviour);
+        self
+    }
+
+    /// Returns the stated behaviour of one arithmetic type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MetalUnstatedSubnormalArithmetic`] when this record states
+    /// nothing about `arithmetic_type`. That is `Unknown`, not a behaviour: the
+    /// measured types disagree, so there is no neighbouring fact a caller may
+    /// substitute and no direction that fails safe by default.
+    pub const fn behaviour(
+        self,
+        arithmetic_type: MetalFloatArithmeticType,
+    ) -> Result<MetalSubnormalArithmetic, MetalUnstatedSubnormalArithmetic> {
+        match self.stated[arithmetic_type.index()] {
+            Some(behaviour) => Ok(behaviour),
+            None => Err(MetalUnstatedSubnormalArithmetic { arithmetic_type }),
         }
     }
 }
@@ -351,8 +579,14 @@ pub struct MetalTargetFacts {
     pub deployment_minimum: MetalDeploymentMinimum,
     /// How the target delivers the governed global launch index.
     pub launch_index: LaunchIndexRealization,
-    /// How the target's `f32` arithmetic treats subnormals.
-    pub subnormal_arithmetic: MetalSubnormalArithmetic,
+    /// How the target's arithmetic treats subnormals, stated per floating-point
+    /// type.
+    ///
+    /// One value per arithmetic type rather than one for the target, because
+    /// the measured Apple row flushes in `f32` and preserves in `f16`. A type
+    /// with no entry is `Unknown` and is rejected at the conformance claim
+    /// rather than defaulted to either behaviour.
+    pub subnormal_arithmetic: MetalSubnormalArithmeticFacts,
     /// Buffer argument-table entries this emission may address.
     ///
     /// Apple's feature tables state 31 entries per compute function for every
@@ -371,7 +605,7 @@ impl MetalTargetFacts {
         platform: MetalPlatform,
         deployment_minimum: MetalDeploymentMinimum,
         launch_index: LaunchIndexRealization,
-        subnormal_arithmetic: MetalSubnormalArithmetic,
+        subnormal_arithmetic: MetalSubnormalArithmeticFacts,
         buffer_binding_limit: u32,
     ) -> Self {
         Self {

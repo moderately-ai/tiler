@@ -65,8 +65,9 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
-    MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
+    MetalPlatform, MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
+    MslLanguageVersion,
 };
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{CompileRequest, NumericalRealization, OptimizationLevel};
@@ -95,20 +96,31 @@ const COLUMNS: u64 = 3;
 
 /// The target facts this producer emits for.
 ///
-/// macOS 13.0 under MSL 3.1, declaring the measured Apple subnormal behaviour:
-/// `f32` arithmetic flushes subnormal operands and results to zero on every
-/// governed family. Declaring it is what lets emission reject a kernel whose
-/// numerical contract the target cannot honour, rather than emitting one that
-/// silently computes something else.
+/// macOS 13.0 under MSL 3.1, declaring the measured Apple subnormal behaviour
+/// once per floating-point arithmetic type: `f32` arithmetic flushes subnormal
+/// operands and results to zero on every governed family, and `f16` arithmetic
+/// preserves them on the same hardware in the same math modes. Declaring them is
+/// what lets emission reject a kernel whose numerical contract the target cannot
+/// honour, rather than emitting one that silently computes something else — and
+/// declaring them separately is what stops the `f32` fact answering for a width
+/// it was not measured at.
 fn target_facts() -> MetalTargetFacts {
     MetalTargetFacts::new(
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(13, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
-        MetalSubnormalArithmetic::FlushesToZero {
-            zero_sign: MetalFlushedZeroSign::PreservesSign,
-        },
+        MetalSubnormalArithmeticFacts::unmeasured()
+            .stating(
+                MetalFloatArithmeticType::F32,
+                MetalSubnormalArithmetic::FlushesToZero {
+                    zero_sign: MetalFlushedZeroSign::PreservesSign,
+                },
+            )
+            .stating(
+                MetalFloatArithmeticType::F16,
+                MetalSubnormalArithmetic::PreservesSubnormals,
+            ),
         BUFFER_BINDING_LIMIT,
     )
 }

@@ -396,7 +396,7 @@ impl NumericalRealization {
     /// own defaults are `fast` math mode and statement-scoped contraction.
     ///
     /// It is the strictest realization the offline driver can select. It is not
-    /// full IEEE-754 binary32 conformance; see [`Self::preserves_subnormals`].
+    /// full IEEE-754 binary32 conformance; see [`Self::preserves_f32_subnormals`].
     #[must_use]
     pub const fn strict_baseline() -> Self {
         Self::new(MathMode::Safe, Fp32Functions::Precise, FpContract::Off)
@@ -446,6 +446,17 @@ impl NumericalRealization {
     /// against this realization gets a definite answer instead of assuming the
     /// strictest flags imply IEEE-754 subnormal behaviour.
     ///
+    /// **The `f32` in the name is load-bearing and is not a spelling of
+    /// "floating-point".** The same hardware, in the same math modes, from
+    /// modules declaring `air.compile.denorms_disable` identically, *preserves*
+    /// subnormals through `f16` arithmetic — finding 21 of the [Apple numerical
+    /// behaviour record](../../../docs/research/apple-targets/numerical-behaviour.md)
+    /// measures it with an execution witness on both dispatchable families.
+    /// There is deliberately no `f16` counterpart here and no dtype-free
+    /// predicate: a caller needing another width's answer must state which
+    /// width, and the driver has no measurement to give it for `bf16` or any
+    /// other unmeasured format.
+    ///
     /// **Measurement.** On an Apple M4 Max under macOS 27.0 (build 26A5388g)
     /// with Metal 32023.883, `x * 1.0f` returns `0x00000000` for the operand
     /// `0x00000001` and `x * 0.5f` returns `0x00000000` for the operand
@@ -457,7 +468,7 @@ impl NumericalRealization {
     /// round trip with no arithmetic returns every subnormal bit pattern
     /// unchanged, so materialization is unaffected.
     #[must_use]
-    pub const fn preserves_subnormals(self) -> bool {
+    pub const fn preserves_f32_subnormals(self) -> bool {
         false
     }
 
@@ -728,13 +739,13 @@ mod tests {
         assert!(strict.preserves_signed_zero());
         assert!(!strict.permits_reassociation());
         assert!(strict.preserves_nan_results());
-        assert!(!strict.preserves_subnormals());
+        assert!(!strict.preserves_f32_subnormals());
 
         for mode in [MathMode::Relaxed, MathMode::Fast] {
             let relaxed = NumericalRealization::new(mode, Fp32Functions::Precise, FpContract::Off);
             assert!(!relaxed.preserves_signed_zero(), "{mode:?}");
             assert!(relaxed.permits_reassociation(), "{mode:?}");
-            assert!(!relaxed.preserves_subnormals(), "{mode:?}");
+            assert!(!relaxed.preserves_f32_subnormals(), "{mode:?}");
         }
         assert!(
             NumericalRealization::new(MathMode::Relaxed, Fp32Functions::Precise, FpContract::Off)

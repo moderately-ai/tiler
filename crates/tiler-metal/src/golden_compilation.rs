@@ -106,8 +106,9 @@ use tiler_metal_aot::input::{
 use crate::emit::emit_translation_unit;
 use crate::record::MetalNumericalRequirement;
 use crate::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
-    MetalSubnormalArithmetic, MetalTargetFacts, MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
+    MetalPlatform, MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
+    MslLanguageVersion,
 };
 
 /// The ambient input that turns an absent toolchain into a failure.
@@ -164,9 +165,17 @@ fn emitter_facts() -> MetalTargetFacts {
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(13, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
-        MetalSubnormalArithmetic::FlushesToZero {
-            zero_sign: MetalFlushedZeroSign::PreservesSign,
-        },
+        MetalSubnormalArithmeticFacts::unmeasured()
+            .stating(
+                MetalFloatArithmeticType::F32,
+                MetalSubnormalArithmetic::FlushesToZero {
+                    zero_sign: MetalFlushedZeroSign::PreservesSign,
+                },
+            )
+            .stating(
+                MetalFloatArithmeticType::F16,
+                MetalSubnormalArithmetic::PreservesSubnormals,
+            ),
         31,
     )
 }

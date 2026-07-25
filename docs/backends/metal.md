@@ -180,6 +180,28 @@ materialization is unaffected; only `f32` *arithmetic* flushes. Stating this as
 a blanket property of the target would be wrong in the direction that matters,
 because a program that only moves subnormals is unaffected by it.
 
+**Measurement — the limit is also `f32` specifically, and the `f32` above is
+therefore load-bearing.** The same GPU, in the same three math modes, on both
+compilation paths and both dispatchable families, *preserves* subnormals through
+`f16` arithmetic: `multiply_two_f16` returns `0400` for `0200`,
+`multiply_half_f16` returns `0200` for `0400`, and `add_smallest_normal_f16`
+returns `0200` for `8200`, each with an execution witness reporting `executed`.
+The emitted modules declare `air.compile.denorms_disable` for both widths
+identically, so nothing readable on the compile side distinguishes them. Finding
+21 of the [Apple numerical behaviour
+record](../research/apple-targets/numerical-behaviour.md) owns the measurement.
+
+**Inference — an unmeasured dtype is `Unknown` and must reject, not default.**
+Two dtypes disagreeing establishes that the flush depends on the dtype and
+establishes nothing about which dtypes flush; `bf16`, `f64`, and every integer
+and quantized format remain unmeasured. A target profile therefore states the
+subnormal behavior once per floating-point arithmetic type, and a type it says
+nothing about is refused at the conformance claim rather than answered from a
+neighbouring type's fact. Reading the `f32` fact for `f16` over-rejects — it
+reports a flush against a value the device carries exactly — and the same
+substitution on the *reference* side, where an evaluation flushes to match a
+device that does not, is what would return a wrong tensor.
+
 **The flush is sign-preserving.** On an Apple M4 Max under macOS 27.0 with
 Metal 32023.883, an emitted `x * 2.0f` returns `0x80000000` for the operand
 `0x80400000`, not `0x00000000`. That is why a flush-accepting contract can be a
@@ -223,12 +245,16 @@ whether a stated contract may be planned for this target at all. The backend's
 translation unit incurs a dimension the target does not honour. Both are kept;
 neither is a second opinion about the target.
 
-**Fact — the Metal subnormal behavior is declared exactly once.**
-`MetalTargetFacts::subnormal_arithmetic` is a required caller-stated fact with
-its measurement recorded on the type, and every arm of the backend's gap rule is
-derived from that single value. A second checkpoint reading one declaration
-cannot diverge from it; two declarations of the same fact could, which is why
-the fact is not restated on the backend side.
+**Fact — the Metal subnormal behavior is declared exactly once per
+floating-point arithmetic type.** `MetalTargetFacts::subnormal_arithmetic` is a
+required caller-stated record holding one behavior per arithmetic type, with the
+measurements recorded on the type, and every arm of the backend's gap rule is
+derived from the single value that record holds for the type the operation is
+performed in. A second checkpoint reading one declaration cannot diverge from
+it; two declarations of the same fact could, which is why the fact is not
+restated on the backend side. One value per type is not two declarations of one
+fact — the measured behaviors differ by type, so a single value would be a
+declaration that is false for one of them.
 
 **Inference — the two checkpoints answer different questions, so collapsing them
 would produce a wrong answer in one direction or the other.** The limit measured

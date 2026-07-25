@@ -21,6 +21,7 @@ use tiler_ir::kernel::{
 };
 
 use crate::record::MetalNumericalGap;
+use crate::target::MetalUnstatedSubnormalArithmetic;
 
 /// The governed operation family whose member has no Metal realization.
 ///
@@ -187,6 +188,23 @@ pub enum MetalEmitError {
         /// The obligation no compiler selection realizes.
         gap: MetalNumericalGap,
     },
+    /// The unit performs arithmetic in a type the target states no subnormal
+    /// fact for.
+    ///
+    /// This is `Unknown`, not a gap: a gap says the target cannot honour the
+    /// obligation, and this says nothing is known about whether it can. The two
+    /// are kept apart because the measured behaviours disagree by arithmetic
+    /// type — Apple `f32` flushes and Apple `f16` preserves — so reading a
+    /// neighbouring type's fact would be a guess, and defaulting to either
+    /// behaviour would either refuse a correct plan or approve an incorrect
+    /// one. It is returned by
+    /// [`MetalTranslationUnit::require_declared_realization`](crate::record::MetalTranslationUnit::require_declared_realization)
+    /// ahead of any gap, because a gap set computed while a fact is missing is
+    /// incomplete and an empty one is therefore not a conformance claim.
+    UnstatedSubnormalArithmetic {
+        /// The arithmetic type no subnormal fact was stated for.
+        unstated: MetalUnstatedSubnormalArithmetic,
+    },
     /// The kernel signature needs more buffer bindings than the target admits.
     BufferBindingLimit {
         /// Bindings the signature requires.
@@ -232,6 +250,9 @@ impl MetalEmitError {
             Self::UnsupportedBarrier { .. } => "unsupported-barrier",
             Self::InvalidCanonicalNan { .. } => "invalid-canonical-nan",
             Self::UnrealizableNumericalObligation { .. } => "unrealizable-numerical-obligation",
+            // Delegated rather than repeated: the reason type owns the
+            // identifier, so the two cannot drift apart.
+            Self::UnstatedSubnormalArithmetic { unstated } => unstated.rule(),
             Self::BufferBindingLimit { .. } => "buffer-binding-limit",
             Self::MalformedKernel { .. } => "malformed-kernel",
             Self::UnresolvedValue => "unresolved-value",
@@ -257,6 +278,8 @@ impl fmt::Display for MetalEmitError {
             Self::UnsupportedBarrier { reason } => write!(f, "{}: {reason}", self.rule()),
             Self::InvalidCanonicalNan { bits } => write!(f, "{}: {bits:#010x}", self.rule()),
             Self::UnrealizableNumericalObligation { gap } => write!(f, "{}: {gap}", self.rule()),
+            // The reason type already renders as `rule: type`.
+            Self::UnstatedSubnormalArithmetic { unstated } => write!(f, "{unstated}"),
             Self::BufferBindingLimit { required, limit } => {
                 write!(f, "{}: {required} of {limit}", self.rule())
             }
