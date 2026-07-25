@@ -5,7 +5,7 @@ status: review
 priority: p0
 dependencies: []
 related: []
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, explain, correctness]
