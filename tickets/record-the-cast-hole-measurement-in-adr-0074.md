@@ -1,7 +1,7 @@
 ---
 id: record-the-cast-hole-measurement-in-adr-0074
 title: Record the cast-hole measurement in ADR 0074
-status: todo
+status: done
 priority: p2
 dependencies: [probe-the-non-exhaustive-discriminant-cast-hole]
 related: [reconcile-adr-records-with-the-widened-numerical-vocabulary, preserve-non-exhaustive-visibility-probe]
@@ -30,3 +30,29 @@ Change the paragraph's leading label from **Inference** to **Measurement** to ma
 **Constraints.** Do not change `decision_status`. Both edits remove the last sentence naming `probe-the-non-exhaustive-discriminant-cast-hole` as owner, so check no other ADR or index still names it as open work — `grep -rn 'probe-the-non-exhaustive-discriminant-cast-hole' docs/` must return nothing after the edit. Run `uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py`.
 
 **Trigger for reconsideration if declined:** none — declining leaves an accepted decision resting on an inference whose measurement is already checked in beside it, which is the exact asymmetry the probe ticket was filed to remove.
+
+## Outcome
+
+Both edits landed in `docs/decisions/0074-use-explicit-public-api-conventions.md` exactly as specified, and both leading labels moved from **Inference** to **Measurement**. `decision_status` is untouched.
+
+### What was verified against the retained evidence rather than transcribed on trust
+
+The ticket is close to mechanical, but every claim in its replacement text was checked against the fixtures and the compiler-produced diagnostics before it was written into an accepted record.
+
+`defining/src/lib.rs` carries `#[non_exhaustive] pub enum Growing { A, B }`, so the enum the two pairs use really is marked. `pass/cross_crate_discriminant_cast.rs` writes `value as u8` on it from `non-exhaustive-consuming`, and asserts the tags `0` and `1`; `fail/cross_crate_discriminant_tag_match.rs` writes `Growing::A => 0, Growing::B => 1`, so the two genuinely derive the same tag for the same variant rather than merely being described as doing so. The retained `.stderr` beside the failing half is `error[E0004]: non-exhaustive patterns: '_' not covered`, with the note that `Growing` is marked non-exhaustive.
+
+The second pair holds up the same way. `pass/cast_ignores_denied_omitted_patterns.rs` carries `#![feature(non_exhaustive_omitted_patterns_lint)]` and `#![deny(non_exhaustive_omitted_patterns)]` at crate level and still writes the cast. Its control contains both constructs — the cast at line 24 and a wildcard-carrying match at line 28 — and the retained diagnostic reports exactly one error, on the match, naming the crate-level attribute at line 19 as the level that fired and saying nothing about line 24. The results record makes that a checked property rather than an observation: the claim's `forbidden_fragments` is `["value as u8"]`.
+
+`spikes/extensions/non-exhaustive-visibility/results/2026-07-24-macos-arm64.json` carries all four new claims under an `amended` block dated 2026-07-25, and its toolchain row is `rustc 1.99.0-nightly (eff8269f7 2026-07-18)`, commit `eff8269f797067c30555e77f160ec84c0ed15cd9`, `aarch64-apple-darwin`, macOS 27.0 (26A5388g), channel `nightly-2026-07-19` — which is byte-for-byte the channel `rust-toolchain.toml` pins, checked rather than assumed.
+
+The one sentence in the replacement text that asserts a *mechanism* rather than a value was verified at its source, because it is the sentence a future reader will rely on. `verify_visibility_evidence` in `spikes/extensions/run.py` collects the channels the retained records name and raises when the pinned channel is not among them, telling the reader to re-run the probe and re-record before reusing the conclusion; a self-test deliberately calls it with a moved pin and fails if that succeeds. So "the record's fail-closed channel comparison forces a fresh run at the next pin migration" is accurate as written.
+
+Strongest of all: the gate run for this ticket compiled the spike on the pin. `spikes/extensions/non-exhaustive-visibility` is in `GATED_SPIKE_WORKSPACES`, so both `pass/` fixtures compiled and both `fail/` fixtures reproduced their retained diagnostics byte for byte during `check_repository.py`. The measurement is not merely checked in beside the ADR; it was re-established by the same run that validated the edit.
+
+### The check the ticket required
+
+`grep -rn 'probe-the-non-exhaustive-discriminant-cast-hole' docs/` returns nothing after the edit, so no contract or index still names the probe as open work. Both edits removed the last sentence that did.
+
+### Gate
+
+`uv run --locked python scripts/docs.py render` passed (183 records) with no catalog line regenerated, since no frontmatter changed. `uv run --locked python scripts/check_repository.py` passed complete, including the Rust sub-gate and the spike's `trybuild` cases. `git diff --check` clean and `tkt lint` reports no problems.
