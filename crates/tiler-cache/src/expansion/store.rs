@@ -17,6 +17,7 @@ use super::report::{
     CacheOperation, CacheReport, CacheUnavailable, EntryRejection, MissReason, PublicationRefusal,
     QuarantineOutcome,
 };
+use super::subject::ComposedSubject;
 
 /// Attempts to find an unused temporary path before giving up.
 ///
@@ -80,12 +81,17 @@ impl CachedEntry {
         &self.key
     }
 
-    /// Returns the canonical compilation subject this entry was published for.
+    /// Returns the composed subject bytes this entry was published under.
     ///
     /// Carried so an entry can say what it claims to be. A reader has already
     /// proved this is the subject the key derives from — that check runs on
     /// every hit — so these are the exact bytes the producer named, not a
     /// separately recorded description of them that could disagree.
+    ///
+    /// Bytes rather than a [`ComposedSubject`], because a subject read off disk
+    /// is untrusted: returning the composed type would assert this crate had
+    /// re-derived its structure, and the re-derivation that actually ran hashed
+    /// these bytes without parsing them.
     #[must_use]
     pub fn subject(&self) -> &[u8] {
         &self.subject
@@ -257,14 +263,18 @@ impl ExpansionCache {
         self.layout.root()
     }
 
-    /// Reads the entry for one compilation subject, validating it completely.
+    /// Reads the entry for one composed subject, validating it completely.
     ///
     /// Lock-free. A reader takes no lock because a lock would not make unvalidated
     /// bytes correct and validation does not need one: the reader holds an open
     /// descriptor, and on the Unix and Darwin hosts this crate targets, an entry
     /// unlinked after that open stays readable through the descriptor.
+    ///
+    /// The parameter is a [`ComposedSubject`] and not a byte run, which is what
+    /// makes under-keying unrepresentable here rather than merely documented: a
+    /// caller cannot reach this with the backend compilation subject alone.
     #[must_use]
-    pub fn lookup(&self, subject: &[u8]) -> Lookup {
+    pub fn lookup(&self, subject: &ComposedSubject) -> Lookup {
         let key = CacheKey::derive(subject);
         match self.read_entry(&key, &artifact_validator) {
             Ok(entry) => Lookup::Hit(Box::new(CachedEntry {
@@ -289,33 +299,35 @@ impl ExpansionCache {
     /// [`Resolution::Uncached`] carrying the reason.
     pub fn get_or_publish<E>(
         &self,
-        subject: &[u8],
+        subject: &ComposedSubject,
         build: impl FnOnce() -> Result<Vec<u8>, E>,
     ) -> Result<Resolution, PublishFailure<E>> {
-        Ok(match self.resolve(subject, build, &artifact_validator)? {
-            ProtocolOutcome::Hit {
-                entry,
-                report,
-                published,
-            } => {
-                let entry = CachedEntry {
-                    key: entry.key,
-                    subject: entry.subject,
+        Ok(
+            match self.resolve(subject.as_bytes(), build, &artifact_validator)? {
+                ProtocolOutcome::Hit {
+                    entry,
+                    report,
+                    published,
+                } => {
+                    let entry = CachedEntry {
+                        key: entry.key,
+                        subject: entry.subject,
+                        envelope: entry.envelope,
+                        artifact: entry.payload,
+                    };
+                    if published {
+                        Resolution::Published { entry, report }
+                    } else {
+                        Resolution::Hit { entry, report }
+                    }
+                }
+                ProtocolOutcome::Uncached { entry, report } => Resolution::Uncached {
                     envelope: entry.envelope,
                     artifact: entry.payload,
-                };
-                if published {
-                    Resolution::Published { entry, report }
-                } else {
-                    Resolution::Hit { entry, report }
-                }
-            }
-            ProtocolOutcome::Uncached { entry, report } => Resolution::Uncached {
-                envelope: entry.envelope,
-                artifact: entry.payload,
-                report,
+                    report,
+                },
             },
-        })
+        )
     }
 
     /// Removes the entry for one key, holding that key's lock while doing so.
@@ -427,7 +439,7 @@ impl ExpansionCache {
         build: impl FnOnce() -> Result<Vec<u8>, E>,
         validate: &dyn Fn(&[u8]) -> Result<T, ArtifactCodecFailure>,
     ) -> Result<ProtocolOutcome<T>, PublishFailure<E>> {
-        let key = CacheKey::derive(subject);
+        let key = CacheKey::derive_bytes(subject);
         let mut report = CacheReport::default();
 
         match self.read_entry(&key, validate) {

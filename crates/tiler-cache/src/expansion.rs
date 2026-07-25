@@ -7,10 +7,13 @@
 //!
 //! **Complete cache identity.** A key that omits an input does not make a cache
 //! slower; it makes a validated hit return an artifact built from different
-//! inputs. [`CacheKey::derive`] digests a canonical *subject* the producer
-//! supplies, under the governed algorithm and this crate's own domain. What this
-//! crate can prove about that subject is stated exactly under [`CacheKey`], and
-//! what it cannot prove is stated there too rather than assumed.
+//! inputs. [`CacheKey::derive`] digests a [`ComposedSubject`] under the governed
+//! algorithm and this crate's own domain, and a composed subject is
+//! constructable only by naming every facet of the envelope a bundle carries —
+//! the backend compilations *and* the artifact program wrapped around them. What
+//! this crate can prove about that subject is stated exactly under [`CacheKey`]
+//! and [`SubjectFacets`], and what it cannot prove is stated there too rather
+//! than assumed.
 //!
 //! **Validation on every hit.** [`ExpansionCache::lookup`] has no fast path.
 //! Every read decodes the whole bundle frame — magic, schema, algorithm,
@@ -70,6 +73,7 @@ mod limits;
 mod lock;
 mod report;
 mod store;
+mod subject;
 
 #[cfg(test)]
 mod tests;
@@ -86,3 +90,4 @@ pub use store::{
     CachedEntry, Durability, Eviction, ExpansionCache, Lookup, PublishFailure, Resolution,
     SweepReport,
 };
+pub use subject::{ComposedSubject, SubjectFacet, SubjectFacets, SubjectRefusal};

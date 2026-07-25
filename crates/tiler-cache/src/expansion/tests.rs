@@ -42,6 +42,7 @@ use super::limits::Limits;
 use super::lock::KeyLock;
 use super::report::{EntryRejection, MissReason, QuarantineOutcome};
 use super::store::{Durability, ExpansionCache, Lookup, ProtocolOutcome, PublishFailure};
+use super::subject::{ComposedSubject, SubjectFacet, SubjectFacets, SubjectRefusal};
 
 // -------------------------------------------------------------------------
 // Fixtures
@@ -97,6 +98,26 @@ fn cache(scratch: &Scratch) -> ExpansionCache {
     ExpansionCache::open(scratch.root().join("cache"))
 }
 
+/// Composes one subject over the given facet bytes, expecting it to be valid.
+fn composed(backend_compilations: &[&[u8]], artifact_program: &[u8]) -> ComposedSubject {
+    ComposedSubject::compose(&SubjectFacets {
+        backend_compilations,
+        artifact_program,
+    })
+    .expect("the fixture names every facet")
+}
+
+/// Attempts a composition, for the cases that must be refused.
+fn compose(
+    backend_compilations: &[&[u8]],
+    artifact_program: &[u8],
+) -> Result<ComposedSubject, SubjectRefusal> {
+    ComposedSubject::compose(&SubjectFacets {
+        backend_compilations,
+        artifact_program,
+    })
+}
+
 /// Publishes one subject through the private protocol and returns the key.
 fn publish(cache: &ExpansionCache, subject: &[u8], envelope: &[u8]) -> CacheKey {
     let outcome = cache
@@ -117,22 +138,226 @@ fn publish(cache: &ExpansionCache, subject: &[u8], envelope: &[u8]) -> CacheKey 
 }
 
 // -------------------------------------------------------------------------
+// Composing the subject
+// -------------------------------------------------------------------------
+
+/// Two artifacts agreeing on every compilation and differing only in their plan
+/// portfolio are two keys.
+///
+/// This is the failure the composed subject exists to remove, and it is stated
+/// as the two halves that make it a failure rather than a coincidence. The pair
+/// shares one backend compilation subject byte for byte, so a subject naming only
+/// the compilation — which is all `tiler-metal-aot` can name — would file them
+/// under one key and serve either artifact for the other. The second assertion is
+/// what stops the first from passing for the wrong reason: identical facets still
+/// produce one key, so the difference above comes from the portfolio and not from
+/// composition being unstable.
+#[test]
+fn two_artifacts_differing_only_in_plan_portfolio_key_differently() {
+    let compilation: &[u8] = b"tiler.metal-aot.compilation-identity.v1\0...one exact compilation";
+    let one_variant = composed(&[compilation], b"portfolio: one plan variant");
+    let two_variants = composed(&[compilation], b"portfolio: two plan variants");
+
+    assert_ne!(
+        one_variant.as_bytes(),
+        two_variants.as_bytes(),
+        "the plan portfolio must reach the composed subject",
+    );
+    assert_ne!(
+        CacheKey::derive(&one_variant),
+        CacheKey::derive(&two_variants),
+        "two plan portfolios over one compilation must not share a cache entry",
+    );
+    assert_eq!(
+        CacheKey::derive(&one_variant),
+        CacheKey::derive(&composed(&[compilation], b"portfolio: one plan variant")),
+        "identical facets must still name one entry",
+    );
+}
+
+/// A composed subject opens with its versioned domain tag and carries content
+/// after it.
+///
+/// The tag is what makes a bare producer subject unable to name an entry: a
+/// caller that reached past the composer and handed a raw compilation subject to
+/// the key derivation could not produce bytes opening this way, so the two
+/// spellings can never collide.
+#[test]
+fn the_composed_subject_is_domain_separated() {
+    let subject = composed(&[b"compilation"], b"program");
+    assert!(
+        subject
+            .as_bytes()
+            .starts_with(super::subject::COMPOSED_SUBJECT_DOMAIN)
+    );
+    assert!(
+        subject.as_bytes().len() > super::subject::COMPOSED_SUBJECT_DOMAIN.len(),
+        "the domain tag must precede content rather than be the whole subject",
+    );
+    assert_ne!(
+        subject.as_bytes(),
+        b"compilation",
+        "a facet's own bytes are never the composed subject",
+    );
+}
+
+/// Composing the same facets twice yields the same bytes.
+///
+/// The negative tests below only mean something paired with this one: they show
+/// facets *move* the bytes, and this shows nothing else does.
+#[test]
+fn the_composed_subject_is_a_function_of_its_facets_alone() {
+    assert_eq!(
+        composed(&[b"compilation"], b"program"),
+        composed(&[b"compilation"], b"program"),
+    );
+}
+
+/// Every facet independently moves the composed subject.
+///
+/// The `match` is exhaustive with no wildcard, so a facet added to
+/// [`SubjectFacet`] fails to compile here until it is given an alteration —
+/// which is what keeps this from silently covering less than the whole facet set.
+#[test]
+fn every_facet_moves_the_composed_subject() {
+    let baseline = composed(&[b"compilation"], b"program");
+    for facet in [
+        SubjectFacet::BackendCompilations,
+        SubjectFacet::ArtifactProgram,
+    ] {
+        let altered = match facet {
+            SubjectFacet::BackendCompilations => composed(&[b"other-compilation"], b"program"),
+            SubjectFacet::ArtifactProgram => composed(&[b"compilation"], b"other-program"),
+        };
+        assert_ne!(baseline, altered, "{facet} must reach the composed subject");
+    }
+}
+
+/// Adjacent runs cannot be re-split into a different subject.
+///
+/// Two ways to try it, because the frame has two joins to defend. Within a facet,
+/// a longer run followed by a shorter one must not concatenate to the same bytes
+/// as the reverse. Across facets, moving a run from the compilations into the
+/// program subject must not reproduce the original — otherwise a two-payload
+/// artifact and a one-payload artifact with a longer program could share a key.
+#[test]
+fn facet_runs_cannot_be_re_split_into_another_subject() {
+    assert_ne!(composed(&[b"ab"], b"cd"), composed(&[b"a"], b"bcd"));
+    assert_ne!(composed(&[b"a", b"b"], b"c"), composed(&[b"a"], b"bc"));
+}
+
+/// The compilation sequence is ordered and counted, not a set.
+///
+/// Payload order is part of the envelope's bytes, so two artifacts whose payload
+/// descriptors are permutations of one another are different artifacts; and a
+/// second payload identical to the first is a second payload, not a duplicate to
+/// fold away.
+#[test]
+fn the_backend_compilation_sequence_is_ordered_and_counted() {
+    assert_ne!(composed(&[b"a", b"b"], b"p"), composed(&[b"b", b"a"], b"p"));
+    assert_ne!(composed(&[b"a"], b"p"), composed(&[b"a", b"a"], b"p"));
+}
+
+/// A facet a caller could not fill is refused rather than composed.
+///
+/// This is the mechanism that turns the old silent under-key into a loud stop.
+/// Every canonical subject in this workspace opens with its own versioned domain
+/// tag, so no authority produces zero bytes; an empty run is a caller that had
+/// nothing to supply, and a subject composed from one would name less than the
+/// envelope it goes on to file.
+#[test]
+fn a_facet_a_caller_could_not_fill_is_refused() {
+    assert_eq!(
+        compose(&[], b"program"),
+        Err(SubjectRefusal::NoRuns {
+            facet: SubjectFacet::BackendCompilations,
+        }),
+    );
+    assert_eq!(
+        compose(&[b""], b"program"),
+        Err(SubjectRefusal::EmptyRun {
+            facet: SubjectFacet::BackendCompilations,
+            index: 0,
+        }),
+    );
+    assert_eq!(
+        compose(&[b"compilation", b""], b"program"),
+        Err(SubjectRefusal::EmptyRun {
+            facet: SubjectFacet::BackendCompilations,
+            index: 1,
+        }),
+    );
+    assert_eq!(
+        compose(&[b"compilation"], b""),
+        Err(SubjectRefusal::EmptyRun {
+            facet: SubjectFacet::ArtifactProgram,
+            index: 0,
+        }),
+    );
+}
+
+/// A refusal names the facet that was left unfilled.
+///
+/// A caller that cannot see *which* facet it failed to supply has to guess, and
+/// the whole value of refusing is that the omission becomes legible.
+#[test]
+fn a_subject_refusal_names_its_facet() {
+    let rendered = compose(&[], b"program")
+        .expect_err("an unfilled facet is refused")
+        .to_string();
+    assert!(rendered.contains("backend-compilations"), "{rendered}");
+}
+
+/// No governed digest domain in this crate is a prefix of another.
+///
+/// [`DigestAlgorithm::digest`] hashes `domain || body`, which distinguishes two
+/// subjects only when no admitted domain prefixes another — otherwise a longer
+/// domain and a shorter one with leading body bytes would collide, and a cache
+/// key would equal a bundle section digest over related bytes. `tiler-artifact`
+/// checks the same property over its own three domains; this crate owns two more
+/// and the property is global to the one algorithm that hashes them all.
+#[test]
+fn no_governed_cache_domain_is_a_prefix_of_another() {
+    let domains = [
+        super::key::CACHE_KEY_DOMAIN,
+        super::bundle::SECTION_DIGEST_DOMAIN,
+    ];
+    for (index, left) in domains.iter().enumerate() {
+        for right in domains.iter().skip(index + 1) {
+            assert!(
+                !left.starts_with(right) && !right.starts_with(left),
+                "one governed cache digest domain prefixes another",
+            );
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
 // Complete cache identity
 // -------------------------------------------------------------------------
 
 /// The key is a function of the subject bytes alone.
 #[test]
 fn the_key_is_a_function_of_the_subject() {
-    assert_eq!(CacheKey::derive(b"subject"), CacheKey::derive(b"subject"));
-    assert_ne!(CacheKey::derive(b"subject"), CacheKey::derive(b"subjecu"));
-    assert_ne!(CacheKey::derive(b"subject"), CacheKey::derive(b"subject "));
-    assert_ne!(CacheKey::derive(b""), CacheKey::derive(b"\0"));
+    assert_eq!(
+        CacheKey::derive_bytes(b"subject"),
+        CacheKey::derive_bytes(b"subject")
+    );
+    assert_ne!(
+        CacheKey::derive_bytes(b"subject"),
+        CacheKey::derive_bytes(b"subjecu")
+    );
+    assert_ne!(
+        CacheKey::derive_bytes(b"subject"),
+        CacheKey::derive_bytes(b"subject ")
+    );
+    assert_ne!(CacheKey::derive_bytes(b""), CacheKey::derive_bytes(b"\0"));
 }
 
 /// A key renders as exactly the fixed width the namespace parses.
 #[test]
 fn a_key_renders_at_the_parsed_width() {
-    let label = CacheKey::derive(b"subject").label();
+    let label = CacheKey::derive_bytes(b"subject").label();
     assert_eq!(label.len(), KEY_LABEL_BYTES);
     assert!(
         label.bytes().all(|byte| byte.is_ascii_hexdigit()),
@@ -153,7 +378,7 @@ fn a_key_renders_at_the_parsed_width() {
 fn the_key_is_domain_separated_from_a_bare_digest() {
     let subject = b"subject";
     let bare = DigestAlgorithm::GOVERNED.digest(b"", subject);
-    assert_ne!(CacheKey::derive(subject).label(), bare.label());
+    assert_ne!(CacheKey::derive_bytes(subject).label(), bare.label());
 }
 
 // -------------------------------------------------------------------------
@@ -165,7 +390,7 @@ fn the_key_is_domain_separated_from_a_bare_digest() {
 fn an_entry_path_round_trips_its_key() {
     let scratch = Scratch::new("path-round-trip");
     let cache = cache(&scratch);
-    let key = CacheKey::derive(b"subject");
+    let key = CacheKey::derive_bytes(b"subject");
     assert_eq!(
         key_of_entry_path(&cache.entry_path(&key)).expect("a constructed entry path parses"),
         key,
@@ -180,7 +405,7 @@ fn an_entry_path_round_trips_its_key() {
 /// would then return an artifact built from different inputs.
 #[test]
 fn a_key_of_the_wrong_width_is_never_fitted() {
-    let label = CacheKey::derive(b"subject").label();
+    let label = CacheKey::derive_bytes(b"subject").label();
     for text in [&label[..KEY_LABEL_BYTES - 1], &format!("{label}0")[..]] {
         assert_eq!(
             CacheKey::parse_label(text),
@@ -196,7 +421,7 @@ fn a_key_of_the_wrong_width_is_never_fitted() {
 /// two paths and the per-key lock at one of them would not protect the other.
 #[test]
 fn uppercase_hexadecimal_is_refused_rather_than_folded() {
-    let label = CacheKey::derive(b"subject").label();
+    let label = CacheKey::derive_bytes(b"subject").label();
     let upper = label.to_uppercase();
     let position = label
         .bytes()
@@ -214,7 +439,7 @@ fn uppercase_hexadecimal_is_refused_rather_than_folded() {
 /// A non-hexadecimal byte is refused, naming its position.
 #[test]
 fn a_non_hexadecimal_byte_is_refused_by_position() {
-    let mut label = CacheKey::derive(b"subject").label();
+    let mut label = CacheKey::derive_bytes(b"subject").label();
     label.replace_range(7..8, "z");
     assert_eq!(
         CacheKey::parse_label(&label),
@@ -228,7 +453,7 @@ fn a_non_hexadecimal_byte_is_refused_by_position() {
 /// An entry under the wrong shard is refused as misplaced.
 #[test]
 fn an_entry_under_the_wrong_shard_is_misplaced() {
-    let label = CacheKey::derive(b"subject").label();
+    let label = CacheKey::derive_bytes(b"subject").label();
     let wrong = if label.starts_with("00") { "11" } else { "00" };
     let path = Path::new("/cache/v1/entries")
         .join(wrong)
@@ -245,7 +470,7 @@ fn an_entry_under_the_wrong_shard_is_misplaced() {
 /// A file that is not a bundle is refused on its extension.
 #[test]
 fn a_non_bundle_file_name_is_refused() {
-    let label = CacheKey::derive(b"subject").label();
+    let label = CacheKey::derive_bytes(b"subject").label();
     let path = Path::new("/cache/v1/entries")
         .join(&label[..2])
         .join(format!("{label}.metallib"));
@@ -281,13 +506,13 @@ fn a_bundle_round_trips() {
 #[test]
 fn the_encoder_derives_the_key_from_the_subject() {
     let (key, _) = encoded(b"subject", b"envelope");
-    assert_eq!(key, CacheKey::derive(b"subject"));
+    assert_eq!(key, CacheKey::derive_bytes(b"subject"));
 }
 
 /// Foreign bytes are refused on the magic, before anything else is read.
 #[test]
 fn foreign_bytes_are_refused_on_the_magic() {
-    let key = CacheKey::derive(b"subject");
+    let key = CacheKey::derive_bytes(b"subject");
     let bytes = vec![0x5a_u8; 256];
     assert_eq!(decode_default(&bytes, &key), Err(BundleRejection::Magic));
 }
@@ -295,7 +520,7 @@ fn foreign_bytes_are_refused_on_the_magic() {
 /// A short byte run is refused as truncated rather than indexed into.
 #[test]
 fn a_short_byte_run_is_refused_as_truncated() {
-    let key = CacheKey::derive(b"subject");
+    let key = CacheKey::derive_bytes(b"subject");
     assert!(matches!(
         decode_default(&[], &key),
         Err(BundleRejection::Truncated { found: 0, .. }),
@@ -315,7 +540,7 @@ fn a_short_byte_run_is_refused_as_truncated() {
 #[test]
 fn a_bundle_is_refused_for_a_key_it_was_not_published_under() {
     let (key, bytes) = encoded(b"subject", b"envelope");
-    let other = CacheKey::derive(b"other-subject");
+    let other = CacheKey::derive_bytes(b"other-subject");
     assert_eq!(
         decode_default(&bytes, &other),
         Err(BundleRejection::KeyMismatch {
@@ -416,7 +641,7 @@ fn a_resealed_forgery_is_refused_by_the_key_derivation() {
         decode_default(&spliced, &key),
         Err(BundleRejection::KeyNotDerivedFromSubject {
             embedded: key.label(),
-            derived: CacheKey::derive(b"subject-b").label(),
+            derived: CacheKey::derive_bytes(b"subject-b").label(),
         }),
     );
 }
@@ -490,9 +715,14 @@ fn a_payload_rejection_is_a_typed_miss() {
 fn the_public_api_validates_the_payload_as_an_artifact() {
     let scratch = Scratch::new("public-validator");
     let cache = cache(&scratch);
-    publish(&cache, b"subject", b"not an artifact envelope at all");
+    let subject = composed(&[b"compilation"], b"program");
+    publish(
+        &cache,
+        subject.as_bytes(),
+        b"not an artifact envelope at all",
+    );
 
-    let Lookup::Miss(reason) = cache.lookup(b"subject") else {
+    let Lookup::Miss(reason) = cache.lookup(&subject) else {
         panic!("a payload that is not an artifact is not a hit");
     };
     assert!(
@@ -540,7 +770,7 @@ fn an_absent_entry_is_distinguishable_from_a_rejected_one() {
     let scratch = Scratch::new("absent");
     let cache = cache(&scratch);
     let reason = cache
-        .read_entry(&CacheKey::derive(b"subject"), &any_payload)
+        .read_entry(&CacheKey::derive_bytes(b"subject"), &any_payload)
         .expect_err("nothing is published");
     assert!(matches!(reason, MissReason::Absent), "{reason}");
 }
@@ -748,7 +978,7 @@ fn the_quarantine_bound_is_reported_when_it_discards() {
 fn one_key_lock_excludes_a_second_holder() {
     let scratch = Scratch::new("lock-exclusion");
     let cache = cache(&scratch);
-    let key = CacheKey::derive(b"subject");
+    let key = CacheKey::derive_bytes(b"subject");
     cache
         .prepare_directories(&key)
         .expect("the namespace is creatable");
@@ -782,7 +1012,7 @@ fn one_key_lock_excludes_a_second_holder() {
 fn a_waiter_rechecks_after_the_lock_and_does_not_rebuild() {
     let scratch = Scratch::new("post-lock-recheck");
     let cache = cache(&scratch);
-    let key = CacheKey::derive(b"subject");
+    let key = CacheKey::derive_bytes(b"subject");
     cache
         .prepare_directories(&key)
         .expect("the namespace is creatable");
@@ -905,7 +1135,7 @@ fn concurrent_callers_for_distinct_keys_do_not_collide() {
                     panic!("every distinct key publishes");
                 };
                 assert_eq!(entry.envelope, envelope.as_bytes());
-                assert_eq!(entry.key, CacheKey::derive(subject.as_bytes()));
+                assert_eq!(entry.key, CacheKey::derive_bytes(subject.as_bytes()));
             })
         })
         .collect();
@@ -958,7 +1188,9 @@ fn a_build_failure_is_not_absorbed_by_the_cache() {
         .expect_err("a build failure is an error");
     assert!(matches!(failure, PublishFailure::Build(_)), "{failure:?}");
     assert!(
-        !cache.entry_path(&CacheKey::derive(b"subject")).exists(),
+        !cache
+            .entry_path(&CacheKey::derive_bytes(b"subject"))
+            .exists(),
         "a failed build publishes nothing",
     );
 }
@@ -968,8 +1200,9 @@ fn a_build_failure_is_not_absorbed_by_the_cache() {
 fn an_invalid_produced_artifact_is_not_absorbed_by_the_cache() {
     let scratch = Scratch::new("invalid-artifact");
     let cache = cache(&scratch);
+    let subject = composed(&[b"compilation"], b"program");
     let failure = cache
-        .get_or_publish(b"subject", || {
+        .get_or_publish(&subject, || {
             Ok::<_, String>(b"not an artifact envelope".to_vec())
         })
         .expect_err("bytes that are not an artifact are an error");
@@ -978,7 +1211,7 @@ fn an_invalid_produced_artifact_is_not_absorbed_by_the_cache() {
         "{failure:?}"
     );
     assert!(
-        !cache.entry_path(&CacheKey::derive(b"subject")).exists(),
+        !cache.entry_path(&CacheKey::derive(&subject)).exists(),
         "an invalid artifact publishes nothing",
     );
 }
@@ -1018,7 +1251,7 @@ fn eviction_removes_the_entry_and_retains_the_lock_file() {
 fn a_young_temporary_is_retained_by_the_sweep() {
     let scratch = Scratch::new("sweep-young");
     let cache = cache(&scratch);
-    let key = CacheKey::derive(b"subject");
+    let key = CacheKey::derive_bytes(b"subject");
     cache
         .prepare_directories(&key)
         .expect("the namespace is creatable");
@@ -1043,7 +1276,7 @@ fn an_aged_temporary_is_swept() {
         temporary_grace: Duration::ZERO,
         ..Limits::default()
     });
-    let key = CacheKey::derive(b"subject");
+    let key = CacheKey::derive_bytes(b"subject");
     cache
         .prepare_directories(&key)
         .expect("the namespace is creatable");

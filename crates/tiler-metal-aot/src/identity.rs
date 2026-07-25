@@ -7,6 +7,24 @@
 //! module is the driver's half of that key — the canonical subject naming every
 //! input that determines the `metallib` bytes a compilation produces.
 //!
+//! # "Complete" of the compilation, not of the artifact
+//!
+//! Read the first line exactly: this subject is complete with respect to the
+//! *compilation* and not with respect to the *artifact*. A cache bundle carries a
+//! whole artifact envelope — the plan portfolio, ABI bindings, routing, declared
+//! target requirements, and selected providers wrapped around the compiled object
+//! — and these bytes say nothing about any of that. Two artifacts agreeing on
+//! source, flags, and toolchain and differing in their plan portfolio produce one
+//! subject here, which is why this is a *facet* of a cache key and never a cache
+//! key on its own.
+//!
+//! `tiler_cache::expansion::ComposedSubject` is where the facets are joined. It
+//! **wraps** these bytes rather than restating them: they appear unaltered as one
+//! run of its backend-compilations facet, so the evidence tag encoded below
+//! travels with them and the `SameHost` reuse bound survives composition
+//! untouched. Nothing here needs to know that, and this crate acquires no
+//! dependency to say it; the note exists so a reader of *these* bytes does not
+//! mistake them for the whole key.
 //! # It is bytes, not a digest, for the reason `family.rs` gives
 //!
 //! This crate's dependency closure is empty by decision (ADR 0077 item 2), so
@@ -22,11 +40,10 @@
 //!
 //! It is the key subject and nothing else. It holds no cache root, no
 //! namespace, no lock, no bundle framing, and no publication step. Those belong
-//! with whichever component owns the expansion cache, and at the base commit of
-//! this module the governed records do not agree on which component that is —
-//! `tickets/decide-the-expansion-cache-owner-and-digest-authority.md` carries
-//! the conflict and the evidence. Emitting the key subject here is independent
-//! of that decision, because the subject is a fact about *this crate's* inputs
+//! to `tiler-cache`, which ADR 0082 admitted as the expansion cache owner on
+//! Tom's decision of 2026-07-25, keeping this crate's dependency closure empty
+//! and ADR 0077 item 1 standing. Emitting the key subject here is independent of
+//! that decision, because the subject is a fact about *this crate's* inputs
 //! whichever component consumes it.
 //!
 //! # The evidence class is the load-bearing field
@@ -42,7 +59,7 @@
 
 #![allow(
     dead_code,
-    reason = "the compilation key subject is landed ahead of its consumer (ADR 0074 convention 7). It reserves the complete-compilation-key half of ADR 0050, whose first caller is the expansion cache. That component has no accepted owner: `docs/architecture.md`'s ownership table assigns the cross-process content cache to this crate while deciding this crate's dependency closure is empty, and proposed ADR 0077 item 1 says this crate does not implement the cache at all. `decide-the-expansion-cache-owner-and-digest-authority` owns closing that, and `implement-the-expansion-cache-protocol` owns the consumer."
+    reason = "the compilation key subject is landed ahead of its consumer (ADR 0074 convention 7). It reserves the compilation facet of ADR 0050's complete key, and the component that consumes it now exists: `tiler-cache` composes that facet with the artifact program's into one canonical byte run. What does not exist is the caller holding both crates, because this crate is reached from the frontend proc-macro layer, whose axis `record-that-the-frontend-axis-is-review-gated` records as gated on Tom's review of a public boundary."
 )]
 
 use core::fmt;

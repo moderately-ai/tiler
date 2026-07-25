@@ -68,10 +68,19 @@ component that implements this record — `tiler-cache` — after the previously
 assigned owner proved unable to reach the governed digest this decision requires
 it to validate against. `implementation_status` is `partial` rather than
 `complete`: the namespace, locking, bundle, validation, publication, replacement,
-and reporting are implemented and tested, and three things this record implies
-are not. The complete compilation key is not yet composed as one canonical byte
-run (`compose-the-complete-expansion-cache-subject`), the cross-process crash and
-race behaviour is exercised only against the spike's miniature frame
+reporting, and the composition of the complete key are implemented and tested,
+and two things this record implies are not. The cross-process crash and race
+behaviour is exercised only against the spike's miniature frame
 (`port-the-cache-harness-to-the-production-bundle`), and the durability default
 is this record's recommendation rather than a measured one
 (`measure-expansion-cache-durability-policies`).
+
+The complete key is now composed as one canonical byte run:
+`tiler_cache::expansion::ComposedSubject` frames the backend compilations and the
+artifact program wrapped around them as separately tagged, counted,
+length-prefixed facets, and `lookup` and `get_or_publish` accept nothing else, so
+under-keying is unrepresentable rather than merely documented. One facet has no
+producer — an artifact-program subject derivable *before* compilation, which
+`CanonicalArtifactProgramIdentity` is not, because it needs the payload digest.
+The composer refuses an empty facet, so the cache is composable and not yet
+usable, and `derive-the-pre-compilation-artifact-program-subject` closes that.
