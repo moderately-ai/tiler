@@ -21,6 +21,7 @@ tiler-ir.workspace = true
 tiler-metal.workspace = true
 tiler-metal-aot.workspace = true
 tiler-reference.workspace = true
+tiler-runtime.workspace = true
 
 # This crate does not inherit `[workspace.lints]`, and the difference is exactly
 # one lint. The workspace sets `unsafe_code = "forbid"`, which cannot be relaxed

@@ -82,8 +82,14 @@ pub fn carried_payload(
     let mut entries = Vec::with_capacity(unit.entry_points().len());
     for entry in unit.entry_points() {
         entries.push(PayloadEntryMapping {
-            entry_key: BackendEntryKey::from_bytes(entry.kernel_identity().as_bytes())
-                .map_err(|_| "the kernel identity is not a valid backend entry key".to_owned())?,
+            entry_key: BackendEntryKey::from_bytes(entry.kernel_identity().as_bytes()).map_err(
+                |cause| {
+                    format!(
+                        "the {}-byte kernel identity is not a valid backend entry key: {cause:?}",
+                        entry.kernel_identity().as_bytes().len(),
+                    )
+                },
+            )?,
             symbol: entry.symbol().to_owned(),
             transports: entry
                 .buffers()

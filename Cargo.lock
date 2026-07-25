@@ -349,6 +349,7 @@ dependencies = [
  "tiler-metal",
  "tiler-metal-aot",
  "tiler-reference",
+ "tiler-runtime",
 ]
 
 [[package]]

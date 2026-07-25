@@ -19,12 +19,41 @@
 //! It proves nothing about execution — no device is created, no kernel is
 //! dispatched, and no output bits are compared. An artifact that assembles,
 //! encodes, and re-validates from its own bytes is not an artifact that has run.
+//!
+//! # Usage, and why `--out` is required
+//!
+//! ```text
+//! cargo run -p tiler-prototype-compile -- --out <path>
+//! ```
+//!
+//! It writes two files: `<path>`, the canonical envelope bytes, and
+//! `<path>.identity`, the artifact identity this producer derived from the
+//! program it built. `prototypes/serial-sum-run` consumes both, and that pair is
+//! the whole interface between the two halves of this vertical slice — no
+//! module, type, or Cargo edge crosses it.
+//!
+//! The path is required rather than defaulted because a producer run that emits
+//! nothing produces nothing. It used to take no arguments and print a summary,
+//! which was honest while the envelope had no consumer and would now be a run
+//! that looks successful and leaves the runner with no artifact.
+//!
+//! # Why the identity travels beside the envelope rather than inside it
+//!
+//! `DecodedProgram::preflight` binds a consumer's *expected* identity against the
+//! one re-derived from the bytes. An identity read out of those same bytes is a
+//! tautology, so the expected one has to come from whatever named the artifact.
+//! Here that is this producer, which derives it from the `VerifiedArtifactProgram`
+//! it assembled rather than from the encoding — so the sidecar catches a stale
+//! envelope, a mixed-up path, or a producer run that did not complete. It does
+//! not resist an adversary who rewrites both files, and nothing unsigned could.
+//! A torn write between the two is caught the same way: as a mismatch, loudly.
 
 mod bundle;
 mod payload;
 mod target;
 
 use std::fmt;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use tiler_artifact::program::{ArtifactCodecFailure, decode_artifact};
@@ -48,6 +77,27 @@ use tiler_metal_aot::input::{CompileRequest, NumericalRealization, OptimizationL
 /// Stated by the caller rather than derived, so a signature needing more
 /// bindings is rejected instead of emitted with an unaddressable attribute.
 const BUFFER_BINDING_LIMIT: u32 = 31;
+
+/// Rows of the packaged program's input; each row reduces to one output element.
+const ROWS: u64 = 4;
+/// Columns of the packaged program's input; the reduced axis.
+///
+/// **One, and not by choice.** `prototypes/serial-sum-run` reduces three
+/// contributors per row, because that is what makes a serial reduction's
+/// ordering observable, and this producer cannot package that program: a
+/// `BackendEntryKey` is bounded at `MAX_OPAQUE_IDENTITY_BYTES` = 1,024 and the
+/// canonical kernel identity of a two-or-more-contributor serial sum measures
+/// 1,113 bytes. **Measurement** on this checkout: the identity is 728 bytes at
+/// one column and a constant 1,113 bytes at two, three, four, and eight, so the
+/// bound admits the degenerate reduction and nothing else — it is the reduction
+/// *structure* that crosses it, not the data size.
+///
+/// The runner therefore takes its envelope-path shape from whatever this
+/// artifact declares rather than fixing one, so the delivery mechanism is still
+/// proven on hardware while the numerical claim stays on its own three-column
+/// program. `bound-the-backend-entry-key-by-the-identity-it-carries` closes the
+/// gap; when it does, this becomes 3 and the two paths run one program.
+const COLUMNS: u64 = 1;
 
 /// The target facts this producer emits for.
 ///
@@ -76,7 +126,7 @@ fn serial_sum_program() -> SemanticProgram {
     let input = builder
         .input::<F32>(
             InputKey::new("input").expect("the input key is valid"),
-            Shape::from_dims([4, 1]),
+            Shape::from_dims([ROWS, COLUMNS]),
         )
         .expect("the input binds");
     let scale = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the scale applies");
@@ -122,6 +172,24 @@ fn emit_and_compile(
     (unit, artifact)
 }
 
+/// Returns the envelope path the invocation names.
+///
+/// Hand-parsed rather than reached for a dependency: one required flag does not
+/// justify an argument crate in a `publish = false` prototype, and an unknown
+/// argument is refused instead of ignored so a typo cannot look like a run that
+/// simply wrote nowhere.
+fn output_path() -> Result<PathBuf, ProducerError> {
+    let mut arguments = std::env::args_os().skip(1);
+    let (Some(flag), Some(path), None) = (arguments.next(), arguments.next(), arguments.next())
+    else {
+        return Err(ProducerError::Usage);
+    };
+    if flag != "--out" {
+        return Err(ProducerError::Usage);
+    }
+    Ok(PathBuf::from(path))
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -132,8 +200,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// One offline pass: compile, emit, and translate to a `metallib`.
+/// One offline pass: compile, emit, translate to a `metallib`, and publish it.
 fn run() -> Result<(), ProducerError> {
+    let path = output_path()?;
     let program = serial_sum_program();
     // Stated, not defaulted. The strict contract is unhonourable on every
     // governed Apple family, so this producer says which contract its program
@@ -227,7 +296,36 @@ fn run() -> Result<(), ProducerError> {
         decoded.variant_count(),
         decoded.identity().as_bytes().len(),
     );
+
+    // Published only after the round trip above proved these exact bytes decode
+    // and re-encode to themselves. Writing first and validating afterwards would
+    // leave a consumer able to read an envelope this producer had not accepted.
+    let identity_path = identity_sidecar(&path);
+    let identity = artifact.canonical_identity();
+    std::fs::write(&path, &bytes)
+        .map_err(|cause| ProducerError::Write(path.display().to_string(), cause))?;
+    std::fs::write(&identity_path, identity.as_bytes())
+        .map_err(|cause| ProducerError::Write(identity_path.display().to_string(), cause))?;
+    println!(
+        "wrote {} ({} bytes) and {} ({} bytes)",
+        path.display(),
+        bytes.len(),
+        identity_path.display(),
+        identity.as_bytes().len(),
+    );
     Ok(())
+}
+
+/// Returns the identity sidecar path for one envelope path.
+///
+/// Derived by appending rather than by replacing an extension, so the two names
+/// cannot collide with each other and the pair stays obviously one unit on disk.
+/// Shared with `prototypes/serial-sum-run`, which derives the same name from the
+/// path it is given.
+fn identity_sidecar(envelope: &std::path::Path) -> PathBuf {
+    let mut name = envelope.as_os_str().to_owned();
+    name.push(".identity");
+    PathBuf::from(name)
 }
 
 /// Why one offline pass did not produce a `metallib`.
@@ -238,6 +336,8 @@ fn run() -> Result<(), ProducerError> {
 /// to do next.
 #[derive(Debug)]
 enum ProducerError {
+    Usage,
+    Write(String, std::io::Error),
     Compile(CompileFailure),
     NoTarget,
     NoSelection,
@@ -255,6 +355,11 @@ enum ProducerError {
 impl fmt::Display for ProducerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Usage => formatter.write_str(
+                "usage: tiler-prototype-compile --out <path>; it writes the envelope to <path> \
+                 and its artifact identity to <path>.identity",
+            ),
+            Self::Write(path, cause) => write!(formatter, "{path} could not be written: {cause}"),
             Self::Compile(failure) => write!(formatter, "the program did not compile: {failure:?}"),
             Self::NoTarget => formatter.write_str("the compilation returned no target profile"),
             Self::NoSelection => formatter.write_str("the portfolio retained no selected plan"),

@@ -68,3 +68,11 @@ Also refused, and unreachable today: a variant whose entry count is not one. The
 **Measurement.** `cargo nextest run -p tiler-runtime`: 8 tests, 8 passed. `cargo clippy -p tiler-runtime --all-targets -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc -p tiler-runtime --no-deps` clean. Full `uv run --locked python scripts/check_repository.py` green.
 
 **Stated plainly: none of the new routing is unit-tested inside this crate, and it cannot be.** Every path added here needs a *valid* artifact, and constructing one needs `ArtifactProgramBuilder`, a `VerifiedKernelProgram`, and therefore `tiler-ir` — an edge `scripts/check_workspace.py` pins this crate as deliberately not having, on ADR 0081 grounds that a loader which could rebuild a plan would stop being a validator of one. The crate's own tests reach only the rejections decidable from malformed bytes, which is what they reached before this change too. The evidence for the routing is `prototypes/serial-sum-run` under `route-the-runtime-proof-through-the-artifact-envelope`, which dispatches a real `metallib` from a real envelope through exactly these types. Reserved-in-the-type-system, implemented, and tested-guarantee are three claims: this is implemented and its guarantee is tested one layer out, not here.
+
+### Corrected on the follow-on branch
+
+Two changes to what landed here were made on `tkt/route-the-runtime-proof-through-the-artifact-envelope`, recorded so this outcome is not read as the final shape.
+
+`preflight`'s `expected` parameter became `&[u8]` rather than `&CanonicalArtifactProgramIdentity`. That type has no public constructor, so only code that built an artifact could hold one, and the second source this method's own documentation names — an identity *recorded* beside cached bytes — was unrepresentable. Tracked as `state-an-expected-artifact-identity-from-recorded-bytes`.
+
+`Preflight` and `RoutedDispatch` gained `kernel_program_identity()`. A committed route naming which program it executes is what lets a consumer holding the program it compiled bind the artifact to it by content, which is a stronger check than any recorded artifact identity and the one the runtime proof relies on.

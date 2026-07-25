@@ -154,6 +154,7 @@ impl<'a> RoutedBinding<'a> {
 #[must_use = "a preflight that is neither committed nor abandoned decides nothing"]
 pub struct Preflight<'a> {
     pub(super) identity: CanonicalArtifactProgramIdentity,
+    pub(super) kernel_program: &'a [u8],
     pub(super) payload: &'a BackendPayloadDescriptor,
     pub(super) object: &'a [u8],
     pub(super) entry: DecodedEntry<'a>,
@@ -167,6 +168,19 @@ impl<'a> Preflight<'a> {
     #[must_use]
     pub const fn identity(&self) -> &CanonicalArtifactProgramIdentity {
         &self.identity
+    }
+
+    /// Returns the canonical identity of the kernel program this route runs.
+    ///
+    /// The identity alone; the program is not carried and cannot be rebuilt
+    /// from an envelope. It is published before the commit because it is the
+    /// strongest binding available to a caller that *does* hold the program it
+    /// compiled: comparing it proves these bytes package that exact program,
+    /// which no artifact identity from a sidecar can establish. A caller that
+    /// holds no program ignores it, and has correspondingly less evidence.
+    #[must_use]
+    pub const fn kernel_program_identity(&self) -> &'a [u8] {
+        self.kernel_program
     }
 
     /// Returns the descriptor of the payload this route selected.
@@ -198,6 +212,7 @@ impl<'a> Preflight<'a> {
     pub fn commit(self) -> RoutedDispatch<'a> {
         let Self {
             identity,
+            kernel_program,
             payload,
             object,
             entry,
@@ -207,6 +222,7 @@ impl<'a> Preflight<'a> {
         } = self;
         RoutedDispatch {
             identity,
+            kernel_program,
             payload,
             object,
             entry,
@@ -229,6 +245,7 @@ impl<'a> Preflight<'a> {
 #[derive(Clone, Debug)]
 pub struct RoutedDispatch<'a> {
     identity: CanonicalArtifactProgramIdentity,
+    kernel_program: &'a [u8],
     payload: &'a BackendPayloadDescriptor,
     object: &'a [u8],
     entry: DecodedEntry<'a>,
@@ -242,6 +259,16 @@ impl<'a> RoutedDispatch<'a> {
     #[must_use]
     pub const fn identity(&self) -> &CanonicalArtifactProgramIdentity {
         &self.identity
+    }
+
+    /// Returns the canonical identity of the kernel program being executed.
+    ///
+    /// The identity alone; the program is not carried. Republished after the
+    /// commit so a host can record *what* it ran beside the result, which is the
+    /// value a numerical comparison needs to be attributable.
+    #[must_use]
+    pub const fn kernel_program_identity(&self) -> &'a [u8] {
+        self.kernel_program
     }
 
     /// Returns the descriptor of the payload this route committed to.

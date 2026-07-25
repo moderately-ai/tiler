@@ -186,15 +186,26 @@ impl DecodedProgram {
     /// the object itself, and last the geometry and bindings, which are the only
     /// obligations that depend on the caller's facts.
     ///
-    /// `expected` is the caller's own artifact identity — the one it obtained by
-    /// building this artifact, or recorded when it cached these bytes. This is
-    /// the binding-by-identity path a decoded envelope supports: it proves the
-    /// loaded bytes *are* that artifact without reconstructing anything, because
-    /// [`Self::decode`] already re-derived the identity from content rather than
-    /// reading it from the manifest. Its strength is exactly the strength of
-    /// whatever recorded it. An identity re-read from these same bytes is a
-    /// tautology, and this method cannot tell the difference, so a caller that
-    /// passes [`Self::identity`] here has checked nothing.
+    /// `expected` is the canonical identity bytes of the artifact the caller
+    /// means to run — [`CanonicalArtifactProgramIdentity::as_bytes`] from
+    /// whatever named it. This is the binding-by-identity path a decoded
+    /// envelope supports: it proves the loaded bytes *are* that artifact without
+    /// reconstructing anything, because [`Self::decode`] already re-derived the
+    /// identity from content rather than reading it from the manifest. Its
+    /// strength is exactly the strength of whatever recorded it. An identity
+    /// re-read from these same bytes is a tautology, and this method cannot tell
+    /// the difference, so a caller passing [`Self::identity`] has checked
+    /// nothing.
+    ///
+    /// **Bytes rather than a [`CanonicalArtifactProgramIdentity`], and the
+    /// reason is a limitation rather than a preference.** That type has no
+    /// public constructor — `grep -n "impl CanonicalArtifactProgramIdentity" -A
+    /// 8 crates/tiler-artifact/src/program/model.rs` shows `as_bytes` and
+    /// nothing else — so only code that *built* an artifact can hold one. Taking
+    /// it here would make the second source this method documents, an identity
+    /// recorded beside cached bytes, unrepresentable, which is the whole cold-
+    /// consumer case. `state-an-expected-artifact-identity-from-recorded-bytes`
+    /// tracks giving the type a checked constructor so this can be typed again.
     ///
     /// `facts` are the ABI facts the caller has bound — input extents, target
     /// properties. They are taken here rather than after the commit because
@@ -220,13 +231,13 @@ impl DecodedProgram {
     pub fn preflight(
         &self,
         environment: &ExecutionEnvironment,
-        expected: &CanonicalArtifactProgramIdentity,
+        expected: &[u8],
         facts: &AbiFacts,
     ) -> Result<Preflight<'_>, LoadRejection> {
         let identity = self.identity();
-        if &identity != expected {
+        if identity.as_bytes() != expected {
             return Err(LoadRejection::ProgramMismatch {
-                expected: expected.clone(),
+                expected: expected.to_vec(),
                 loaded: identity,
             });
         }
@@ -299,6 +310,7 @@ impl DecodedProgram {
 
         Ok(Preflight {
             identity,
+            kernel_program: variant.kernel_program_identity(),
             payload,
             object,
             entry,
@@ -548,12 +560,17 @@ pub enum LoadRejection {
     Artifact(ArtifactCodecFailure),
     /// The bytes are a valid artifact, and not the one the caller expected.
     ///
-    /// The whole substance of binding by identity. Both identities are carried
+    /// The whole substance of binding by identity. Both sides are carried
     /// because a caller that logs only "mismatch" cannot tell a stale cache
     /// entry from a mixed-up path.
+    ///
+    /// The two are deliberately different types, and the asymmetry is the point:
+    /// the loaded side was *derived* from content this decode validated, and the
+    /// expected side is a byte string somebody *recorded*. Spelling both as one
+    /// type would suggest the two carry equal evidence.
     ProgramMismatch {
-        /// Identity the caller expected these bytes to have.
-        expected: CanonicalArtifactProgramIdentity,
+        /// Canonical identity bytes the caller expected these bytes to have.
+        expected: Vec<u8>,
         /// Identity re-derived from the bytes that were actually loaded.
         loaded: CanonicalArtifactProgramIdentity,
     },
@@ -654,7 +671,7 @@ impl fmt::Display for LoadRejection {
                 formatter,
                 "runtime.program-mismatch: expected an artifact of {} identity bytes, loaded one \
                  of {}, and they differ",
-                expected.as_bytes().len(),
+                expected.len(),
                 loaded.as_bytes().len(),
             ),
             Self::NoApplicableVariant { packaged } => write!(
