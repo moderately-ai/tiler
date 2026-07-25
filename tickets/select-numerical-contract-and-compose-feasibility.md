@@ -97,6 +97,18 @@ with `Frontier(MalformedProposal { provider: tiler/prototype-serial-sum-physical
 
 **Inference — two distinct pieces of work, neither of them the request boundary.** The fusion numerical proof provider is literally named `tiler.fusion-strict-f32` and cannot discharge exceptional-value obligations for a contract it was not written for, so it defers every region rather than proving or refusing one. And the physical provider then rejects with an `Intrinsic { rule: "request-subject" }`, which is a hard compiler-output error rather than a feasibility outcome — something below is still keyed to the strict contract's subject.
 
+**Second pass, 2026-07-25: the three admission checks are now unified and the remaining blocker is a single obligation.**
+
+Landed on `main`: `governed_flush_to_zero()` (key `tiler.flush-f32.v1`, `FlushToZero { zero_sign: PreservesSign }` on both dimensions, contraction and reassociation still `Forbidden`), `governed_profile()`, `is_governed()`, and `governed_under()`. All three sites that hardcoded equality with `governed()` — `verify_request`, `VerifiedCompilationRequest::for_target`, and `physical::verify_schedule_with_feasibility` — now share that one authority. The public selector was **not** landed; see below.
+
+With those in place the failure moved from `InvalidCompilerOutput` to an honest `NoFeasiblePlan(Selection(Structure { rule: "no-complete-plan" }))`. The physical path accepts the flush contract; the trace shows `frontier.enumeration` admitting one implementation for the reduction region and **zero** for the other, then `selection.complete-plan` with `plan-count: 0`.
+
+**The single remaining cause.** `fusion_legality.rs` discharges `FusionObligation::ExceptionalValues` only when both subnormal dimensions are `SubnormalMode::Preserve`. Under any flush contract it returns `unknown("unproven-exceptional-values")`, so every fused candidate defers, the whole-program region is never legal, and no complete plan forms. The provider is named `tiler.fusion-strict-f32` — it was written for one contract and correctly declines to speak for another.
+
+**The argument that would discharge it, to be made carefully rather than assumed.** Both alternatives compile under the *same* contract, and the measured target flushes at each arithmetic operation while a store/load round trip preserves subnormals unchanged. So a value that lives in a register in the fused form and in memory in the materialized form is flushed at the same operations either way, and fusion does not change observable exceptional-value behaviour. That reasoning needs checking against the NaN-canonicalization dimension too, and it needs its own test — it is a fusion-legality correctness claim, not a plumbing change.
+
+**The public selector was deliberately withheld.** A `NumericalContract::FlushSubnormalsToZeroF32` on the public boundary would compile no program at all until the obligation above is dischargeable, which is the same lying-API failure this ticket's first pass already reverted once. Expose it in the same change that makes fusion contract-aware.
+
 **Consequence for whoever takes this ticket.** Widening admission is roughly twenty lines and is *not* the work. The work is the ticket's honourability-authority and composition sections: the fusion proof must be contract-parameterized so it proves or refuses rather than deferring, and the physical path's request-subject binding must accept any admitted contract. Until both hold, admitting a second contract only moves the failure from a clear rejection at the boundary to an opaque `InvalidCompilerOutput` deep inside — strictly worse for a caller.
 
 The reverted prototype is not in the tree; this record is what it produced.

@@ -221,7 +221,7 @@ const fn rule_of(error: &RequestError) -> &'static str {
     }
 }
 
-/// Compiles one semantic program under the governed bounded profile.
+/// Compiles one semantic program under the governed strict contract.
 ///
 /// # Errors
 ///

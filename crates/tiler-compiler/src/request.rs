@@ -22,6 +22,12 @@ use crate::region::SemanticMemberId;
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
 const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
+/// Versioned key of the governed contract that accepts sign-preserving flushing.
+///
+/// A distinct key rather than a flag on the strict one: the two contracts give
+/// the same program different observable results, so they must give it
+/// different canonical identities, artifacts, and cache entries.
+const FLUSH_CONTRACT_KEY: &str = "tiler.flush-f32.v1";
 const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
 /// Recognized operation count when both pointwise constants are one shared value.
 const RECOGNIZED_OPERATIONS_MIN: usize = 4;
@@ -61,6 +67,53 @@ impl StrictF32NumericalContract {
             contraction: NumericalPermission::Forbidden,
             reassociation: NumericalPermission::Forbidden,
         }
+    }
+
+    /// The governed contract that accepts sign-preserving subnormal flushing.
+    ///
+    /// A **different contract, not a relaxation**: its own versioned key, so a
+    /// program compiled under it has a different identity. A caller states it to
+    /// say that flushing subnormals to the sign-preserving zero is part of what
+    /// its program means — which is what makes running on Apple hardware a
+    /// choice the caller made rather than a compromise a planner made for it.
+    ///
+    /// `PreservesSign` because that is what the hardware measurably does
+    /// (`0x80400000 * 2.0f` returns `0x80000000`), and a contract must name
+    /// which zero it accepts: the two zeros are observably different results.
+    ///
+    /// Contraction and reassociation stay `Forbidden`. This widens exactly one
+    /// dimension, so accepting flushing does not silently accept reassociation.
+    pub(crate) const fn governed_flush_to_zero() -> Self {
+        Self {
+            key: FLUSH_CONTRACT_KEY,
+            canonical_arithmetic_nan_bits: tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            input_subnormals: SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            result_subnormals: SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            contraction: NumericalPermission::Forbidden,
+            reassociation: NumericalPermission::Forbidden,
+        }
+    }
+
+    /// Returns every contract this build registers.
+    ///
+    /// Admission is membership in this set rather than equality with one
+    /// constant. Three separate sites previously compared against `governed()`
+    /// directly — the request boundary, the per-target verification, and the
+    /// physical schedule verifier — so registering a second contract meant
+    /// finding all three. This is the single authority they now share.
+    pub(crate) const fn governed_profile() -> [Self; 2] {
+        [Self::governed(), Self::governed_flush_to_zero()]
+    }
+
+    /// Returns whether this contract is one this build registers.
+    pub(crate) fn is_governed(&self) -> bool {
+        Self::governed_profile()
+            .iter()
+            .any(|admitted| admitted == self)
     }
 
     /// Projects this contract into the target-neutral numerical realization the
@@ -319,10 +372,23 @@ impl CompilationRequest<'_> {
         reason = "the crate-internal governed request profile; its only in-crate callers are the compile path's own conformance and unit tests until a reviewed public facade exposes it"
     )]
     pub(crate) fn governed(program: &SemanticProgram) -> CompilationRequest<'_> {
+        Self::governed_under(program, StrictF32NumericalContract::governed())
+    }
+
+    /// Builds the governed request under one caller-stated numerical contract.
+    ///
+    /// The contract is a parameter with no default. On the measured Apple row
+    /// the strictest reading is unhonourable, so a strict default would make
+    /// every Apple compilation fail with a rejection the caller never asked for
+    /// and leave the knob reachable only by reading that rejection.
+    pub(crate) fn governed_under(
+        program: &SemanticProgram,
+        numerical_contract: StrictF32NumericalContract,
+    ) -> CompilationRequest<'_> {
         CompilationRequest {
             program,
             shape_environment: StaticShapeEnvironment::governed(),
-            numerical_contract: StrictF32NumericalContract::governed(),
+            numerical_contract,
             budgets: DeterministicBudgets::governed(),
             target_profiles: vec![PrototypeTargetProfile::governed()],
             capabilities: CompilerCapabilitySnapshot::governed(),
@@ -731,7 +797,7 @@ impl VerifiedCompilationRequest {
                 .target_profiles
                 .iter()
                 .any(|profile| *profile != PrototypeTargetProfile::governed())
-            || self.numerical_contract != StrictF32NumericalContract::governed()
+            || !self.numerical_contract.is_governed()
             || self.authorities.get(index) != Some(&current_authority)
         {
             return Err(RequestError::UnverifiedTargetSelection);
@@ -858,8 +924,11 @@ pub(crate) fn verify_request(
     if request.target_profiles.is_empty() {
         return Err(RequestError::EmptyTargetSet);
     }
-    if request.numerical_contract != StrictF32NumericalContract::governed() {
-        return unsupported("numerics", "strict-f32");
+    if !request.numerical_contract.is_governed() {
+        // Names the profile rather than one contract: a caller stating an
+        // unadmitted contract has not violated the strict one, it has named a
+        // contract this build does not register.
+        return unsupported("numerics", "governed-contract-profile");
     }
     if request
         .target_profiles

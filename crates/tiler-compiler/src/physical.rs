@@ -28,8 +28,8 @@ use crate::feasibility::{
 };
 use crate::region::SemanticMemberId;
 use crate::request::{
-    NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract, SubnormalMode,
-    VerifiedRequestSubject, VerifiedTargetRequest,
+    NumericalPermission, PrototypeTargetProfile, SubnormalMode, VerifiedRequestSubject,
+    VerifiedTargetRequest,
 };
 
 /// Feasibility-rule version of the prototype baseline's checked target profile.
@@ -479,7 +479,7 @@ pub(crate) fn verify_schedule_with_feasibility(
     let subject = request.subject();
     if !request.is_authoritative()
         || request.target_profile() != PrototypeTargetProfile::governed()
-        || request.numerical_contract() != StrictF32NumericalContract::governed()
+        || !request.numerical_contract().is_governed()
     {
         return intrinsic("request-subject", id);
     }
