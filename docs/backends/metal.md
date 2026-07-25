@@ -162,7 +162,43 @@ measured only that this toolchain accepted these exact spellings and compiled
 every tested macOS, iOS-device, and iOS-simulator tuple with them. That probe
 qualifies the row for bounded compile and same-host reproducibility alone; it
 explicitly does not qualify it for Tiler's runtime support matrix or numerical
-conformance, and it did not observe the numerical behavior these flags request.
+conformance, and it did not itself observe the numerical behavior these flags
+request.
+
+**Measurement — the strict row does not deliver subnormal preservation.** A
+separate measurement recorded in
+[ADR 0076](../decisions/0076-declare-target-honourable-numerical-realizations.md) did
+observe it, and the result is negative: `-fmetal-math-mode=safe` emits
+`air.compile.denorms_disable` alongside `air.compile.fast_math_disable`, and it
+does so under `safe`, `relaxed`, and `fast` alike. No offline flag and no
+runtime `MTLCompileOptions` setting clears it. The strict spellings above
+therefore request preservation and do not obtain it.
+
+**The limit is arithmetic specifically, not the target generally.** A
+load-then-store round trip preserves every subnormal bit pattern, so
+materialization is unaffected; only `f32` *arithmetic* flushes. Stating this as
+a blanket property of the target would be wrong in the direction that matters,
+because a program that only moves subnormals is unaffected by it.
+
+**The flush is sign-preserving.** On an Apple M4 Max under macOS 27.0 with
+Metal 32023.883, an emitted `x * 2.0f` returns `0x80000000` for the operand
+`0x80400000`, not `0x00000000`. That is why a flush-accepting contract can be a
+positive conformance claim on this row rather than merely a weaker one: the
+zero a contract names can be compared against the zero the target produces, and
+only a genuine mismatch is a gap.
+
+**Inference — honourability is a stated fact here, never a probed one.** Under
+`-fmetal-math-mode=relaxed` a `scale 1.0, bias +0.0` kernel returns subnormal
+operands unchanged, which looks like preservation and is not: `x * 1.0` folds to
+a copy under every math mode, the kernel retains exactly one floating-point
+operation under `safe` (the `+0.0` fadd, unremovable without `nsz`) and zero
+under `relaxed`, and the surviving `fadd` is what flushes. The same licence that
+breaks signed zero deletes the operation that would have flushed. So preserved
+subnormals observed from a compiled kernel are not evidence that this target
+preserves them, and the modes where that inference misleads are exactly the
+least trustworthy ones. `MetalTargetFacts::subnormal_arithmetic` is
+correspondingly a required caller-stated fact with its measurement recorded on
+the type, not a value inferred from a probe kernel.
 
 These spellings are a governed realization for that toolchain row, not a
 portable promise that future Metal compilers use the same flags or definitions.
@@ -195,7 +231,7 @@ output, compiler realization, and artifact identity.
 
 **Fact — the boundary on the cross-family half.** The iOS Simulator dispatches on the host Mac GPU: `MTLCreateSystemDefaultDevice` inside the booted runtime reports device name `Apple iOS simulator GPU` and the *same* `registryID` as `Apple M4 Max` on the host. A simulator result is admissible as a measurement of what the `IOsSimulator` family delivers on this host and is not evidence about iPhone or iPad hardware. `IOsDevice` is compiled for all 42 cases and dispatched for none, because no physical device is attached; closing that gap requires dispatching the `air64-apple-ios16.0` metallib on an Apple-silicon iPhone or iPad's own GPU. Loading that module on this Mac is not a substitute and is refused even though it succeeds (findings 13 and 14).
 
-**Fact — what this section does not state.** It identifies *which* compiler delivered a numerical realization and how far that identification reaches. It does not state what the realization is. What the strict flag row above is measured to deliver — in particular its subnormal behaviour, which the numerical realization section still describes as unobserved — is owned by [`declare-metal-numerical-honourability`](../../tickets/declare-metal-numerical-honourability.md) and amends that section separately. The two are deliberately disjoint: this section reads the same whatever the subnormal verdict turns out to be.
+**Fact — what this section does not state.** It identifies *which* compiler delivered a numerical realization and how far that identification reaches. It does not state what the realization is. What the strict flag row above is measured to deliver is recorded in that section rather than here; its subnormal verdict has since been measured and is negative for arithmetic and positive for materialization. The two sections are deliberately disjoint: this one reads the same whatever the subnormal verdict is, which is why recording that verdict did not touch it.
 
 ## Expansion-time offline compilation
 

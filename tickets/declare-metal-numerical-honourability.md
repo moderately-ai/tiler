@@ -1,7 +1,7 @@
 ---
 id: declare-metal-numerical-honourability
 title: Declare Metal numerical honourability as a target profile fact
-status: todo
+status: in-progress
 priority: p0
 dependencies: [select-numerical-contract-and-compose-feasibility]
 related: [draft-target-honourable-numerical-contract-adr, prototype-metal-numerical-realization]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, numerics]
+claimed_from: todo
+assignee: agent-coordinator
+lease_expires_at: 1784994096
 ---
 ADR 0076 item 3, on the one target that has a measured unhonourable dimension. This is the ticket that gives the Apple row a positive conformance story for the first time: a flush-tolerant `f32` contract compiles and conforms, a preserving one rejects with a named cause.
 
@@ -86,3 +89,22 @@ That change plus a selectable contract is what let a real program reach an Apple
 **Why this ticket is still open.** What landed is a *backend-local target fact*, which is exactly what this ticket exists to replace. `MetalSubnormalArithmetic` still lives in `tiler-metal` and is still consulted only during emission, so the compiler cannot assess honourability *before* emitting — it discovers unhonourability from `require_declared_realization` after a translation unit already exists. The per-dimension honourability declaration in the shared form, expressed so `feasibility` can assess it as a peer of `CheckedTargetProfile`, is not built; that is `compose-numerical-honourability-and-retire-the-strict-boolean`'s peer authority, and this ticket owns the Metal side of it.
 
 Also unchanged: whether `MetalNumericalGap` and `require_declared_realization` are retired in favour of the typed rejection, or whether a backend-local conformance step survives alongside it with a stated reason. The measurements stay recorded on the declaring types either way.
+
+## Contract half landed; the declaration mechanism is what remains
+
+**Done — `docs/backends/metal.md`'s numerical realization section.** The ticket names this half as "not in question", and the contract was stating something the re-verified measurement contradicts: it said the compatibility probe "did not observe the numerical behavior these flags request" without recording that a *different* measurement since has.
+
+Four things are now recorded there, each separated from the others because they fail differently:
+
+- **The strict row does not deliver subnormal preservation.** `-fmetal-math-mode=safe` emits `air.compile.denorms_disable` beside `air.compile.fast_math_disable`, under `safe`, `relaxed`, and `fast` alike, and no offline flag or runtime `MTLCompileOptions` setting clears it. The strict spellings request preservation and do not obtain it.
+- **The limit is arithmetic specifically.** A load-then-store round trip preserves every subnormal bit pattern, so materialization is unaffected. Stating this as a blanket property of the target would be wrong in the direction that matters, because a program that only moves subnormals is unaffected.
+- **The flush is sign-preserving**, `0x80400000 * 2.0f` → `0x80000000` on an M4 Max under macOS 27.0 with Metal 32023.883 — which is what lets a flush-accepting contract be a positive conformance claim on this row rather than merely a weaker one.
+- **Honourability is stated, never probed.** The `relaxed`-mode trap is recorded in the contract itself rather than only in the ticket, because the contract is where someone would otherwise be tempted to close the loop with a probe kernel: preserved subnormals coming back from a compiled kernel can mean no arithmetic executed, since `x * 1.0` folds to a copy and the surviving `+0.0` fadd is the operation that flushes.
+
+The compiler-provenance section's cross-reference, which described the subnormal behaviour as still unobserved and pointed at this ticket, was corrected in the same pass rather than left to contradict the section above it.
+
+**Siting, as the ticket required stating.** The measured flag behaviour went in `docs/backends/metal.md`, which the ticket says is not in question. The profile *declaration mechanism* is not written there, so ADR 0076's open question about where it belongs stays open and is not answered by omission.
+
+**What remains, and why the ticket stays open.** The two substantive halves are untouched: expressing `MetalSubnormalArithmetic` as a per-dimension honourability declaration in the shared form so `feasibility` can assess it before emission rather than discovering it after, and deciding whether `MetalNumericalGap`/`require_declared_realization` retire in favour of the typed rejection or survive alongside it with a stated reason. Both wait on `compose-numerical-honourability-and-retire-the-strict-boolean`'s peer authority, which this ticket already lists as the shared form it must adopt.
+
+**Evidence.** `uv run --locked python scripts/check_repository.py` passes. The run also caught a broken link in the first draft of this amendment — `0076-target-honourable-numerical-realizations.md` against the real `0076-declare-target-honourable-numerical-realizations.md` — which is the gate doing its job on a hand-written cross-reference.
