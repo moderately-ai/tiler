@@ -38,11 +38,23 @@
 //! numerical contract. [`record::MetalTranslationUnit::require_declared_realization`]
 //! is the conformance claim and fails closed.
 //!
-//! On every governed Apple family this currently rejects any kernel that
-//! performs `f32` arithmetic under a subnormal-preserving realization, because
-//! Apple GPU `f32` arithmetic flushes subnormals to zero in every math mode.
-//! That is a measured hard feasibility limit, recorded rather than hidden
-//! behind a flag that would not deliver it.
+//! On every governed Apple family this rejects any kernel that performs `f32`
+//! arithmetic under a subnormal-preserving realization, because Apple GPU `f32`
+//! arithmetic flushes subnormals to zero in every math mode. That is a measured
+//! hard feasibility limit, recorded rather than hidden behind a flag that would
+//! not deliver it. A realization that accepts a flush to the zero the target
+//! actually produces is honoured, and only a genuine sign mismatch stays a gap.
+//!
+//! This step is deliberately kept alongside the compiler's per-dimension
+//! honourability declaration rather than retired in favour of it. The two are
+//! not two answers to one question: the declaration is a claim about a target
+//! and a contract and is answerable before emission, while this is a claim
+//! about the operations one translation unit actually emitted. They also cannot
+//! be collapsed by dependency — this crate does not depend on `tiler-compiler`,
+//! so a compiler-side rejection is unreachable from a caller that drives
+//! [`emit::emit_translation_unit`] from `tiler_ir` alone.
+//! [`record::MetalNumericalGap`] records the full reasoning; the Metal fact
+//! itself is declared exactly once, on [`target::MetalSubnormalArithmetic`].
 //!
 //! # What it does not decide
 //!

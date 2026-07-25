@@ -1,17 +1,17 @@
 ---
 id: declare-metal-numerical-honourability
 title: Declare Metal numerical honourability as a target profile fact
-status: in-progress
+status: review
 priority: p0
 dependencies: [select-numerical-contract-and-compose-feasibility]
-related: [draft-target-honourable-numerical-contract-adr, prototype-metal-numerical-realization]
+related: [draft-target-honourable-numerical-contract-adr, prototype-metal-numerical-realization, express-metal-honourability-in-the-shared-form]
 scopes: [implementation/metal, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, numerics]
 claimed_from: todo
 assignee: agent-metal
-lease_expires_at: 1784997110
+lease_expires_at: 1785001280
 ---
 ADR 0076 item 3, on the one target that has a measured unhonourable dimension. This is the ticket that gives the Apple row a positive conformance story for the first time: a flush-tolerant `f32` contract compiles and conforms, a preserving one rejects with a named cause.
 
@@ -108,3 +108,53 @@ The compiler-provenance section's cross-reference, which described the subnormal
 **What remains, and why the ticket stays open.** The two substantive halves are untouched: expressing `MetalSubnormalArithmetic` as a per-dimension honourability declaration in the shared form so `feasibility` can assess it before emission rather than discovering it after, and deciding whether `MetalNumericalGap`/`require_declared_realization` retire in favour of the typed rejection or survive alongside it with a stated reason. Both wait on `compose-numerical-honourability-and-retire-the-strict-boolean`'s peer authority, which this ticket already lists as the shared form it must adopt.
 
 **Evidence.** `uv run --locked python scripts/check_repository.py` passes. The run also caught a broken link in the first draft of this amendment — `0076-target-honourable-numerical-realizations.md` against the real `0076-declare-target-honourable-numerical-realizations.md` — which is the gate doing its job on a hand-written cross-reference.
+
+## Outcome
+
+Two of the three open questions are settled and recorded; the third — expressing `MetalSubnormalArithmetic` in the shared honourability form — is split into `express-metal-honourability-in-the-shared-form`, which depends on `compose-numerical-honourability-and-retire-the-strict-boolean`. This ticket goes to `review`, not `done`: its title names the half that moved out.
+
+### Decided — the backend-local conformance step survives, and the profile declaration is authoritative
+
+The ticket allowed either arm and forbade leaving both without saying which is authoritative. **The profile declaration is the authority on what the target honours.** `MetalNumericalGap` and `require_declared_realization` are kept, and they are not a second authority on that fact. Three reasons, the third decisive:
+
+- **Fact — the Metal fact is declared exactly once.** `MetalTargetFacts::subnormal_arithmetic` is the sole statement of it, and every arm of `emit::subnormal_gap` and `emit::flushed_zero_gap` is derived from that one value. A second checkpoint reading one declaration cannot diverge from it; two declarations of the same property could, which is the failure mode being avoided.
+- **Inference — the two checkpoints answer different questions.** A profile declaration is a claim about a *target and a contract*, answerable before emission. A gap is a claim about *the operations one translation unit actually emitted*. The measurement makes that distinction load-bearing rather than pedantic: the limit is `f32` arithmetic specifically, and a load-then-store round trip preserves every subnormal. A single checkpoint sited before emission would refuse a materialization-only kernel this target does honour; a single checkpoint at admission would let emission proceed unchallenged. Collapsing them produces a wrong answer in one direction or the other.
+- **Fact — the dependency graph makes the backend step non-optional.** `tiler-metal` depends on `tiler-ir` and `tiler-artifact` and deliberately not on `tiler-compiler`; the two are siblings over the IR. Verified with `grep -n 'tiler-' crates/tiler-metal/Cargo.toml crates/tiler-compiler/Cargo.toml` at `94fb26e`. A compiler-side rejection is therefore unreachable from `emit_translation_unit`, which is a public entry point a caller can drive from `tiler-ir` alone — the crate's own doctest does exactly that. Retiring the backend step would leave that path emitting source under a refused contract with no conformance claim in reach.
+
+Recorded on the declaring types (`crates/tiler-metal/src/record.rs`, `crates/tiler-metal/src/lib.rs`) and in the contract (`docs/backends/metal.md`, "Two conformance checkpoints, one declaration of the fact").
+
+### Decided — the goldens stay under the strict declared realization
+
+The ticket anticipated that the four fixtures could "carry a contract the hardware actually honours". They are **not** moved, and the reasoning is worth stating because the anticipation is reasonable and the evidence goes the other way.
+
+Two records are called a contract here and they are decided separately: the *declared realization* the program states, baked into the emitted bytes, and the *compiler realization* the driver selects. The goldens are governed under `tiler.test.strict-f32` (preserving on both subnormal dimensions) and the strict driver baseline. Reasons:
+
+- **Nothing about the compiler evidence would change.** Neither subnormal mode names a compiler selection, so the flag row is identical either way, and the emitted bodies are identical too — no operation is emitted to realize a flush, because this backend expresses no emulation. Rebaselining would change every entry-point symbol, since the canonical kernel identity encodes the profile key and both subnormal dimensions, and buy no coverage for four wholesale file rewrites plus an `xcrun` recompile.
+- **Under strict they are the only checked-in artifacts pinning the non-empty unrealizable-obligation provenance block**, which is what a caller keeping only the emitted text reads.
+- **Decisive — there is no flush-accepting contract this crate can name.** The governed one, `tiler.flush-f32.v1`, is registered in `tiler-compiler`, which `tiler-metal` must not depend on. A "flush golden" would carry a crate-local key that merely resembles it; writing the registered key as a string literal would duplicate a versioned identity across a boundary with no compile-time link, so a rename on the owning side would leave a golden silently claiming the wrong contract.
+
+A consequence that was implicit and is now stated in `crates/tiler-metal/src/golden_compilation.rs`: the units the gate compiles are ones `require_declared_realization` refuses. That is intentional and is itself evidence — it shows the refusal is a Tiler conformance decision about an unhonourable contract, not a compiler rejection of the source.
+
+### Landed — the honourability rule became a tested guarantee
+
+`a56bff8` made a sign-matching flush a positive conformance claim, but the crate owning that rule tested one of its four `subnormal_gap` arms and neither `flushed_zero_gap` arm. The only coverage of an honoured flush lived in `prototypes/serial-sum-compile`, outside `tiler-metal` entirely. Reserved-in-the-type-system, implemented, and tested-guarantee are three different claims, and this was the second. Five tests in `crates/tiler-metal/src/tests.rs` close every uncovered arm:
+
+- a flush the target delivers is honoured over real arithmetic — with an explicit non-vacuity assertion, because the comparison is only reached from emitted `f32` arithmetic and a "no gap" result over a materialization-only kernel would be evidence of nothing;
+- a flush to the other zero is refused as `FlushedZeroSignMismatch` — the arm that must never be widened away;
+- an always-positive flush is honoured by an always-positive target, so agreement rather than the one measured value is what the rule turns on;
+- a flush contract on a preserving target is refused as `SubnormalPreservationInArithmetic`;
+- the two subnormal dimensions are compared independently — declared as a *mismatched* flush on one dimension and preservation on the other, so one kernel yields two *different* gaps, which a pair of cases producing the same gap could not distinguish from a coupled comparison. It also pins the documented rejection order.
+
+### Not decided, deliberately
+
+ADR 0076's open question on where the profile *declaration mechanism* is sited stays open. `docs/backends/metal.md` records the relationship between the two checkpoints, which is a Metal backend contract matter, and says explicitly that it does not site the declaration. `express-metal-honourability-in-the-shared-form` carries that decision, along with the finding that forces it: neither `tiler-metal` nor `tiler-compiler` can hold both the shared form and the Metal fact, so the siting is a real choice between `tiler-ir`, a consumer-constructed translation, and a third crate.
+
+### Nothing retracted
+
+No prior claim in this ticket was found to be wrong. The Progress and contract-half sections stand as written.
+
+### Evidence
+
+`uv run --locked python scripts/check_repository.py` passes, and the five new tests run within it.
+
+The gate captures test output, so toolchain resolution is not readable from its log and was confirmed separately rather than inferred: `cargo nextest run -p tiler-metal --lib -E 'test(golden_compilation)' --no-capture` resolves `metal`/`metallib` `32023.883` (`metalfe-32023.883`) against macOS SDK 26.5 build 25F70, links all four fixtures (3683/3715/3747/3859 bytes) and the four-entry-point portfolio (14716 bytes). These tests self-skip where no qualified toolchain resolves, so that command is the check to repeat on another host.

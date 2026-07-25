@@ -213,6 +213,48 @@ signed-zero behavior, contraction, subnormal handling, and observable
 intermediate-rounding removal remain independent permissions in IR, explain
 output, compiler realization, and artifact identity.
 
+### Two conformance checkpoints, one declaration of the fact
+
+**Decision — the backend-local conformance step survives alongside the profile
+declaration, and the profile declaration is the authority on what the target
+honours.** A per-dimension honourability declaration in the compiler decides
+whether a stated contract may be planned for this target at all. The backend's
+`MetalTranslationUnit::require_declared_realization` decides whether one emitted
+translation unit incurs a dimension the target does not honour. Both are kept;
+neither is a second opinion about the target.
+
+**Fact — the Metal subnormal behavior is declared exactly once.**
+`MetalTargetFacts::subnormal_arithmetic` is a required caller-stated fact with
+its measurement recorded on the type, and every arm of the backend's gap rule is
+derived from that single value. A second checkpoint reading one declaration
+cannot diverge from it; two declarations of the same fact could, which is why
+the fact is not restated on the backend side.
+
+**Inference — the two checkpoints answer different questions, so collapsing them
+would produce a wrong answer in one direction or the other.** The limit measured
+above is a property of `f32` *arithmetic*, not of the target generally: a kernel
+that only materializes values preserves every subnormal. Whether a program
+incurs the dimension is therefore a property of the operations actually emitted,
+which the profile declaration — a statement about a target and a contract — does
+not and should not encode. A single checkpoint sited before emission would
+refuse a materialization-only kernel this target does honour; sited after
+admission only, it would let a contract the target refuses reach emission
+unchallenged.
+
+**Fact — the dependency graph makes the backend step non-optional.**
+`tiler-metal` depends on `tiler-ir` and `tiler-artifact` and deliberately not on
+`tiler-compiler`; the two are siblings over the IR. A compiler-side rejection is
+consequently unreachable from `tiler_metal::emit::emit_translation_unit`, which
+is a public entry point a caller can drive from `tiler-ir` alone. Retiring the
+backend step would leave that path emitting source under a refused contract with
+no conformance claim anywhere in reach.
+
+**What this does not decide.** Where the profile *declaration mechanism* is
+sited remains [ADR 0076](../decisions/0076-declare-target-honourable-numerical-realizations.md)'s
+open question. This section records the relationship between the two
+checkpoints, which is a Metal backend contract matter; it does not site the
+declaration and must not be read as having answered that by omission.
+
 ## Compiler provenance and the runtime compiler
 
 **Fact — Tiler compiles no MSL at runtime, and that is already decided.** [ADR 0002](../decisions/0002-aot-metal-artifacts.md) decides that the runtime "creates and caches pipeline objects from compiled artifacts but does not compile MSL source". [ADR 0043](../decisions/0043-use-typed-phased-target-feasibility.md) restates it as a standing prohibition — "this does not authorize runtime source compilation: the initial product still forbids it, while a backend may declare required device translation of an AOT target-IR artifact such as a metallib" — and [Vision](../vision.md) lists runtime source compilation among the first implementation's non-goals. `newLibraryWithSource:options:` is therefore on no Tiler path, and this section does not reopen that question. It states what the exclusion is worth, because the measurement below is a second and independent justification for it that ADR 0002's latency-and-deployment argument does not carry.
