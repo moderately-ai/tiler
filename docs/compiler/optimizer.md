@@ -334,7 +334,8 @@ rewrite semantic identity.
 An enforcer supplies a missing required property at a cost:
 
 - contiguous materialization;
-- layout conversion.
+- layout conversion;
+- encoding repacking.
 
 An enforcer may change only how a boundary value is stored, addressed, placed, or delivered, never which values that boundary carries. ADR 0001's separation of semantic planning from physical scheduling holds only because several physical schedules implement one semantic group identically, so a schedule-level step that altered a value would make one semantic program mean different things under different plans. Every entry above is value-preserving in that sense, and so is every property the [boundary-property list](#boundary-requirements-and-guarantees) admits.
 
@@ -362,9 +363,53 @@ producer implementation advertises what it guarantees. Initial boundary
 contracts include:
 
 - storage layout class and contiguous axes;
+- storage encoding;
 - alignment and vectorizable width;
 - materialized buffer, alias/view, or opaque runtime value;
 - device and address space.
+
+**Storage encoding is a distinct property, not part of layout class.** Layout
+class answers which logical coordinate maps to which position; encoding answers
+how one element is represented at that position. They vary independently: a
+blocked layout of bit-packed `u4` and a blocked layout of unpacked `u4` share a
+layout class and differ in encoding, so no layout class can express the
+difference. Encoding meets the admission test that keeps dtype off this list —
+a producer can realize one semantic value either way and the choice is
+unobservable in the value — where a narrowing dtype change is observable in it.
+
+Its enforcer is repacking. ADR 0047 already names "materialization/repacking" as
+an enforcer family, and the
+[transfer taxonomy](../research/transfers/transfer-synchronization-and-resource-lifetime.md)
+already separates `MaterializeLayout` ("same logical value and dtype;
+addressing/layout may change") from `RepackEncoding` ("explicitly changes
+storage encoding"), keeping both distinct from `ConvertDtype`. Its
+`TransferStage` also carries an explicit `PreserveStorageEncoding` semantics
+field, which a transfer would have no reason to declare unless encoding were a
+dimension it could otherwise change. So the enforcer was accepted before the
+property it supplies was named here, and this entry closes that gap rather than
+adding a new mechanism.
+
+Encoding owes the same treatment every other property owes: canonical keys,
+satisfaction and subsumption, child-requirement derivation, and dominance.
+Subsumption is not automatic in either direction — an unpacked producer does not
+satisfy a packed requirement merely by being cheaper to read, and a packed one
+does not satisfy an unpacked requirement merely by being denser — so an encoding
+relation is stated per encoding family rather than assumed to be an ordering.
+
+**A quantized value's companion parameters are not a separate property.** Its
+component roles are semantic: the [IR contract](../ir.md) makes a quantized
+tensor "one first-class semantic tensor value even when its runtime
+representation has several components", with the versioned scheme, component
+roles, and coordinate maps named in its static type contract, and with scale and
+zero-point tensors entering as ordered operands to an explicit assembly or
+conversion operation. A schedule may not add, drop, or re-role a component,
+because that would change which values the boundary carries. What remains
+physical is that "physical packing and addressing remain storage decisions" and
+that "artifact lowering may expand one logical quantized argument or result into
+several verified physical bindings". Those are encoding and layout applied to
+each component, so what this list owes a multi-component value is that its
+properties are stated per component — not a further property naming the
+companions themselves.
 
 Logical shape, resolved value dtype, accumulation semantics, and numerical
 policy are semantic traits or optimization-context constraints, not properties
