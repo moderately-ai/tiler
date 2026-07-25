@@ -1,7 +1,7 @@
 ---
 id: prototype-public-compiler-api
 title: Implement the reviewed public compiler boundary
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-optimizer-conformance-gate]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, dx]
+claimed_from: todo
+assignee: agent-api
+lease_expires_at: 1785011687
 ---
 Implement ADR 0069's consumer-agnostic CompilationRequest, session/provider
 inputs, checked compilation result, stable diagnostics/explain, and ordinary
