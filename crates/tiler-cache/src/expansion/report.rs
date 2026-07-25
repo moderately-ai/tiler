@@ -61,6 +61,10 @@ pub enum CacheOperation {
     ScanDirectory,
     /// Removing an abandoned temporary file.
     RemoveTemporary,
+    /// Renaming the whole version namespace out of service, during a purge.
+    RetireNamespace,
+    /// Removing a namespace tree a purge has already retired.
+    RemoveRetired,
 }
 
 impl CacheOperation {
@@ -84,6 +88,8 @@ impl CacheOperation {
             Self::RemoveEntry => "remove-entry",
             Self::ScanDirectory => "scan-directory",
             Self::RemoveTemporary => "remove-temporary",
+            Self::RetireNamespace => "retire-namespace",
+            Self::RemoveRetired => "remove-retired",
         }
     }
 }

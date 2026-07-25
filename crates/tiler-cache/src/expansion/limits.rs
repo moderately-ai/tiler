@@ -27,14 +27,22 @@ pub const DEFAULT_TEMPORARY_GRACE: Duration = Duration::from_hours(6);
 
 /// The bounds one cache instance reads and publishes within.
 ///
-/// # Why there is no maximum entry count here
+/// # Why there is still no maximum entry count here
 ///
-/// Bounding the number of entries means evicting one when the bound is reached,
-/// and choosing *which* is a garbage-collection policy the research note
-/// requires to be designed and stress-tested separately
-/// (`design-bounded-expansion-cache-garbage-collection`). A field that recorded
-/// a bound nothing enforced would be worse than its absence: it would read as a
-/// guarantee. Every field below is checked at the point it applies.
+/// Every field below is a bound on *one operation this type is passed to* — a
+/// read that must refuse before allocating, a section table that must not grow
+/// without limit, a sweep that must not remove a live writer's temporary. Each
+/// is checked at the point it applies, and a caller that never publishes never
+/// reaches any of them.
+///
+/// A whole-cache ceiling is not that. It is a bound on the *collection* that
+/// enforces it, and enforcing it means choosing which entry to remove and
+/// reporting which ones left. `super::collect::CollectionBound` is where those
+/// ceilings live, as an argument to an explicit operation, and it defaults to
+/// removing nothing. Putting one here instead would make it a property of a
+/// cache that is otherwise only ever read from and published to — so it would
+/// read as a guarantee that something enforces it, when the two operations that
+/// consult this type never could.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
     /// Maximum bytes of one stored bundle, checked before allocation.

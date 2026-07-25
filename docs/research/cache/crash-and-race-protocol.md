@@ -184,6 +184,14 @@ correctness. Therefore a Tiler-provided whole-cache purge should either require
 quiescence or rename the version root out of service and tolerate active users;
 it must not promise compile-once during arbitrary external `rm -r`.
 
+Of those two, only the rename is implementable: no code can establish that no
+other process is using a configured root, so requiring quiescence would promise
+something unverifiable. `ExpansionCache::purge` therefore renames the version
+root out of service in one atomic operation and reclaims it afterwards, and
+[the collection note](bounded-collection.md) states exactly what it does not
+promise — compile-once does not survive the rename, because a lock held in the
+retired tree and one taken in the new tree are different inodes.
+
 ## Garbage collection
 
 Internal eviction obeys these rules:
@@ -203,6 +211,18 @@ Internal eviction obeys these rules:
    count, maximum diagnostic/quarantine bytes, temporary-file grace period,
    and a best-effort cleanup budget per invocation. Exact defaults require
    workload measurement.
+
+Rules 1 to 4 are implemented and tested. Rules 5 and 6 are now designed,
+implemented, and measured, and [the collection note](bounded-collection.md)
+records two ways the result departs from rule 6 as written. **There is no
+default bound**: the ceilings exist exactly when a caller states one, because
+this note's own "exact defaults require workload measurement" makes any value
+chosen now a guess, and a default bound would delete entries invisibly on the
+strength of it. **There is no per-invocation work budget**, because the
+collector takes each key lock with `try_lock` and never waits — a budget's
+purpose would have been to cap an unbounded wait, and there is none to cap. A
+held key lock is also positive evidence that the entry is live, so skipping a
+contended key is better selection as well as bounded latency.
 
 Windows cannot inherit the open-unlinked-reader conclusion. Its sharing flags,
 replacement API, and deletion semantics need their own spike before the cache
@@ -296,7 +316,16 @@ of scope for this ticket.
 5. Define supported local filesystems and add platform-specific Windows and
    network-filesystem feasibility gates before claiming portability.
 6. Design bounded GC/accounting separately and stress eviction with active
-   writers/readers at 1, 8, and 32 processes.
+   writers/readers at 1, 8, and 32 processes. **Closed** by
+   [the collection note](bounded-collection.md):
+   `tiler_cache::expansion::collect` implements non-durable whole-cache
+   accounting, a declared bound that defaults to removing nothing, a
+   never-blocking collector that names every entry it removes, and a purge that
+   retires the version root in one rename. `expansion::harness` runs the ladder
+   at 1, 8, and 32 real writer processes against a real collecting process.
+   Every type is staged `pub(crate)` under ADR 0074 convention 7, so no consumer
+   can reach it until `accept-the-tiler-cache-public-boundary` promotes it, and
+   nothing schedules a collection yet.
 7. Run the harness under Cargo and rust-analyzer process patterns once the
    proc-macro spike exists; this ticket only establishes the storage protocol.
 

@@ -7,7 +7,7 @@ topics: ["cache", "concurrency", "durability"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
-supports: ["tiler.research.cache.crash-race-protocol"]
+supports: ["tiler.research.cache.crash-race-protocol", "tiler.research.cache.bounded-collection"]
 entrypoints: ["spikes/cache/cache_harness.rs", "crates/tiler-cache/src/expansion/harness.rs"]
 last_verified: "2026-07-25"
 ticket: "port-the-cache-harness-to-the-production-bundle"
@@ -73,6 +73,27 @@ The tracked
 [2026-07-25 result](results/production-bundle-macos-27.0-rustc-1.99.0-nightly-2026-07-19.tsv)
 is that command's output, with the host and toolchain header added. It is an
 observation about one host, not a portable guarantee.
+
+## Collection under load
+
+The same harness runs the collection ladder the research note's sixth gate asks
+for, at 1, 8, and 32 real writer processes against a real collecting process:
+
+```sh
+cargo nextest run -p tiler-cache \
+  -E 'test(collection_races_active_processes_at_one_eight_and_thirty_two)'
+```
+
+The scales are fixed in the case rather than taken from
+`TILER_CACHE_HARNESS_CONCURRENCY`, because the ladder *is* the deliverable — a
+run that silently used four would report having stressed 32 having stressed
+nothing. `TILER_CACHE_HARNESS_EVIDENCE` still records one row per scale, and the
+row carries the entries removed and the candidates the collector deliberately
+left alone. How often the contended and superseded dispositions are reached is a
+property of the host's scheduling, so the ladder records those totals rather than
+asserting on them; each disposition has deterministic coverage in
+`expansion::tests`, which holds the lock and replaces the entry itself. See
+[the collection design](../../docs/research/cache/bounded-collection.md).
 
 **One substitution is stated in the evidence header rather than hidden.** The
 children drive the crate-private `resolve` with a payload validator accepting any

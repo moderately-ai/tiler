@@ -12,6 +12,16 @@ use super::key::{CacheKey, KeyTextRejection};
 /// differently — they are simply in a directory it does not look in.
 pub(crate) const NAMESPACE_VERSION: &str = "v1";
 
+/// Prefix of a namespace tree a purge has renamed out of service.
+///
+/// Deliberately not a suffix of [`NAMESPACE_VERSION`] and never equal to it:
+/// [`Layout::shard`] joins the version component exactly, so nothing this crate
+/// reads can resolve into a retired tree. That is the whole mechanism by which a
+/// purge takes a namespace out of service in one atomic step — a reader does not
+/// have to be told, because the directory it looks in is simply no longer the
+/// directory that holds the old entries.
+pub(crate) const OUT_OF_SERVICE_PREFIX: &str = "v1.out-of-service.";
+
 const ENTRIES_DIR: &str = "entries";
 const LOCKS_DIR: &str = "locks";
 const TEMPORARIES_DIR: &str = "tmp";
@@ -91,6 +101,39 @@ impl Layout {
     /// True when `name` is a temporary file belonging to `key`.
     pub(crate) fn is_temporary_of(key: &CacheKey, name: &str) -> bool {
         name.starts_with(&format!("{}.", key.label())) && name.ends_with(TEMPORARY_EXTENSION)
+    }
+
+    /// `<root>/v1` — the whole namespace one purge takes out of service.
+    pub(crate) fn version_root(&self) -> PathBuf {
+        self.root.join(NAMESPACE_VERSION)
+    }
+
+    /// `<root>/v1/entries` — the tree a collection scan walks.
+    pub(crate) fn entries_root(&self) -> PathBuf {
+        self.version_root().join(ENTRIES_DIR)
+    }
+
+    /// `<root>/v1/quarantine` — retained evidence, which a collection counts and
+    /// never removes.
+    pub(crate) fn quarantine_root(&self) -> PathBuf {
+        self.version_root().join(QUARANTINE_DIR)
+    }
+
+    /// `<root>/v1.out-of-service.<nonce>` — where a purge renames the namespace.
+    ///
+    /// A sibling of the version root rather than a child of it, because a child
+    /// would be walked by anything scanning the namespace it was retired from.
+    pub(crate) fn out_of_service_path(&self, nonce: u128) -> PathBuf {
+        self.root.join(format!("{OUT_OF_SERVICE_PREFIX}{nonce}"))
+    }
+
+    /// True when `name` is a namespace tree some purge already retired.
+    ///
+    /// Used to reclaim a tree left behind by a purge that died between its
+    /// rename and its removal. Nothing reads such a tree, so recovering it is
+    /// disk reclamation and never a correctness step.
+    pub(crate) fn is_out_of_service(name: &str) -> bool {
+        name.starts_with(OUT_OF_SERVICE_PREFIX)
     }
 
     fn shard(&self, kind: &str, label: &str) -> PathBuf {

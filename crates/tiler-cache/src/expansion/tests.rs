@@ -34,6 +34,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tiler_artifact::program::{ArtifactCodecFailure, DIGEST_BYTES, DigestAlgorithm};
 
 use super::bundle::{self, BundleRejection, BundleSection};
+use super::collect::{CollectionBound, CollectionOutcome, Disposition};
 use super::key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
 use super::layout::{PathRejection, key_of_entry_path};
 use super::limits::Limits;
@@ -114,6 +115,39 @@ fn compose(
         backend_compilations,
         artifact_program,
     })
+}
+
+/// Publishes one subject and then sets its entry's publication time.
+///
+/// Collection orders by the entry file's modification time, and two publications
+/// microseconds apart can land on one timestamp wherever the filesystem's
+/// granularity is coarser than the gap. Setting the time explicitly makes an
+/// ordering test a statement about the selector rather than about how fast two
+/// writes happened to be — and `set_modified` is the same metadata the
+/// production scan reads, so nothing about the path under test is bypassed.
+fn publish_aged(
+    cache: &ExpansionCache,
+    subject: &[u8],
+    envelope: &[u8],
+    seconds_old: u64,
+) -> CacheKey {
+    let key = publish(cache, subject, envelope);
+    let when = SystemTime::now() - Duration::from_secs(seconds_old);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(cache.entry_path(&key))
+        .expect("a published entry opens")
+        .set_modified(when)
+        .expect("the host records a modification time");
+    key
+}
+
+/// A bound on the number of entries, with no byte ceiling.
+const fn at_most(entries: u64) -> CollectionBound {
+    CollectionBound {
+        max_total_bytes: None,
+        max_entries: Some(entries),
+    }
 }
 
 /// Publishes one subject through the private protocol and returns the key.
@@ -1291,5 +1325,597 @@ fn an_aged_temporary_is_swept() {
     assert!(
         unrelated.exists(),
         "a sweep holding one key's lock touches only that key's temporaries",
+    );
+}
+
+// -------------------------------------------------------------------------
+// Accounting
+// -------------------------------------------------------------------------
+
+/// Accounting measures the cache and changes nothing about it.
+///
+/// The second half is the half that matters. Accounting exists to be run against
+/// a live cache before a bound is chosen, so an operator looking at their cache
+/// must not be the reason an entry stops validating.
+#[test]
+fn accounting_measures_the_cache_without_changing_it() {
+    let scratch = Scratch::new("accounting");
+    let cache = cache(&scratch);
+    let first = publish(&cache, b"subject-a", b"envelope-a");
+    let second = publish(&cache, b"subject-b", b"a-longer-envelope-b");
+
+    let accounting = cache.account().expect("a published cache accounts");
+    assert_eq!(accounting.entry_count(), 2);
+    let expected: u64 = [first, second]
+        .iter()
+        .map(|key| {
+            fs::metadata(cache.entry_path(key))
+                .expect("the entry exists")
+                .len()
+        })
+        .sum();
+    assert_eq!(accounting.total_bytes(), expected);
+    assert!(accounting.unrecognized().is_empty());
+    assert_eq!(accounting.quarantine_files(), 0);
+
+    for key in [first, second] {
+        assert!(
+            cache.read_entry(&key, &any_payload).is_ok(),
+            "{key} still validates after being accounted for",
+        );
+    }
+}
+
+/// A cache root that has never been written to accounts as empty rather than
+/// failing.
+///
+/// [`ExpansionCache::open`] creates nothing, so this is the ordinary starting
+/// state and not an error condition.
+#[test]
+fn an_unwritten_cache_accounts_as_empty() {
+    let scratch = Scratch::new("accounting-empty");
+    let accounting = cache(&scratch).account().expect("an absent root accounts");
+    assert_eq!(accounting.entry_count(), 0);
+    assert_eq!(accounting.total_bytes(), 0);
+}
+
+/// Quarantined bytes are counted and never collected.
+///
+/// Quarantine holds the exact bytes of an entry that failed validation, which is
+/// evidence. Its growth is already bounded where it is *added* to, and reaching
+/// that bound is reported; a collector that also deleted it would be discarding
+/// the diagnosis a user kept the bound for.
+#[test]
+fn quarantined_evidence_is_counted_and_never_collected() {
+    let scratch = Scratch::new("quarantine-accounting");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    fs::write(cache.entry_path(&key), b"this is not a bundle")
+        .expect("the entry is writable in this test");
+    publish(&cache, b"subject", b"rebuilt-envelope");
+
+    let accounting = cache.account().expect("the cache accounts");
+    assert_eq!(accounting.quarantine_files(), 1);
+    assert_eq!(accounting.quarantine_bytes(), 20);
+
+    // Collect everything collectable, then confirm the evidence is still there.
+    let report = cache.collect(&at_most(0)).expect("a collection runs");
+    assert_eq!(report.removed().len(), 1);
+    let after = cache.account().expect("the cache accounts");
+    assert_eq!(after.entry_count(), 0, "the entry was collected");
+    assert_eq!(
+        after.quarantine_bytes(),
+        20,
+        "collection never reclaims retained evidence",
+    );
+}
+
+// -------------------------------------------------------------------------
+// Bounded collection
+// -------------------------------------------------------------------------
+
+/// The bound this crate supplies by default removes nothing at all.
+///
+/// The repository rule prefers removing an unnecessary limit to choosing a number
+/// for one, and the research note is explicit that exact defaults require
+/// workload measurement. An unbounded collection is therefore a pure measurement,
+/// and no entry can leave because of a ceiling nobody chose.
+#[test]
+fn the_default_bound_removes_nothing() {
+    let scratch = Scratch::new("unbounded");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+
+    let report = cache
+        .collect(&CollectionBound::UNBOUNDED)
+        .expect("a collection runs");
+    assert_eq!(report.outcome(), CollectionOutcome::WithinBound);
+    assert_eq!(report.selected(), 0);
+    assert!(report.removed().is_empty());
+    assert_eq!(report.reclaimed_bytes(), 0);
+    assert!(report.accounts_for_every_entry());
+    assert!(
+        cache.read_entry(&key, &any_payload).is_ok(),
+        "an unbounded collection is a measurement",
+    );
+    assert_eq!(CollectionBound::default(), CollectionBound::UNBOUNDED);
+}
+
+/// A cache already within its bound has nothing selected.
+#[test]
+fn a_cache_within_its_bound_selects_nothing() {
+    let scratch = Scratch::new("within-bound");
+    let cache = cache(&scratch);
+    publish(&cache, b"subject", b"envelope");
+    let report = cache.collect(&at_most(4)).expect("a collection runs");
+    assert_eq!(report.outcome(), CollectionOutcome::WithinBound);
+    assert_eq!(report.selected(), 0);
+}
+
+/// An entry bound removes the oldest publications first and stops at the bound.
+#[test]
+fn a_bound_removes_the_oldest_publications_first() {
+    let scratch = Scratch::new("oldest-first");
+    let cache = cache(&scratch);
+    let oldest = publish_aged(&cache, b"subject-old", b"envelope-old", 300);
+    let middle = publish_aged(&cache, b"subject-mid", b"envelope-mid", 200);
+    let newest = publish_aged(&cache, b"subject-new", b"envelope-new", 100);
+
+    let report = cache.collect(&at_most(1)).expect("a collection runs");
+    assert_eq!(report.outcome(), CollectionOutcome::BoundReached);
+    assert_eq!(
+        report
+            .removed()
+            .iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>(),
+        vec![oldest, middle],
+        "the two oldest publications are the two that leave",
+    );
+    assert!(
+        cache.read_entry(&newest, &any_payload).is_ok(),
+        "the newest publication survives",
+    );
+    assert!(report.accounts_for_every_entry());
+}
+
+/// A byte bound removes until the total fits, and no further.
+///
+/// Paired with the entry-count case above because the two ceilings are checked
+/// separately and a selector honouring one and ignoring the other would pass
+/// either test alone.
+#[test]
+fn a_byte_bound_removes_until_the_total_fits() {
+    let scratch = Scratch::new("byte-bound");
+    let cache = cache(&scratch);
+    let oldest = publish_aged(&cache, b"subject-old", b"envelope-old", 300);
+    let newest = publish_aged(&cache, b"subject-new", b"envelope-new", 100);
+    let each = fs::metadata(cache.entry_path(&newest))
+        .expect("the entry exists")
+        .len();
+
+    let report = cache
+        .collect(&CollectionBound {
+            max_total_bytes: Some(each),
+            max_entries: None,
+        })
+        .expect("a collection runs");
+    assert_eq!(report.outcome(), CollectionOutcome::BoundReached);
+    assert_eq!(report.reclaimed_bytes(), each);
+    assert_eq!(
+        report
+            .removed()
+            .iter()
+            .map(|entry| entry.key)
+            .collect::<Vec<_>>(),
+        vec![oldest],
+    );
+    assert!(cache.read_entry(&newest, &any_payload).is_ok());
+}
+
+/// Every removal is named individually, and the dispositions account for the
+/// whole selection.
+///
+/// This is the mechanical form of the rule that nothing is dropped silently. A
+/// count alone would let an entry leave the cache without anything saying which
+/// one; the report has to be able to answer that after an unexpected rebuild.
+#[test]
+fn a_collection_names_every_entry_it_removed() {
+    let scratch = Scratch::new("named-removals");
+    let cache = cache(&scratch);
+    let keys: Vec<CacheKey> = (0_u64..4)
+        .map(|index| {
+            publish_aged(
+                &cache,
+                format!("subject-{index}").as_bytes(),
+                format!("envelope-{index}").as_bytes(),
+                400 - index * 100,
+            )
+        })
+        .collect();
+
+    let report = cache.collect(&at_most(1)).expect("a collection runs");
+    assert!(report.accounts_for_every_entry());
+    assert_eq!(report.selected(), 3);
+    assert_eq!(report.removed().len(), 3);
+    assert_eq!(
+        report.reclaimed_bytes(),
+        report
+            .removed()
+            .iter()
+            .map(|entry| entry.bytes)
+            .sum::<u64>(),
+        "the reclaimed total is the sum of the named removals",
+    );
+    for removed in report.removed() {
+        assert!(
+            removed.bytes > 0,
+            "a removal reports the bytes it reclaimed"
+        );
+        assert!(keys.contains(&removed.key), "a removal names a real key");
+        assert!(
+            !cache.entry_path(&removed.key).exists(),
+            "a named removal really happened",
+        );
+    }
+    assert_eq!(report.order().as_str(), "oldest-publication-first");
+}
+
+/// A key another process holds the lock on is skipped, reported, and never
+/// waited for.
+///
+/// A held key lock means somebody is publishing or evicting that key right now,
+/// which makes the entry live rather than collectable. Skipping is both the
+/// better selection and what lets a collection have no work budget: it never
+/// blocks, so there is no unbounded wait to cap.
+#[test]
+fn a_contended_key_is_skipped_and_reported_rather_than_waited_for() {
+    let scratch = Scratch::new("contended");
+    let cache = cache(&scratch);
+    let contended = publish_aged(&cache, b"subject-old", b"envelope-old", 300);
+    publish_aged(&cache, b"subject-new", b"envelope-new", 100);
+
+    let held = KeyLock::try_acquire(&cache.lock_path(&contended))
+        .expect("the lock file opens")
+        .expect("an unheld lock is free");
+
+    let report = cache.collect(&at_most(1)).expect("a collection runs");
+    assert_eq!(report.contended(), 1);
+    assert!(report.removed().is_empty());
+    assert!(report.accounts_for_every_entry());
+    assert!(
+        matches!(
+            report.outcome(),
+            CollectionOutcome::BoundNotReached { entries: 2, .. },
+        ),
+        "an unreachable bound is reported, not quietly abandoned: {:?}",
+        report.outcome(),
+    );
+    assert!(
+        cache.read_entry(&contended, &any_payload).is_ok(),
+        "a contended entry is left alone",
+    );
+    held.release().expect("the lock releases");
+}
+
+/// An entry replaced since the scan is left alone rather than removed.
+///
+/// Without this, a collection deciding on a stale measurement could unlink a
+/// *fresh* publication and then report having reclaimed bytes belonging to a file
+/// it never saw.
+#[test]
+fn an_entry_replaced_since_the_scan_is_not_removed() {
+    let scratch = Scratch::new("superseded");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let stale = cache
+        .account()
+        .expect("the cache accounts")
+        .entries()
+        .first()
+        .expect("one entry was published")
+        .clone();
+
+    // Republish under the same key with a differently sized envelope, which is
+    // what a writer replacing a rejected entry does.
+    fs::remove_file(cache.entry_path(&key)).expect("the entry is removable");
+    publish(
+        &cache,
+        b"subject",
+        b"a-considerably-longer-replacement-envelope",
+    );
+
+    assert_eq!(
+        cache
+            .remove_if_unchanged(&stale)
+            .expect("the removal reaches a decision"),
+        Disposition::Superseded,
+    );
+    assert_eq!(
+        cache
+            .read_entry(&key, &any_payload)
+            .expect("the replacement survives")
+            .envelope,
+        b"a-considerably-longer-replacement-envelope",
+    );
+}
+
+/// An entry already gone when the lock is taken is reported and not counted as
+/// reclaimed.
+///
+/// The ordinary outcome when two collectors select overlapping sets, or when an
+/// external deletion wins the race. The bytes belong to whoever actually removed
+/// the file.
+#[test]
+fn an_entry_already_gone_is_reported_rather_than_counted() {
+    let scratch = Scratch::new("already-absent");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let stale = cache
+        .account()
+        .expect("the cache accounts")
+        .entries()
+        .first()
+        .expect("one entry was published")
+        .clone();
+    fs::remove_file(cache.entry_path(&key)).expect("the entry is removable");
+
+    assert_eq!(
+        cache
+            .remove_if_unchanged(&stale)
+            .expect("the removal reaches a decision"),
+        Disposition::AlreadyAbsent,
+    );
+}
+
+/// A file the entry parser refuses is reported and never removed.
+///
+/// A collector that deleted whatever it could not parse would be acting on the
+/// absence of understanding. The parser is strict — exact label width, lowercase
+/// hexadecimal, and the key's own shard — so an unrecognized file means something
+/// other than this crate is writing into the namespace, which an operator should
+/// be told rather than have tidied away.
+#[test]
+fn a_file_the_parser_refuses_is_reported_and_never_removed() {
+    let scratch = Scratch::new("unrecognized");
+    let cache = cache(&scratch);
+    let key = publish_aged(&cache, b"subject", b"envelope", 100);
+    let shard = cache
+        .entry_path(&key)
+        .parent()
+        .expect("an entry has a shard directory")
+        .to_path_buf();
+    let stray = shard.join("not-a-cache-entry.txt");
+    fs::write(&stray, b"something else wrote here").expect("the shard is writable in this test");
+
+    let report = cache.collect(&at_most(0)).expect("a collection runs");
+    assert_eq!(
+        report.accounting().unrecognized(),
+        std::slice::from_ref(&stray)
+    );
+    assert!(
+        stray.exists(),
+        "a collector never removes what its own parser refused",
+    );
+    assert_eq!(
+        report.removed().len(),
+        1,
+        "the recognized entry is still collected",
+    );
+    assert!(report.accounts_for_every_entry());
+}
+
+/// Collection retains every lock file.
+///
+/// Not tidiness. Unlinking a locked file lets a later process create a different
+/// inode at the same path and take an independent lock while an earlier process
+/// still holds the first, which splits contenders into two groups that do not
+/// exclude each other.
+#[test]
+fn collection_retains_every_lock_file() {
+    let scratch = Scratch::new("collection-locks");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+    let lock = cache.lock_path(&key);
+    assert!(lock.exists(), "publishing created the lock file");
+
+    let report = cache.collect(&at_most(0)).expect("a collection runs");
+    assert_eq!(report.removed().len(), 1);
+    assert!(!cache.entry_path(&key).exists(), "the entry is gone");
+    assert!(lock.exists(), "the lock file is retained");
+}
+
+/// A reader that has already opened and validated an entry finishes its read
+/// across a collection that removes it.
+///
+/// This is why [`ExpansionCache::lookup`] takes no lock. The reader's descriptor
+/// was opened before the unlink, and a directory entry removed on the Unix and
+/// Darwin hosts this crate targets does not reclaim the inode while a descriptor
+/// is open. `super::harness` measures the same property across a real process
+/// boundary, with the collection running in a different process.
+#[test]
+fn a_reader_holding_a_descriptor_reads_across_a_collection() {
+    let scratch = Scratch::new("read-across-collection");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope-before-collection");
+    let held = fs::File::open(cache.entry_path(&key)).expect("a published entry opens");
+
+    let report = cache.collect(&at_most(0)).expect("a collection runs");
+    assert_eq!(report.removed().len(), 1);
+    assert!(!cache.entry_path(&key).exists(), "the entry was unlinked");
+    assert!(
+        matches!(
+            cache.read_entry(&key, &any_payload),
+            Err(MissReason::Absent),
+        ),
+        "a reader arriving afterwards finds an ordinary absence",
+    );
+
+    let mut bytes = Vec::new();
+    {
+        use std::io::Read;
+        let mut held = held;
+        held.read_to_end(&mut bytes)
+            .expect("an open descriptor survives the unlink");
+    }
+    let view = bundle::decode(&bytes, &key, &Limits::default())
+        .expect("the bytes an open descriptor yields are still a valid bundle");
+    assert_eq!(view.envelope, b"envelope-before-collection");
+}
+
+/// Concurrent collectors over one cache never double-count and never fail.
+///
+/// Each removal is taken under its own key lock, so two collectors selecting
+/// overlapping sets serialize per key: one removes and counts the bytes, the
+/// other finds the entry gone. Every entry is still accounted for in both
+/// reports.
+#[test]
+fn concurrent_collectors_do_not_double_count() {
+    const COLLECTORS: usize = 8;
+    let scratch = Scratch::new("concurrent-collectors");
+    let cache = cache(&scratch);
+    for index in 0_u64..16 {
+        publish_aged(
+            &cache,
+            format!("subject-{index}").as_bytes(),
+            format!("envelope-{index}").as_bytes(),
+            1600 - index * 100,
+        );
+    }
+
+    let handles: Vec<_> = (0..COLLECTORS)
+        .map(|_| {
+            let cache = cache.clone();
+            thread::spawn(move || cache.collect(&at_most(0)).expect("a collection runs"))
+        })
+        .collect();
+
+    let mut reclaimed = 0_u64;
+    let mut removed = 0_usize;
+    for handle in handles {
+        let report = handle.join().expect("no collector panics");
+        assert!(report.accounts_for_every_entry());
+        assert!(report.failed().is_empty(), "{:?}", report.failed());
+        reclaimed += report.reclaimed_bytes();
+        removed += report.removed().len();
+    }
+    assert_eq!(removed, 16, "every entry is removed exactly once");
+    assert_eq!(
+        cache.account().expect("the cache accounts").entry_count(),
+        0,
+    );
+    assert!(reclaimed > 0);
+}
+
+// -------------------------------------------------------------------------
+// The out-of-service purge
+// -------------------------------------------------------------------------
+
+/// A purge retires the whole namespace in one rename and reclaims it.
+///
+/// The rename is what makes this stronger than `rm -r`: afterwards `<root>/v1`
+/// does not exist, so a process arriving next creates a fresh, coherent
+/// namespace rather than walking a half-deleted one.
+#[test]
+fn a_purge_retires_the_namespace_and_a_later_writer_starts_clean() {
+    let scratch = Scratch::new("purge");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope-before-purge");
+    assert!(cache.entry_path(&key).exists());
+
+    let report = cache.purge().expect("a purge runs");
+    assert!(report.retired().is_some(), "the live namespace was retired");
+    assert_eq!(report.reclaimed_trees(), 1);
+    assert!(report.reclaimed_bytes() > 0);
+    assert!(report.failed().is_empty());
+    assert!(
+        !cache.root().join("v1").exists(),
+        "nothing is left in service",
+    );
+    assert_eq!(
+        cache
+            .account()
+            .expect("an emptied cache accounts")
+            .entry_count(),
+        0,
+    );
+
+    let republished = publish(&cache, b"subject", b"envelope-after-purge");
+    assert_eq!(
+        republished, key,
+        "a key is a function of the subject, not of the cache it is stored in",
+    );
+    assert_eq!(
+        cache
+            .read_entry(&key, &any_payload)
+            .expect("the fresh namespace serves the new entry")
+            .envelope,
+        b"envelope-after-purge",
+    );
+}
+
+/// A purge reclaims a tree an earlier purge left behind.
+///
+/// This is the crash recovery, and it needs no rule beyond "reclaim what is out
+/// of service": a purge that died between its rename and its removal left a tree
+/// nothing reads, so removing it later is disk reclamation rather than a repair.
+#[test]
+fn a_purge_reclaims_a_tree_an_earlier_purge_left_behind() {
+    let scratch = Scratch::new("purge-leftover");
+    let cache = cache(&scratch);
+    publish(&cache, b"subject", b"envelope");
+
+    // Exactly the state a purge killed after its rename leaves behind.
+    let abandoned = cache.root().join("v1.out-of-service.12345");
+    fs::rename(cache.root().join("v1"), &abandoned).expect("the namespace renames");
+    assert!(abandoned.exists());
+
+    let report = cache.purge().expect("a purge runs");
+    assert!(
+        report.retired().is_none(),
+        "there was no live namespace left to retire",
+    );
+    assert_eq!(report.reclaimed_trees(), 1);
+    assert!(!abandoned.exists(), "the abandoned tree was reclaimed");
+}
+
+/// Purging a cache that was never written to is not an error.
+#[test]
+fn purging_an_unwritten_cache_is_not_an_error() {
+    let scratch = Scratch::new("purge-empty");
+    let report = cache(&scratch).purge().expect("an absent root purges");
+    assert!(report.retired().is_none());
+    assert_eq!(report.reclaimed_trees(), 0);
+}
+
+/// A retired namespace is invisible to every reader.
+///
+/// The version component is joined exactly, so a tree named with the
+/// out-of-service prefix cannot be resolved into by anything this crate reads.
+/// That is the whole mechanism by which one rename takes a namespace out of
+/// service without telling anyone.
+#[test]
+fn a_retired_namespace_is_invisible_to_a_reader() {
+    let scratch = Scratch::new("retired-invisible");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+
+    let abandoned = cache.root().join("v1.out-of-service.999");
+    fs::rename(cache.root().join("v1"), &abandoned).expect("the namespace renames");
+    assert!(
+        abandoned.join("entries").exists(),
+        "the entries are still on disk, merely out of service",
+    );
+    assert!(
+        matches!(
+            cache.read_entry(&key, &any_payload),
+            Err(MissReason::Absent),
+        ),
+        "a reader does not resolve into a retired tree",
+    );
+    assert_eq!(
+        cache.account().expect("the cache accounts").entry_count(),
+        0,
+        "a scan does not walk a retired tree either",
     );
 }
