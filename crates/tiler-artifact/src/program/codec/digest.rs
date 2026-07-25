@@ -447,8 +447,18 @@ mod tests {
     /// subjects only when no admitted domain is a prefix of another — otherwise
     /// a longer domain and a shorter one with leading body bytes would collide.
     /// Every governed domain is a fixed constant of this crate, so the property
-    /// is checkable here rather than assumed, and a new domain that violates it
-    /// fails this test instead of silently merging two subjects.
+    /// is checkable rather than assumed, and a new domain that violates it fails
+    /// a test instead of silently merging two subjects.
+    ///
+    /// **This test covers the envelope's three domains and not the crate's
+    /// seven.** The property is global: one algorithm hashes both the envelope
+    /// and the proof sidecar in one process, so a domain added to either
+    /// container could collide with one in the other, and a check confined to
+    /// three of the seven would report separation it had not established.
+    /// `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another`
+    /// checks the union and is the authority for the property; this test is the
+    /// envelope-local half. A fourth envelope domain must be added to **both**,
+    /// and `docs/artifact-abi.md` records the union obligation normatively.
     #[test]
     fn no_governed_domain_is_a_prefix_of_another() {
         let domains = [

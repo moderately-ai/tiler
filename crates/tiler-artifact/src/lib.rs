@@ -19,12 +19,13 @@
 //! [`program`] is a **reviewed draft boundary** (ADR 0074 §7, ADR 0075). It is
 //! `pub` so its shape can be reviewed as a whole; it is not an accepted public
 //! facade until Tom accepts the exact interface.
+//!
+//! [`proof`] is an **accepted facade**, promoted on Tom's review of
+//! 2026-07-25. It is deliberately *not* artifact semantics: a sidecar names an
+//! artifact, an artifact never names a sidecar, and an artifact decodes,
+//! validates, and dispatches with no sidecar present.
 
 /// Public target-neutral artifact program model, verifier, and identity.
 pub mod program;
-// The proof-case evidence sidecar. Crate-private under ADR 0074 convention 7
-// until its facade is reviewed; its module documentation names what it reserves
-// and states why it is deliberately *not* artifact semantics — a sidecar names
-// an artifact, an artifact never names a sidecar, and an artifact decodes,
-// validates, and dispatches with no sidecar present.
-mod proof;
+/// The separate, versioned proof-case evidence sidecar.
+pub mod proof;

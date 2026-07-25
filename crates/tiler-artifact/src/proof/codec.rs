@@ -83,7 +83,7 @@ const MAX_TEXT_BYTES: usize = 4 * 1024;
 
 /// A governed structural bound of the proof sidecar.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ProofLimitKind {
+pub enum ProofLimitKind {
     /// Total encoded sidecar bytes.
     SidecarBytes,
     /// Canonical manifest bytes.
@@ -115,13 +115,13 @@ impl fmt::Display for ProofLimitKind {
 /// A single record shared by construction and by decoding, so a bound has one
 /// name and one reported shape whichever side refused it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ProofLimitExceeded {
+pub struct ProofLimitExceeded {
     /// The bound that was exceeded.
-    pub(crate) kind: ProofLimitKind,
+    pub kind: ProofLimitKind,
     /// Quantity that was attempted.
-    pub(crate) attempted: usize,
+    pub attempted: usize,
     /// Governed maximum.
-    pub(crate) limit: usize,
+    pub limit: usize,
 }
 
 impl fmt::Display for ProofLimitExceeded {
@@ -162,7 +162,7 @@ pub(super) fn proof_limit(
 /// consumer that classifies a rejection matches this to decide what to report,
 /// and a new ordered subject must break such a match.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ProofOrderedSubject {
+pub enum ProofOrderedSubject {
     /// The proof cases, ordered by stable case key.
     Case,
     /// The bound input keys, in the artifact's interface order.
@@ -184,7 +184,7 @@ impl fmt::Display for ProofOrderedSubject {
 /// `#[non_exhaustive]` (ADR 0074 convention 5c): this is a recognizer whose
 /// arms are the behaviours a consumer supports.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ProofFailureClass {
+pub enum ProofFailureClass {
     /// The bytes are not a well-formed proof sidecar.
     Malformed,
     /// A digest or a derived identity did not match the content it covers.
@@ -220,7 +220,7 @@ impl fmt::Display for ProofFailureClass {
 /// total, so no out-of-crate reader has to enumerate these variants.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub(crate) enum ProofCodecError {
+pub enum ProofCodecError {
     /// The encoding ran out of bytes before a field was complete.
     Truncated {
         /// Bytes the field required.
@@ -357,7 +357,8 @@ impl ProofCodecError {
     /// The match is exhaustive with no wildcard arm, so a new boundary is a
     /// build error here and has to be classified deliberately instead of
     /// silently becoming whichever class a wildcard named.
-    pub(crate) const fn classification(&self) -> ProofFailureClass {
+    #[must_use]
+    pub const fn classification(&self) -> ProofFailureClass {
         match self {
             Self::Truncated { .. }
             | Self::TrailingBytes { .. }
@@ -524,7 +525,7 @@ impl From<ProofInterfaceError> for ProofCodecError {
 /// `#[non_exhaustive]` under ADR 0074 convention 5a.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub(crate) enum ProofAssociationError {
+pub enum ProofAssociationError {
     /// The supplied envelope bytes do not digest to the recorded envelope.
     ///
     /// Checked first, because it is the cheapest and it is the one failure that
@@ -782,7 +783,7 @@ impl VerifiedProofSidecar {
     ///
     /// Returns [`ProofCodecError::Limit`] when the canonical encoding exceeds a
     /// governed bound.
-    pub(crate) fn encode(&self) -> Result<Vec<u8>, ProofCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, ProofCodecError> {
         encode(&self.data, &self.identity)
     }
 }
@@ -802,7 +803,7 @@ impl VerifiedProofSidecar {
 ///
 /// Returns the typed [`ProofCodecError`] naming the first boundary that
 /// rejected.
-pub(crate) fn decode_proof_sidecar(bytes: &[u8]) -> Result<DecodedProofSidecar, ProofCodecError> {
+pub fn decode_proof_sidecar(bytes: &[u8]) -> Result<DecodedProofSidecar, ProofCodecError> {
     proof_limit(
         bytes.len(),
         MAX_PROOF_SIDECAR_BYTES,
@@ -852,7 +853,7 @@ pub(crate) fn decode_proof_sidecar(bytes: &[u8]) -> Result<DecodedProofSidecar, 
 
 /// A validated read view over one decoded proof sidecar.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DecodedProofSidecar {
+pub struct DecodedProofSidecar {
     sidecar: VerifiedProofSidecar,
 }
 
@@ -862,52 +863,62 @@ impl DecodedProofSidecar {
     /// Re-derived, never read from the bytes: [`decode_proof_sidecar`] already
     /// proved this equals the identity the manifest carried, so a damaged
     /// manifest cannot present a chosen identity.
-    pub(crate) const fn identity(&self) -> &CanonicalProofSidecarIdentity {
+    #[must_use]
+    pub const fn identity(&self) -> &CanonicalProofSidecarIdentity {
         self.sidecar.canonical_identity()
     }
 
     /// Returns the canonical identity bytes of the artifact this sidecar names.
-    pub(crate) fn artifact_identity_bytes(&self) -> &[u8] {
+    #[must_use]
+    pub fn artifact_identity_bytes(&self) -> &[u8] {
         self.sidecar.artifact_identity_bytes()
     }
 
     /// Returns the digest of the exact envelope bytes this sidecar names.
-    pub(crate) const fn envelope_digest(&self) -> &[u8; DIGEST_BYTES] {
+    #[must_use]
+    pub const fn envelope_digest(&self) -> &[u8; DIGEST_BYTES] {
         self.sidecar.envelope_digest()
     }
 
     /// Returns the semantic graph the expected bytes were evaluated over.
-    pub(crate) const fn semantic_subject(&self) -> &ProofSemanticSubject {
+    #[must_use]
+    pub const fn semantic_subject(&self) -> &ProofSemanticSubject {
         self.sidecar.semantic_subject()
     }
 
     /// Returns the numerical contract the expected bytes are normative under.
-    pub(crate) const fn numerical_identity(&self) -> &ProofNumericalIdentity {
+    #[must_use]
+    pub const fn numerical_identity(&self) -> &ProofNumericalIdentity {
         self.sidecar.numerical_identity()
     }
 
     /// Returns the reference implementation that produced the expected bytes.
-    pub(crate) const fn reference_identity(&self) -> &ProofReferenceIdentity {
+    #[must_use]
+    pub const fn reference_identity(&self) -> &ProofReferenceIdentity {
         self.sidecar.reference_identity()
     }
 
     /// Returns the bound input keys, in the artifact's interface order.
-    pub(crate) fn input_keys(&self) -> &[InputKey] {
+    #[must_use]
+    pub fn input_keys(&self) -> &[InputKey] {
         self.sidecar.input_keys()
     }
 
     /// Returns the bound output keys, in the artifact's interface order.
-    pub(crate) fn output_keys(&self) -> &[OutputKey] {
+    #[must_use]
+    pub fn output_keys(&self) -> &[OutputKey] {
         self.sidecar.output_keys()
     }
 
     /// Returns the proof cases in canonical case-key order.
-    pub(crate) fn cases(&self) -> impl ExactSizeIterator<Item = ProofCaseRef<'_>> {
+    #[must_use]
+    pub fn cases(&self) -> impl ExactSizeIterator<Item = ProofCaseRef<'_>> {
         cases_of(&self.sidecar.data)
     }
 
     /// Returns the case with this key, or `None`.
-    pub(crate) fn case(&self, key: &ProofCaseKey) -> Option<ProofCaseRef<'_>> {
+    #[must_use]
+    pub fn case(&self, key: &ProofCaseKey) -> Option<ProofCaseRef<'_>> {
         case_of(&self.sidecar.data, key)
     }
 
@@ -922,7 +933,7 @@ impl DecodedProofSidecar {
     ///
     /// Returns [`ProofCodecError::Limit`] when the canonical encoding exceeds a
     /// governed bound.
-    pub(crate) fn re_encode(&self) -> Result<Vec<u8>, ProofCodecError> {
+    pub fn re_encode(&self) -> Result<Vec<u8>, ProofCodecError> {
         self.sidecar.encode()
     }
 
@@ -942,10 +953,7 @@ impl DecodedProofSidecar {
     /// [`ProofAssociationError::EnvelopeRejected`] when they are not a valid
     /// envelope, or [`ProofAssociationError::ArtifactIdentityMismatch`] when
     /// they encode a different artifact.
-    pub(crate) fn bind_to_envelope(
-        &self,
-        envelope_bytes: &[u8],
-    ) -> Result<(), ProofAssociationError> {
+    pub fn bind_to_envelope(&self, envelope_bytes: &[u8]) -> Result<(), ProofAssociationError> {
         if envelope_digest(envelope_bytes) != *self.envelope_digest() {
             return Err(ProofAssociationError::EnvelopeDigestMismatch);
         }
@@ -975,7 +983,7 @@ impl DecodedProofSidecar {
     /// artifact's declared shapes cannot be projected on this host, or
     /// [`ProofAssociationError::Interface`] when a case disagrees with the
     /// declared interface.
-    pub(crate) fn bind_to_artifact(
+    pub fn bind_to_artifact(
         &self,
         artifact: &VerifiedArtifactProgram,
     ) -> Result<(), ProofAssociationError> {

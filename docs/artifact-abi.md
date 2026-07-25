@@ -12,11 +12,11 @@ ticket: "synthesize-artifact-contracts"
 
 # Artifact envelope and Metal kernel ABI profile
 
-**Status:** accepted research contract; shared IR ownership established, a bounded neutral envelope codec implemented behind an unaccepted crate-private facade
+**Status:** accepted research contract; shared IR ownership established, a bounded neutral envelope codec implemented with an accepted capability facade, and a separate proof-case evidence sidecar implemented with an accepted facade
 
 The private compiler proof constructs provisional program portfolios and artifact-construction inputs. ADRs 0070 and 0071 now assign authoritative target-neutral executable meaning and checked construction to shared `tiler-ir` representations; the proof-specific structs remain private until replaced in dependency order.
 
-**Fact — canonical envelope serialization, canonical form, and integrity validation are implemented; the public artifact API and backend payloads are not.** `crates/tiler-artifact/src/program/codec/` encodes, decodes, and re-validates the envelope this document specifies, in the bounded lockstep profile recorded under "Implemented envelope profile" below. Every item in that module is `pub(crate)` behind a private `mod` under ADR 0074 convention 7, so no crate outside `tiler-artifact` can encode or decode an artifact and no consumer surface has been accepted; promoting it is Tom's decision under ADR 0075. The envelope now carries a backend payload's compilation subject and its object bytes, but nothing yet fills that shape from a real emission and a real compilation; and a decoded envelope still cannot reconstruct the shared-IR programs it names. The accurate statement is that a bounded lockstep codec exists behind an unaccepted facade, not that the artifact format is available.
+**Fact — canonical envelope serialization, canonical form, and integrity validation are implemented, and the codec's *capability* is reachable.** `crates/tiler-artifact/src/program/codec/` encodes, decodes, and re-validates the envelope this document specifies, in the bounded lockstep profile recorded under "Implemented envelope profile" below. On Tom's review of 2026-07-25 that capability was promoted: `VerifiedArtifactProgram::encode`, `decode_artifact`, and the `DecodedArtifact` read view are `pub`, and the envelope, encoder, decoder, and section types stay `pub(crate)` behind the private module ADR 0074 convention 7 prescribes. So an out-of-crate consumer obtains bytes and a validated view over them, and does not obtain the codec's internal layout. A decoded envelope still cannot reconstruct the shared-IR programs it names. The accurate statement is that a bounded lockstep codec with an accepted capability facade exists, not that the artifact format is stable.
 
 ## Ownership boundary
 
@@ -32,6 +32,17 @@ reconstruct shared IR through its checked builders and cannot manufacture a
 verified value or retain a second editable authority. The implemented profile
 satisfies the second half and not the first, for a structural reason recorded
 under "Implemented envelope profile" below.
+
+This document also owns the **proof-case evidence sidecar**, a second container
+produced by the same crate and specified under "Proof-case evidence sidecar"
+below. It is owned here for the two reasons that make its boundary with the
+envelope a statement about artifacts: the negative claim — an artifact never
+names a sidecar and validates and dispatches with none present — constrains what
+this document's decoders and runtimes may require, and the governed digest
+domain set is shared, so one authority has to hold both. The sidecar's *meaning*
+is nonetheless not artifact semantics, and the section below states that
+separation as the container's first property rather than as a caveat. Deleting
+every sidecar in existence changes nothing this document says an artifact means.
 
 This document describes the accepted first-backend Metal profile of Tiler's
 target-neutral artifact concepts. `MetallibBundle`, Metal binding indices, and
@@ -80,13 +91,13 @@ Everything in this section is a fact about `crates/tiler-artifact/src/program/co
 
 ### Maturity of the implementation
 
-**Fact — the surface is crate-private and its facade is unaccepted.** `codec` is a private `mod` of `tiler_artifact::program`, every item it exports is `pub(crate)`, and the module carries the `#![allow(dead_code, reason = "…")]` that ADR 0074 convention 7 prescribes for a landed authority whose facade has not been reviewed. Encoding, decoding, `ArtifactEnvelope`, the typed rejection vocabulary, and the governed constants are all unreachable from outside the crate. Promoting the module or any of its types from `pub(crate)` to `pub` is named on ADR 0075's always-ask list and requires Tom's review before merge.
+**Fact — the codec's capability is accepted and its layout is not.** `codec` is a private `mod` of `tiler_artifact::program`. Promoted on Tom's review of 2026-07-25 are the capability and the read view alone: `VerifiedArtifactProgram::encode`, `decode_artifact`, `DecodedArtifact`, `SectionView`, `SectionPurpose`, the payload vocabulary, and `ArtifactCodecFailure`. `ArtifactEnvelope`, the encoder, the decoder, the row types, and the governed constants — including the three digest domain separators — stay `pub(crate)`. Promoting any further item is named on ADR 0075's always-ask list and requires Tom's review before merge.
 
-**What a consumer can do today.** Build a `VerifiedArtifactProgram` through `tiler_artifact::program` — itself a reviewed *draft* boundary rather than an accepted facade — and read its canonical identity, which is now derived from the canonical envelope and is therefore exactly the identity a decoder re-derives from bytes.
+**What a consumer can do today.** Build a `VerifiedArtifactProgram` through `tiler_artifact::program` — itself a reviewed *draft* boundary rather than an accepted facade — read its canonical identity, encode it to bytes, decode bytes back into a fully validated `DecodedArtifact`, re-encode that decoded view, observe any typed codec rejection, and carry a backend payload.
 
-**What a consumer cannot do today.** Obtain an artifact's bytes, decode bytes into an artifact, name an envelope digest, observe any typed codec rejection, or carry a backend payload — the entry point that carries one is itself `pub(crate)`. There is no serialization API and no exposed file or embedding format.
+**What a consumer cannot do today.** Reach an `ArtifactEnvelope`, an encoder, a decoder, a manifest row, or a governed digest domain; digest a subject under one of this crate's domains; or obtain a `VerifiedArtifactProgram` from bytes, which no decoder can produce for the structural reason recorded under "Deliberate exclusions".
 
-Four maturity claims stay distinct here. The framing, canonical manifest, section framing, required-feature mechanism, and rejection vocabulary are **implemented**. The section-purpose vocabulary and the carried-payload entry point are **implemented and tested against synthetic content**, and are **reservations** in the narrower sense that no backend fills them from a real emission and a real compilation yet. A `pub` codec facade is an **architectural seam** with no accepted shape. The properties labelled Measurement below are **tested guarantees over the named fixtures**, not universal claims about every artifact.
+Four maturity claims stay distinct here. The framing, canonical manifest, section framing, required-feature mechanism, and rejection vocabulary are **implemented**. The section-purpose vocabulary and the carried-payload entry point are **implemented and tested against synthetic content**, and are **reservations** in the narrower sense that no backend fills them from a real emission and a real compilation yet. The codec's *capability* facade is **accepted**; a facade over the envelope's own layout is an **architectural seam** with no accepted shape. The properties labelled Measurement below are **tested guarantees over the named fixtures**, not universal claims about every artifact.
 
 ### Framing header
 
@@ -164,7 +175,7 @@ Replacing that field moved the manifest schema to **4.0**. As with the earlier s
 
 ### The governed digest
 
-**Fact.** The envelope names its digest algorithm by an explicit header tag and a reader never infers one from a digest width. `0x01` is `tiler.digest.sha-256.v1`, the only admitted value in this build. Three domain separators are governed as fixed NUL-terminated crate constants, and a test proves no admitted domain is a prefix of another, so `H(domain || bytes)` genuinely separates its subjects rather than colliding a longer domain with a shorter one plus leading content:
+**Fact.** The envelope names its digest algorithm by an explicit header tag and a reader never infers one from a digest width. `0x01` is `tiler.digest.sha-256.v1`, the only admitted value in this build. The envelope governs three domain separators as fixed NUL-terminated crate constants, so `H(domain || bytes)` genuinely separates its subjects rather than colliding a longer domain with a shorter one plus leading content:
 
 ```text
 manifest_digest = H("tiler.artifact-envelope.manifest-digest.v1\0"
@@ -175,6 +186,8 @@ section_digest  = H("tiler.artifact-envelope.section-digest.v1\0"
 envelope_digest = H("tiler.artifact-envelope.envelope-digest.v1\0"
                     || exact complete envelope bytes)
 ```
+
+**Fact — the no-prefix obligation is over the crate's *seven* governed domains, not over these three, and it is normative rather than incidental.** Domain separation by prefix is a property of the whole admitted set: the three above and the proof sidecar's four (recorded under "Proof-case evidence sidecar" below) are hashed by one algorithm in one process, so a domain added to either container could collide with one in the other. A check confined to one container would report a separation it had not established. `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another` checks the union and is the authority for the property; `crate::program::codec::digest`'s own three-domain test is the envelope-local half and names the union test as the authority. **A new governed domain in either container must be added to the union check**, and adding one to the envelope-local check alone does not discharge this obligation.
 
 A section descriptor is derived from its section's position and exact bytes at encode time and re-derived and compared at decode time, never stored beside the bytes it describes, so the two cannot disagree in memory. The envelope digest is computed and never stored in band; a test asserts its bytes occur nowhere in the envelope it covers.
 
@@ -234,6 +247,115 @@ Each variant carries the structured data a caller reacts to rather than a messag
    The field is the payload's contract, not the plan's. A variant's `TargetProfileRef` and `FeasibilityRuleSetRef` are the *plan's* declared target requirements, and the two coincide only while a payload is realized by one variant — which nothing in this model requires, since entries cross-reference payloads by index. Carrying it per payload is what lets a program share one compiled object across variants declaring different profiles and still state what that object was built for; without it a loader would infer the payload's contract from whichever variant it happened to route to, which is the inference this layer exists to forbid.
 
    The narrower alternative — declaring a payload per-variant by construction — was rejected on a concrete cost rather than on taste: it makes a legitimate program inexpressible. Two variants compiling to the same library could not share the payload under the new rule, and could not declare a second identical descriptor either, because the builder already refuses that as a duplicate.
+
+## Proof-case evidence sidecar
+
+A producer that compiles an artifact also knows what the artifact is *supposed to compute*, because it can evaluate the same semantic program through the target-independent reference evaluator. The proof-case evidence sidecar is the bounded, separately versioned container that carries that knowledge beside an artifact. Everything in this section is a fact about `crates/tiler-artifact/src/proof/` unless labelled otherwise.
+
+### The separation from artifact semantics, and the two properties a consumer must not confuse
+
+**Normative — a sidecar names an artifact and an artifact never names a sidecar.** No envelope section carries a proof case, no manifest field references one, and an artifact decodes, validates, classifies compatibility, commits routing, and dispatches with no sidecar present. The dependency runs one way, which is what makes proof data deletable without changing what a program means. A runtime that required a sidecar, or that read one to decide routing, a fallback, or a numerical realization, would be violating this contract rather than extending it.
+
+**Normative — a validated sidecar is evidence of integrity and association, and is not evidence of authenticity.** Every digest and every identity in the container is derived from the container's own content, so a forger that rewrites an expected value recomputes all of them and the result validates *and binds to the artifact it names*. The container has no signature, no external trust anchor, and no key. `crate::proof::tests::a_forged_case_is_indistinguishable_from_a_real_one_by_the_container_alone` pins exactly this, so the limit is a checked-in fact rather than a sentence a later reader could mistake for a stronger guarantee.
+
+**Inference — what therefore protects a proof run is the comparison, not the container.** A forged expectation makes a *correct* device fail the bitwise readback comparison, which is a loud result rather than a silent one. A consumer must treat sidecar payloads as **test data** and never as a semantic authority, a fallback value, a reference implementation, or an input to routing. Authenticity, if it is ever required, is a separate mechanism over these bytes and is not a property this container can acquire by adding another digest to itself.
+
+### Facade status
+
+**Fact.** `tiler_artifact::proof` is an **accepted facade**, promoted from the crate-private draft form of ADR 0074 convention 7 on Tom's review of 2026-07-25. Public are the producer's builder and its input records, the case-key and provenance-subject vocabulary, the verified product and the decoded read view with their accessors, the two association checks, the governed budgets, and the four typed rejection vocabularies with the total `ProofCodecError::classification` map. The promotion's reason is structural: the producer and the runner are different crates by construction, so nothing crate-private can let a case written by one be verified by the other.
+
+**Fact — the wire form itself is not public.** The framing magic, the four domain separators, the schema versions, the manifest encoder, and the identity deriver stay private, so an out-of-crate caller cannot digest a subject under one of this container's domains or present bytes the reader did not derive. Broadening the surface to expose them would first require deciding what an out-of-crate producer of these bytes may claim about them, which — given the authenticity limit above — is not a question the container answers today.
+
+### Framing
+
+**Fact — the header is exactly 69 bytes, fixed width, big-endian.** It deliberately mirrors the envelope's discipline without sharing its bytes.
+
+| Offset | Width | Field |
+| --- | --- | --- |
+| 0 | 8 | magic `TILERPRF` |
+| 8 | 2 + 2 | sidecar framing format `{major, minor}`; `{1, 0}` in this build |
+| 12 | 2 + 2 | canonical encoding profile `{major, minor}`; `{1, 0}` in this build |
+| 16 | 1 | governed digest algorithm tag; `0x01` is `tiler.digest.sha-256.v1` |
+| 17 | 8 | total encoded length |
+| 25 | 8 | canonical manifest length |
+| 33 | 4 | framed payload count |
+| 37 | 32 | digest of the exact canonical manifest bytes |
+
+The magic differs from the envelope's `TILERART` in the first differing byte, so a sidecar handed to the artifact reader and an envelope handed to the sidecar reader are each refused at the magic rather than misparsed. As in the envelope, the total length is derived from the completed encoding rather than declared, and every declared count is checked against its governed budget before anything proportional to it is reserved.
+
+The header is followed by one canonical manifest and then a stream of length-delimited payloads.
+
+### Canonical manifest and payload stream
+
+**Fact — the manifest opens with the versioned domain tag `tiler.proof-sidecar.manifest.v1\0` and its own `{major, minor}` schema**, then, in this order: the associated artifact's canonical identity bytes; the digest of the exact encoded envelope bytes; the three provenance subjects; the bound input keys and output keys in the artifact's own interface order; the case table; and the sidecar's canonical identity.
+
+Each case row is its stable key and the payload counts it declares in each direction, followed by one descriptor per payload: the payload's canonical ordinal, its exact byte length, and its content digest.
+
+**Fact — payload position is structural rather than referential.** Payloads are framed in one canonical order — cases by stable key, then that case's inputs in interface order, then its expectations in interface order — and a case's descriptors are aligned with that order positionally. There is no payload index a manifest could point at, so the class of forgery in which one payload's descriptor names another payload's bytes does not exist in this format.
+
+**Fact — the three provenance subjects are separately typed because they answer three different staleness questions.** The semantic-graph identity says which mathematical program was evaluated; the numerical-contract identity says under which contract its result is normative; the reference-implementation identity says which implementation computed it. A sidecar can be stale against any one while agreeing with the other two. Following ADR 0072, the frozen registry snapshot is deliberately absent: a provider that was available and never reached does not change what the program computes, so recording it would let an unused provider invalidate a still-correct expectation.
+
+**Fact — the semantic subject is supplied by the producer and compared, not derived.** The risk the check exists to catch is a producer that reference-evaluated a different program from the one it compiled; deriving the subject from the artifact would make the check tautological. A mismatch is a build failure. The other two subjects are opaque bytes this crate compares and encodes and never re-derives, because it is not the authority for either.
+
+**Fact — payloads are bit-preserving and are never interpreted as numbers.** A signalling NaN, a quiet NaN, a negative zero, and a subnormal all survive the container unchanged, which is the only reason a bitwise readback comparison means anything. A container that parsed floats would be free to canonicalize the first into the second and the comparison would then pass against the wrong value.
+
+**Fact — a well-formed but non-canonical encoding is refused rather than normalized.** Named checks reject an out-of-order or repeated case key or interface key, a non-canonical payload ordinal, and a case whose payloads disagree with the container's own bound interface. The reader then re-derives the canonical identity from the decoded content, requires it to equal the carried one, and re-encodes the whole container and requires byte equality. One sidecar therefore has exactly one byte identity, and the identity a reader reports is always the re-derived one rather than the carried one.
+
+### The sidecar's four governed digest domains
+
+**Fact.** The sidecar's domains are its own; the *algorithm* is the envelope's governed one, because this document requires every digest use in this crate to name one governed algorithm explicitly rather than choose locally, and a sidecar that chose its own would be unverifiable by a reader that knows only the governed tag.
+
+```text
+manifest_digest = H("tiler.proof-sidecar.manifest-digest.v1\0"
+                    || exact canonical manifest bytes)
+payload_digest  = H("tiler.proof-sidecar.payload-digest.v1\0"
+                    || payload's canonical ordinal || exact payload bytes)
+manifest bytes    open with "tiler.proof-sidecar.manifest.v1\0"
+identity bytes    open with "tiler.proof-sidecar.identity.v1\0"
+```
+
+**Fact — a payload digest binds the payload's canonical ordinal, so it is a standalone address of that slot's content.** Without the ordinal, two slots holding equal bytes would share one address and a swap between them would be invisible to the manifest.
+
+**Fact — the canonical identity folds payload digests rather than payload bytes.** It covers the association, the three provenance subjects, the bound interface keys, every case key, and a content digest of every payload, so it stays bounded by the case and interface counts while still changing whenever any carried byte changes. That is what keeps it usable as a key for a sidecar carrying megabytes of evidence. It has no constructor: the encoder derives it and nothing else can.
+
+These four and the envelope's three are the seven the union no-prefix obligation under "The governed digest" covers.
+
+### Association is a decision, not a default
+
+**Fact.** A decoded sidecar is fully validated evidence about *nothing* until it is bound. Two checks establish the same association and differ in what they re-prove.
+
+- **`bind_to_envelope(&[u8])`** is for a consumer holding only bytes. It re-derives the envelope digest over the exact bytes supplied, decodes them through the artifact codec, and compares the re-derived artifact identity with the recorded one. Nothing is taken on the producer's word: both values are computed from the caller's own bytes. The digest check runs first, because it is the cheapest and it is the one failure that distinguishes damaged bytes from the wrong artifact entirely.
+- **`bind_to_artifact(&VerifiedArtifactProgram)`** is for a consumer holding the program it compiled. It compares the same artifact identity and additionally re-proves every structural obligation locally: that the sidecar binds exactly the artifact's declared inputs and outputs in the artifact's own interface order, that each payload is a whole number of elements of its declared shape, and that all cases agree on each entry's byte length.
+
+**Inference — the second is not a stronger *association*.** Both prove the same artifact identity, which already folds the ordered named interface. The difference is that the second re-proves the obligations rather than inheriting them through an identity comparison, which is what a reader wants when the sidecar was written by an older producer than itself.
+
+**Fact — the obligation has one implementation.** `verify_cases` is called by the builder's terminal and by `bind_to_artifact`. A producer-side copy and a consumer-side copy would agree today, drift later, and each half would still pass its own tests.
+
+**Fact — under the dispatch-record decision, a cold consumer reaches only the weaker check.** A decoded envelope is a dispatch record and never rebuilds a `VerifiedKernelProgram`, so a process that did not compile the artifact cannot obtain a `VerifiedArtifactProgram` and therefore cannot call `bind_to_artifact`. That is not a gap in the sidecar: `bind_to_envelope` establishes the same association from bytes alone, and the obligations `bind_to_artifact` re-proves were already proven by the producer and are folded into the artifact identity both checks compare.
+
+### Governed budgets
+
+**Fact.** Every bound is checked before any allocation proportional to it, in both directions: the encoder refuses to write a container a reader would not admit, and the reader refuses a declared count before reserving for it. The bounds are 256 MiB per complete encoding, 8 MiB per manifest, 8 MiB per derived identity, 16 MiB per case payload, 1,024 bytes per received provenance subject, 4 KiB per encoded text run, 256 proof cases, 256 UTF-8 bytes per stable case key, and 4,096 named interface entries per direction. The framed payload bound is *derived* from the case and interface bounds rather than declared, so the framing bound and the structural bounds cannot disagree.
+
+**Fact — the interface bound deliberately equals the artifact model's own.** A sidecar binds one payload per declared entry, so a looser bound here would admit a container no artifact could ever associate with.
+
+**Fact — no storage width is derived, and the omission is deliberate.** A payload is checked to be a whole, nonzero number of the declared shape's elements; the absolute byte width of a governed element type is a backend fact this crate does not own, and inventing one would assert a byte count no verifier examined. Divisibility plus cross-case length agreement catches the same class of producer error without the invention.
+
+### Rejection vocabulary
+
+**Fact.** Failure is typed, non-erasing, and never partially validated. Construction, encoding and decoding, and association each have their own vocabulary, and `ProofCodecError::classification` is a total map from every reader rejection onto five classes a consumer can act on — `Malformed`, `IntegrityFailure`, `Unsupported`, `Invalid`, `Limit` — so an out-of-crate reader never enumerates the `#[non_exhaustive]` variant set. Collapsing the classes would make a version skew look like corruption.
+
+**Fact — a major version step is refused outright rather than read on a best effort**, for the framing format, the canonical encoding profile, and the manifest schema alike; a minor version this build predates is `Unsupported` rather than ignored. This is the same lockstep posture the envelope takes.
+
+### Maturity, stated apart
+
+The container, its canonical form, its integrity validation, its two association checks, and its facade are **implemented and tested**, including against re-sealed forgeries — the adversarial cases build a structurally invalid sidecar and then encode it, which stamps a correct manifest digest, correct payload digests, and a correct identity for whatever it now says, and require the reader to refuse it by name.
+
+**Reserved and not implemented:** case grouping, per-case tolerance, any comparison policy other than bitwise equality, and execution ordering. Bitwise equality is the only comparison the numerical contract admits and the only one a container that never interprets its payloads can honestly support.
+
+**Not a capability of this container at all:** authenticity, as recorded above. Broadening to it would require an external trust anchor and a key-management contract, neither of which exists in this workspace, and would not be a change to this format's digests.
+
+**No producer or consumer ships one yet.** `prototype-metal-aot-slice` owns generating a sidecar from the real producer and `prototype-metal-runtime-proof` owns validating and comparing against one in the runner. Until both land, this section records a reachable and tested format rather than a delivered evidence path.
 
 ## Metal payload hierarchy
 
