@@ -152,12 +152,27 @@ pub(crate) struct ArtifactConstructionPlan {
 impl KernelProgram {
     /// Returns the verified target-neutral program this target binding wraps.
     ///
-    /// The compiler reaches the shared program through its own private field;
-    /// this accessor exists for the crate's tests until a reviewed public
-    /// compiler facade exposes the compilation product.
-    #[cfg(test)]
+    /// No longer `#[cfg(test)]`: `crate::session` is the reviewed public facade
+    /// this accessor's previous comment was waiting for, and an artifact
+    /// assembler outside this crate cannot package a variant without the
+    /// program `push_variant` binds against.
     pub(crate) const fn core(&self) -> &VerifiedKernelProgram {
         &self.core
+    }
+
+    /// Returns the host preflight expression arena in canonical arena order.
+    pub(crate) fn host_expressions(&self) -> &[ExprNode] {
+        &self.host_expressions
+    }
+
+    /// Returns the arena position of the guard deciding whether to route here.
+    pub(crate) const fn applicability_guard(&self) -> HostExprId {
+        self.applicability_guard
+    }
+
+    /// Returns the per-stage entry contracts in stage order.
+    pub(crate) fn entries(&self) -> &[EntryContract] {
+        &self.entries
     }
 
     pub(crate) fn stage_count(&self) -> usize {
@@ -176,6 +191,11 @@ impl KernelProgram {
 impl ArtifactConstructionPlan {
     pub(crate) fn lowering_providers(&self) -> &[LoweringProviderIdentity] {
         &self.lowering_providers
+    }
+
+    /// Returns the target-bound program whose ABI contract this plan packages.
+    pub(crate) const fn verified_program(&self) -> &KernelProgram {
+        &self.verified_program
     }
 }
 

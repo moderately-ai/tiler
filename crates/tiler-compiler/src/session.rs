@@ -39,6 +39,8 @@
 //! could not express that.
 
 use tiler_ir::kernel::VerifiedKernel;
+use tiler_ir::program::VerifiedKernelProgram;
+use tiler_ir::program::abi::ExprNode;
 use tiler_ir::semantic::SemanticProgram;
 
 use crate::explain::VerifiedExplainTrace;
@@ -46,6 +48,7 @@ use crate::pipeline::{
     CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind,
     compile as compile_internal,
 };
+use crate::program::{EntryContract, KernelProgram};
 use crate::request::{CompilationRequest, RequestError, StrictF32NumericalContract};
 
 /// Why a compilation did not produce plans.
@@ -151,6 +154,107 @@ impl PlanAlternative<'_> {
     #[must_use]
     pub fn kernels(&self) -> &[VerifiedKernel] {
         &self.0.kernels
+    }
+
+    /// Returns this alternative's ABI construction inputs.
+    ///
+    /// This is what an artifact assembler needs beyond the kernels: the guard,
+    /// the accessible byte ranges, and the launch geometry, as expressions
+    /// rather than as scalars.
+    #[must_use]
+    pub fn abi(&self) -> AbiConstruction<'_> {
+        AbiConstruction(self.0.artifact_plan.verified_program())
+    }
+}
+
+/// A borrowed view of the ABI construction inputs of one plan alternative.
+///
+/// # Why this is a view of expressions rather than of numbers
+///
+/// ADR 0068 assigns construction of `AbiExpr` to `tiler-compiler`, and the
+/// compiler derives these while it verifies the program's host preflight
+/// contract. Handing out the derived *scalars* instead would make the assembler
+/// re-derive an accessible byte range beside the compiler's own derivation, and
+/// two derivations of one fact is exactly the drift this boundary exists to
+/// prevent.
+///
+/// # Why the assembler still has to replay them
+///
+/// `tiler-artifact`'s builder owns its own arena and mints owner-bound handles
+/// into it, so these nodes are transliterated onto that arena rather than moved.
+/// That replay is mechanical and position-preserving — it introduces no second
+/// derivation, because the *decision* about what each expression says was made
+/// here.
+///
+/// The vocabulary is `tiler_ir::program::abi`, which both crates already
+/// depend on, so nothing compiler-internal crosses this boundary and packaging
+/// needs no `tiler-compiler` → `tiler-artifact` edge.
+#[derive(Clone, Copy, Debug)]
+pub struct AbiConstruction<'a>(&'a KernelProgram);
+
+impl<'a> AbiConstruction<'a> {
+    /// Returns the expression arena in canonical arena order.
+    ///
+    /// Every operand position is strictly smaller than the node that names it,
+    /// so replaying front to back always has its operands already minted.
+    #[must_use]
+    pub fn expressions(self) -> &'a [ExprNode] {
+        self.0.host_expressions()
+    }
+
+    /// Returns the arena position of the guard deciding whether this
+    /// alternative may be routed to.
+    #[must_use]
+    pub fn applicability_guard(self) -> u32 {
+        self.0.applicability_guard().index()
+    }
+
+    /// Returns the verified target-neutral program this alternative packages.
+    ///
+    /// Already verified by `tiler-ir`'s own authority, so exposing it commits
+    /// this boundary to no guarantee of its own.
+    #[must_use]
+    pub fn kernel_program(self) -> &'a VerifiedKernelProgram {
+        self.0.core()
+    }
+
+    /// Returns one entry view per program stage, in stage order.
+    pub fn entries(self) -> impl ExactSizeIterator<Item = AbiEntry<'a>> {
+        self.0.entries().iter().map(AbiEntry)
+    }
+}
+
+/// A borrowed view of one stage's ABI and launch contract.
+///
+/// Each accessor returns an arena position into the same arena
+/// [`AbiConstruction::expressions`] returns, never a resolved number.
+#[derive(Clone, Copy, Debug)]
+pub struct AbiEntry<'a>(&'a EntryContract);
+
+impl<'a> AbiEntry<'a> {
+    /// Returns the accessible byte range of each binding, in kernel
+    /// buffer-parameter order.
+    ///
+    /// The order is the contract: `push_variant` matches bindings to kernel
+    /// buffer parameters positionally.
+    #[must_use]
+    pub fn accessible_bytes(self) -> impl ExactSizeIterator<Item = u32> + 'a {
+        self.0
+            .bindings
+            .iter()
+            .map(|binding| binding.accessible_bytes.index())
+    }
+
+    /// Returns the total launch thread count of this entry.
+    #[must_use]
+    pub fn grid_threads(self) -> u32 {
+        self.0.launch_threads.index()
+    }
+
+    /// Returns the workgroup width of this entry.
+    #[must_use]
+    pub fn threads_per_workgroup(self) -> u32 {
+        self.0.threads_per_workgroup.index()
     }
 }
 
