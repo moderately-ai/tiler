@@ -134,6 +134,20 @@ Every answer is recorded twice — at the item it governs in `crates/tiler-compi
 
 Tom approved `pub mod session` in its current shape on 2026-07-25, and question 1's answer reshapes `CompileFailure` within it. That is a concrete, tested draft of the answer, not implicit approval of the new signature: `CompileFailure` becoming a struct, and the four classes moving to `CompileFailureClass`, is a change to an existing public signature, which ADR 0075 routes to Tom. Everything else on the surface is unchanged.
 
+## The `CompileFailure` signature — auto-resolved, because one option survives
+
+Recorded rather than escalated, under Tom's standing instruction to resolve rather than ask when the surviving option is unique, and stated in full so the elimination can be refuted rather than only the conclusion.
+
+**Fact — what the enum discarded.** `From<CompileError> for CompileFailure` mapped a failure onto a bare class and dropped the sealed explain trace on the floor. The trace is the compile path's diagnostic evidence, and once dropped there is no way to recover *what* was lost — only that a compilation failed.
+
+**The alternative does not survive correctness.** Keeping `CompileFailure` an enum means either continuing to discard the trace, or carrying `Option<VerifiedExplainTrace>` in every variant, which duplicates one field across four variants and makes the invariant "a failure may carry its trace" a per-variant coincidence rather than a property of the type. The first is prohibited outright by the standing rule — never drop or silently truncate; fail loud, or remove a limit that is not needed — and this is a drop, not a truncation, which is the stronger form. The second is the same struct written less safely.
+
+**It does not survive maintainability either.** The four classes are unchanged in name, meaning and `#[non_exhaustive]`-ness; only the enum's own name moved to `CompileFailureClass`. A consumer that matched on the class still matches on the class, through `class()`. So the change that preserves the diagnostic evidence is also the smaller change to what a caller writes.
+
+**Consequence, stated so it is not discovered later.** `Debug` is hand-written to print the class and a record count rather than the whole trace, because both in-workspace consumers format the failure with `{failure:?}` and a full trace in a panic message is unreadable rather than informative. That is a deliberate narrowing of `Debug` output, not of the data — `explain()` returns the trace in full.
+
+**What would reopen this.** A caller that needs to match a failure class *without* the possibility of a trace — a `#[repr]`-stable ABI boundary, or a context where `Option<VerifiedExplainTrace>` is not constructible. Neither exists in this workspace, and no crate here is publishable, so compatibility is not a live constraint.
+
 The request itself is still not exposed — `compile_governed` names the governed profile rather than letting a caller assemble a `CompilationRequest`, which ADR 0069 specifies and which the bounded profile cannot yet honour. That remains this ticket's stated gap and is unaffected by the seven answers.
 
 `uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py` pass.
