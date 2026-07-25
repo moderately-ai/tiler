@@ -82,22 +82,16 @@ const BUFFER_BINDING_LIMIT: u32 = 31;
 const ROWS: u64 = 4;
 /// Columns of the packaged program's input; the reduced axis.
 ///
-/// **One, and not by choice.** `prototypes/serial-sum-run` reduces three
-/// contributors per row, because that is what makes a serial reduction's
-/// ordering observable, and this producer cannot package that program: a
-/// `BackendEntryKey` is bounded at `MAX_OPAQUE_IDENTITY_BYTES` = 1,024 and the
-/// canonical kernel identity of a two-or-more-contributor serial sum measures
-/// 1,113 bytes. **Measurement** on this checkout: the identity is 728 bytes at
-/// one column and a constant 1,113 bytes at two, three, four, and eight, so the
-/// bound admits the degenerate reduction and nothing else — it is the reduction
-/// *structure* that crosses it, not the data size.
+/// Three, matching `prototypes/serial-sum-run`, because three contributors per
+/// row is what makes a serial reduction's ordering observable — one contributor
+/// reduces in every order.
 ///
-/// The runner therefore takes its envelope-path shape from whatever this
-/// artifact declares rather than fixing one, so the delivery mechanism is still
-/// proven on hardware while the numerical claim stays on its own three-column
-/// program. `bound-the-backend-entry-key-by-the-identity-it-carries` closes the
-/// gap; when it does, this becomes 3 and the two paths run one program.
-const COLUMNS: u64 = 1;
+/// It was one until `bound-the-backend-entry-key-by-the-identity-it-carries`,
+/// because the artifact layer bounded a `BackendEntryKey` at 1,024 bytes while
+/// the canonical kernel identity this producer hands it measures 1,121 bytes for
+/// any reduction with two or more contributors. The bound is now `tiler-ir`'s
+/// own for that value, so the runner's two paths carry the same program.
+const COLUMNS: u64 = 3;
 
 /// The target facts this producer emits for.
 ///

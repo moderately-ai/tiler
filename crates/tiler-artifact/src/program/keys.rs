@@ -17,14 +17,53 @@
 //! Neither shape is the artifact's own derived identity;
 //! [`super::CanonicalArtifactProgramIdentity`] is derived only by this crate's
 //! encoder and has no public constructor.
+//!
+//! # An opaque identity's bound belongs to whoever mints it
+//!
+//! Not being the authority for a subject settles its byte bound too: the number
+//! that admits every value a producer can legally mint is the producer's own,
+//! and any other number is this crate deciding something it just said it does
+//! not decide. So each identity below names the bound of the authority that
+//! derives it rather than sharing one bound chosen for their common *shape* —
+//! `super::codec::budget`'s rule, applied one level out.
+//!
+//! The three do not share a subject and never did. A [`PayloadDigest`] is a
+//! fixed-width digest under the governed algorithm. A [`BackendEntryKey`] is a
+//! `tiler_ir::kernel::CanonicalKernelIdentity`, a canonical *encoding* of a
+//! whole structured kernel, and it is bounded by
+//! `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES` — the exact constant that
+//! crate enforces when it mints one. A [`TargetProfileDescriptorDigest`] is a
+//! digest in name only:
+//! `tiler_compiler::feasibility` records that its bytes *are* the descriptor
+//! identity rather than a hash of it, and it is under
+//! [`MAX_OPAQUE_IDENTITY_BYTES`] because no authority downstream of this crate
+//! publishes a bound for it yet, not because a digest bound fits it —
+//! `bound-the-target-profile-descriptor-by-its-declaring-authority` owns that.
 
 use std::fmt;
+
+use tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES;
 
 use super::error::{ArtifactBuildError, ArtifactKeyKind};
 
 /// Maximum UTF-8 byte length of one governed artifact key.
 pub const MAX_GOVERNED_KEY_BYTES: usize = 256;
-/// Maximum byte length of one opaque identity received at a boundary.
+/// Maximum byte length of one digest-shaped opaque identity.
+///
+/// This bounds the two identities no upstream authority publishes a bound for:
+/// [`PayloadDigest`], which is fixed-width under the governed digest algorithm
+/// and cannot approach it, and [`TargetProfileDescriptorDigest`], whose bytes
+/// are a canonical descriptor encoding and can. **Measurement** on this
+/// checkout: the standard profile's descriptor is 249 bytes and does not grow
+/// with the program, so nothing is refused today; it grows with the profile's
+/// capability and honourability facts, and
+/// `bound-the-target-profile-descriptor-by-its-declaring-authority` owns
+/// closing that.
+///
+/// It does **not** bound a [`BackendEntryKey`]. That is a canonical kernel
+/// identity and takes `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES`, the exact
+/// constant that mints one; the 1,024 shared here admitted only a degenerate
+/// single-contributor reduction and refused every real one.
 pub const MAX_OPAQUE_IDENTITY_BYTES: usize = 1_024;
 
 fn validate_key(value: &str, kind: ArtifactKeyKind) -> Result<(), ArtifactBuildError> {
@@ -41,15 +80,19 @@ fn validate_key(value: &str, kind: ArtifactKeyKind) -> Result<(), ArtifactBuildE
     Ok(())
 }
 
-fn validate_opaque(value: &[u8], kind: ArtifactKeyKind) -> Result<(), ArtifactBuildError> {
+fn validate_opaque(
+    value: &[u8],
+    kind: ArtifactKeyKind,
+    limit: usize,
+) -> Result<(), ArtifactBuildError> {
     if value.is_empty() {
         return Err(ArtifactBuildError::EmptyKey { kind });
     }
-    if value.len() > MAX_OPAQUE_IDENTITY_BYTES {
+    if value.len() > limit {
         return Err(ArtifactBuildError::KeyTooLong {
             kind,
             bytes: value.len(),
-            limit: MAX_OPAQUE_IDENTITY_BYTES,
+            limit,
         });
     }
     Ok(())
@@ -102,8 +145,8 @@ macro_rules! governed_key {
 }
 
 macro_rules! opaque_identity {
-    ($name:ident, $kind:expr, $docs:literal) => {
-        #[doc = $docs]
+    ($name:ident, $kind:expr, $limit:expr, $limit_doc:literal, $($docs:literal),+ $(,)?) => {
+        $(#[doc = $docs])+
         ///
         /// The bytes are treated as opaque: this crate compares and encodes
         /// them, and never re-derives them locally.
@@ -116,11 +159,10 @@ macro_rules! opaque_identity {
             /// # Errors
             ///
             /// Returns [`ArtifactBuildError::EmptyKey`] for empty bytes, or
-            /// [`ArtifactBuildError::KeyTooLong`] beyond
-            /// [`MAX_OPAQUE_IDENTITY_BYTES`].
+            #[doc = $limit_doc]
             pub fn from_bytes(value: impl AsRef<[u8]>) -> Result<Self, ArtifactBuildError> {
                 let value = value.as_ref();
-                validate_opaque(value, $kind)?;
+                validate_opaque(value, $kind, $limit)?;
                 Ok(Self(value.into()))
             }
 
@@ -167,17 +209,36 @@ governed_key!(
 opaque_identity!(
     BackendEntryKey,
     ArtifactKeyKind::BackendEntry,
-    "The opaque backend entry key one executable entry is realized by."
+    MAX_KERNEL_IDENTITY_BYTES,
+    "[`ArtifactBuildError::KeyTooLong`] beyond `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES`.",
+    "The opaque backend entry key one executable entry is realized by.",
+    "",
+    "This is the canonical identity of the structured kernel the entry realizes,",
+    "which is why the bound is `tiler-ir`'s own for that value. The artifact",
+    "already carries these exact bytes a second time in the same executable",
+    "entry — `super::model::stage_key` prefixes them into the entry's stage",
+    "subject, which the codec admits to 16 MiB — so a smaller bound here refused",
+    "values the envelope beside it had already accepted, and guarded no",
+    "allocation that stage subject had not already made.",
 );
 opaque_identity!(
     PayloadDigest,
     ArtifactKeyKind::PayloadDigest,
+    MAX_OPAQUE_IDENTITY_BYTES,
+    "[`ArtifactBuildError::KeyTooLong`] beyond [`MAX_OPAQUE_IDENTITY_BYTES`].",
     "The opaque content digest of one backend payload's exact bytes."
 );
 opaque_identity!(
     TargetProfileDescriptorDigest,
     ArtifactKeyKind::TargetProfileDescriptor,
-    "The opaque descriptor digest of one declared target profile."
+    MAX_OPAQUE_IDENTITY_BYTES,
+    "[`ArtifactBuildError::KeyTooLong`] beyond [`MAX_OPAQUE_IDENTITY_BYTES`].",
+    "The opaque descriptor identity of one declared target profile.",
+    "",
+    "Named a digest, and not one: `tiler-compiler` emits the canonical descriptor",
+    "bytes themselves rather than a hash of them, deliberately, so that no second",
+    "identity has to be kept in agreement with what it summarizes. The bound it",
+    "is under is therefore provisional; see [`MAX_OPAQUE_IDENTITY_BYTES`].",
 );
 
 /// The declared target profile a plan variant was assessed against.
