@@ -1,12 +1,12 @@
 ---
 id: never-truncate-the-governed-explain-trace
 title: The governed compile path now truncates its explain trace
-status: in-progress
+status: review
 priority: p0
 dependencies: []
 related: []
-scopes: [implementation/compiler]
-shared_scopes: []
+scopes: [implementation/compiler, contracts/numerics]
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, explain, correctness]
 claimed_from: todo
@@ -37,3 +37,21 @@ Also record whether `omitted_bytes`/`omitted_records` should survive at all once
 ## Closes when
 
 The governed compile path emits no `explain.retention` record, the exhaustive-snapshot test passes unmodified in that respect, the choice is stated with the rejected alternative, and `uv run --locked python scripts/check_repository.py` passes.
+
+## Outcome
+
+**Decided: remove the soft retention budget; the retained hard ceiling now fails closed.** `ExplainLimits` (default 256 records / 64 KiB, per-writer configurable) was deleted. The detail bound is now the same `MAX_RECORDS` (4096) / `MAX_CANONICAL_BYTES` (1 MiB) ceiling that `MAX_TRACE_RECORDS`/`MAX_TRACE_CANONICAL_BYTES` are already derived from, and exceeding it returns the new typed `ExplainError::DetailCapacity` instead of dropping the record. A trace is therefore complete or the compilation is refused.
+
+**Why the soft bound went rather than being raised.** It protected nothing the hard ceiling did not already protect. Memory is bounded by the byte ceiling, which is checked incrementally on every push, and `ExplainLimits::new` already rejected any budget above that ceiling — so the soft bound could only ever be *stricter* than a limit that was itself sufficient. Its sole production construction was `ExplainLimits::default()` at one call site (`pipeline.rs`), never tuned by a caller.
+
+**Rejected alternative: raise `ExplainLimits::default()` to the hard ceiling and keep truncating.** That is nominally this ticket's first option and it would have made the failing test pass with a three-line change. It was rejected because it moves the threshold without removing the silent-loss path: any program large enough would still drop records and report only a count. The ticket's own standard is that a summary saying *that* something was lost is not compliance, and a bound whose behaviour on breach is a silent drop is wrong at every threshold, not just this one.
+
+**The reachable case the retained bound protects against.** Candidate enumeration is combinatorial — the governed serial-sum program already emits 17 `region.candidate.v1` records and 12 `fusion.legality.v1` records — so record count grows with program size and is not caller-bounded. 1 MiB of canonical detail is a real ceiling on how much a single compilation may retain. It is kept, as a refusal.
+
+**`omitted_records`/`omitted_bytes` do not survive, and neither does the machinery built around them.** Once a detail record cannot be dropped, each of these describes a state that cannot occur, so all were removed rather than left as unconstructible vocabulary implying a behaviour the compiler no longer has: `ExplainEvent::Truncated`, `ExplainDisposition::Truncated`, the `explain.retention` rule and `append_truncation_summary`, `TerminalCauseKind::Omitted`, and `ExplainEvent::CausalBridge` — the bridge existed only to re-materialize a cause whose detail record had been dropped. `push_detail` now returns `ExplainRecordId` rather than `Option<ExplainRecordId>`, and the `Option` threading that carried a possible drop through `pipeline.rs`, `normalize.rs`, and `region.rs` collapsed with it. Their canonical encoding tags (event 8 and 9, disposition 13) are left as gaps so no surviving record's encoding moved.
+
+**One `Option` was deliberately kept.** `RegionFormationRecords::whole_program` and the alternative-id lookup in `record_cost_and_selection` stay optional: a program may genuinely have no whole-program candidate, and an id lookup may genuinely miss. Those `None`s are facts about the candidate set, not records that went missing — verified by reading each site rather than sweeping the type.
+
+**Measured.** `pipeline::tests::every_wired_authority_emits_its_typed_explain_records` passes **unmodified** — confirmed by `git diff` over `pipeline.rs` showing no change within that test or to the string `explain.retention`. `explain::tests::terminal_ledger_rejects_duplicates_unknowns_and_max_detail_pressure` gained the regression assertion: pushing one detail past `MAX_RECORDS` returns `Err(ExplainError::DetailCapacity)`. Six truncation-dependent tests were rewritten to their surviving subject; two whose subject was the drop path itself (omitted-cause bridging) were replaced by tests that the cause is cited directly. 205/205 `tiler-compiler` tests pass.
+
+**Gate.** `uv run --locked python scripts/check_repository.py` passes.

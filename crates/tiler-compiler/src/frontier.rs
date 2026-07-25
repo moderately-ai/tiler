@@ -58,7 +58,8 @@ use tiler_ir::schedule::{
 };
 use tiler_ir::semantic::ProviderIdentity;
 
-use crate::feasibility::ResolvedPredicate;
+use crate::feasibility::ProvenEvidence;
+use crate::honourability::UnhonouredDimension;
 use crate::physical::{PhysicalError, VerifiedScheduledRegion, verify_schedule_with_feasibility};
 use crate::region::SemanticMemberId;
 use crate::request::VerifiedTargetRequest;
@@ -644,7 +645,7 @@ impl ImplementationProposalIdentity {
 pub(crate) struct AdmittedImplementation {
     provenance: ImplementationProvenance,
     verified: VerifiedScheduledRegion,
-    feasibility: Vec<ResolvedPredicate>,
+    feasibility: ProvenEvidence,
     boundary: BoundaryContract,
     cost: PhysicalCostEstimate,
     identity: ImplementationProposalIdentity,
@@ -670,8 +671,9 @@ impl AdmittedImplementation {
         self.verified.requirements()
     }
 
-    /// Returns the resolved feasibility predicates admitting this implementation.
-    pub(crate) fn feasibility(&self) -> &[ResolvedPredicate] {
+    /// Returns the feasibility evidence admitting this implementation: the
+    /// resolved capability predicates and the honoured numerical dimensions.
+    pub(crate) const fn feasibility(&self) -> &ProvenEvidence {
         &self.feasibility
     }
 
@@ -713,6 +715,20 @@ pub(crate) enum FrontierRejection {
         /// The amount the target profile made available on that axis.
         available: u64,
     },
+    /// The proposal is applicable and valid, but the target declares it cannot
+    /// honour a dimension of the request's numerical contract.
+    ///
+    /// Distinct from [`Self::Infeasible`] because the two say different things
+    /// to a caller: a capability rejection means this plan does not fit and
+    /// another plan might, while an unhonourable dimension means the target
+    /// cannot compute what the caller asked for at all. Neither is ever a cost.
+    Unhonourable {
+        /// The provider whose proposal was rejected.
+        provider: ProviderIdentity,
+        /// The dimension, required behaviour, declared means, honoured
+        /// alternative, and declaring profile.
+        cause: UnhonouredDimension,
+    },
     /// The proposal body is a reserved variant the P0 frontier does not implement.
     UnsupportedVariant {
         /// The provider whose proposal was rejected.
@@ -745,6 +761,21 @@ impl FrontierRejection {
                 encode_bytes(output, axis.as_bytes());
                 output.extend_from_slice(&required.to_be_bytes());
                 output.extend_from_slice(&available.to_be_bytes());
+            }
+            Self::Unhonourable { provider, cause } => {
+                output.push(4);
+                encode_provider(output, provider);
+                output.push(cause.dimension().tag());
+                output.extend_from_slice(&cause.required().tag());
+                encode_bytes(output, cause.means().key().as_bytes());
+                match cause.honoured() {
+                    Some(honoured) => {
+                        output.push(1);
+                        output.extend_from_slice(&honoured.tag());
+                    }
+                    None => output.push(0),
+                }
+                encode_bytes(output, cause.profile().key().as_bytes());
             }
             Self::UnsupportedVariant { provider, kind } => {
                 output.push(2);
@@ -1006,6 +1037,12 @@ pub(crate) fn enumerate_frontier(
                         axis: rule,
                         required,
                         available,
+                    });
+                }
+                Err(PhysicalError::Numerical { cause, .. }) => {
+                    rejections.push(FrontierRejection::Unhonourable {
+                        provider: provenance.provider().clone(),
+                        cause,
                     });
                 }
                 Err(

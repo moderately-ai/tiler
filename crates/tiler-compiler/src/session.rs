@@ -380,6 +380,10 @@ const fn rule_of(error: &RequestError) -> &'static str {
         RequestError::EmptyTargetSet => "compile.request.targets.empty",
         RequestError::DuplicateTargetProfile => "compile.request.targets.duplicate",
         RequestError::UnverifiedTargetSelection => "compile.request.targets.selection",
+        RequestError::UnstatedNumericalContract => "compile.request.numerics.unstated",
+        RequestError::NoResolvableNumericalContract { .. } => {
+            "compile.request.numerics.unhonourable"
+        }
         RequestError::BudgetExceeded { resource, .. } => resource,
         RequestError::UnsupportedCapability { rule, .. } => rule,
         RequestError::ShapeProductOverflow { role } => role,

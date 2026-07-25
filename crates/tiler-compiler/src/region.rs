@@ -337,7 +337,7 @@ pub(crate) struct RegionBudgetStop {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RegionFormationRecords {
     /// The stage receipt.
-    pub(crate) summary: Option<ExplainRecordId>,
+    pub(crate) summary: ExplainRecordId,
     /// The whole-program candidate record, when one was emitted.
     pub(crate) whole_program: Option<ExplainRecordId>,
 }
@@ -400,32 +400,33 @@ impl RegionFormationOutcome {
     pub(crate) fn record(
         &self,
         explain: &mut ExplainWriter,
-        cause: Option<ExplainRecordId>,
+        cause: ExplainRecordId,
     ) -> Result<RegionFormationRecords, ExplainError> {
         let mut chain = cause;
         for stop in &self.budget_stops {
             let subject = explain.subject(SubjectKind::Region, REGION_FORMATION_SUBJECT)?;
-            chain = explain
-                .push_detail(
-                    RuleRef::builtin(REGION_FORMATION_RULE)?,
-                    vec![subject],
-                    ExplainEvent::BudgetStop {
-                        stage: ExplainStage::RegionFormation,
-                        resource: ResourceKey::new(stop.resource.key())?,
-                        limit: stop.limit,
-                        actual: stop.actual,
-                    },
-                    chain.into_iter().collect(),
-                )?
-                .or(chain);
+            chain = explain.push_detail(
+                RuleRef::builtin(REGION_FORMATION_RULE)?,
+                vec![subject],
+                ExplainEvent::BudgetStop {
+                    stage: ExplainStage::RegionFormation,
+                    resource: ResourceKey::new(stop.resource.key())?,
+                    limit: stop.limit,
+                    actual: stop.actual,
+                },
+                vec![chain],
+            )?;
         }
+        // `whole_program` stays optional because a program may have no
+        // whole-program candidate at all; that `None` is a fact about the
+        // candidate set, not a record that went missing.
         let mut whole_program = None;
         for candidate in self.candidates() {
             let record = record_candidate(explain, candidate, chain)?;
             if candidate.covers_whole_program() {
-                whole_program = record;
+                whole_program = Some(record);
             }
-            chain = record.or(chain);
+            chain = record;
         }
         let summary = self.record_summary(explain, chain)?;
         Ok(RegionFormationRecords {
@@ -437,8 +438,8 @@ impl RegionFormationOutcome {
     fn record_summary(
         &self,
         explain: &mut ExplainWriter,
-        cause: Option<ExplainRecordId>,
-    ) -> Result<Option<ExplainRecordId>, ExplainError> {
+        cause: ExplainRecordId,
+    ) -> Result<ExplainRecordId, ExplainError> {
         let assessment = PredicateAssessment::proven(
             "region.singleton-coverage-complete",
             EvidenceBasis::CheckedInvariant,
@@ -476,7 +477,7 @@ impl RegionFormationOutcome {
                 assessment,
                 rejection: RejectionClass::IntrinsicInvalid,
             },
-            cause.into_iter().collect(),
+            vec![cause],
         )
     }
 }
@@ -485,8 +486,8 @@ impl RegionFormationOutcome {
 fn record_candidate(
     explain: &mut ExplainWriter,
     candidate: &RegionCandidate,
-    cause: Option<ExplainRecordId>,
-) -> Result<Option<ExplainRecordId>, ExplainError> {
+    cause: ExplainRecordId,
+) -> Result<ExplainRecordId, ExplainError> {
     let assessment =
         PredicateAssessment::proven("region.connected-convex", EvidenceBasis::CheckedInvariant)?
             .with_fact(ExplainFact::new(
@@ -518,7 +519,7 @@ fn record_candidate(
             assessment,
             rejection: RejectionClass::IntrinsicInvalid,
         },
-        cause.into_iter().collect(),
+        vec![cause],
     )
 }
 
@@ -1708,7 +1709,6 @@ fn digest(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::explain::ExplainLimits;
     use crate::request::{CompilationRequest, verify_request};
     use std::collections::BTreeMap as OracleMap;
     use tiler_ir::semantic::{
@@ -1716,6 +1716,32 @@ mod tests {
         StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
+
+    /// A retained root record the stage chain hangs from.
+    ///
+    /// The real pipeline always has one — the request-verification receipt —
+    /// so the stage recorders take a record rather than an option.
+    fn test_root(explain: &mut ExplainWriter) -> ExplainRecordId {
+        let subject = explain
+            .subject(SubjectKind::SemanticProgram, "semantic-program")
+            .unwrap();
+        explain
+            .push_detail(
+                RuleRef::builtin("test.root").unwrap(),
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::RequestVerification,
+                    assessment: PredicateAssessment::proven(
+                        "test.root",
+                        EvidenceBasis::CheckedInvariant,
+                    )
+                    .unwrap(),
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+                Vec::new(),
+            )
+            .unwrap()
+    }
 
     /// The governed serial-sum program with two distinct pointwise constants.
     fn serial_sum_program() -> SemanticProgram {
@@ -2408,9 +2434,10 @@ mod tests {
         let outcome = form(&program);
         let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
         let target = verified.for_target(verified.target_profiles()[0]).unwrap();
-        let mut explain = ExplainWriter::new(&target, ExplainLimits::default()).unwrap();
+        let mut explain = ExplainWriter::new(&target).unwrap();
 
-        let records = outcome.record(&mut explain, None).unwrap();
+        let root = test_root(&mut explain);
+        let records = outcome.record(&mut explain, root).unwrap();
         let alternative = explain
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();
@@ -2436,7 +2463,7 @@ mod tests {
         let summary = trace
             .records()
             .iter()
-            .find(|record| record.id() == records.summary.unwrap())
+            .find(|record| record.id() == records.summary)
             .unwrap();
         assert_eq!(
             summary.subjects()[0].key().as_str(),
@@ -2476,9 +2503,10 @@ mod tests {
         let outcome = form_with(&program, budgets);
         let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
         let target = verified.for_target(verified.target_profiles()[0]).unwrap();
-        let mut explain = ExplainWriter::new(&target, ExplainLimits::default()).unwrap();
+        let mut explain = ExplainWriter::new(&target).unwrap();
 
-        outcome.record(&mut explain, None).unwrap();
+        let root = test_root(&mut explain);
+        outcome.record(&mut explain, root).unwrap();
         let alternative = explain
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();

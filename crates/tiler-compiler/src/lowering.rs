@@ -516,21 +516,31 @@ fn occurrence_signature(
 /// family it lowers, including that operation's semantic version, so two
 /// versions of one operation never share a key.
 ///
-/// # What is deliberately not in the key, and what that costs
+/// # What is deliberately not in the key, and what keeps that safe
 ///
 /// The resolved **signature** is excluded. A capability is registered under
 /// family, operation, signature, and provider (`capability.rs`'s
 /// `LoweringCapabilityKey`), so two capabilities from one provider differing
 /// only in signature would mint the same key here. Signatures are unbounded
 /// structural values and a governed key is bounded at 256 bytes, so folding one
-/// in would either truncate — silently colliding — or require a digest, which
-/// is a second identity to keep in agreement.
+/// in would either truncate — silently colliding, which is worse than the
+/// conflation because it would *look* distinguishing — or require a digest,
+/// which is a second identity that must be kept in agreement with the signature
+/// it summarizes.
 ///
-/// The provider and the capability revision are recorded *beside* this key by
-/// every consumer that stores it, so the conflation is only reachable when one
-/// provider registers two signatures for one operation family at one revision.
-/// `resolve-capability-key-signature-conflation` owns widening this if the
-/// profile makes that reachable; it is recorded rather than assumed away.
+/// The exclusion is therefore kept, and the assumption it rests on is enforced
+/// rather than recorded: every consumer stores the provider beside this key, so
+/// the pair names one capability exactly while one provider registers one
+/// signature per family and operation, and
+/// `LoweringRegistryError::ConflatedCapabilityKey` refuses the registration that
+/// would make that false. Two *different* providers may still differ in
+/// signature for one operation, because the recorded provider distinguishes them.
+///
+/// The consequence is a real restriction: a provider cannot register per-shape
+/// or per-attribute signatures for one operation family. Admitting those means
+/// deciding a bounded signature encoding for this key first, which is a decision
+/// someone makes rather than a property that quietly stops holding
+/// (`resolve-capability-key-signature-conflation`).
 fn governed_capability_key(resolved: &ResolvedLoweringCapability) -> String {
     let operation = resolved.operation();
     format!(

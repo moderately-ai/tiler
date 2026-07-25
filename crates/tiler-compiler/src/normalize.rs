@@ -158,24 +158,21 @@ impl NormalizationOutcome {
     pub(crate) fn record(
         &self,
         explain: &mut ExplainWriter,
-        cause: Option<ExplainRecordId>,
-    ) -> Result<Option<ExplainRecordId>, ExplainError> {
-        let mut cause = cause;
+        mut cause: ExplainRecordId,
+    ) -> Result<ExplainRecordId, ExplainError> {
         if let Some((limit, actual)) = self.budget_stop {
             let subject = explain.subject(SubjectKind::Normalization, NORMALIZATION_SUBJECT)?;
-            cause = explain
-                .push_detail(
-                    RuleRef::builtin(NORMALIZE_STAGE_RULE)?,
-                    vec![subject],
-                    ExplainEvent::BudgetStop {
-                        stage: ExplainStage::Normalization,
-                        resource: ResourceKey::new(REWRITE_BUDGET_RESOURCE)?,
-                        limit,
-                        actual,
-                    },
-                    cause.into_iter().collect(),
-                )?
-                .or(cause);
+            cause = explain.push_detail(
+                RuleRef::builtin(NORMALIZE_STAGE_RULE)?,
+                vec![subject],
+                ExplainEvent::BudgetStop {
+                    stage: ExplainStage::Normalization,
+                    resource: ResourceKey::new(REWRITE_BUDGET_RESOURCE)?,
+                    limit,
+                    actual,
+                },
+                vec![cause],
+            )?;
         }
         for merge in &self.merges {
             let key = format!("normalization:shared-value/operation:{}", merge.merged);
@@ -192,18 +189,16 @@ impl NormalizationOutcome {
                 "merged-operation",
                 FactValue::Count(count(merge.merged)),
             )?)?;
-            cause = explain
-                .push_detail(
-                    RuleRef::builtin(NORMALIZE_SHARED_VALUE_RULE)?,
-                    vec![subject],
-                    ExplainEvent::Check {
-                        stage: ExplainStage::Normalization,
-                        assessment,
-                        rejection: RejectionClass::IntrinsicInvalid,
-                    },
-                    cause.into_iter().collect(),
-                )?
-                .or(cause);
+            cause = explain.push_detail(
+                RuleRef::builtin(NORMALIZE_SHARED_VALUE_RULE)?,
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::Normalization,
+                    assessment,
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+                vec![cause],
+            )?;
         }
         let assessment = PredicateAssessment::proven(
             "normalize.canonical-fixpoint",
@@ -241,7 +236,7 @@ impl NormalizationOutcome {
                 assessment,
                 rejection: RejectionClass::IntrinsicInvalid,
             },
-            cause.into_iter().collect(),
+            vec![cause],
         )
     }
 }
@@ -599,7 +594,6 @@ fn digest(program: &SemanticProgram) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::explain::ExplainLimits;
     use crate::request::{CompilationRequest, verify_request};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
@@ -610,6 +604,32 @@ mod tests {
         FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor,
         TensorPayloadView,
     };
+
+    /// A retained root record the stage chain hangs from.
+    ///
+    /// The real pipeline always has one — the request-verification receipt —
+    /// so the stage recorders take a record rather than an option.
+    fn test_root(explain: &mut ExplainWriter) -> ExplainRecordId {
+        let subject = explain
+            .subject(SubjectKind::SemanticProgram, "semantic-program")
+            .unwrap();
+        explain
+            .push_detail(
+                RuleRef::builtin("test.root").unwrap(),
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::RequestVerification,
+                    assessment: PredicateAssessment::proven(
+                        "test.root",
+                        EvidenceBasis::CheckedInvariant,
+                    )
+                    .unwrap(),
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+                Vec::new(),
+            )
+            .unwrap()
+    }
 
     /// Builds the governed serial-sum program.
     ///
@@ -836,9 +856,10 @@ mod tests {
         let normalized = outcome.normalized_program().unwrap();
         let verified = verify_request(CompilationRequest::governed(normalized)).unwrap();
         let target = verified.for_target(verified.target_profiles()[0]).unwrap();
-        let mut explain = ExplainWriter::new(&target, ExplainLimits::default()).unwrap();
+        let mut explain = ExplainWriter::new(&target).unwrap();
 
-        let receipt = outcome.record(&mut explain, None).unwrap().unwrap();
+        let root = test_root(&mut explain);
+        let receipt = outcome.record(&mut explain, root).unwrap();
         let alternative = explain
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();
@@ -889,9 +910,10 @@ mod tests {
                 .unwrap();
         let verified = verify_request(CompilationRequest::governed(&duplicated)).unwrap();
         let target = verified.for_target(verified.target_profiles()[0]).unwrap();
-        let mut explain = ExplainWriter::new(&target, ExplainLimits::default()).unwrap();
+        let mut explain = ExplainWriter::new(&target).unwrap();
 
-        outcome.record(&mut explain, None).unwrap().unwrap();
+        let root = test_root(&mut explain);
+        outcome.record(&mut explain, root).unwrap();
         let alternative = explain
             .subject(SubjectKind::Alternative, "alternative:test")
             .unwrap();

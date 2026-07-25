@@ -24,16 +24,22 @@ use tiler_ir::schedule::{
 use crate::feasibility::{
     AvailabilityPhase, AxisRequirement, CapabilityAxis, CapabilityFact, CheckedTargetProfile,
     FactAuthority, FactProvenance, FactValidityScope, FeasibilityError, FeasibilityOutcome,
-    FeasibilityProposal, ResolvedPredicate, TargetProfileIdentity,
+    FeasibilityProposal, ProvenEvidence, RejectionCause, TargetProfileIdentity,
+};
+use crate::honourability::{
+    DimensionBehaviour, NumericalDimension, NumericalRequirement, UnhonouredDimension,
 };
 use crate::region::SemanticMemberId;
 use crate::request::{
-    NumericalPermission, PrototypeTargetProfile, SubnormalMode, VerifiedRequestSubject,
-    VerifiedTargetRequest,
+    NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract,
+    VerifiedRequestSubject, VerifiedTargetRequest,
 };
 
 /// Stable candidate identity used when assessing one scheduled region.
 const REGION_PROPOSAL_CANDIDATE: &str = "tiler.prototype.scheduled-region";
+
+/// Stable candidate identity used when resolving a numerical contract alone.
+const CONTRACT_PROPOSAL_CANDIDATE: &str = "tiler.prototype.numerical-contract";
 
 /// A verified scheduled region bound to one compilation request.
 ///
@@ -104,6 +110,17 @@ pub(crate) enum PhysicalError {
         required: u64,
         available: u64,
     },
+    /// A numerical dimension the target declares it cannot honour as required.
+    ///
+    /// A distinct variant rather than a `Target` with two numbers, because the
+    /// rejection ADR 0076 item 5 requires names a dimension, a required
+    /// behaviour, a declared means, the behaviour the target does honour, and
+    /// the declaring profile — none of which is a quantity, and all of which the
+    /// retired `strict-f32: required 1, available 0` shape discarded.
+    Numerical {
+        region: RegionId,
+        cause: UnhonouredDimension,
+    },
     Refinement {
         rule: &'static str,
         region: RegionId,
@@ -133,6 +150,20 @@ impl fmt::Display for PhysicalError {
                 "schedule.target.{rule}: region {} requires {required}, available {available}",
                 region.get()
             ),
+            Self::Numerical { region, cause } => {
+                write!(
+                    formatter,
+                    "schedule.numerics.{}: region {} requires {}, target declares {}",
+                    cause.dimension().key(),
+                    region.get(),
+                    cause.required().key(),
+                    cause.means().key(),
+                )?;
+                if let Some(honoured) = cause.honoured() {
+                    write!(formatter, " and honours {}", honoured.key())?;
+                }
+                write!(formatter, " (profile {})", cause.profile().key())
+            }
             Self::Refinement { rule, region } => write!(
                 formatter,
                 "kernel.refinement.{rule}: kernel for region {} rejected",
@@ -458,17 +489,18 @@ pub(crate) fn verify_schedule(
 /// This runs the exact checked path [`verify_schedule`] runs — the request-subject
 /// precondition, whole-region intrinsic verification, numerical-realization
 /// agreement, the request-subject binding, and the single hard-feasibility
-/// decision — and additionally returns the resolved predicates of a
+/// decision — and additionally returns the evidence of a
 /// [`FeasibilityOutcome::Proven`](crate::feasibility::FeasibilityOutcome) verdict.
-/// The physical implementation frontier retains them as admission evidence for an
+/// The physical implementation frontier retains it as admission evidence for an
 /// enumerated proposal. A provider cannot bypass any of these checks: a
-/// [`PhysicalError::Target`] means the proposal is hard-infeasible (never a cost),
-/// and any other [`PhysicalError`] means the provider emitted invalid IR.
+/// [`PhysicalError::Target`] or [`PhysicalError::Numerical`] means the proposal
+/// is hard-infeasible (never a cost), and any other [`PhysicalError`] means the
+/// provider emitted invalid IR.
 pub(crate) fn verify_schedule_with_feasibility(
     region: ScheduledRegion,
     semantic_members: Vec<SemanticMemberId>,
     request: &VerifiedTargetRequest,
-) -> Result<(VerifiedScheduledRegion, Vec<ResolvedPredicate>), PhysicalError> {
+) -> Result<(VerifiedScheduledRegion, ProvenEvidence), PhysicalError> {
     let id = region.index.id;
     let subject = request.subject();
     if !request.is_authoritative()
@@ -484,7 +516,7 @@ pub(crate) fn verify_schedule_with_feasibility(
         return intrinsic("numerical-realization", id);
     }
     verify_region_subject_binding(verified.region(), &semantic_members, &subject)?;
-    let predicates = assess_region(
+    let evidence = assess_region(
         id,
         verified.requirements(),
         verified.region().schedule.work_items,
@@ -497,7 +529,7 @@ pub(crate) fn verify_schedule_with_feasibility(
             target_profile_key: request.target_profile().key,
             request_subject: subject,
         },
-        predicates,
+        evidence,
     ))
 }
 
@@ -611,34 +643,36 @@ fn reduction_access_matches(
 /// This is the single hard-feasibility decision for the bounded serial-Sum path.
 /// It builds an immutable checked target profile and a typed candidate proposal,
 /// then maps the four-outcome result onto the existing physical-error contract:
-/// a proven candidate yields its resolved predicates (consumed by the explain
-/// admitted trace); a rejected candidate yields the canonical representative
-/// disproved predicate as a [`PhysicalError::Target`]. The governed baseline
-/// declares only compile-profile-resolvable predicates, so a deferred or unknown
-/// verdict — like a malformed profile or proposal — signals that the checked
-/// contract drifted from the prototype limits and fails closed as an intrinsic
-/// error rather than admitting an unproven plan. Cost never enters this decision.
+/// a proven candidate yields its evidence (consumed by the explain admitted
+/// trace); a rejected candidate yields the canonical representative cause, as a
+/// [`PhysicalError::Numerical`] when the target declares it cannot honour a
+/// dimension and as a [`PhysicalError::Target`] when a capability bound is
+/// exceeded. The governed baseline declares only compile-profile-resolvable
+/// predicates, so a deferred or unknown verdict — like a malformed profile or
+/// proposal — signals that the checked contract drifted from the prototype
+/// limits and fails closed as an intrinsic error rather than admitting an
+/// unproven plan. Cost never enters this decision.
 pub(crate) fn assess_region(
     region: RegionId,
     requirements: ResourceRequirements,
     work_items: u64,
     target: &PrototypeTargetProfile,
-) -> Result<Vec<ResolvedPredicate>, PhysicalError> {
+) -> Result<ProvenEvidence, PhysicalError> {
     let profile =
         checked_target_profile(target).map_err(|error| feasibility_intrinsic(error, region))?;
     let proposal = region_proposal(requirements, work_items)
         .map_err(|error| feasibility_intrinsic(error, region))?;
     match profile.assess(&proposal, AvailabilityPhase::CompileProfile) {
-        FeasibilityOutcome::Proven(predicates) => Ok(predicates),
-        FeasibilityOutcome::Rejected(rejection) => {
-            let representative = rejection.representative();
-            Err(PhysicalError::Target {
-                rule: representative.axis().key(),
+        FeasibilityOutcome::Proven(evidence) => Ok(evidence),
+        FeasibilityOutcome::Rejected(rejection) => Err(match rejection.representative() {
+            RejectionCause::Numerical(cause) => PhysicalError::Numerical { region, cause },
+            RejectionCause::Capability(predicate) => PhysicalError::Target {
+                rule: predicate.axis().key(),
                 region,
-                required: representative.required().value(),
-                available: representative.available().value(),
-            })
-        }
+                required: predicate.required().value(),
+                available: predicate.available().value(),
+            },
+        }),
         FeasibilityOutcome::Deferred(_) | FeasibilityOutcome::Unknown(_) => {
             Err(PhysicalError::Intrinsic {
                 rule: "target-assessment-unresolved",
@@ -646,6 +680,27 @@ pub(crate) fn assess_region(
             })
         }
     }
+}
+
+/// Assesses one numerical contract alone against a target's declaration.
+///
+/// The request boundary resolves a caller's stated preference through this: the
+/// proposal carries the contract's four dimensions and *no* capability
+/// requirement, because whether a target honours a contract is a fact about the
+/// contract and the target, independent of any region, schedule, or cost. A
+/// region is assessed again later against the same authority, which is
+/// defence in depth rather than a second decision.
+pub(crate) fn assess_contract(
+    target: &PrototypeTargetProfile,
+    contract: StrictF32NumericalContract,
+) -> Result<FeasibilityOutcome, FeasibilityError> {
+    let profile = checked_target_profile(target)?;
+    let proposal = FeasibilityProposal::new(
+        CONTRACT_PROPOSAL_CANDIDATE,
+        Vec::new(),
+        contract.dimension_requirements(),
+    )?;
+    Ok(profile.assess(&proposal, AvailabilityPhase::CompileProfile))
 }
 
 /// Returns the canonical descriptor bytes of one target profile.
@@ -670,7 +725,9 @@ pub(crate) fn target_profile_descriptor(
 /// The prototype profile has no explicitly stageable local memory or barriers,
 /// so those axes carry a conservative compile-time ceiling of zero. Every axis is
 /// a compile-profile guarantee, keeping the bounded serial-Sum candidate provable
-/// without any later-phase query.
+/// without any later-phase query. The target's numerical honourability
+/// declaration is lifted here too, each line attributed to the declaring profile
+/// exactly as a capability bound is.
 fn checked_target_profile(
     target: &PrototypeTargetProfile,
 ) -> Result<CheckedTargetProfile, FeasibilityError> {
@@ -705,21 +762,25 @@ fn checked_target_profile(
                 CapabilityAxis::DeviceAddressSpace,
                 u64::from(target.supports_device_memory),
             ),
-            fact(
-                CapabilityAxis::StrictF32Arithmetic,
-                u64::from(target.supports_strict_f32),
-            ),
             fact(CapabilityAxis::LocalMemoryBytes, 0),
             fact(CapabilityAxis::Barriers, 0),
         ],
+        target
+            .numerical
+            .iter()
+            .map(|declared| declared.attributed_to(identity))
+            .collect(),
     )
 }
 
 /// Builds the typed candidate proposal for one scheduled region.
 ///
-/// The candidate requires 64-bit indexing and the device address space and
-/// strict-f32 arithmetic whenever its resource requirements demand them; the
-/// prototype baseline needs no local memory or barriers.
+/// The candidate requires 64-bit indexing and the device address space whenever
+/// its resource requirements demand it; the prototype baseline needs no local
+/// memory or barriers. Its numerical requirements are the region's declared
+/// realization carried forward **per dimension** rather than collapsed into one
+/// summary bit — the collapse the retired `StrictF32Arithmetic` axis forced, and
+/// which could neither name a failing dimension nor express emulation.
 fn region_proposal(
     requirements: ResourceRequirements,
     work_items: u64,
@@ -742,50 +803,30 @@ fn region_proposal(
                 u64::from(requirements.requires_device_memory),
             ),
             AxisRequirement::new(
-                CapabilityAxis::StrictF32Arithmetic,
-                u64::from(requires_strict_f32(requirements)),
-            ),
-            AxisRequirement::new(
                 CapabilityAxis::LocalMemoryBytes,
                 requirements.local_memory_bytes,
             ),
             AxisRequirement::new(CapabilityAxis::Barriers, u64::from(requirements.barriers)),
         ],
+        vec![
+            NumericalRequirement::new(
+                NumericalDimension::InputSubnormals,
+                DimensionBehaviour::Subnormals(requirements.input_subnormals),
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::ResultSubnormals,
+                DimensionBehaviour::Subnormals(requirements.result_subnormals),
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::Contraction,
+                DimensionBehaviour::Transform(requirements.contraction),
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::Reassociation,
+                DimensionBehaviour::Transform(requirements.reassociation),
+            ),
+        ],
     )
-}
-
-/// Returns whether a region's numerical requirements demand strict IEEE-754
-/// binary32 arithmetic of its target.
-///
-/// This is the interim summary the single `StrictF32Arithmetic` axis still
-/// needs, and it is computed here rather than inside intrinsic verification
-/// because the collapse is a property of this axis, not of the region. ADR 0076
-/// item 3 retires the axis for a per-dimension honourability authority that can
-/// name the failing dimension and express emulation; until then the summary is
-/// a **disjunction**, because any one strict dimension is enough to make a
-/// relaxing target infeasible. The predicate this replaced was a conjunction
-/// over contraction and reassociation alone, so a subnormal-preserving contract
-/// that permitted both transforms required nothing at all.
-///
-/// Each dimension is matched exhaustively, so a widened vocabulary stops the
-/// build here instead of falling into the non-strict arm.
-fn requires_strict_f32(requirements: ResourceRequirements) -> bool {
-    let strict_subnormals = [
-        requirements.input_subnormals,
-        requirements.result_subnormals,
-    ]
-    .into_iter()
-    .any(|mode| match mode {
-        SubnormalMode::Preserve => true,
-        SubnormalMode::FlushToZero { zero_sign: _ } => false,
-    });
-    let strict_transforms = [requirements.contraction, requirements.reassociation]
-        .into_iter()
-        .any(|permission| match permission {
-            NumericalPermission::Forbidden => true,
-            NumericalPermission::Permitted => false,
-        });
-    strict_subnormals || strict_transforms
 }
 
 /// Maps a feasibility intrinsic error onto the physical-error contract.
