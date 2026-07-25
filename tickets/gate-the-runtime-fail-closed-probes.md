@@ -1,7 +1,7 @@
 ---
 id: gate-the-runtime-fail-closed-probes
 title: Run the runtime fail-closed probes in the gate
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [prototype-runtime-routing-commit, bound-the-backend-entry-key-by-the-identity-it-carries]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, routing, correctness, testing]
+claimed_from: todo
+assignee: agent-probes
+lease_expires_at: 1785016755
 ---
 The routing commit's fail-closed classification is measured but not gate-enforced. Make it a checked property.
 
