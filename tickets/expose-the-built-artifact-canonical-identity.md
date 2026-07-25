@@ -8,7 +8,7 @@ related: [carry-the-metal-payload-in-an-artifact-envelope, route-the-runtime-pro
 scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, artifact, identity, public-surface, needs-tom]
+tags: [implementation, artifact, identity, public-surface]
 ---
 A producer can encode an artifact and a reader can observe a decoded one's identity, but nothing can ask a *built* artifact what its identity is — so the two cannot be compared across the boundary they exist to bind.
 

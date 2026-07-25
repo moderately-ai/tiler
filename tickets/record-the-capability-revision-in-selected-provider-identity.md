@@ -8,7 +8,7 @@ related: [carry-the-metal-payload-in-an-artifact-envelope, name-the-resolved-low
 scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, artifact, identity, needs-tom]
+tags: [implementation, artifact, identity]
 ---
 `SelectedProvider` cannot record the value `docs/operation-extensions.md` says a selected plan records, and asks instead for one no producer can supply. The first artifact assembler hit this and carried a real value into an adjacent slot rather than inventing a plausible one; that stopgap is in code and named, and this ticket closes it.
 
