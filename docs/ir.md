@@ -1054,11 +1054,12 @@ scalar model is complete:
   multi-result operations, and exact serial reduction without dtype branches;
   the downstream initial executable profile remains strict `f32`, which is a
   capability limit rather than an intrinsic limit of scalar IR;
-- interval bounds proofs, resource-bounded finite fallback when a conservative
-  interval overlaps a boundary, structural permutation proofs for large
-  ordinary writes, resource-bounded exhaustive ownership fallback,
-  zero/rank-zero behavior, and access-owned bounds/write-ownership evidence
-  with inspectable proof kinds; and
+- interval bounds proofs, a structural proved-extent-equality bounds proof for
+  a coordinate that *is* a domain dimension whose extent the environment proves
+  equal to its axis, resource-bounded finite fallback when neither closes,
+  structural permutation proofs for large ordinary writes, resource-bounded
+  exhaustive ownership fallback, zero/rank-zero behavior, and access-owned
+  bounds/write-ownership evidence with inspectable proof kinds; and
 - reachable compaction plus canonical structural identity that excludes draft
   ownership, raw semantic handles, dead builder history, semantic-region
   identity, proof caches, provider addresses, and target choices.

@@ -1,11 +1,11 @@
 ---
 id: name-the-proved-extent-equality-bounds-proof
 title: Name the proved-extent-equality bounds proof
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [bind-shapeenv-sources-into-tensor-boundaries-and-coefficients, name-the-unprovable-symbolic-extent-diagnostic, promote-the-symbolic-index-profile-to-a-public-boundary]
-scopes: [implementation/ir]
+scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, shapes, correctness]
@@ -29,3 +29,35 @@ One decision this ticket owns: whether the same rule also relaxes the `!interval
 ## Closes when
 
 The wholly undetermined `[n] -> [n]` copy verifies, its retained bounds evidence names the equality argument rather than an interval or an enumeration, the neighbour whose environment does not prove the extents equal is still refused, `a_wholly_undetermined_dynamic_copy_is_refused_rather_than_approximated` is replaced by its accepting successor rather than deleted, and `uv run --locked python scripts/check_repository.py` passes.
+
+## Outcome
+
+`BoundsProofView::ProvedExtentEquality` landed, additively on the already-`#[non_exhaustive]` enum, with the private `BoundsProof::ProvedExtentEquality` beside it and `TensorAccessRef::bounds_proof` growing the one arm the ticket predicted.
+
+### The rule
+
+`IndexRegionBuilder::coordinates_are_bounded_dimensions` holds when every coordinate of an access *is* an `IndexNode::Dimension(d)`, `d` is iterated by that access, and `extents_proved_equal` proves `extent(d)` and the axis it indexes are one extent. That is per-axis and needs no bound on either side, which is exactly why it decides the case interval propagation cannot: a wholly undetermined symbol's interval is the whole extent domain, so no comparison against it closes.
+
+It is deliberately **not** a permutation check. Two axes may name the same dimension and each still be in bounds; covering a boundary exactly once stays `write_is_permutation`'s obligation. Conflating them would either refuse a legal read or let a write claim ownership it has not shown.
+
+### The decision this ticket owned — the `!interval_proved` conjunct is subsumed, not removed
+
+The ticket asked whether the same rule should also relax the interval conjunct a proven `CoordinatePermutation` write is additionally required to satisfy. It needed no separate answer: `write_is_permutation` requires *exactly* the per-axis condition above plus distinct dimensions and equal ranks, so it implies `coordinates_are_bounded_dimensions`. Once the bounds disjunction admits the structural argument, a write that owns its boundary satisfies the bounds obligation through the argument that actually holds. The conjunct was therefore not deleted; it stopped being reachable for a proven permutation, and the verifier still discharges bounds explicitly rather than inheriting them from ownership.
+
+### Precedence, and why it is the evidence that constrains it
+
+`verify_accesses`, `access_needs_exhaustive_proof`, and `remap_access` all read one predicate, `bounds_proved_without_enumeration` — interval first, structural equality second — so the pass that decides an enumeration is needed and the pass that records what proved it cannot drift. The order is load-bearing for the retained evidence rather than for soundness: an access interval propagation already proved keeps recording `Interval`, so no existing region's evidence changes meaning. `VacuousEmptyDomain` still precedes both.
+
+### Identity is untouched, deliberately
+
+`tiler.index-region.v6` encodes an access as mode, tensor, domain, and coordinates, and folds neither `bounds_proof` nor `ownership_proof`. The proof kind is retained evidence beside the identity rather than part of it, so a new variant needs no domain bump and no existing identity byte moves. The exact check is `grep -n "bounds_proof" crates/tiler-ir/src/index/builder.rs`, whose hits are confined to `remap_access` and the encoder is not among them.
+
+### Tests
+
+`a_wholly_undetermined_dynamic_copy_is_refused_rather_than_approximated` is replaced by `a_wholly_undetermined_dynamic_copy_verifies_by_proved_extent_equality`, which asserts the region verifies, that **both** accesses record `ProvedExtentEquality` rather than an interval or an enumeration, and that the write's ownership is still the permutation argument. Its neighbour `an_undetermined_copy_whose_extents_are_never_proved_equal_is_still_refused` runs the same fixture over an environment that declares `m` and `n` and relates them not at all: both accesses are refused, and neither refusal is `ProofResourceLimit`, because nothing was enumerated. The shared `undetermined_dynamic_copy` fixture is what makes the pair differ in the environment and in nothing else.
+
+`cargo nextest run --workspace`: 790 tests, all passing. `uv run --locked python scripts/check_repository.py` passes.
+
+### Contract updated
+
+`docs/ir.md`'s index-layer capability list named "interval bounds proofs, resource-bounded finite fallback when a conservative interval overlaps a boundary"; it now names the structural proved-extent-equality proof between them, because the finite fallback is no longer what a symbolic equality falls through to.

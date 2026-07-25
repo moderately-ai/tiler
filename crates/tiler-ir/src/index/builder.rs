@@ -2037,7 +2037,15 @@ impl IndexRegionBuilder {
                 });
                 continue;
             }
-            if !interval_proved
+            // A proven permutation implies the structural bounds argument —
+            // both require every coordinate to be a domain dimension whose
+            // extent the environment proves equal to its axis, and the
+            // permutation additionally requires those dimensions distinct — so
+            // a write that owns its boundary no longer has to satisfy the
+            // interval conjunct separately. That is a subsumption rather than a
+            // relaxation: the bounds obligation is still discharged, by the
+            // argument that actually holds.
+            if !(interval_proved || self.coordinates_are_bounded_dimensions(access, shape))
                 || (access.mode == AccessMode::Write && !self.write_is_permutation(access, shape))
             {
                 // The finite fallback walks the domain point by point and checks
@@ -2152,13 +2160,65 @@ impl IndexRegionBuilder {
         verdict
     }
 
-    /// Returns whether interval propagation alone leaves this access unproved.
+    /// Returns whether every coordinate is a domain dimension whose extent the
+    /// environment proves equal to the axis it indexes.
+    ///
+    /// The sound argument interval propagation cannot express. A coordinate
+    /// that *is* `IndexNode::Dimension(d)`, with `d` iterated by this access,
+    /// ranges over `[0, extent(d))` by construction; when the environment
+    /// proves `extent(d)` and the axis are one extent, the coordinate is below
+    /// the axis in every model. Nothing about either interval is needed, which
+    /// is exactly why `[n] -> [n]` with nothing determined is provable here and
+    /// nowhere else: `n`'s interval is the whole extent domain, so `max(i)` is
+    /// never below the axis's floor.
+    ///
+    /// Deliberately *not* a permutation check. Two axes may name the same
+    /// dimension and still each be in bounds; covering a boundary exactly once
+    /// is a separate obligation that [`Self::write_is_permutation`] owns, and
+    /// conflating them would either refuse a legal read or let a write claim
+    /// ownership it has not shown.
+    fn coordinates_are_bounded_dimensions(
+        &self,
+        access: &AccessData,
+        shape: &SourcedShape,
+    ) -> bool {
+        if access.coordinates.len() != shape.rank() {
+            return false;
+        }
+        access
+            .coordinates
+            .iter()
+            .zip(shape.extents())
+            .all(|(coordinate, extent)| {
+                let IndexNode::Dimension(d) = *self.expressions[*coordinate as usize].node else {
+                    return false;
+                };
+                access.domain.contains(&d)
+                    && self.extents_proved_equal(&self.dimensions[d as usize].extent, &extent)
+            })
+    }
+
+    /// Returns whether this access's coordinates are proved in bounds without
+    /// enumerating its domain.
+    ///
+    /// Interval propagation first and the structural equality argument second.
+    /// The order is load-bearing for the *evidence*, not for soundness: an
+    /// access interval propagation already proved must keep recording
+    /// [`BoundsProof::Interval`], or the retained evidence of existing regions
+    /// silently changes meaning.
+    fn bounds_proved_without_enumeration(&self, access: &AccessData, shape: &SourcedShape) -> bool {
+        self.interval_verdict(access, shape).interval_proved
+            || self.coordinates_are_bounded_dimensions(access, shape)
+    }
+
+    /// Returns whether the cheap proofs alone leave this access unproved.
     ///
     /// Exactly the condition the verifier falls through on, read from
-    /// [`Self::interval_verdict`] rather than recomputed, so the enumeration
-    /// pass cannot come to disagree with the pass that decided one was needed.
+    /// [`Self::bounds_proved_without_enumeration`] rather than recomputed, so
+    /// the enumeration pass cannot come to disagree with the pass that decided
+    /// one was needed.
     fn access_needs_exhaustive_proof(&self, access: &AccessData, shape: &SourcedShape) -> bool {
-        !self.interval_verdict(access, shape).interval_proved
+        !self.bounds_proved_without_enumeration(access, shape)
             || (access.mode == AccessMode::Write && !self.write_is_permutation(access, shape))
     }
 
@@ -2638,10 +2698,15 @@ impl IndexRegionBuilder {
         let shape = &self.tensors[access.tensor as usize].shape;
         let points = self.domain_points(&access.domain);
         // The retained evidence names how the access was *actually* proved, so
-        // it reads the same predicate the verifier admitted it on rather than a
-        // second copy of it. A copy that drifted would record an interval proof
-        // for an access the verifier enumerated, or the reverse.
-        let interval = points != Some(0) && self.interval_verdict(access, shape).interval_proved;
+        // it reads the same predicates the verifier admitted it on rather than
+        // a second copy of them. A copy that drifted would record an interval
+        // proof for an access the verifier enumerated, or the reverse. The
+        // precedence is the verifier's: interval first, the structural equality
+        // argument second, enumeration last.
+        let visited = points != Some(0);
+        let interval = visited && self.interval_verdict(access, shape).interval_proved;
+        let extent_equality =
+            visited && !interval && self.coordinates_are_bounded_dimensions(access, shape);
         VerifiedAccessData {
             tensor: tensor_map[&access.tensor],
             mode: access.mode,
@@ -2663,6 +2728,8 @@ impl IndexRegionBuilder {
                 BoundsProof::VacuousEmptyDomain
             } else if interval {
                 BoundsProof::Interval
+            } else if extent_equality {
+                BoundsProof::ProvedExtentEquality
             } else {
                 BoundsProof::Exhaustive {
                     points: enumerated_points(points),

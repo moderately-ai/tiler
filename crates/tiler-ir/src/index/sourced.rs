@@ -522,7 +522,7 @@ mod tests {
     use super::{EXTENT_PHASE_CEILING, ExtentSourceError, SymbolicExtentError};
     use super::{ExtentSources, SourcedExtent, SourcedShape};
     use crate::index::{
-        BoundsProofView, DomainRole, FrozenScalarRegistry, IndexRegionBuildError,
+        AccessMode, BoundsProofView, DomainRole, FrozenScalarRegistry, IndexRegionBuildError,
         IndexRegionBuilder, IndexRegionDiagnostic, ScalarArity, ScalarAttributeSchema,
         ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
         ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
@@ -1395,37 +1395,95 @@ mod tests {
         );
     }
 
-    /// A wholly undetermined `[n] -> [n]` copy is refused, explicitly.
+    /// A wholly undetermined `[n] -> [n]` copy verifies, and its evidence names
+    /// the argument that actually proved it.
     ///
-    /// **Measurement, and this profile's boundary.** Ownership *is* proved
-    /// here — the environment decides `m == n` from the equality class — but
-    /// bounds are not, and the reason is structural rather than a gap in the
-    /// environment. Proving `i < m` from `0 <= i < n` and `m == n` is an
-    /// equality-class argument, not an interval comparison: `n`'s interval is
-    /// the whole extent domain, so `max(i)` is nowhere below `m`'s floor.
+    /// **The successor to `a_wholly_undetermined_dynamic_copy_is_refused_rather_than_approximated`.**
+    /// That case measured this profile's boundary: ownership was proved — the
+    /// environment decides `m == n` from the equality class — while bounds were
+    /// not, and the reason was structural rather than a gap in the environment.
+    /// Proving `i < m` from `0 <= i < n` and `m == n` is an equality-class
+    /// argument, not an interval comparison: `n`'s interval is the whole extent
+    /// domain, so `max(i)` is nowhere below `m`'s floor. The argument was sound
+    /// and cheap, and what blocked it was that [`BoundsProofView`] had no name
+    /// for it — `VacuousEmptyDomain`, `Interval`, and `Exhaustive` would each
+    /// have misdescribed how such an access was proved, and an access whose
+    /// retained evidence names the wrong proof is worse than one that is
+    /// refused.
     ///
-    /// The argument itself is sound and cheap. What blocks it is that
-    /// [`BoundsProofView`] has no name for it — `VacuousEmptyDomain`,
-    /// `Interval`, and `Exhaustive` would each misdescribe how such an access
-    /// was proved, and an access whose retained evidence names the wrong proof
-    /// is worse than one that is refused. Naming it is a public enum variant,
-    /// which is owner-reserved, so
-    /// `name-the-proved-extent-equality-bounds-proof` carries it.
-    ///
-    /// Until then the refusal must stay *explicit*, which is what this asserts:
-    /// both accesses are refused, and neither is the proof-resource diagnostic,
-    /// which `docs/ir.md` defines as meaning "the enumeration stopped — not
-    /// that the region was disproved". When the follow-up lands this test is
-    /// the thing that fails, which is the trigger it should have.
+    /// `name-the-proved-extent-equality-bounds-proof` added
+    /// [`BoundsProofView::ProvedExtentEquality`], so the region now verifies.
+    /// This asserts the part that made naming it necessary: the *read* records
+    /// the equality argument rather than an interval or an enumeration, and
+    /// nothing was enumerated at all.
     #[test]
-    fn a_wholly_undetermined_dynamic_copy_is_refused_rather_than_approximated() {
+    fn a_wholly_undetermined_dynamic_copy_verifies_by_proved_extent_equality() {
+        let region = undetermined_dynamic_copy(environment_over(
+            EXTENT_PHASE_CEILING,
+            &["m", "n"],
+            &[ExtentRelation::equal(term("m"), term("n"))],
+        ))
+        .expect("`i` is a dimension sized `n`, and the environment proves `m == n`");
+
+        assert!(
+            region
+                .accesses()
+                .all(|access| access.bounds_proof() == BoundsProofView::ProvedExtentEquality),
+            "neither interval propagation nor an enumeration closed this; the equality did",
+        );
+        assert!(
+            region
+                .accesses()
+                .filter(|access| access.mode() == AccessMode::Write)
+                .all(|access| access.write_ownership_proof()
+                    == Some(WriteOwnershipProofView::CoordinatePermutation)),
+            "ownership stays the permutation argument, which was already discharged",
+        );
+    }
+
+    /// The neighbour whose environment never says the two extents are one.
+    ///
+    /// `m` is declared and available, and nothing bounds it at all. The
+    /// structural argument needs the equality and has none, interval
+    /// propagation has no interval to compare, and there is no finite domain to
+    /// walk — so both accesses are refused. The refusal must stay *explicit*
+    /// and must not be the proof-resource diagnostic, which `docs/ir.md`
+    /// defines as meaning "the enumeration stopped — not that the region was
+    /// disproved".
+    #[test]
+    fn an_undetermined_copy_whose_extents_are_never_proved_equal_is_still_refused() {
+        let error =
+            undetermined_dynamic_copy(environment_over(EXTENT_PHASE_CEILING, &["m", "n"], &[]))
+                .unwrap_err();
+        assert!(
+            reports(&error, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::BoundsNotProven { .. }
+            )) && reports(&error, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::WriteOwnershipNotProven { .. }
+            )),
+            "an unproved equality is not a proof, and both accesses rest on it: {error}",
+        );
+        assert!(
+            !reports(&error, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::ProofResourceLimit { .. }
+            )),
+            "nothing was enumerated, so nothing ran out of budget: {error}",
+        );
+    }
+
+    /// Builds the caller-sized `[m] -> [m]` copy over a domain sized `n`.
+    ///
+    /// Nothing in either fixture determines a value for `m` or `n`; the two
+    /// differ only in whether the environment proves them one extent.
+    fn undetermined_dynamic_copy(
+        environment: Arc<ShapeEnv>,
+    ) -> Result<VerifiedIndexRegion, IndexRegionBuildError> {
         let mut builder = IndexRegionBuilder::new(registry())
             .unwrap()
-            .with_shape_environment(environment_over(
-                EXTENT_PHASE_CEILING,
-                &["m", "n"],
-                &[ExtentRelation::equal(term("m"), term("n"))],
-            ));
+            .with_shape_environment(environment);
         let boundary = |builder: &mut IndexRegionBuilder, role| {
             builder
                 .sourced_tensor(role, value_type(), vec![SourcedExtent::Symbol(symbol("m"))])
@@ -1440,24 +1498,6 @@ mod tests {
         let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
         let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
         builder.output(write, value).unwrap();
-
-        let error = builder.build().unwrap_err();
-        assert!(
-            reports(&error, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::BoundsNotProven { .. }
-            )) && reports(&error, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::WriteOwnershipNotProven { .. }
-            )),
-            "both accesses are refused while no bounds-proof kind names the argument: {error}",
-        );
-        assert!(
-            !reports(&error, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::ProofResourceLimit { .. }
-            )),
-            "nothing was enumerated, so nothing ran out of budget: {error}",
-        );
+        builder.build()
     }
 }
