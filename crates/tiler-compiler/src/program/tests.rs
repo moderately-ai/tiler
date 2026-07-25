@@ -181,6 +181,47 @@ fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
     );
 }
 
+/// The plan carries the target profile and the feasibility rules as two
+/// independent identities, so neither has to be invented from the other.
+///
+/// The artifact layer's `TargetProfileRef` and `FeasibilityRuleSetRef` are
+/// separate references because one profile can be re-assessed under new rules
+/// and one rule set applies across profiles. Before the split, the plan carried
+/// a single key-and-version pair whose key named the profile and whose version
+/// named the rules, so an assembler had no rule-set key to record and would have
+/// had to name the rules after the profile.
+#[test]
+fn the_plan_names_its_target_profile_and_its_feasibility_rules_separately() {
+    let (semantic, request, scheduled) = fixture();
+    let program = build_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let kernels: Vec<_> = scheduled
+        .iter()
+        .map(lower_structured_kernel)
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let artifact = build_artifact_plan(
+        &semantic,
+        &request,
+        &scheduled,
+        &kernels,
+        &program,
+        resolved_providers(&semantic, &request),
+    )
+    .unwrap();
+
+    // The profile half: a governed key and the exact descriptor of the profile
+    // the plan was assessed against.
+    assert_eq!(artifact.target_profile_key, request.target_profile().key);
+    assert!(!artifact.target_profile_descriptor().is_empty());
+
+    // The rule set half: its own governed key and a nonzero revision, neither
+    // recoverable from the profile's.
+    let rules = artifact.feasibility_rule_set();
+    assert!(!rules.key().is_empty());
+    assert_ne!(rules.key(), artifact.target_profile_key);
+    assert!(rules.revision() > 0);
+}
+
 #[test]
 fn the_program_identity_is_the_shared_canonical_identity() {
     let (semantic, request, scheduled) = fixture();

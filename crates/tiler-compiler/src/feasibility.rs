@@ -8,7 +8,7 @@
 //! Target feasibility is a physical contract outside the semantic tensor graph.
 //! This module owns the *hard* feasibility decision only: whether a candidate's
 //! typed resource and capability requirements are provably satisfiable against an
-//! immutable, versioned target profile. It deliberately has no notion of cost. A
+//! immutable checked target profile. It deliberately has no notion of cost. A
 //! cost estimate can neither prove nor disprove feasibility, and a disproved hard
 //! predicate is never expressed as an expensive plan; the two authorities are
 //! kept in different types so they cannot be confused (ADR 0043, AGENTS.md
@@ -20,6 +20,16 @@
 //! unresolved checks form one nonempty canonical deferred set grouped by phase;
 //! otherwise, with no remaining checks, the candidate is proven. A proposal with
 //! no requirements is vacuously [`FeasibilityOutcome::Proven`].
+//!
+//! Two governed identities meet here and are kept apart. A
+//! [`TargetProfileIdentity`] names *what* a target declares, distinguished by
+//! [`CheckedTargetProfile::canonical_descriptor`]; a
+//! [`FeasibilityRuleSetIdentity`] names *how* this authority compares a
+//! requirement against a declaration. Neither determines the other — one profile
+//! can be re-assessed under new rules, and one rule set applies across profiles
+//! — and the artifact layer records them as two independent references, so
+//! fusing them into one key-and-version pair would make an artifact assert that
+//! it was assessed under a rule set named after a target profile.
 //!
 //! Malformed profiles and malformed proposals are *intrinsic errors* surfaced at
 //! construction time ([`FeasibilityError`]), never a feasibility outcome. A valid
@@ -40,7 +50,52 @@ use crate::explain::Quantity;
 ///
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v1\0";
+///
+/// `v2` because the encoding changed when the feasibility rule version left the
+/// profile's identity: a descriptor is durable identity, so an encoding that no
+/// longer means what `v1` meant must not be able to collide with one that does.
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v2\0";
+
+/// Governed key of the feasibility rule set this authority applies.
+///
+/// The `.v1` suffix names the governed *vocabulary* the rules range over — the
+/// ADR 0043 capability axes, availability phases, fact authorities, and validity
+/// scopes — not an output-affecting revision within it. Widening that vocabulary
+/// mints a new key because the rules would then decide predicates the old key
+/// could not express; changing how the same terms are compared bumps
+/// [`GOVERNED_FEASIBILITY_RULE_SET_REVISION`] instead. That is why the artifact
+/// layer's `FeasibilityRuleSetRef` carries both a key and a revision rather than
+/// one number.
+const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str = "tiler.feasibility.phased-capability-bounds.v1";
+
+/// Nonzero output-affecting revision of the governed feasibility rule set.
+///
+/// Bumped when this module changes *how* a requirement is compared against a
+/// bound — an axis [`Relation`], [`satisfies`], [`CapabilityAxis::admits`],
+/// [`authority_matches_phase`], [`CheckedTargetProfile::resolve`]'s preference
+/// for the most refined available fact, or the outcome precedence in
+/// [`CheckedTargetProfile::assess`]. It is deliberately *not* bumped when a
+/// target profile's declared bounds change: a bound is the profile's claim, and
+/// the profile's canonical descriptor already distinguishes it.
+const GOVERNED_FEASIBILITY_RULE_SET_REVISION: u32 = 1;
+
+/// The one feasibility rule set every [`CheckedTargetProfile::assess`] applies.
+///
+/// A `const` rather than a per-target derivation, because the rules are this
+/// module's code and do not vary by target: exposing a `fn(target) -> rules`
+/// would imply a variation that cannot exist and would invite a second
+/// definition of one identity. A consumer recording which rules assessed a
+/// variant reads this; it never composes a key and a number of its own.
+pub(crate) const GOVERNED_FEASIBILITY_RULE_SET: FeasibilityRuleSetIdentity =
+    match FeasibilityRuleSetIdentity::new(
+        GOVERNED_FEASIBILITY_RULE_SET_KEY,
+        GOVERNED_FEASIBILITY_RULE_SET_REVISION,
+    ) {
+        Some(identity) => identity,
+        // A const panic is a build failure, so a malformed governed identity can
+        // never reach an artifact.
+        None => panic!("the governed feasibility rule set identity is malformed"),
+    };
 
 /// Ordered capability availability phases (ADR 0043).
 ///
@@ -244,44 +299,89 @@ impl FactValidityScope {
     }
 }
 
-/// Versioned identity of a checked target profile.
+/// Identity of a checked target profile.
 ///
-/// The version encodes the feasibility-rule identity of the profile: two
-/// profiles that would evaluate predicates differently must not share a version.
-/// It participates in plan and artifact identity (wiring that into artifact
-/// hashing is owned by the artifact-identity work, not this authority).
+/// The key alone is *not* the profile's identity: ADR 0043 requires the exact
+/// [`CheckedTargetProfile::canonical_descriptor`] beside it, because two
+/// profiles can advertise one key and admit different candidates. This type
+/// names the governed key; the descriptor distinguishes profiles sharing it.
+///
+/// It deliberately carries no version. The rules that decide predicates are
+/// [`GOVERNED_FEASIBILITY_RULE_SET`], which is a property of this authority
+/// rather than of any one profile: a rule change alters every profile's
+/// verdicts at once, so recording it on each profile would claim per-profile
+/// variation that cannot occur. The artifact layer keeps the two apart for the
+/// same reason — one profile may be re-assessed under a new rule set, and one
+/// rule set applies across profiles, so neither identity determines the other.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ProfileIdentity {
+pub(crate) struct TargetProfileIdentity {
     key: &'static str,
-    version: u32,
 }
 
-impl ProfileIdentity {
-    /// Constructs a profile identity from a governed key and rule version.
-    pub(crate) const fn new(key: &'static str, version: u32) -> Self {
-        Self { key, version }
+impl TargetProfileIdentity {
+    /// Constructs a target profile identity from a governed key.
+    pub(crate) const fn new(key: &'static str) -> Self {
+        Self { key }
     }
 
-    /// The governed profile key.
+    /// The governed target profile key.
+    pub(crate) const fn key(self) -> &'static str {
+        self.key
+    }
+}
+
+/// Identity of the feasibility rule set a candidate was assessed under.
+///
+/// Separate from [`TargetProfileIdentity`] because the two answer different
+/// questions: a profile declares *what* a target can do, and a rule set governs
+/// *how* a requirement is compared against that declaration. Fusing them into
+/// one key-and-version pair would make an artifact assert that it was assessed
+/// under a rule set named after a target profile.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct FeasibilityRuleSetIdentity {
+    key: &'static str,
+    revision: u32,
+}
+
+impl FeasibilityRuleSetIdentity {
+    /// Constructs a rule set identity, rejecting a malformed one.
+    ///
+    /// Returns [`None`] for an empty key or a zero revision. Zero is reserved
+    /// for "unset" at the artifact boundary, so admitting it here would let an
+    /// artifact record rules it was never assessed under.
+    pub(crate) const fn new(key: &'static str, revision: u32) -> Option<Self> {
+        if key.is_empty() || revision == 0 {
+            return None;
+        }
+        Some(Self { key, revision })
+    }
+
+    /// The governed rule set key.
     pub(crate) const fn key(self) -> &'static str {
         self.key
     }
 
-    /// The feasibility-rule version.
-    pub(crate) const fn version(self) -> u32 {
-        self.version
+    /// The nonzero output-affecting revision of the rule set.
+    pub(crate) const fn revision(self) -> u32 {
+        self.revision
     }
 }
 
-/// Provenance of a capability fact: which profile declared it.
+/// Provenance of a capability fact: which target profile declared it.
+///
+/// It names the **profile**, not the rule set. A capability fact is a *bound* —
+/// "at most one thread per workgroup" — and a profile is the authority that
+/// declares a bound. The rule set governs how a requirement is compared against
+/// that bound; it neither supplies nor admits the bound itself, so citing it
+/// here would attribute the claim to something that never made it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FactProvenance {
-    profile: ProfileIdentity,
+    profile: TargetProfileIdentity,
 }
 
 impl FactProvenance {
     /// Records that a fact was declared by `profile`.
-    pub(crate) const fn declared_by(profile: ProfileIdentity) -> Self {
+    pub(crate) const fn declared_by(profile: TargetProfileIdentity) -> Self {
         Self { profile }
     }
 }
@@ -343,14 +443,14 @@ impl CapabilityFact {
     }
 }
 
-/// An immutable checked target profile with versioned identity.
+/// An immutable checked target profile with a key and a canonical descriptor.
 ///
 /// Constructed only through [`CheckedTargetProfile::new`], which rejects
 /// malformed declarations as intrinsic errors. There are no mutators: once
 /// checked, the facts and identity are fixed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedTargetProfile {
-    identity: ProfileIdentity,
+    identity: TargetProfileIdentity,
     /// Canonical: sorted by `(axis, phase)`, unique per `(axis, phase)`.
     facts: Vec<CapabilityFact>,
 }
@@ -358,14 +458,15 @@ pub(crate) struct CheckedTargetProfile {
 impl CheckedTargetProfile {
     /// Builds a checked profile, validating it as an intrinsic contract.
     ///
-    /// Rejects an empty identity key, an unversioned identity, a fact whose bound
-    /// is inadmissible for its axis, a fact whose declared authority contradicts
-    /// its phase, and duplicate facts for the same `(axis, phase)`.
+    /// Rejects an empty identity key, a fact whose bound is inadmissible for its
+    /// axis, a fact whose provenance names another profile, a fact whose declared
+    /// authority contradicts its phase, and duplicate facts for the same
+    /// `(axis, phase)`.
     pub(crate) fn new(
-        identity: ProfileIdentity,
+        identity: TargetProfileIdentity,
         mut facts: Vec<CapabilityFact>,
     ) -> Result<Self, FeasibilityError> {
-        if identity.key().is_empty() || identity.version() == 0 {
+        if identity.key().is_empty() {
             return Err(FeasibilityError::MalformedProfile { rule: "identity" });
         }
         for fact in &facts {
@@ -399,8 +500,8 @@ impl CheckedTargetProfile {
         Ok(Self { identity, facts })
     }
 
-    /// The versioned identity of this profile.
-    pub(crate) const fn identity(&self) -> ProfileIdentity {
+    /// The governed identity of this profile.
+    pub(crate) const fn identity(&self) -> TargetProfileIdentity {
         self.identity
     }
 
@@ -425,21 +526,31 @@ impl CheckedTargetProfile {
     ///
     /// # What it covers, and what it deliberately does not
     ///
-    /// The identity key, the rule version, and every fact's axis, bound, phase,
-    /// authority, and validity scope — the whole of what makes one profile
-    /// admit a candidate another rejects. Facts are already in the canonical
-    /// `(axis, phase)` order the constructor enforces and are unique per pair,
-    /// so the encoding is a function of the profile rather than of the order it
-    /// was declared in.
+    /// The identity key and every fact's axis, bound, phase, authority, and
+    /// validity scope — the whole of what makes one profile admit a candidate
+    /// another rejects. Facts are already in the canonical `(axis, phase)` order
+    /// the constructor enforces and are unique per pair, so the encoding is a
+    /// function of the profile rather than of the order it was declared in.
     ///
     /// A fact's [`FactProvenance`] is excluded: it cites this profile's own
     /// identity, so folding it in would make the descriptor depend on a value
     /// derived from the descriptor's own subject.
+    ///
+    /// The feasibility rule set is excluded, and that exclusion is load-bearing
+    /// rather than an omission. [`Self::assess`] is a function of the facts this
+    /// descriptor covers and of rules that are the same for every profile:
+    /// [`Self::resolve`] reads only each fact's axis, phase, and bound, and the
+    /// comparison it feeds is [`CapabilityAxis::relation`], a function of the
+    /// axis alone. So two profiles with equal descriptors return equal verdicts
+    /// for every proposal and phase — the invariant the discarded profile
+    /// *version* used to state, now discharged by the facts themselves. A rule
+    /// change moves every profile's verdicts at once and is recorded beside the
+    /// descriptor as [`GOVERNED_FEASIBILITY_RULE_SET`]; folding it in here would
+    /// make a profile appear to have changed when only the rules did.
     pub(crate) fn canonical_descriptor(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         push_slice(&mut bytes, PROFILE_DESCRIPTOR_DOMAIN);
         push_slice(&mut bytes, self.identity.key().as_bytes());
-        bytes.extend_from_slice(&self.identity.version().to_be_bytes());
         push_len(&mut bytes, self.facts.len());
         for fact in &self.facts {
             bytes.push(fact.axis.tag());
@@ -865,13 +976,12 @@ mod tests {
     use super::*;
 
     const BASELINE_KEY: &str = "tiler.test.baseline.v1";
-    const BASELINE_VERSION: u32 = 1;
 
-    fn identity() -> ProfileIdentity {
-        ProfileIdentity::new(BASELINE_KEY, BASELINE_VERSION)
+    fn identity() -> TargetProfileIdentity {
+        TargetProfileIdentity::new(BASELINE_KEY)
     }
 
-    fn compile_fact(id: ProfileIdentity, axis: CapabilityAxis, bound: u64) -> CapabilityFact {
+    fn compile_fact(id: TargetProfileIdentity, axis: CapabilityAxis, bound: u64) -> CapabilityFact {
         CapabilityFact::new(
             axis,
             bound,
@@ -933,19 +1043,33 @@ mod tests {
             "a profile that admits fewer candidates must not share a descriptor",
         );
 
-        // A differing rule version under the same key: the rules that assessed
-        // the facts changed even though the facts did not.
-        let revised_id = ProfileIdentity::new(id.key(), id.version() + 1);
-        let revised = CheckedTargetProfile::new(
-            revised_id,
-            baseline
-                .facts()
-                .iter()
-                .map(|fact| compile_fact(revised_id, fact.axis, fact.bound))
-                .collect(),
-        )
-        .unwrap();
-        assert_ne!(revised.canonical_descriptor(), descriptor);
+        // A fact moved to a later phase: same key, same axes, same bounds, but
+        // the profile now defers where the baseline proved. This is the case the
+        // discarded profile *version* was supposed to catch and never could,
+        // because nothing forced a declarer to bump it; the facts carry it.
+        let mut deferred_facts: Vec<_> = baseline.facts().to_vec();
+        deferred_facts[0] = CapabilityFact::new(
+            CapabilityAxis::GridAxisThreads,
+            65_535,
+            AvailabilityPhase::LiveDevicePreflight,
+            FactAuthority::DeviceRuntime,
+            FactValidityScope::DeviceInstance,
+            FactProvenance::declared_by(id),
+        );
+        let later = CheckedTargetProfile::new(id, deferred_facts).unwrap();
+        assert_eq!(later.identity().key(), baseline.identity().key());
+        assert_ne!(
+            later.canonical_descriptor(),
+            descriptor,
+            "a profile that resolves an axis at a later phase must not share a descriptor",
+        );
+        assert!(matches!(
+            later.assess(
+                &baseline_proposal("candidate:baseline", 6),
+                AvailabilityPhase::CompileProfile,
+            ),
+            FeasibilityOutcome::Deferred(_),
+        ));
 
         // The consumer wraps these bytes directly rather than hashing them, so
         // they must fit the artifact layer's opaque-identity bound. If a profile
@@ -1248,11 +1372,7 @@ mod tests {
     fn malformed_profiles_are_intrinsic_errors_not_outcomes() {
         let id = identity();
         assert_eq!(
-            CheckedTargetProfile::new(ProfileIdentity::new("", 1), Vec::new()),
-            Err(FeasibilityError::MalformedProfile { rule: "identity" })
-        );
-        assert_eq!(
-            CheckedTargetProfile::new(ProfileIdentity::new(BASELINE_KEY, 0), Vec::new()),
+            CheckedTargetProfile::new(TargetProfileIdentity::new(""), Vec::new()),
             Err(FeasibilityError::MalformedProfile { rule: "identity" })
         );
         // A boolean-capability axis with a non-boolean bound is malformed.
@@ -1294,7 +1414,7 @@ mod tests {
             })
         );
         // A fact whose provenance names a different profile is malformed.
-        let other = ProfileIdentity::new("tiler.test.other.v1", 1);
+        let other = TargetProfileIdentity::new("tiler.test.other.v1");
         assert_eq!(
             CheckedTargetProfile::new(id, vec![compile_fact(other, CapabilityAxis::Barriers, 0)]),
             Err(FeasibilityError::MalformedProfile {
@@ -1335,12 +1455,90 @@ mod tests {
     }
 
     #[test]
-    fn checked_profile_exposes_canonical_facts_and_versioned_identity() {
+    fn checked_profile_exposes_canonical_facts_and_its_governed_identity() {
         let profile = baseline_profile();
         assert_eq!(profile.identity(), identity());
-        assert_eq!(profile.identity().version(), BASELINE_VERSION);
+        assert_eq!(profile.identity().key(), BASELINE_KEY);
         // Facts are sorted into canonical axis order regardless of input order.
         let axes: Vec<_> = profile.facts().iter().map(|fact| fact.axis()).collect();
         assert_eq!(axes, CANONICAL_AXES.to_vec());
+    }
+
+    /// The two identities are separate values a consumer records separately.
+    ///
+    /// Before the split, one `key`/`version` pair carried a profile key and a
+    /// rule revision, so a consumer building the artifact layer's two
+    /// independent references had to name the rule set after the profile. The
+    /// assertions below are that neither identity is recoverable from, or equal
+    /// to, the other, and that the rule set's revision is a real nonzero value
+    /// rather than one a consumer would have to invent.
+    #[test]
+    fn the_profile_and_rule_set_identities_are_independent_and_complete() {
+        let profile = baseline_profile();
+        let rules = GOVERNED_FEASIBILITY_RULE_SET;
+
+        assert_ne!(rules.key(), profile.identity().key());
+        assert!(rules.revision() > 0);
+        assert!(!rules.key().is_empty());
+
+        // The descriptor is the profile's identity beside its key, and it does
+        // not carry the rule set: a consumer that recorded only the descriptor
+        // would silently claim rule-set independence it does not have, which is
+        // why the rule set is a second recorded reference rather than a field.
+        let descriptor = profile.canonical_descriptor();
+        assert!(
+            !descriptor
+                .windows(rules.key().len())
+                .any(|window| window == rules.key().as_bytes()),
+            "the profile descriptor must not encode the rule set key",
+        );
+
+        // A malformed rule set identity is rejected rather than defaulted, so
+        // the reserved "unset" revision cannot reach an artifact.
+        assert_eq!(FeasibilityRuleSetIdentity::new("tiler.rules.v1", 0), None);
+        assert_eq!(FeasibilityRuleSetIdentity::new("", 1), None);
+    }
+
+    /// Equal descriptors imply equal verdicts, which is what lets the profile
+    /// version go away.
+    ///
+    /// The discarded `ProfileIdentity::version` documented the invariant "two
+    /// profiles that would evaluate predicates differently must not share a
+    /// version". Nothing enforced it — a declarer could reuse a version for a
+    /// changed profile. The descriptor discharges it structurally, because
+    /// assessment reads exactly the axis, phase, and bound the descriptor
+    /// encodes and otherwise only `CapabilityAxis::relation`, which is a
+    /// function of the axis rather than of the profile.
+    #[test]
+    fn profiles_sharing_a_descriptor_return_the_same_verdicts() {
+        let id = identity();
+        let rebuilt = CheckedTargetProfile::new(
+            id,
+            // Declared in a deliberately different order from `baseline_profile`.
+            baseline_profile()
+                .facts()
+                .iter()
+                .rev()
+                .map(|fact| compile_fact(id, fact.axis, fact.bound))
+                .collect(),
+        )
+        .unwrap();
+        assert_eq!(
+            rebuilt.canonical_descriptor(),
+            baseline_profile().canonical_descriptor(),
+        );
+        for threads in [0, 6, 65_535, 65_536, 10_000_000] {
+            let proposal = baseline_proposal("candidate:probe", threads);
+            for phase in [
+                AvailabilityPhase::CompileProfile,
+                AvailabilityPhase::LiveDevicePreflight,
+                AvailabilityPhase::LaunchPreflight,
+            ] {
+                assert_eq!(
+                    rebuilt.assess(&proposal, phase),
+                    baseline_profile().assess(&proposal, phase),
+                );
+            }
+        }
     }
 }

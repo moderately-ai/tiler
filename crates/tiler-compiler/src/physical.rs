@@ -24,19 +24,13 @@ use tiler_ir::schedule::{
 use crate::feasibility::{
     AvailabilityPhase, AxisRequirement, CapabilityAxis, CapabilityFact, CheckedTargetProfile,
     FactAuthority, FactProvenance, FactValidityScope, FeasibilityError, FeasibilityOutcome,
-    FeasibilityProposal, ProfileIdentity, ResolvedPredicate,
+    FeasibilityProposal, ResolvedPredicate, TargetProfileIdentity,
 };
 use crate::region::SemanticMemberId;
 use crate::request::{
     NumericalPermission, PrototypeTargetProfile, SubnormalMode, VerifiedRequestSubject,
     VerifiedTargetRequest,
 };
-
-/// Feasibility-rule version of the prototype baseline's checked target profile.
-///
-/// Bumped when the baseline's predicate set or bounds change in a way that alters
-/// how feasibility is decided, so the versioned profile identity stays honest.
-const PROTOTYPE_FEASIBILITY_RULE_VERSION: u32 = 1;
 
 /// Stable candidate identity used when assessing one scheduled region.
 const REGION_PROPOSAL_CANDIDATE: &str = "tiler.prototype.scheduled-region";
@@ -654,28 +648,33 @@ pub(crate) fn assess_region(
     }
 }
 
-/// Builds the immutable checked profile for the prototype baseline target.
-///
-/// The prototype profile has no explicitly stageable local memory or barriers,
-/// so those axes carry a conservative compile-time ceiling of zero. Every axis is
-/// a compile-profile guarantee, keeping the bounded serial-Sum candidate provable
-/// without any later-phase query.
 /// Returns the canonical descriptor bytes of one target profile.
 ///
 /// Derived from the same [`checked_target_profile`] the feasibility assessment
 /// uses, so the descriptor an artifact records is the profile a variant was
 /// actually assessed against rather than one recomputed from a key that
 /// happens to match.
+///
+/// This is only half of what ADR 0043 requires an artifact to record. The other
+/// half — which feasibility rules compared the candidate against these facts —
+/// is [`crate::feasibility::GOVERNED_FEASIBILITY_RULE_SET`], and it is not
+/// derived per target because the rules do not vary by target.
 pub(crate) fn target_profile_descriptor(
     target: &PrototypeTargetProfile,
 ) -> Result<Vec<u8>, FeasibilityError> {
     checked_target_profile(target).map(|profile| profile.canonical_descriptor())
 }
 
+/// Builds the immutable checked profile for the prototype baseline target.
+///
+/// The prototype profile has no explicitly stageable local memory or barriers,
+/// so those axes carry a conservative compile-time ceiling of zero. Every axis is
+/// a compile-profile guarantee, keeping the bounded serial-Sum candidate provable
+/// without any later-phase query.
 fn checked_target_profile(
     target: &PrototypeTargetProfile,
 ) -> Result<CheckedTargetProfile, FeasibilityError> {
-    let identity = ProfileIdentity::new(target.key, PROTOTYPE_FEASIBILITY_RULE_VERSION);
+    let identity = TargetProfileIdentity::new(target.key);
     let fact = |axis: CapabilityAxis, bound: u64| {
         CapabilityFact::new(
             axis,
