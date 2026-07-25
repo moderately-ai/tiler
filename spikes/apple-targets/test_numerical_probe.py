@@ -1122,6 +1122,56 @@ def test_the_emitted_operation_count_alone_is_insufficient_when_a_toolchain_and_
             ), f"{family}/{mode}"
 
 
+def test_the_additive_path_flushes_its_input_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 20. An add whose subnormal operand comes straight from the buffer flushes it.
+
+    Every other adding kernel here adds *after* a multiply, so an additive-path
+    input flush was asserted by ADR 0076 and re-established by nothing. This
+    kernel adds `2**-126` to the operand and nothing else, so the operand reaching
+    the add is the one the buffer supplied.
+
+    The three outcomes are distinct and only one of them is this flush.
+    `00800000` is the operand flushed to a signed zero before the add, leaving
+    the bias standing alone. `00400000` is the operand preserved, giving a
+    subnormal sum. `00000000` would be the operand preserved and the subnormal
+    *result* flushed instead, which is a different mechanism and lands on
+    `unexpected-result` rather than being read as agreement.
+    """
+    run = probe_run()
+    probe = PROBE.ADDITIVE_INPUT_FLUSH
+    assert probe.flushing not in {0x00000000, 0x80000000}, (
+        "this probe exists because a flush does not have to show up as a returned zero"
+    )
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            for optimization in ("0", "2"):
+                operations = run.of(
+                    family.name, "add_smallest_normal", mode, optimization
+                ).operations
+                assert operations is not None
+                assert [operation.opcode for operation in operations] == ["fadd"], (
+                    f"{family.name}/{mode}/O{optimization}: adding a nonzero constant is an "
+                    f"identity on no operand, so the add must survive: {operations}"
+                )
+    for family in dispatched_families(run):
+        for mode in PROBE.MATH_MODES:
+            for optimization in ("0", "2"):
+                observation = run.of(family, "add_smallest_normal", mode, optimization)
+                verdict = PROBE.subnormal_verdict(observation, probe)
+                assert verdict is PROBE.Verdict.FLUSHED_TO_ZERO, (
+                    f"{family}/{mode}/O{optimization} additive input flush: {verdict}"
+                )
+                assert verdict.is_evidence
+                assert observation.result_for(probe.operand) == 0x00800000
+            for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+                assert (
+                    PROBE.subnormal_verdict(
+                        run.runtime(family, "add_smallest_normal", mode, optimization), probe
+                    )
+                    is PROBE.Verdict.FLUSHED_TO_ZERO
+                ), f"{family}/{mode}/{optimization} runtime additive input flush"
+
+
 def test_a_power_of_two_division_is_not_a_division_when_a_toolchain_and_gpu_resolve() -> None:
     """Finding 15's compile-side half, and the reason the flush is measured on other divisors.
 

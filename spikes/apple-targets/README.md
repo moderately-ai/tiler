@@ -106,9 +106,11 @@ in the dispatch host reports the image dyld actually loaded and
 family's runtime compiler is inherited from another's row.
 
 **The operation vocabulary, and the two matrices it is measured in.** The kernels
-cover multiply, add, division in both the power-of-two form the driver rewrites
-into a multiply and the form it keeps, a source-level `fma`, and a two-add chain
-whose value says where the parentheses went. The swept axes are the three math
+cover multiply, add — including one bare add whose subnormal operand comes
+straight from the buffer rather than out of a preceding multiply — division in
+both the power-of-two form the driver rewrites into a multiply and the form it
+keeps, a source-level `fma`, and a two-add chain whose value says where the
+parentheses went. The swept axes are the three math
 modes, the three contraction settings, both `-fmetal-math-fp32-functions`
 values, and all five offline optimization levels. That costs more than the gate
 should pay on every run, so `cases` assembles a `covering` set — at least one
@@ -211,11 +213,11 @@ all and run everywhere, including on a host with neither an Apple toolchain nor
 
 **What it costs the gate.** `uv run --locked python -m pytest -c pyproject.toml
 spikes/apple-targets` takes about 47 s on the measured host once a simulator is
-booted, covering the 204 offline cases of the covering matrix across three
-families and 164 runtime ones across the two families that dispatch; the same
+booted, covering the 222 offline cases of the covering matrix across three
+families and 176 runtime ones across the two families that dispatch; the same
 command took about 20 s over 126 and 80 before the matrix was widened, on the
-same host. The exhaustive matrix adds 99 offline cases and about 5 s to a probe
-run. All of these were measured while several other worktrees were running their
+same host. The exhaustive matrix adds 99 offline cases and about 10 s to the
+same command. All of these were measured while several other worktrees were running their
 own gates, so treat them as an upper bound with a loaded host rather than as a
 clean figure. The one-time cost of booting a cold simulator adds roughly 8 s to
 the first gate run that needs it; the harness leaves the device booted so

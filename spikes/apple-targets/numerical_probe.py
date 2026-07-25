@@ -653,6 +653,24 @@ DIVIDED_RESULT_FLUSH = SubnormalProbe(
 )
 """Dividing the smallest normal by `3.0` has a subnormal result, isolating the result."""
 
+ADDITIVE_INPUT_FLUSH = SubnormalProbe(
+    operand=0x80400000, preserving=0x00400000, flushing=0x00800000
+)
+"""Input flushing isolated on an add whose subnormal operand comes straight from the buffer.
+
+`-2**-127 + 2**-126` is the subnormal `00400000` when the operand is preserved
+and the *normal* `00800000` when it is flushed to a signed zero first, because
+the bias then stands alone. `flushing` is therefore not a zero: the flushed
+subnormal is an addend and not the whole result, which is exactly the case the
+"a flush shows up as a returned zero" reading does not cover.
+
+A third outcome is possible and is deliberately left as `unexpected-result`
+rather than folded into either: `00000000` would mean the operand survived the
+add and the *subnormal result* was flushed instead, which is a different
+mechanism from the one this probe isolates and must not read as agreement with
+it.
+"""
+
 REASSOCIATION = OrderProbe(operand=0x3F800000, ordered=0x3F800000, reassociated=0x3F800001)
 """`(1.0 + 2**-24) + 2**-24`, whose value depends on where the parentheses go.
 
@@ -786,6 +804,14 @@ KERNELS: tuple[Kernel, ...] = (
         canonicalized=True,
         witness=Witness(operand=0x3F800000, executed=0x3F000000, deleted=0x3F800000),
         subnormal_probes=(RESULT_FLUSH,),
+    ),
+    Kernel(
+        name="add_smallest_normal",
+        purpose="the only kernel whose add takes a subnormal operand straight from the buffer",
+        steps=(Step(0x00800000, "+"),),
+        canonicalized=True,
+        witness=Witness(operand=0x00800000, executed=0x01000000, deleted=0x00800000),
+        subnormal_probes=(ADDITIVE_INPUT_FLUSH,),
     ),
     Kernel(
         name="multiply_one",
@@ -1098,6 +1124,15 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
         for optimization in ("0", "2"):
             add("multiply_two", mode, optimization, "off")
             add("multiply_half", mode, optimization, "off")
+    # Input flushing on the additive path, which every other adding kernel here
+    # reaches only downstream of a multiply. Both optimization levels, because
+    # the level is where the trap kernel's arithmetic survives or does not, and
+    # every math mode, because adding a nonzero constant is an identity on no
+    # operand and so this kernel keeps its arithmetic where the trap kernel loses
+    # it — which is what makes a witnessed relaxed-mode observation possible here.
+    for mode in MATH_MODES:
+        for optimization in ("0", "2"):
+            add("add_smallest_normal", mode, optimization, "off")
     # Materialization, which the record claims is untouched.
     for mode in MATH_MODES:
         add("materialize", mode, "2", "off")
