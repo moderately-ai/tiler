@@ -22,11 +22,28 @@
 //! `VerifiedKernelProgram`, and a decoder that returned one would be claiming a
 //! reconstruction the format does not carry.
 //!
-//! What a reader gets is everything the envelope actually holds: re-derived
-//! identity, the governed feature set, payload descriptors, framed section
-//! bytes, and each variant's entries with their ABI and launch expressions.
-//! Whether that is enough for a runtime to dispatch — or whether the envelope
-//! must carry a reconstructable program — is
+//! What a reader gets is the part of the envelope this module has promoted:
+//! re-derived identity, the governed feature set, the routing policy, the
+//! backend payload descriptors, the framed section bytes, and the packaged
+//! variant count.
+//!
+//! The envelope also *holds* each variant's guard, declared target profile,
+//! feasibility rules, deferred predicates, and entries — each entry with its
+//! bindings, its shared ABI expression arena, and its launch contract — and
+//! none of that is reachable from a [`DecodedArtifact`]. Those rows are
+//! `pub(crate)` and no accessor projects them, so the read surface here is
+//! narrower than the bytes behind it. That is a promotion boundary, not an
+//! encoding gap: a decode still validates every one of those rows, and
+//! [`DecodedArtifact::re_encode`] still writes them all back.
+//!
+//! The consequence is worth stating because it decides how a runtime is
+//! written. Evaluating an applicability guard, a binding's accessible byte
+//! range, or a launch formula needs the [`VerifiedArtifactProgram`]'s own read
+//! views, which no decode produces; a consumer that must evaluate one holds the
+//! program it compiled and uses the decoded identity to prove the bytes it
+//! loaded name that same artifact. Whether binding-by-identity is enough for a
+//! runtime to dispatch — or whether the envelope must carry a reconstructable
+//! program, or this view must project the dispatch record it already holds — is
 //! `carry-reconstructable-kernel-programs-in-the-neutral-envelope`'s question,
 //! and this module deliberately does not answer it by inventing a shape.
 

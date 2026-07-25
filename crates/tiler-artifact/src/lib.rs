@@ -1,12 +1,14 @@
 //! Target-neutral artifact, ABI, validation, and routing contracts for Tiler.
 //!
-//! This crate may depend on lockstep prototype IR types, but it must never call
-//! compiler passes. Its job is to project a verified
-//! [`tiler_ir::program::VerifiedKernelProgram`] into the bounded, versioned
-//! artifact model a runtime or a codec consumes: entry points, the neutral ABI
-//! and its launch expressions, plan portfolios and their routing predicates,
-//! declared target requirements, the provenance actually reached by the
-//! packaged plan, and backend payload descriptors.
+//! This crate depends on `tiler-ir` for the shared target-neutral
+//! representation: it retains programs that crate has already verified, rebuilds
+//! decoded values through its checked constructors, owns no second editable
+//! program model, and never invokes compiler passes. Its job is to project a
+//! verified [`tiler_ir::program::VerifiedKernelProgram`] into the bounded,
+//! versioned artifact model a runtime or a codec consumes: entry points, the
+//! neutral ABI and its launch expressions, plan portfolios and their routing
+//! predicates, declared target requirements, the provenance actually reached by
+//! the packaged plan, and backend payload descriptors.
 //!
 //! That separation is the point of the layer. Nothing here requires a consumer
 //! to link `tiler-compiler`, to reconstruct a semantic graph, a region cover, a

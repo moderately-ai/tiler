@@ -1,0 +1,39 @@
+---
+id: admit-the-device-free-runtime-validation-crate
+title: Admit the device-free runtime validation crate
+status: todo
+priority: p0
+dependencies: []
+related: [prototype-runtime-artifact-validation, record-an-adr-for-the-metal-aot-crate-admission]
+scopes: [contracts/foundation, contracts/decisions, implementation/workspace]
+shared_scopes: [project/tickets]
+paths: []
+tags: [implementation, workspace, runtime, needs-tom]
+---
+`prototype-runtime-artifact-validation` says "if the owning production crate is absent, this ticket owns its atomic workspace admission and lockfile update." Attempting that admission established that it cannot be done from `implementation/workspace` alone, and that the accepted contract currently withholds the crate. This ticket owns the part that is not a workspace edit.
+
+## Fact — the path is reserved and the owner is deliberately temporary
+
+`ticketsplease.toml`'s `[scopes]` maps `"implementation/runtime" = ["crates/tiler-runtime/**", "prototypes/serial-sum-run/**"]`, and `[scope_crates]` maps `"implementation/runtime" = "tiler-prototype-run"` under the comment "The runtime mapping is a temporary owner while its production crate is absent … Each crate-admission ticket must atomically add the real workspace package and add or move its mapping here." So the intent to admit a `tiler-runtime` is recorded in the work graph.
+
+## Fact — no contract names the crate, and the accepted profile withholds it
+
+`grep -rn "tiler-runtime" docs tickets spikes crates Cargo.toml prototypes` returns no hit naming a crate; the string exists only in `ticketsplease.toml`'s glob. `docs/architecture.md:352-354` states of the accepted prototype packaging profile: "This is an unstable prototype packaging profile, not the final published crate set. It deliberately omits frontend, proc-macro, Candle, generalized cache, and reusable Metal-runtime crates until the proof reaches those boundaries." The accepted six-library block at `docs/architecture.md:330-342` has no runtime row, and `scripts/check_workspace.py` pins that exact member set.
+
+## Fact — ADR 0077 pre-emptively refuses to be the precedent
+
+`docs/decisions/0077-admit-tiler-metal-aot-as-a-dependency-free-driver.md:80` reads: "No frontend, proc-macro, Candle, generalized cache, or reusable Metal-runtime crate is created for the first proof. **Inference.** `tiler-metal-aot` does not breach this clause and is not an exception to it: it is a build-time compiler driver that never touches a live device, an `MTLDevice`, or a pipeline state, so it is not the reusable Metal-*runtime* crate that clause withholds. A reader must not cite this admission as precedent for admitting one."
+
+## The genuine question, and why it is Tom's
+
+The crate `prototype-runtime-artifact-validation` describes is **device-free** — decoding, integrity and ABI validation, checked expression evaluation, compatibility classification, no `MTLDevice` and no pipeline state. It would depend on `tiler-artifact` and `tiler-ir` and nothing else. By ADR 0077's own stated test for the withheld clause it is not a reusable Metal-*runtime* crate at all, which argues it is admissible today. Against that: `docs/architecture.md`'s "until the proof reaches those boundaries" is not obviously reached — `route-the-runtime-proof-through-the-artifact-envelope` records that the landed `serial-sum-run` proof bypasses the artifact envelope entirely, and `prototype-metal-runtime-execution` is blocked on the `unsafe`/Metal-binding decision — so the evidence a crate admission is supposed to rest on has not been produced by a runtime proof yet.
+
+That is a real architectural choice with valid priorities on both sides, not a detail to settle by implementation.
+
+## Why it could not be landed under `implementation/workspace`
+
+The admission is only coherent if three things move together: the workspace member set and `scripts/check_workspace.py` pins (`implementation/workspace`), the accepted packaging profile in `docs/architecture.md` (`contracts/foundation`), and a superseding decision record (`contracts/decisions`). A worker holding only the first would leave the mechanically checked contract disagreeing with the accepted architecture text — which is precisely the state ADR 0077 was written to end, and which its Consequences describe: "The decision record stops disagreeing with the workspace. Before this, the six-crate profile was written down only in the architecture contract, which said so about itself in the same paragraph." Repeating that pattern knowingly is worse than the first time, because the first time was structural and this would be chosen.
+
+## What closes this
+
+Tom decides whether the device-free validation crate is admitted now or waits for the runtime proof. If admitted: add `crates/tiler-runtime` to `Cargo.toml` members and `[workspace.dependencies]`, add its rows to `scripts/check_workspace.py`'s `EXPECTED_MEMBERS`, `PACKAGE_DESCRIPTIONS`, `PACKAGE_DIRS`, and `EXPECTED_DEPENDENCIES`, move `[scope_crates]`'s `implementation/runtime` mapping off `tiler-prototype-run` onto it, restate the packaging block in `docs/architecture.md`, and record the decision — including whether "device-free" is the operative line that distinguishes it from the withheld Metal-runtime crate. If deferred: say so on `prototype-runtime-artifact-validation` and give that ticket a trigger for reconsideration, because it is currently a p0 whose stated deliverable is unreachable.
