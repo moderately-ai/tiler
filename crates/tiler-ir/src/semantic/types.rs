@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
 
@@ -333,7 +334,19 @@ impl Error for TypeIdentityError {}
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ResolvedValueType(ResolvedValueTypeData);
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// The three governed resolved-type families.
+///
+/// [`Ord`] is written out rather than derived because a derived ordering ranks
+/// by Rust variant declaration order, and this ordering reaches a durable
+/// identity encoding: `tiler_reference::compute_reference_identity` iterates a
+/// `BTreeMap` keyed by [`ResolvedValueType`] in key order and encodes each entry
+/// into `CanonicalReferenceRegistryIdentity`. A semantically neutral variant
+/// reorder would therefore change a durable identity, not merely a diagnostic
+/// order. The rank comes from the same [`family_discriminant`] the encoding
+/// emits, so rank and tag cannot drift apart.
+///
+/// [`family_discriminant`]: ResolvedValueTypeData::family_discriminant
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum ResolvedValueTypeData {
     Nominal(TypeKey),
     Parameterized {
@@ -344,6 +357,56 @@ enum ResolvedValueTypeData {
         scheme: QuantSchemeKey,
         contract: EncodedNumericContract,
     },
+}
+
+impl ResolvedValueTypeData {
+    /// Returns the stable family discriminant shared by ordering and encoding.
+    const fn family_discriminant(&self) -> u8 {
+        match self {
+            Self::Nominal(_) => 1,
+            Self::Parameterized { .. } => 2,
+            Self::EncodedNumeric { .. } => 3,
+        }
+    }
+}
+
+impl Ord for ResolvedValueTypeData {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Nominal(left), Self::Nominal(right)) => left.cmp(right),
+            (
+                Self::Parameterized {
+                    constructor: left_constructor,
+                    arguments: left_arguments,
+                },
+                Self::Parameterized {
+                    constructor: right_constructor,
+                    arguments: right_arguments,
+                },
+            ) => left_constructor
+                .cmp(right_constructor)
+                .then_with(|| left_arguments.cmp(right_arguments)),
+            (
+                Self::EncodedNumeric {
+                    scheme: left_scheme,
+                    contract: left_contract,
+                },
+                Self::EncodedNumeric {
+                    scheme: right_scheme,
+                    contract: right_contract,
+                },
+            ) => left_scheme
+                .cmp(right_scheme)
+                .then_with(|| left_contract.cmp(right_contract)),
+            _ => self.family_discriminant().cmp(&other.family_discriminant()),
+        }
+    }
+}
+
+impl PartialOrd for ResolvedValueTypeData {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl ResolvedValueType {
@@ -457,16 +520,15 @@ impl ResolvedValueType {
     }
 
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
+        // The family tag is the same discriminant `Ord` ranks by, so a variant
+        // reorder cannot move one without moving the other.
+        output.push(self.0.family_discriminant());
         match &self.0 {
-            ResolvedValueTypeData::Nominal(key) => {
-                output.push(1);
-                key.0.encode(output);
-            }
+            ResolvedValueTypeData::Nominal(key) => key.0.encode(output),
             ResolvedValueTypeData::Parameterized {
                 constructor,
                 arguments,
             } => {
-                output.push(2);
                 constructor.0.encode(output);
                 encode_len(output, arguments.values.len());
                 for argument in &arguments.values {
@@ -474,7 +536,6 @@ impl ResolvedValueType {
                 }
             }
             ResolvedValueTypeData::EncodedNumeric { scheme, contract } => {
-                output.push(3);
                 scheme.0.encode(output);
                 contract.encode(output);
             }
@@ -1538,6 +1599,52 @@ mod tests {
         assert_ne!(
             parameterized.canonical_encoding(),
             encoded.canonical_encoding()
+        );
+    }
+
+    /// The resolved-type family order is stated, not inherited from Rust.
+    ///
+    /// This ordering reaches a durable identity:
+    /// `tiler_reference::compute_reference_identity` iterates a `BTreeMap` keyed
+    /// by `ResolvedValueType` and encodes each entry in key order. The test
+    /// fails if the variants are reordered, and pins the rank against the same
+    /// family tag the canonical encoding emits so the two cannot drift apart.
+    #[test]
+    fn resolved_type_family_order_is_explicit_and_matches_the_encoded_tag() {
+        let nominal = ResolvedValueType::nominal(key("f32"));
+        let parameterized = ResolvedValueType::parameterized(
+            key("complex"),
+            TypeArguments::new([CanonicalValue::value_type(nominal.clone())]).unwrap(),
+        )
+        .unwrap();
+        let encoded = ResolvedValueType::encoded_numeric(
+            QuantSchemeKey::new("ocp", "mxfp8", 1).unwrap(),
+            EncodedNumericContract::new([CanonicalField::new(
+                AttributeFieldId::new(1),
+                CanonicalValue::unsigned_u32(32),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(nominal < parameterized);
+        assert!(parameterized < encoded);
+
+        // The rank is the encoded family tag, which is the byte the canonical
+        // encoding writes immediately after its domain separator.
+        let separator = b"tiler.resolved-value-type.v2\0".len();
+        for (value, tag) in [(&nominal, 1_u8), (&parameterized, 2), (&encoded, 3)] {
+            assert_eq!(value.0.family_discriminant(), tag);
+            assert_eq!(value.canonical_encoding().as_bytes()[separator], tag);
+        }
+
+        // Within one family the order is by the family's own key, so the
+        // discriminant decides only cross-family comparisons.
+        let other_nominal = ResolvedValueType::nominal(key("f64"));
+        assert_eq!(
+            nominal.cmp(&other_nominal),
+            key("f32").cmp(&key("f64")),
+            "a same-family comparison must not consult the discriminant"
         );
     }
 

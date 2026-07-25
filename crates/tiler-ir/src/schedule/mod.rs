@@ -17,6 +17,41 @@
 //! consumes. This module owns no target profile, no feasibility decision, no
 //! cost model, and no semantic-graph correlation; those remain compiler-owned.
 //!
+//! # Why the leaf descriptors expose fields
+//!
+//! This module's leaf descriptors — [`crate::schedule::IndexRegion`],
+//! [`crate::schedule::Access`], [`crate::schedule::KernelSchedule`],
+//! [`crate::schedule::BoundsProof`], and [`crate::schedule::OwnershipProof`] —
+//! are `pub`-field value data, while the sibling [`crate::index`] module reaches
+//! its data through view accessors. That is deliberate, and the two are not
+//! comparable the way they first appear: they sit on opposite sides of a
+//! verification boundary.
+//!
+//! `tiler_ir::index`'s public type *is* the verified product, so it must be
+//! opaque and hand out views. This module's verified product is
+//! [`crate::schedule::VerifiedScheduledRegion`], which is equally opaque —
+//! private fields, a `pub(super)` constructor, and read-only accessors.
+//! [`crate::schedule::ScheduledRegion`] is the *unverified proposal* submitted
+//! to `ScheduledRegionBuilder::from_region`, and the read-only borrow that
+//! `VerifiedScheduledRegion::region` hands back. The honest comparison is
+//! `VerifiedScheduledRegion` against
+//! [`crate::index::VerifiedIndexRegion`], and both are opaque; comparing
+//! `ScheduledRegion`'s fields against `VerifiedIndexRegion`'s accessors compares
+//! an input to an output.
+//!
+//! Nothing here maintains a field-level invariant between calls: every
+//! descriptor is a closed enum, a [`crate::shape::Shape`], or a fixed-width bit
+//! pattern, and every invariant relating them is a whole-region property the
+//! intrinsic verifier proves at `build`. Accessors would therefore add ceremony
+//! without moving a check earlier. Struct-literal construction also earns
+//! something accessors would cost: adding a descriptor field is a compile error
+//! at every construction site, so a new physical fact cannot be silently
+//! defaulted by a producer that has not been taught about it.
+//!
+//! A consumer can of course clone a borrowed `ScheduledRegion`, edit a field,
+//! and resubmit it — which is exactly why `from_region` re-verifies rather than
+//! trusting its input.
+//!
 //! ```
 //! use tiler_ir::schedule::{
 //!     Access, AccessMode, BoundsProof, BoundsProofKind, ExecutionBinding, KernelSchedule,

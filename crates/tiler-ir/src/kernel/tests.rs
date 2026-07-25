@@ -332,6 +332,150 @@ fn canonical_lowering_produces_a_verified_backend_consumable_kernel() {
     assert_eq!(effects, 2);
 }
 
+/// Compile-time tripwire for `revisit-kernel-body-single-spelling-gate`.
+///
+/// The refinement gate re-derives the canonical body with
+/// `lower::derive_canonical` — a deterministic function of the scheduled region
+/// — and requires structural equality, so the profile admits **exactly one
+/// spelling** of a legal kernel. That is correct only while the surface is
+/// narrow enough that no two genuinely different bodies are both legal for one
+/// region. Past that point derive-and-compare starts rejecting *valid* kernels.
+///
+/// The ticket names that widening as its trigger for reconsideration, and a
+/// trigger nobody is told about is a trigger nobody notices. These matches are
+/// exhaustive with no wildcard arm, so adding a variant to any of the closed
+/// vocabularies that decide a body's shape is a **compile error here**. Whoever
+/// hits it should read that ticket before adding an arm: the fix may be to widen
+/// the gate rather than to widen this match.
+///
+/// Deliberately a spelling check, not a semantic one — it cannot tell that a
+/// widened vocabulary admits two bodies, only that the vocabulary widened, which
+/// is the point at which a human has to look.
+fn body_shaping_vocabulary_is_closed(
+    binding: ExecutionBinding,
+    tail: TailPolicy,
+    access: &LogicalAccess,
+    topology: &ReductionTopology,
+    program: &ScalarProgram,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    (
+        match binding {
+            ExecutionBinding::GlobalLinearInvocation => "global-linear-invocation",
+        },
+        match tail {
+            TailPolicy::Exact => "exact",
+        },
+        match access {
+            LogicalAccess::LinearIdentity => "linear-identity",
+            LogicalAccess::ReductionContributor { .. } => "reduction-contributor",
+        },
+        match topology {
+            ReductionTopology::None => "none",
+            ReductionTopology::Serial { .. } => "serial",
+        },
+        match program {
+            ScalarProgram::MultiplyThenAdd { .. } => "multiply-then-add",
+            ScalarProgram::StrictSerialSum { .. } => "strict-serial-sum",
+            ScalarProgram::FusedMultiplyAddSerialSum { .. } => "fused-multiply-add-serial-sum",
+        },
+    )
+}
+
+/// The single-spelling gate's precondition still holds.
+///
+/// One execution binding and one tail policy is the substance of it: with a
+/// single way to bind invocations to coordinates and no tail to handle, a
+/// scheduled region's body has no legal degree of freedom for a producer to
+/// spell differently. See [`body_shaping_vocabulary_is_closed`].
+#[test]
+fn the_single_spelling_profile_is_still_narrow_enough_for_derive_and_compare() {
+    let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
+    let region = scheduled.region();
+    let names = body_shaping_vocabulary_is_closed(
+        region.schedule.binding,
+        region.schedule.tail,
+        &region.index.accesses[0].map,
+        &region.schedule.reduction,
+        &region.index.scalar_program,
+    );
+    assert_eq!(
+        names,
+        (
+            "global-linear-invocation",
+            "exact",
+            "linear-identity",
+            "none",
+            "multiply-then-add",
+        )
+    );
+}
+
+/// Collects every buffer handle a block's effects reference, descending into
+/// predicated bodies.
+fn referenced_buffers(block: BlockRef<'_>) -> Vec<VerifiedBufferId> {
+    let mut found = Vec::new();
+    for operation in block.operations() {
+        match operation.view() {
+            OperationView::Load { buffer, .. } | OperationView::Store { buffer, .. } => {
+                found.push(buffer);
+            }
+            OperationView::Predicated { body, .. } => found.extend(referenced_buffers(body)),
+            _ => {}
+        }
+    }
+    found
+}
+
+/// The buffer handles a body references recover the signature, in handle order.
+///
+/// This is evidence for `pair-verified-buffer-handles-with-signature-ordinals`,
+/// not a public guarantee. A backend that must emit an argument-table index per
+/// load and store can today only recover the pairing by *sorting handles*,
+/// which works solely because a verified handle is `(owner, index)` and every
+/// handle of one kernel shares an owner — a private representation detail the
+/// derived `Ord` exposes and no contract promises.
+///
+/// The test pins that the fact is already true, so publishing it is exposing an
+/// invariant rather than computing a new one. It deliberately does not assert a
+/// *position*, because no public accessor yields one; that is precisely the gap
+/// the ticket asks the IR to close.
+#[test]
+fn referenced_buffer_handles_recover_the_signature_in_handle_order() {
+    let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
+    let kernel = lower_scheduled_region(&scheduled).unwrap();
+
+    let mut referenced = referenced_buffers(kernel.body());
+    referenced.sort_unstable();
+    referenced.dedup();
+
+    // Every signature parameter is referenced exactly once by this lowering, so
+    // the recovered sequence is the whole signature rather than a prefix of it.
+    assert_eq!(referenced.len(), kernel.buffers().len());
+    let recovered: Vec<_> = referenced
+        .iter()
+        .map(|id| kernel.buffer(*id).unwrap())
+        .collect();
+    assert_eq!(recovered, kernel.buffers().collect::<Vec<_>>());
+
+    // A handle from another kernel is rejected rather than silently resolving
+    // to the same ordinal, which is what makes the pairing kernel-scoped.
+    let other = lower_scheduled_region(&pointwise_region(
+        RegionId::new(1),
+        &Shape::from_dims([2, 3]),
+    ))
+    .unwrap();
+    assert!(matches!(
+        other.buffer(referenced[0]),
+        Err(VerifiedKernelHandleError::ForeignKernel { .. })
+    ));
+}
+
 #[test]
 fn a_producer_built_canonical_kernel_verifies_and_equals_the_lowering() {
     let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));

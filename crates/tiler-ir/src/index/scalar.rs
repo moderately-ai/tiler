@@ -851,16 +851,161 @@ struct RegisteredScalarOperation {
     provider: ProviderIdentity,
 }
 
+/// Rounding rule a governed scalar operation applies to its result.
+///
+/// Its meaning is the same on every governed scalar definition, so a consumer
+/// that reads this field on one operation reads it the same way on all of them.
+const SCALAR_FACT_ROUNDING: AttributeFieldId = AttributeFieldId::new(1);
+
+/// Rule deciding which NaN payload a governed scalar operation's result carries.
+///
+/// Every governed scalar definition states this field. It is the field that
+/// makes a *preserving* operation distinguishable from one whose payload
+/// behaviour was merely never written down: absence of
+/// [`SCALAR_FACT_CANONICAL_NAN_BITS`] never carries meaning on its own.
+const SCALAR_FACT_NAN_RESULT_RULE: AttributeFieldId = AttributeFieldId::new(2);
+
+/// Exact canonical arithmetic-NaN payload the operation installs, when it does.
+///
+/// Present exactly when [`SCALAR_FACT_NAN_RESULT_RULE`] names the canonical
+/// arithmetic-NaN profile; an operation that installs no payload omits it
+/// rather than declaring one it never produces.
+const SCALAR_FACT_CANONICAL_NAN_BITS: AttributeFieldId = AttributeFieldId::new(3);
+
+/// Whether the operation may be contracted with an adjacent arithmetic scalar.
+///
+/// Present only on the arithmetic scalars, because contraction is defined over
+/// a pattern of arithmetic operations; a constant or a conversion is not a
+/// participant, and asserting `false` there would answer a question the
+/// numerical contract does not pose.
+const SCALAR_FACT_CONTRACTION_PERMITTED: AttributeFieldId = AttributeFieldId::new(4);
+
+/// Names the versioned NaN profile the governed arithmetic scalars realize.
+///
+/// This is the exact profile `docs/numerical-semantics.md` names, not a
+/// synonym, so a reader can trace the fact to the normative clause that decides
+/// it.
+const CANONICAL_ARITHMETIC_NAN_PROFILE: &str = "tiler::canonical-arithmetic-nan-f32@1";
+
+/// Names the opposite rule: the declared payload survives verbatim.
+///
+/// `docs/numerical-semantics.md` states it as "Constants retain their declared
+/// bit pattern until an operation's semantics produce a new value."
+const DECLARED_PAYLOAD_PRESERVED: &str = "declared-payload-preserved";
+
+/// Facts of the governed `f32` constant: an exact payload, canonicalized never.
+fn constant_f32_facts() -> Result<CanonicalValue, ScalarRegistryError> {
+    scalar_facts([
+        (SCALAR_FACT_ROUNDING, utf8_fact("exact-binary32-bits")?),
+        (
+            SCALAR_FACT_NAN_RESULT_RULE,
+            utf8_fact(DECLARED_PAYLOAD_PRESERVED)?,
+        ),
+    ])
+}
+
+/// Facts shared by the governed binary `f32` arithmetic scalars.
+///
+/// These restate the rounding and canonical-NaN rules that
+/// [`crate::semantic::FrozenSemanticRegistry::standard`] declares for the
+/// tensor-level families these scalars realize. The two records are checked
+/// against each other rather than derived from one another; see
+/// `standard_scalar_conformance` for why.
+fn arithmetic_f32_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> {
+    scalar_facts([
+        (
+            SCALAR_FACT_ROUNDING,
+            utf8_fact("binary32-round-to-nearest-ties-even")?,
+        ),
+        (
+            SCALAR_FACT_NAN_RESULT_RULE,
+            utf8_fact(CANONICAL_ARITHMETIC_NAN_PROFILE)?,
+        ),
+        (
+            SCALAR_FACT_CANONICAL_NAN_BITS,
+            crate::semantic::canonical_f32_bits(crate::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS),
+        ),
+        (
+            SCALAR_FACT_CONTRACTION_PERMITTED,
+            CanonicalValue::boolean(false),
+        ),
+    ])
+}
+
+/// Facts of the governed canonical arithmetic-NaN conversion.
+///
+/// It installs the same payload as the arithmetic scalars, but it is not
+/// arithmetic: it rounds nothing and reproduces every non-NaN binary32 pattern
+/// verbatim, including the sign of a zero. That exactness is the reason a
+/// reduction can canonicalize a singleton result without an addition.
+fn canonicalize_nan_f32_facts() -> Result<CanonicalValue, ScalarRegistryError> {
+    scalar_facts([
+        (SCALAR_FACT_ROUNDING, utf8_fact("exact-binary32-bits")?),
+        (
+            SCALAR_FACT_NAN_RESULT_RULE,
+            utf8_fact(CANONICAL_ARITHMETIC_NAN_PROFILE)?,
+        ),
+        (
+            SCALAR_FACT_CANONICAL_NAN_BITS,
+            crate::semantic::canonical_f32_bits(crate::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS),
+        ),
+    ])
+}
+
+fn utf8_fact(value: &str) -> Result<CanonicalValue, ScalarRegistryError> {
+    CanonicalValue::utf8(value)
+        .map_err(|source| ScalarRegistryError::CanonicalAttributes(Arc::new(source)))
+}
+
+fn scalar_facts<const N: usize>(
+    fields: [(AttributeFieldId, CanonicalValue); N],
+) -> Result<CanonicalValue, ScalarRegistryError> {
+    CanonicalValue::record(
+        fields
+            .into_iter()
+            .map(|(id, value)| crate::semantic::CanonicalField::new(id, value)),
+    )
+    .map_err(|source| ScalarRegistryError::CanonicalAttributes(Arc::new(source)))
+}
+
+/// Builds the conformance identity of one governed scalar definition.
+///
+/// The prefix is `tiler.scalar.conformance.`, deliberately distinct from the
+/// semantic layer's `tiler.conformance.`. The two layers govern different
+/// contracts over the same names — one is a whole-tensor operation family, the
+/// other a per-point scalar — so letting them share a conformance string would
+/// give two subjects one identity.
+fn standard_scalar_conformance(name: &str) -> Result<CanonicalValue, ScalarRegistryError> {
+    let canonical = |source| ScalarRegistryError::CanonicalAttributes(Arc::new(source));
+    CanonicalValue::record([
+        crate::semantic::CanonicalField::new(
+            AttributeFieldId::new(1),
+            CanonicalValue::utf8_owned(format!("tiler.scalar.conformance.{name}"))
+                .map_err(canonical)?,
+        ),
+        crate::semantic::CanonicalField::new(
+            AttributeFieldId::new(2),
+            CanonicalValue::unsigned_u32(1),
+        ),
+    ])
+    .map_err(canonical)
+}
+
 /// Assembles one governed standard scalar definition.
+///
+/// The conformance identity is derived from the key rather than passed in, so a
+/// definition cannot be registered under one name while claiming conformance to
+/// another.
 fn standard_definition(
     key: ScalarOpKey,
     normative: &str,
     attributes: ScalarAttributeSchema,
     operands: ScalarArity,
+    facts: CanonicalValue,
     inferencer: Arc<dyn ScalarOperationInferencer>,
 ) -> Result<ScalarOperationDefinition, ScalarRegistryError> {
-    let canonical = |source| ScalarRegistryError::CanonicalAttributes(Arc::new(source));
     let authority = |source| ScalarRegistryError::TypeAuthority(Arc::new(source));
+    let conformance = standard_scalar_conformance(key.name())?;
     Ok(ScalarOperationDefinition::new(
         key,
         NormativeDefinitionRef::new(normative).map_err(authority)?,
@@ -869,8 +1014,8 @@ fn standard_definition(
             operands,
             ScalarArity::exact(1)?,
             ScalarEffect::Pure,
-            CanonicalValue::record([]).map_err(canonical)?,
-            CanonicalValue::record([]).map_err(canonical)?,
+            facts,
+            conformance,
         ),
         inferencer,
     ))
@@ -1118,6 +1263,7 @@ impl ScalarRegistryBuilder {
                 "IEEE 754-2019 binary32 constant; tiler.scalar::constant-f32@1",
                 constant_attribute_schema()?,
                 ScalarArity::exact(0)?,
+                constant_f32_facts()?,
                 Arc::new(StandardF32Constant),
             )?,
         )?;
@@ -1128,6 +1274,7 @@ impl ScalarRegistryBuilder {
                 "IEEE 754-2019 binary32 multiplication; tiler.scalar::multiply-f32@1",
                 ScalarAttributeSchema::empty(),
                 ScalarArity::exact(2)?,
+                arithmetic_f32_scalar_facts()?,
                 Arc::new(StandardF32Homogeneous),
             )?,
         )?;
@@ -1138,6 +1285,7 @@ impl ScalarRegistryBuilder {
                 "IEEE 754-2019 binary32 addition; tiler.scalar::add-f32@1",
                 ScalarAttributeSchema::empty(),
                 ScalarArity::exact(2)?,
+                arithmetic_f32_scalar_facts()?,
                 Arc::new(StandardF32Homogeneous),
             )?,
         )?;
@@ -1149,6 +1297,7 @@ impl ScalarRegistryBuilder {
                  tiler.scalar::canonicalize-nan-f32@1",
                 ScalarAttributeSchema::empty(),
                 ScalarArity::exact(1)?,
+                canonicalize_nan_f32_facts()?,
                 Arc::new(StandardF32Homogeneous),
             )?,
         )?;
@@ -1862,6 +2011,307 @@ pub(super) fn encode_len(output: &mut Vec<u8>, len: usize) {
 pub(super) fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
     encode_len(output, value.len());
     output.extend_from_slice(value);
+}
+
+#[cfg(test)]
+mod governed_fact_tests {
+    use super::{
+        CANONICAL_ARITHMETIC_NAN_PROFILE, DECLARED_PAYLOAD_PRESERVED, FrozenScalarRegistry,
+        SCALAR_FACT_CANONICAL_NAN_BITS, SCALAR_FACT_CONTRACTION_PERMITTED,
+        SCALAR_FACT_NAN_RESULT_RULE, ScalarOpKey, add_f32_scalar_op,
+        canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
+    };
+    use crate::semantic::{
+        AttributeFieldId, CanonicalValue, CanonicalValueView, FrozenSemanticRegistry, OpKey,
+        add_f32_op, constant_f32_op, multiply_f32_op,
+    };
+
+    fn field(value: &CanonicalValue, id: AttributeFieldId) -> Option<CanonicalValueView<'_>> {
+        let CanonicalValueView::Record(fields) = value.view() else {
+            panic!("a governed facts record is a canonical record");
+        };
+        fields
+            .iter()
+            .find(|field| field.id() == id)
+            .map(|field| field.value().view())
+    }
+
+    /// Returns every exact binary32 payload a facts record declares.
+    ///
+    /// The two layers number their fact fields independently, so this collects
+    /// by value category rather than by field ID: the claim under test is that
+    /// the declared *payload* agrees, not that the records happen to be shaped
+    /// alike.
+    fn declared_float_payloads(value: &CanonicalValue) -> Vec<Vec<u8>> {
+        let CanonicalValueView::Record(fields) = value.view() else {
+            panic!("a governed facts record is a canonical record");
+        };
+        fields
+            .iter()
+            .filter_map(|field| match field.value().view() {
+                CanonicalValueView::FloatBits(bits) => Some(bits.bits().to_vec()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn utf8(view: CanonicalValueView<'_>) -> String {
+        match view {
+            CanonicalValueView::Utf8(value) => value.to_owned(),
+            other => panic!("expected a utf8 fact, found {other:?}"),
+        }
+    }
+
+    /// Every governed scalar definition states which NaN payload its result
+    /// carries, and names a conformance revision an implementation can claim.
+    ///
+    /// This is the clause that makes the authority self-contained: before it,
+    /// a second reference capability or a third-party index-access lowering
+    /// provider had nothing in the scalar authority to conform to.
+    #[test]
+    fn every_governed_scalar_states_a_nan_rule_and_a_conformance_identity() {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        for key in [
+            constant_f32_scalar_op(),
+            multiply_f32_scalar_op(),
+            add_f32_scalar_op(),
+            canonicalize_nan_f32_scalar_op(),
+        ] {
+            let definition = registry
+                .definition(&key)
+                .expect("the definition is governed");
+            let rule = field(definition.facts(), SCALAR_FACT_NAN_RESULT_RULE)
+                .unwrap_or_else(|| panic!("{} states no NaN-result rule", key.name()));
+            assert!(
+                matches!(rule, CanonicalValueView::Utf8(_)),
+                "{} must name its NaN-result rule",
+                key.name()
+            );
+            assert_eq!(
+                field(definition.conformance(), AttributeFieldId::new(1))
+                    .map(utf8)
+                    .as_deref(),
+                Some(format!("tiler.scalar.conformance.{}", key.name()).as_str()),
+                "{} must name a scalar-scoped conformance identity",
+                key.name()
+            );
+        }
+    }
+
+    /// A canonicalizing scalar declares the payload it installs; the preserving
+    /// one declares that it installs none.
+    ///
+    /// The preserving case is asserted beside its canonicalizing neighbours so
+    /// the absent payload is evidence about `constant-f32` specifically, rather
+    /// than a check that never fires.
+    #[test]
+    fn only_the_canonicalizing_scalars_declare_a_payload() {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let canonical =
+            crate::semantic::canonical_f32_bits(crate::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS);
+        let expected = declared_float_payloads(
+            &CanonicalValue::record([crate::semantic::CanonicalField::new(
+                AttributeFieldId::new(1),
+                canonical,
+            )])
+            .expect("a one-field record is canonical"),
+        );
+
+        for key in [
+            multiply_f32_scalar_op(),
+            add_f32_scalar_op(),
+            canonicalize_nan_f32_scalar_op(),
+        ] {
+            let facts = registry
+                .definition(&key)
+                .expect("the definition is governed")
+                .facts();
+            assert_eq!(
+                field(facts, SCALAR_FACT_NAN_RESULT_RULE)
+                    .map(utf8)
+                    .as_deref(),
+                Some(CANONICAL_ARITHMETIC_NAN_PROFILE),
+                "{} must name the canonical arithmetic-NaN profile",
+                key.name()
+            );
+            assert_eq!(
+                declared_float_payloads(facts),
+                expected,
+                "{} must declare the exact payload it installs",
+                key.name()
+            );
+            assert!(
+                field(facts, SCALAR_FACT_CANONICAL_NAN_BITS).is_some(),
+                "{} must carry its payload in the governed field",
+                key.name()
+            );
+        }
+
+        let constant = registry
+            .definition(&constant_f32_scalar_op())
+            .expect("the definition is governed")
+            .facts();
+        assert_eq!(
+            field(constant, SCALAR_FACT_NAN_RESULT_RULE)
+                .map(utf8)
+                .as_deref(),
+            Some(DECLARED_PAYLOAD_PRESERVED),
+            "the governed constant must state preservation as a positive rule"
+        );
+        assert!(
+            declared_float_payloads(constant).is_empty(),
+            "the governed constant installs no payload, so it declares none"
+        );
+    }
+
+    /// Only the arithmetic scalars answer the contraction question.
+    ///
+    /// A constant and a conversion are not participants in an arithmetic
+    /// pattern, so declaring `false` there would answer a question the
+    /// numerical contract does not pose about them.
+    #[test]
+    fn contraction_is_stated_exactly_where_it_is_defined() {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let stated = |key: &ScalarOpKey| {
+            field(
+                registry
+                    .definition(key)
+                    .expect("the definition is governed")
+                    .facts(),
+                SCALAR_FACT_CONTRACTION_PERMITTED,
+            )
+            .map(|view| match view {
+                CanonicalValueView::Bool(permitted) => permitted,
+                other => panic!("the contraction fact is a boolean, found {other:?}"),
+            })
+        };
+        for key in [multiply_f32_scalar_op(), add_f32_scalar_op()] {
+            assert_eq!(
+                stated(&key),
+                Some(false),
+                "{} must forbid contraction explicitly",
+                key.name()
+            );
+        }
+        for key in [constant_f32_scalar_op(), canonicalize_nan_f32_scalar_op()] {
+            assert!(
+                stated(&key).is_none(),
+                "{} is not an arithmetic contraction participant",
+                key.name()
+            );
+        }
+    }
+
+    /// The scalar and semantic layers agree on the canonical NaN payload.
+    ///
+    /// The records are written independently — see the module's
+    /// `standard_scalar_conformance` note for why they are not derived from one
+    /// another — so this is the check that keeps them from drifting apart.
+    #[test]
+    fn scalar_and_semantic_facts_agree_on_the_canonical_payload() {
+        let scalars = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let semantic = FrozenSemanticRegistry::standard().expect("the governed authority composes");
+        for (scalar_key, semantic_key) in [
+            (multiply_f32_scalar_op(), multiply_f32_op()),
+            (add_f32_scalar_op(), add_f32_op()),
+        ] {
+            let scalar = declared_float_payloads(
+                scalars
+                    .definition(&scalar_key)
+                    .expect("the scalar definition is governed")
+                    .facts(),
+            );
+            let tensor = declared_float_payloads(
+                semantic
+                    .operation_definition(&semantic_key)
+                    .expect("the semantic definition is governed")
+                    .canonical_facts()
+                    .value(),
+            );
+            assert_eq!(
+                scalar,
+                tensor,
+                "{} and its semantic counterpart must declare one payload",
+                scalar_key.name()
+            );
+        }
+
+        // The preserving pair agrees too: neither layer declares a payload for
+        // the constant, so the agreement covers the negative case rather than
+        // only the operations that canonicalize.
+        assert!(
+            declared_float_payloads(
+                scalars
+                    .definition(&constant_f32_scalar_op())
+                    .expect("the scalar definition is governed")
+                    .facts()
+            )
+            .is_empty()
+        );
+        assert!(
+            declared_float_payloads(
+                semantic
+                    .operation_definition(&constant_f32_op())
+                    .expect("the semantic definition is governed")
+                    .canonical_facts()
+                    .value()
+            )
+            .is_empty()
+        );
+    }
+
+    /// The governed conversion has no semantic counterpart to derive from.
+    ///
+    /// This is the fact that decides the restate-and-check design: a rule that
+    /// copied each scalar's facts from its semantic operation would have no
+    /// source for this one, which exists because a reduction's *result
+    /// boundary* must canonicalize where no combine necessarily ran.
+    #[test]
+    fn the_canonical_nan_conversion_has_no_semantic_counterpart() {
+        let semantic = FrozenSemanticRegistry::standard().expect("the governed authority composes");
+        assert!(
+            semantic
+                .operation_definition(
+                    &OpKey::new("tiler", "canonicalize-nan-f32", 1).expect("the key is valid")
+                )
+                .is_none()
+        );
+        let scalars = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        assert!(
+            scalars
+                .definition(&canonicalize_nan_f32_scalar_op())
+                .is_some()
+        );
+    }
+
+    /// The two layers' conformance identities are distinct for the same name.
+    ///
+    /// They govern different contracts — one a whole-tensor operation family,
+    /// the other a per-point scalar — so a shared identity string would give
+    /// two subjects one identity.
+    #[test]
+    fn scalar_conformance_is_domain_separated_from_semantic_conformance() {
+        let scalars = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let semantic = FrozenSemanticRegistry::standard().expect("the governed authority composes");
+        let scalar = scalars
+            .definition(&add_f32_scalar_op())
+            .expect("the scalar definition is governed")
+            .conformance();
+        let tensor = semantic
+            .operation_definition(&add_f32_op())
+            .expect("the semantic definition is governed")
+            .conformance()
+            .value();
+        assert_ne!(scalar, tensor);
+        assert_eq!(
+            field(scalar, AttributeFieldId::new(1)).map(utf8).as_deref(),
+            Some("tiler.scalar.conformance.add-f32")
+        );
+        assert_eq!(
+            field(tensor, AttributeFieldId::new(1)).map(utf8).as_deref(),
+            Some("tiler.conformance.add-f32")
+        );
+    }
 }
 
 #[cfg(test)]
