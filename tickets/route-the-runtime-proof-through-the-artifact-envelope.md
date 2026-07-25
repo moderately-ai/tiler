@@ -33,3 +33,13 @@ The payload carrier's constructors are `pub(crate)` in `tiler-artifact`; promoti
 ## Do not
 
 Do not delete or weaken the direct-dispatch spike when the envelope path lands. Keeping both is what distinguishes an envelope defect from a compiler defect the next time the bits disagree: if the direct path still matches the reference and the envelope path does not, the envelope is at fault, and that is a diagnostic worth retaining.
+
+## Correction — the stated prerequisite is satisfied, and the producer half is built
+
+Recorded from `carry-the-metal-payload-in-an-artifact-envelope`, so it is not re-derived.
+
+**The sentence "the payload carrier's constructors are `pub(crate)` in `tiler-artifact`" is stale.** They were promoted on Tom's review on 2026-07-25, together with the codec's *capability*: `VerifiedArtifactProgram::encode`, `decode_artifact`, `DecodedArtifact` with `identity`/`features`/`routing`/`payloads`/`sections`/`variant_count`/`re_encode`, `SectionView`, `SectionPurpose`, and `ArtifactCodecFailure` are all `pub` (`crates/tiler-artifact/src/program/codec/view.rs`, re-exported at `program/mod.rs:313-317`). The envelope, encoder, decoder, and section types themselves stay `pub(crate)`; the view exposes accessors rather than fields.
+
+**The producing half of this ticket's work already exists.** `prototypes/serial-sum-compile/src/bundle.rs` assembles a real compilation and a real `metallib` into an envelope and proves the round trip — encode, decode, byte-identical re-encode, section purposes, descriptor digest, and the derived feature set. What remains here is genuinely the consuming half: hand the runtime **bytes**, and have it decode, validate, classify compatibility, and commit routing before it loads anything.
+
+**A measured constraint this ticket must plan around.** The envelope's reader refuses a multi-stage variant. This profile's neutral program section carries a program's canonical identity and not its dependency graph, so the projector derives `tiler.artifact.feature.multi-stage-program` and `SUPPORTED_FEATURES` deliberately omits it. The fused single-stage plan — which is what the selection policy chooses for the proof program, and what the runtime proof already dispatches — round-trips. Routing the proof through the envelope therefore works today for the plan it actually runs, and the materialized reference alternative cannot travel until `carry-reconstructable-kernel-programs-in-the-neutral-envelope` closes. Whether the runtime proof needs the reference alternative *in the envelope* or only in-process is a question this ticket should answer explicitly rather than discover.
