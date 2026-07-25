@@ -364,6 +364,15 @@ def test_every_kernel_names_its_dtype_exactly_when_it_is_not_the_default() -> No
             assert not kernel.name.endswith(f"_{other.name}"), kernel.name
     assert PROBE.F16_KERNELS, "the second dtype lost every kernel"
     assert set(PROBE.F16_KERNELS) < set(PROBE.BY_NAME)
+    assert PROBE.BF16_KERNELS, "the third dtype lost every kernel"
+    assert set(PROBE.BF16_KERNELS) < set(PROBE.BY_NAME)
+    assert not set(PROBE.F16_KERNELS) & set(PROBE.BF16_KERNELS)
+    # The two narrow dtypes must ask the same questions, or a difference between
+    # them would be a difference in coverage rather than in the hardware.
+    assert [name.removesuffix("_f16") for name in PROBE.F16_KERNELS] == [
+        name.removesuffix("_bf16") for name in PROBE.BF16_KERNELS
+    ], "the narrow dtypes' kernel sets diverged, so their results are not comparable"
+    assert set(PROBE.NARROW_KERNELS) == {PROBE.F16.name, PROBE.BF16.name}
 
 
 def test_every_dtype_renders_at_its_own_width_and_declares_a_consistent_format() -> None:
@@ -431,15 +440,40 @@ def test_the_operation_count_sees_every_spelling_this_front_end_emits() -> None:
     new spelling, so the parse is pinned here over a module fragment rather than
     trusted — including the `call` to the generated canonicalization helper, which
     appears at `-O0`, is not arithmetic, and must not be counted.
+
+    **Every line below is copied from a module this toolchain actually emitted**,
+    which is the only thing that makes the pin evidence rather than a restatement
+    of the pattern. That distinction has already cost once in the other
+    direction: the helper `call` was pinned here in an *unmangled* spelling that
+    the front end never produces. It named no fused intrinsic either way, so no
+    count was ever wrong, but a reader checking the recognizer against a real
+    module would have found the pinned line absent from it. The helper is a
+    file-local C++ function and is mangled with its parameter type — `f`, `Dh`,
+    and `DF16b` for the three dtypes — so the three spellings differ in more than
+    the substring naming the dtype.
+
+    A `bfloat` operand list is the case that matters most here, because this
+    front end has **no** `air.fma.bf16`: a source-level `fma` on `bfloat` is
+    `fpext` to `float`, `air.fma.f32`, and `fptrunc` back. The conversions are
+    deliberately not counted — they are not arithmetic that can flush — while the
+    `f32` fused call inside them is, which is exactly the reading that says such
+    a kernel measures `f32` and not `bfloat`.
     """
     fragment = "\n".join(
         (
-            "  %9 = call half @tiler_canonicalize_nan_f16_7e00(half %8) #2",
+            "  %31 = call half @_ZL31tiler_canonicalize_nan_f16_7e00Dh(half noundef %30) #1",
+            "  %31 = call bfloat @_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b"
+            "(bfloat noundef %30) #1",
             "  %16 = fmul half %8, 0xH4000",
             "  %17 = fdiv half %16, 0xH4200",
             "  %18 = tail call half @air.fma.f16(half %17, half 0xH3E00, half 0xH3C00) #2",
             "  %19 = fadd reassoc nsz arcp afn half %18, 0xH3C00",
-            "  %20 = tail call float @air.fma.f32(float %2, float 1.0, float 1.0) #2",
+            "  %9 = fmul reassoc nsz arcp contract afn bfloat %8, 0xR402B",
+            "  %9 = fdiv bfloat %8, 0xR4040",
+            "  %9 = fadd bfloat %8, 0xR0080",
+            "  %7 = fpext bfloat %6 to float",
+            "  %8 = tail call float @air.fma.f32(float %7, float 1.5, float 1.0) #2",
+            "  %9 = fptrunc float %8 to bfloat",
             "  %21 = fcmp oeq half %19, 0xH0000",
             "  %22 = fmul float %20, 2.000000e+00",
         )
@@ -450,6 +484,9 @@ def test_the_operation_count_sees_every_spelling_this_front_end_emits() -> None:
         "fdiv",
         "air.fma.f16",
         "fadd+reassoc+nsz+arcp+afn",
+        "fmul+reassoc+nsz+arcp+contract+afn",
+        "fdiv",
+        "fadd",
         "air.fma.f32",
         "fmul",
     ], found
@@ -1784,6 +1821,264 @@ def test_the_second_dtype_keeps_the_trap_and_the_guard_when_a_toolchain_and_gpu_
             "the unguarded reading must still be 'preserved', or this kernel is not the control "
             "the preservation result needs"
         )
+
+
+# --------------------------------------------------------------------------
+# The third dtype, which is the one that discriminates. `bfloat16` carries
+# `f32`'s exponent field, so every one of its subnormals is an `f32` subnormal
+# too — unlike `f16`, whose subnormals are all `f32` normals.
+# --------------------------------------------------------------------------
+
+BF16_FLUSH_PROBES = (
+    ("multiply_two_bf16", "multiply_two", PROBE.INPUT_FLUSH_BF16, PROBE.INPUT_FLUSH),
+    (
+        "multiply_two_bf16",
+        "multiply_two",
+        PROBE.NEGATIVE_INPUT_FLUSH_BF16,
+        PROBE.NEGATIVE_INPUT_FLUSH,
+    ),
+    ("multiply_half_bf16", "multiply_half", PROBE.RESULT_FLUSH_BF16, PROBE.RESULT_FLUSH),
+    (
+        "add_smallest_normal_bf16",
+        "add_smallest_normal",
+        PROBE.ADDITIVE_INPUT_FLUSH_BF16,
+        PROBE.ADDITIVE_INPUT_FLUSH,
+    ),
+    (
+        "divide_by_three_eighths_bf16",
+        "divide_by_three_eighths",
+        PROBE.DIVIDED_INPUT_FLUSH_BF16,
+        PROBE.DIVIDED_INPUT_FLUSH,
+    ),
+    (
+        "divide_by_three_eighths_bf16",
+        "divide_by_three_eighths",
+        PROBE.DIVIDED_NEGATIVE_INPUT_FLUSH_BF16,
+        PROBE.DIVIDED_NEGATIVE_INPUT_FLUSH,
+    ),
+    (
+        "divide_by_three_bf16",
+        "divide_by_three",
+        PROBE.DIVIDED_RESULT_FLUSH_BF16,
+        PROBE.DIVIDED_RESULT_FLUSH,
+    ),
+)
+"""Each `bf16` probe beside the `f32` probe asking the identical question.
+
+The rows are the `f16` table's rows at a third width, deliberately: the three
+dtypes are then read with one set of questions and any difference between them
+is a difference in the answer.
+"""
+
+
+def bfloat_families(run: PROBE.Run) -> tuple[str, ...]:
+    """Every family that both has a device and accepted a `bfloat` pipeline on it.
+
+    Two different absences are filtered here and the record distinguishes them:
+    a family with no attached device was never asked, while a family whose device
+    refused pipeline creation for `bfloat` answered and refused. Neither yields a
+    device-side row, so neither can be asserted on; the reason each is missing is
+    printed rather than swallowed.
+    """
+    resolved = []
+    for family in dispatched_families(run):
+        support = run.environment[f"family.{family}.device_bfloat_support"]
+        if support == "supported":
+            resolved.append(family)
+        else:
+            print(f"{family} refused a bfloat pipeline: {support}", file=sys.stderr)
+    return tuple(resolved)
+
+
+def test_the_third_dtype_declares_the_same_denormals_disable_when_a_toolchain_gpu_resolve() -> None:
+    """`bfloat` modules carry the identical declaration, and it settles nothing here either.
+
+    This is the compile side, so every family answers it — including the one
+    whose device then refuses to run the module. That a module which compiles,
+    links, and declares `air.compile.denorms_disable` can still fail pipeline
+    creation is itself the sharpest form of finding 22's point.
+    """
+    run = probe_run()
+    for family in PROBE.FAMILIES:
+        for kernel in PROBE.BF16_KERNELS:
+            for mode in PROBE.MATH_MODES:
+                observation = run.of(family.name, kernel, mode)
+                assert observation.compile_options is not None, f"{family.name}/{kernel}/{mode}"
+                assert "air.compile.denorms_disable" in observation.compile_options, (
+                    f"{family.name}/{kernel}/{mode} declared {observation.compile_options}"
+                )
+        for mode in PROBE.MATH_MODES:
+            wide = run.of(family.name, "multiply_two", mode)
+            narrow = run.of(family.name, "multiply_two_bf16", mode)
+            assert narrow.compile_options == wide.compile_options, (
+                f"{family.name}/{mode}: the two dtypes declared different module options"
+            )
+            assert [operation.opcode for operation in narrow.operations] == [
+                operation.opcode for operation in wide.operations
+            ], f"{family.name}/{mode}: {narrow.operations} against {wide.operations}"
+
+
+def test_the_third_dtype_flushes_like_the_first_when_a_toolchain_and_gpu_resolve() -> None:
+    """The discriminating result: `bfloat16` flushes what `f16` preserves.
+
+    Read against the two dtypes already measured this is not a third data point;
+    it is the one that separates the two explanations finding 21 left open.
+
+    - "narrow formats are evaluated at a wider internal precision, rounding
+      once" predicts `f16` preserved — its subnormals are `f32` **normals** — and
+      predicts `bf16` **flushed**, because `bf16` carries `f32`'s exponent field
+      and every `bf16` subnormal is an `f32` subnormal meeting the `f32` flush.
+    - "this hardware honours subnormals natively in narrow formats" predicts both
+      narrow dtypes preserve.
+
+    The second prediction is what this test refuses. Every `bf16` probe is
+    admitted as `flushed-to-zero` under the identical two-layer guard that admits
+    the `f16` twin as `preserved`, so the surviving explanation is the first —
+    and a reviewer wanting to overturn that has to overturn a witnessed
+    measurement rather than an argument.
+    """
+    run = probe_run()
+    for family in bfloat_families(run):
+        for mode in PROBE.MATH_MODES:
+            for narrow_name, wide_name, narrow_probe, wide_probe in BF16_FLUSH_PROBES:
+                narrow = run.of(family, narrow_name, mode)
+                wide = run.of(family, wide_name, mode)
+                narrow_verdict = PROBE.subnormal_verdict(narrow, narrow_probe)
+                wide_verdict = PROBE.subnormal_verdict(wide, wide_probe)
+                assert wide_verdict is PROBE.Verdict.FLUSHED_TO_ZERO, (
+                    f"{family}/{mode}/{wide_name}: {wide_verdict}"
+                )
+                assert narrow_verdict is PROBE.Verdict.FLUSHED_TO_ZERO, (
+                    f"{family}/{mode}/{narrow_name}: {narrow_verdict}. If this became "
+                    f"preserved, the wider-internal-precision explanation of finding 21 is "
+                    f"refuted and finding 24 must be restated, not the test relaxed"
+                )
+                assert narrow_verdict.is_evidence and wide_verdict.is_evidence
+                assert narrow.result_for(narrow_probe.operand) == narrow_probe.flushing
+                assert wide.result_for(wide_probe.operand) == wide_probe.flushing
+
+
+def test_the_three_dtypes_do_not_agree_when_a_toolchain_and_gpu_resolve() -> None:
+    """The one-line statement of the dtype axis, over the identical isolation.
+
+    Doubling the mid subnormal returns a signed zero in `f32`, the exactly
+    doubled subnormal in `f16`, and a signed zero again in `bf16`. Three formats,
+    one question, two answers — which is why a target fact carrying no dtype
+    cannot state any of them.
+    """
+    run = probe_run()
+    for family in bfloat_families(run):
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family, "multiply_two", mode).result_for(0x00400000) == 0x00000000
+            assert run.of(family, "multiply_two_f16", mode).result_for(0x0200) == 0x0400
+            assert run.of(family, "multiply_two_bf16", mode).result_for(0x0040) == 0x0000
+            # The sign of the flushed zero, which finding 3 measures for `f32`.
+            assert run.of(family, "multiply_two_bf16", mode).result_for(0x8040) == 0x8000
+            assert run.of(family, "multiply_two_bf16", mode).result_for(0x8000) == 0x8000, (
+                f"{family}/{mode}: negative zero is not subnormal and must survive"
+            )
+
+
+def test_the_third_dtype_materializes_unchanged_when_a_toolchain_and_gpu_resolve() -> None:
+    """The control the flush result needs as much as the preservation result did.
+
+    A load and a store of `bfloat` returning every operand unchanged — subnormals
+    included — is what rules out the buffer round trip as the explanation for a
+    flushed one. Without it, a `bfloat` transfer that quietly normalized its
+    values would produce the same zeros the arithmetic does.
+    """
+    run = probe_run()
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family.name, "materialize_bf16", mode).operation_count == 0, family.name
+    for family in bfloat_families(run):
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family, "materialize_bf16", mode).results == PROBE.BF16.operands, (
+                f"{family}/{mode}: a bfloat subnormal did not survive the buffer round trip, so "
+                f"the flush measured above is not attributable to the arithmetic"
+            )
+
+
+def test_the_third_dtype_keeps_the_trap_and_the_guard_when_a_toolchain_and_gpu_resolve() -> None:
+    """The trap must still be refused at the third width, and admitted under `safe`.
+
+    In `bf16` the admissible verdict is `flushed-to-zero`, so the trap's
+    unguarded reading and the real result are different words again, as in `f32`
+    and unlike `f16`. The guard is held to both directions here anyway: a guard
+    that refused everything would make the flush result unreachable rather than
+    wrong, and that failure is invisible from the headline test alone.
+    """
+    run = probe_run()
+    probe = PROBE.IDENTITY_VALUED_FLUSH_BF16
+    for family in PROBE.FAMILIES:
+        for mode in PROBE.MATH_MODES:
+            assert run.of(family.name, "multiply_one_bf16", mode).operation_count == 0, (
+                f"{family.name}/{mode}: x * 1.0 in bfloat must fold"
+            )
+        safe = run.of(family.name, "scale_one_bias_zero_bf16", "safe")
+        assert safe.operation_count == 1 and safe.operations[0].opcode == "fadd", family.name
+        for mode in ("relaxed", "fast"):
+            assert run.of(family.name, "scale_one_bias_zero_bf16", mode).operation_count == 0, (
+                f"{family.name}/{mode}"
+            )
+        unoptimized = run.of(family.name, "scale_one_bias_zero_bf16", "relaxed", "0")
+        assert unoptimized.operation_count == 2, (
+            f"{family.name}: -O0 must remain the level at which the front end keeps both"
+        )
+    for family in bfloat_families(run):
+        for mode in ("relaxed", "fast"):
+            for optimization in ("0", "2"):
+                observation = run.of(family, "scale_one_bias_zero_bf16", mode, optimization)
+                guarded = PROBE.subnormal_verdict(observation, probe)
+                assert not guarded.is_evidence, (
+                    f"{family}/{mode}/O{optimization} was admitted as {guarded}"
+                )
+        safe = run.of(family, "scale_one_bias_zero_bf16", "safe")
+        assert PROBE.subnormal_verdict(safe, probe) is PROBE.Verdict.FLUSHED_TO_ZERO, (
+            "the same kernel under safe must be admitted, or the guard simply refuses everything"
+        )
+        assert safe.result_for(0x8000) == 0x0000, (
+            f"{family}: the signed-zero divergence of finding 5 must reproduce in bfloat"
+        )
+
+
+def test_a_device_that_refused_a_dtype_is_not_a_device_that_was_absent() -> None:
+    """The two reasons a `results` row can be missing must stay different classes.
+
+    On the measured row the iOS Simulator compiles and links every `bfloat`
+    module and then fails pipeline creation, while the `IOsDevice` family is
+    never asked at all. Collapsing those into one word would let a future run
+    where the simulator started working look identical to today's, and would let
+    a real dispatch defect hide behind an absence.
+    """
+    run = probe_run()
+    for family in PROBE.FAMILIES:
+        support = run.environment[f"family.{family.name}.device_bfloat_support"]
+        execution = run.environment[f"family.{family.name}.execution"]
+        assert support, family.name
+        if execution.startswith("unavailable:"):
+            assert support.startswith("unavailable:"), (
+                f"{family.name}: a family with no device cannot have answered a capability probe"
+            )
+        for kernel in PROBE.BF16_KERNELS:
+            observation = run.of(family.name, kernel, "safe")
+            # The compile side runs for every family regardless, so the module
+            # facts are present even where the device refused to run them.
+            assert observation.compile_options is not None, f"{family.name}/{kernel}"
+            if support == "supported":
+                assert observation.results is not None and not observation.refusal, (
+                    f"{family.name}/{kernel}"
+                )
+                continue
+            assert observation.results is None, f"{family.name}/{kernel}"
+            verdict = PROBE.subnormal_verdict(observation, PROBE.IDENTITY_VALUED_FLUSH_BF16)
+            assert not verdict.is_evidence, f"{family.name}/{kernel}"
+            if execution.startswith("unavailable:"):
+                assert not observation.refusal, f"{family.name}/{kernel}: never asked"
+                assert verdict is PROBE.Verdict.NO_DEVICE_OBSERVATION, f"{family.name}/{kernel}"
+            else:
+                assert observation.refusal, f"{family.name}/{kernel}: asked and refused"
+                assert verdict is PROBE.Verdict.DEVICE_REFUSED_DTYPE, f"{family.name}/{kernel}"
 
 
 # --------------------------------------------------------------------------

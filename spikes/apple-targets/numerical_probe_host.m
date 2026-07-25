@@ -87,9 +87,14 @@ typedef struct {
     uint32_t sentinel;
 } ProbeDtype;
 
+/// This host never interprets a pattern as a number, so two formats of the same
+/// width need nothing distinct here beyond a name: `f16` and `bf16` are both
+/// dispatched, seeded, and printed as 16-bit patterns, and which format the bits
+/// mean is decided entirely by the compiled kernel the manifest entry names.
 static const ProbeDtype kProbeDtypes[] = {
     {"f32", 32, 0xdeadbeefu},
     {"f16", 16, 0x0000deadu},
+    {"bf16", 16, 0x0000deadu},
 };
 
 static const ProbeDtype *probe_dtype_named(NSString *name) {
@@ -179,7 +184,13 @@ static int probe_usage(NSString *detail) {
     fprintf(stderr, "         <case-key>\t<dtype>\tlibrary\t<metallib>\t<function>\n");
     fprintf(stderr,
             "         <case-key>\t<dtype>\tsource\t<source.metal>\t<function>\t<options>\n");
-    fprintf(stderr, "       <dtype> is one of: f32 f16\n");
+    // Printed from the table rather than spelled here, so adding a dtype cannot
+    // leave the usage text naming a set the host no longer accepts.
+    fprintf(stderr, "       <dtype> is one of:");
+    for (size_t index = 0; index < sizeof(kProbeDtypes) / sizeof(kProbeDtypes[0]); index += 1) {
+        fprintf(stderr, " %s", kProbeDtypes[index].name);
+    }
+    fprintf(stderr, "\n");
     fprintf(stderr, "       <options> is a comma-separated key=value list; every key and value "
                     "must be recognized:\n");
     fprintf(stderr, "         math=safe|relaxed|fast  fpfun=fast|precise  lang=3.1|3.2  "

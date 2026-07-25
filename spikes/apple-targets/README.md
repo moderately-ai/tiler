@@ -121,24 +121,39 @@ selected by `TILER_APPLE_NUMERICS_EXHAUSTIVE`. `probe.matrix` names which one
 produced a record and `matrix_mismatch` refuses to compare one against a run of
 the other. A portable guard test holds the covering set to its coverage claim.
 
-**The dtype is not an axis of that matrix.** `DTYPES` names `f32` and `f16`, and
-each one owns its operand vector, its result width, its MSL constant spelling and
-canonicalization helper, its exact evaluation, and its element width and sentinel
-in the dispatch host. A kernel names its dtype in its own name only when that
-dtype is not `f32`, so every case key recorded while the harness measured one
-dtype keeps its exact meaning and the `_f16` kernels are the only new ones. The
-`f16` kernels cover multiply in both flush directions, a bare add, a surviving
-`fdiv` in both directions, materialization, the identity multiply, and the trap;
-contraction, a source-level `fma`, and reassociation are `f32`-only and are named
-as a boundary in the research record rather than assumed to carry over.
+**The dtype is not an axis of that matrix.** `DTYPES` names `f32`, `f16`, and
+`bf16`, and each one owns its operand vector, its result width, its MSL constant
+spelling and canonicalization helper, its exact evaluation, and its element width
+and sentinel in the dispatch host. A kernel names its dtype in its own name only
+when that dtype is not `f32`, so every case key recorded while the harness
+measured one dtype keeps its exact meaning and the `_f16` and `_bf16` kernels are
+the only new ones. Both narrow dtypes cover multiply in both flush directions, a
+bare add, a surviving `fdiv` in both directions, materialization, the identity
+multiply, and the trap — a portable test holds the two kernel sets to being the
+same list at two widths, so neither can gain coverage the other silently lacks.
+Contraction and reassociation are `f32`-only and are named as a boundary in the
+research record. A source-level `fma` is `f32`-only for a stronger reason at
+`bf16`: this front end has no `bfloat` overload, so `fma(bfloat, …)` returns
+`float` and emits `fpext`/`air.fma.f32`/`fptrunc`, which would measure `f32`
+arithmetic wearing `bfloat` operands.
+
+**`bf16` needs its own float conversions, because `struct` has none.** `BrainFloat`
+subclasses `Dtype` and overrides `as_float` and `as_bits` alone: `struct` offers
+`<e` for `f16` and nothing for `bfloat16`, so the conversion passes through the
+`f32` carrier this format is the high half of, with one round-to-nearest-even on
+the discarded 16 bits and an explicit refusal for a value that rounds past the
+largest finite `bfloat16`. Its `struct_format` field therefore names the carrier
+rather than a packing of its own width.
 
 **A recorded pattern is rendered at its own dtype's width** — four hex digits for
-`f16`, eight for `f32`, in `case.*.results`, in a divergent `comparison.*` row,
-in the dispatch host's `result=` lines, and in the operand groups the host is
-given. The manifest states each entry's dtype rather than letting the host infer
-it, because the width decides the buffer size, the operand vector, the sentinel,
-and the print width, and a host that guessed would read a correctly dispatched
-`f16` kernel back as half as many `f32` values.
+`f16` and `bf16`, eight for `f32`, in `case.*.results`, in a divergent
+`comparison.*` row, in the dispatch host's `result=` lines, and in the operand
+groups the host is given. The manifest states each entry's dtype rather than
+letting the host infer it, because the width decides the buffer size, the operand
+vector, the sentinel, and the print width, and a host that guessed would read a
+correctly dispatched `f16` kernel back as half as many `f32` values. **Two dtypes
+now share a width**, so the digit count identifies neither format and only the
+kernel name in the case key does.
 
 **What the second dtype found.** `f16` arithmetic **preserves** the subnormals
 `f32` arithmetic flushes, on this row, under every math mode, on both compilation
@@ -151,6 +166,33 @@ which is the same word the trap kernel produces when nothing ran, so the gate
 holds the `f16` trap to the refusal and the `f16` flush kernels to their
 witnesses in the same run.
 
+**What the third dtype found, and why it was the one worth measuring.** `bf16`
+arithmetic **flushes**, matching `f32` and not `f16`, with an execution witness
+on every verdict. That is not a third data point; it is the one that separates
+the two mechanisms the `f16` result left open. `f16` subnormals are all `f32`
+**normals**, so "narrow arithmetic is evaluated at `f32` precision" predicts `f16`
+preserving for free; `bf16` carries `f32`'s exponent field, so every `bf16`
+subnormal *is* an `f32` subnormal and the same hypothesis predicts it flushing.
+It does. The competing hypothesis — that the hardware honours subnormals natively
+in narrow formats — predicted preservation and is refuted. In `bf16` the
+admissible verdict and the trap's unguarded reading are different words again, as
+in `f32`, so the risk runs the other way and the gate additionally holds the
+`bf16` trap kernel under `safe` to *admission*: a guard that had started refusing
+everything would make the result unreachable rather than wrong.
+
+**A device can compile a module and then refuse to run it.** The iOS Simulator
+compiles and links every `bf16` module on this row and then fails pipeline
+creation with `XPC_ERROR_CONNECTION_INTERRUPTED`, on both compilation paths and
+for the arithmetic-free kernel too. `bfloat_support` asks each family once,
+before any measured case is dispatched, and a family that refuses has its `bf16`
+cases left out of that family's manifest and recorded with the exact diagnostic
+in `case.*.refusal` and `environment.family.*.device_bfloat_support`. This is a
+capability probe and not a fallback: a family that *accepts* the probe and then
+fails a real case is still a hard `ProbeFailure`. `Verdict.DEVICE_REFUSED_DTYPE`
+and `Verdict.NO_DEVICE_OBSERVATION` stay separate members, because "a device that
+answered no" and "no device to ask" are different measurements and both would
+otherwise be a missing `results` row.
+
 **A kernel added here must be checked against what the module emitted.** Widening
 the vocabulary found the harness reporting a kernel whose whole body is one
 `fma` as containing no floating-point arithmetic at all: this front end lowers
@@ -159,10 +201,21 @@ spellings. The verdict still failed closed, but the count was wrong in the
 direction a reader acts on, because a surviving operation reported as zero looks
 exactly like a deleted one. Both spellings are matched now, and a portable test
 pins the parse over a module fragment carrying `fmul half`, `fdiv half`,
-`@air.fma.f16`, `@air.fma.f32`, an `fcmp` that must not count, and the `call` to
-the generated canonicalization helper that appears at `-O0` and is not
-arithmetic. Widening the dtype puts the same question again in a new spelling, so
-check it before trusting any count a new dtype gives you. Every hand-written
+`@air.fma.f16`, `@air.fma.f32`, `fmul`/`fdiv`/`fadd bfloat`, the `fpext` and
+`fptrunc` around a `bfloat` fused call that must not count, an `fcmp` that must
+not count, and the `call` to the generated canonicalization helper that appears
+at `-O0` and is not arithmetic. Widening the dtype puts the same question again
+in a new spelling, so check it against real emitted modules at both `-O0` and
+`-O2` before trusting any count a new dtype gives you. **Every line in that
+fragment is now copied from a module this toolchain actually emitted**, which the
+`bf16` pass had to correct: the helper `call` had been pinned in an *unmangled*
+spelling the front end never produces. It named no fused intrinsic either way so
+no count was ever wrong, but a reader checking the recognizer against a real
+module would have found the pinned line absent from it. The helper is a
+file-local C++ function mangled with its parameter type, so the three dtypes
+spell it `_ZL35tiler_canonicalize_nan_f32_7fc00000f`,
+`_ZL31tiler_canonicalize_nan_f16_7e00Dh`, and
+`_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b`. Every hand-written
 `SubnormalProbe`, `OrderProbe`, and `Witness` is also checked against `evaluate`,
 which derives each candidate result from the kernel under exact arithmetic and
 under the sign-preserving flush at that kernel's own dtype, so a mis-stated
@@ -247,34 +300,46 @@ not measure. The guard tests over synthetic observations carry no condition at
 all and run everywhere, including on a host with neither an Apple toolchain nor
 `git`.
 
-**What it costs the gate.** `uv run --locked python -m pytest -c pyproject.toml
-spikes/apple-targets` takes about 36 s on the measured host once a simulator is
-booted, covering the 312 offline cases of the covering matrix across three
-families and 272 runtime ones across the two families that dispatch, and about
-44 s for the exhaustive matrix's 492 offline cases. The second dtype accounts for
-90 of those offline cases and 96 of the runtime ones. **These are not comparable
-with the figures this file previously carried** — 47 s over 222 and 176 before
-the dtype was widened, 20 s over 126 and 80 before the matrix was — because each
-was taken with a different number of other worktrees running their own gates
-concurrently, and the load dominates the difference: the widened run measured
-here is *faster* than the narrower one it replaced. Treat every wall-clock figure
-as an upper bound on a loaded host and the case counts, which are exact, as the
-thing that actually grew. The one-time cost of booting a cold simulator adds
-roughly 8 s to the first gate run that needs it; the harness leaves the device
-booted so subsequent runs pay only one `simctl spawn` per family. On a host with
-no Apple toolchain the whole thing skips in well under a second.
+**What it costs the gate, in case counts, which are the only exact figures here.**
+The covering matrix the gate runs is **402 offline cases** across three families
+and **368 runtime cases** across the two families that dispatch; the exhaustive
+matrix is **663 offline cases**. The third dtype accounts for 90 of those offline
+cases (30 per family) and 96 of the runtime ones (48 per dispatching family), and
+171 of the exhaustive offline cases. Of the 368 runtime cases, **320 are actually
+dispatched**: the iOS Simulator's 48 `bf16` runtime cases are refused before
+dispatch and recorded as such, and so are its 30 offline `bf16` cases on the
+device side, whose compile side still runs. The figures the second dtype left
+were 312 offline, 272 runtime, and 492 exhaustive offline.
+
+**Wall-clock figures are deliberately not carried forward.** Every measurement of
+this suite has been taken with a different number of other worktrees running
+their own gates concurrently, and that load dominates the difference — the last
+widening measured *faster* than the narrower matrix it replaced, which is
+information about the host and not about the change. A misleading speedup is
+worse than no number, so the case counts above are the claim. For orientation
+only, and not as a comparison against any earlier figure: the full suite
+completed in roughly 33 s on the measured host with a simulator already booted.
+The one-time cost of booting a cold simulator adds roughly 8 s to the first gate
+run that needs it; the harness leaves the device booted so subsequent runs pay
+only one `simctl spawn` per family. On a host with no Apple toolchain the whole
+thing skips in well under a second.
 
 The retained 2026-07-25 runs are
 [`results/2026-07-25-numerics-covering-xcode26.6-metal32023.883/record.tsv`](results/2026-07-25-numerics-covering-xcode26.6-metal32023.883/record.tsv)
 and
 [`results/2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv`](results/2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv),
-schema `tiler.apple-numerical-behaviour/v5`. Both were rewritten in place when the
-dtype axis landed, on the identical host, toolchain, and date row they already
+schema `tiler.apple-numerical-behaviour/v6`. Both were rewritten in place when the
+third dtype landed, on the identical host, toolchain, and date row they already
 named, and every `case.*`, `comparison.*`, and `hazard.*` row they carried before
-reproduced unchanged — the only rows that moved are the schema, the two digests,
-the repository revision, the timestamp, and `probe.operands`, which became
-per-dtype. That diff is the evidence that widening the dtype did not change what
-the harness asks about `f32`. The schema `v3` record
+reproduced unchanged. The exact check, which is the evidence that widening the
+dtype did not change what the harness asks about the dtypes already measured:
+of the 1921 such rows in the covering record and the 2401 in the exhaustive one,
+**0 disappeared and 0 changed**, and every one of the 480 and 696 rows added
+names a `bf16` kernel; independently, the generated MSL of all 23 pre-existing
+kernels is **byte-identical** to what the base commit's harness produced. The
+only non-`case`/`comparison`/`hazard` rows that moved are the schema, the two
+digests, the repository revision, the timestamp, `probe.dtypes`, and the new
+`probe.operands.bf16` and `environment.family.*.device_bfloat_support`. The schema `v3` record
 [`results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv`](results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv)
 is retained as the previous row and is no longer compared against. The directory
 name identifies the offline toolchain and the matrix; the `environment.family.*`
