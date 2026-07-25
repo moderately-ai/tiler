@@ -14,7 +14,13 @@ ticket: "prototype-foundation-contract"
 
 # 0056: Use four libraries and two proof executables
 
-**Status:** superseded by ADR 0065 for the reusable-crate count and reference evaluator placement, by ADR 0070 for the compiler-to-artifact dependency edge, and by ADR 0077 — accepted on 2026-07-25 — for its AOT-invocation clause; ADRs 0070 and 0071 additionally retire its lockstep artifact/IR consequence; the remaining packaging boundaries are retained
+**Status:** superseded by ADR 0065 for the reusable-crate count and reference
+evaluator placement and by ADR 0070 for the compiler-to-artifact dependency
+edge; ADRs 0070 and 0071 additionally retire its lockstep artifact/IR
+consequence; ADR 0077 supersedes its AOT-invocation clause; ADR 0081 admits a
+device-free artifact loader on the stated terms of the reusable-Metal-runtime
+clause rather than as an exception to it, so that clause is retained and
+unchanged; the remaining packaging boundaries are retained
 
 ## Context
 
@@ -32,10 +38,11 @@ artifact contract and live Metal bindings, never the compiler.
 
 Multiple target-independent IRs remain modules in `tiler-ir`; compiler passes
 remain modules in `tiler-compiler`; MSL emission and AOT invocation remain
-modules in `tiler-metal`. No frontend, proc-macro, Candle, generalized cache, or
-reusable Metal-runtime crate is created for the first proof.
-
-**Retired:** [ADR 0077](0077-admit-tiler-metal-aot-as-a-dependency-free-driver.md), accepted on 2026-07-25, supersedes exactly the AOT-invocation half of the sentence above. AOT invocation is `tiler-metal-aot`, a sixth reusable library whose complete dependency closure is empty and which `tiler-metal` reaches over a development-only edge. MSL emission is untouched and remains a module in `tiler-metal`, as do the IR and compiler-pass placements beside it. The sentence that follows is also untouched: `tiler-metal-aot` is not an exception to the withheld reusable Metal-*runtime* crate, because it is a build-time compiler driver that never touches a live device, and that record forbids citing its admission as precedent for admitting one.
+modules in `tiler-metal`. **Retired:** ADR 0077 makes offline Apple tool
+invocation its own dependency-free crate, `tiler-metal-aot`; the retained part
+of this sentence is that MSL emission stays in `tiler-metal`. No frontend,
+proc-macro, Candle, generalized cache, or reusable Metal-runtime crate is
+created for the first proof.
 
 ## Consequences
 

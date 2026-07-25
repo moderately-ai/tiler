@@ -1,9 +1,9 @@
 ---
 id: route-the-runtime-proof-through-the-artifact-envelope
 title: Route the runtime proof through the artifact envelope
-status: todo
+status: blocked
 priority: p0
-dependencies: [prototype-runtime-artifact-validation]
+dependencies: [prototype-runtime-artifact-validation, share-the-serial-sum-artifact-assembler]
 related: [prototype-metal-runtime-proof, prototype-metal-aot-slice, assemble-the-metal-payload-from-emission-and-compilation]
 scopes: [implementation/runtime, implementation/artifact]
 shared_scopes: [project/tickets]
@@ -43,3 +43,25 @@ Recorded from `carry-the-metal-payload-in-an-artifact-envelope`, so it is not re
 **The producing half of this ticket's work already exists.** `prototypes/serial-sum-compile/src/bundle.rs` assembles a real compilation and a real `metallib` into an envelope and proves the round trip — encode, decode, byte-identical re-encode, section purposes, descriptor digest, and the derived feature set. What remains here is genuinely the consuming half: hand the runtime **bytes**, and have it decode, validate, classify compatibility, and commit routing before it loads anything.
 
 **A measured constraint this ticket must plan around.** The envelope's reader refuses a multi-stage variant. This profile's neutral program section carries a program's canonical identity and not its dependency graph, so the projector derives `tiler.artifact.feature.multi-stage-program` and `SUPPORTED_FEATURES` deliberately omits it. The fused single-stage plan — which is what the selection policy chooses for the proof program, and what the runtime proof already dispatches — round-trips. Routing the proof through the envelope therefore works today for the plan it actually runs, and the materialized reference alternative cannot travel until `carry-reconstructable-kernel-programs-in-the-neutral-envelope` closes. Whether the runtime proof needs the reference alternative *in the envelope* or only in-process is a question this ticket should answer explicitly rather than discover.
+
+## Blocked 2026-07-25 — the consuming half is built; the assembler is unreachable
+
+Attempted from `implementation/runtime` and `implementation/artifact` after `admit-the-device-free-runtime-validation-crate` and `prototype-runtime-artifact-validation` landed. The loader this ticket needs now exists and is not the obstacle.
+
+**Fact — every input is in the process except one.** `crates/tiler-runtime` provides `DecodedProgram::decode`, `preflight(&ExecutionEnvironment, &CanonicalArtifactProgramIdentity)`, and the infallible `Preflight::commit`, whose `RoutedDispatch::object()` returns the exact object bytes the envelope carries — byte for byte what the producer handed to `push_carried_payload`, because the decoder strips the framing and the section body *is* the object (`crates/tiler-artifact/src/program/codec/model.rs:758-769`, `codec/decode.rs:203-207`). `prototypes/serial-sum-run` already holds everything an `ExecutionEnvironment` needs: `compilation.target_profile_key()` and `target_profile_descriptor()` for the `TargetProfileRef`, and `"tiler.metal"`/`"metallib"` for the backend and representation. The single missing value is the `VerifiedArtifactProgram` — needed both to `encode()` the envelope and to supply `preflight`'s `expected` identity.
+
+**Fact — only one assembler exists and it is private to a binary crate.** `grep -rn "ArtifactProgramBuilder" crates prototypes --include "*.rs"` returns exactly one non-`tiler-artifact` user, `prototypes/serial-sum-compile/src/bundle.rs`. That package's `Cargo.toml` declares `[[bin]]` and no `[lib]`, and `src/main.rs:23-25` declares `mod bundle; mod payload; mod target;` as private modules. No other package can name them.
+
+**Split into [`share-the-serial-sum-artifact-assembler`](share-the-serial-sum-artifact-assembler.md)**, which carries the three ways of fixing that, their costs, and a recommendation. In short: a `[lib]` target on `tiler-prototype-compile` is the smallest change that leaves one assembler, but it creates a public namespace on a package that has none and requires relaxing `scripts/check_workspace.py`'s `expected_member_manifest` and `expected_targets`, both of which hard-code one `[[bin]]` and no `[lib]` for a `tiler-prototype-*` package. Promoting the assembler to its own library crate is a new crate admission and therefore Tom's. Duplicating roughly 300-340 lines of identity-bearing assembly into the runner is rejected outright: two independently maintained descriptions of one compilation is the exact defect this ticket exists to remove.
+
+**Fact — a cold two-process handoff does not avoid the assembler, it costs two other things.** Writing the envelope from the producer and reading it in the runner leaves the runner with no `expected` identity to bind against except one re-derived from the same bytes, which is vacuous; and it still cannot obtain the entry symbol, because `decode_metadata` is `pub(crate)` (`crates/tiler-artifact/src/program/codec/payload.rs:292`) and no public accessor parses the payload-metadata section. Binding by identity is available only to a consumer holding the program it compiled, which is the single-process shape this ticket describes.
+
+## The question this ticket asked is answered: only in-process
+
+"Whether the runtime proof needs the reference alternative *in the envelope* or only in-process." **Only in-process, and the envelope must not be widened for it.**
+
+The reference alternative is the materialized plan. The proof's independent oracle is `ReferenceEvaluator`, which evaluates the *`SemanticProgram`* directly — `prototypes/serial-sum-run/src/main.rs:127-158` — and the semantic program is not what an envelope carries at all; the envelope carries one packaged plan's kernel-program identity. So the bit comparison never needed the materialized alternative to travel, and the multi-stage refusal recorded on `carry-reconstructable-kernel-programs-in-the-neutral-envelope` does not gate this ticket. The envelope needs to carry exactly the plan that is dispatched, which is the fused single-stage one, and that round-trips today.
+
+## What must still be true when this lands
+
+Unchanged by the block, and restated because the enabling ticket must not quietly relax it: the device must load the bytes `RoutedDispatch::object()` returns and nothing the process held before, the bit comparison must still pass, and the direct-dispatch path must be retained beside the envelope path as the diagnostic that separates an envelope defect from a compiler defect.

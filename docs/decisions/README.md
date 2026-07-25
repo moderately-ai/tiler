@@ -109,6 +109,7 @@ accepted. Unresolved questions are collected in
 
 ### Runtime, integration, and placement
 
+- [0081: Admit tiler-runtime as a device-free artifact loader](0081-admit-tiler-runtime-as-a-device-free-artifact-loader.md) — accepted; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Target-neutral artifact and backend payload envelope](../research/artifacts/target-neutral-artifact-envelope.md)
 - [0003: Keep the compiler independent of Candle](0003-candle-is-an-integration.md) — accepted; contracts: [Candle integration](../integration/candle.md); evidence: [Consumer-neutral runtime execution contract](../research/runtime/runtime-execution-contract.md)
 - [0051: Make runtime routing commit one-way before program work](0051-make-runtime-routing-commit-one-way.md) — accepted; contracts: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Candle integration](../integration/candle.md); evidence: [Consumer-neutral runtime execution contract](../research/runtime/runtime-execution-contract.md), [Candle Metal post-wait error checking](../research/runtime/candle-metal-post-wait-error-checking.md), [Semantic validation enforcement](../research/runtime/semantic-validation-enforcement.md)
 
@@ -201,6 +202,7 @@ accepted. Unresolved questions are collected in
 - [0078: Name the intended public extension seams](0078-name-the-intended-public-extension-seams.md) — accepted
 - [0079: Permit unsafe code case by case at named sites](0079-permit-unsafe-code-case-by-case-at-named-sites.md) — accepted
 - [0080: Treat distributivity as a third numerical dimension](0080-treat-distributivity-as-a-third-numerical-dimension.md) — accepted
+- [0081: Admit tiler-runtime as a device-free artifact loader](0081-admit-tiler-runtime-as-a-device-free-artifact-loader.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template

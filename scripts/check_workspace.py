@@ -20,6 +20,7 @@ EXPECTED_MEMBERS = (
     "crates/tiler-metal",
     "crates/tiler-metal-aot",
     "crates/tiler-reference",
+    "crates/tiler-runtime",
     "prototypes/serial-sum-compile",
     "prototypes/serial-sum-run",
 )
@@ -47,6 +48,7 @@ EXPECTED_WORKSPACE_DEPENDENCIES: dict[str, object] = {
     "tiler-metal": {"path": "crates/tiler-metal"},
     "tiler-metal-aot": {"path": "crates/tiler-metal-aot"},
     "tiler-reference": {"path": "crates/tiler-reference"},
+    "tiler-runtime": {"path": "crates/tiler-runtime"},
     "trybuild": "1.0.114",
 }
 EXPECTED_RUST_LINTS = {"missing_docs": "warn", "unsafe_code": "forbid"}
@@ -86,6 +88,7 @@ PACKAGE_DESCRIPTIONS = {
     "tiler-metal": "Pure structured-kernel-to-Metal-source lowering for Tiler",
     "tiler-metal-aot": "Offline Apple Metal compiler driver for Tiler",
     "tiler-reference": "Target-independent executable reference semantics for Tiler",
+    "tiler-runtime": "Device-free artifact loading and validation for Tiler runtimes",
     "tiler-prototype-compile": "Non-published producer for Tiler's serial-Sum value proof",
     "tiler-prototype-run": "Non-published runner for Tiler's serial-Sum value proof",
 }
@@ -96,6 +99,7 @@ PACKAGE_DIRS = {
     "tiler-metal": "crates/tiler-metal",
     "tiler-metal-aot": "crates/tiler-metal-aot",
     "tiler-reference": "crates/tiler-reference",
+    "tiler-runtime": "crates/tiler-runtime",
     "tiler-prototype-compile": "prototypes/serial-sum-compile",
     "tiler-prototype-run": "prototypes/serial-sum-run",
 }
@@ -149,6 +153,14 @@ EXPECTED_DEPENDENCIES = {
     ],
     "tiler-metal-aot": [],
     "tiler-reference": [dependency("tiler-ir", path="crates/tiler-ir")],
+    # The device-free loader's closure is a decided property, not an accident of
+    # ordering (ADR 0081). It is the whole substance of the crate: a loader that
+    # acquired `tiler-compiler` could rebuild a plan instead of validating one,
+    # and one that acquired a platform binding would stop being decidable
+    # without hardware. `tiler-ir` is absent as a *direct* edge deliberately —
+    # everything the loader names is an artifact-layer type — even though
+    # `tiler-artifact` links it transitively.
+    "tiler-runtime": [dependency("tiler-artifact", path="crates/tiler-artifact")],
     "tiler-prototype-compile": [
         dependency("tiler-artifact", path="crates/tiler-artifact"),
         dependency("tiler-compiler", path="crates/tiler-compiler"),

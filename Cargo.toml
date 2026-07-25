@@ -6,6 +6,7 @@ members = [
     "crates/tiler-metal",
     "crates/tiler-metal-aot",
     "crates/tiler-reference",
+    "crates/tiler-runtime",
     "prototypes/serial-sum-compile",
     "prototypes/serial-sum-run",
 ]
@@ -35,6 +36,7 @@ tiler-ir = { path = "crates/tiler-ir" }
 tiler-metal = { path = "crates/tiler-metal" }
 tiler-metal-aot = { path = "crates/tiler-metal-aot" }
 tiler-reference = { path = "crates/tiler-reference" }
+tiler-runtime = { path = "crates/tiler-runtime" }
 trybuild = "1.0.114"
 
 # Keep useful file/line backtraces without paying for full variable debug data.
