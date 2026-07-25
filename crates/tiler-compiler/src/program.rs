@@ -30,7 +30,7 @@ use tiler_ir::program::abi::{
 
 use crate::physical::{
     NumericalRealization, RegionId, ResourceRequirements, VerifiedKernel, VerifiedScheduledRegion,
-    lower_structured_kernel,
+    lower_structured_kernel, target_profile_descriptor,
 };
 use crate::region::SemanticMemberId;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
@@ -140,6 +140,11 @@ pub(crate) struct ArtifactConstructionPlan {
     numerical_contract_key: &'static str,
     numerical_realizations: Vec<NumericalRealization>,
     target_profile_key: &'static str,
+    /// Canonical descriptor bytes of the profile the plan was assessed against.
+    ///
+    /// ADR 0043 requires both the key and the exact descriptor: a key alone is
+    /// not evidence that a variant is legal on a device advertising that key.
+    target_profile_descriptor: Vec<u8>,
     entry_regions: Vec<RegionId>,
     routing_guard: HostExprId,
     lowering_providers: Vec<LoweringProviderIdentity>,
@@ -196,6 +201,11 @@ impl ArtifactConstructionPlan {
     /// Returns the target-bound program whose ABI contract this plan packages.
     pub(crate) const fn verified_program(&self) -> &KernelProgram {
         &self.verified_program
+    }
+
+    /// Returns the canonical descriptor bytes of the assessed target profile.
+    pub(crate) fn target_profile_descriptor(&self) -> &[u8] {
+        &self.target_profile_descriptor
     }
 }
 
@@ -783,6 +793,16 @@ pub(crate) fn build_artifact_plan(
             .map(|entry| entry.numerical)
             .collect(),
         target_profile_key: program.target_profile_key,
+        // Derived from the request's profile, which `verify_request` proves is
+        // the governed one, and which `verify_kernel_program_layers` proves the
+        // program and every scheduled region were bound to. So this is the
+        // descriptor of the profile the plan was assessed against rather than
+        // one recomputed from a matching key.
+        target_profile_descriptor: target_profile_descriptor(&request.target_profile()).map_err(
+            |_| ProgramError::Structure {
+                rule: "target-profile-descriptor",
+            },
+        )?,
         entry_regions: program
             .core
             .stages()

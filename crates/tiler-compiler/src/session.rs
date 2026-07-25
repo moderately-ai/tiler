@@ -158,6 +158,23 @@ impl PlanAlternative<'_> {
         &self.0.kernels
     }
 
+    /// Returns the canonical descriptor bytes of the profile this alternative
+    /// was assessed against.
+    ///
+    /// ADR 0043 requires a declared target profile to carry both its governed
+    /// key and its exact descriptor identity, because two profiles can
+    /// advertise one key and admit different candidates — so a key alone is not
+    /// evidence that this alternative is legal on a device presenting it.
+    ///
+    /// These bytes *are* the descriptor identity rather than a hash of it, so a
+    /// consumer wraps them in its own opaque-identity type. Emitting bytes
+    /// avoids minting a digest here and avoids a second identity that would
+    /// have to be kept in agreement with the bytes it summarizes.
+    #[must_use]
+    pub fn target_profile_descriptor(&self) -> &[u8] {
+        self.0.artifact_plan.target_profile_descriptor()
+    }
+
     /// Returns the lowering capabilities this alternative resolved.
     ///
     /// An artifact records which capabilities actually lowered its program;

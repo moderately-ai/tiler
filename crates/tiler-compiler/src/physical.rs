@@ -660,6 +660,18 @@ pub(crate) fn assess_region(
 /// so those axes carry a conservative compile-time ceiling of zero. Every axis is
 /// a compile-profile guarantee, keeping the bounded serial-Sum candidate provable
 /// without any later-phase query.
+/// Returns the canonical descriptor bytes of one target profile.
+///
+/// Derived from the same [`checked_target_profile`] the feasibility assessment
+/// uses, so the descriptor an artifact records is the profile a variant was
+/// actually assessed against rather than one recomputed from a key that
+/// happens to match.
+pub(crate) fn target_profile_descriptor(
+    target: &PrototypeTargetProfile,
+) -> Result<Vec<u8>, FeasibilityError> {
+    checked_target_profile(target).map(|profile| profile.canonical_descriptor())
+}
+
 fn checked_target_profile(
     target: &PrototypeTargetProfile,
 ) -> Result<CheckedTargetProfile, FeasibilityError> {

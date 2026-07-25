@@ -1,7 +1,7 @@
 ---
 id: carry-the-target-profile-descriptor-identity-into-the-plan
 title: Carry the target profile's descriptor identity into the plan
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: []
 paths: []
 tags: [implementation, compiler, artifact, identity]
-claimed_from: todo
-assignee: agent-coordinator
-lease_expires_at: 1784992968
 ---
 The third instance of one shape, found while building the first out-of-crate artifact assembler: a governed key reaches the plan and the exact identity beside it does not.
 
@@ -73,3 +70,21 @@ The correction above claimed "`ProfileIdentity` supplies `FeasibilityRuleSetRef`
 **Consequence — the ticket needs a third piece it did not name:** the feasibility rules need a governed key of their own, not just a version. Splitting `ProfileIdentity` into a target-profile identity and a feasibility-rule-set identity is the durable fix; `split-profile-and-feasibility-rule-identity` owns it, because doing it inside this ticket would mean changing every `FactProvenance` in the feasibility layer while also adding a descriptor encoding, and those fail for different reasons.
 
 **Descriptor subject, decided.** `TargetProfileDescriptorDigest` is an `opaque_identity!` accepting bounded non-empty bytes up to `MAX_OPAQUE_IDENTITY_BYTES = 1_024` (`keys.rs:28`), not a hash of a fixed width. So the compiler exposes the **canonical descriptor bytes** of the checked profile's facts and the consumer wraps them, rather than the compiler minting a hash. That avoids introducing a digest algorithm and a second identity that must be kept in agreement with the bytes it summarizes — the same argument that kept the signature out of the capability key. If a profile's canonical descriptor ever exceeds the bound, that is the point at which a digest becomes a real decision with a real reason, and it will fail closed rather than silently truncate.
+
+## Outcome
+
+**Done.** A caller outside `tiler-compiler` can build a `TargetProfileRef` — both halves, for the variant and for the payload compatibility contract — with no invented value. `Compilation::target_profile_key()` already gave the key; `PlanAlternative::target_profile_descriptor()` now gives the descriptor.
+
+**Ownership decision, stated as the ticket required: the compiler emits canonical descriptor bytes and the consumer wraps them; it does not mint a digest.** `TargetProfileDescriptorDigest` is an `opaque_identity!` accepting bounded non-empty bytes up to `MAX_OPAQUE_IDENTITY_BYTES = 1_024`, not a fixed-width hash, so nothing requires hashing here. Emitting bytes avoids introducing a digest algorithm in the compiler and avoids a second identity that would have to be kept in agreement with the bytes it summarizes — the same argument that kept the resolved signature out of the capability key in `name-the-resolved-lowering-capability`. The test asserts the descriptor fits the governed bound, so a profile that outgrows it fails closed at that assertion rather than silently truncating, and that is the point at which a digest becomes a real decision with a real reason.
+
+**What the descriptor covers.** `CheckedTargetProfile::canonical_descriptor` encodes a domain separator, the identity key, the rule version, and every fact's axis, bound, phase, authority, and validity scope — the whole of what makes one profile admit a candidate another rejects. Facts are already in the canonical `(axis, phase)` order the constructor enforces and are unique per pair, so the encoding is a function of the profile rather than of declaration order. It reuses `tiler_ir::identity`'s length framing, the module `relocate-abi-expressions-into-tiler-ir` consolidated.
+
+`FactProvenance` is deliberately excluded: it cites the profile's own `ProfileIdentity`, so folding it in would make the descriptor depend on a value derived from its own subject.
+
+`CapabilityAxis`, `FactAuthority`, and `FactValidityScope` gained governed tags written by exhaustive match rather than read from the discriminant (ADR 0074 convention 3). A descriptor is durable identity, so adding or reordering an axis must be a build error rather than a silent change to every descriptor ever produced.
+
+**The descriptor is the assessed profile, not a matching one.** It is derived through the same `checked_target_profile` the feasibility assessment uses, from the request's own profile — which `verify_request` proves is the governed one and which `verify_kernel_program_layers` proves the program and every scheduled region were bound to. So this is not a recomputation from a key that happens to agree.
+
+**Evidence.** New test `feasibility::tests::the_canonical_profile_descriptor_separates_profiles_sharing_a_key` asserts the property ADR 0043 actually needs: three profiles **sharing a key** — the baseline, one with a narrowed grid-axis bound, and one with an incremented rule version — produce three different descriptors, and the encoding is deterministic and domain-separated. A descriptor that only varied with the key would pass a weaker test and prove nothing. Full repository gate green.
+
+**Split out, not deferred.** `split-profile-and-feasibility-rule-identity` (p1) owns the conflation this ticket uncovered, and is now a dependency of `carry-the-metal-payload-in-an-artifact-envelope` in its own right: an assembler still cannot build a `FeasibilityRuleSetRef`, because the feasibility rules have a version and no governed key. That is a separate missing value from the one this ticket supplied, and it fails for a different reason.

@@ -32,7 +32,15 @@
 //! observable value; facts and requirements are stored sorted by their typed
 //! keys and every aggregate is emitted in a fixed canonical order.
 
+use tiler_ir::identity::{push_len, push_slice};
+
 use crate::explain::Quantity;
+
+/// Domain separator of a canonical target profile descriptor.
+///
+/// Trailing NUL so no descriptor can be a prefix of a differently-domained
+/// encoding, matching the framing the rest of the workspace's identities use.
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v1\0";
 
 /// Ordered capability availability phases (ADR 0043).
 ///
@@ -68,6 +76,29 @@ pub(crate) enum CapabilityAxis {
     LocalMemoryBytes,
     /// Barrier/collective synchronization operations.
     Barriers,
+}
+
+impl CapabilityAxis {
+    /// Returns the governed tag naming this axis in a canonical descriptor.
+    ///
+    /// Written by an exhaustive match rather than read from the discriminant,
+    /// so adding or reordering an axis is a build error here instead of a
+    /// silent change to every target profile descriptor ever produced
+    /// (ADR 0074 convention 3). A descriptor is durable identity: a profile
+    /// whose descriptor changed without its facts changing would claim to be a
+    /// different profile.
+    const fn tag(self) -> u8 {
+        match self {
+            Self::GridAxisThreads => 0x01,
+            Self::WorkgroupThreads => 0x02,
+            Self::BufferBindings => 0x03,
+            Self::IndexWidthBits => 0x04,
+            Self::DeviceAddressSpace => 0x05,
+            Self::StrictF32Arithmetic => 0x06,
+            Self::LocalMemoryBytes => 0x07,
+            Self::Barriers => 0x08,
+        }
+    }
 }
 
 /// How a candidate requirement is compared against a profile capability bound.
@@ -171,6 +202,21 @@ pub(crate) enum FactAuthority {
     LaunchInstance,
 }
 
+impl FactAuthority {
+    /// Returns the governed tag naming this authority in a canonical descriptor.
+    ///
+    /// Exhaustive for the same reason as [`CapabilityAxis::tag`].
+    const fn tag(self) -> u8 {
+        match self {
+            Self::GovernedProfile => 0x01,
+            Self::ArtifactEvidence => 0x02,
+            Self::DeviceRuntime => 0x03,
+            Self::PreparedKernel => 0x04,
+            Self::LaunchInstance => 0x05,
+        }
+    }
+}
+
 /// The scope over which a capability fact is valid.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FactValidityScope {
@@ -182,6 +228,20 @@ pub(crate) enum FactValidityScope {
     PreparedArtifact,
     /// Valid for one launch instance only.
     LaunchInstance,
+}
+
+impl FactValidityScope {
+    /// Returns the governed tag naming this scope in a canonical descriptor.
+    ///
+    /// Exhaustive for the same reason as [`CapabilityAxis::tag`].
+    const fn tag(self) -> u8 {
+        match self {
+            Self::PortableProfile => 0x01,
+            Self::DeviceInstance => 0x02,
+            Self::PreparedArtifact => 0x03,
+            Self::LaunchInstance => 0x04,
+        }
+    }
 }
 
 /// Versioned identity of a checked target profile.
@@ -347,6 +407,48 @@ impl CheckedTargetProfile {
     /// The checked capability facts, in canonical order.
     pub(crate) fn facts(&self) -> &[CapabilityFact] {
         &self.facts
+    }
+
+    /// Returns this profile's canonical descriptor bytes.
+    ///
+    /// These bytes *are* the profile's descriptor identity, not a hash of it.
+    /// `tiler_artifact::program::TargetProfileDescriptorDigest` is a bounded
+    /// opaque identity rather than a fixed-width digest, so a consumer wraps
+    /// these directly. Emitting bytes rather than a hash avoids introducing a
+    /// digest algorithm here and avoids a second identity that would have to be
+    /// kept in agreement with the bytes it summarizes.
+    ///
+    /// ADR 0043 is why this exists at all: a profile *key* is not evidence that
+    /// a variant is legal on a device advertising that key, because two
+    /// profiles can share a key and differ in their facts. The descriptor is
+    /// what distinguishes them.
+    ///
+    /// # What it covers, and what it deliberately does not
+    ///
+    /// The identity key, the rule version, and every fact's axis, bound, phase,
+    /// authority, and validity scope — the whole of what makes one profile
+    /// admit a candidate another rejects. Facts are already in the canonical
+    /// `(axis, phase)` order the constructor enforces and are unique per pair,
+    /// so the encoding is a function of the profile rather than of the order it
+    /// was declared in.
+    ///
+    /// A fact's [`FactProvenance`] is excluded: it cites this profile's own
+    /// identity, so folding it in would make the descriptor depend on a value
+    /// derived from the descriptor's own subject.
+    pub(crate) fn canonical_descriptor(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        push_slice(&mut bytes, PROFILE_DESCRIPTOR_DOMAIN);
+        push_slice(&mut bytes, self.identity.key().as_bytes());
+        bytes.extend_from_slice(&self.identity.version().to_be_bytes());
+        push_len(&mut bytes, self.facts.len());
+        for fact in &self.facts {
+            bytes.push(fact.axis.tag());
+            bytes.extend_from_slice(&fact.bound.to_be_bytes());
+            bytes.push(fact.phase.tag());
+            bytes.push(fact.authority.tag());
+            bytes.push(fact.validity.tag());
+        }
+        bytes
     }
 
     /// Resolves one axis against the facts available through `available_phase`.
@@ -797,6 +899,63 @@ mod tests {
             ],
         )
         .unwrap()
+    }
+
+    /// The descriptor distinguishes profiles a key alone cannot tell apart.
+    ///
+    /// ADR 0043's whole reason for requiring a descriptor beside the key is
+    /// that two profiles can advertise one key and admit different candidates.
+    /// Each pair below shares a key and must not share a descriptor.
+    #[test]
+    fn the_canonical_profile_descriptor_separates_profiles_sharing_a_key() {
+        let baseline = baseline_profile();
+        let descriptor = baseline.canonical_descriptor();
+
+        assert_eq!(
+            descriptor,
+            baseline_profile().canonical_descriptor(),
+            "the descriptor is a function of the profile, not of when it was built",
+        );
+        assert!(
+            descriptor.starts_with(&(PROFILE_DESCRIPTOR_DOMAIN.len() as u64).to_be_bytes()),
+            "the descriptor is domain-separated and length-framed",
+        );
+
+        // A differing bound on one axis: same key, same axes, different profile.
+        let id = identity();
+        let mut facts: Vec<_> = baseline.facts().to_vec();
+        facts[0] = compile_fact(id, CapabilityAxis::GridAxisThreads, 1_024);
+        let narrower = CheckedTargetProfile::new(id, facts).unwrap();
+        assert_eq!(narrower.identity().key(), baseline.identity().key());
+        assert_ne!(
+            narrower.canonical_descriptor(),
+            descriptor,
+            "a profile that admits fewer candidates must not share a descriptor",
+        );
+
+        // A differing rule version under the same key: the rules that assessed
+        // the facts changed even though the facts did not.
+        let revised_id = ProfileIdentity::new(id.key(), id.version() + 1);
+        let revised = CheckedTargetProfile::new(
+            revised_id,
+            baseline
+                .facts()
+                .iter()
+                .map(|fact| compile_fact(revised_id, fact.axis, fact.bound))
+                .collect(),
+        )
+        .unwrap();
+        assert_ne!(revised.canonical_descriptor(), descriptor);
+
+        // The consumer wraps these bytes directly rather than hashing them, so
+        // they must fit the artifact layer's opaque-identity bound. If a profile
+        // ever outgrows it, that is when a digest becomes a real decision with a
+        // real reason -- and it fails here rather than silently truncating.
+        assert!(
+            descriptor.len() <= 1_024,
+            "descriptor is {} bytes, past the governed opaque-identity bound",
+            descriptor.len(),
+        );
     }
 
     fn baseline_proposal(candidate: &'static str, grid_threads: u64) -> FeasibilityProposal {
