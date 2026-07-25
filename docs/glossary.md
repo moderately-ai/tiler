@@ -27,7 +27,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Canonical identity | Opaque newtype over the deterministic canonical bytes identifying one subject; the bytes are read only through `as_bytes()` and are the sole input to equality, ordering, hashing, dedup, and cache keying. |
 | Byte offset | Offset used by a buffer-binding API, measured in bytes. |
 | Candidate region set | Overlapping region candidates considered by program planning; a hypergraph may be used as its internal index. |
-| Boundary enforcer | Explicit materialization, layout conversion, cast, or copy that satisfies a boundary requirement. |
+| Boundary enforcer | Explicit materialization, layout conversion, or copy that satisfies a boundary requirement. Value-preserving by construction: a dtype cast is a semantic operation, not an enforcer. |
 | Boundary guarantee | Layout/materialization/storage contract a region implementation provides for an outgoing value. |
 | Boundary requirement | Layout/materialization/storage contract a region implementation requires of an incoming value. |
 | Buffer plan | Kernel-program mapping from logical values/views to allocation identities and verified lifetime intervals. |
