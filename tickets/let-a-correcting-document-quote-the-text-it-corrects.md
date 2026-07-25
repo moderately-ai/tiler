@@ -1,7 +1,7 @@
 ---
 id: let-a-correcting-document-quote-the-text-it-corrects
 title: The quotation validator rejects a document that quotes the staleness it is fixing
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: []
 paths: []
 tags: [documentation, gate, navigation]
+claimed_from: todo
+assignee: agent-nav2
+lease_expires_at: 1784999640
 ---
 **Fact — observed on `main`, not hypothesised.** Merging the new `validate_quotations` phase together with ADR 0080 turned the repository gate red:
 

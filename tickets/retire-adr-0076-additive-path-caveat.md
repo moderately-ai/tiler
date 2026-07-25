@@ -1,7 +1,7 @@
 ---
 id: retire-adr-0076-additive-path-caveat
 title: Retire ADR 0076's additive-path re-establishment caveat
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [extend-the-numerical-probe-to-an-additive-path-kernel, broaden-the-apple-numerical-probe-matrix, repoint-adr-0076-evidence-at-the-numerical-record]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics, metal]
+claimed_from: todo
+assignee: agent-dec2
+lease_expires_at: 1784999640
 ---
 `docs/decisions/0076-declare-target-honourable-numerical-realizations.md` states, in two places, that one re-verified observation is not reproduced by the checked-in harness.
 

@@ -1,7 +1,7 @@
 ---
 id: prototype-proof-case-sidecar
 title: Implement the proof-case evidence sidecar
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-neutral-artifact-codec, prototype-optimizer-conformance-gate]
 related: []
@@ -9,5 +9,8 @@ scopes: [implementation/reference, implementation/artifact, implementation/metal
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, testing, artifact, numerics]
+claimed_from: todo
+assignee: agent-sidecar
+lease_expires_at: 1784999640
 ---
 Implement a separate versioned proof sidecar containing stable case keys, bit-preserving inputs, normative expected bytes, semantic/numerical/reference identities, digests, and exact envelope association. Validate limits, uniqueness, corruption and mismatch; never make it runtime artifact semantics.
