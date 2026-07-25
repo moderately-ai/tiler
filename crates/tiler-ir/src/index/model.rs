@@ -102,6 +102,7 @@ pub(super) struct AccessData {
 pub(super) enum BoundsProof {
     VacuousEmptyDomain,
     Interval,
+    ProvedExtentEquality,
     Exhaustive { points: u64 },
 }
 #[derive(Clone, Copy, Debug)]
@@ -803,6 +804,7 @@ impl<'a> TensorAccessRef<'a> {
         match self.data.bounds_proof {
             BoundsProof::VacuousEmptyDomain => BoundsProofView::VacuousEmptyDomain,
             BoundsProof::Interval => BoundsProofView::Interval,
+            BoundsProof::ProvedExtentEquality => BoundsProofView::ProvedExtentEquality,
             BoundsProof::Exhaustive { points } => BoundsProofView::Exhaustive { points },
         }
     }
@@ -828,6 +830,18 @@ pub enum BoundsProofView {
     VacuousEmptyDomain,
     /// Exact interval propagation proved every coordinate in bounds.
     Interval,
+    /// Every coordinate *is* a domain dimension whose extent the environment
+    /// proves equal to the axis it indexes.
+    ///
+    /// A structural argument rather than a numeric one, and it is what a
+    /// caller-sized program rests on: a coordinate that is `Dimension(d)`
+    /// ranges over `[0, extent(d))` by construction, so when the environment
+    /// proves `extent(d)` and the axis are one extent, the coordinate is in
+    /// bounds in *every* model — with no bound known on either. Interval
+    /// propagation cannot express this, because a wholly undetermined symbol's
+    /// interval is the entire extent domain and no comparison against it
+    /// closes.
+    ProvedExtentEquality,
     /// Finite enumeration proved every coordinate in bounds.
     Exhaustive {
         /// Enumerated domain points.
