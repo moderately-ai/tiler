@@ -56,6 +56,23 @@ and the alternatives encode different valid priorities. Questions must be:
 - explicit about point and counterpoint, not only a recommendation; and
 - accompanied by a recommendation and the evidence behind it.
 
+**Before presenting options, eliminate the ones that do not survive.** Test each
+candidate against correctness, performance, and long-term maintainability and
+discard every one that fails; if one survives, there is no question and asking
+wastes Tom's time on a decision already made by the constraints. Run that
+elimination explicitly rather than assuming it — twice this session an option
+was offered that a single check would have removed, once because a decoded
+artifact binding buffers by slot position could not verify the position meant
+what it assumed, and once because an adapter could not learn which numerical
+realization its fallback had delivered. Both would have returned a silently
+wrong result, which is not a trade-off but a defect.
+
+Be especially suspicious of the cheaper option. A shortcut presented as a
+legitimate alternative is the common shape of this error: it looks like a
+trade-off because it costs less, and the cost it saves is the part that makes
+the answer correct. State the derivation that eliminated a candidate, so a
+reader can refute the elimination rather than only the conclusion.
+
 Pause for Tom's answer after asking such a question. Do not bury several
 decisions in a long design dump. If Tom asks for more detail, walk through the
 example step by step and distinguish node semantics, graph structure, logical
