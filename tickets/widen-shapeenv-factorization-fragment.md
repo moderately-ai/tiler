@@ -83,3 +83,13 @@ constraint: p == outer * tile
 **Counterpoint, stated plainly.** If Tiler is meant to ship one artifact that serves arbitrary runtime shapes without recompilation — a reasonable product goal that no accepted decision currently rules out — then the refusal is a real limit and the third status is the honest way to represent it. Choosing refusal now does not preclude the third status later, but it does mean consumers get written against a two-outcome contract and would all need revisiting.
 
 **If refusal is chosen, this splits into:** a ticket making compile-time-available bindings determined for fragment membership (with the artifact-identity consequence recorded), and no change to the arithmetic fragment at all.
+
+## Resolved by the coordinator — 2026-07-25
+
+**Refuse launch-dynamic factorizations; close the availability-phase gap instead.** Auto-resolved: the alternative does not survive the correctness rules.
+
+Admitting them under an explicit third `Undecided` status would put a shape environment into a state the contract calls invalid while reporting that it does not know — and `docs/ir.md` makes contradiction rejection normative, not best-effort. `AGENTS.md` requires the unsupported to be rejected explicitly rather than approximated, and the constraint half was deliberately built narrow-but-COMPLETE for exactly this reason: a procedure that can answer 'unknown' is one that can miss a contradiction.
+
+**The real defect the agent found is the one to fix.** `check_fragment` reads only `BindingSource::StaticValue`, even though `RootBinding` already carries an `AvailabilityPhase`. So a caller parameter known at `CompileProfile` is refused today despite being arithmetically identical to the literal case that is admitted. That is a phase gap, not a fragment limit, and closing it admits the cases that should always have been in the fragment without weakening the procedure.
+
+Rescope this ticket to that fix. A genuinely launch-dynamic factorization stays refused, explicitly.

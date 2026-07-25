@@ -87,3 +87,13 @@ This reasoning is now recorded in the `tiler_ir::schedule` module documentation 
 ### Split out
 
 `finish-consolidating-tiler-ir-length-framing` — found while reading `encode_identity` for the identity question. `crates/tiler-ir/src/identity.rs` was meant to be the one definition of canonical length framing, and three private copies remain in the crate. `schedule/model.rs` has four raw `as u64` narrowing casts, which is the exact form `identity.rs` documents as the hazard it removed. Latent rather than live on the gate's 64-bit profiles, and deliberately not fixed here so that a unification ticket does not silently rebaseline identity encoders.
+
+## Resolved by the coordinator — 2026-07-25
+
+**Do not unify. Rename the schedule type instead.** Auto-resolved rather than escalated, because only one option survives the architectural guardrails and a question with one admissible answer is not a decision.
+
+The agent that read both modules in full found the ticket's premise does not survive: `index` is an open SSA symbolic region over a registry-governed vocabulary, `schedule` is a closed enumerated physical descriptor. Their proof descriptors are not parallel because they answer different questions, and `physical.rs` never holds a `VerifiedIndexRegion` to compose with.
+
+`AGENTS.md` requires symbolic access relations and physical schedules to stay distinct representations. Merging them crosses that guardrail to remove a name collision, which the glossary sweep has already shown is fixable by naming. The accessor half is separately settled and recorded: the two sit on opposite sides of a verification boundary, so comparing `ScheduledRegion`'s fields to `VerifiedIndexRegion`'s accessors compares an input to an output.
+
+Remaining work is the rename, which carries no decision.

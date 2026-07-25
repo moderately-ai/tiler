@@ -29,3 +29,9 @@ Remove the `#[allow(dead_code)]` on `ArtifactConstructionPlan::feasibility_rule_
 ## Closes when
 
 An out-of-crate consumer can build a `tiler_artifact::program::FeasibilityRuleSetRef` from `tiler_compiler::session` alone with no invented value, a test on the session boundary proves it (as `an_alternative_names_its_capabilities_and_exposes_its_abi_inputs` does for the capability pair), and `uv run --locked python scripts/check_repository.py` passes.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: promote, and the pair goes on `Compilation`, not `PlanAlternative`.** The ticket left the placement open. `TargetProfileRef` and `FeasibilityRuleSetRef` vary by neither plan nor alternative, so siting them per-alternative would invite a reader to believe they can differ between alternatives of one compilation — a false affordance in a type. `Compilation` is where a compilation-invariant belongs.
+
+Move the existing `PlanAlternative::target_profile_descriptor` accessor to match, so the two halves of `TargetProfileRef` are not split across two views. Unblocks `carry-the-metal-payload-in-an-artifact-envelope`, which had three of its four required identities.

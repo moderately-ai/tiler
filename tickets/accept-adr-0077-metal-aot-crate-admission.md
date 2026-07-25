@@ -35,3 +35,9 @@ The record is deliberate about what it does *not* supersede, and accepting it ac
 
 - **Accepted.** Set `decision_status: "accepted"`. `scripts/docs.py`'s graph validation then requires the accepted decision to carry `applies_to` and `evidence`, which ADR 0077 already has; ADR 0056 is already `decision_status: "superseded"` and already the target of `supersedes` edges from ADRs 0065, 0070, and 0077, so no further metadata moves. `docs/architecture.md`'s paragraph naming this record as proposed becomes stale in the same moment and must be rewritten to state the accepted packaging profile directly; that edit is `contracts/foundation`, so file it as its own ticket if the accepting change does not hold that scope.
 - **Rejected.** Close with `tkt close` rather than `done`, so it does not satisfy dependents. Rejection does not restore the workspace to ADR 0056's retained clause — the crate exists and is pinned — so a rejection must be followed immediately by a ticket that either removes the crate or writes a different superseding record. Do not leave the contradiction undisclosed.
+
+## Decision — Tom, 2026-07-25
+
+**Accepted.** `decision_status` moves `proposed` → `accepted`.
+
+Two consequences to carry out rather than assume: the disclosure at `docs/architecture.md:350` is no longer required by the proposed-decision gate (Check A) and may be reworded to cite an accepted decision; and this ADR's own clause that its admission must not be cited as precedent stays in force — it is the reason `admit-the-device-free-runtime-validation-crate` is a separate question rather than a corollary.

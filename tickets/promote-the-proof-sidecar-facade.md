@@ -30,3 +30,9 @@ The proof-case evidence sidecar landed as a crate-private draft authority in `cr
 **Two things the contract must state, whichever document takes it.** That the sidecar is producer evidence and never artifact semantics — a sidecar names an artifact, an artifact never names a sidecar, and an artifact validates and dispatches with none present. And the measurement boundary the implementation already pins as a test: a validated sidecar is evidence of *integrity and association* and not of *authenticity*, because every digest and identity in it is derived from its own content, so a re-sealed forgery validates and binds. A consumer that treats sidecar payloads as anything but test data has read a guarantee the container does not make.
 
 **Fact — one union property crosses the two containers and is checked in only one place.** `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another` checks all seven governed domains together, because one algorithm hashes both containers in one process; the envelope codec's own three-domain test carries no note pointing at it. Whoever takes this ticket should decide whether that cross-reference belongs in the codec's test or in the contract.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: promote the proof-sidecar facade.** The container is crate-private today and the producer and runner are different crates by construction, so a public facade is the only shape that lets a case written by one be verified by the other. This unblocks `prototype-metal-aot-slice`, which was otherwise dispatchable straight into an unreachable API.
+
+The container's stated limit does not change with promotion: authenticity is not claimed, a re-sealed forgery validates and binds, and `a_forged_case_is_indistinguishable_from_a_real_one_by_the_container_alone` exists so a reader cannot infer a stronger guarantee from a public API than the private one offered.

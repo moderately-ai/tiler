@@ -39,3 +39,13 @@ The checked-in probe `spikes/macro-environment/run-family-cfg.sh` already demons
 Do not infer the consumer family from the proc-macro host. ADR 0049 rejects it, and the measurement behind that rejection is that `TARGET` and `CARGO_CFG_TARGET_*` were absent in the measured macro process.
 
 Do not let a nonmatching target receive another family's bytes, and do not rely on a wrong-family payload failing loudly. `docs/research/apple-targets/numerical-behaviour.md` records that an `air64-apple-ios16.0` metallib loads and dispatches on the macOS host GPU without error, returning results; the load does not fail. That is why `docs/research/apple-targets/artifact-compatibility.md` requires runtime selection "by declared family and compatibility, never by trial-loading every metallib".
+
+## Decision — Tom, 2026-07-25
+
+**Decided: one envelope carrying N payloads, not N envelopes.** A selection naming several Apple families produces ONE artifact with one payload descriptor per family, each with its own compatibility contract. A consumer's `#[cfg]` selects a payload within an artifact it already holds.
+
+**Why, in the terms that decided it:** one artifact identity per compilation means the cache key covers the whole selection and a partial delivery is impossible by construction. N envelopes would leave the selection itself with no identity — N artifacts and nothing binding them as one compilation, so 'these came from one program' becomes an external convention rather than a checked fact. That is the same class of gap that produced three separate identity defects this week, and it would additionally make a partial cache hit representable, which would then have to be made impossible or explicitly refused.
+
+**It matches what already exists:** `push_carried_payload` takes a per-payload `compatibility: TargetProfileRef`, which exists precisely so payloads within one artifact can target different profiles.
+
+**Accepted cost:** a consumer needing one family carries bytes for all of them. That is a delivery-time filtering concern, not an identity one, and may be addressed later without moving any artifact identity.

@@ -38,3 +38,9 @@ Three outcomes are available and each has a different consequence for the graph:
 - **Rejected.** Close this ticket with `tkt close` rather than `done`, so it does not satisfy its dependents, and close the propagation ticket too — that ticket has no deliverable that survives the record being rejected.
 
 `docs/architecture.md` and `docs/operation-extensions.md` currently state nothing that ADR 0078 decides, which is the correct state while it is proposed and is what its `implementation_status: "partial"` reports. Do not treat this ticket as blocked on anything but the decision itself.
+
+## Decision — Tom, 2026-07-25
+
+**Accepted.** `decision_status` moves `proposed` → `accepted`. This releases `propagate-extension-seam-classification-into-governed-contracts`, which was correctly parked and refusing to dispatch: writing a proposed ADR into a normative contract is precisely what the new Check A now refuses.
+
+Repoint that ticket off the acceptance node and return it to the ready pool.

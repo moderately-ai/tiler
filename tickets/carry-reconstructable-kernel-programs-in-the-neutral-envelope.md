@@ -98,3 +98,13 @@ Its `scopes` gained `contracts/artifacts`, because either answer amends `docs/ar
 The ADR-side propagation is **not** this ticket's. `settle-adr-0071-artifact-decoding-through-ir-builders` already owns the identical clause in ADR 0071's Decision and its "Unrealized clause" paragraph, and the two must give the same answer.
 
 If the decision is the dispatch record, the encoding work the two gaps above name is a follow-up ticket over `implementation/artifact` and `contracts/artifacts` and is deliberately **not** filed yet: filing an implementation ticket for one branch of an undecided question would convert a proposal into a plan.
+
+## Decision — Tom, 2026-07-25
+
+**Decided: a decoded envelope is a DISPATCH RECORD, not a reconstruction.** It carries entries, bindings and launch expressions as encoded facts a decoder projects, validated against the packaged program's identity digest. It never rebuilds a `VerifiedKernelProgram`.
+
+Full IR reconstruction was excluded on evidence rather than preference: `KernelProgramBuilder::new` requires a `SemanticProgram`, which requires a frozen registry of `Arc<dyn OperationInferencer>` — behaviour, not data. No serialization format carries that, so the option was impossible at any encoding cost rather than merely expensive.
+
+**The cost is accepted with its weakness stated.** A decoded envelope currently cannot say which buffer a slot addresses: `BindingData` carries no value or view reference, and the stage reaches the envelope only as an opaque content key. So this needs a new encoded fact plus a schema step, not an accessor — the ticket's earlier 'only a projection' inference was retracted for exactly this reason. A carried value reference is asserted by the producer rather than re-derived by the decoder, and that asymmetry must be stated wherever the record is documented rather than left for a reader to discover.
+
+This is what lets a loader dispatch without linking `tiler-compiler` or rebuilding a semantic graph, which is the artifact layer's stated purpose.

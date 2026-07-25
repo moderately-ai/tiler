@@ -70,3 +70,9 @@ So the IR does not merely withhold the pairing; it publishes a derived ordering 
 The one substantive argument for the pairing iterator is that it makes the correspondence unmissable rather than something a consumer has to know to ask for. That is real but is better served by documenting the accessor on `buffers()` than by breaking it.
 
 **Split out.** `retire-the-metal-first-use-buffer-binding-workaround` carries the `tiler-metal` half — the first-use `[[buffer(N)]]` assignment and the `unreferenced-buffer-parameter` rejection that exist only because the IR withholds the ordinal. It is a different scope (`implementation/metal`) and is blocked on this ticket's public-surface decision, so it could not land here regardless.
+
+## Resolved by the coordinator — 2026-07-25
+
+**Take the additive `buffer_id` accessor; do not change `buffers()`.** Auto-resolved on maintainability: changing `buffers()` churns eight call sites to deliver what an added accessor delivers at none, and a signature change to a widely-used reader is the kind of edit whose blast radius is discovered rather than planned.
+
+The promotion itself still needs the owner's approval under ADR 0075 and is not covered by the four promotions approved today. Land the accessor and leave the ticket in `review` naming that as the remaining step.

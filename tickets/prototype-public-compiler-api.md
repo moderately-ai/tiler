@@ -63,3 +63,9 @@ Any consequential public or cross-crate crate, module, trait, type, or call-site
 **`PlanAlternative::selected_capabilities() -> impl ExactSizeIterator<Item = SelectedCapability<'_>>`** (commit `d7ba751`). Exposes provider identity, the governed capability key, and the capability revision. The question for review is key ownership: the compiler mints the key and the consumer wraps it, rather than the compiler exposing family and operation for a consumer to compose, because the key enters artifact identity under ADR 0072.
 
 **`KernelProgram::core()` lost `#[cfg(test)]`.** Its own doc comment deferred to "a reviewed public compiler facade"; that facade is `session`, which is itself still a draft, so the accessor's premise is only as accepted as this ticket is.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: promote the compiler boundary.** `pub mod session` in its current shape — `compile_governed`, `Compilation`, `PlanAlternative`, `ExplainReport`, `CompileFailure`, `AbiConstruction`, `AbiEntry`, `SelectedCapability` — together with `pub mod abi` in `tiler-ir`. This closes the ADR 0075 always-ask review that has been gating the entire frontend axis: `prototype-inline-proc-macro-frontend` and everything behind it are now dependency-satisfied on this point.
+
+The seven deferred public-surface questions this ticket carries are **not** answered by the promotion. Explain stays an opaque handle with only `render()`, which is the shape that answers none of them by default, and any future widening is a separate reviewed step.

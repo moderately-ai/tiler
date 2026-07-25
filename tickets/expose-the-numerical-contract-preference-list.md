@@ -21,3 +21,7 @@ tags: [implementation, numerics, api]
 ## Closes when
 
 Either the public boundary gains a reviewed way to state an ordered preference and both `#[allow(dead_code)]` attributes are removed, or ADR 0076's open question is settled the other way and the crate-internal list is withdrawn with the record amended to say so. `uv run --locked python scripts/check_repository.py` passes.
+
+## Decision — Tom, 2026-07-25
+
+**Approved: promote.** The capability is implemented, resolved, subject-bound and tested; only the public spelling was missing. Remove the two `#[allow(dead_code)]` that name this ticket — implemented-and-tested capability sitting unreachable behind a dead-code allow is exactly the state that decays into nobody knowing whether it still works.
