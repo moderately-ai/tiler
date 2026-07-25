@@ -369,24 +369,55 @@ identity.
 
 ## Dependency direction
 
+The pipeline below is drawn as **production and consumption**. Every arrow means
+that the value named beside it flows from the component that produces it to the
+component that consumes it, and no arrow is a Cargo dependency edge.
+
 ```text
-frontend integrations ─► tiler-ir ◄─ tiler-compiler
-                              ▲              │
-                              │              ▼
-                        public op       verified IR products
-                        definitions       │             │
-                                          ▼             ▼
-                                   tiler-artifact   backend emitters
-                                          ▲             │
-                                          │             ▼
-                                  runtime adapters  target AOT tools
+frontend integrations      public operation definitions
+          │                              │
+          │ semantic tensor graph        │ registered capabilities
+          └──────────────┬───────────────┘
+                         ▼
+                      tiler-ir
+                         │
+                         │ compilation request
+                         ▼
+                   tiler-compiler
+                         │
+                         │ verified IR products
+              ┌──────────┴──────────┐
+              ▼                     ▼
+        tiler-artifact       backend emitters
+              │                     │
+              │ artifact            │ emitted target source
+              ▼                     ▼
+       runtime adapters      target AOT tools
 ```
 
-The runtime adapter must not link the optimizer merely to execute a compiled
-artifact. Backend emitters do not own frontend syntax or runtime storage
-objects. Target AOT tooling owns external compiler invocation and caching. The
-compiler core must not know about Candle storage objects, einops syntax, or a
-particular artifact-delivery workflow.
+**Flow direction and dependency direction are frequently opposite, which is why
+this section draws only one of them.** A runtime adapter consumes an artifact
+but *depends on* `tiler-artifact`; a backend emitter produces source that target
+AOT tooling consumes, while the only Cargo edge between those two crates today
+runs from the emitter to the tooling and exists solely as a development
+dependency. Reading a flow arrow as a dependency claim inverts the first case and
+asserts, in the second, exactly the normal edge the packaging profile forbids.
+
+Intra-workspace Cargo edges belong to the accepted packaging profile above, and
+`scripts/check_workspace.py` pins every package's complete normal and development
+dependency list, so that block is a checked contract and this section is
+deliberately not a second copy of it. The emitter/AOT pair in particular must not
+be read here as a dependency claim in either direction: the `tiler-metal` →
+`tiler-metal-aot` edge is development-only for the two reasons the profile
+states, and the eventual `tiler-metal-aot` → `tiler-metal` production direction
+is reserved and unbuilt.
+
+What this section does constrain is which components may know about which,
+including roles that no workspace crate has yet. The runtime adapter must not
+link the optimizer merely to execute a compiled artifact. Backend emitters do not
+own frontend syntax or runtime storage objects. Target AOT tooling owns external
+compiler invocation and caching. The compiler core must not know about Candle
+storage objects, einops syntax, or a particular artifact-delivery workflow.
 
 ## Proposed initial Rust/Metal integration composition
 

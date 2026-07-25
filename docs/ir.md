@@ -569,10 +569,15 @@ Reduce
 ```
 
 Program inputs are declarations rather than operation invocations. The
-operation list is illustrative rather than a closed Rust enum. In particular,
-an admitted `Gelu` key pins its exact formula or decomposition and every
-subordinate transcendental contract; erf-GELU and a tanh approximation are not
-interchangeable implementations of an unspecified node. An operation
+operation list is illustrative rather than a closed Rust enum.
+
+**An illustrative name is prose, and a governed key is an identity; the spelling tells you which.** The names in that list denote operation *families* in running text and none of them is an operation key. A governed key is always written `namespace::name@version` — the rendering `OpKey`'s `Display` produces — so the two never have to be distinguished by context: `tiler::add-f32@1` later in this section is a key, and `FloatAdd` above is not. Several placeholders sit deliberately close to a real identifier without being one. `FloatAdd` and `Multiply` name families that `tiler::add-f32@1` and `tiler::multiply-f32@1` currently realize for a single dtype, and `F32Add` and `F32Multiply` are the typed authoring facades over those two keys rather than third names for the families. Renaming a placeholder to match a key would assert a correspondence that does not hold, since a family is broader than any one key that realizes part of it.
+
+In particular, an admitted `Gelu` key pins its exact formula or decomposition and every subordinate transcendental contract; erf-GELU and a tanh approximation are not interchangeable implementations of an unspecified node. The placeholder pins none of that, which is the difference the spelling rule above exists to keep visible.
+
+**This document states what an operation means, never which operations exist.** The registered inventory is whatever a compilation request's frozen operation registry resolves; per-family status, evidence, and remaining work belong to the [operation-family support matrix](roadmap.md#operation-family-support-matrix). A placeholder appearing here is not a support claim, not a reservation, and not a commitment to that spelling — the matrix records, for example, that no `Cast`, `Reindex`, or `Broadcast` key exists, which this list neither contradicts nor implies.
+
+An operation
 invocation is a graph node; its axes, reduction kind, accumulator dtype, and
 other meaning-defining parameters are canonical semantic attributes. Shape,
 result dtype, and constraints are inferred semantic facts. Layout,
