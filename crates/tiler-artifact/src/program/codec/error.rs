@@ -79,6 +79,8 @@ pub(crate) enum TagSubject {
     BinaryOperation,
     /// The purpose of one envelope section.
     SectionKind,
+    /// Whether an unrecognizing reader may skip one envelope section.
+    SectionDisposition,
     /// Whether one backend payload carries its content in this envelope.
     PayloadContent,
     /// A Boolean field encoded as one byte.
@@ -236,6 +238,29 @@ pub(crate) enum ArtifactCodecError {
         /// Encoded major version.
         major: u16,
         /// Encoded minor version.
+        minor: u16,
+    },
+    /// A section descriptor claims a skip permission its purpose does not have.
+    ///
+    /// The disposition is carried for a reader that does not recognize the
+    /// purpose. A reader that *does* recognize it owns the answer, so a
+    /// descriptor disagreeing with it is asserting a skip permission rather
+    /// than reporting one.
+    SectionDispositionMismatch {
+        /// Ordered section identifier.
+        section: u32,
+        /// Disposition tag the descriptor declared.
+        declared: u8,
+        /// Disposition tag the recognized purpose carries.
+        expected: u8,
+    },
+    /// A section's declared content schema is not the one its purpose carries.
+    UnsupportedSectionSchema {
+        /// Ordered section identifier.
+        section: u32,
+        /// Declared major version.
+        major: u16,
+        /// Declared minor version.
         minor: u16,
     },
     /// A section reference names a section whose governed purpose is wrong.
@@ -483,6 +508,8 @@ impl Error for ArtifactCodecError {
             | Self::BadPayloadMetadataDomain
             | Self::UnsupportedPayloadMetadataSchema { .. }
             | Self::SectionPurposeMismatch { .. }
+            | Self::SectionDispositionMismatch { .. }
+            | Self::UnsupportedSectionSchema { .. }
             | Self::PayloadIdentityMismatch { .. }
             | Self::TotalLengthMismatch { .. }
             | Self::UnsupportedEnvelopeFormat { .. }

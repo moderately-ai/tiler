@@ -66,11 +66,22 @@ impl DigestAlgorithm {
 
     /// Digests `bytes` under an explicit domain separator.
     pub(super) fn digest(self, domain: &[u8], bytes: &[u8]) -> Digest {
+        self.digest_parts(&[domain, bytes])
+    }
+
+    /// Digests the concatenation of `parts` in order.
+    ///
+    /// The caller owns unambiguity. Every use here opens with a governed domain
+    /// separator and follows it with fixed-width qualifiers before any
+    /// variable-length run, so no two distinct part sequences can produce one
+    /// pre-image.
+    pub(super) fn digest_parts(self, parts: &[&[u8]]) -> Digest {
         match self {
             Self::Sha256 => {
                 let mut state = Sha256::new();
-                state.update(domain);
-                state.update(bytes);
+                for part in parts {
+                    state.update(part);
+                }
                 Digest(state.finish())
             }
         }

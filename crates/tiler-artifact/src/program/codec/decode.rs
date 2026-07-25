@@ -43,8 +43,8 @@ use super::super::{
 use super::digest::{Digest, DigestAlgorithm};
 use super::encode::{
     CANONICAL_ENCODING, ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN,
-    MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES, MAX_MANIFEST_BYTES,
-    SECTION_DIGEST_DOMAIN, encode,
+    MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES, MAX_MANIFEST_BYTES, encode,
+    section_digest,
 };
 use super::error::{
     ArtifactCodecError, CodecLimitKind, ComponentSchemaKind, OrderedSubject, ReferenceSubject,
@@ -53,9 +53,9 @@ use super::error::{
 use super::model::{
     AdmissionProvenanceSubject, ArtifactEnvelope, EntryRow, MAX_FEATURES, MAX_INTERFACE_ENTRIES,
     MAX_INTERFACE_SHAPE_RANK, MAX_SECTION_BYTES, MAX_SECTIONS, MAX_TEXT_BYTES, NumericalFacts,
-    PayloadSections, ReachedDefinitionsSubject, SUPPORTED_FEATURES, Section, SectionKind,
-    SemanticGraphSubject, SemanticSubjects, StageSubject, VariantRow, canonical_expression_order,
-    expression_keys, ordinal, position,
+    PayloadSections, ReachedDefinitionsSubject, SUPPORTED_FEATURES, Section, SectionDisposition,
+    SectionKind, SemanticGraphSubject, SemanticSubjects, StageSubject, VariantRow,
+    canonical_expression_order, expression_keys, ordinal, position,
 };
 use super::validate::validate;
 
@@ -201,15 +201,16 @@ fn read_sections(
             });
         }
         let content = cursor.take(framed)?;
-        if algorithm.digest(SECTION_DIGEST_DOMAIN, content) != descriptor.digest {
+        let section = Section {
+            kind: descriptor.kind,
+            bytes: content.to_vec(),
+        };
+        if section_digest(algorithm, &section) != descriptor.digest {
             return Err(ArtifactCodecError::SectionDigestMismatch {
                 section: declared_id,
             });
         }
-        sections.push(Section {
-            kind: descriptor.kind,
-            bytes: content.to_vec(),
-        });
+        sections.push(section);
     }
     Ok(sections)
 }
@@ -288,19 +289,7 @@ fn parse_manifest(bytes: &[u8]) -> Result<ParsedManifest, ArtifactCodecError> {
     let expressions = parse_expressions(&mut cursor)?;
     let variants = parse_variants(&mut cursor, expressions.len(), payloads.len())?;
 
-    let sections = cursor.vec(MAX_SECTIONS, CodecLimitKind::Sections, |cursor| {
-        let id = cursor.u32()?;
-        let tag = cursor.u8()?;
-        Ok(SectionDescriptor {
-            id,
-            kind: SectionKind::from_tag(tag).ok_or(ArtifactCodecError::UnknownTag {
-                subject: TagSubject::SectionKind,
-                tag,
-            })?,
-            exact_len: cursor.u64()?,
-            digest: Digest::from_wire(cursor.array()?),
-        })
-    })?;
+    let sections = parse_section_descriptors(&mut cursor)?;
     let identity = cursor.slice()?.to_vec();
     if cursor.remaining() != 0 {
         return Err(ArtifactCodecError::TrailingManifestBytes {
@@ -406,6 +395,67 @@ fn read_providers(cursor: &mut Cursor<'_>) -> Result<Vec<SelectedProvider>, Arti
         OrderedSubject::Provider,
     )?;
     Ok(providers)
+}
+
+/// Parses the section descriptor table and proves each descriptor is honest.
+///
+/// A descriptor carries its purpose's disposition and content schema for a
+/// reader that does *not* recognize the purpose, which is the only reader that
+/// cannot derive them. This reader recognizes every purpose it admits, having
+/// just refused the alternative, so for it both fields are checkable against
+/// its own table — and checking them is what stops a descriptor asserting a
+/// schema or a skip permission the purpose does not carry.
+///
+/// # Errors
+///
+/// Returns the typed [`ArtifactCodecError`] naming the first boundary that
+/// rejected: an exhausted section budget, an unrecognized purpose or
+/// disposition tag, or a declared disposition or schema the purpose contradicts.
+fn parse_section_descriptors(
+    cursor: &mut Cursor<'_>,
+) -> Result<Vec<SectionDescriptor>, ArtifactCodecError> {
+    cursor.vec(MAX_SECTIONS, CodecLimitKind::Sections, |cursor| {
+        let id = cursor.u32()?;
+        let tag = cursor.u8()?;
+        let kind = SectionKind::from_tag(tag).ok_or(ArtifactCodecError::UnknownTag {
+            subject: TagSubject::SectionKind,
+            tag,
+        })?;
+        // The disposition and the content schema are carried for a reader that
+        // does *not* recognize the purpose. This reader recognizes every
+        // purpose it admits, having just rejected the alternative, so for it
+        // the two fields are checkable against its own table rather than
+        // informative — and checking them is what stops a descriptor asserting
+        // a schema or a skip permission the purpose does not have.
+        let disposition_tag = cursor.u8()?;
+        let disposition = SectionDisposition::from_tag(disposition_tag).ok_or(
+            ArtifactCodecError::UnknownTag {
+                subject: TagSubject::SectionDisposition,
+                tag: disposition_tag,
+            },
+        )?;
+        if disposition != kind.disposition() {
+            return Err(ArtifactCodecError::SectionDispositionMismatch {
+                section: id,
+                declared: disposition_tag,
+                expected: kind.disposition().tag(),
+            });
+        }
+        let schema = SchemaVersion::new(cursor.u16()?, cursor.u16()?);
+        if schema != kind.schema() {
+            return Err(ArtifactCodecError::UnsupportedSectionSchema {
+                section: id,
+                major: schema.major(),
+                minor: schema.minor(),
+            });
+        }
+        Ok(SectionDescriptor {
+            id,
+            kind,
+            exact_len: cursor.u64()?,
+            digest: Digest::from_wire(cursor.array()?),
+        })
+    })
 }
 
 /// Reads the backend payload descriptors and proves their canonical order.

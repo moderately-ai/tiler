@@ -35,7 +35,8 @@ use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRe
 use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, LaunchData,
-    RoutingPolicy, SelectedProvider, VariantData, deferred_key, encode_identity, stage_key,
+    RoutingPolicy, SchemaVersion, SelectedProvider, VariantData, deferred_key, encode_identity,
+    stage_key,
 };
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::payload::{PayloadContent, encode_metadata};
@@ -239,6 +240,62 @@ impl SectionKind {
             0x01 => Some(Self::KernelProgramSubject),
             0x02 => Some(Self::BackendPayloadMetadata),
             0x03 => Some(Self::BackendPayloadCode),
+            _ => None,
+        }
+    }
+
+    /// Returns the schema version of this purpose's section content.
+    ///
+    /// It is a property of the *purpose*, not of the instance: one purpose has
+    /// one content schema in a given build. It is nonetheless written into each
+    /// descriptor, because the whole point of carrying it is a reader that does
+    /// not recognize the purpose and therefore cannot derive it.
+    pub(super) const fn schema(self) -> SchemaVersion {
+        match self {
+            Self::KernelProgramSubject
+            | Self::BackendPayloadMetadata
+            | Self::BackendPayloadCode => SchemaVersion::new(1, 0),
+        }
+    }
+
+    /// Returns whether a reader may skip this purpose when it does not know it.
+    ///
+    /// Every purpose this build writes is [`SectionDisposition::Required`], and
+    /// an unrecognized purpose is refused outright, so no skip path exists yet.
+    /// The field is written anyway: it is the mechanism the contract's
+    /// "unknown optional sections may be skipped only when their schema
+    /// explicitly permits it" needs, and it can only be added for free while
+    /// nothing is persisted.
+    pub(super) const fn disposition(self) -> SectionDisposition {
+        match self {
+            Self::KernelProgramSubject
+            | Self::BackendPayloadMetadata
+            | Self::BackendPayloadCode => SectionDisposition::Required,
+        }
+    }
+}
+
+/// Whether a reader that does not recognize a section's purpose may skip it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SectionDisposition {
+    /// The section must be understood; not recognizing it fails closed.
+    Required,
+    /// The section may be skipped by a reader its schema permits to skip it.
+    Optional,
+}
+
+impl SectionDisposition {
+    pub(super) const fn tag(self) -> u8 {
+        match self {
+            Self::Required => 0x01,
+            Self::Optional => 0x02,
+        }
+    }
+
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::Required),
+            0x02 => Some(Self::Optional),
             _ => None,
         }
     }

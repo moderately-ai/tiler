@@ -39,13 +39,13 @@ use super::super::{ArtifactProgramBuilder, CompilationEnvironment, VerifiedArtif
 use super::decode::{decode, parse_expression_arena};
 use super::digest::DigestAlgorithm;
 use super::encode::{
-    ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, encode,
-    envelope_digest,
+    ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA,
+    encode, envelope_digest, section_digest,
 };
 use super::error::{ArtifactCodecError, OrderedSubject, ReferenceSubject, TagSubject};
 use super::model::{
     ArtifactEnvelope, FEATURE_MULTI_STAGE_PROGRAM, FEATURE_MULTI_VARIANT_ROUTING, Section,
-    SectionKind, position,
+    SectionDisposition, SectionKind, position,
 };
 use super::payload::{
     PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
@@ -627,7 +627,10 @@ fn an_unknown_manifest_or_component_schema_is_rejected() {
     reseal(&mut manifest);
     assert_eq!(
         decode(&manifest),
-        Err(ArtifactCodecError::UnsupportedManifestSchema { major: 1, minor: 5 }),
+        Err(ArtifactCodecError::UnsupportedManifestSchema {
+            major: MANIFEST_SCHEMA.0,
+            minor: 5,
+        }),
     );
 
     let mut component = encoded(&default_artifact());
@@ -1383,4 +1386,121 @@ fn carried_flag_order_is_retained_rather_than_canonicalized() {
             "-fno-fast-math".to_owned(),
         ]
     );
+}
+
+// -------------------------------------------------------------------------
+// Section descriptor purpose, disposition, and schema
+// -------------------------------------------------------------------------
+
+/// A section digest is a *standalone* content address, not only an in-envelope
+/// integrity check.
+///
+/// This is the property the descriptor change exists for. Inside a complete
+/// envelope the purpose was already bound one level up, by the manifest
+/// descriptor that names it and the manifest digest that covers that
+/// descriptor. Lifted out of the envelope — which is exactly what
+/// content-addressing a backend code section does — a digest over bytes alone
+/// would give two sections of different purposes one address.
+#[test]
+fn equal_bytes_under_different_purposes_have_different_section_digests() {
+    let bytes = b"the same section content".to_vec();
+    let metadata = Section {
+        kind: SectionKind::BackendPayloadMetadata,
+        bytes: bytes.clone(),
+    };
+    let code = Section {
+        kind: SectionKind::BackendPayloadCode,
+        bytes,
+    };
+    assert_ne!(
+        section_digest(DigestAlgorithm::GOVERNED, &metadata),
+        section_digest(DigestAlgorithm::GOVERNED, &code),
+    );
+}
+
+/// Locates the fixed-width prefix of the first section descriptor.
+///
+/// The prefix is `id | purpose | disposition | schema major | schema minor`,
+/// which is distinctive enough to find unambiguously; a bare purpose tag is
+/// one byte and occurs throughout the manifest.
+fn first_section_descriptor(bytes: &[u8]) -> usize {
+    let kind = SectionKind::KernelProgramSubject;
+    let schema = kind.schema();
+    let mut needle = 0_u32.to_be_bytes().to_vec();
+    needle.push(kind.tag());
+    needle.push(kind.disposition().tag());
+    needle.extend_from_slice(&schema.major().to_be_bytes());
+    needle.extend_from_slice(&schema.minor().to_be_bytes());
+    manifest_offset(bytes, &needle)
+}
+
+/// A descriptor may not assert a skip permission its purpose does not have.
+#[test]
+fn a_section_disposition_that_contradicts_its_purpose_is_rejected() {
+    let mut bytes = encoded(&default_artifact());
+    let at = first_section_descriptor(&bytes);
+    bytes[at + 5] = SectionDisposition::Optional.tag();
+    reseal(&mut bytes);
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::SectionDispositionMismatch {
+            section: 0,
+            declared: SectionDisposition::Optional.tag(),
+            expected: SectionDisposition::Required.tag(),
+        }),
+    );
+}
+
+/// A descriptor may not assert a content schema its purpose does not carry.
+#[test]
+fn a_section_content_schema_that_contradicts_its_purpose_is_rejected() {
+    let mut bytes = encoded(&default_artifact());
+    let at = first_section_descriptor(&bytes);
+    bytes[at + 6..at + 8].copy_from_slice(&7_u16.to_be_bytes());
+    reseal(&mut bytes);
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::UnsupportedSectionSchema {
+            section: 0,
+            major: 7,
+            minor: 0,
+        }),
+    );
+}
+
+/// An unrecognized disposition tag is refused by name rather than defaulted.
+#[test]
+fn an_unknown_section_disposition_tag_is_rejected() {
+    let mut bytes = encoded(&default_artifact());
+    let at = first_section_descriptor(&bytes);
+    bytes[at + 5] = 0x7f;
+    reseal(&mut bytes);
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::UnknownTag {
+            subject: TagSubject::SectionDisposition,
+            tag: 0x7f,
+        }),
+    );
+}
+
+/// Every governed section purpose declares a disposition and a schema.
+///
+/// Exhaustive over the vocabulary, so a purpose added without deciding either
+/// fails here rather than inheriting whatever the match arm beside it said.
+#[test]
+fn every_section_purpose_declares_its_disposition_and_schema() {
+    for kind in [
+        SectionKind::KernelProgramSubject,
+        SectionKind::BackendPayloadMetadata,
+        SectionKind::BackendPayloadCode,
+    ] {
+        assert_eq!(SectionKind::from_tag(kind.tag()), Some(kind));
+        assert_eq!(kind.disposition(), SectionDisposition::Required);
+        assert_eq!(
+            SectionDisposition::from_tag(kind.disposition().tag()),
+            Some(kind.disposition()),
+        );
+        assert_eq!(kind.schema(), SchemaVersion::new(1, 0));
+    }
 }

@@ -17,9 +17,9 @@ use super::super::model::{
     element_type_tag, push_len, push_numerical, push_resources, push_shape, value_role_tag,
 };
 use super::budget::check_budgets;
-use super::digest::{DIGEST_BYTES, DigestAlgorithm};
+use super::digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
-use super::model::{ArtifactEnvelope, EntryRow, MAX_SECTION_BYTES, ordinal};
+use super::model::{ArtifactEnvelope, EntryRow, MAX_SECTION_BYTES, Section, ordinal};
 
 /// Fixed framing magic of the target-neutral artifact envelope.
 pub(super) const MAGIC: [u8; 8] = *b"TILERART";
@@ -30,13 +30,24 @@ pub(super) const ENVELOPE_FORMAT: (u16, u16) = (1, 0);
 /// Canonical byte-encoding profile version this build writes and reads.
 pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// Neutral manifest schema version this build writes and reads.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (1, 0);
+///
+/// Raised to `2.0` when the section descriptor grew its purpose disposition and
+/// content schema. That is deliberately a **major** step rather than the minor
+/// one it might look like: the reader admits `minor <= implemented`, so a minor
+/// bump would have left it accepting a `1.0` manifest whose descriptors it can
+/// no longer parse. A field added inside a fixed-width record is not additive.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (2, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
 /// Domain separator of the manifest digest carried in the framing header.
 pub(super) const MANIFEST_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest-digest.v1\0";
 /// Domain separator of one section's exact-content digest.
+///
+/// The pre-image is the separator, the section's purpose tag, its content
+/// schema, and then its exact bytes. Binding the purpose is what lets a section
+/// digest serve as a *standalone* content address: without it, two sections
+/// with equal bytes under different purposes would share one address.
 pub(super) const SECTION_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.section-digest.v1\0";
 /// Domain separator of the external digest over a complete encoded envelope.
 pub(super) const ENVELOPE_DIGEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.envelope-digest.v1\0";
@@ -174,6 +185,21 @@ fn encode_manifest(
     Ok(bytes)
 }
 
+/// Derives one section's content digest over its purpose, schema, and bytes.
+///
+/// The qualifiers are fixed width and precede the variable-length content, so
+/// the pre-image is unambiguous without a length prefix between them.
+pub(super) fn section_digest(algorithm: DigestAlgorithm, section: &Section) -> Digest {
+    let schema = section.kind.schema();
+    algorithm.digest_parts(&[
+        SECTION_DIGEST_DOMAIN,
+        &[section.kind.tag()],
+        &schema.major().to_be_bytes(),
+        &schema.minor().to_be_bytes(),
+        &section.bytes,
+    ])
+}
+
 /// Encodes the selected providers and backend payload descriptors.
 fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
     push_len(bytes, envelope.providers().len());
@@ -299,12 +325,12 @@ fn encode_section_descriptors(
         )?;
         bytes.extend_from_slice(&ordinal(position).to_be_bytes());
         bytes.push(section.kind.tag());
+        bytes.push(section.kind.disposition().tag());
+        let schema = section.kind.schema();
+        bytes.extend_from_slice(&schema.major().to_be_bytes());
+        bytes.extend_from_slice(&schema.minor().to_be_bytes());
         push_len(bytes, section.bytes.len());
-        bytes.extend_from_slice(
-            algorithm
-                .digest(SECTION_DIGEST_DOMAIN, &section.bytes)
-                .as_bytes(),
-        );
+        bytes.extend_from_slice(section_digest(algorithm, section).as_bytes());
     }
     Ok(())
 }
