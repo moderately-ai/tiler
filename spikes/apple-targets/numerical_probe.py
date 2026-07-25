@@ -2741,6 +2741,12 @@ def bfloat_support(toolchain: Toolchain, host: Path, attachment: Attachment, wor
     probing with the arithmetic-free kernel could pass on an environment that
     supports the *type* in a signature and not the arithmetic, which is the one
     outcome that would make this probe worse than useless.
+
+    That choice costs one distinction, which is why `bfloat_dispatch_probe.py`
+    exists beside this file: asking with an arithmetic kernel cannot say whether
+    a refusal is about the format or about operating on it. On the measured row
+    it is the format — the arithmetic-free kernel is refused too — but that is a
+    separate one-off measurement and not something this function establishes.
     """
     kernel = BY_NAME["multiply_two_bf16"]
     source = work / "bfloat_probe.metal"

@@ -8,7 +8,7 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour"]
-entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py"]
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py"]
 last_verified: "2026-07-25"
 ticket: "apple-artifact-compatibility"
 ---
@@ -182,8 +182,8 @@ everything would make the result unreachable rather than wrong.
 
 **A device can compile a module and then refuse to run it.** The iOS Simulator
 compiles and links every `bf16` module on this row and then fails pipeline
-creation with `XPC_ERROR_CONNECTION_INTERRUPTED`, on both compilation paths and
-for the arithmetic-free kernel too. `bfloat_support` asks each family once,
+creation with `XPC_ERROR_CONNECTION_INTERRUPTED`, on both compilation paths.
+`bfloat_support` asks each family once,
 before any measured case is dispatched, and a family that refuses has its `bf16`
 cases left out of that family's manifest and recorded with the exact diagnostic
 in `case.*.refusal` and `environment.family.*.device_bfloat_support`. This is a
@@ -192,6 +192,25 @@ fails a real case is still a hard `ProbeFailure`. `Verdict.DEVICE_REFUSED_DTYPE`
 and `Verdict.NO_DEVICE_OBSERVATION` stay separate members, because "a device that
 answered no" and "no device to ask" are different measurements and both would
 otherwise be a missing `results` row.
+
+**Whether that refusal is about the type or the arithmetic is a separate probe.**
+`bfloat_support` asks with `multiply_two_bf16`, which cannot distinguish them, so
+`bfloat_dispatch_probe.py` asks the arithmetic-free `materialize_bf16` directly —
+it is refused too, so the refusal is about the format. That probe is deliberately
+outside the gate: the refusal path costs minutes of `XPC` retries per case, and
+the gate already carries what it needs on every run. Its control is what makes it
+evidence rather than a guess, and it runs on **both** sides of the `bfloat`
+attempts, because a refusal seen after earlier faults could be the simulator's
+compiler service degrading instead:
+
+```sh
+uv run --locked python spikes/apple-targets/bfloat_dispatch_probe.py
+```
+
+The measured order and outcome: `materialize_f16` dispatched, `materialize_bf16`
+refused, `multiply_one_bf16` refused, `materialize_f16` dispatched. The probe
+exits nonzero when the trailing control fails, because such a run establishes
+nothing about `bfloat` and must be discarded rather than reported.
 
 **A kernel added here must be checked against what the module emitted.** Widening
 the vocabulary found the harness reporting a kernel whose whole body is one

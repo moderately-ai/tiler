@@ -13,7 +13,7 @@ claimed_from: todo
 assignee: agent-dispatchability
 lease_expires_at: 1785042783
 ---
-Finding 26 of [the Apple numerical-behaviour record](../docs/research/apple-targets/numerical-behaviour.md) measures a case the physical contracts have no name for: the iOS Simulator compiles every `bfloat` probe kernel to LLVM IR, to AIR, and links it to a metallib without a diagnostic, and its device then fails `newComputePipelineStateWithFunction:` with `XPC_ERROR_CONNECTION_INTERRUPTED` — on both the offline and runtime compilation paths, and for the arithmetic-free kernel as well as the arithmetic ones. The same simulator runs every `f32` and `f16` kernel in the same invocation.
+Finding 26 of [the Apple numerical-behaviour record](../docs/research/apple-targets/numerical-behaviour.md) measures a case the physical contracts have no name for: the iOS Simulator compiles every `bfloat` probe kernel to LLVM IR, to AIR, and links it to a metallib without a diagnostic, and its device then fails `newComputePipelineStateWithFunction:` with `XPC_ERROR_CONNECTION_INTERRUPTED` — on both the offline and runtime compilation paths. The same simulator runs every `f32` and `f16` kernel in the same invocation. The refusal is measured to be about the *format* rather than any operation on it: the arithmetic-free `materialize_bf16`, which emits zero floating-point operations, is refused too.
 
 So "it compiled for this target, therefore it runs there" is false on a measured row, and the dtype is what makes it false.
 
