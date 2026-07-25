@@ -1,7 +1,7 @@
 ---
 id: carry-the-target-profile-descriptor-identity-into-the-plan
 title: Carry the target profile's descriptor identity into the plan
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: []
 paths: []
 tags: [implementation, compiler, artifact, identity]
+claimed_from: todo
+assignee: agent-coordinator
+lease_expires_at: 1784992968
 ---
 The third instance of one shape, found while building the first out-of-crate artifact assembler: a governed key reaches the plan and the exact identity beside it does not.
 
@@ -29,3 +32,19 @@ Check whether `PrototypeTargetProfile` and `CheckedTargetProfile` are two spelli
 ## Closes when
 
 A caller outside `tiler-compiler` can build a `TargetProfileRef` for both the variant and the payload compatibility contract with no invented value; the ownership choice is stated; and `uv run --locked python scripts/check_repository.py` passes.
+
+## Correction to this ticket's own premise, from reading the source
+
+The ticket above proposed carrying "the checked profile's `ProfileIdentity` — or the canonical descriptor bytes it is derived from". Reading both types shows that is two different values, and `ProfileIdentity` is the wrong one for the descriptor.
+
+**Fact — `crates/tiler-compiler/src/feasibility.rs:194-213`.** `ProfileIdentity` is `{ key: &'static str, version: u32 }`, whose accessors are documented as "The governed profile key" and "**The feasibility-rule version**". It is a key plus a rule version, not a digest over anything.
+
+**Fact — `crates/tiler-artifact/src/program/keys.rs:196-203`.** `FeasibilityRuleSetRef` is `{ key: FeasibilityRuleSetKey, revision: u32 }`, documented as "The feasibility rule set under which a plan variant was assessed" with a "Nonzero output-affecting revision".
+
+**Inference — `ProfileIdentity` supplies `FeasibilityRuleSetRef`, not `TargetProfileDescriptorDigest`.** The shapes and the meanings agree exactly: governed key plus nonzero rule revision. `VariantSpec` requires a `FeasibilityRuleSetRef` too, and it was on the list of values an assembler had no source for — so this reading supplies one of them outright, with no new plumbing beyond exposure.
+
+**Fact — the descriptor is still missing.** `TargetProfileDescriptorDigest` must identify the profile *descriptor*: the facts themselves. `CheckedTargetProfile` (`feasibility.rs:292-296`) holds `facts: Vec<CapabilityFact>` in a canonical order its constructor enforces — sorted by `(axis, phase)`, unique per pair — so a canonical encoding of those facts is the right subject. **No such encoder exists**; `CheckedTargetProfile` exposes `identity()` and `facts()` and nothing that digests them.
+
+**Fact — a second, separate profile type exists.** `PrototypeTargetProfile` (`crates/tiler-compiler/src/request.rs:343-351`) carries `key` plus scalar limits and is the request-side profile; `CheckedTargetProfile` is the feasibility-side one. They are not two spellings of one type. Whether the descriptor digest should cover the checked facts, the request-side limits, or a reconciliation of both is now the ticket's real question, and it should be settled before an encoder is written — digesting the wrong subject would produce a stable, wrong descriptor identity.
+
+**Consequence.** This ticket splits cleanly into an exposure half that needs no decision (`FeasibilityRuleSetRef` from `ProfileIdentity`) and a design half that does (what the descriptor's canonical subject is). The first can land immediately; the second must not be settled by an assembler's convenience.
