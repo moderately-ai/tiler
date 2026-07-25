@@ -10,15 +10,28 @@
 //! # What this boundary deliberately is not
 //!
 //! It is scoped to *reaching execution*, not to being the compiler's finished
-//! API. `prototype-public-compiler-api` carries seven deferred public-surface
-//! questions — report completeness, trace serialization and embedding, renderer
-//! and redaction guarantees, enum exhaustiveness, evidence-receipt minting,
-//! identity spelling, and header stability. **None of them is answered here.**
-//! Explain is exposed as an opaque handle with one rendering method, which is
-//! the narrowest shape that answers none of those questions by default; a
-//! caller can see a trace and cannot yet serialize, embed, redact, or key on
-//! one. Answering them by omission is exactly what that ticket exists to
-//! prevent.
+//! API.
+//!
+//! `prototype-public-compiler-api` carried seven deferred public-surface
+//! questions, and they are now settled rather than left open. Six of the
+//! answers are that the surface stays as narrow as it already is, and each is
+//! recorded at the item it governs so a later reader finds a decision instead
+//! of an omission: a trace is never serialized or embedded ([`ExplainReport`]);
+//! the rendered form is deterministic and total but not a parse target, nothing
+//! in it is redacted, and there is no retention control left to expose
+//! ([`ExplainReport::render`]); public enums follow ADR 0074 convention 5's
+//! clause test and never a parallel versioned schema view
+//! ([`CompileFailureClass`]); every identity this boundary emits is canonical
+//! bytes and never a digest ([`Compilation::target_profile_descriptor`]); the
+//! compiler alone mints an evidence receipt, which is why none is reachable
+//! here at all; and the renderer header's request qualifier is a correlation
+//! label, never an identity.
+//!
+//! The seventh — report completeness — is the one that required a change.
+//! A failed compilation now returns the complete trace the compiler had already
+//! sealed, through [`CompileFailure::explain`]; before, the boundary discarded
+//! it and reported [`CompileFailureClass::NoFeasiblePlan`] with nothing
+//! attached, which `docs/compiler/optimizer.md` forbids in terms.
 //!
 //! Nor does it expose the request. The bounded profile admits exactly one
 //! governed configuration — shape environment, numerical contract, budgets,
@@ -38,6 +51,8 @@
 //! materialized program as its numerical reference; a selected-only surface
 //! could not express that.
 
+use std::fmt;
+
 use tiler_ir::kernel::VerifiedKernel;
 use tiler_ir::program::VerifiedKernelProgram;
 use tiler_ir::program::abi::ExprNode;
@@ -54,16 +69,32 @@ use crate::request::{
     CompilationRequest, LoweringProviderIdentity, RequestError, StrictF32NumericalContract,
 };
 
-/// Why a compilation did not produce plans.
+/// Which boundary refused a compilation.
 ///
 /// ADR 0074 convention 1: a typed enumeration rather than a boxed error, so a
 /// caller branches on the boundary that refused instead of matching on text.
-/// The classes are the compiler's own and are deliberately coarse at this
-/// boundary — a caller that needs the exact internal cause reads the explain
-/// trace, which is where causes are already typed and attributed.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// The classes are the compiler's own and are deliberately coarse — a caller
+/// that needs the exact internal cause reads [`CompileFailure::explain`], which
+/// is where causes are already typed and attributed.
+///
+/// # Why `#[non_exhaustive]` and not a versioned schema view
+///
+/// ADR 0074's amended convention 5 decides this per type by asking what an
+/// out-of-crate wildcard arm would have to do. Here a consumer only classifies
+/// partially or forwards the value; no consumer maps it totally onto a derived
+/// value, and none matches it to decide what it supports. That is clause 5a, so
+/// the attribute applies and a later class lands additively.
+///
+/// A parallel versioned schema view was considered and eliminated rather than
+/// deferred. It is a second, hand-maintained description of this enum, and
+/// nothing keeps the two in agreement — which is convention 3's argument
+/// against encoding a projection of an enum instead of the enum: a projection
+/// cannot fail closed when its source grows. It also buys compatibility, and
+/// ADR 0075 records that Tom rejected the compatibility premise outright while
+/// no crate in this workspace is publishable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum CompileFailure {
+pub enum CompileFailureClass {
     /// The request or the program is outside the admitted profile.
     ///
     /// The program is not wrong; this build does not compile it.
@@ -83,6 +114,80 @@ pub enum CompileFailure {
     /// and is reported as a distinct class so a caller never reports it as an
     /// unsupported program.
     InvalidCompilerOutput,
+}
+
+/// A refused compilation: which boundary refused, and why in full.
+///
+/// # Why a failure carries a report at all
+///
+/// `docs/compiler/optimizer.md` requires that "Every rejection records its
+/// stage, stable reason code, rule/provider identity, affected operation/value
+/// or candidate, failed predicate/evidence, and whether the result is a hard
+/// rejection, safe deferral, budget stop, dominance pruning, or cost
+/// disadvantage", and that explain output "never collapses these into 'not
+/// fused.'" A [`CompileFailureClass::NoFeasiblePlan`] with nothing attached is
+/// exactly that collapse, and the compiler had already sealed the trace that
+/// answers it before this boundary threw it away.
+///
+/// # Why the report is complete or absent, and never partial
+///
+/// A sealed trace is complete by construction. A detail record that would
+/// exceed the retained-trace ceiling fails the compilation closed with a typed
+/// capacity error rather than being dropped, so there is no truncated form for
+/// this surface to describe. "Partial" was never one of two shapes to choose
+/// between; it is a shape the explain authority does not produce.
+///
+/// # Why absence is structural rather than best-effort
+///
+/// A request-qualified trace can only exist once a verified per-target request
+/// does. Request verification, semantic output typing, numerical-contract
+/// resolution, normalization, and target selection all run before that point
+/// and fail with no trace to seal, so [`Self::explain`] returns `None` for
+/// precisely those refusals. It is a statement about which phase refused, not
+/// about whether the compiler bothered.
+#[derive(Clone, Eq, PartialEq)]
+pub struct CompileFailure {
+    class: CompileFailureClass,
+    explain: Option<VerifiedExplainTrace>,
+}
+
+impl CompileFailure {
+    /// Returns which boundary refused the compilation.
+    #[must_use]
+    pub const fn class(&self) -> CompileFailureClass {
+        self.class
+    }
+
+    /// Returns the compilation's complete explain trace, when one exists.
+    ///
+    /// `None` means the refusal happened before a target-qualified trace could
+    /// be opened; this type's documentation names which phases those are.
+    #[must_use]
+    pub fn explain(&self) -> Option<ExplainReport<'_>> {
+        self.explain.as_ref().map(ExplainReport)
+    }
+}
+
+/// Renders the class and whether a trace is attached, never the trace itself.
+///
+/// A derived `Debug` would print every retained record. A caller formatting an
+/// error with `{:?}` on a failure path is asking what refused, not for the
+/// whole explanation, and both in-workspace consumers do exactly that. The
+/// trace stays reachable deliberately, through [`CompileFailure::explain`].
+impl fmt::Debug for CompileFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CompileFailure")
+            .field("class", &self.class)
+            .field(
+                "explain",
+                &match &self.explain {
+                    Some(trace) => format!("{} records", trace.records().len()),
+                    None => "absent (refused before a target-qualified trace)".to_owned(),
+                },
+            )
+            .finish()
+    }
 }
 
 /// One target profile's compilation result.
@@ -354,24 +459,98 @@ impl<'a> AbiEntry<'a> {
     }
 }
 
-/// An opaque handle to one compilation's explain trace.
+/// An opaque handle to one compilation's complete explain trace.
 ///
-/// Deliberately minimal. Rendering is the only capability exposed, because
-/// every richer one — serializing, embedding in an artifact, redacting provider
-/// detail, keying a cache on trace identity — is a deferred question owned by
-/// `prototype-public-compiler-api`, and offering it here would answer that
-/// question by default.
+/// Rendering is the only capability exposed, and that is now a settled shape
+/// rather than a placeholder narrow enough to avoid settling anything.
+///
+/// # Not serialized, and not embedded in an artifact
+///
+/// `docs/compiler/optimizer.md` already states the half that governs artifacts:
+/// "Canonical trace content is data and the renderer is presentation. Nothing
+/// in this contract requires an explain trace to be serialized into an artifact
+/// envelope, and the artifact contract does not carry one." Neither placement
+/// survives inspection anyway. Inside artifact identity, a trace folds rule
+/// keys, provider revisions and the explain schema version, so renaming a
+/// reason code would change the identity of a program whose executable meaning
+/// did not — invalidating every cache entry, which `docs/artifact-abi.md`
+/// already rejects for the frozen registry snapshot on exactly that ground.
+/// Outside it, `docs/artifact-abi.md` refuses a section no variant references
+/// as `UnreferencedSection`, precisely so an envelope cannot carry bytes its
+/// identity does not cover.
+///
+/// Serializing the canonical bytes at this boundary fails for a third reason:
+/// those bytes *are* the trace's identity, and ADR 0074 convention 2 keeps a
+/// canonical identity opaque and never re-derived by a consumer. A caller
+/// parsing them would be a second derivation of what the trace means. The
+/// producer-evidence use this would otherwise serve is already owned, with the
+/// better shape, by the proof sidecar — where a sidecar names an artifact and
+/// an artifact never names a sidecar.
+///
+/// The reconsideration trigger is the one `docs/compiler/optimizer.md` already
+/// names: a second crate that must *read* canonical traces. Its answer is to
+/// move the record vocabulary into `tiler-ir`, not to publish a byte format.
 #[derive(Clone, Copy, Debug)]
 pub struct ExplainReport<'a>(&'a VerifiedExplainTrace);
 
 impl ExplainReport<'_> {
     /// Renders the trace in its deterministic text form.
     ///
-    /// The rendered form is **not** a stable contract at this boundary; it is a
-    /// diagnostic for a human reader. Do not parse it.
+    /// # What is guaranteed
+    ///
+    /// Rendering is **deterministic** — one trace renders to one string — and
+    /// **total**: every retained record appears, in trace order. There is no
+    /// filter, no bound, and no retention control to configure, because the
+    /// explain authority refuses a compilation whose trace would not fit rather
+    /// than dropping records from one that exists.
+    ///
+    /// # What is not
+    ///
+    /// The spelling. The rendered form is a diagnostic for a human reader and
+    /// **not a parse target**; the leading `tiler-explain-v<N>` names the
+    /// renderer version and changes when the rendering does. Committing to the
+    /// text would create a second description of the trace that has to be kept
+    /// in agreement with its canonical bytes, which is the duplicate-derivation
+    /// hazard this whole boundary is shaped to avoid.
+    ///
+    /// The `request=<hex>` qualifier beside that version is a **correlation
+    /// label**, not an identity: it is a 64-bit non-cryptographic fold of the
+    /// request subject, so two distinct requests may share one. Reading it as
+    /// an identifier — keying a cache or a lookup on it — is unsound in the
+    /// silent direction, and ADR 0074 convention 2 states the rule it breaks: a
+    /// short bounded label is presentation and is never an equality or dedup
+    /// input.
+    ///
+    /// # Nothing here is redacted
+    ///
+    /// Every provider key and revision a trace attributes is either minted by
+    /// Tiler or installed by this caller's own request — the writer refuses a
+    /// rule attributed to any other provider — so there is no third party's
+    /// detail present to withhold. Redacting one would also make a rejection
+    /// unexplainable, which `docs/compiler/optimizer.md` forbids by requiring
+    /// every rejection to record its rule and provider identity.
     #[must_use]
     pub fn render(&self) -> String {
         self.0.render()
+    }
+}
+
+/// Splits one internal compile error into its public class and its trace.
+impl From<CompileError> for CompileFailure {
+    fn from(error: CompileError) -> Self {
+        match error {
+            // The one shape that carries a sealed trace, and the only place a
+            // trace can reach a caller: the compiler opens a writer once a
+            // verified per-target request exists and seals it on the way out.
+            CompileError::Explained { source, explain } => Self {
+                class: class_of(*source),
+                explain: Some(explain),
+            },
+            other => Self {
+                class: class_of(other),
+                explain: None,
+            },
+        }
     }
 }
 
@@ -384,27 +563,26 @@ impl ExplainReport<'_> {
 /// symmetric — reporting a Tiler defect as an unsupported program tells a
 /// caller to change a program that was fine, and reporting an unsupported
 /// program as a Tiler defect sends a correct refusal to the wrong owner.
-impl From<CompileError> for CompileFailure {
-    fn from(error: CompileError) -> Self {
-        match error {
-            // An explained failure wraps its own cause; the trace is not
-            // exposed on the error path, because whether a failed compilation
-            // returns a partial report is one of the deferred questions this
-            // boundary must not answer by default.
-            CompileError::Explained { source, .. } => Self::from(*source),
-            // Both are statements about the request rather than about Tiler,
-            // and both carry the refusing check's own key, so they classify the
-            // same way; the internal distinction between a malformed request
-            // and an unsupported capability is preserved in the explain trace.
-            CompileError::InvalidRequest(cause) | CompileError::UnsupportedCapability(cause) => {
-                Self::Unsupported {
-                    rule: rule_of(&cause),
-                }
+fn class_of(error: CompileError) -> CompileFailureClass {
+    match error {
+        // Unreachable rather than impossible: `compile_target` is the sole
+        // construction site and never feeds its own result back into a wrapped
+        // failure, but the type admits nesting, so the arm classifies the
+        // innermost cause instead of leaving a wildcard to absorb it. The
+        // caller above keeps the outer trace, which is the more complete one.
+        CompileError::Explained { source, .. } => class_of(*source),
+        // Both are statements about the request rather than about Tiler, and
+        // both carry the refusing check's own key, so they classify the same
+        // way; the internal distinction between a malformed request and an
+        // unsupported capability is preserved in the explain trace.
+        CompileError::InvalidRequest(cause) | CompileError::UnsupportedCapability(cause) => {
+            CompileFailureClass::Unsupported {
+                rule: rule_of(&cause),
             }
-            CompileError::BudgetExhausted(_) => Self::BudgetExhausted,
-            CompileError::NoFeasiblePlan(_) => Self::NoFeasiblePlan,
-            CompileError::InvalidCompilerOutput(_) => Self::InvalidCompilerOutput,
         }
+        CompileError::BudgetExhausted(_) => CompileFailureClass::BudgetExhausted,
+        CompileError::NoFeasiblePlan(_) => CompileFailureClass::NoFeasiblePlan,
+        CompileError::InvalidCompilerOutput(_) => CompileFailureClass::InvalidCompilerOutput,
     }
 }
 
@@ -498,7 +676,10 @@ fn into_compilations(product: CompilationProduct) -> Vec<Compilation> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompileFailure, NumericalContract, compile_governed};
+    use super::{
+        CompilationRequest, CompileFailure, CompileFailureClass, NumericalContract,
+        StrictF32NumericalContract, compile_governed, compile_internal,
+    };
     use tiler_ir::program::abi::ExprNode;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
@@ -606,13 +787,85 @@ mod tests {
     #[test]
     fn the_failure_classes_are_distinct() {
         assert_ne!(
-            CompileFailure::NoFeasiblePlan,
-            CompileFailure::InvalidCompilerOutput,
+            CompileFailureClass::NoFeasiblePlan,
+            CompileFailureClass::InvalidCompilerOutput,
         );
         assert_ne!(
-            CompileFailure::BudgetExhausted,
-            CompileFailure::Unsupported { rule: "any" },
+            CompileFailureClass::BudgetExhausted,
+            CompileFailureClass::Unsupported { rule: "any" },
         );
+    }
+
+    /// A target compilation that fails hands the caller its complete trace.
+    ///
+    /// This is the property the boundary previously lacked: the compiler sealed
+    /// a trace on the failure path and `From<CompileError>` discarded it, so a
+    /// caller receiving `NoFeasiblePlan` had no way to learn which predicate
+    /// rejected which alternative — the collapse `docs/compiler/optimizer.md`
+    /// forbids.
+    ///
+    /// It drives the internal request rather than [`compile_governed`] because
+    /// reaching a *post-request* failure needs a budget the governed profile
+    /// does not expose. That is a statement about the bounded profile, not
+    /// about the mapping, and the mapping is what this test covers.
+    #[test]
+    fn a_target_failure_carries_its_complete_trace() {
+        let program = semantic_program();
+        let mut request = CompilationRequest::governed_under(
+            &program,
+            StrictF32NumericalContract::governed_flush_to_zero(),
+        );
+        // No per-seed growth leaves only singleton candidates, which the
+        // bounded profile implements for no region, so every plan depends on a
+        // region that was never formed.
+        request.budgets.region_candidates_per_seed = 0;
+        let failure = CompileFailure::from(
+            compile_internal(request).expect_err("a zero region budget has no complete plan"),
+        );
+
+        assert_eq!(failure.class(), CompileFailureClass::NoFeasiblePlan);
+        let rendered = failure
+            .explain()
+            .expect("a post-request failure retains its sealed trace")
+            .render();
+        assert!(rendered.starts_with("tiler-explain-v2 "));
+        assert!(
+            rendered.contains("compiler-failure"),
+            "the trace names the terminal failure: {rendered}",
+        );
+        assert!(
+            rendered.contains("region.formation.v1"),
+            "the trace names the rule that refused: {rendered}",
+        );
+    }
+
+    /// A refusal that precedes the trace boundary says so, rather than
+    /// pretending a trace was withheld.
+    ///
+    /// The `None` is structural: request verification runs before any
+    /// `ExplainWriter` exists, so there is nothing to seal. Asserting it here
+    /// keeps the two cases distinguishable at the public surface.
+    #[test]
+    fn a_refusal_before_the_trace_boundary_carries_no_trace() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4, 1]))
+            .unwrap();
+        // An identity program: outside the bounded profile's admitted subject,
+        // and refused while verifying the request.
+        builder
+            .output(OutputKey::new("result").unwrap(), input)
+            .unwrap();
+        let program = builder.build().unwrap();
+
+        let failure = compile_governed(&program, NumericalContract::StrictF32)
+            .expect_err("the bounded profile does not admit an identity program");
+        assert!(
+            matches!(failure.class(), CompileFailureClass::Unsupported { .. }),
+            "unexpected class: {:?}",
+            failure.class(),
+        );
+        assert!(failure.explain().is_none());
     }
 
     /// The boundary names both assessment identities an artifact must record.
