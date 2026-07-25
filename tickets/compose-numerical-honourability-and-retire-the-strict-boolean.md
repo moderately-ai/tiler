@@ -1,7 +1,7 @@
 ---
 id: compose-numerical-honourability-and-retire-the-strict-boolean
 title: Compose per-dimension numerical honourability and retire the strict-f32 boolean
-status: todo
+status: in-progress
 priority: p1
 dependencies: [select-numerical-contract-and-compose-feasibility]
 related: [declare-metal-numerical-honourability, draft-target-honourable-numerical-contract-adr]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, feasibility]
+claimed_from: todo
+assignee: agent-numerics
+lease_expires_at: 1784996925
 ---
 The composition half of `select-numerical-contract-and-compose-feasibility`, split out when its Selection half landed. ADR 0076 items 2, 3, and 5.
 

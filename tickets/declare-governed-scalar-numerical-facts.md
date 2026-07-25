@@ -1,7 +1,7 @@
 ---
 id: declare-governed-scalar-numerical-facts
 title: Declare the governed scalar operations' numerical facts instead of leaving them empty
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [register-governed-scalar-reference-evaluation, reconcile-single-contributor-strict-sum-nan-canonicalization]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, ir, contracts, milestone-0b]
+claimed_from: todo
+assignee: agent-ir2
+lease_expires_at: 1784997589
 ---
 The three governed scalar definitions declare *no* numerical facts, so the rounding and NaN-canonicalization rules a scalar reference oracle and an external index-access lowering provider must implement exist nowhere in the scalar authority.
 
