@@ -1,7 +1,7 @@
 ---
 id: record-the-capability-revision-in-selected-provider-identity
 title: Record the capability revision in selected provider identity
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [carry-the-metal-payload-in-an-artifact-envelope, name-the-resolved-lowering-capability, resolve-capability-key-signature-conflation]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, contracts/artifacts, contracts/foundation, imp
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, identity]
-claimed_from: todo
-assignee: agent-artifact
-lease_expires_at: 1785017446
 ---
 `SelectedProvider` cannot record the value `docs/operation-extensions.md` says a selected plan records, and asks instead for one no producer can supply. The first artifact assembler hit this and carried a real value into an adjacent slot rather than inventing a plausible one; that stopgap is in code and named, and this ticket closes it.
 
