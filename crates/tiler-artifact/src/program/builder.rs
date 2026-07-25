@@ -312,11 +312,7 @@ impl ArtifactProgramBuilder {
     /// Returns [`ArtifactBuildError::DuplicatePayload`] for a descriptor this
     /// artifact already declares, a structural-limit error, or the identity
     /// error the digest constructor produced.
-    #[allow(
-        dead_code,
-        reason = "the carried-payload entry point is the crate-private draft half of `prototype-metal-bundle-assembly` (ADR 0074 convention 7). It reserves the invariant that a carried payload's descriptor digest is derived from its subject rather than supplied; its first non-test consumer is the backend assembler that does not exist yet."
-    )]
-    pub(crate) fn push_carried_payload(
+    pub fn push_carried_payload(
         &mut self,
         backend: BackendKey,
         representation: RepresentationKey,

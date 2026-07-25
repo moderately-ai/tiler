@@ -1,7 +1,7 @@
 ---
 id: assemble-the-metal-payload-from-emission-and-compilation
 title: Assemble the Metal payload from an emission and a compilation
-status: todo
+status: done
 priority: p0
 dependencies: [prototype-metal-bundle-assembly]
 related: [prototype-apple-aot-driver, choose-one-owner-for-apple-target-vocabulary, prototype-artifact-family-delivery]
@@ -48,3 +48,23 @@ Five tests, written so they cannot pass by repeating the map: the family asserti
 **Blocked, and this is the finding that matters.** Item 1 — filling the neutral payload from a real emission and a real compilation — cannot start. `tiler_compiler::pipeline` is a private `mod`, and both `compile` and `CompilationRequest` are `pub(crate)`, so **no caller outside `tiler-compiler` can compile a program at all**. Without a `VerifiedKernel` there is nothing to emit, nothing to compile, and nothing to assemble. The payload carrier's constructors are `pub(crate)` in `tiler-artifact` for the same reason, so even a caller holding a kernel could not build a `PayloadContent`.
 
 That makes `prototype-public-compiler-api` the true head of the critical path to first execution, ahead of every Metal ticket. The translation above is landed behind an ADR 0074 convention 7 `#![allow(dead_code, reason = …)]` naming exactly that blocker as the reason its production caller does not yet exist.
+
+## Outcome
+
+Items 2 and 3 are complete and item 1 is complete **as far as the payload**; carrying it in an envelope is split out, because the surface it needs does not exist.
+
+**Item 1 — the neutral payload, filled from a real emission and a real compilation.** `prototypes/serial-sum-compile/src/payload.rs` reads a `MetalTranslationUnit` and an `ArtifactProvenance` and produces a `PayloadContent`. Running the producer assembles one from the actual `[4, 1]` proof program: 1 entry mapping, 2 obligations, a 32-byte compilation identity, beside 3,667 bytes of `metallib`.
+
+Three decisions are in the code rather than implied. **Absolute paths are excluded** — `ResolvedTool::path` and `SdkIdentity::path` are local provenance by their own documentation, and folding one would give two hosts running the same toolchain different artifact identities. **The entry key is the kernel's canonical identity, not the emitted symbol**, because the symbol is a bounded digest and presentation only while the identity is what an artifact's executable entry names. **Flag order is preserved, not sorted**, because a compiler resolves conflicting flags positionally; entry mappings and obligations *are* sorted, because the codec proves canonical content order and refuses a non-canonical spelling rather than normalizing it.
+
+**Measured, against a real emission rather than a fixture.** `the_payload_identity_follows_its_compilation_subject` asserts all three directions of the identity decision: appending a byte to the emitted object leaves the artifact identity **unchanged**, changing the source changes it, and reversing the compile flags changes it. `the_payload_subject_carries_no_local_path` checks every text field of the portable subject. `the_entry_mapping_keys_on_the_kernel_identity` pins the key, the symbol, and the transport slots against the emission.
+
+**Item 2 — the total target translation** lives in `prototypes/serial-sum-compile/src/target.rs`, in the one place a dependency permits it, with five tests written so they cannot pass by repeating the map.
+
+**Item 3 — `#[non_exhaustive]` removed** from `tiler_metal::target::{MslLanguageVersion, MetalPlatform}`, both now documented as ADR 0074 convention 5b types. This was a *loosening* rather than an ADR 0075 breaking change: nothing that compiled before stopped compiling.
+
+**Surface promoted on Tom's review, 2026-07-25.** `PayloadContent`, `PayloadMetadata`, `PayloadProvenance`, `ToolComponent`, `PayloadSdkIdentity`, `PayloadEntryMapping`, `PayloadTargetObligation`, and `ArtifactProgramBuilder::push_carried_payload` are now `pub`. Everything else in `codec` stays `pub(crate)` behind its private module under ADR 0074 convention 7 — the envelope, encoder, decoder, rejection vocabulary, and governed constants are all still unreachable.
+
+**Split out: carrying the payload in an envelope.** The ticket's closing condition also requires the payload carried in the neutral envelope and re-validated from bytes without a device. That cannot be done from here. Building an artifact needs the selected plan's `VerifiedKernelProgram`, its selected providers, its ABI expressions, guards, bindings, and launch contracts — all reachable only through `ProgramAlternative::artifact_plan`, which is `pub(crate)` in `tiler-compiler` and not exposed on the `session` boundary. That is a separate surface decision and a separate piece of work: `carry-the-metal-payload-in-an-artifact-envelope`.
+
+`cargo nextest run --workspace --no-fail-fast` — 631 passed, 0 skipped; clippy, fmt, doctests, and `scripts/check_repository.py` clean.

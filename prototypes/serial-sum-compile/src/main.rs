@@ -19,6 +19,7 @@
 //! constructors are `pub(crate)` in `tiler-artifact`, and promoting them is
 //! ADR 0075 review that has not happened.
 
+mod payload;
 mod target;
 
 use std::fmt;
@@ -156,6 +157,20 @@ fn run() -> Result<(), ProducerError> {
         artifact.metallib.len(),
         request.target.triple(),
     );
+
+    // Fill the neutral carried payload from what was just emitted and compiled.
+    // The subject is the compilation *inputs*; the object travels beside it.
+    let payload = payload::carried_payload(&unit, &artifact.provenance, &artifact.metallib)
+        .map_err(ProducerError::Payload)?;
+    let identity = payload
+        .identity()
+        .map_err(|_| ProducerError::PayloadIdentity)?;
+    println!(
+        "payload subject: {} entr(y/ies), {} obligation(s), identity {} bytes",
+        payload.metadata.entries.len(),
+        payload.metadata.obligations.len(),
+        identity.as_bytes().len(),
+    );
     Ok(())
 }
 
@@ -172,6 +187,8 @@ enum ProducerError {
     NoSelection,
     Emit,
     UnrealizableNumerics { gaps: Vec<String> },
+    Payload(String),
+    PayloadIdentity,
     Toolchain,
 }
 
@@ -190,15 +207,21 @@ impl fmt::Display for ProducerError {
             Self::Toolchain => {
                 formatter.write_str("the offline Metal toolchain did not produce a metallib")
             }
+            Self::Payload(cause) => write!(formatter, "the carried payload is malformed: {cause}"),
+            Self::PayloadIdentity => {
+                formatter.write_str("the carried payload's compilation subject has no identity")
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{serial_sum_program, target_facts};
+    use super::{payload, serial_sum_program, target, target_facts};
     use tiler_compiler::session::{NumericalContract, compile_governed};
     use tiler_metal::emit::emit_translation_unit;
+    use tiler_metal_aot::driver::Toolchain;
+    use tiler_metal_aot::input::{CompileRequest, NumericalRealization, OptimizationLevel};
 
     /// The offline path composes as far as deterministic MSL, without a
     /// toolchain.
@@ -226,6 +249,132 @@ mod tests {
             first.source().contains("kernel"),
             "the emitted unit declares a Metal kernel",
         );
+    }
+
+    /// A carried payload is content-addressed over its compilation *inputs*.
+    ///
+    /// This is the identity decision `prototype-metal-bundle-assembly` made,
+    /// asserted against a real emission rather than a fixture: relinking the
+    /// same source must not change what artifact this is, and changing a
+    /// compilation input must. Without the first property, artifact identity
+    /// would depend on linker reproducibility, which `docs/artifact-abi.md`
+    /// explicitly refuses to promise.
+    #[test]
+    fn the_payload_identity_follows_its_compilation_subject() {
+        let (unit, artifact) = emit_and_compile();
+        let payload = payload::carried_payload(&unit, &artifact.provenance, &artifact.metallib)
+            .expect("the payload assembles");
+        let identity = payload.identity().expect("the subject has an identity");
+
+        // Same subject, different emitted object: the artifact is unchanged.
+        let mut relinked = payload.clone();
+        relinked.code.push(0xff);
+        assert_eq!(
+            relinked.identity().expect("the subject has an identity"),
+            identity,
+            "the object is opaque; a different link is the same artifact",
+        );
+
+        // A changed compilation input: a different artifact.
+        let mut recompiled = payload.clone();
+        recompiled.metadata.source.push(b' ');
+        assert_ne!(
+            recompiled.identity().expect("the subject has an identity"),
+            identity,
+            "different source is a different compilation subject",
+        );
+
+        // Flag order is meaning, not presentation.
+        let mut reordered = payload;
+        reordered.metadata.provenance.compile_flags.reverse();
+        assert_ne!(
+            reordered.identity().expect("the subject has an identity"),
+            identity,
+            "a compiler resolves conflicting flags positionally, so order is identity",
+        );
+    }
+
+    /// No absolute path reaches the payload's portable subject.
+    ///
+    /// `ResolvedTool::path` and `SdkIdentity::path` are local provenance by
+    /// their own documentation. A subject that folded one would give two hosts
+    /// running the same toolchain two different artifact identities.
+    #[test]
+    fn the_payload_subject_carries_no_local_path() {
+        let (unit, artifact) = emit_and_compile();
+        let payload = payload::carried_payload(&unit, &artifact.provenance, &artifact.metallib)
+            .expect("the payload assembles");
+        let provenance = &payload.metadata.provenance;
+        let mut text = vec![
+            provenance.toolchain.clone(),
+            provenance.target.clone(),
+            provenance.family.clone(),
+            provenance.language.clone(),
+            provenance.sdk.name.clone(),
+            provenance.sdk.version.clone(),
+            provenance.sdk.build.clone(),
+        ];
+        text.extend(
+            provenance
+                .components
+                .iter()
+                .map(|part| part.version.clone()),
+        );
+        text.extend(provenance.compile_flags.iter().cloned());
+        text.extend(provenance.link_flags.iter().cloned());
+        for value in text {
+            assert!(
+                !value.starts_with('/') && !value.contains("/Applications"),
+                "{value:?} looks like a local path and must not be portable identity",
+            );
+        }
+    }
+
+    /// The entry mapping names the kernel identity, not the emitted symbol.
+    #[test]
+    fn the_entry_mapping_keys_on_the_kernel_identity() {
+        let (unit, artifact) = emit_and_compile();
+        let payload = payload::carried_payload(&unit, &artifact.provenance, &artifact.metallib)
+            .expect("the payload assembles");
+        let entry = &payload.metadata.entries[0];
+        let emitted = &unit.entry_points()[0];
+        assert_eq!(
+            entry.entry_key.as_bytes(),
+            emitted.kernel_identity().as_bytes()
+        );
+        assert_eq!(entry.symbol, emitted.symbol());
+        assert_eq!(
+            entry.transports,
+            emitted
+                .buffers()
+                .iter()
+                .map(|binding| binding.index())
+                .collect::<Vec<_>>(),
+            "the transport slots are the emitted argument-table indices",
+        );
+    }
+
+    /// Compiles the proof program once for the payload cases above.
+    fn emit_and_compile() -> (
+        tiler_metal::record::MetalTranslationUnit,
+        tiler_metal_aot::record::CompiledArtifact,
+    ) {
+        let program = serial_sum_program();
+        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed program compiles");
+        let plan = compilations[0].selected().expect("a selected alternative");
+        let kernels: Vec<_> = plan.kernels().iter().collect();
+        let unit = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
+        let request = CompileRequest::new(
+            unit.source(),
+            target::compile_target(target_facts()),
+            OptimizationLevel::Default,
+            NumericalRealization::strict_baseline(),
+        );
+        let artifact = Toolchain::system()
+            .compile(&request)
+            .expect("the offline toolchain compiles");
+        (unit, artifact)
     }
 
     /// The contract a caller states decides whether this target can honour it.

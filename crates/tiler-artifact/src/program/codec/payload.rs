@@ -92,62 +92,62 @@ pub(super) const MAX_TARGET_OBLIGATIONS: usize = 64;
 /// provenance rather than portable key material, and a payload identity that
 /// folded one would differ between two hosts running the same toolchain.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ToolComponent {
+pub struct ToolComponent {
     /// Governed role key, such as the offline compiler or the linker.
-    pub(crate) role: String,
+    pub role: String,
     /// Exact version string the component reported.
-    pub(crate) version: String,
+    pub version: String,
 }
 
 /// The identity of the SDK one payload was compiled against.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PayloadSdkIdentity {
+pub struct PayloadSdkIdentity {
     /// Canonical SDK selector, such as `macosx`.
-    pub(crate) name: String,
+    pub name: String,
     /// Canonical SDK version.
-    pub(crate) version: String,
+    pub version: String,
     /// SDK build identifier.
-    pub(crate) build: String,
+    pub build: String,
 }
 
 /// Everything about *how* a payload was produced that participates in identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PayloadProvenance {
+pub struct PayloadProvenance {
     /// Governed key of the toolchain family that produced the payload.
-    pub(crate) toolchain: String,
+    pub toolchain: String,
     /// Normalized target the payload was compiled for.
-    pub(crate) target: String,
+    pub target: String,
     /// Artifact family the payload belongs to.
-    pub(crate) family: String,
+    pub family: String,
     /// Source language standard the payload was compiled under.
-    pub(crate) language: String,
+    pub language: String,
     /// Major component of the requested deployment minimum.
-    pub(crate) deployment_major: u16,
+    pub deployment_major: u16,
     /// Minor component of the requested deployment minimum.
-    pub(crate) deployment_minor: u16,
+    pub deployment_minor: u16,
     /// Versioned tool components, in canonical role order.
-    pub(crate) components: Vec<ToolComponent>,
+    pub components: Vec<ToolComponent>,
     /// Identity of the SDK the payload was compiled against.
-    pub(crate) sdk: PayloadSdkIdentity,
+    pub sdk: PayloadSdkIdentity,
     /// The exact ordered compiler flags, excluding file paths.
     ///
     /// Order is meaning here, not presentation: a compiler resolves repeated or
     /// conflicting flags positionally, so a canonicalized list would name a
     /// different invocation.
-    pub(crate) compile_flags: Vec<String>,
+    pub compile_flags: Vec<String>,
     /// The exact ordered linker flags, excluding file paths.
-    pub(crate) link_flags: Vec<String>,
+    pub link_flags: Vec<String>,
 }
 
 /// The backend's own spelling of one neutral executable entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PayloadEntryMapping {
+pub struct PayloadEntryMapping {
     /// Neutral backend entry key the artifact's executable entry names.
-    pub(crate) entry_key: BackendEntryKey,
+    pub entry_key: BackendEntryKey,
     /// The backend's own entry-point symbol.
-    pub(crate) symbol: String,
+    pub symbol: String,
     /// Ordered transport slots this entry's ABI bindings occupy.
-    pub(crate) transports: Vec<u32>,
+    pub transports: Vec<u32>,
 }
 
 /// One target obligation the backend recorded for this payload.
@@ -158,11 +158,11 @@ pub(crate) struct PayloadEntryMapping {
 /// discharge and what it required of the compilation, so a reader can see why a
 /// payload was accepted without re-deriving the backend's own reasoning.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct PayloadTargetObligation {
+pub struct PayloadTargetObligation {
     /// Governed obligation key.
-    pub(crate) key: String,
+    pub key: String,
     /// Governed obligation value.
-    pub(crate) value: String,
+    pub value: String,
 }
 
 /// The complete compilation subject of one carried payload.
@@ -171,26 +171,26 @@ pub(crate) struct PayloadTargetObligation {
 /// every field here is an *input* to the compilation. The emitted object is not
 /// a field; it travels in its own section.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PayloadMetadata {
+pub struct PayloadMetadata {
     /// Governed representation key of the retained source.
-    pub(crate) source_representation: RepresentationKey,
+    pub source_representation: RepresentationKey,
     /// The exact source bytes that were compiled.
-    pub(crate) source: Vec<u8>,
+    pub source: Vec<u8>,
     /// How the payload was produced.
-    pub(crate) provenance: PayloadProvenance,
+    pub provenance: PayloadProvenance,
     /// Entry mappings in canonical backend-entry-key order.
-    pub(crate) entries: Vec<PayloadEntryMapping>,
+    pub entries: Vec<PayloadEntryMapping>,
     /// Recorded target obligations in canonical key order.
-    pub(crate) obligations: Vec<PayloadTargetObligation>,
+    pub obligations: Vec<PayloadTargetObligation>,
 }
 
 /// One carried backend payload: its compilation subject and its object bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PayloadContent {
+pub struct PayloadContent {
     /// The compilation subject, which is the payload's identity.
-    pub(crate) metadata: PayloadMetadata,
+    pub metadata: PayloadMetadata,
     /// The emitted object bytes, carried opaquely.
-    pub(crate) code: Vec<u8>,
+    pub code: Vec<u8>,
 }
 
 impl PayloadContent {
@@ -201,7 +201,7 @@ impl PayloadContent {
     /// Returns [`ArtifactBuildError`] when the canonical metadata bytes exceed
     /// the governed opaque-identity bound, which the fixed digest width makes
     /// unreachable and which is propagated rather than asserted.
-    pub(crate) fn identity(&self) -> Result<PayloadDigest, ArtifactBuildError> {
+    pub fn identity(&self) -> Result<PayloadDigest, ArtifactBuildError> {
         payload_identity(&encode_metadata(&self.metadata))
     }
 }
@@ -215,7 +215,7 @@ impl PayloadContent {
 /// # Errors
 ///
 /// Returns [`ArtifactBuildError`] from the wrapping constructor.
-pub(crate) fn payload_identity(metadata: &[u8]) -> Result<PayloadDigest, ArtifactBuildError> {
+pub fn payload_identity(metadata: &[u8]) -> Result<PayloadDigest, ArtifactBuildError> {
     PayloadDigest::from_bytes(
         DigestAlgorithm::GOVERNED
             .digest(PAYLOAD_IDENTITY_DOMAIN, metadata)

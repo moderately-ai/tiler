@@ -91,7 +91,14 @@ mod validate;
 pub(crate) use model::{
     ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, expression_keys, position,
 };
-pub(crate) use payload::{
+// The carried-payload vocabulary is the one part of this module that is
+// public. A backend assembler outside this crate must be able to describe what
+// it compiled, and nothing else here is reachable: the envelope, the encoder,
+// the decoder, the rejection vocabulary, and the governed constants all stay
+// `pub(crate)` behind this private module under ADR 0074 convention 7.
+//
+// Promoted on Tom's review, 2026-07-25.
+pub use payload::{
     PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
     PayloadTargetObligation, ToolComponent,
 };

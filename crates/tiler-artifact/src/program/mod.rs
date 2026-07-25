@@ -310,6 +310,10 @@ pub use builder::{
     ArtifactProgramBuilder, BindingSpec, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
     LaunchSpec, VariantSpec,
 };
+pub use codec::{
+    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
+    PayloadTargetObligation, ToolComponent,
+};
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
     ArtifactLimitKind, ArtifactVerificationError, ForeignEnumSubject,
