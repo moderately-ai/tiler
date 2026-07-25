@@ -53,11 +53,18 @@
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::{
-    CanonicalScheduledRegionIdentity, ResourceRequirements, ScheduledRegion, TensorRole,
+    AccessMode, CanonicalScheduledRegionIdentity, ResourceRequirements, ScheduledRegion, TensorRole,
 };
 use tiler_ir::semantic::ProviderIdentity;
 
+use crate::boundary::{
+    AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, ByteAlignment,
+    ExecutionAffinity, GuaranteedProperties, GuaranteedProperty, LayoutGuarantee,
+    LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
+    RequiredProperty, StorageEncoding, VisibilityGuarantee, VisibilityRequirement,
+};
 use crate::feasibility::ProvenEvidence;
 use crate::honourability::UnhonouredDimension;
 use crate::physical::{PhysicalError, VerifiedScheduledRegion, verify_schedule_with_feasibility};
@@ -224,9 +231,9 @@ impl TargetApplicability {
     }
 
     fn encode(&self, output: &mut Vec<u8>) {
-        encode_len(output, self.target_profile_keys.len());
+        push_len(output, self.target_profile_keys.len());
         for key in &self.target_profile_keys {
-            encode_bytes(output, key.as_bytes());
+            push_slice(output, key.as_bytes());
         }
     }
 }
@@ -320,32 +327,21 @@ impl PhysicalCostEstimate {
     }
 }
 
-/// How a boundary tensor an implementation reads must be available beforehand.
+/// ADR 0047's "ownership": how a producer owns the writes to a boundary value.
+///
+/// This is a guarantee-side qualifier and not a property dimension, because it
+/// has no requirement counterpart: a consumer states an
+/// [`AccessMode`], not an ownership. ADR 0047 lists the two on opposite sides
+/// for the same reason.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BoundaryAvailability {
-    /// The tensor must be materialized in the device address space before the
-    /// implementation runs.
-    MaterializedInDeviceMemory,
-}
-
-impl BoundaryAvailability {
-    const fn tag(self) -> u8 {
-        match self {
-            Self::MaterializedInDeviceMemory => 1,
-        }
-    }
-}
-
-/// How a boundary tensor an implementation writes is produced.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BoundaryProduction {
+pub(crate) enum BoundaryOwnership {
     /// The implementation writes every owned output position exactly once, so the
     /// tensor is produced totally and race-free (backed by the region's ownership
     /// proof).
     TotalRaceFreeWrite,
 }
 
-impl BoundaryProduction {
+impl BoundaryOwnership {
     const fn tag(self) -> u8 {
         match self {
             Self::TotalRaceFreeWrite => 1,
@@ -353,41 +349,55 @@ impl BoundaryProduction {
     }
 }
 
-/// One boundary tensor an implementation requires to be available before it runs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// One boundary tensor an implementation requires, with the typed properties it
+/// requires of it.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BoundaryRequirement {
     tensor: TensorRole,
-    availability: BoundaryAvailability,
+    access: AccessMode,
+    properties: RequiredProperties,
 }
 
 impl BoundaryRequirement {
     /// Returns the boundary tensor role the requirement is over.
-    pub(crate) const fn tensor(self) -> TensorRole {
+    pub(crate) const fn tensor(&self) -> TensorRole {
         self.tensor
     }
 
-    /// Returns how the required tensor must be available.
-    pub(crate) const fn availability(self) -> BoundaryAvailability {
-        self.availability
+    /// Returns ADR 0047's requirement-side access mode.
+    pub(crate) const fn access(&self) -> AccessMode {
+        self.access
+    }
+
+    /// Returns the typed properties the incoming value must have.
+    pub(crate) const fn properties(&self) -> &RequiredProperties {
+        &self.properties
     }
 }
 
-/// One boundary tensor an implementation guarantees to produce.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// One boundary tensor an implementation guarantees, with the typed properties
+/// it guarantees of it.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BoundaryGuarantee {
     tensor: TensorRole,
-    production: BoundaryProduction,
+    ownership: BoundaryOwnership,
+    properties: GuaranteedProperties,
 }
 
 impl BoundaryGuarantee {
     /// Returns the boundary tensor role the guarantee is over.
-    pub(crate) const fn tensor(self) -> TensorRole {
+    pub(crate) const fn tensor(&self) -> TensorRole {
         self.tensor
     }
 
-    /// Returns how the guaranteed tensor is produced.
-    pub(crate) const fn production(self) -> BoundaryProduction {
-        self.production
+    /// Returns ADR 0047's guarantee-side ownership.
+    pub(crate) const fn ownership(&self) -> BoundaryOwnership {
+        self.ownership
+    }
+
+    /// Returns the typed properties the outgoing value has.
+    pub(crate) const fn properties(&self) -> &GuaranteedProperties {
+        &self.properties
     }
 }
 
@@ -415,46 +425,191 @@ impl BoundaryContract {
         &self.guarantees
     }
 
+    /// Whether this contract's requirements are no stronger than `other`'s and
+    /// its guarantees are at least as strong, at every boundary tensor.
+    ///
+    /// This is the boundary half of the accepted dominance relation: "its
+    /// applicability covers the other's, its target and boundary requirements are
+    /// no stronger, its guarantees are at least as strong".
+    ///
+    /// The two contracts are paired *positionally*, and the pairing is rejected
+    /// unless the two sequences of side qualifiers agree entry for entry. Both
+    /// are derived in the verified region's access order, which is deterministic
+    /// and already part of `CanonicalScheduledRegionIdentity`, so two
+    /// implementations of one region always pair exactly. Matching by tensor role
+    /// instead would be wrong rather than merely loose: a region reading two
+    /// `Input` boundaries has two entries under one role, and a search for the
+    /// role would compare one of them against both — a mis-pairing that can
+    /// report dominance where none holds. A contract whose sequence differs
+    /// describes a different boundary, and neither side dominates.
+    fn subsumes(&self, other: &Self) -> bool {
+        let requirements_no_stronger = self.requirements.len() == other.requirements.len()
+            && self
+                .requirements
+                .iter()
+                .zip(&other.requirements)
+                .all(|(mine, theirs)| {
+                    mine.tensor == theirs.tensor
+                        && mine.access == theirs.access
+                        && mine.properties.is_no_stronger_than(&theirs.properties)
+                });
+        let guarantees_at_least_as_strong = self.guarantees.len() == other.guarantees.len()
+            && self
+                .guarantees
+                .iter()
+                .zip(&other.guarantees)
+                .all(|(mine, theirs)| {
+                    mine.tensor == theirs.tensor
+                        && mine.ownership == theirs.ownership
+                        && mine.properties.is_at_least_as_strong_as(&theirs.properties)
+                });
+        requirements_no_stronger && guarantees_at_least_as_strong
+    }
+
     fn encode(&self, output: &mut Vec<u8>) {
-        encode_len(output, self.requirements.len());
+        push_len(output, self.requirements.len());
         for requirement in &self.requirements {
             output.push(tensor_role_tag(requirement.tensor));
-            output.push(requirement.availability.tag());
+            output.push(access_mode_tag(requirement.access));
+            requirement.properties.encode(output);
         }
-        encode_len(output, self.guarantees.len());
+        push_len(output, self.guarantees.len());
         for guarantee in &self.guarantees {
             output.push(tensor_role_tag(guarantee.tensor));
-            output.push(guarantee.production.tag());
+            output.push(guarantee.ownership.tag());
+            guarantee.properties.encode(output);
         }
     }
 }
+
+/// The bounded profile's single symbolic execution affinity.
+///
+/// ADR 0047's initial execution profile is one symbolic affinity, one live
+/// device, and one ordered command stream, with every stage, temporary, and
+/// output using that affinity. A second affinity is what a target profile would
+/// declare, and it is what makes transfer enforcers reachable.
+const BOUNDED_AFFINITY: ExecutionAffinity = ExecutionAffinity::PRIMARY;
+
+/// Rule code for a region whose resources deny the address space its own
+/// boundary tensors are bound in.
+const NO_BOUNDARY_DOMAIN_RULE: &str = "boundary-domain-undetermined";
 
 /// Derives the boundary contract of a verified scheduled region.
 ///
 /// Each read access contributes a requirement on its boundary tensor; the single
 /// owning write contributes a guarantee on its boundary tensor. The intrinsic
 /// verifier already proved the write is a total, race-free ownership, so the
-/// guarantee is sound.
-fn derive_boundary_contract(region: &ScheduledRegion) -> BoundaryContract {
+/// ownership qualifier is sound.
+///
+/// The typed properties are derived and never declared, and each has a stated
+/// source:
+///
+/// - **layout** is dense row-major on both sides. `tiler_ir::kernel` linearizes a
+///   contributor address as "the row-major linearization" of the logical
+///   coordinates and the reference evaluator holds elements "in logical row-major
+///   order", so both `LogicalAccess::LinearIdentity` and
+///   `LogicalAccess::ReductionContributor` already address a dense row-major
+///   value. A schedule whose accesses were not dense would need a layout the
+///   scheduled-region IR cannot express today;
+/// - **encoding** is unpacked. The bounded profile is strict `f32` throughout, so
+///   no boundary value is sub-byte packed;
+/// - **alignment** is the natural `f32` alignment, for the same reason and with
+///   the same bound: `ScheduledRegion` carries no resolved element type, so a
+///   widened dtype vocabulary must derive this from the value rather than the
+///   profile;
+/// - **materialization** is a materialized buffer. Each access is a distinct
+///   buffer binding — `derive_requirements` counts `accesses.len()` bindings —
+///   and the bounded frontier admits no view or opaque body;
+/// - **affinity** is the bounded profile's single affinity, per ADR 0047;
+/// - **memory domain** is read from `ResourceRequirements::requires_device_memory`
+///   rather than assumed, so a profile that stops requiring an explicitly
+///   addressable device space changes the derivation instead of silently keeping
+///   a stale one;
+/// - **availability** is the producing dispatch on both sides. One scheduled
+///   region describes one kernel (ADR 0007), so its guarantee is its own dispatch
+///   and its requirement is whichever dispatch produced the value it reads;
+/// - **visibility** is coherent on the producing affinity. In the single-affinity
+///   profile a producer and a consumer share it, so no coherence action is owed;
+///   a second affinity is what makes
+///   [`VisibilityGuarantee::RequiresExplicitCoherenceAction`] reachable.
+///
+/// # Errors
+///
+/// Returns the rule code of a malformed derivation: a region that binds boundary
+/// tensors while its resources deny needing an explicitly addressable device
+/// address space names no domain its boundary values could live in, and that is
+/// incoherent compiler output rather than an unsatisfiable plan.
+fn derive_boundary_contract(
+    verified: &VerifiedScheduledRegion,
+) -> Result<BoundaryContract, &'static str> {
+    let region = verified.region();
+    let resources = verified.requirements();
+    if !region.index.accesses.is_empty() && !resources.requires_device_memory {
+        return Err(NO_BOUNDARY_DOMAIN_RULE);
+    }
     let mut requirements = Vec::new();
     let mut guarantees = Vec::new();
     for access in &region.index.accesses {
         if access.ownership.is_some() {
             guarantees.push(BoundaryGuarantee {
                 tensor: access.tensor,
-                production: BoundaryProduction::TotalRaceFreeWrite,
+                ownership: BoundaryOwnership::TotalRaceFreeWrite,
+                properties: bounded_guarantees(),
             });
         } else {
             requirements.push(BoundaryRequirement {
                 tensor: access.tensor,
-                availability: BoundaryAvailability::MaterializedInDeviceMemory,
+                access: access.mode,
+                properties: bounded_requirements(),
             });
         }
     }
-    BoundaryContract {
+    Ok(BoundaryContract {
         requirements,
         guarantees,
-    }
+    })
+}
+
+/// The typed properties the bounded profile's regions require of an input.
+///
+/// # Panics
+///
+/// Panics only if these compile-time constants violate the property model's own
+/// well-formedness rules, which no reachable input can cause.
+fn bounded_requirements() -> RequiredProperties {
+    RequiredProperties::new([
+        RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
+        RequiredProperty::StorageEncoding(StorageEncoding::Unpacked),
+        RequiredProperty::Alignment(ByteAlignment::F32_NATURAL),
+        RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
+        RequiredProperty::ExecutionAffinity(BOUNDED_AFFINITY),
+        RequiredProperty::MemoryDomain(
+            AdmittedMemoryDomains::new([MemoryDomainClass::Device])
+                .expect("a one-class admitted set is non-empty"),
+        ),
+        RequiredProperty::Availability(AvailabilityRequirement::AfterProducingDispatch),
+        RequiredProperty::Visibility(VisibilityRequirement::ReadableOnRequiringAffinity),
+    ])
+    .expect("the bounded profile's requirement set is well formed")
+}
+
+/// The typed properties the bounded profile's regions guarantee of an output.
+///
+/// # Panics
+///
+/// Panics under the same unreachable condition as [`bounded_requirements`].
+fn bounded_guarantees() -> GuaranteedProperties {
+    GuaranteedProperties::new([
+        GuaranteedProperty::StorageLayout(LayoutGuarantee::DenseRowMajor),
+        GuaranteedProperty::StorageEncoding(StorageEncoding::Unpacked),
+        GuaranteedProperty::Alignment(ByteAlignment::F32_NATURAL),
+        GuaranteedProperty::Materialization(MaterializationForm::MaterializedBuffer),
+        GuaranteedProperty::ExecutionAffinity(BOUNDED_AFFINITY),
+        GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device),
+        GuaranteedProperty::Availability(AvailabilityGuarantee::AfterOwnDispatch),
+        GuaranteedProperty::Visibility(VisibilityGuarantee::CoherentOnProducingAffinity),
+    ])
+    .expect("the bounded profile's guarantee set is well formed")
 }
 
 /// The provenance of one physical implementation provider.
@@ -691,6 +846,17 @@ impl AdmittedImplementation {
     pub(crate) const fn identity(&self) -> &ImplementationProposalIdentity {
         &self.identity
     }
+
+    /// Whether this implementation dominates `other` under the accepted relation.
+    ///
+    /// Boundary subsumption is checked *first* and cost last, so a cheaper
+    /// candidate never prunes one that asks less of its producers or offers more
+    /// to its consumers. Both are feasible by construction — holding an
+    /// [`AdmittedImplementation`] is that evidence — so this relation ranks
+    /// retained alternatives and can neither establish nor refute feasibility.
+    fn dominates(&self, other: &Self) -> bool {
+        self.boundary.subsumes(&other.boundary) && self.cost.dominates(&other.cost)
+    }
 }
 
 /// A proposal that did not enter the frontier, with a typed reason.
@@ -758,7 +924,7 @@ impl FrontierRejection {
             } => {
                 output.push(1);
                 encode_provider(output, provider);
-                encode_bytes(output, axis.as_bytes());
+                push_slice(output, axis.as_bytes());
                 output.extend_from_slice(&required.to_be_bytes());
                 output.extend_from_slice(&available.to_be_bytes());
             }
@@ -767,7 +933,7 @@ impl FrontierRejection {
                 encode_provider(output, provider);
                 output.push(cause.dimension().tag());
                 output.extend_from_slice(&cause.required().tag());
-                encode_bytes(output, cause.means().key().as_bytes());
+                push_slice(output, cause.means().key().as_bytes());
                 match cause.honoured() {
                     Some(honoured) => {
                         output.push(1);
@@ -775,7 +941,7 @@ impl FrontierRejection {
                     }
                     None => output.push(0),
                 }
-                encode_bytes(output, cause.profile().key().as_bytes());
+                push_slice(output, cause.profile().key().as_bytes());
             }
             Self::UnsupportedVariant { provider, kind } => {
                 output.push(2);
@@ -790,7 +956,7 @@ impl FrontierRejection {
                 output.push(3);
                 encode_provider(output, provider);
                 output.push(kind.tag());
-                encode_bytes(output, target_profile_key.as_bytes());
+                push_slice(output, target_profile_key.as_bytes());
             }
         }
     }
@@ -846,10 +1012,17 @@ impl ImplementationFrontier {
 
     /// Returns the non-dominated admitted implementations, in canonical order.
     ///
-    /// An implementation is retained unless another admitted implementation
-    /// strictly dominates its cost estimate. Domination runs strictly *after*
-    /// feasibility admission and only ever removes a proposal another proposal
-    /// beats on cost; it never establishes or refutes feasibility.
+    /// Domination is the accepted relation, not cost alone: an implementation is
+    /// removed only when another admitted implementation's *boundary
+    /// requirements are no stronger*, its *guarantees are at least as strong*,
+    /// and its cost estimate strictly dominates. Cost alone is not sufficient,
+    /// because "interesting boundary properties such as useful unit-stride axes
+    /// are retained on a bounded Pareto frontier even when they are not locally
+    /// cheapest": a cheaper implementation that demands more of its inputs or
+    /// delivers less to its consumers is not a replacement for one that does not.
+    ///
+    /// Domination still runs strictly *after* feasibility admission and never
+    /// establishes or refutes feasibility.
     pub(crate) fn non_dominated(&self) -> Vec<&AdmittedImplementation> {
         self.admitted
             .iter()
@@ -859,9 +1032,7 @@ impl ImplementationFrontier {
                     .admitted
                     .iter()
                     .enumerate()
-                    .any(|(other_index, other)| {
-                        *index != other_index && other.cost.dominates(&candidate.cost)
-                    })
+                    .any(|(other_index, other)| *index != other_index && other.dominates(candidate))
             })
             .map(|(_, candidate)| candidate)
             .collect()
@@ -894,6 +1065,18 @@ pub(crate) enum FrontierError {
         /// The ungoverned cost-model key the provider declared.
         declared_model_key: &'static str,
     },
+    /// A verified region's own facts do not determine a boundary property its
+    /// contract must state.
+    ///
+    /// Distinct from [`Self::MalformedProposal`] because the region passed
+    /// intrinsic verification: the inconsistency is between the region's accesses
+    /// and its derived resources, which no intrinsic invariant relates.
+    UndeterminedBoundaryProperty {
+        /// The provider whose proposal could not be described at its boundary.
+        provider: ProviderIdentity,
+        /// A stable rule code naming the undetermined property.
+        rule: &'static str,
+    },
 }
 
 impl FrontierError {
@@ -902,6 +1085,7 @@ impl FrontierError {
         match self {
             Self::MalformedProposal { .. } => "malformed-proposal",
             Self::MalformedCostProvenance { .. } => "malformed-cost-provenance",
+            Self::UndeterminedBoundaryProperty { .. } => "undetermined-boundary-property",
         }
     }
 }
@@ -920,6 +1104,10 @@ impl fmt::Display for FrontierError {
                 formatter,
                 "frontier.malformed-cost-provenance: provider {provider} declared ungoverned cost model {declared_model_key}"
             ),
+            Self::UndeterminedBoundaryProperty { provider, rule } => write!(
+                formatter,
+                "frontier.undetermined-boundary-property: provider {provider} emitted a region whose boundary property {rule} is undetermined"
+            ),
         }
     }
 }
@@ -928,7 +1116,9 @@ impl Error for FrontierError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::MalformedProposal { source, .. } => Some(source),
-            Self::MalformedCostProvenance { .. } => None,
+            Self::MalformedCostProvenance { .. } | Self::UndeterminedBoundaryProperty { .. } => {
+                None
+            }
         }
     }
 }
@@ -1006,25 +1196,14 @@ pub(crate) fn enumerate_frontier(
                 request,
             ) {
                 Ok((verified, feasibility)) => {
-                    let boundary = derive_boundary_contract(verified.region());
-                    let identity = encode_proposal_identity(
-                        verified.canonical_identity(),
+                    admitted.push(admit_verified(
+                        verified,
+                        feasibility,
                         provenance.provider(),
                         kind,
                         &proposal.applicability,
-                        &boundary,
-                    );
-                    admitted.push(AdmittedImplementation {
-                        provenance: ImplementationProvenance {
-                            provider: provenance.provider().clone(),
-                            kind,
-                        },
-                        verified,
-                        feasibility,
-                        boundary,
-                        cost: proposal.declared_cost,
-                        identity,
-                    });
+                        proposal.declared_cost,
+                    )?);
                 }
                 Err(PhysicalError::Target {
                     rule,
@@ -1065,6 +1244,52 @@ pub(crate) fn enumerate_frontier(
         region_role: subject.role,
         admitted,
         rejections,
+    })
+}
+
+/// Turns one region that passed checked verification into an admitted
+/// implementation, deriving its boundary contract and its canonical identity.
+///
+/// The provider supplies only the applicability predicate and the cost estimate;
+/// the contract and the identity are derived here from the verified region, so a
+/// provider can neither declare a boundary it does not honour nor forge an
+/// identity.
+///
+/// # Errors
+///
+/// Returns [`FrontierError::UndeterminedBoundaryProperty`] when the verified
+/// region's own facts do not determine a property its contract must state.
+fn admit_verified(
+    verified: VerifiedScheduledRegion,
+    feasibility: ProvenEvidence,
+    provider: &ProviderIdentity,
+    kind: PhysicalProposalKind,
+    applicability: &TargetApplicability,
+    cost: PhysicalCostEstimate,
+) -> Result<AdmittedImplementation, FrontierError> {
+    let boundary = derive_boundary_contract(&verified).map_err(|rule| {
+        FrontierError::UndeterminedBoundaryProperty {
+            provider: provider.clone(),
+            rule,
+        }
+    })?;
+    let identity = encode_proposal_identity(
+        verified.canonical_identity(),
+        provider,
+        kind,
+        applicability,
+        &boundary,
+    );
+    Ok(AdmittedImplementation {
+        provenance: ImplementationProvenance {
+            provider: provider.clone(),
+            kind,
+        },
+        verified,
+        feasibility,
+        boundary,
+        cost,
+        identity,
     })
 }
 
@@ -1161,7 +1386,7 @@ fn encode_proposal_identity(
     boundary: &BoundaryContract,
 ) -> ImplementationProposalIdentity {
     let mut bytes = PROPOSAL_IDENTITY_TAG.to_vec();
-    encode_bytes(&mut bytes, region_identity.as_bytes());
+    push_slice(&mut bytes, region_identity.as_bytes());
     encode_provider(&mut bytes, provider);
     bytes.push(kind.tag());
     applicability.encode(&mut bytes);
@@ -1183,33 +1408,43 @@ const fn tensor_role_tag(role: TensorRole) -> u8 {
     }
 }
 
+/// The governed tag naming an access mode in a canonical encoding.
+///
+/// An out-of-crate total map onto an identity tag, so `AccessMode` is an ADR 0074
+/// convention 5b vocabulary and must not become `#[non_exhaustive]`: a wildcard
+/// here would have to invent a tag, and two distinct access modes sharing one
+/// would give two distinct boundary contracts one identity.
+const fn access_mode_tag(mode: AccessMode) -> u8 {
+    match mode {
+        AccessMode::Read => 1,
+        AccessMode::Write => 2,
+    }
+}
+
 fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
-    encode_bytes(output, provider.namespace().as_bytes());
-    encode_bytes(output, provider.name().as_bytes());
+    push_slice(output, provider.namespace().as_bytes());
+    push_slice(output, provider.name().as_bytes());
     output.extend_from_slice(&provider.revision().to_be_bytes());
-}
-
-fn encode_len(output: &mut Vec<u8>, value: usize) {
-    output.extend_from_slice(&u64::try_from(value).unwrap_or(u64::MAX).to_be_bytes());
-}
-
-fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
-    encode_len(output, value.len());
-    output.extend_from_slice(value);
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmittedImplementation, BoundaryAvailability, BoundaryProduction, FrontierError,
-        FrontierRegionSubject, FrontierRejection, ImplementationContext, ImplementationProposal,
+        AdmittedImplementation, BoundaryOwnership, FrontierError, FrontierRegionSubject,
+        FrontierRejection, GovernedPhysicalProvider, ImplementationContext, ImplementationProposal,
         PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProposalKind,
         PhysicalProviderProvenance, ProposalBody, ReservedProposalSeam, TargetApplicability,
         enumerate_frontier,
     };
+    use crate::boundary::{
+        BoundaryProperty, GuaranteedProperty, MaterializationForm, MemoryDomainClass,
+        RequiredProperty,
+    };
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
     use crate::request::{CompilationRequest, VerifiedTargetRequest, verify_request};
-    use tiler_ir::schedule::{NumericalPermission, ScheduledRegion, SubnormalMode, TensorRole};
+    use tiler_ir::schedule::{
+        AccessMode, NumericalPermission, ScheduledRegion, SubnormalMode, TensorRole,
+    };
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -1349,16 +1584,41 @@ mod tests {
         let requirements = admitted.boundary().requirements();
         assert_eq!(requirements.len(), 1);
         assert_eq!(requirements[0].tensor(), TensorRole::Input);
-        assert_eq!(
-            requirements[0].availability(),
-            BoundaryAvailability::MaterializedInDeviceMemory
-        );
+        assert_eq!(requirements[0].access(), AccessMode::Read);
         let guarantees = admitted.boundary().guarantees();
         assert_eq!(guarantees.len(), 1);
         assert_eq!(guarantees[0].tensor(), TensorRole::Output);
         assert_eq!(
-            guarantees[0].production(),
-            BoundaryProduction::TotalRaceFreeWrite
+            guarantees[0].ownership(),
+            BoundaryOwnership::TotalRaceFreeWrite
+        );
+
+        // Every governed dimension is stated on both sides. A derivation that
+        // left one out would compose only by accident, because a requirement no
+        // guarantee speaks to fails closed rather than passing.
+        let needed = requirements[0].properties();
+        let offered = guarantees[0].properties();
+        assert_eq!(
+            needed.properties().len(),
+            crate::boundary::CANONICAL_PROPERTIES.len()
+        );
+        assert_eq!(
+            offered.properties().len(),
+            crate::boundary::CANONICAL_PROPERTIES.len()
+        );
+
+        // The derived values are the bounded profile's, and each is read from the
+        // region rather than declared by the provider.
+        assert_eq!(
+            needed.get(BoundaryProperty::Materialization),
+            Some(&RequiredProperty::Materialization(
+                MaterializationForm::MaterializedBuffer
+            ))
+        );
+        assert_eq!(
+            offered.get(BoundaryProperty::MemoryDomain),
+            Some(&GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device)),
+            "the domain is read from the region's own resource requirements"
         );
     }
 
@@ -1602,6 +1862,48 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Dominance is boundary-aware: two implementations of *different*
+    /// boundaries are incomparable however their costs compare.
+    ///
+    /// The bounded profile derives one contract per region, so two admitted
+    /// implementations of one region always share a contract and cost is what
+    /// separates them; the boundary half of the relation is therefore exercised
+    /// against two regions' real derived contracts rather than end to end. That
+    /// is a measurement boundary on this test, not on the relation.
+    #[test]
+    fn boundary_subsumption_gates_dominance_before_cost_is_consulted() {
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let fused = enumerate_frontier(
+            &request,
+            &fused_subject(&request),
+            &[&FusedScheduledKernelProvider {
+                provider: provider_identity("fused", 1),
+                cost: PhysicalCostEstimate::structural(1, 2, 0),
+            } as &dyn PhysicalImplementationProvider],
+        )
+        .unwrap();
+        let pointwise = enumerate_frontier(
+            &request,
+            &pointwise_subject(&request),
+            &[&GovernedPhysicalProvider as &dyn PhysicalImplementationProvider],
+        )
+        .unwrap();
+
+        let fused_contract = fused.admitted()[0].boundary();
+        let pointwise_contract = pointwise.admitted()[0].boundary();
+        // The fused region produces the program Output; the pointwise prologue
+        // produces the cross-region Intermediate. Different boundaries.
+        assert_ne!(
+            fused_contract.guarantees()[0].tensor(),
+            pointwise_contract.guarantees()[0].tensor()
+        );
+        assert!(!fused_contract.subsumes(pointwise_contract));
+        assert!(!pointwise_contract.subsumes(fused_contract));
+        // A contract always subsumes itself, so cost remains the separator for
+        // two implementations of one region.
+        assert!(fused_contract.subsumes(fused_contract));
     }
 
     #[test]
