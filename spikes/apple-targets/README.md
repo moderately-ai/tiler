@@ -9,7 +9,7 @@ implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour"]
 entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py"]
-last_verified: "2026-07-24"
+last_verified: "2026-07-25"
 ticket: "apple-artifact-compatibility"
 ---
 
@@ -105,11 +105,40 @@ in the dispatch host reports the image dyld actually loaded and
 `environment.family.<name>.runtime_compiler_build` records its build, so no
 family's runtime compiler is inherited from another's row.
 
+**The operation vocabulary, and the two matrices it is measured in.** The kernels
+cover multiply, add, division in both the power-of-two form the driver rewrites
+into a multiply and the form it keeps, a source-level `fma`, and a two-add chain
+whose value says where the parentheses went. The swept axes are the three math
+modes, the three contraction settings, both `-fmetal-math-fp32-functions`
+values, and all five offline optimization levels. That costs more than the gate
+should pay on every run, so `cases` assembles a `covering` set — at least one
+case of every kernel, mode, level, contraction setting, and fp32-functions
+value, plus every case a finding cites — and an `exhaustive` cross product
+selected by `TILER_APPLE_NUMERICS_EXHAUSTIVE`. `probe.matrix` names which one
+produced a record and `matrix_mismatch` refuses to compare one against a run of
+the other. A portable guard test holds the covering set to its coverage claim.
+
+**A kernel added here must be checked against what the module emitted.** Widening
+the vocabulary found the harness reporting a kernel whose whole body is one
+`fma` as containing no floating-point arithmetic at all: this front end lowers
+`fma(x, a, b)` to `@air.fma.f32` and `FUSED_INTRINSIC` named only the `llvm.`
+spellings. The verdict still failed closed, but the count was wrong in the
+direction a reader acts on, because a surviving operation reported as zero looks
+exactly like a deleted one. Both spellings are matched now. Every hand-written
+`SubnormalProbe`, `OrderProbe`, and `Witness` is also checked against `evaluate`,
+which derives each candidate result from the kernel under exact arithmetic and
+under the sign-preserving flush, so a mis-stated literal is a portable test
+failure rather than a silently wrong classification.
+
 Print a run and rewrite the retained record with:
 
 ```sh
 uv run --locked python spikes/apple-targets/numerical_probe.py \
-  --record spikes/apple-targets/results/<yyyy-mm-dd>-numerics-<toolchain>/record.tsv
+  --record spikes/apple-targets/results/<yyyy-mm-dd>-numerics-covering-<toolchain>/record.tsv
+
+TILER_APPLE_NUMERICS_EXHAUSTIVE=1 \
+  uv run --locked python spikes/apple-targets/numerical_probe.py \
+  --record spikes/apple-targets/results/<yyyy-mm-dd>-numerics-exhaustive-<toolchain>/record.tsv
 ```
 
 Pass `--work-dir spikes/apple-targets/local-work` to keep the generated
@@ -181,22 +210,30 @@ all and run everywhere, including on a host with neither an Apple toolchain nor
 `git`.
 
 **What it costs the gate.** `uv run --locked python -m pytest -c pyproject.toml
-spikes/apple-targets` takes about 13–20 s on the measured host once a simulator
-is booted (about 15 s baseline before this ticket, on the same host, with the
-older single-family probe), covering 126 offline cases across three families and
-80 runtime ones across the two families that dispatch. The one-time cost of
-booting a cold simulator adds roughly 8 s to the first gate run that needs it;
-the harness leaves the device booted so subsequent runs pay only one `simctl
-spawn` per family. On a host with no Apple toolchain the whole thing skips in
-well under a second.
+spikes/apple-targets` takes about 47 s on the measured host once a simulator is
+booted, covering the 204 offline cases of the covering matrix across three
+families and 164 runtime ones across the two families that dispatch; the same
+command took about 20 s over 126 and 80 before the matrix was widened, on the
+same host. The exhaustive matrix adds 99 offline cases and about 5 s to a probe
+run. All of these were measured while several other worktrees were running their
+own gates, so treat them as an upper bound with a loaded host rather than as a
+clean figure. The one-time cost of booting a cold simulator adds roughly 8 s to
+the first gate run that needs it; the harness leaves the device booted so
+subsequent runs pay only one `simctl spawn` per family. On a host with no Apple
+toolchain the whole thing skips in well under a second.
 
-The retained 2026-07-24 run is
-[`results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv`](results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv),
-schema `tiler.apple-numerical-behaviour/v3`. The directory name identifies the
-offline toolchain; the `environment.family.*` rows identify each family's SDK,
-emitted triple, execution environment, and both compilers. The gate compares a
-live run's `case.*`, `comparison.*`, and `hazard.*` rows against it whenever the
-environment row matches and announces a skip when it does not, because a
+The retained 2026-07-25 runs are
+[`results/2026-07-25-numerics-covering-xcode26.6-metal32023.883/record.tsv`](results/2026-07-25-numerics-covering-xcode26.6-metal32023.883/record.tsv)
+and
+[`results/2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv`](results/2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv),
+schema `tiler.apple-numerical-behaviour/v4`. The schema `v3` record
+[`results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv`](results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv)
+is retained as the previous row and is no longer compared against. The directory
+name identifies the offline toolchain and the matrix; the `environment.family.*`
+rows identify each family's SDK, emitted triple, execution environment, and both
+compilers. The gate compares a live run's `case.*`, `comparison.*`, and
+`hazard.*` rows against the record for the matrix it measured, whenever the
+environment row matches, and announces a skip when it does not, because a
 different toolchain build or simulator runtime legitimately produces different
 values. See the
 [numerical-behaviour report](../../docs/research/apple-targets/numerical-behaviour.md)

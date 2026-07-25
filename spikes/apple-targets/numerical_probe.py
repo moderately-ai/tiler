@@ -139,6 +139,34 @@ offline path resolves properly. It is corroboration, not evidence. In the iOS
 Simulator it is not even available: serializing an archive aborts the process
 there, so `archive_support` probes for it in a one-entry batch of its own before
 any manifest that carries measurements asks for one.
+
+# The widened matrix, and the two sets it is measured in
+
+The vocabulary this harness reads is not the vocabulary a compiler emits, and the
+gap is where its guard fails quietly rather than loudly. Widening the matrix
+found exactly that: a source-level `fma` lowers to `@air.fma.f32`, which the
+intrinsic pattern did not name, so a kernel whose entire body is one fused
+multiply-add was reported as containing no arithmetic at all. A count that reads
+zero on a surviving operation is indistinguishable from a deleted one, which is
+the reading finding 7 rests on. `FUSED_INTRINSIC` names both spellings now, and
+the lesson generalizes: every kernel added here has to be checked against what
+the module *emitted*, not against what its source says.
+
+The widened axes are `-fmetal-math-fp32-functions`, which was a pinned flag and
+is now swept on both paths; `-O1`, `-O3`, and `-Os`, which join `-O0` and `-O2`;
+division, both in the power-of-two form the driver rewrites into a multiply and
+in the form it keeps; a source-level `fma` over the constants the contraction
+pair already uses; and a two-add chain whose value says where the parentheses
+went, which is the smallest shape a reassociation licence can be observed in.
+
+That costs more than the gate should pay on every run, so `cases` assembles two
+sets. `covering` keeps at least one case of every kernel, math mode, optimization
+level, contraction setting, and fp32-functions value, and every case a recorded
+finding cites; `exhaustive`, selected by `TILER_APPLE_NUMERICS_EXHAUSTIVE`, is
+the full cross product on the widened axes. `probe.matrix` records which one
+produced a record and `matrix_mismatch` refuses to compare one against a run of
+the other, because the two pin different case sets and every case they do not
+share would otherwise read as decay.
 """
 
 from __future__ import annotations
@@ -147,22 +175,25 @@ import argparse
 import enum
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from fractions import Fraction
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parents[1]
 HOST_SOURCE = HERE / "numerical_probe_host.m"
 
-SCHEMA = "tiler.apple-numerical-behaviour/v3"
+SCHEMA = "tiler.apple-numerical-behaviour/v4"
 """Record format identity. Bump this whenever a key's meaning changes.
 
 v2 added the runtime-compilation path. `case.*.float_operations` and
@@ -177,6 +208,17 @@ because a family with no attached device is never dispatched, the single
 `environment.sdk_*`/`metal_version`/`runtime_compiler`/`device` fields became
 per-family `environment.family.*` rows, and `hazard.*` records a measured
 cross-family outcome that the harness refuses to treat as evidence.
+
+v4 widens the matrix. `-fmetal-math-fp32-functions` stopped being a fixed flag
+and became a swept axis, so `probe.fixed_flags` and `probe.runtime_fixed_options`
+no longer name it and `probe.default_fp32_functions` does; a case key carries the
+`fpfun-<value>` suffix **exactly when** it departs from that default, so every
+v3 key keeps its exact meaning and only the departing cases are new keys.
+`-O1`, `-O3`, and `-Os` joined `-O0` and `-O2`; division, a source-level `fma`,
+and a two-add reassociation chain joined multiply and add; and `probe.matrix`
+names which case matrix produced the record, because the exhaustive sweep and
+the covering subset the gate runs are different sets of cases and a record from
+one may not be compared against a run of the other.
 """
 
 REQUIRE_TOOLCHAIN = "TILER_REQUIRE_METAL_TOOLCHAIN"
@@ -188,8 +230,34 @@ repository strict. It can only make this harness stricter; nothing here lets an
 environment variable weaken a check.
 """
 
+EXHAUSTIVE = "TILER_APPLE_NUMERICS_EXHAUSTIVE"
+"""Selects the full case matrix instead of the covering subset the gate runs.
+
+The widened matrix costs more than the gate should pay on every run, so
+`cases` assembles two sets: a covering subset that keeps at least one case of
+every kernel, math mode, optimization level, contraction setting, and
+`-fmetal-math-fp32-functions` value, and the exhaustive cross product. Setting
+this variable to any value selects the exhaustive one.
+
+This is the one environment variable here that changes *what is measured*, so
+`probe.matrix` records which set produced a record and `compare_record`'s caller
+refuses to compare a record from one against a run of the other. Unlike
+`TILER_REQUIRE_TOOLCHAIN` it can therefore make the harness measure *less*, which
+is why the retained covering record is the one the gate holds itself to and the
+exhaustive record is separate retained evidence rather than a replacement.
+"""
+
 MSL_VERSION = "metal3.1"
-FP32_FUNCTIONS = "precise"
+DEFAULT_FP32_FUNCTIONS = "precise"
+FP32_FUNCTION_MODES = ("precise", "fast")
+"""`-fmetal-math-fp32-functions`, pinned to `precise` before this axis was swept.
+
+`prototype-metal-numerical-realization` reported that the signed-zero divergence
+also reproduces under `=fast`; nothing re-established it until this axis existed.
+A case key names the value only when it is not `DEFAULT_FP32_FUNCTIONS`, so every
+key recorded while the flag was fixed keeps its exact meaning.
+"""
+
 ENTRY_POINT = "tiler_probe"
 
 OPERANDS: tuple[int, ...] = (
@@ -206,6 +274,13 @@ OPERANDS: tuple[int, ...] = (
 
 MATH_MODES = ("safe", "relaxed", "fast")
 FP_CONTRACTS = ("off", "on", "fast")
+OPTIMIZATIONS = ("0", "1", "2", "3", "s")
+"""Every `-O` selection the offline driver is asked for, spelled as the flag's suffix.
+
+`s` yields `-Os`. `0` and `2` are the two the record was built on and the two the
+covering subset keeps, because the `-O0`/`-O2` difference in how much arithmetic
+survives into the emitted IR is the one this harness already measured to matter.
+"""
 
 RUNTIME_LANGUAGE = "3.1"
 """`MTLLanguageVersion3_1`, the exact counterpart of the offline `-std=metal3.1`."""
@@ -225,7 +300,8 @@ OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART = (
     "-ffp-contract: MTLCompileOptions has no contraction property; the source-level "
     "`#pragma METAL fp contract(...)` is accepted by this front end but changing the "
     "source would break the byte-identical pairing the comparison depends on",
-    "-O0: MTLLibraryOptimizationLevel offers Default and Size only",
+    "-O0/-O1/-O3/-Os: MTLLibraryOptimizationLevel offers Default and Size only, so four "
+    "of the five offline optimization levels have no runtime counterpart",
 )
 """Every offline selection with no `MTLCompileOptions` property, and what is there instead.
 
@@ -234,6 +310,8 @@ Enumerated by reading the complete `@interface MTLCompileOptions` in
 `mathMode`, `mathFloatingPointFunctions`, and `languageVersion` are exact
 counterparts of `-fmetal-math-mode`, `-fmetal-math-fp32-functions`, and `-std`;
 `preprocessorMacros` has no offline selection in use here to correspond to.
+`mathFloatingPointFunctions` is an exact counterpart and is swept on both paths,
+so it is not listed here.
 """
 
 RUNTIME_PAIRED_OPTIMIZATION = "2"
@@ -302,7 +380,20 @@ FLOAT_OPERATION = re.compile(
 subnormal, so counting it would let a NaN test stand in for a surviving multiply.
 """
 
-FUSED_INTRINSIC = re.compile(r"@(llvm\.(?:fma|fmuladd)\.\S+?)\(")
+FUSED_INTRINSIC = re.compile(r"@((?:llvm|air)\.(?:fma|fmuladd)\.\S+?)\(")
+"""The fused-multiply-add intrinsics a `call` may name, in both spellings.
+
+`air.` is not decoration. This front end lowers a source-level `fma(x, a, b)` to
+`tail call float @air.fma.f32(...)` and never to the LLVM spelling, so a pattern
+naming only `llvm.` matched nothing and reported a kernel whose whole body is one
+`fma` as containing **no** floating-point arithmetic. The verdict still failed
+closed — an empty operation list is `no-emitted-arithmetic` and inadmissible —
+but the *count* was wrong in the one direction a reader acts on, because a
+surviving operation reported as zero is indistinguishable from a deleted one,
+which is the reading finding 7 rests on. It stayed latent for exactly as long as
+the operation vocabulary was multiply and add. Both spellings are named because
+neither is documented as the one the front end will keep using.
+"""
 COMPILE_OPTIONS = re.compile(r"^!air\.compile_options = !\{(.*)\}$", re.MULTILINE)
 METADATA_STRING = re.compile(r'^!(\d+) = !\{!"([^"]+)"\}$', re.MULTILINE)
 EMITTED_TRIPLE = re.compile(r'^target triple = "([^"]+)"$', re.MULTILINE)
@@ -357,15 +448,20 @@ class ProbeFailure(RuntimeError):
 
 
 class Verdict(enum.Enum):
-    """What one subnormal observation is admissible evidence of.
+    """What one observation is admissible evidence of.
 
-    Only `FLUSHED_TO_ZERO` and `PRESERVED` are claims about arithmetic. The rest
-    record precisely why the observation cannot support either claim, which is
-    the difference between this harness and one that reads bit patterns alone.
+    Only the four claim members are claims about arithmetic. The rest record
+    precisely why the observation cannot support any of them, which is the
+    difference between this harness and one that reads bit patterns alone. The
+    inadmissible members are shared by every classifier deliberately: an
+    observation that cannot support a subnormal claim cannot support an
+    evaluation-order claim either, and for the same reason.
     """
 
     FLUSHED_TO_ZERO = "flushed-to-zero"
     PRESERVED = "preserved"
+    LEFT_TO_RIGHT = "left-to-right"
+    REASSOCIATED = "reassociated"
     NO_DEVICE_OBSERVATION = "no-device-observation"
     NO_EMITTED_ARITHMETIC = "no-emitted-arithmetic"
     ARITHMETIC_NOT_EXECUTED = "arithmetic-not-executed"
@@ -376,7 +472,12 @@ class Verdict(enum.Enum):
     @property
     def is_evidence(self) -> bool:
         """Whether this verdict may be cited as a fact about arithmetic."""
-        return self in {Verdict.FLUSHED_TO_ZERO, Verdict.PRESERVED}
+        return self in {
+            Verdict.FLUSHED_TO_ZERO,
+            Verdict.PRESERVED,
+            Verdict.LEFT_TO_RIGHT,
+            Verdict.REASSOCIATED,
+        }
 
 
 class Execution(enum.Enum):
@@ -467,7 +568,16 @@ class Witness:
 
 @dataclass(frozen=True)
 class SubnormalProbe:
-    """One operand whose two possible results separate flushing from preserving."""
+    """One operand whose two possible results separate flushing from preserving.
+
+    `flushing` is the result of substituting a **sign-preserving zero** for every
+    subnormal the kernel would otherwise carry — the operand on entry and the
+    result of every step — which is what this hardware was measured to do. It is
+    a zero only when the flushed subnormal is the whole result: an additive
+    kernel whose bias dominates returns a normal value under the same hypothesis.
+    `evaluate` derives both fields from the kernel, and a guard test holds every
+    declared probe to that derivation rather than to a hand-check.
+    """
 
     operand: int
     preserving: int
@@ -475,126 +585,24 @@ class SubnormalProbe:
 
 
 @dataclass(frozen=True)
-class Kernel:
-    """One probe kernel in the Metal emitter's output shape.
+class OrderProbe:
+    """One operand whose two possible results separate an evaluation order from another.
 
-    `scale_bits` and `bias_bits` are exact `f32` bit patterns emitted through
-    `as_type<float>`, never decimal literals, so no rendering step stands between
-    the stated constant and the compiled one. `witness` is `None` exactly when
-    the kernel is an identity on every operand and therefore cannot prove its own
-    arithmetic ran.
+    Unlike `SubnormalProbe` this says nothing about subnormals: it separates the
+    left-to-right evaluation the source spells from the reassociated one a
+    `reassoc` licence permits. `ordered` is deliberately allowed to equal the
+    operand — for the chain kernel it does — which is precisely why the kernel
+    still needs an execution witness on a *different* operand: a deleted chain
+    and an unreassociated one return the same bits here.
     """
 
-    name: str
-    purpose: str
-    scale_bits: int | None
-    bias_bits: int | None
-    canonicalized: bool
-    witness: Witness | None
-
-    def source(self) -> str:
-        """Render the complete translation unit for this kernel."""
-        lines = ["#include <metal_stdlib>", "using namespace metal;", ""]
-        if self.canonicalized and (self.scale_bits is not None or self.bias_bits is not None):
-            lines += [CANONICALIZATION]
-        lines += [
-            f"kernel void {ENTRY_POINT}(",
-            "        device const float *b0 [[buffer(0)]],",
-            "        device float *b1 [[buffer(1)]],",
-            "        uint tiler_global_invocation_index [[thread_position_in_grid]]) {",
-            "    ulong v0 = ulong(tiler_global_invocation_index);",
-            f"    ulong v1 = {len(OPERANDS)}ul;",
-            "    bool v2 = v0 < v1;",
-            "    if (v2) {",
-            "        float v3 = b0[v0];",
-        ]
-        register, current = 4, "v3"
-        for constant, operator in ((self.scale_bits, "*"), (self.bias_bits, "+")):
-            if constant is None:
-                continue
-            lines.append(f"        float v{register} = as_type<float>(0x{constant:08x}u);")
-            lines.append(f"        float v{register + 1} = {current} {operator} v{register};")
-            current = f"v{register + 1}"
-            register += 2
-            if self.canonicalized:
-                helper = "tiler_canonicalize_nan_f32_7fc00000"
-                lines.append(f"        float v{register} = {helper}({current});")
-                current = f"v{register}"
-                register += 1
-        lines += [f"        b1[v0] = {current};", "    }", "}", ""]
-        return "\n".join(lines)
+    operand: int
+    ordered: int
+    reassociated: int
 
 
 NEGATIVE_ZERO = 0x80000000
 POSITIVE_ZERO = 0x00000000
-
-KERNELS: tuple[Kernel, ...] = (
-    Kernel(
-        name="materialize",
-        purpose="a load and a store with no arithmetic at all",
-        scale_bits=None,
-        bias_bits=None,
-        canonicalized=False,
-        witness=None,
-    ),
-    Kernel(
-        name="multiply_two",
-        purpose="isolates input flushing: a subnormal operand whose exact result is normal",
-        scale_bits=0x40000000,
-        bias_bits=None,
-        canonicalized=True,
-        witness=Witness(operand=0x3F800000, executed=0x40000000, deleted=0x3F800000),
-    ),
-    Kernel(
-        name="multiply_half",
-        purpose="isolates result flushing: a normal operand whose exact result is subnormal",
-        scale_bits=0x3F000000,
-        bias_bits=None,
-        canonicalized=True,
-        witness=Witness(operand=0x3F800000, executed=0x3F000000, deleted=0x3F800000),
-    ),
-    Kernel(
-        name="multiply_one",
-        purpose="the identity multiply: no witness exists, so it can prove nothing",
-        scale_bits=0x3F800000,
-        bias_bits=None,
-        canonicalized=True,
-        witness=None,
-    ),
-    Kernel(
-        name="scale_one_bias_zero",
-        purpose="the emitter's MultiplyThenAdd shape whose relaxed form deletes its arithmetic",
-        scale_bits=0x3F800000,
-        bias_bits=POSITIVE_ZERO,
-        canonicalized=True,
-        witness=Witness(operand=NEGATIVE_ZERO, executed=POSITIVE_ZERO, deleted=NEGATIVE_ZERO),
-    ),
-    Kernel(
-        name="scale_two_bias_one",
-        purpose="the shape the checked-in pointwise golden emits",
-        scale_bits=0x40000000,
-        bias_bits=0x3F800000,
-        canonicalized=True,
-        witness=Witness(operand=0x3F800000, executed=0x40400000, deleted=0x3F800000),
-    ),
-    Kernel(
-        name="contraction_pair",
-        purpose="a multiply and an add as two statements, with no canonicalization between them",
-        scale_bits=0x3FC00000,
-        bias_bits=0x3F800000,
-        canonicalized=False,
-        witness=Witness(operand=0x3F800000, executed=0x40200000, deleted=0x3F800000),
-    ),
-    Kernel(
-        name="contraction_pair_canonicalized",
-        purpose="the same pair with the emitter's canonicalization interposed",
-        scale_bits=0x3FC00000,
-        bias_bits=0x3F800000,
-        canonicalized=True,
-        witness=Witness(operand=0x3F800000, executed=0x40200000, deleted=0x3F800000),
-    ),
-)
-BY_NAME = {kernel.name: kernel for kernel in KERNELS}
 
 INPUT_FLUSH = SubnormalProbe(operand=0x00400000, preserving=0x00800000, flushing=POSITIVE_ZERO)
 """Doubling this subnormal has an exactly representable *normal* result.
@@ -623,6 +631,338 @@ ran, which is exactly why an observation using this probe is admissible only
 through the execution witness.
 """
 
+DIVIDED_INPUT_FLUSH = SubnormalProbe(
+    operand=0x00400000, preserving=0x00AAAAAB, flushing=POSITIVE_ZERO
+)
+"""`INPUT_FLUSH`'s isolation for a divisor no strength reduction can turn into a shift.
+
+Dividing this subnormal by `0.375` has a *normal* result, so a returned zero can
+only come from flushing the operand. The divisor is deliberately not a power of
+two: `divide_by_two` measures that the driver rewrites a power-of-two division
+into a multiply even under `safe`, so a power-of-two divisor measures the
+multiplier a second time rather than measuring division at all.
+"""
+
+DIVIDED_NEGATIVE_INPUT_FLUSH = SubnormalProbe(
+    operand=0x80400000, preserving=0x80AAAAAB, flushing=NEGATIVE_ZERO
+)
+"""The same isolation with a negative operand, so the flushed zero's sign shows."""
+
+DIVIDED_RESULT_FLUSH = SubnormalProbe(
+    operand=0x00800000, preserving=0x002AAAAB, flushing=POSITIVE_ZERO
+)
+"""Dividing the smallest normal by `3.0` has a subnormal result, isolating the result."""
+
+REASSOCIATION = OrderProbe(operand=0x3F800000, ordered=0x3F800000, reassociated=0x3F800001)
+"""`(1.0 + 2**-24) + 2**-24`, whose value depends on where the parentheses go.
+
+`2**-24` is exactly half an ulp of `1.0`, so each add on its own is a tie that
+rounds to even and returns `1.0`; summing the two small terms first gives the
+exactly representable `1.0 + 2**-23`. This is the shape a reduction would expose
+and the smallest one that exposes it, so it needs no second buffer, no second
+indexing scheme, and no change to the operand vector.
+"""
+
+
+@dataclass(frozen=True)
+class Step:
+    """One arithmetic statement of a probe kernel.
+
+    `constant` is an exact `f32` bit pattern emitted through `as_type<float>`,
+    never a decimal literal, so no rendering step stands between the stated
+    constant and the compiled one.
+    """
+
+    constant: int
+    operator: str
+
+
+@dataclass(frozen=True)
+class Kernel:
+    """One probe kernel in the Metal emitter's output shape.
+
+    `steps` are applied left to right, each one its own statement, which is the
+    per-statement shape the Metal emitter produces and the shape finding 6's
+    contraction defence depends on. `fused` replaces those statements with a
+    single source-level `fma` over the same two constants, so the fused and
+    unfused kernels differ in exactly one thing.
+
+    `witness` is `None` exactly when the kernel is an identity on every operand
+    and therefore cannot prove its own arithmetic ran. `subnormal_probes` names
+    every probe this kernel is read with, so a guard test can derive each probe's
+    two candidate results from this kernel rather than trusting a literal.
+    """
+
+    name: str
+    purpose: str
+    steps: tuple[Step, ...]
+    canonicalized: bool
+    witness: Witness | None
+    subnormal_probes: tuple[SubnormalProbe, ...] = ()
+    fused: bool = False
+
+    def source(self) -> str:
+        """Render the complete translation unit for this kernel."""
+        lines = ["#include <metal_stdlib>", "using namespace metal;", ""]
+        if self.canonicalized and self.steps:
+            lines += [CANONICALIZATION]
+        lines += [
+            f"kernel void {ENTRY_POINT}(",
+            "        device const float *b0 [[buffer(0)]],",
+            "        device float *b1 [[buffer(1)]],",
+            "        uint tiler_global_invocation_index [[thread_position_in_grid]]) {",
+            "    ulong v0 = ulong(tiler_global_invocation_index);",
+            f"    ulong v1 = {len(OPERANDS)}ul;",
+            "    bool v2 = v0 < v1;",
+            "    if (v2) {",
+            "        float v3 = b0[v0];",
+        ]
+        register, current = 4, "v3"
+
+        def canonicalize() -> None:
+            nonlocal register, current
+            if not self.canonicalized:
+                return
+            helper = "tiler_canonicalize_nan_f32_7fc00000"
+            lines.append(f"        float v{register} = {helper}({current});")
+            current = f"v{register}"
+            register += 1
+
+        if self.fused:
+            scale, bias = self.steps
+            lines.append(f"        float v{register} = as_type<float>(0x{scale.constant:08x}u);")
+            lines.append(f"        float v{register + 1} = as_type<float>(0x{bias.constant:08x}u);")
+            lines.append(
+                f"        float v{register + 2} = fma({current}, v{register}, v{register + 1});"
+            )
+            current = f"v{register + 2}"
+            register += 3
+            canonicalize()
+        else:
+            for step in self.steps:
+                lines.append(f"        float v{register} = as_type<float>(0x{step.constant:08x}u);")
+                lines.append(
+                    f"        float v{register + 1} = {current} {step.operator} v{register};"
+                )
+                current = f"v{register + 1}"
+                register += 2
+                canonicalize()
+        lines += [f"        b1[v0] = {current};", "    }", "}", ""]
+        return "\n".join(lines)
+
+
+def times(constant: int) -> tuple[Step, ...]:
+    return (Step(constant, "*"),)
+
+
+def over(constant: int) -> tuple[Step, ...]:
+    return (Step(constant, "/"),)
+
+
+def scale_then_bias(scale: int, bias: int) -> tuple[Step, ...]:
+    return (Step(scale, "*"), Step(bias, "+"))
+
+
+KERNELS: tuple[Kernel, ...] = (
+    Kernel(
+        name="materialize",
+        purpose="a load and a store with no arithmetic at all",
+        steps=(),
+        canonicalized=False,
+        witness=None,
+    ),
+    Kernel(
+        name="multiply_two",
+        purpose="isolates input flushing: a subnormal operand whose exact result is normal",
+        steps=times(0x40000000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F800000, executed=0x40000000, deleted=0x3F800000),
+        subnormal_probes=(INPUT_FLUSH, NEGATIVE_INPUT_FLUSH),
+    ),
+    Kernel(
+        name="multiply_half",
+        purpose="isolates result flushing: a normal operand whose exact result is subnormal",
+        steps=times(0x3F000000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F800000, executed=0x3F000000, deleted=0x3F800000),
+        subnormal_probes=(RESULT_FLUSH,),
+    ),
+    Kernel(
+        name="multiply_one",
+        purpose="the identity multiply: no witness exists, so it can prove nothing",
+        steps=times(0x3F800000),
+        canonicalized=True,
+        witness=None,
+        subnormal_probes=(IDENTITY_VALUED_FLUSH,),
+    ),
+    Kernel(
+        name="scale_one_bias_zero",
+        purpose="the emitter's MultiplyThenAdd shape whose relaxed form deletes its arithmetic",
+        steps=scale_then_bias(0x3F800000, POSITIVE_ZERO),
+        canonicalized=True,
+        witness=Witness(operand=NEGATIVE_ZERO, executed=POSITIVE_ZERO, deleted=NEGATIVE_ZERO),
+        subnormal_probes=(IDENTITY_VALUED_FLUSH,),
+    ),
+    Kernel(
+        name="scale_two_bias_one",
+        purpose="the shape the checked-in pointwise golden emits",
+        steps=scale_then_bias(0x40000000, 0x3F800000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F800000, executed=0x40400000, deleted=0x3F800000),
+    ),
+    Kernel(
+        name="contraction_pair",
+        purpose="a multiply and an add as two statements, with no canonicalization between them",
+        steps=scale_then_bias(0x3FC00000, 0x3F800000),
+        canonicalized=False,
+        witness=Witness(operand=0x3F800000, executed=0x40200000, deleted=0x3F800000),
+    ),
+    Kernel(
+        name="contraction_pair_canonicalized",
+        purpose="the same pair with the emitter's canonicalization interposed",
+        steps=scale_then_bias(0x3FC00000, 0x3F800000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F800000, executed=0x40200000, deleted=0x3F800000),
+    ),
+    Kernel(
+        name="fused_pair",
+        purpose="the same two constants as a source-level fma, which contraction cannot unfuse",
+        steps=scale_then_bias(0x3FC00000, 0x3F800000),
+        canonicalized=False,
+        witness=Witness(operand=0x3F800000, executed=0x40200000, deleted=0x3F800000),
+        fused=True,
+    ),
+    Kernel(
+        name="divide_by_half",
+        purpose="a written division by a power of two, which the driver need not keep as one",
+        steps=over(0x3F000000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F800000, executed=0x40000000, deleted=0x3F800000),
+        subnormal_probes=(INPUT_FLUSH, NEGATIVE_INPUT_FLUSH),
+    ),
+    Kernel(
+        name="divide_by_two",
+        purpose="the same in the other direction, whose exact result is subnormal",
+        steps=over(0x40000000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F800000, executed=0x3F000000, deleted=0x3F800000),
+        subnormal_probes=(RESULT_FLUSH,),
+    ),
+    Kernel(
+        name="divide_by_three_eighths",
+        purpose="input flushing through a division the driver keeps: a subnormal whose result "
+        "is normal",
+        steps=over(0x3EC00000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F800000, executed=0x402AAAAB, deleted=0x3F800000),
+        subnormal_probes=(DIVIDED_INPUT_FLUSH, DIVIDED_NEGATIVE_INPUT_FLUSH),
+    ),
+    Kernel(
+        name="divide_by_three",
+        purpose="result flushing through a division the driver keeps: a normal whose result "
+        "is subnormal",
+        steps=over(0x40400000),
+        canonicalized=True,
+        witness=Witness(operand=0x3F800000, executed=0x3EAAAAAB, deleted=0x3F800000),
+        subnormal_probes=(DIVIDED_RESULT_FLUSH,),
+    ),
+    Kernel(
+        name="reassociation_chain",
+        purpose="two adds of half an ulp, whose value says where the parentheses went",
+        steps=(Step(0x33800000, "+"), Step(0x33800000, "+")),
+        canonicalized=False,
+        witness=Witness(operand=0x00800000, executed=0x34000000, deleted=0x00800000),
+    ),
+)
+BY_NAME = {kernel.name: kernel for kernel in KERNELS}
+
+
+def _as_float(bits: int) -> float:
+    return float(struct.unpack("<f", struct.pack("<I", bits))[0])
+
+
+def _as_bits(value: float) -> int:
+    """Narrow a double to `f32` bits, refusing a value `f32` cannot hold."""
+    try:
+        narrowed = struct.pack("<f", value)
+    except OverflowError as overflowed:
+        raise ProbeFailure(f"{value!r} is not representable as f32: {overflowed}") from overflowed
+    return int(struct.unpack("<I", narrowed)[0])
+
+
+def flush_subnormal(bits: int) -> int:
+    """Replace a subnormal with the zero of its own sign, which is what finding 3 measured."""
+    if bits & 0x7F800000 == 0 and bits & 0x007FFFFF != 0:
+        return bits & 0x80000000
+    return bits
+
+
+def evaluate(kernel: Kernel, operand: int, *, flushes: bool) -> int:
+    """The exact `f32` result of one kernel on one operand, under a stated flush hypothesis.
+
+    This is not a measurement and never becomes one: it derives what a probe's
+    two candidate results *must* be, so a hand-written `SubnormalProbe` or
+    `Witness` literal is checked against arithmetic instead of against a reader's
+    attention. Nothing in the admissibility guard calls it.
+
+    `flushes=True` substitutes a sign-preserving zero for the operand on entry
+    and for the result of every step, which is the behaviour findings 2 and 3
+    measured. `flushes=False` is IEEE-754 with subnormals intact.
+
+    **Why a double intermediate is exact here.** Each step is one `+`, `*`, or
+    `/` of two `f32` values. Rounding such a result to double and then to `f32`
+    agrees with rounding it directly to `f32`, because double's 53-bit
+    significand exceeds the 2*24+2 = 50 bits that make the second rounding
+    innocuous. Signed zero is carried by the double path natively, which matters
+    because `(-0.0) + (+0.0)` is `+0.0` and that is finding 5. The fused form is
+    a single rounding of `x*a + b`, which no single double operation performs, so
+    it is evaluated exactly as a rational and narrowed once; a fused kernel whose
+    exact result is zero would lose its sign that way and is refused rather than
+    guessed at, because no kernel here needs one.
+    """
+    current = flush_subnormal(operand) if flushes else operand
+    if kernel.fused:
+        if len(kernel.steps) != 2 or [step.operator for step in kernel.steps] != ["*", "+"]:
+            raise ProbeFailure(f"{kernel.name}: a fused kernel must be one multiply then one add")
+        scale, bias = kernel.steps
+        exact = Fraction(_as_float(current)) * Fraction(_as_float(scale.constant)) + Fraction(
+            _as_float(bias.constant)
+        )
+        if exact == 0:
+            raise ProbeFailure(
+                f"{kernel.name}: a fused result of zero would need signed-zero handling that "
+                f"the rational evaluation cannot supply"
+            )
+        fused = _as_bits(float(exact))
+        return flush_subnormal(fused) if flushes else fused
+    for step in kernel.steps:
+        value, constant = _as_float(current), _as_float(step.constant)
+        if step.operator == "*":
+            stepped = value * constant
+        elif step.operator == "+":
+            stepped = value + constant
+        elif step.operator == "/":
+            if constant == 0.0:
+                raise ProbeFailure(f"{kernel.name}: division by zero is not an evaluable step")
+            stepped = value / constant
+        else:
+            raise ProbeFailure(f"{kernel.name}: no evaluation rule for {step.operator!r}")
+        current = _as_bits(stepped)
+        if flushes:
+            current = flush_subnormal(current)
+    return current
+
+
+def _fp32_suffix(fp32_functions: str) -> str:
+    """The key fragment that names a departure from the pinned default, and nothing otherwise.
+
+    Naming the default in the key would rewrite every case key recorded while
+    `-fmetal-math-fp32-functions` was a fixed flag, and every citation of one in
+    the research record with it, for no gain: an unsuffixed key means `precise`
+    and `probe.default_fp32_functions` says so in the record.
+    """
+    return "" if fp32_functions == DEFAULT_FP32_FUNCTIONS else f".fpfun-{fp32_functions}"
+
 
 @dataclass(frozen=True)
 class Configuration:
@@ -631,10 +971,14 @@ class Configuration:
     math_mode: str
     optimization: str
     fp_contract: str
+    fp32_functions: str = DEFAULT_FP32_FUNCTIONS
 
     @property
     def key(self) -> str:
-        return f"{self.math_mode}.O{self.optimization}.contract-{self.fp_contract}"
+        return (
+            f"{self.math_mode}.O{self.optimization}.contract-{self.fp_contract}"
+            f"{_fp32_suffix(self.fp32_functions)}"
+        )
 
     def flags(self, family: Family) -> list[str]:
         return [
@@ -643,7 +987,7 @@ class Configuration:
             f"-std={MSL_VERSION}",
             f"-O{self.optimization}",
             f"-fmetal-math-mode={self.math_mode}",
-            f"-fmetal-math-fp32-functions={FP32_FUNCTIONS}",
+            f"-fmetal-math-fp32-functions={self.fp32_functions}",
             f"-ffp-contract={self.fp_contract}",
         ]
 
@@ -652,11 +996,11 @@ class Configuration:
 class RuntimeConfiguration:
     """One in-process `MTLCompileOptions` selection.
 
-    The two properties that have no offline counterpart in the harness's fixed
-    flags — `languageVersion` and `mathFloatingPointFunctions` — are pinned to
-    the counterparts of `MSL_VERSION` and `FP32_FUNCTIONS` rather than left at
-    their API defaults, because `mathFloatingPointFunctions` defaults to `Fast`
-    and an unpinned runtime case would not be comparable to any offline row.
+    `languageVersion` is pinned to the counterpart of `MSL_VERSION` rather than
+    left at its API default. `mathFloatingPointFunctions` is an exact counterpart
+    of `-fmetal-math-fp32-functions` and is swept on both paths, but it is still
+    always stated explicitly, because its API default is `Fast` and a runtime
+    case that left it unset would not be comparable to any offline row.
 
     There is no target property, so a runtime case's family is decided by which
     execution environment compiled it rather than by a flag.
@@ -664,15 +1008,18 @@ class RuntimeConfiguration:
 
     math_mode: str
     optimization: str
+    fp32_functions: str = DEFAULT_FP32_FUNCTIONS
 
     @property
     def key(self) -> str:
-        return f"runtime.{self.math_mode}.opt-{self.optimization}"
+        return (
+            f"runtime.{self.math_mode}.opt-{self.optimization}{_fp32_suffix(self.fp32_functions)}"
+        )
 
     def options(self, archive: Path | None = None) -> str:
         selections = [
             f"math={self.math_mode}",
-            f"fpfun={FP32_FUNCTIONS}",
+            f"fpfun={self.fp32_functions}",
             f"lang={RUNTIME_LANGUAGE}",
             f"opt={self.optimization}",
         ]
@@ -696,7 +1043,16 @@ class Case:
         return isinstance(self.configuration, RuntimeConfiguration)
 
 
-def cases(family: str) -> tuple[Case, ...]:
+COVERING = "covering"
+EXHAUSTIVE_MATRIX = "exhaustive"
+
+
+def matrix() -> str:
+    """Which case matrix this process measures, named the way the record spells it."""
+    return EXHAUSTIVE_MATRIX if os.environ.get(EXHAUSTIVE) is not None else COVERING
+
+
+def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     """Every kernel and configuration pair the recorded findings need, for one family.
 
     The set is assembled per finding and then deduplicated, so a case shared by
@@ -704,11 +1060,29 @@ def cases(family: str) -> tuple[Case, ...]:
     lose its configuration when another one changes. The same set is produced for
     every family, so a per-family difference is a difference in what the
     toolchain did and never in what was asked of it.
+
+    Two selections exist because the widened matrix costs more than the gate
+    should pay on every run. `covering` keeps at least one case of every kernel,
+    math mode, optimization level, contraction setting, and
+    `-fmetal-math-fp32-functions` value, and every case any recorded finding
+    cites; `exhaustive` is the full cross product on the widened axes. A guard
+    test holds the covering set to that coverage claim, so narrowing an axis
+    without noticing is a test failure rather than a quieter record.
     """
+    selection = matrix() if selection is None else selection
+    exhaustive = selection == EXHAUSTIVE_MATRIX
     selected: list[Case] = []
 
-    def add(kernel: str, mode: str, optimization: str, contract: str) -> None:
-        selected.append(Case(family, kernel, Configuration(mode, optimization, contract)))
+    def add(
+        kernel: str,
+        mode: str,
+        optimization: str,
+        contract: str,
+        fp32_functions: str = DEFAULT_FP32_FUNCTIONS,
+    ) -> None:
+        selected.append(
+            Case(family, kernel, Configuration(mode, optimization, contract, fp32_functions))
+        )
 
     # The emitted module's own denormal and fast-math declarations, and the
     # fast-math flags each mode attaches, across every contraction selection.
@@ -736,6 +1110,50 @@ def cases(family: str) -> tuple[Case, ...]:
     for contract in FP_CONTRACTS:
         add("contraction_pair", "safe", "2", contract)
         add("contraction_pair_canonicalized", "safe", "2", contract)
+    # A source-level `fma` over the identical constants, against the same three
+    # contraction settings, so what `-ffp-contract` can and cannot unfuse is a
+    # difference in one thing.
+    for contract in FP_CONTRACTS:
+        add("fused_pair", "safe", "2", contract)
+    # Division, which the operation vocabulary did not previously reach. The two
+    # power-of-two divisors are compiled under `safe` alone, because what they
+    # establish is a compile-side fact about the driver rather than a second
+    # measurement of the flush: the strictest math mode is where a rewrite into a
+    # multiply is least expected and therefore most worth recording.
+    add("divide_by_half", "safe", "2", "off")
+    add("divide_by_two", "safe", "2", "off")
+    # The divisors a rewrite cannot absorb, which is where both flush dimensions
+    # are actually isolated on a surviving `fdiv`. `arcp` may still substitute a
+    # reciprocal multiply under the relaxed modes; the flush hypothesis is
+    # insensitive to that, because a flushed operand is a zero either way.
+    for mode in MATH_MODES:
+        add("divide_by_three_eighths", mode, "2", "off")
+        add("divide_by_three", mode, "2", "off")
+    # Reassociation, in the smallest shape that exposes it. A `reassoc` licence
+    # is attached under `relaxed` and `fast` (finding 1), so whether it is acted
+    # on is a device-side question every math mode has to answer.
+    for mode in MATH_MODES:
+        add("reassociation_chain", mode, "2", "off")
+    # `-fmetal-math-fp32-functions=fast`, against the two findings that would
+    # move if it were not confined to the transcendental functions: the flush
+    # and the signed-zero divergence.
+    for mode in MATH_MODES:
+        for kernel in ("multiply_two", "multiply_half", "scale_one_bias_zero"):
+            add(kernel, mode, "2", "off", "fast")
+    # The three optimization levels the record never reached. The covering set
+    # keeps `-O1` under `safe` for the kernel whose surviving operation count is
+    # the thing the level is known to move; the exhaustive set sweeps all three
+    # levels, all three modes, and the four kernels whose counts or results the
+    # level could change.
+    widened = ("multiply_two", "multiply_half", "scale_one_bias_zero", "multiply_one")
+    if exhaustive:
+        for mode in MATH_MODES:
+            for optimization in ("1", "3", "s"):
+                for kernel in widened:
+                    add(kernel, mode, optimization, "off")
+    else:
+        for optimization in ("1", "3", "s"):
+            add("scale_one_bias_zero", "safe", optimization, "off")
 
     unique: dict[str, Case] = {}
     for case in selected:
@@ -743,23 +1161,32 @@ def cases(family: str) -> tuple[Case, ...]:
     return tuple(unique.values())
 
 
-def runtime_cases(family: str) -> tuple[Case, ...]:
+def runtime_cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     """Every runtime-compilation case for one family, derived from its offline set.
 
     Deriving it is what keeps the two paths comparable. A runtime case exists for
-    each kernel and math mode the offline probe already covers, so no runtime
-    case can be added that has nothing to be compared against and no offline case
-    can be dropped while its runtime partner survives. Both optimization levels
-    the runtime surface offers are swept, so an optimization-dependent runtime
-    divergence has somewhere to show up.
+    each kernel, math mode, and `mathFloatingPointFunctions` value the offline
+    probe already covers, so no runtime case can be added that has nothing to be
+    compared against and no offline case can be dropped while its runtime partner
+    survives. Both optimization levels the runtime surface offers are swept, so
+    an optimization-dependent runtime divergence has somewhere to show up.
+
+    An offline case whose optimization level is not `RUNTIME_PAIRED_OPTIMIZATION`
+    contributes nothing of its own: `path_comparisons` pairs a runtime case only
+    against offline rows at that level, so deriving a runtime case from an `-O1`
+    row would produce one with no candidate to be compared against.
     """
-    pairs: dict[tuple[str, str], None] = {}
-    for case in cases(family):
+    pairs: dict[tuple[str, str, str], None] = {}
+    for case in cases(family, selection):
         assert isinstance(case.configuration, Configuration)
-        pairs.setdefault((case.kernel, case.configuration.math_mode), None)
+        if case.configuration.optimization != RUNTIME_PAIRED_OPTIMIZATION:
+            continue
+        pairs.setdefault(
+            (case.kernel, case.configuration.math_mode, case.configuration.fp32_functions), None
+        )
     return tuple(
-        Case(family, kernel, RuntimeConfiguration(mode, optimization))
-        for kernel, mode in pairs
+        Case(family, kernel, RuntimeConfiguration(mode, optimization, fp32_functions))
+        for kernel, mode, fp32_functions in pairs
         for optimization in RUNTIME_OPTIMIZATIONS
     )
 
@@ -845,13 +1272,16 @@ class Observation:
         return tuple(op.flags for op in self.operations if op.opcode == opcode)
 
 
-def subnormal_verdict(observation: Observation, probe: SubnormalProbe) -> Verdict:
-    """Classify one subnormal observation, refusing to over-read a deleted operation.
+def inadmissible(observation: Observation) -> Verdict | None:
+    """The verdict refusing this observation, or `None` when its result may be read.
 
-    The guard layers run before the returned pattern is even consulted; see the
-    module documentation for why the emitted operation count alone is not enough
-    on this toolchain row, and for why a missing layer is refused rather than
-    assumed in either direction.
+    This is the whole guard and it is deliberately independent of what the result
+    is going to be read *for*: an observation whose arithmetic cannot be shown to
+    have executed supports no claim about that arithmetic, whether the claim is
+    about subnormals or about evaluation order. The layers run before the
+    returned pattern is consulted at all; see the module documentation for why
+    the emitted operation count alone is not enough on this toolchain row, and
+    for why a missing layer is refused rather than assumed in either direction.
     """
     if observation.results is None:
         return Verdict.NO_DEVICE_OBSERVATION
@@ -865,11 +1295,38 @@ def subnormal_verdict(observation: Observation, probe: SubnormalProbe) -> Verdic
         return Verdict.ARITHMETIC_NOT_EXECUTED
     if witnessed != witness.executed:
         return Verdict.WITNESS_DISAGREES
+    return None
+
+
+def subnormal_verdict(observation: Observation, probe: SubnormalProbe) -> Verdict:
+    """Classify one subnormal observation, refusing to over-read a deleted operation."""
+    refused = inadmissible(observation)
+    if refused is not None:
+        return refused
     result = observation.result_for(probe.operand)
     if result == probe.flushing:
         return Verdict.FLUSHED_TO_ZERO
     if result == probe.preserving:
         return Verdict.PRESERVED
+    return Verdict.UNEXPECTED_RESULT
+
+
+def order_verdict(observation: Observation, probe: OrderProbe) -> Verdict:
+    """Classify one evaluation-order observation, under the identical guard.
+
+    `unexpected-result` is a real outcome here rather than a defect signal: a
+    chain evaluated in a third order, or one whose adds were fused with something
+    else, lands there instead of being forced into one of the two the probe
+    names.
+    """
+    refused = inadmissible(observation)
+    if refused is not None:
+        return refused
+    result = observation.result_for(probe.operand)
+    if result == probe.ordered:
+        return Verdict.LEFT_TO_RIGHT
+    if result == probe.reassociated:
+        return Verdict.REASSOCIATED
     return Verdict.UNEXPECTED_RESULT
 
 
@@ -1291,15 +1748,23 @@ class Run:
         mode: str,
         optimization: str = "2",
         contract: str = "off",
+        fp32_functions: str = DEFAULT_FP32_FUNCTIONS,
     ) -> Observation:
         """Return one offline observation by its case coordinates, failing loudly if absent."""
-        return self._at(Case(family, kernel, Configuration(mode, optimization, contract)).key)
+        configuration = Configuration(mode, optimization, contract, fp32_functions)
+        return self._at(Case(family, kernel, configuration).key)
 
     def runtime(
-        self, family: str, kernel: str, mode: str, optimization: str = "default"
+        self,
+        family: str,
+        kernel: str,
+        mode: str,
+        optimization: str = "default",
+        fp32_functions: str = DEFAULT_FP32_FUNCTIONS,
     ) -> Observation:
         """Return one runtime-compilation observation by its case coordinates."""
-        return self._at(Case(family, kernel, RuntimeConfiguration(mode, optimization)).key)
+        configuration = RuntimeConfiguration(mode, optimization, fp32_functions)
+        return self._at(Case(family, kernel, configuration).key)
 
     def _at(self, key: str) -> Observation:
         if key not in self.observations:
@@ -1356,12 +1821,15 @@ def path_comparisons(run: Run) -> tuple[PathComparison, ...]:
     """Pair every runtime case with the offline cases it can legitimately be compared to.
 
     The candidate set is every offline case *of the same family* for the same
-    kernel and math mode at `RUNTIME_PAIRED_OPTIMIZATION`, across whatever
-    contraction settings the offline probe recorded. Deriving the set instead of
-    naming one row is what keeps a kernel that becomes contraction-sensitive from
-    reading as a divergence between the two compilers when it is nothing of the
-    kind; restricting it to one family is what keeps a cross-family difference
-    from reading as one.
+    kernel, math mode, and `-fmetal-math-fp32-functions` value at
+    `RUNTIME_PAIRED_OPTIMIZATION`, across whatever contraction settings the
+    offline probe recorded. Deriving the set instead of naming one row is what
+    keeps a kernel that becomes contraction-sensitive from reading as a
+    divergence between the two compilers when it is nothing of the kind;
+    restricting it to one family is what keeps a cross-family difference from
+    reading as one; and matching the fp32-functions value is what keeps the
+    `precise` and `fast` runtime cases from being compared against each other's
+    offline rows, which `mathFloatingPointFunctions` can express exactly.
     """
     compared: list[PathComparison] = []
     for key in sorted(run.observations):
@@ -1377,6 +1845,7 @@ def path_comparisons(run: Run) -> tuple[PathComparison, ...]:
             and run.observations[other].case.family == observation.case.family
             and run.observations[other].case.kernel == observation.case.kernel
             and offline.math_mode == configuration.math_mode
+            and offline.fp32_functions == configuration.fp32_functions
             and offline.optimization == RUNTIME_PAIRED_OPTIMIZATION
         }
         if not candidates:
@@ -1833,16 +2302,12 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
         ("probe.repository_base_revision", _first_line(revision.stdout) or "unreported"),
         ("probe.harness_sha256", digest(Path(__file__).resolve())),
         ("probe.host_source_sha256", digest(HOST_SOURCE)),
-        (
-            "probe.fixed_flags",
-            f"-std={MSL_VERSION} -fmetal-math-fp32-functions={FP32_FUNCTIONS}",
-        ),
+        ("probe.matrix", matrix()),
+        ("probe.fixed_flags", f"-std={MSL_VERSION}"),
+        ("probe.default_fp32_functions", DEFAULT_FP32_FUNCTIONS),
         ("probe.entry_point", ENTRY_POINT),
         ("probe.operands", " ".join(f"{value:08x}" for value in OPERANDS)),
-        (
-            "probe.runtime_fixed_options",
-            f"fpfun={FP32_FUNCTIONS} lang={RUNTIME_LANGUAGE}",
-        ),
+        ("probe.runtime_fixed_options", f"lang={RUNTIME_LANGUAGE}"),
         ("probe.runtime_paired_optimization", f"-O{RUNTIME_PAIRED_OPTIMIZATION}"),
         ("probe.guard_layers.offline_with_device", f"{EMITTED_ARITHMETIC} {EXECUTION_WITNESS}"),
         ("probe.guard_layers.offline_without_device", EMITTED_ARITHMETIC),
@@ -1908,6 +2373,21 @@ happening.
 """
 
 
+def matrix_mismatch(stored: dict[str, str]) -> str:
+    """Why a retained record may not be compared against this run at all, or the empty string.
+
+    Two records exist and they pin different case sets, so comparing one against
+    a run of the other reports every case the two sets do not share as decay.
+    This is the same refusal the environment row already makes, for the one
+    input that changes *what was measured* rather than *what measured it*.
+    """
+    recorded = stored.get("probe.matrix", "unrecorded")
+    live = matrix()
+    if recorded == live:
+        return ""
+    return f"the retained record pins the {recorded} matrix and this run measures {live}"
+
+
 def compare_record(run: Run, stored: dict[str, str]) -> list[str]:
     """Return every way a retained record disagrees with a live run's case rows.
 
@@ -1962,6 +2442,7 @@ def main(arguments: list[str] | None = None) -> int:
     except ProbeUnavailable as unavailable:
         print(f"numerical_probe: skipped, {unavailable}", file=sys.stderr)
         return 0
+    print(f"matrix={matrix()}")
     for key in qualifying_keys(run.environment):
         print(f"{key}={run.environment[key]}")
     for key, value in sorted(run.hazards.items()):
