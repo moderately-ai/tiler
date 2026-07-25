@@ -222,10 +222,6 @@ impl ArtifactConstructionPlan {
     /// capability key: the pair enters artifact identity, and a consumer
     /// composing a key and a revision of its own would be a second derivation of
     /// one identity.
-    #[allow(
-        dead_code,
-        reason = "the compiler-side half of the artifact's FeasibilityRuleSetRef; carrying it onto the public session boundary is a public-surface decision owned by expose-the-feasibility-rule-set-on-the-compiler-boundary, and this module's own tests read it until then"
-    )]
     pub(crate) const fn feasibility_rule_set(&self) -> FeasibilityRuleSetIdentity {
         self.feasibility_rule_set
     }

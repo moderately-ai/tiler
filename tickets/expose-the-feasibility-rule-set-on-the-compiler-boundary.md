@@ -1,7 +1,7 @@
 ---
 id: expose-the-feasibility-rule-set-on-the-compiler-boundary
 title: Expose the feasibility rule set identity on the public compiler boundary
-status: in-progress
+status: done
 priority: p1
 dependencies: [split-profile-and-feasibility-rule-identity]
 related: [carry-the-target-profile-descriptor-identity-into-the-plan, prototype-public-compiler-api]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, feasibility, identity, public-surface]
-claimed_from: todo
-assignee: agent-spine
-lease_expires_at: 1785004834
 ---
 The compiler now derives the feasibility rule set identity but no caller outside the crate can read it, so an artifact assembler still cannot build `FeasibilityRuleSetRef` without inventing a value.
 
@@ -38,3 +35,17 @@ An out-of-crate consumer can build a `tiler_artifact::program::FeasibilityRuleSe
 **Approved: promote, and the pair goes on `Compilation`, not `PlanAlternative`.** The ticket left the placement open. `TargetProfileRef` and `FeasibilityRuleSetRef` vary by neither plan nor alternative, so siting them per-alternative would invite a reader to believe they can differ between alternatives of one compilation — a false affordance in a type. `Compilation` is where a compilation-invariant belongs.
 
 Move the existing `PlanAlternative::target_profile_descriptor` accessor to match, so the two halves of `TargetProfileRef` are not split across two views. Unblocks `carry-the-metal-payload-in-an-artifact-envelope`, which had three of its four required identities.
+
+## Outcome
+
+**Landed as approved.** `Compilation` now carries all four values an assembler needs for `TargetProfileRef` and `FeasibilityRuleSetRef`: `target_profile_key()`, `target_profile_descriptor()`, `feasibility_rule_set_key()`, and `feasibility_rule_set_revision()`. `PlanAlternative::target_profile_descriptor` is gone; the two halves of `TargetProfileRef` are read from one view. The promotion is exactly the two approved methods plus the moved one — no other `pub` item was added.
+
+**What the surface now claims, stated as the ticket asked.** Both identities are *compilation-invariant*, not per-alternative and not derived from the target. The profile descriptor is a property of the one `VerifiedTargetRequest` the target compiles under; the rule set is `GOVERNED_FEASIBILITY_RULE_SET`, a constant of the feasibility authority, and is on `Compilation` because that is the narrowest view a consumer can hold that is not narrower than the value — not because the rules are a function of the target.
+
+**The invariance is checked, not assumed.** `pipeline::target_assessment` lifts both off the portfolio's first alternative and refuses a portfolio whose alternatives disagree, or an empty one, as `CompilerOutputError::Program(ProgramError::Structure)` under rules `portfolio-target-assessment` and `portfolio-empty`. Lifting rather than re-deriving from the request is deliberate: the value a consumer reads is the one the retained alternatives were actually built with, and there is still exactly one derivation site (`build_artifact_plan`). `verify_alternative` independently re-derives every plan from the one request, so both refusals are unreachable while that verification holds — they are the fail-closed statement of what the new siting asserts, not a second authority.
+
+**Fact — no consumer was broken by the move.** `grep -rn "target_profile_descriptor" crates prototypes` before the change returned nine sites, all inside `tiler-compiler`; the accessor had no out-of-crate caller yet.
+
+**Measurement.** `cargo nextest run -p tiler-compiler`: 206 passed, 0 failed. The new `session::tests::a_compilation_names_its_target_profile_and_its_feasibility_rules` asserts a non-empty descriptor within the artifact boundary's 1024-byte opaque-identity bound, a rule set key under `tiler.feasibility.` that differs from the profile key, and a nonzero revision. The full gate result is recorded on `carry-the-metal-payload-in-an-artifact-envelope`, which lands in the same branch.
+
+`ArtifactConstructionPlan::feasibility_rule_set` lost its `#[allow(dead_code)]`: the compile path now reads it.

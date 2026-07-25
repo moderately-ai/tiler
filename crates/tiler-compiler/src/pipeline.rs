@@ -9,6 +9,7 @@ use crate::explain::{
     RejectionClass, RuleRef, SelectionOutcome, SubjectKind, TerminalCause, VerifiedEvidenceRef,
     VerifiedExplainTrace,
 };
+use crate::feasibility::FeasibilityRuleSetIdentity;
 use crate::frontier::{
     FrontierError, FrontierRegionSubject, GovernedPhysicalProvider, PhysicalImplementationProvider,
     enumerate_frontier,
@@ -53,6 +54,17 @@ pub(crate) struct CompilationProduct {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TargetCompilationProduct {
     pub(crate) target_profile_key: &'static str,
+    /// Canonical descriptor bytes of the profile every alternative was assessed
+    /// against, and the rules they were assessed under.
+    ///
+    /// Both sit on the target rather than on an alternative because neither is a
+    /// function of a plan: one request declares one profile, and the feasibility
+    /// authority applies one rule set to every candidate it assesses. They are
+    /// lifted from the portfolio rather than re-derived from the request, so the
+    /// value a consumer reads is the one the alternatives were actually built
+    /// with; [`target_assessment`] proves the portfolio agrees on it.
+    pub(crate) target_profile_descriptor: Vec<u8>,
+    pub(crate) feasibility_rule_set: FeasibilityRuleSetIdentity,
     pub(crate) portfolio: ProgramPortfolio,
     pub(crate) explain: VerifiedExplainTrace,
 }
@@ -429,8 +441,11 @@ fn compile_target(
                 &expected_alternatives,
                 &portfolio.selection.selected_alternative_id,
             )?;
+            let (target_profile_descriptor, feasibility_rule_set) = target_assessment(&portfolio)?;
             Ok(TargetCompilationProduct {
                 target_profile_key: verified.target_profile().key,
+                target_profile_descriptor,
+                feasibility_rule_set,
                 portfolio,
                 explain,
             })
@@ -443,6 +458,44 @@ fn compile_target(
             })
         }
     }
+}
+
+/// Lifts the compilation-invariant assessment identities off a target's portfolio.
+///
+/// The profile descriptor and the feasibility rule set are properties of the
+/// target request, not of a plan, so they are read once per target and carried
+/// beside the portfolio rather than once per alternative. Every alternative
+/// still records its own copy, and this refuses a portfolio whose alternatives
+/// disagree instead of picking one: the returned pair becomes half of an
+/// artifact's `TargetProfileRef` and its whole `FeasibilityRuleSetRef` under ADR
+/// 0072, so a silent choice between two candidate identities would put a claim
+/// into artifact identity that some retained alternative never made.
+///
+/// A disagreement is a Tiler defect rather than a rejected program, which is why
+/// it classifies as invalid compiler output. `verify_alternative` independently
+/// re-derives each plan from the one request, so reaching either refusal here
+/// means that verification did not run or did not hold.
+fn target_assessment(
+    portfolio: &ProgramPortfolio,
+) -> Result<(Vec<u8>, FeasibilityRuleSetIdentity), CompileError> {
+    let Some((first, rest)) = portfolio.alternatives.split_first() else {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-empty",
+        }
+        .into());
+    };
+    let descriptor = first.artifact_plan.target_profile_descriptor();
+    let rules = first.artifact_plan.feasibility_rule_set();
+    if rest.iter().any(|alternative| {
+        alternative.artifact_plan.target_profile_descriptor() != descriptor
+            || alternative.artifact_plan.feasibility_rule_set() != rules
+    }) {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-target-assessment",
+        }
+        .into());
+    }
+    Ok((descriptor.to_vec(), rules))
 }
 
 #[derive(Debug)]
