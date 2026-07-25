@@ -1,7 +1,7 @@
 ---
 id: make-adr-acceptance-visible-to-the-work-graph
 title: The ticket graph cannot distinguish an ADR written from an ADR accepted
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [accept-adr-0077-metal-aot-crate-admission, accept-adr-0078-public-extension-seams]
@@ -9,9 +9,6 @@ scopes: [project/tickets]
 shared_scopes: []
 paths: []
 tags: [planning, process, decisions]
-claimed_from: todo
-assignee: agent-tickets
-lease_expires_at: 1784998335
 ---
 Found by an agent that reached a ticket as `ready` and could not do it.
 

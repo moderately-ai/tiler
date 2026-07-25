@@ -1,7 +1,7 @@
 ---
 id: gate-proposed-decision-assertions
 title: Refuse a contract that asserts a proposed decision as fact
-status: todo
+status: in-progress
 priority: p1
 dependencies: [make-adr-acceptance-visible-to-the-work-graph]
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/navigation]
 shared_scopes: []
 paths: []
 tags: [documentation, validation, decisions, governance]
+claimed_from: todo
+assignee: agent-nav3
+lease_expires_at: 1785000986
 ---
 Split out of [`make-adr-acceptance-visible-to-the-work-graph`](make-adr-acceptance-visible-to-the-work-graph.md), which could not hold this scope. That ticket made the *scheduling* failure structural — a ticket conditional on an unaccepted ADR now depends on an `accept-adr-NNNN-*` node that only Tom closes, so it cannot reach the ready frontier. This ticket closes the other, more dangerous half: nothing mechanically prevents a worker from writing a proposed decision into a normative contract as though it were settled, and such a change passes the repository gate today.
 
