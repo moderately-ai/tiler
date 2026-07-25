@@ -313,14 +313,26 @@ pub struct SelectedProvider {
 }
 
 impl SelectedProvider {
+    /// Derives this selection's canonical content key.
+    ///
+    /// Destructured irrefutably, so a field added to this record fails to
+    /// compile here rather than silently leaving artifact identity.
+    /// [`ProviderIdentity`] is another crate's type and is read through its
+    /// accessors instead; that crate owns the same obligation for its own
+    /// fields.
     pub(super) fn canonical_key(&self) -> Vec<u8> {
+        let Self {
+            provider,
+            capability,
+            capability_revision,
+        } = self;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(PROVIDER_KEY_DOMAIN);
-        push_slice(&mut bytes, self.provider.namespace().as_bytes());
-        push_slice(&mut bytes, self.provider.name().as_bytes());
-        bytes.extend_from_slice(&self.provider.revision().to_be_bytes());
-        push_slice(&mut bytes, self.capability.as_str().as_bytes());
-        bytes.extend_from_slice(&self.capability_revision.to_be_bytes());
+        push_slice(&mut bytes, provider.namespace().as_bytes());
+        push_slice(&mut bytes, provider.name().as_bytes());
+        bytes.extend_from_slice(&provider.revision().to_be_bytes());
+        push_slice(&mut bytes, capability.as_str().as_bytes());
+        bytes.extend_from_slice(&capability_revision.to_be_bytes());
         bytes
     }
 }
@@ -355,16 +367,38 @@ pub struct BackendPayloadDescriptor {
 }
 
 impl BackendPayloadDescriptor {
+    /// Derives this descriptor's canonical content key.
+    ///
+    /// Every field is a compilation *input*: [`Self::digest`] is the identity
+    /// of the payload's compilation subject rather than of the emitted object
+    /// — `super::codec`'s payload module states and its decoder re-proves that
+    /// — so this key, and therefore the artifact identity that folds it, is
+    /// derivable before the backend compiler has run.
+    ///
+    /// Destructured irrefutably, so a field added to this record fails to
+    /// compile here rather than silently leaving artifact identity.
     pub(super) fn canonical_key(&self) -> Vec<u8> {
+        let Self {
+            backend,
+            representation,
+            payload_schema,
+            digest,
+            compatibility,
+            execution_policy,
+        } = self;
+        let TargetProfileRef {
+            key: compatibility_key,
+            descriptor: compatibility_descriptor,
+        } = compatibility;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(PAYLOAD_KEY_DOMAIN);
-        push_slice(&mut bytes, self.backend.as_str().as_bytes());
-        push_slice(&mut bytes, self.representation.as_str().as_bytes());
-        self.payload_schema.encode(&mut bytes);
-        push_slice(&mut bytes, self.digest.as_bytes());
-        push_slice(&mut bytes, self.compatibility.key.as_str().as_bytes());
-        push_slice(&mut bytes, self.compatibility.descriptor.as_bytes());
-        bytes.push(self.execution_policy.tag());
+        push_slice(&mut bytes, backend.as_str().as_bytes());
+        push_slice(&mut bytes, representation.as_str().as_bytes());
+        payload_schema.encode(&mut bytes);
+        push_slice(&mut bytes, digest.as_bytes());
+        push_slice(&mut bytes, compatibility_key.as_str().as_bytes());
+        push_slice(&mut bytes, compatibility_descriptor.as_bytes());
+        bytes.push(execution_policy.tag());
         bytes
     }
 }
@@ -540,15 +574,47 @@ pub(super) struct ArtifactProgramData {
 /// requirements, the backend payload descriptors and entry mappings, and the
 /// provenance the packaged plan actually reached.
 ///
-/// It deliberately excludes two things. **Unused compilation-environment
+/// It deliberately excludes three things. **Unused compilation-environment
 /// providers** never enter it: only reached admission provenance and selected
 /// capability providers do, so an artifact is not invalidated by a provider it
-/// never used (ADR 0072). And **transient ordinals** never enter it: expression
+/// never used (ADR 0072). **Transient ordinals** never enter it: expression
 /// arena positions, builder insertion order, and program-local stage positions
 /// are all replaced by canonical content keys, so two structurally equal
 /// artifacts assembled in different orders share bytes. Variant order is the
 /// one retained order, because routing priority is meaning rather than
-/// insertion.
+/// insertion. And **emitted backend object bytes** never enter it: a payload is
+/// named by the digest of its compilation subject, so a non-reproducible linker
+/// does not change what artifact this is.
+///
+/// # This is a pre-compilation subject
+///
+/// The last exclusion is the load-bearing one for anything that has to decide
+/// *whether to compile*. Every fact folded here is a compilation **input**: the
+/// component schemas, the semantic subjects, the interface, the selected
+/// providers, each variant's complete program identity, its guards, routing,
+/// ABI, launch contracts, declared target requirements and deferred predicates,
+/// and — through each [`BackendPayloadDescriptor`]'s digest — that payload's
+/// source, flags, resolved toolchain, entry mappings, and recorded obligations.
+/// No output of a backend compiler is among them.
+///
+/// **Inference.** These bytes are therefore derivable before the backend
+/// compiler runs, given only the metadata the caller must already hold to
+/// invoke it, and
+/// [`ArtifactProgramBuilder::push_pending_payload`](super::ArtifactProgramBuilder::push_pending_payload)
+/// is the constructor that reaches them without an object. An expansion cache
+/// needs its key on a *miss*; this value answers that, and it is the same value
+/// the compiled artifact carries rather than a cheaper stand-in kept in
+/// agreement with it. There is one identity authority over the artifact
+/// subject, which is what ADR 0082 requires and what a second "pre-compilation"
+/// encoding would have broken.
+///
+/// **What it is not evidence of.** It names the artifact and says nothing about
+/// whether the compilation succeeded, what the compiler emitted, or whether any
+/// object with these bytes exists. An artifact assembled from pending payloads
+/// has this identity and carries no code; a published envelope additionally
+/// carries the object under its own section digest, which is integrity rather
+/// than identity. Equal identity implies equal bytes for the identity-bearing
+/// part of an envelope and deliberately not for its object sections.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CanonicalArtifactProgramIdentity(Vec<u8>);
 

@@ -29,7 +29,7 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::Shape;
 
-use super::codec::{ArtifactEnvelope, PayloadContent};
+use super::codec::{ArtifactEnvelope, PayloadContent, PayloadMetadata};
 use super::error::{
     AbiExprUse, ArtifactBuildError, ArtifactEntityKind, ArtifactLimitKind,
     ArtifactVerificationError, invalid_handle, limit,
@@ -295,6 +295,59 @@ impl ArtifactProgramBuilder {
         Ok(id)
     }
 
+    /// Declares the payload a backend compilation that has not run will produce.
+    ///
+    /// # Naming an object before it exists
+    ///
+    /// A [`PayloadMetadata`] is the compilation's *subject* — its source, its
+    /// flags, its resolved toolchain, its entry mappings, its recorded target
+    /// obligations — and the descriptor's content digest is derived from
+    /// exactly those bytes, never from the emitted object. Every one of them is
+    /// settled before the compiler is invoked, so this call is available on a
+    /// cache *miss*: an artifact assembled through it carries the exact
+    /// [`CanonicalArtifactProgramIdentity`](super::CanonicalArtifactProgramIdentity)
+    /// the compiled artifact will carry, which is what lets a caller derive the
+    /// key it will file the compiled result under before it pays for the
+    /// compilation.
+    ///
+    /// [`Self::push_carried_payload`] is the same declaration once the object
+    /// has arrived, and it delegates here rather than repeating the descriptor,
+    /// so a pending payload and the carried payload of the same compilation
+    /// cannot name two different backend payloads.
+    ///
+    /// # What the product is for
+    ///
+    /// The artifact this yields is *descriptor-only*: it names a backend object
+    /// it does not contain. It is assembled to be identified rather than
+    /// published. A descriptor-only payload carries no entry mapping, so
+    /// `check_entry_mappings` cannot prove the artifact's executable entries
+    /// reach a symbol — the obligation a carried payload does discharge — and
+    /// publishing one would announce an object no compilation produced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactBuildError::DuplicatePayload`] for a descriptor this
+    /// artifact already declares, a structural-limit error, or the identity
+    /// error the digest constructor produced.
+    pub fn push_pending_payload(
+        &mut self,
+        backend: BackendKey,
+        representation: RepresentationKey,
+        payload_schema: SchemaVersion,
+        compatibility: TargetProfileRef,
+        execution_policy: ArtifactExecutionPolicy,
+        metadata: &PayloadMetadata,
+    ) -> Result<PayloadId, ArtifactBuildError> {
+        self.push_payload(BackendPayloadDescriptor {
+            backend,
+            representation,
+            payload_schema,
+            digest: metadata.identity()?,
+            compatibility,
+            execution_policy,
+        })
+    }
+
     /// Declares one backend payload and carries its content in the artifact.
     ///
     /// The compatibility contract is supplied rather than derived. The carried
@@ -309,11 +362,14 @@ impl ArtifactProgramBuilder {
     /// over its compilation inputs, and the emitted object travels opaquely
     /// under an integrity digest that artifact identity deliberately excludes.
     ///
+    /// The descriptor is therefore the one [`Self::push_pending_payload`] would
+    /// have built from the same subject, and this delegates to it so there is
+    /// one construction rather than two that agree by inspection. The object is
+    /// what this call adds, and the object is the part identity excludes.
+    ///
     /// # Errors
     ///
-    /// Returns [`ArtifactBuildError::DuplicatePayload`] for a descriptor this
-    /// artifact already declares, a structural-limit error, or the identity
-    /// error the digest constructor produced.
+    /// Returns the errors [`Self::push_pending_payload`] returns.
     pub fn push_carried_payload(
         &mut self,
         backend: BackendKey,
@@ -323,15 +379,14 @@ impl ArtifactProgramBuilder {
         execution_policy: ArtifactExecutionPolicy,
         content: PayloadContent,
     ) -> Result<PayloadId, ArtifactBuildError> {
-        let descriptor = BackendPayloadDescriptor {
+        let id = self.push_pending_payload(
             backend,
             representation,
             payload_schema,
-            digest: content.identity()?,
             compatibility,
             execution_policy,
-        };
-        let id = self.push_payload(descriptor)?;
+            &content.metadata,
+        )?;
         let position = self.payloads.len() - 1;
         self.payload_content[position] = Some(content);
         Ok(id)

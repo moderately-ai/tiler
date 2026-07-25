@@ -34,6 +34,19 @@
 //! payload descriptors and their entry mappings, and the capability providers
 //! the plan actually selected.
 //!
+//! Every one of those subjects is a compilation **input**, including each
+//! payload descriptor: its digest identifies the payload's compilation subject
+//! — source, flags, resolved toolchain, entry mappings, obligations — and not
+//! the emitted object. The artifact identity is therefore derivable *before*
+//! the backend compiler runs, which is what an expansion cache needs on a miss,
+//! and
+//! [`ArtifactProgramBuilder::push_pending_payload`](crate::program::ArtifactProgramBuilder::push_pending_payload)
+//! is the constructor that reaches it without an object. The pre-compilation
+//! and post-compilation values are the same bytes rather than two subjects kept
+//! in agreement; see
+//! [`CanonicalArtifactProgramIdentity`](crate::program::CanonicalArtifactProgramIdentity)
+//! for what that does and does not prove.
+//!
 //! It excludes the compilation environment's unused remainder in the strongest
 //! available way: those providers are never retained. A
 //! [`CompilationEnvironment`](crate::program::CompilationEnvironment) is a
