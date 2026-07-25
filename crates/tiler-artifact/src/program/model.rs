@@ -311,6 +311,16 @@ pub struct BackendPayloadDescriptor {
     pub payload_schema: SchemaVersion,
     /// Exact content digest of the payload bytes.
     pub digest: PayloadDigest,
+    /// Target profile this payload's own bytes were built against.
+    ///
+    /// This is the *payload's* compatibility contract, not the plan's. The two
+    /// coincide only while a payload is realized by one variant, and nothing in
+    /// this model requires that: entries cross-reference payloads by index, so
+    /// two variants declaring different `TargetProfileRef`s may realize their
+    /// entries through one payload. Without this field a loader would have to
+    /// infer the payload's contract from whichever variant it happened to route
+    /// to, which is exactly the inference this layer exists to forbid.
+    pub compatibility: TargetProfileRef,
     /// How the payload reaches an executable state.
     pub execution_policy: ArtifactExecutionPolicy,
 }
@@ -323,6 +333,8 @@ impl BackendPayloadDescriptor {
         push_slice(&mut bytes, self.representation.as_str().as_bytes());
         self.payload_schema.encode(&mut bytes);
         push_slice(&mut bytes, self.digest.as_bytes());
+        push_slice(&mut bytes, self.compatibility.key.as_str().as_bytes());
+        push_slice(&mut bytes, self.compatibility.descriptor.as_bytes());
         bytes.push(self.execution_policy.tag());
         bytes
     }

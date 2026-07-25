@@ -23,7 +23,10 @@ use tiler_ir::shape::Axis;
 
 use super::super::error::{AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind};
 use super::super::expr::{AbiBinaryOp, AbiRoot, AbiType, AvailabilityPhase, ExprNode};
-use super::super::keys::{BackendEntryKey, BackendKey, PayloadDigest, RepresentationKey};
+use super::super::keys::{
+    BackendEntryKey, BackendKey, PayloadDigest, RepresentationKey, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef,
+};
 use super::super::model::{
     ArtifactExecutionPolicy, RoutingPolicy, SchemaVersion, address_space_from_tag,
     address_space_tag, buffer_access_from_tag, buffer_access_tag, element_type_from_tag,
@@ -32,8 +35,8 @@ use super::super::model::{
 };
 use super::super::tests::{
     Formulas, OTHER_SCALE_BITS, SCALE_BITS, build_artifact, default_artifact, formulas,
-    fused_program, lowering_provider, payload, selection, semantic_program, spare_provider,
-    variant,
+    fused_program, lowering_provider, payload, profile, selection, semantic_program,
+    spare_provider, variant,
 };
 use super::super::{ArtifactProgramBuilder, CompilationEnvironment, VerifiedArtifactProgram};
 use super::decode::{decode, parse_expression_arena};
@@ -1223,6 +1226,7 @@ fn carried_artifact(source: &[u8], code: &[u8]) -> VerifiedArtifactProgram {
             BackendKey::new("tiler.metal").unwrap(),
             RepresentationKey::new("metallib").unwrap(),
             SchemaVersion::new(1, 0),
+            profile(),
             ArtifactExecutionPolicy::RequiresDeviceTranslation,
             payload_content(source, code),
         )
@@ -1503,4 +1507,69 @@ fn every_section_purpose_declares_its_disposition_and_schema() {
         );
         assert_eq!(kind.schema(), SchemaVersion::new(1, 0));
     }
+}
+
+/// A payload's compatibility contract is its own, not its variant's.
+///
+/// Two payloads that agree on backend, representation, schema, digest, and
+/// execution policy but were built against different target profiles are two
+/// distinct payloads with two distinct canonical keys — so a program that
+/// shares one compiled object across variants declaring different profiles has
+/// an honest encoding, and a loader reads the payload's own contract rather
+/// than inferring it from whichever variant it routed to.
+#[test]
+fn the_payload_compatibility_contract_participates_in_its_canonical_key() {
+    let baseline = payload(0xa1);
+    let mut elsewhere = baseline.clone();
+    elsewhere.compatibility = TargetProfileRef {
+        key: TargetProfileKey::new("tiler.test.other").unwrap(),
+        descriptor: baseline.compatibility.descriptor.clone(),
+    };
+    assert_ne!(baseline.canonical_key(), elsewhere.canonical_key());
+
+    let mut redescribed = baseline.clone();
+    redescribed.compatibility = TargetProfileRef {
+        key: baseline.compatibility.key.clone(),
+        descriptor: TargetProfileDescriptorDigest::from_bytes([0x09, 0x09]).unwrap(),
+    };
+    assert_ne!(
+        baseline.canonical_key(),
+        redescribed.canonical_key(),
+        "the descriptor digest is part of the contract, not decoration",
+    );
+}
+
+/// The compatibility contract reaches artifact identity and the envelope bytes.
+#[test]
+fn a_changed_payload_compatibility_contract_changes_the_artifact() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let build = |compatibility: TargetProfileRef| {
+        let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+        let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+        draft.select_provider(selection(provider.clone())).unwrap();
+        let mut descriptor = payload(0xa1);
+        descriptor.compatibility = compatibility;
+        let id = draft.push_payload(descriptor).unwrap();
+        let formulas = formulas(&mut draft);
+        draft
+            .push_variant(&program, variant(&formulas, id, b"fused"))
+            .unwrap();
+        draft.build().unwrap()
+    };
+    let baseline = build(profile());
+    let elsewhere = build(TargetProfileRef {
+        key: TargetProfileKey::new("tiler.test.other").unwrap(),
+        descriptor: profile().descriptor,
+    });
+    assert_ne!(
+        baseline.canonical_identity(),
+        elsewhere.canonical_identity(),
+    );
+    assert_ne!(encoded(&baseline), encoded(&elsewhere));
+    assert_eq!(
+        decode(&encoded(&elsewhere)).unwrap(),
+        envelope_of(&elsewhere)
+    );
 }

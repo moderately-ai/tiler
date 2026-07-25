@@ -16,7 +16,7 @@ ticket: "synthesize-artifact-contracts"
 
 The private compiler proof constructs provisional program portfolios and artifact-construction inputs. ADRs 0070 and 0071 now assign authoritative target-neutral executable meaning and checked construction to shared `tiler-ir` representations; the proof-specific structs remain private until replaced in dependency order.
 
-**Fact — canonical envelope serialization, canonical form, and integrity validation are implemented; the public artifact API and backend payloads are not.** `crates/tiler-artifact/src/program/codec/` encodes, decodes, and re-validates the envelope this document specifies, in the bounded lockstep profile recorded under "Implemented envelope profile" below. Every item in that module is `pub(crate)` behind a private `mod` under ADR 0074 convention 7, so no crate outside `tiler-artifact` can encode or decode an artifact and no consumer surface has been accepted; promoting it is Tom's decision under ADR 0075. Backend payload bytes still have no section vocabulary, and a decoded envelope still cannot reconstruct the shared-IR programs it names. The accurate statement is that a bounded lockstep codec exists behind an unaccepted facade, not that the artifact format is available.
+**Fact — canonical envelope serialization, canonical form, and integrity validation are implemented; the public artifact API and backend payloads are not.** `crates/tiler-artifact/src/program/codec/` encodes, decodes, and re-validates the envelope this document specifies, in the bounded lockstep profile recorded under "Implemented envelope profile" below. Every item in that module is `pub(crate)` behind a private `mod` under ADR 0074 convention 7, so no crate outside `tiler-artifact` can encode or decode an artifact and no consumer surface has been accepted; promoting it is Tom's decision under ADR 0075. The envelope now carries a backend payload's compilation subject and its object bytes, but nothing yet fills that shape from a real emission and a real compilation; and a decoded envelope still cannot reconstruct the shared-IR programs it names. The accurate statement is that a bounded lockstep codec exists behind an unaccepted facade, not that the artifact format is available.
 
 ## Ownership boundary
 
@@ -63,7 +63,7 @@ skipped only when their schema explicitly permits it. An external
 `EnvelopeDigest` covers the exact complete encoding and is not recursively
 stored inside itself.
 
-The implemented descriptor is narrower than that sentence and the implemented reader admits no optional section at all; both differences are named under "Where the implemented profile is narrower than this contract" below rather than weakened here.
+The implemented descriptor carries all four of those fields. The implemented reader still admits no optional section at all, which is named under "Where the implemented profile is narrower than this contract" below rather than weakened here.
 
 Integrity, structural validity, neutral-program validity, backend-payload
 validity, declared target compatibility, live applicability, prepared-entry
@@ -73,7 +73,7 @@ Parse success never implies executable compatibility. See the
 
 ## Implemented envelope profile
 
-Everything in this section is a fact about `crates/tiler-artifact/src/program/codec/` as of commit `1f78223`. It records what one build writes and reads. It does not widen the normative contract above, and where the two differ the difference is named rather than resolved by rewriting either side.
+Everything in this section is a fact about `crates/tiler-artifact/src/program/codec/` as of commit `5c51da7`. It records what one build writes and reads. It does not widen the normative contract above, and where the two differ the difference is named rather than resolved by rewriting either side.
 
 ### Maturity of the implementation
 
@@ -81,9 +81,9 @@ Everything in this section is a fact about `crates/tiler-artifact/src/program/co
 
 **What a consumer can do today.** Build a `VerifiedArtifactProgram` through `tiler_artifact::program` — itself a reviewed *draft* boundary rather than an accepted facade — and read its canonical identity, which is now derived from the canonical envelope and is therefore exactly the identity a decoder re-derives from bytes.
 
-**What a consumer cannot do today.** Obtain an artifact's bytes, decode bytes into an artifact, name an envelope digest, or observe any typed codec rejection. There is no serialization API, no exposed file or embedding format, and no backend payload bytes in the envelope at all.
+**What a consumer cannot do today.** Obtain an artifact's bytes, decode bytes into an artifact, name an envelope digest, observe any typed codec rejection, or carry a backend payload — the entry point that carries one is itself `pub(crate)`. There is no serialization API and no exposed file or embedding format.
 
-Four maturity claims stay distinct here. The framing, canonical manifest, section framing, required-feature mechanism, and rejection vocabulary are **implemented**. The section-purpose vocabulary and the backend payload descriptor are **type-system reservations** for a backend assembler that does not exist yet. A `pub` codec facade is an **architectural seam** with no accepted shape. The properties labelled Measurement below are **tested guarantees over the named fixtures**, not universal claims about every artifact.
+Four maturity claims stay distinct here. The framing, canonical manifest, section framing, required-feature mechanism, and rejection vocabulary are **implemented**. The section-purpose vocabulary and the carried-payload entry point are **implemented and tested against synthetic content**, and are **reservations** in the narrower sense that no backend fills them from a real emission and a real compilation yet. A `pub` codec facade is an **architectural seam** with no accepted shape. The properties labelled Measurement below are **tested guarantees over the named fixtures**, not universal claims about every artifact.
 
 ### Framing header
 
@@ -147,7 +147,7 @@ Each executable entry carries its stage subject, proven resource requirements, d
 
 ### Sections
 
-**Fact — the section vocabulary has exactly one governed purpose in this build**: the canonical kernel-program identity of one packaged variant. Two variants that package the same program share one section, because the content is that program's identity, so the sharing is a stated property of the purpose rather than an accident of equal bytes. Sections are ordered canonically by content; duplicates, unreferenced sections, a section identifier that is not its canonical position, and an unrecognized purpose tag are each rejected by name.
+**Fact — the section vocabulary has three governed purposes in this build**: the canonical kernel-program identity of one packaged variant, and a carried backend payload's compilation subject and its object bytes. Two variants that package the same program share one section, and two payloads carrying the same object share one section, because content is the address — so sharing is a stated property of these purposes rather than an accident of equal bytes. Sections are ordered canonically by content; duplicates, unreferenced sections, a section identifier that is not its canonical position, and an unrecognized purpose tag are each rejected by name.
 
 **Fact — a section carries canonical identity bytes, not a digest of them.** ADR 0074 convention 2 makes a canonical identity an opaque byte encoding and short digests presentation-only, so the governed bound on one section is the shared IR's own identity budget rather than a digest width.
 
@@ -207,7 +207,7 @@ Each variant carries the structured data a caller reacts to rather than a messag
 
 ### Where the implemented profile is narrower than this contract
 
-**Fact.** Four normative statements elsewhere in this document describe a format wider than the one this build writes. Each is recorded rather than weakened.
+**Fact.** Four normative statements elsewhere in this document once described a format wider than the one this build writes. Items 1 and 4 have since been closed and are retained here as the record of what closed them; items 2 and 3 are open, each with a stated trigger rather than an open-ended gap.
 
 1. **A section descriptor now carries all four declared fields, and one difference remains.** It is an ordered identifier, a purpose tag, the purpose's required/optional disposition, the purpose's content schema, the exact byte length, and the content digest. The one remaining narrowing is deliberate: the *digest algorithm* is named once in the header rather than per descriptor, because one envelope is digested under one governed algorithm and a per-descriptor spelling would admit an envelope whose sections disagreed about it.
 
@@ -216,7 +216,11 @@ Each variant carries the structured data a caller reacts to rather than a messag
    Adding both fields moved the manifest schema to **2.0** — a major step rather than the minor one it might look like. A minor step would have been wrong, because the reader admits `minor <= implemented` and would have gone on accepting a `1.0` manifest whose descriptors it can no longer parse. A field added inside a fixed-width record is not additive. The envelope format and the canonical encoding profile in the header are unchanged at `{1, 0}`: the manifest's layout moved, not the framing around it.
 2. **There are no optional sections, so "unknown optional sections may be skipped only when their schema explicitly permits it" describes no implemented behaviour.** Every unrecognized purpose fails closed. This is the deliberate version-1 posture the envelope research records, and "Loading and validation" below already conditions the skip mechanism on exposing the format outside a lockstep release. It is an explicitly deferred question with that trigger rather than an unrecorded gap.
 3. **A decoder does not reconstruct shared IR through its checked builders**, for the structural reason under "Deliberate exclusions". It does satisfy the other two halves of that requirement: nothing in the codec manufactures a verified value, and a decoded envelope is a validated envelope rather than a second editable authority.
-4. **The backend payload descriptor carries no compatibility-contract reference.** It carries the backend key, representation key, payload schema, content digest, and execution policy. The declared target profile and feasibility rule set are carried per *variant*, which coincides with a per-payload contract only while a payload is not shared across variants that declare different profiles — and nothing in the model prevents that sharing. `carry-a-compatibility-contract-reference-on-the-payload-descriptor` owns it.
+4. **The backend payload descriptor carries its compatibility-contract reference.** It carries the backend key, representation key, payload schema, content digest, the target profile the payload's own bytes were built against, and the execution policy. The reference is folded into the payload's canonical key and therefore into artifact identity, so two payloads that agree on every other field but were built against different profiles are two payloads rather than one.
+
+   The field is the payload's contract, not the plan's. A variant's `TargetProfileRef` and `FeasibilityRuleSetRef` are the *plan's* declared target requirements, and the two coincide only while a payload is realized by one variant — which nothing in this model requires, since entries cross-reference payloads by index. Carrying it per payload is what lets a program share one compiled object across variants declaring different profiles and still state what that object was built for; without it a loader would infer the payload's contract from whichever variant it happened to route to, which is the inference this layer exists to forbid.
+
+   The narrower alternative — declaring a payload per-variant by construction — was rejected on a concrete cost rather than on taste: it makes a legitimate program inexpressible. Two variants compiling to the same library could not share the payload under the new rule, and could not declare a second identical descriptor either, because the builder already refuses that as a duplicate.
 
 ## Metal payload hierarchy
 

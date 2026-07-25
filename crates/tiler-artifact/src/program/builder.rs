@@ -295,6 +295,11 @@ impl ArtifactProgramBuilder {
 
     /// Declares one backend payload and carries its content in the artifact.
     ///
+    /// The compatibility contract is supplied rather than derived. The carried
+    /// provenance names a backend-specific target string; `TargetProfileRef` is
+    /// the neutral governed profile the artifact layer reasons about, and only
+    /// the assembler knows which profile it compiled against.
+    ///
     /// The descriptor's content digest is not supplied: it is *derived* from
     /// the exact canonical payload-metadata bytes, so a carried payload cannot
     /// claim a compilation subject other than the one it carries. That is the
@@ -316,6 +321,7 @@ impl ArtifactProgramBuilder {
         backend: BackendKey,
         representation: RepresentationKey,
         payload_schema: SchemaVersion,
+        compatibility: TargetProfileRef,
         execution_policy: ArtifactExecutionPolicy,
         content: PayloadContent,
     ) -> Result<PayloadId, ArtifactBuildError> {
@@ -324,6 +330,7 @@ impl ArtifactProgramBuilder {
             representation,
             payload_schema,
             digest: content.identity()?,
+            compatibility,
             execution_policy,
         };
         let id = self.push_payload(descriptor)?;

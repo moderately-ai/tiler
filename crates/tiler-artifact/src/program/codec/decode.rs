@@ -476,6 +476,12 @@ fn read_payloads(
             payload_schema: SchemaVersion::new(cursor.u16()?, cursor.u16()?),
             digest: PayloadDigest::from_bytes(cursor.slice()?)
                 .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
+            compatibility: TargetProfileRef {
+                key: TargetProfileKey::from_owned(cursor.text()?)
+                    .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
+                descriptor: TargetProfileDescriptorDigest::from_bytes(cursor.slice()?)
+                    .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
+            },
             execution_policy: cursor.execution_policy()?,
         };
         let content = match cursor.u8()? {

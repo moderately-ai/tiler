@@ -229,6 +229,13 @@
 //!     representation: RepresentationKey::new("metallib")?,
 //!     payload_schema: SchemaVersion::new(1, 0),
 //!     digest: PayloadDigest::from_bytes([0xa1, 0xb2, 0xc3])?,
+//!     // The payload's own compatibility contract, not the plan's: this names
+//!     // what these bytes were built against, which a shared payload could not
+//!     // otherwise state.
+//!     compatibility: TargetProfileRef {
+//!         key: TargetProfileKey::new("tiler.prototype-target-neutral-baseline.v1")?,
+//!         descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02])?,
+//!     },
 //!     execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
 //! })?;
 //!

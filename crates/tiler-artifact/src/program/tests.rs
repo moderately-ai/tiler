@@ -290,6 +290,7 @@ pub(super) fn payload(tag: u8) -> BackendPayloadDescriptor {
         representation: RepresentationKey::new("metallib").unwrap(),
         payload_schema: SchemaVersion::new(1, 0),
         digest: PayloadDigest::from_bytes([tag, 0xb2, 0xc3]).unwrap(),
+        compatibility: profile(),
         execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
     }
 }

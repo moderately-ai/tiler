@@ -227,6 +227,8 @@ fn encode_provenance_tables(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
         bytes.extend_from_slice(&payload.payload_schema.major().to_be_bytes());
         bytes.extend_from_slice(&payload.payload_schema.minor().to_be_bytes());
         push_slice(bytes, payload.digest.as_bytes());
+        push_slice(bytes, payload.compatibility.key.as_str().as_bytes());
+        push_slice(bytes, payload.compatibility.descriptor.as_bytes());
         bytes.push(payload.execution_policy.tag());
         // A carried payload names its two sections here rather than in the
         // section table, so a descriptor and the object it names cannot be
