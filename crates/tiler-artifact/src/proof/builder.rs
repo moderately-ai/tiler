@@ -49,7 +49,7 @@ use super::{MAX_PROOF_CASES, MAX_PROOF_INTERFACE_ENTRIES, MAX_PROOF_PAYLOAD_BYTE
 /// consumer that reports or routes on this matches it to decide behaviour, and
 /// a third direction must break such a match rather than fall into a wildcard.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ProofDirection {
+pub enum ProofDirection {
     /// A bit-preserving case input.
     Input,
     /// A normative expected case output.
@@ -74,7 +74,7 @@ impl fmt::Display for ProofDirection {
 /// `#[non_exhaustive]` under ADR 0074 convention 5a.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub(crate) enum ProofInterfaceError {
+pub enum ProofInterfaceError {
     /// The sidecar binds a different number of entries than the artifact declares.
     Arity {
         /// Which half of the interface disagreed.
@@ -246,7 +246,7 @@ pub(super) enum InterfaceProjectionError {
 /// producer reports and forwards, never one any crate maps totally.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub(crate) enum ProofBuildError {
+pub enum ProofBuildError {
     /// A stable case key was rejected.
     CaseKey(ProofCaseKeyError),
     /// A received provenance subject was rejected.
@@ -431,18 +431,18 @@ impl From<InterfaceProjectionError> for ProofBuildError {
 /// must be able to write the literal, and growing the record is a
 /// constructor-signature change either way.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProofProvenance {
+pub struct ProofProvenance {
     /// The semantic graph the expected bytes were evaluated over.
     ///
     /// Typed rather than opaque, because this crate can compare it with the
     /// artifact's own and refuse a mismatch. The other two are opaque because
     /// this crate has no way to check them, and pretending otherwise would be a
     /// stronger claim than the code makes.
-    pub(crate) semantic_graph: SemanticGraphIdentity,
+    pub semantic_graph: SemanticGraphIdentity,
     /// The numerical contract the expected bytes are normative under.
-    pub(crate) numerical: ProofNumericalIdentity,
+    pub numerical: ProofNumericalIdentity,
     /// The reference implementation that produced the expected bytes.
-    pub(crate) reference: ProofReferenceIdentity,
+    pub reference: ProofReferenceIdentity,
 }
 
 /// One proof case as a producer states it.
@@ -450,13 +450,13 @@ pub(crate) struct ProofProvenance {
 /// A caller-constructed input record; see [`ProofProvenance`] for why it
 /// exposes fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProofCaseSpec {
+pub struct ProofCaseSpec {
     /// The stable key naming this case.
-    pub(crate) key: ProofCaseKey,
+    pub key: ProofCaseKey,
     /// One bit-preserving payload per declared artifact input, in any order.
-    pub(crate) inputs: Vec<(InputKey, Vec<u8>)>,
+    pub inputs: Vec<(InputKey, Vec<u8>)>,
     /// One normative expected payload per declared artifact output, in any order.
-    pub(crate) expected: Vec<(OutputKey, Vec<u8>)>,
+    pub expected: Vec<(OutputKey, Vec<u8>)>,
 }
 
 /// The artifact-declared interface a sidecar's cases bind, with the dense
@@ -697,7 +697,7 @@ fn check_elements<K>(
 /// The draft is unchanged when an insertion is rejected, and [`Self::build`]
 /// consumes it.
 #[derive(Clone, Debug)]
-pub(crate) struct ProofSidecarBuilder {
+pub struct ProofSidecarBuilder {
     artifact_identity: Vec<u8>,
     envelope_digest: [u8; DIGEST_BYTES],
     subjects: ProofSubjects,
@@ -720,7 +720,7 @@ impl ProofSidecarBuilder {
     /// [`ProofBuildError::Subject`] when a provenance subject is out of bounds,
     /// or [`ProofBuildError::Limit`] / [`ProofBuildError::Interface`] when the
     /// artifact's declared interface cannot be bound.
-    pub(crate) fn new(
+    pub fn new(
         artifact: &VerifiedArtifactProgram,
         provenance: ProofProvenance,
     ) -> Result<Self, ProofBuildError> {
@@ -768,7 +768,7 @@ impl ProofSidecarBuilder {
     /// [`ProofBuildError::MissingInput`] or [`ProofBuildError::MissingOutput`]
     /// for a declared key left unsupplied, or [`ProofBuildError::Limit`] beyond
     /// [`MAX_PROOF_CASES`] or [`MAX_PROOF_PAYLOAD_BYTES`].
-    pub(crate) fn push_case(&mut self, case: ProofCaseSpec) -> Result<(), ProofBuildError> {
+    pub fn push_case(&mut self, case: ProofCaseSpec) -> Result<(), ProofBuildError> {
         proof_limit(self.cases.len() + 1, MAX_PROOF_CASES, ProofLimitKind::Cases)?;
         if self.cases.iter().any(|held| held.key == case.key) {
             return Err(ProofBuildError::DuplicateCaseKey { key: case.key });
@@ -807,7 +807,7 @@ impl ProofSidecarBuilder {
     /// [`ProofBuildError::Interface`] when a case disagrees with the artifact's
     /// declared interface, or [`ProofBuildError::Limit`] when the derived
     /// identity exceeds its governed bound.
-    pub(crate) fn build(mut self) -> Result<VerifiedProofSidecar, ProofBuildError> {
+    pub fn build(mut self) -> Result<VerifiedProofSidecar, ProofBuildError> {
         if self.cases.is_empty() {
             return Err(ProofBuildError::NoCases);
         }

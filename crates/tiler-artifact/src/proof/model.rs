@@ -31,7 +31,7 @@ use super::{MAX_PROOF_CASE_KEY_BYTES, MAX_PROOF_SUBJECT_BYTES};
 /// caller forwards or partially classifies, never one any crate maps totally.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub(crate) enum ProofCaseKeyError {
+pub enum ProofCaseKeyError {
     /// The key was empty.
     ///
     /// An empty key is refused rather than normalized because a case key is
@@ -66,7 +66,7 @@ impl Error for ProofCaseKeyError {}
 /// `#[non_exhaustive]` under ADR 0074 convention 5a.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub(crate) enum ProofSubjectError {
+pub enum ProofSubjectError {
     /// The subject bytes were empty.
     ///
     /// An absent identity must be absent by construction, not spelled as zero
@@ -103,7 +103,7 @@ impl Error for ProofSubjectError {}
 /// sidecar; a consumer reports and tracks a case by it. Nothing derives it, so
 /// renaming a case is a deliberate act that changes the sidecar's identity.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ProofCaseKey(String);
+pub struct ProofCaseKey(String);
 
 impl ProofCaseKey {
     /// Creates a validated stable case key.
@@ -112,7 +112,7 @@ impl ProofCaseKey {
     ///
     /// Returns [`ProofCaseKeyError::Empty`] for an empty key, or
     /// [`ProofCaseKeyError::TooLong`] beyond [`MAX_PROOF_CASE_KEY_BYTES`].
-    pub(crate) fn new(value: impl AsRef<str>) -> Result<Self, ProofCaseKeyError> {
+    pub fn new(value: impl AsRef<str>) -> Result<Self, ProofCaseKeyError> {
         Self::from_owned(value.as_ref().to_owned())
     }
 
@@ -121,7 +121,7 @@ impl ProofCaseKey {
     /// # Errors
     ///
     /// Returns the same errors as [`Self::new`], before retaining the string.
-    pub(crate) fn from_owned(value: String) -> Result<Self, ProofCaseKeyError> {
+    pub fn from_owned(value: String) -> Result<Self, ProofCaseKeyError> {
         if value.is_empty() {
             return Err(ProofCaseKeyError::Empty);
         }
@@ -135,7 +135,8 @@ impl ProofCaseKey {
     }
 
     /// Returns the exact key text.
-    pub(crate) fn as_str(&self) -> &str {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -154,7 +155,7 @@ macro_rules! received_subject {
         /// never re-derives them, because it is not the authority for the
         /// subject they name (ADR 0074 convention 2).
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub(crate) struct $name(Vec<u8>);
+        pub struct $name(Vec<u8>);
 
         impl $name {
             /// Wraps subject bytes another authority derived.
@@ -164,7 +165,7 @@ macro_rules! received_subject {
             /// Returns [`ProofSubjectError::Empty`] for empty bytes, or
             /// [`ProofSubjectError::TooLong`] beyond
             /// [`MAX_PROOF_SUBJECT_BYTES`].
-            pub(crate) fn from_bytes(value: impl AsRef<[u8]>) -> Result<Self, ProofSubjectError> {
+            pub fn from_bytes(value: impl AsRef<[u8]>) -> Result<Self, ProofSubjectError> {
                 let value = value.as_ref();
                 if value.is_empty() {
                     return Err(ProofSubjectError::Empty);
@@ -179,7 +180,7 @@ macro_rules! received_subject {
             }
 
             /// Returns the exact subject bytes.
-            pub(crate) fn as_bytes(&self) -> &[u8] {
+            pub fn as_bytes(&self) -> &[u8] {
                 &self.0
             }
         }
@@ -263,14 +264,15 @@ pub(crate) struct ProofSidecarData {
 /// identity stays bounded by the case count while still changing whenever any
 /// carried byte changes.
 ///
-/// There is no constructor: [`super::codec`] derives it and nothing else can
-/// (ADR 0074 convention 2).
+/// There is no constructor: the crate-private `super::codec` derives it and
+/// nothing else can (ADR 0074 convention 2).
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct CanonicalProofSidecarIdentity(pub(super) Vec<u8>);
+pub struct CanonicalProofSidecarIdentity(pub(super) Vec<u8>);
 
 impl CanonicalProofSidecarIdentity {
     /// Returns the canonical identity bytes.
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
@@ -280,7 +282,7 @@ impl CanonicalProofSidecarIdentity {
 /// Only [`super::ProofSidecarBuilder::build`] produces one. Equality compares
 /// the canonical identity.
 #[derive(Clone)]
-pub(crate) struct VerifiedProofSidecar {
+pub struct VerifiedProofSidecar {
     pub(super) data: ProofSidecarData,
     pub(super) identity: CanonicalProofSidecarIdentity,
 }
@@ -307,71 +309,83 @@ impl fmt::Debug for VerifiedProofSidecar {
 
 impl VerifiedProofSidecar {
     /// Returns the canonical identity of this sidecar.
-    pub(crate) const fn canonical_identity(&self) -> &CanonicalProofSidecarIdentity {
+    #[must_use]
+    pub const fn canonical_identity(&self) -> &CanonicalProofSidecarIdentity {
         &self.identity
     }
 
     /// Returns the canonical identity bytes of the artifact this sidecar names.
-    pub(crate) fn artifact_identity_bytes(&self) -> &[u8] {
+    #[must_use]
+    pub fn artifact_identity_bytes(&self) -> &[u8] {
         &self.data.artifact_identity
     }
 
     /// Returns the digest of the exact envelope bytes this sidecar names.
-    pub(crate) const fn envelope_digest(&self) -> &[u8; DIGEST_BYTES] {
+    #[must_use]
+    pub const fn envelope_digest(&self) -> &[u8; DIGEST_BYTES] {
         &self.data.envelope_digest
     }
 
     /// Returns the semantic graph the expected bytes were evaluated over.
-    pub(crate) const fn semantic_subject(&self) -> &ProofSemanticSubject {
+    #[must_use]
+    pub const fn semantic_subject(&self) -> &ProofSemanticSubject {
         &self.data.subjects.semantic
     }
 
     /// Returns the numerical contract the expected bytes are normative under.
-    pub(crate) const fn numerical_identity(&self) -> &ProofNumericalIdentity {
+    #[must_use]
+    pub const fn numerical_identity(&self) -> &ProofNumericalIdentity {
         &self.data.subjects.numerical
     }
 
     /// Returns the reference implementation that produced the expected bytes.
-    pub(crate) const fn reference_identity(&self) -> &ProofReferenceIdentity {
+    #[must_use]
+    pub const fn reference_identity(&self) -> &ProofReferenceIdentity {
         &self.data.subjects.reference
     }
 
     /// Returns the bound input keys, in the artifact's interface order.
-    pub(crate) fn input_keys(&self) -> &[InputKey] {
+    #[must_use]
+    pub fn input_keys(&self) -> &[InputKey] {
         &self.data.input_keys
     }
 
     /// Returns the bound output keys, in the artifact's interface order.
-    pub(crate) fn output_keys(&self) -> &[OutputKey] {
+    #[must_use]
+    pub fn output_keys(&self) -> &[OutputKey] {
         &self.data.output_keys
     }
 
     /// Returns the proof cases in canonical case-key order.
-    pub(crate) fn cases(&self) -> impl ExactSizeIterator<Item = ProofCaseRef<'_>> {
+    #[must_use]
+    pub fn cases(&self) -> impl ExactSizeIterator<Item = ProofCaseRef<'_>> {
         cases_of(&self.data)
     }
 
     /// Returns the case with this key, or `None`.
-    pub(crate) fn case(&self, key: &ProofCaseKey) -> Option<ProofCaseRef<'_>> {
+    #[must_use]
+    pub fn case(&self, key: &ProofCaseKey) -> Option<ProofCaseRef<'_>> {
         case_of(&self.data, key)
     }
 }
 
 /// A read view over one proof case.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ProofCaseRef<'a> {
+pub struct ProofCaseRef<'a> {
     data: &'a ProofSidecarData,
     case: &'a ProofCaseData,
 }
 
 impl<'a> ProofCaseRef<'a> {
     /// Returns this case's stable key.
-    pub(crate) const fn key(self) -> &'a ProofCaseKey {
+    #[must_use]
+    pub const fn key(self) -> &'a ProofCaseKey {
         &self.case.key
     }
 
     /// Returns the bit-preserving input payloads, in interface order.
-    pub(crate) fn inputs(self) -> impl ExactSizeIterator<Item = ProofPayloadRef<'a, InputKey>> {
+    #[must_use]
+    pub fn inputs(self) -> impl ExactSizeIterator<Item = ProofPayloadRef<'a, InputKey>> {
         self.data
             .input_keys
             .iter()
@@ -380,7 +394,8 @@ impl<'a> ProofCaseRef<'a> {
     }
 
     /// Returns the normative expected payloads, in interface order.
-    pub(crate) fn expected(self) -> impl ExactSizeIterator<Item = ProofPayloadRef<'a, OutputKey>> {
+    #[must_use]
+    pub fn expected(self) -> impl ExactSizeIterator<Item = ProofPayloadRef<'a, OutputKey>> {
         self.data
             .output_keys
             .iter()
@@ -395,7 +410,7 @@ impl<'a> ProofCaseRef<'a> {
 /// `K: Copy`, and the interface keys this view names are heap-backed. The view
 /// itself is two references and is unconditionally copyable.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct ProofPayloadRef<'a, K> {
+pub struct ProofPayloadRef<'a, K> {
     key: &'a K,
     bytes: &'a [u8],
 }
@@ -410,7 +425,8 @@ impl<K> Copy for ProofPayloadRef<'_, K> {}
 
 impl<'a, K> ProofPayloadRef<'a, K> {
     /// Returns the interface key this payload belongs to.
-    pub(crate) const fn key(self) -> &'a K {
+    #[must_use]
+    pub const fn key(self) -> &'a K {
         self.key
     }
 
@@ -420,7 +436,8 @@ impl<'a, K> ProofPayloadRef<'a, K> {
     /// interpreted as numbers here. A canonical NaN, a signed zero, and a
     /// subnormal all survive this container unchanged, which is the only reason
     /// a bitwise readback comparison means anything.
-    pub(crate) const fn bytes(self) -> &'a [u8] {
+    #[must_use]
+    pub const fn bytes(self) -> &'a [u8] {
         self.bytes
     }
 }
