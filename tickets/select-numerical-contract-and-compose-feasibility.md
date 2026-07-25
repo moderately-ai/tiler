@@ -111,7 +111,19 @@ With those in place the failure moved from `InvalidCompilerOutput` to an honest 
 
 So the conservative deferral is very likely *correct* under a flush contract, and discharging it on the retracted argument would return wrong numbers — the exact failure the goal forbids.
 
-**What actually has to be settled, by reading rather than by argument.** Whether `result_subnormals` is a boundary-crossing rule or a per-arithmetic-operation rule. `docs/numerical-semantics.md` and ADR 0019 own that definition, and `tiler_ir::schedule::numerics` spells it as "treatment of subnormal floating-point values crossing the region boundary", which points at the boundary reading. If that reading holds, fusion under a flush contract is genuinely illegal and this ticket must say so — in which case reaching Apple hardware needs the *materialized* alternative to form a complete plan, and the open question becomes why the frontier admits zero implementations for the non-reduction region, not how to license fusion.
+**Settled 2026-07-25 by reading `docs/numerical-semantics.md`.** The normative contract is explicit and it is a **per-operation** rule, not a boundary rule:
+
+> Input flushing treats an existing subnormal operand as zero before arithmetic. Result flushing replaces a newly produced subnormal result with zero.
+
+A materialization boundary is a store and a load. Neither is arithmetic and neither produces a *newly produced result*, so a region boundary neither adds nor removes a flush. The fused and materialized alternatives therefore perform the same arithmetic operations with the same per-operation flushing, and **fusion does not change exceptional-value behaviour under a flush contract**. The retracted argument above was right; retracting it was still correct, because it had been asserted without this check.
+
+**A governed statement is wrong, and it is what caused the retraction.** `tiler_ir::schedule::numerics` documents `SubnormalMode` as "treatment of subnormal floating-point values crossing the region boundary". That contradicts `docs/numerical-semantics.md`, and it is the sentence that made the boundary reading look plausible. Correct the doc comment to the per-operation rule the contract states; it is a live trap for exactly this reasoning.
+
+**Consequently the obligation can be discharged**, and the discharge condition should be that the contract's canonical NaN bits match the governed pattern and the subnormal dimensions are *any* admitted resolution — not that they are `Preserve`. Keep the NaN-canonicalization half of the condition: that one genuinely is a per-result rewrite the fused form must still apply, and `emit_reduction` and `emit_scale_bias` are what apply it.
+
+**Still to verify before trusting this.** `ConversionBoundaryPreservation` is a separate obligation covering removed materialization boundaries; confirm it is the one that would refuse if a boundary ever *did* carry semantics, so discharging `ExceptionalValues` does not leave that case unguarded.
+
+**What was previously listed as needing settlement, now answered above.** Whether `result_subnormals` is a boundary-crossing rule or a per-arithmetic-operation rule. `docs/numerical-semantics.md` and ADR 0019 own that definition, and `tiler_ir::schedule::numerics` spells it as "treatment of subnormal floating-point values crossing the region boundary", which points at the boundary reading. If that reading holds, fusion under a flush contract is genuinely illegal and this ticket must say so — in which case reaching Apple hardware needs the *materialized* alternative to form a complete plan, and the open question becomes why the frontier admits zero implementations for the non-reduction region, not how to license fusion.
 
 Note this also means `ConversionBoundaryPreservation` — a separate obligation, "no observable conversion/materialization boundary is silently removed" — may be the one that should refuse, and it currently does not.
 
