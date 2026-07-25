@@ -16,7 +16,7 @@ Implement a separate versioned proof sidecar containing stable case keys, bit-pr
 
 `crates/tiler-artifact/src/proof/` holds the bounded, versioned proof-case evidence sidecar: a transactional builder, a canonical encoding, a fail-closed reader, and two explicit envelope-association checks. It landed as a **crate-private draft authority** under ADR 0074 convention 7 — a private `mod proof` in the crate root whose items are `pub(crate)`, with the module-level `#![allow(dead_code, unused_imports, reason = "…")]` naming what it reserves and which slices consume it. **Promotion to a public facade is Tom's under ADR 0075 and has not been made**; `promote-the-proof-sidecar-facade` owns it and is now a dependency of `prototype-metal-aot-slice`.
 
-151 tests pass in `tiler-artifact` (39 of them the sidecar's own), and the complete gate `uv run --locked python scripts/check_repository.py` is green.
+151 tests pass in `tiler-artifact`, 46 of them the sidecar's own (`grep -c '#\[test\]' crates/tiler-artifact/src/proof/tests.rs`), and the complete gate `uv run --locked python scripts/check_repository.py` is green.
 
 ### The separation from artifact semantics is structural, not a convention
 
@@ -51,6 +51,12 @@ A validated sidecar is evidence of **integrity and association**. It is **not** 
 ### Fixture reuse over a second fixture
 
 `crate::program::tests` became `pub(crate)` under `cfg(test)`, and seven of its fixtures moved from `pub(super)` to `pub(crate)`. The sidecar associates with a *real* verified artifact — a real semantic program, a real verified kernel program, a real artifact envelope — and a hand-built second one would be 400 lines that could drift from the artifact model's own. One fixture bug was found and fixed while writing the suite: the "other artifact" fixture originally varied only the kernel's scale constant, which leaves the semantic graph identity unchanged, so the semantic-subject mismatch case was vacuous until it was rebuilt on `build_graph_scaled(…, 3.0)`.
+
+### One gap left open on purpose, with its trigger
+
+No governed contract records the sidecar's format. `docs/artifact-abi.md` deliberately should not: the sidecar is not artifact semantics, and that document's "The governed digest" section correctly describes three envelope domain separators while the sidecar adds four of its own. The union property those separators depend on — no admitted domain prefixing another — is checked across all seven in `crate::proof::tests`, because one algorithm hashes both containers in one process, and the envelope codec's own three-domain test carries no note pointing at it.
+
+Writing the format into a contract now would describe a format no crate can reach. The trigger is the facade promotion, so the closing condition is recorded on `promote-the-proof-sidecar-facade` rather than filed as a ticket that would sit ready and unactionable.
 
 ### What is reserved and not implemented
 

@@ -5,7 +5,7 @@ status: todo
 priority: p0
 dependencies: [prototype-proof-case-sidecar]
 related: [prototype-metal-aot-slice, prototype-metal-runtime-proof]
-scopes: [implementation/artifact]
+scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, api, review]
@@ -22,3 +22,11 @@ The proof-case evidence sidecar landed as a crate-private draft authority in `cr
 - Whether `DecodedProofSidecar::bind_to_artifact` is promoted at all. It is the stronger check and it requires the caller to hold a `VerifiedArtifactProgram`, which is exactly the binding-by-identity posture that `carry-reconstructable-kernel-programs-in-the-neutral-envelope` is deciding. Promoting it commits a second public call site to that posture before that ticket closes.
 
 **Not closed by** widening visibility without review. A crate-private authority that is unreachable is the accepted staging state (ADR 0074 convention 7), not a defect to be worked around.
+
+## Also closes the contract gap the sidecar deliberately left open
+
+**Fact — no governed contract records the sidecar's format.** `docs/artifact-abi.md` should not be the one: the sidecar is not artifact semantics, and its "The governed digest" section correctly describes the envelope's three domain separators while the sidecar adds four of its own (`tiler.proof-sidecar.manifest.v1`, `…manifest-digest.v1`, `…payload-digest.v1`, `…identity.v1`). Writing the format down while nothing outside `tiler-artifact` can reach it would document an unreachable format, which is why `prototype-proof-case-sidecar` recorded the gap with this promotion as its trigger rather than filing a ticket that would sit ready and unactionable.
+
+**Two things the contract must state, whichever document takes it.** That the sidecar is producer evidence and never artifact semantics — a sidecar names an artifact, an artifact never names a sidecar, and an artifact validates and dispatches with none present. And the measurement boundary the implementation already pins as a test: a validated sidecar is evidence of *integrity and association* and not of *authenticity*, because every digest and identity in it is derived from its own content, so a re-sealed forgery validates and binds. A consumer that treats sidecar payloads as anything but test data has read a guarantee the container does not make.
+
+**Fact — one union property crosses the two containers and is checked in only one place.** `crate::proof::tests::no_governed_domain_of_either_container_prefixes_another` checks all seven governed domains together, because one algorithm hashes both containers in one process; the envelope codec's own three-domain test carries no note pointing at it. Whoever takes this ticket should decide whether that cross-reference belongs in the codec's test or in the contract.
