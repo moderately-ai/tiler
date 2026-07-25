@@ -82,6 +82,10 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Schedule trace | Non-authoritative history of scheduling transforms, parameters, preconditions, and rejections retained for explain/replay. |
 | Root binding | Typed declaration mapping a semantic extent symbol to a static value, input dimension, interface parameter, or admitted target property. |
 | Routing commit | Boundary after all route-sensitive launch preflight and final variant selection, before output/scratch acquisition or encoding; no later failure selects another plan or semantic fallback. |
+| Select (ABI expression) | The ternary conditional of the host-side ABI expression language: `ExprNode::Select`, defined in `crates/tiler-ir/src/program/abi.rs` and re-exported through `tiler-artifact`'s `program::expr` shim, projected as `AbiExprView::Select` and verified in that crate's `program/verify.rs`. Condition and branches are bounded-width ABI values; evaluation is lazy, so only the selected branch is evaluated. Distinct from the three `Select` entries below, and the only one of the four that exists in compiled code — every hit of `grep -rnw Select crates/` is this construct. It meets *Select (shape expression)* at exactly one point, the explicit typed checked lowering from `ShapeExpr` to `AbiExpr`, and shares no identity with it. |
+| Select (shape expression) | The ternary conditional of the closed shape-expression language, whose condition is a host-evaluable shape predicate and whose branches share one shape-expression type. It computes shape metadata: the shape-environment contract states it "is not tensor `where`, general logical-graph control flow, or a device branch", which is what separates it from *Select (tensor)* and from *Select (structured kernel operation)*. Distinct from *Select (ABI expression)* by the accepted decision that `ShapeExpr` and `AbiExpr` are separate newtyped domain IRs, which may share arithmetic components without sharing identity. Adopted and unimplemented: `crates/tiler-ir/src/shape/` defines no `ShapeExpr`. |
+| Select (structured kernel operation) | A device-level operation in the bounded initial operation set of the structured kernel IR — the kind of branch that *Select (shape expression)* explicitly is not. Its research is `disposition: adopted` with `implementation_status: spike-only`, and the implemented structured-kernel vocabulary in `crates/tiler-ir/src/kernel/model.rs` has no `Select`. It is a proposal, not support. |
+| Select (tensor) | The semantic tensor operation family named by the adopted conformance matrix row "`Select` and bit-selecting operations": preserve the selected operand's bits, with explicit predicate semantics. That row is the only place the corpus mentions the family — no ADR, no normative contract section, and no operation key defines it, and the roadmap's operation-family support matrix places it at the lowest rung. A `Select` found in `crates/` is therefore never evidence that this family is supported; that hit is *Select (ABI expression)*. |
 | Semantic tensor graph | Public backend-neutral operation/value DAG describing tensor values and named program results as a function over explicit inputs and extent symbols. |
 | Semantic authority | The single registered definition owning an operation key's meaning, schema, normative specification, and deterministic inference/validation contract. |
 | Shape constraint | Equality, divisibility, interval, or factorization fact required by tensor semantics. |
@@ -113,3 +117,11 @@ Avoid unqualified **property** and **physical plan** where a more precise term
 exists. Use boundary requirement/guarantee, target requirement, applicability
 predicate, resource requirements/estimate, schedule invariant, cost estimate,
 `RegionPartition`, `KernelSchedule`, or `KernelProgram` as appropriate.
+
+Never write an unqualified **`Select`** in normative text or diagnostics; name
+which of the four constructs above is meant. A substring search cannot make the
+distinction for you, and this is the case AGENTS.md's warning against concluding
+support from a search is about: every `Select` in `crates/` belongs to the ABI
+expression language, and the same search over `docs/` additionally returns ADR
+0049, whose title uses the ordinary English verb and defines no `Select`
+construct at all.
