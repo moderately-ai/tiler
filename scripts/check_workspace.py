@@ -37,6 +37,7 @@ EXPECTED_WORKSPACE_PACKAGE = {
 }
 EXPECTED_WORKSPACE_DEPENDENCIES: dict[str, object] = {
     "num-bigint": "0.4.6",
+    "metal": "0.33.0",
     "num-integer": "0.1.46",
     "num-traits": "0.2.19",
     "tiler-artifact": {"path": "crates/tiler-artifact"},
@@ -48,6 +49,29 @@ EXPECTED_WORKSPACE_DEPENDENCIES: dict[str, object] = {
     "trybuild": "1.0.114",
 }
 EXPECTED_RUST_LINTS = {"missing_docs": "warn", "unsafe_code": "forbid"}
+# Members that deliberately do not inherit `[workspace.lints]`, with the exact
+# table each is permitted instead.
+#
+# The workspace forbids `unsafe_code`, and `forbid` cannot be relaxed by an
+# inner attribute at any scope, so a crate that must call an Objective-C API
+# cannot inherit it. The runtime proof reaches `MTLBuffer` storage through the
+# raw pointer `Buffer::contents` returns, which no Metal binding exposes safely.
+#
+# The exception is pinned rather than merely allowed, in three ways that matter:
+# only the named member may diverge, its table must match *exactly*, and that
+# table says `deny` rather than `allow`. So unsafe stays a hard error throughout
+# that crate too, except at the individual functions that opt in by name with a
+# stated reason — and a later edit widening `deny` to `allow`, or a second crate
+# quietly dropping inheritance, fails this check.
+UNINHERITED_LINT_MEMBERS = {
+    "tiler-prototype-run": {
+        "rust": {"missing_docs": "warn", "unsafe_code": "deny"},
+        "clippy": {
+            "all": {"level": "warn", "priority": -1},
+            "pedantic": {"level": "warn", "priority": -1},
+        },
+    }
+}
 EXPECTED_CLIPPY_LINTS = {
     "all": {"level": "warn", "priority": -1},
     "pedantic": {"level": "warn", "priority": -1},
@@ -137,7 +161,17 @@ EXPECTED_DEPENDENCIES = {
         dependency("tiler-metal-aot", path="crates/tiler-metal-aot"),
         dependency("tiler-reference", path="crates/tiler-reference"),
     ],
-    "tiler-prototype-run": [dependency("tiler-artifact", path="crates/tiler-artifact")],
+    "tiler-prototype-run": [
+        # The runtime proof is the one member that talks to a device, so it is
+        # the one member with a Metal binding.
+        dependency("metal", requirement="^0.33.0", source=CRATES_IO),
+        dependency("tiler-artifact", path="crates/tiler-artifact"),
+        dependency("tiler-compiler", path="crates/tiler-compiler"),
+        dependency("tiler-ir", path="crates/tiler-ir"),
+        dependency("tiler-metal", path="crates/tiler-metal"),
+        dependency("tiler-metal-aot", path="crates/tiler-metal-aot"),
+        dependency("tiler-reference", path="crates/tiler-reference"),
+    ],
 }
 
 EXPECTED_TESTS = {
@@ -193,7 +227,7 @@ def expected_member_manifest(name: str) -> dict[str, object]:
         manifest["dependencies"] = normal
     if development:
         manifest["dev-dependencies"] = development
-    manifest["lints"] = {"workspace": True}
+    manifest["lints"] = UNINHERITED_LINT_MEMBERS.get(name, {"workspace": True})
     return manifest
 
 
@@ -378,8 +412,12 @@ def validate_manifest_contract(root: Path, metadata: dict[str, object]) -> list[
                 f"package.{name}.manifest: expected {expected_authored_manifest!r}, got "
                 f"{package_manifest!r}"
             )
-        if package_manifest.get("lints") != {"workspace": True}:
-            errors.append(f"package.{name}.lints: must inherit the workspace policy exactly")
+        expected_lints = UNINHERITED_LINT_MEMBERS.get(name, {"workspace": True})
+        if package_manifest.get("lints") != expected_lints:
+            errors.append(
+                f"package.{name}.lints: expected {expected_lints!r}, got "
+                f"{package_manifest.get('lints')!r}"
+            )
 
         package_fields = {
             "version": package.get("version"),
