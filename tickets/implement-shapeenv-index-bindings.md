@@ -1,7 +1,7 @@
 ---
 id: implement-shapeenv-index-bindings
 title: Bind ShapeEnv sources into canonical index regions
-status: todo
+status: in-progress
 priority: p1
 dependencies: [implement-shapeenv-core, implement-shapeenv-constraints]
 related: [prototype-canonical-index-region-slice]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, indexing]
+claimed_from: todo
+assignee: agent-shapes2
+lease_expires_at: 1785002816
 ---
 Extend canonical index domains and expressions with sourceable ShapeEnv
 InputDimension, InterfaceParameter, and phased TargetProperty bindings. Preserve
