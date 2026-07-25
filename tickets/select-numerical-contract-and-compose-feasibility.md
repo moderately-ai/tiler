@@ -73,3 +73,30 @@ Everything before that line works. The compiler compiles, the emitter emits, and
 `prototypes/serial-sum-compile/src/main.rs::the_governed_contract_is_not_honourable_on_the_governed_apple_target` pins the refusal and its exact gap key, and is deliberately written as an assertion of failure so that the day a contract becomes selectable, it breaks and forces its reasoning to be re-derived rather than passing silently under a new meaning.
 
 Raised to p0 on this evidence: every Metal and runtime p0 sits behind it.
+
+## Measured: admission is the easy half — the proof machinery is contract-specific
+
+A working prototype of the Selection half was built and then **reverted deliberately**, because it produced a public surface that lied: `NumericalContract::FlushSubnormalsToZeroF32` was accepted at the request boundary and then failed for every program. What it measured is recorded here so the real implementation starts from evidence rather than from the same discovery.
+
+**What the prototype did.** Added a second governed contract `tiler.flush-f32.v1` — `SubnormalMode::FlushToZero { zero_sign: PreservesSign }` on both dimensions, contraction and reassociation still `Forbidden`, its own versioned key so identities differ — plus `governed_profile()`, `governed_under()`, and a `NumericalContract` selector on the public boundary.
+
+**Two hardcoded equality checks had to be widened, not one.** `verify_request` compares against `StrictF32NumericalContract::governed()`, and so does `VerifiedCompilationRequest::for_target`, which raises `UnverifiedTargetSelection` — a diagnostic that names target selection for what is actually a contract rejection. Both are at `crates/tiler-compiler/src/request.rs`.
+
+**Then the compile failed inside the compiler, and the trace says exactly where.** Under `tiler.flush-f32.v1`, request verification, normalization, region formation, capability resolution, and index-region refinement all succeed and `cover.enumeration` retains 16 covers. Then **every** fused candidate defers:
+
+```text
+31..42 capability-resolution deferred-unsupported rule=fusion.legality.v1@1
+       provider=tiler.fusion-strict-f32@1 subject=candidate:region:…
+       event=deferred:fusion.obligations-discharged:unproven-exceptional-values
+44 intrinsic-scheduling compiler-failure rule=compile.failure@1
+   subject=schedule:implementation-frontier
+   event=compiler-failure:frontier-malformed-proposal
+```
+
+with `Frontier(MalformedProposal { provider: tiler/prototype-serial-sum-physical@1, source: Intrinsic { rule: "request-subject", region: RegionId(1) } })`.
+
+**Inference — two distinct pieces of work, neither of them the request boundary.** The fusion numerical proof provider is literally named `tiler.fusion-strict-f32` and cannot discharge exceptional-value obligations for a contract it was not written for, so it defers every region rather than proving or refusing one. And the physical provider then rejects with an `Intrinsic { rule: "request-subject" }`, which is a hard compiler-output error rather than a feasibility outcome — something below is still keyed to the strict contract's subject.
+
+**Consequence for whoever takes this ticket.** Widening admission is roughly twenty lines and is *not* the work. The work is the ticket's honourability-authority and composition sections: the fusion proof must be contract-parameterized so it proves or refuses rather than deferring, and the physical path's request-subject binding must accept any admitted contract. Until both hold, admitting a second contract only moves the failure from a clear rejection at the boundary to an opaque `InvalidCompilerOutput` deep inside — strictly worse for a caller.
+
+The reverted prototype is not in the tree; this record is what it produced.
