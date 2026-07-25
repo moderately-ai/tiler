@@ -1455,8 +1455,7 @@ mod tests {
                     provider: selected.provider().clone(),
                     capability: CapabilityKey::new(selected.capability_key())
                         .expect("the compiler mints a governed capability key"),
-                    capability_api_version: u16::try_from(selected.capability_revision())
-                        .expect("the bounded profile's capability revision fits a u16"),
+                    capability_revision: selected.capability_revision(),
                 })
                 .expect("a selected provider was offered");
         }
