@@ -54,3 +54,15 @@ The same applies with more force to "the target facts relied on": no target-neut
 **What changed here.** The missing dependency edge on `declare-metal-numerical-honourability` was added, so the work graph stops advertising this ticket as ready. Nothing was implemented; no public surface was added to `tiler-artifact`.
 
 **Trigger for reconsideration.** When `declare-metal-numerical-honourability` lands the means vocabulary and the target-fact shape, this ticket becomes a projection of them into the artifact record plus its identity encoding, and its `needs-tom` public-surface question becomes answerable with a concrete draft rather than an invented one.
+
+## Re-checked 2026-07-25 from `implementation/artifact` — the trigger fired and the ticket is still blocked, on a different thing
+
+`declare-metal-numerical-honourability` is `done`, so the stated trigger has fired. Re-running the blocked note's own check against `2305c4a`:
+
+**Fact — the means vocabulary now exists.** `grep -rn "SupportedExactly\|SupportedWithExactEmulation\|SupportedOnlyUnderDeclaredRelaxation\|Honourab\|Honorab" crates/` is no longer empty. `crates/tiler-compiler/src/honourability.rs:178-198` defines all four means, `NumericalHonourabilityFact` carries them with the provenance discipline ADR 0076 item 3 required, and `feasibility.rs` composes them into the target-profile descriptor.
+
+**Fact — it is not reachable from `tiler-artifact`, twice over.** `HonouringMeans` is `pub(crate)` (`honourability.rs:179`), so nothing outside `tiler-compiler` can name it; and `grep -n tiler-artifact crates/tiler-compiler/Cargo.toml` is empty while `tiler-artifact` does not and must not depend on `tiler-compiler`, so the dependency direction forbids reaching it even if it were public. The vocabulary landed in a crate the artifact layer cannot see.
+
+**Inference — the blocked note's reasoning survives with a new subject.** Projecting the record into `tiler-artifact` today would still mean *restating* the four means there, which is the second authority ADR 0076 line 58 forbids, only now the first authority demonstrably exists rather than being pending. What changed is that the question is answerable: either the vocabulary is promoted out of `tiler-compiler` into a crate both depend on (`tiler-ir`), or the artifact layer receives it as an opaque governed key the way it receives every other identity it is not the authority for — and `HonouringMeans::key` already mints exactly such a key (`"supported-exactly"`, `"supported-with-exact-emulation"`, …). That is a real atomic decision with two live options and a dependency direction that decides it, rather than a gap.
+
+**Not attempted.** This ticket adds a public numerical surface to `tiler-artifact`, which its own "Boundary — this needs Tom" section reserves under ADR 0075, and no such approval exists. The homing decision above should be presented as the atomic question when it is picked up.
