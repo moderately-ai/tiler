@@ -316,13 +316,23 @@ pub use codec::{
     PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
     PayloadTargetObligation, SectionPurpose, SectionView, ToolComponent, decode_artifact,
 };
-// The two things `crate::proof` shares with the envelope codec and nothing
-// else: the governed digest algorithm, which `docs/artifact-abi.md` requires
-// every digest use in this crate to name explicitly rather than choose locally,
-// and [`envelope_digest`], which *is* the proof sidecar's association with an
-// envelope. Named re-exports rather than a crate-visible `mod codec`, so the
-// codec's working vocabulary stays confined to this module.
-pub(crate) use codec::{DIGEST_BYTES, Digest, DigestAlgorithm, envelope_digest};
+// The governed digest algorithm, which `docs/artifact-abi.md` requires every
+// digest use to name explicitly rather than choose locally.
+//
+// Promoted for `tiler-cache` on Tom's decision of 2026-07-25
+// (`decide-the-expansion-cache-owner-and-digest-authority`). The expansion
+// cache validates a stored bundle's section digests on every hit (ADR 0050),
+// and the alternative — a hash function local to that crate — would make it a
+// second identity authority over the same subject. The promotion is
+// deliberately the algorithm and the opaque digest alone: `digest_parts` and
+// [`envelope_digest`] stay crate-private, so an outside caller can digest a
+// subject under its own domain and cannot construct an envelope association.
+pub use codec::{DIGEST_BYTES, Digest, DigestAlgorithm};
+// [`envelope_digest`] *is* the proof sidecar's association with an envelope, and
+// nothing outside this crate has a use for it. Named re-exports rather than a
+// crate-visible `mod codec`, so the codec's working vocabulary stays confined to
+// this module.
+pub(crate) use codec::envelope_digest;
 // The envelope's three governed digest domains, reachable only under test.
 // `crate::proof::tests` checks the no-domain-prefixes-another property over the
 // *union* of both containers' domains rather than per container, because the

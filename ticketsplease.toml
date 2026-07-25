@@ -130,15 +130,17 @@ satisfies_dependents = false
 "implementation/ir" = "tiler-ir"
 "implementation/reference" = "tiler-reference"
 "implementation/artifact" = "tiler-artifact"
+"implementation/cache" = "tiler-cache"
 "implementation/compiler" = "tiler-compiler"
 "implementation/metal" = "tiler-metal"
 "implementation/metal-aot" = "tiler-metal-aot"
 "implementation/runtime" = "tiler-runtime"
 
-# Cache, frontend, and Candle scopes have no crate mapping until their owning
-# crates are admitted. The Metal-AOT and runtime mappings now name their real
-# owners, tiler-metal-aot and tiler-runtime. Each crate-admission ticket must
-# atomically add the real workspace package and add or move its mapping here.
+# Frontend and Candle scopes have no crate mapping until their owning crates are
+# admitted. The Metal-AOT, runtime, and cache mappings now name their real
+# owners, tiler-metal-aot, tiler-runtime, and tiler-cache. Each crate-admission
+# ticket must atomically add the real workspace package and add or move its
+# mapping here.
 #
 # The runtime scope's globs still cover `prototypes/serial-sum-run/**` as well,
 # because the proof executable and the loader it drives are edited together;

@@ -93,15 +93,17 @@ mod view;
 pub(crate) use model::{
     ArtifactEnvelope, EntryRow, NumericalFacts, VariantRow, expression_keys, position,
 };
-// Re-exported one level up by `super` for `crate::proof`, which needs the
-// governed digest algorithm and the external envelope digest and nothing else
-// from this module. The sidecar is deliberately not artifact semantics, so it
-// owns its own framing, schema, vocabulary, and limits; what it must *not* own
-// is a second answer to "which hash function", because `docs/artifact-abi.md`
-// requires every digest use to name one governed algorithm, and a sidecar that
-// digested under a different one would be unverifiable by a reader that knows
-// only the governed tag.
-pub(crate) use digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
+// The governed digest is the one part of this module that is public, for the
+// reason `digest.rs` states: `docs/artifact-abi.md` requires every digest use
+// to name one governed algorithm, and a component that hashed under a different
+// one would be a second identity authority over the same subject. `crate::proof`
+// reaches it here, and so does `tiler-cache` — the expansion cache must validate
+// the section digests of a stored bundle on every hit, and ADR 0050's whole
+// argument rests on that digest being *the* governed one.
+pub use digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
+// The external envelope digest stays crate-private: it names one published
+// encoding of an artifact, which only `crate::proof`'s sidecar association
+// needs.
 pub(crate) use encode::envelope_digest;
 #[cfg(test)]
 pub(crate) use encode::{ENVELOPE_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN};

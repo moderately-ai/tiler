@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_MEMBERS = (
     "crates/tiler-artifact",
+    "crates/tiler-cache",
     "crates/tiler-compiler",
     "crates/tiler-ir",
     "crates/tiler-metal",
@@ -43,6 +44,7 @@ EXPECTED_WORKSPACE_DEPENDENCIES: dict[str, object] = {
     "num-integer": "0.1.46",
     "num-traits": "0.2.19",
     "tiler-artifact": {"path": "crates/tiler-artifact"},
+    "tiler-cache": {"path": "crates/tiler-cache"},
     "tiler-compiler": {"path": "crates/tiler-compiler"},
     "tiler-ir": {"path": "crates/tiler-ir"},
     "tiler-metal": {"path": "crates/tiler-metal"},
@@ -83,6 +85,7 @@ EXPECTED_RUSTFMT = {"edition": "2024", "max_width": 100}
 
 PACKAGE_DESCRIPTIONS = {
     "tiler-artifact": "Target-neutral artifact and execution contracts for Tiler",
+    "tiler-cache": "Cross-process expansion cache protocol for Tiler",
     "tiler-compiler": "Target-independent optimization and scheduling for Tiler",
     "tiler-ir": "Target-independent tensor compiler representations for Tiler",
     "tiler-metal": "Pure structured-kernel-to-Metal-source lowering for Tiler",
@@ -94,6 +97,7 @@ PACKAGE_DESCRIPTIONS = {
 }
 PACKAGE_DIRS = {
     "tiler-artifact": "crates/tiler-artifact",
+    "tiler-cache": "crates/tiler-cache",
     "tiler-compiler": "crates/tiler-compiler",
     "tiler-ir": "crates/tiler-ir",
     "tiler-metal": "crates/tiler-metal",
@@ -132,6 +136,16 @@ def dependency(
 CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
 EXPECTED_DEPENDENCIES = {
     "tiler-artifact": [dependency("tiler-ir", path="crates/tiler-ir")],
+    # The expansion cache's single edge is a decided property in the same sense
+    # as the driver's empty closure and the loader's single edge (ADR 0082). It
+    # reaches `tiler-artifact` for exactly two things ADR 0050 requires and a
+    # storage protocol cannot supply itself: the governed digest
+    # `tiler.digest.sha-256.v1`, which validates a stored bundle's section
+    # digests, and `decode_artifact`, which re-proves the carried envelope's
+    # manifest, section digests, and canonical identity on every hit. A local
+    # hash function would make it a second identity authority over one subject,
+    # which is what made the previous owner assignment unsatisfiable.
+    "tiler-cache": [dependency("tiler-artifact", path="crates/tiler-artifact")],
     "tiler-compiler": [
         dependency("tiler-ir", path="crates/tiler-ir"),
         dependency("tiler-reference", kind="dev", path="crates/tiler-reference"),
