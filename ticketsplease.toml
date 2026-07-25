@@ -27,6 +27,15 @@ category = "open"
 [workflow.states.blocked]
 category = "parked"
 
+# A ticket whose deliverables are conditional on an ADR being accepted must
+# depend on that ADR's `accept-adr-NNNN-*` ticket, never on the ticket that
+# drafted the record. Drafting a *proposed* ADR is a completed outcome, so the
+# drafting ticket is correctly `done` the moment the file exists, and a
+# dependency on it cannot distinguish "written" from "decided" — the dependent
+# surfaces in `ready` and reaches a worker who can only park it by hand. An
+# acceptance ticket sits permanently in the parked state below, which `ready`
+# excludes and which never satisfies a dependent, so the block is structural and
+# `rollup` names the undecided record as its cause. Only Tom closes one.
 [workflow.states.awaiting-decision]
 category = "parked"
 

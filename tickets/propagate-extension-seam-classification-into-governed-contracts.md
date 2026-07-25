@@ -1,9 +1,9 @@
 ---
 id: propagate-extension-seam-classification-into-governed-contracts
 title: Propagate the extension-seam classification into governed contracts
-status: awaiting-decision
+status: todo
 priority: p2
-dependencies: [draft-public-extension-seam-ownership-adr]
+dependencies: [accept-adr-0078-public-extension-seams]
 related: []
 scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
@@ -29,6 +29,8 @@ Run `uv run --locked python scripts/docs.py render` and `uv run --locked python 
 
 **The precedent is explicit.** `propagate-accepted-api-conventions-into-governed-contracts` is the same shape one ADR earlier, and it propagated only after ADR 0074 reached `decision_status: "accepted"` — its title names the accepted state. ADRs 0072, 0074, and 0075, which 0078 depends on, are all `accepted`; 0078 is the only one that is not.
 
-**This ticket is scheduled as ready, and that is wrong.** Its one dependency, `draft-public-extension-seam-ownership-adr`, is `done` — correctly, since drafting a *proposed* ADR was its whole outcome. The dependency graph has no node representing Tom's acceptance, so nothing separates "the ADR has been written" from "the ADR has been decided", and the ticket surfaces in `tkt ready`. It reached a worker's queue that way. Status is therefore `awaiting-decision` rather than `todo`, so the parked category keeps it out of the ready frontier until the gate below clears.
+**This ticket was scheduled as ready, and that was wrong.** Its one dependency was `draft-public-extension-seam-ownership-adr`, which is `done` — correctly, since drafting a *proposed* ADR was its whole outcome. The dependency graph had no node representing Tom's acceptance, so nothing separated "the ADR has been written" from "the ADR has been decided", and the ticket surfaced in `tkt ready`. It reached a worker's queue that way, and the worker parked it by hand.
 
-**Trigger for reconsideration.** ADR 0078 reaching `decision_status: "accepted"`. On acceptance, this ticket is unblocked exactly as written; nothing in its body needs revision. If Tom amends the classification before accepting it, re-read items 4 and 5 first — the ticket forbids propagating the physical-implementation provider and the mature fusion numerical capability, which the record leaves as open questions, and an amendment is the most likely way that instruction would go stale.
+**How that is now prevented.** [`make-adr-acceptance-visible-to-the-work-graph`](make-adr-acceptance-visible-to-the-work-graph.md) replaced the drafting dependency with [`accept-adr-0078-public-extension-seams`](accept-adr-0078-public-extension-seams.md), a node that only Tom closes and that sits permanently in `awaiting-decision`. A parked dependency never satisfies a dependent, so this ticket stays out of the ready frontier structurally rather than by its own status, and `tkt rollup` names the acceptance node as the reason it is blocked. Its status is `todo` again because the ticket itself is not awaiting a decision — its prerequisite is, and that distinction is now the graph's rather than a reader's.
+
+**Trigger for reconsideration.** ADR 0078 reaching `decision_status: "accepted"`, at which point Tom closes the acceptance ticket and this one becomes ready automatically. Nothing in its body needs revision on acceptance. If Tom amends the classification before accepting it, re-read items 4 and 5 first — the ticket forbids propagating the physical-implementation provider and the mature fusion numerical capability, which the record leaves as open questions, and an amendment is the most likely way that instruction would go stale.
