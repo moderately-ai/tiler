@@ -454,6 +454,12 @@ impl ExpansionCache {
             }
             Err(reason) => report.set_lookup_miss(reason),
         }
+        // Only the harness ever parks here, and only to make a racing case
+        // decidable: a process held at this point has missed the lock-free
+        // lookup and has taken no lock, so releasing several at once orders them
+        // by observation instead of by how fast the host happened to be.
+        #[cfg(test)]
+        fault::rendezvous();
 
         // Everything from here can fail open. `lock` is `None` when the
         // namespace could not be prepared or locked, and a publication is not

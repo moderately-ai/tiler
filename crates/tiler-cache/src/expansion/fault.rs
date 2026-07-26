@@ -1,4 +1,10 @@
-//! Deterministic publication-phase faults, for the killed-writer harness.
+//! Deterministic publication-phase faults and orderings, for the killed-writer
+//! harness.
+//!
+//! Two seams live here and they answer the same objection from opposite sides.
+//! [`reach`] names the instant a writer dies. [`rendezvous`] names an instant
+//! every racing writer can be *held* at, so the harness establishes the order it
+//! needs by observing it rather than by sleeping long enough to make it likely.
 //!
 //! # Why this exists in the crate rather than beside the harness
 //!
@@ -31,7 +37,11 @@
 //! to being killed at an instant it chooses.
 
 use std::env;
+use std::fs;
+use std::path::Path;
 use std::process;
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Environment variable naming the phase an armed child aborts at.
 ///
@@ -123,5 +133,62 @@ pub(super) fn reach(phase: Phase) {
         .and_then(|name| Phase::parse(&name));
     if armed == Some(phase) {
         process::abort();
+    }
+}
+
+/// Environment variable naming the file this process creates on arriving at the
+/// rendezvous.
+///
+/// Absent, [`rendezvous`] announces nothing and only waits — which is what an
+/// unnumbered participant would want, and is not what the harness does.
+pub(super) const ARRIVAL_VARIABLE: &str = "TILER_CACHE_FAULT_ARRIVAL";
+
+/// Environment variable naming the file whose appearance releases this process
+/// from the rendezvous.
+///
+/// Absent — which is every ordinary test run — [`rendezvous`] does nothing at
+/// all, on the same guard [`reach`] uses.
+pub(super) const RELEASE_VARIABLE: &str = "TILER_CACHE_FAULT_RELEASE";
+
+/// How long a parked process waits for a release that never arrives.
+///
+/// A backstop against a harness that died without releasing, deliberately far
+/// longer than the harness's own wait for arrivals. That ordering is what makes
+/// the *parent* report a failed rendezvous: it knows how many children it
+/// expected and which ones are missing, where an orphan knows only that it
+/// waited. Nothing any assertion claims depends on this duration.
+const RELEASE_DEADLINE: Duration = Duration::from_secs(60);
+
+/// How often a parked process looks for its release.
+const RELEASE_POLL: Duration = Duration::from_millis(2);
+
+/// Announces that this process has reached the rendezvous, then blocks until the
+/// harness releases it.
+///
+/// Called from [`ExpansionCache::resolve`](super::store::ExpansionCache::resolve)
+/// at the one point that makes a racing case decidable: the lock-free lookup has
+/// run and missed, and no lock has been taken. A process released from there has
+/// already committed to the locked path, so what any other process does next
+/// cannot turn it into a lock-free hit.
+///
+/// A process that *hit* returned before this call and never announces itself, so
+/// a missing arrival is exactly the statement "some process found an entry
+/// before the barrier opened" — which the harness reports rather than absorbs.
+pub(super) fn rendezvous() {
+    let Ok(release) = env::var(RELEASE_VARIABLE) else {
+        return;
+    };
+    if let Ok(arrival) = env::var(ARRIVAL_VARIABLE) {
+        fs::write(&arrival, b"arrived").expect("a rendezvous arrival file is writable");
+    }
+    let release = Path::new(&release);
+    let expiry = Instant::now() + RELEASE_DEADLINE;
+    while !release.exists() {
+        assert!(
+            Instant::now() < expiry,
+            "no release reached {} within {RELEASE_DEADLINE:?}",
+            release.display(),
+        );
+        thread::sleep(RELEASE_POLL);
     }
 }
