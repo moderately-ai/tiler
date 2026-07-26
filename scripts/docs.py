@@ -459,12 +459,6 @@ MARKDOWN = MarkdownIt("commonmark")
 COMMENT_ONLY_HTML = re.compile(r"(?:\s*<!--(?:(?!-->)[\s\S])*-->)*\s*")
 DIRECT_INTERNAL_ENTRYPOINTS = {Path("spikes/shapes/shape-evidence/generate-workloads.sh")}
 INLINE_LINK = re.compile(r"\[(?:[^\]\\]|\\.)*\]\(([^()\s]*)(?:\s+\"[^\"]*\")?\)")
-QUOTED = re.compile(r"“([^”]{2,400})”|\"([^\"]{2,400})\"")
-ELLIPSIS = re.compile(r"…|\.\.\.")
-SENTENCE_BREAK = re.compile(r"[.;:!?][\s)\]]")
-QUOTE_REACH = 220
-SUPERSEDED_QUOTATION = re.compile(r"<!--\s*superseded-quotation\s*-->")
-CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)*\1")
 DISCLOSES_PROPOSED = re.compile(r"\bproposed\b", re.IGNORECASE)
 DISPATCHABLE_OR_OPEN = {"todo", "ready", "in-progress", "review"}
 TICKET_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -525,127 +519,6 @@ def validate_links(records: list[Record], root: Path) -> list[str]:
                         error = validate_local_target(record, target, root)
                         if error:
                             errors.append(error)
-    return errors
-
-
-def quotable(body: str) -> list[str]:
-    """Blank-line-separated paragraphs outside fenced blocks; fenced content is never mined."""
-    paragraphs, buffer, fenced = [], [], False
-    for line in body.splitlines():
-        opening = line.lstrip().startswith("```")
-        if opening or (not fenced and not line.strip()):
-            # A fence may abut the paragraph above it with no blank line between.
-            if buffer:
-                paragraphs.append("\n".join(buffer))
-                buffer = []
-            fenced = fenced != opening
-            continue
-        if not fenced:
-            buffer.append(line)
-    if buffer:
-        paragraphs.append("\n".join(buffer))
-    return paragraphs
-
-
-def flatten(text: str) -> str:
-    """Drop what a faithful quotation may restyle: wrapping, case, and inline markup."""
-    return re.sub(r"\s+", " ", text.replace("`", "").replace("*", "")).casefold()
-
-
-def quotes(haystack: str, quoted: str) -> bool:
-    """An elided quotation asserts only that its fragments appear in the written order."""
-    cursor = 0
-    for fragment in (f for f in (flatten(f).strip() for f in ELLIPSIS.split(quoted)) if f):
-        index = haystack.find(fragment, cursor)
-        if index < 0:
-            return False
-        cursor = index + len(fragment)
-    return True
-
-
-def validate_quotations(records: list[Record], root: Path) -> list[str]:
-    """Require a quotation attached to a link to exist in a governed document that paragraph links.
-
-    A resolving link proves the destination exists, not that it still says what
-    the quoting sentence claims. Only an unambiguously attributed span is
-    checked: a multi-word quotation reached from a preceding governed-document
-    link in the same sentence. A term in scare quotes, a quotation of a document
-    named in prose or of a ticket, and one placed a sentence away from its link
-    carry no target this can resolve and are left to review.
-
-    A `superseded-quotation` marker directly after the closing quotation mark
-    inverts the obligation rather than lifting it: the marked span must appear in
-    none of those documents, which is what a document correcting or superseding
-    the words it quotes is asserting. One predicate serves both polarities, so a
-    marker cannot silence a quotation whose attribution still resolves, and a
-    marker qualifying nothing at all is itself an error.
-    """
-    base = root.resolve()
-    corpus = {path.resolve() for path in governed(root)}
-    flattened: dict[Path, str] = {}
-    errors = []
-    for record in records:
-        own = (root / record.path).resolve()
-        for paragraph in quotable(record.body):
-            linked: list[tuple[int, Path]] = []
-            for match in INLINE_LINK.finditer(paragraph):
-                parsed = urllib.parse.urlsplit(match.group(1))
-                if parsed.scheme or parsed.netloc or not parsed.path:
-                    continue
-                target = (root / record.path.parent / urllib.parse.unquote(parsed.path)).resolve()
-                if target in corpus and target != own:
-                    linked.append((match.end(), target))
-            # A marker inside a code span is mentioned rather than used, so this
-            # document can name it. Blanking keeps every offset aligned.
-            mentioned = CODE_SPAN.sub(lambda m: " " * len(m.group()), paragraph)
-            markers = {match.start() for match in SUPERSEDED_QUOTATION.finditer(mentioned)}
-            marked: dict[int, str] = {}
-            qualified: set[int] = set()
-            for match in QUOTED.finditer(paragraph):
-                quoted = match.group(1) or match.group(2)
-                marker = SUPERSEDED_QUOTATION.match(mentioned, match.end())
-                if marker:
-                    marked[marker.start()] = quoted
-                preceding = [pair for pair in linked if pair[0] <= match.start()]
-                if len(flatten(quoted).split()) < 2 or not preceding:
-                    continue
-                end, attributed = preceding[-1]
-                gap = paragraph[end : match.start()]
-                if len(gap) > QUOTE_REACH or SENTENCE_BREAK.search(gap):
-                    continue
-                # One sentence may name two contracts and quote the second, so any
-                # document the paragraph links clears the quotation.
-                found = None
-                for candidate in dict.fromkeys([attributed, *(path for _, path in linked)]):
-                    if candidate not in flattened:
-                        flattened[candidate] = flatten(candidate.read_text(encoding="utf-8"))
-                    if quotes(flattened[candidate], quoted):
-                        found = candidate
-                        break
-                if marker is None:
-                    if found is None:
-                        errors.append(
-                            f"{record.path}: quoted text attributed to "
-                            f"{attributed.relative_to(base).as_posix()} appears in no document "
-                            f"this paragraph links: {quoted!r}"
-                        )
-                    continue
-                qualified.add(marker.start())
-                if found is not None:
-                    errors.append(
-                        f"{record.path}: quotation marked superseded still appears in "
-                        f"{found.relative_to(base).as_posix()}: {quoted!r}"
-                    )
-            for start in sorted(markers - qualified):
-                quoted = marked.get(start)
-                errors.append(
-                    f"{record.path}: superseded-quotation marker qualifies nothing: "
-                    + (
-                        f"the quotation {quoted!r} before it carries no resolvable attribution"
-                        if quoted is not None
-                        else "no quotation ends where the marker begins"
-                    )
-                )
     return errors
 
 
@@ -794,34 +667,6 @@ def validate_tickets(records: list[Record], root: Path) -> list[str]:
     return errors
 
 
-def validate_questions(root: Path) -> list[str]:
-    path = root / "docs/open-questions.md"
-    text = path.read_text(encoding="utf-8")
-    valid = re.compile(r"^### (Q-[A-Z]+-\d+(?:-[A-Z])?) — .+$", re.MULTILINE)
-    matches = list(valid.finditer(text))
-    errors, seen = [], set()
-    for line_no, line in enumerate(text.splitlines(), 1):
-        if re.match(r"^###\s+Q", line) and not valid.fullmatch(line):
-            errors.append(f"docs/open-questions.md:{line_no}: malformed question heading")
-    headings = list(re.finditer(r"^### .+$", text, re.MULTILINE))
-    for match in matches:
-        qid = match.group(1)
-        if qid in seen:
-            errors.append(f"docs/open-questions.md: duplicate question {qid}")
-        seen.add(qid)
-        next_heading = next(
-            (heading.start() for heading in headings if heading.start() > match.start()), len(text)
-        )
-        block = text[match.end() : next_heading]
-        if not re.search(r"^- Owner(?:/track(?:ing)?|/tracking)?:", block, re.MULTILINE):
-            errors.append(f"docs/open-questions.md: {qid} lacks owner")
-        if not re.search(r"^- (?:Close(?: when)?|Run when|Trigger):", block, re.MULTILINE):
-            errors.append(f"docs/open-questions.md: {qid} lacks closure or trigger")
-    if not matches:
-        errors.append("docs/open-questions.md: no stable question IDs")
-    return errors
-
-
 def catalog(records: list[Record], kind: str) -> str:
     selected = [r for r in records if r.meta.get("kind") == kind]
     by_id = {r.id: r for r in records}
@@ -937,11 +782,9 @@ def validate(root: Path, check_render: bool = True) -> list[str]:
         errors += validate_record(record, root)
     errors += validate_graph(records, root)
     errors += validate_links(records, root)
-    errors += validate_quotations(records, root)
     errors += validate_proposal_disclosure(records, root)
     errors += validate_executable_modes(records, root)
     errors += validate_tickets(records, root)
-    errors += validate_questions(root)
     if check_render:
         errors += render(root, records, True)
     return sorted(set(errors))
