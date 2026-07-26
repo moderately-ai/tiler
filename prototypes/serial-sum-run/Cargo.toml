@@ -14,7 +14,6 @@ test = true
 doc = true
 
 [dependencies]
-metal.workspace = true
 tiler-artifact.workspace = true
 tiler-compiler.workspace = true
 tiler-ir.workspace = true
@@ -22,6 +21,12 @@ tiler-metal.workspace = true
 tiler-metal-aot.workspace = true
 tiler-reference.workspace = true
 tiler-runtime.workspace = true
+
+# `metal` binds Apple frameworks and cannot link anywhere else, so declaring it
+# unconditionally made `cargo check --workspace` structurally impossible on a
+# non-Apple host. The proof body is selected by the same `cfg` in `src/main.rs`.
+[target.'cfg(target_os = "macos")'.dependencies]
+metal.workspace = true
 
 # This crate does not inherit `[workspace.lints]`, and the difference is exactly
 # one lint. The workspace sets `unsafe_code = "forbid"`, which cannot be relaxed

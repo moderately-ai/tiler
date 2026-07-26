@@ -116,8 +116,17 @@ def dependency(
     path: str | None = None,
     requirement: str = "*",
     source: str | None = None,
+    target: str | None = None,
 ) -> dict[str, object]:
-    """Build one exact normalized Cargo metadata dependency contract."""
+    """Build one exact normalized Cargo metadata dependency contract.
+
+    `target` is the `cfg(...)` expression a platform-conditional edge is
+    declared under, and `None` means the edge is unconditional. It is pinned
+    rather than ignored because narrowing an edge to one platform decides where
+    the workspace can be compiled at all: an Apple-only crate declared
+    unconditionally makes `cargo check --workspace` impossible on every other
+    host, and widening one back is the same change in reverse.
+    """
     return {
         "name": name,
         "source": source,
@@ -127,7 +136,7 @@ def dependency(
         "optional": False,
         "uses_default_features": True,
         "features": [],
-        "target": None,
+        "target": target,
         "registry": None,
         "path": path,
     }
@@ -190,8 +199,17 @@ EXPECTED_DEPENDENCIES = {
     ],
     "tiler-prototype-run": [
         # The runtime proof is the one member that talks to a device, so it is
-        # the one member with a Metal binding.
-        dependency("metal", requirement="^0.33.0", source=CRATES_IO),
+        # the one member with a Metal binding. It is conditional because `metal`
+        # links Apple frameworks and cannot build anywhere else; declaring it
+        # unconditionally made `cargo check --workspace` structurally impossible
+        # on the supported GNU Linux host, which is the profile that carries the
+        # evidence that the compiler core is target-independent.
+        dependency(
+            "metal",
+            requirement="^0.33.0",
+            source=CRATES_IO,
+            target='cfg(target_os = "macos")',
+        ),
         dependency("tiler-artifact", path="crates/tiler-artifact"),
         dependency("tiler-compiler", path="crates/tiler-compiler"),
         dependency("tiler-ir", path="crates/tiler-ir"),
@@ -439,17 +457,30 @@ def expected_member_manifest(name: str) -> dict[str, object]:
     normal = {
         item["name"]: {"workspace": True}
         for item in EXPECTED_DEPENDENCIES[name]
-        if item["kind"] is None
+        if item["kind"] is None and item["target"] is None
     }
     development = {
         item["name"]: {"workspace": True}
         for item in EXPECTED_DEPENDENCIES[name]
-        if item["kind"] == "dev"
+        if item["kind"] == "dev" and item["target"] is None
     }
+    # A platform-conditional edge is authored under `[target.<cfg>.dependencies]`
+    # rather than beside the unconditional ones, so the expected manifest has to
+    # reproduce that nesting; the resolved comparison below still sees one flat
+    # edge list carrying the `cfg` on the edge itself.
+    conditional: dict[str, object] = {}
+    for item in EXPECTED_DEPENDENCIES[name]:
+        if item["target"] is None:
+            continue
+        table = "dev-dependencies" if item["kind"] == "dev" else "dependencies"
+        section = conditional.setdefault(str(item["target"]), {})
+        section.setdefault(table, {})[item["name"]] = {"workspace": True}  # type: ignore[index]
     if normal:
         manifest["dependencies"] = normal
     if development:
         manifest["dev-dependencies"] = development
+    if conditional:
+        manifest["target"] = conditional
     manifest["lints"] = UNINHERITED_LINT_MEMBERS.get(name, {"workspace": True})
     return manifest
 

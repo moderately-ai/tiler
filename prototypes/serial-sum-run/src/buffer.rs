@@ -4,7 +4,7 @@
 //! pointer, so moving `f32` operands in and results out cannot be expressed
 //! safely by any Rust binding. Device creation, library loading, pipeline
 //! construction, encoding, and dispatch are all safe calls and stay in
-//! [`super`].
+//! [`crate::proof`].
 //!
 //! The crate denies `unsafe_code`, so every site that needs it opts in by name
 //! with its own reason. Two functions do; they are the complete extent of
