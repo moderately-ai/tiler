@@ -1,7 +1,8 @@
 error[E0080]: evaluation panicked: shape array exceeds MAX_SHAPE_RANK
  --> $RUST/core/src/panic.rs
   |
-  = note: evaluation of `tiler_ir::shape::Shape::from_dims::<4097>::{constant#1}` failed here
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `tiler_ir::shape::Shape::from_dims::<4097>::{constant#1}` failed here
   |
  ::: src/shape.rs
   |
