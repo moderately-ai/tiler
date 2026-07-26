@@ -50,7 +50,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -281,6 +281,8 @@ struct Run<'case> {
     compile_log: Option<&'case Path>,
     outcome: Option<&'case Path>,
     build_delay: Duration,
+    arrival: Option<&'case Path>,
+    release: Option<&'case Path>,
 }
 
 impl<'case> Run<'case> {
@@ -295,6 +297,8 @@ impl<'case> Run<'case> {
             compile_log: None,
             outcome: None,
             build_delay: Duration::ZERO,
+            arrival: None,
+            release: None,
         }
     }
 
@@ -324,6 +328,16 @@ impl<'case> Run<'case> {
         self
     }
 
+    /// Holds this child at `gate` as participant `index`.
+    ///
+    /// It parks inside the protocol, once it has looked and found nothing, and
+    /// runs on from there only when every other participant has done the same.
+    fn gated_by(mut self, gate: &'case Gate, index: usize) -> Self {
+        self.arrival = Some(gate.arrival(index));
+        self.release = Some(gate.release_path());
+        self
+    }
+
     /// Builds the command that re-executes this test binary as a child.
     fn command(&self) -> Command {
         let exe = env::current_exe().expect("a test binary knows its own path");
@@ -346,13 +360,22 @@ impl<'case> Run<'case> {
             )
             // A child inherits this process's environment, and this process may
             // itself be an armed child's parent under a repeated run. Removing
-            // the variable before conditionally setting it is what stops an
-            // unarmed child inheriting a phase nobody meant to give it.
+            // each variable before conditionally setting it is what stops an
+            // unarmed child inheriting a phase nobody meant to give it, or an
+            // ungated child parking at a rendezvous nobody will release.
             .env_remove(fault::PHASE_VARIABLE)
+            .env_remove(fault::ARRIVAL_VARIABLE)
+            .env_remove(fault::RELEASE_VARIABLE)
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         if let Some(phase) = self.phase {
             command.env(fault::PHASE_VARIABLE, phase.as_str());
+        }
+        if let Some(path) = self.arrival {
+            command.env(fault::ARRIVAL_VARIABLE, path);
+        }
+        if let Some(path) = self.release {
+            command.env(fault::RELEASE_VARIABLE, path);
         }
         if let Some(path) = self.compile_log {
             command.env(COMPILE_LOG_VARIABLE, path);
@@ -413,6 +436,138 @@ fn run_all(runs: &[Run<'_>]) -> Vec<Death> {
         .iter()
         .map(|run| run.command().spawn().expect("a child process spawns"))
         .collect();
+    children
+        .iter_mut()
+        .map(|child| wait_bounded(child, CHILD_DEADLINE))
+        .collect()
+}
+
+/// A barrier several children meet *inside* the publication protocol.
+///
+/// Each gated child creates its own arrival file at the moment it has completed
+/// the lock-free lookup and has taken no lock, then blocks. The parent releases
+/// them together, and only once every arrival file exists.
+///
+/// # What it buys, and what it replaces
+///
+/// The racing cases need an ordering: every process must still be *before* the
+/// lock when the first of them takes it. The harness used to buy that with a
+/// sleep in the winning child's build step, long enough that the others were
+/// presumed to be behind it. That is true only while the host stays fast enough,
+/// and when it is not, the case reports a correctness failure for a scheduling
+/// event. Widening the sleep keeps the failure and makes it rarer.
+///
+/// A barrier removes it instead of widening it. When it opens, every gated
+/// process has looked, found nothing, and committed to the locked path, so no
+/// later publication can turn any of them into a lock-free hit — which is
+/// exactly the ordering the sleep was approximating, now observed.
+///
+/// # Its own failure is loud
+///
+/// A deadline still exists, because a barrier no one reaches must not hang the
+/// suite. It is not a margin any property depends on: reaching it means the
+/// rendezvous did not happen, and the parent says how many of how many children
+/// arrived and which one exited early instead of reporting a cache defect. A
+/// child that hits, never starts, or dies before arriving is caught there.
+struct Gate {
+    /// One arrival file per gated child, indexed as its [`Run`] is.
+    ///
+    /// A file each rather than one shared counter, so the parent names its
+    /// population and counts it: a barrier that opened on a total could be
+    /// satisfied by one child arriving twice.
+    arrivals: Vec<PathBuf>,
+    /// The file whose appearance releases every parked child at once.
+    release: PathBuf,
+}
+
+impl Gate {
+    fn new(scratch: &Scratch, children: usize) -> Self {
+        Self {
+            arrivals: (0..children)
+                .map(|index| scratch.file(&format!("arrival-{index}")))
+                .collect(),
+            release: scratch.file("release"),
+        }
+    }
+
+    fn arrival(&self, index: usize) -> &Path {
+        &self.arrivals[index]
+    }
+
+    fn release_path(&self) -> &Path {
+        &self.release
+    }
+
+    /// Blocks until every gated child has arrived, naming what did not.
+    ///
+    /// `children` are the gated children in barrier order. They are polled as
+    /// well as the arrival files, because a child that has already exited will
+    /// never arrive and waiting out the deadline for it would report a timeout
+    /// where the real answer is an exit status.
+    fn await_arrivals(&self, children: &mut [Child]) {
+        let expected = self.arrivals.len();
+        let expiry = Instant::now() + CHILD_DEADLINE;
+        let failure = loop {
+            let arrived = self.arrivals.iter().filter(|path| path.exists()).count();
+            if arrived == expected {
+                break None;
+            }
+            if let Some((index, status)) = first_exited(children) {
+                break Some(format!(
+                    "child {index} exited with {status} before reaching the rendezvous, \
+                     with {arrived} of {expected} children arrived",
+                ));
+            }
+            if Instant::now() >= expiry {
+                break Some(format!(
+                    "only {arrived} of {expected} children reached the rendezvous \
+                     within {CHILD_DEADLINE:?}",
+                ));
+            }
+            thread::sleep(POLL_INTERVAL);
+        };
+        let Some(reason) = failure else {
+            return;
+        };
+        // Reap before failing: a parked child would otherwise outlive the panic
+        // until its own backstop expired.
+        for child in children {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        panic!("{reason}");
+    }
+
+    /// Releases every parked child at once.
+    fn release(&self) {
+        fs::write(&self.release, b"released").expect("the release file is writable");
+    }
+
+    /// [`Self::await_arrivals`], then [`Self::release`].
+    fn open(&self, children: &mut [Child]) {
+        self.await_arrivals(children);
+        self.release();
+    }
+}
+
+/// Returns the first child that has already exited, with its status.
+fn first_exited(children: &mut [Child]) -> Option<(usize, ExitStatus)> {
+    children.iter_mut().enumerate().find_map(|(index, child)| {
+        child
+            .try_wait()
+            .expect("a spawned child is waitable")
+            .map(|status| (index, status))
+    })
+}
+
+/// Runs several gated children, releasing them together once every one of them
+/// is inside the protocol.
+fn run_all_gated(runs: &[Run<'_>], gate: &Gate) -> Vec<Death> {
+    let mut children: Vec<Child> = runs
+        .iter()
+        .map(|run| run.command().spawn().expect("a child process spawns"))
+        .collect();
+    gate.open(&mut children);
     children
         .iter_mut()
         .map(|child| wait_bounded(child, CHILD_DEADLINE))
@@ -695,10 +850,13 @@ fn a_killed_writer_leaves_nothing_extra_in_the_entry_shard() {
 
 /// Concurrent processes on one key compile once and all agree on one entry.
 ///
-/// The build delay widens the window a second process could squeeze into: with
-/// no delay every child could serialize behind the lock and finish before the
-/// next started, which would make the count trivially one without the lock ever
-/// having excluded anything.
+/// The count is one whether or not the children overlap — a child that arrives
+/// after the entry exists hits and never compiles — so overlap is what makes the
+/// case *mean* that the lock excluded something. The harness used to buy it with
+/// a sleep in every build step, which widened the window without ever checking
+/// that anything entered it. The [`Gate`] checks it: every child is held until
+/// all of them have looked and found nothing, so the one compilation is the
+/// exclusion and not the scheduling.
 #[test]
 fn concurrent_processes_on_one_key_compile_once() {
     let started = Instant::now();
@@ -708,15 +866,16 @@ fn concurrent_processes_on_one_key_compile_once() {
         let root = scratch.root();
         let log = scratch.file("compiles");
         let subject = "race-identical";
+        let gate = Gate::new(&scratch, concurrency());
 
         let runs: Vec<Run<'_>> = (0..concurrency())
-            .map(|_| {
+            .map(|index| {
                 Run::new(&root, subject, "envelope-from-the-race")
                     .logging_compiles_to(&log)
-                    .with_build_delay(Duration::from_millis(50))
+                    .gated_by(&gate, index)
             })
             .collect();
-        for (index, death) in run_all(&runs).into_iter().enumerate() {
+        for (index, death) in run_all_gated(&runs, &gate).into_iter().enumerate() {
             children += 1;
             assert_eq!(
                 death,
@@ -740,6 +899,11 @@ fn concurrent_processes_on_one_key_compile_once() {
 }
 
 /// Concurrent processes on distinct keys each publish their own entry.
+///
+/// Gated for the same reason the shared-key case is: distinct keys never
+/// contend, so the assertion holds even if the children ran one after another,
+/// and the barrier is what makes "concurrent" in the name a checked fact rather
+/// than a hope about spawn timing.
 #[test]
 fn concurrent_processes_on_distinct_keys_do_not_collide() {
     let started = Instant::now();
@@ -747,6 +911,7 @@ fn concurrent_processes_on_distinct_keys_do_not_collide() {
     for repetition in 0..repetitions() {
         let scratch = Scratch::new("race-distinct");
         let root = scratch.root();
+        let gate = Gate::new(&scratch, concurrency());
         let subjects: Vec<String> = (0..concurrency())
             .map(|index| format!("race-distinct-{index}"))
             .collect();
@@ -757,9 +922,12 @@ fn concurrent_processes_on_distinct_keys_do_not_collide() {
         let runs: Vec<Run<'_>> = subjects
             .iter()
             .zip(&envelopes)
-            .map(|(subject, envelope)| Run::new(&root, subject, envelope))
+            .enumerate()
+            .map(|(index, (subject, envelope))| {
+                Run::new(&root, subject, envelope).gated_by(&gate, index)
+            })
             .collect();
-        for (index, death) in run_all(&runs).into_iter().enumerate() {
+        for (index, death) in run_all_gated(&runs, &gate).into_iter().enumerate() {
             children += 1;
             assert_eq!(
                 death,
@@ -785,6 +953,21 @@ fn concurrent_processes_on_distinct_keys_do_not_collide() {
 /// dead one's lock must be released by the kernel and the survivors must each
 /// finish, which is the cross-process form of the recheck the threaded suite
 /// exercises.
+///
+/// # Why the armed child's death is not a race
+///
+/// `after-lock` sits below the lock-free lookup, so only a process that *missed*
+/// that lookup ever reaches it. A survivor that published first would leave the
+/// armed child hitting and exiting zero — a scheduling event this case would
+/// report as a failed crash property. The harness once made that unlikely by
+/// sleeping fifty milliseconds inside every build step, which is a margin rather
+/// than an order and fails on a machine under load.
+///
+/// The [`Gate`] makes it impossible instead: every child is held at the point it
+/// has looked and found nothing, and none is released until all of them are
+/// there. From that point the armed child reaches `after-lock` whatever anyone
+/// else does — including when the namespace could not be locked at all, since
+/// the fall-open path passes through the same phase.
 #[test]
 fn processes_racing_a_dying_writer_still_resolve() {
     let started = Instant::now();
@@ -793,18 +976,19 @@ fn processes_racing_a_dying_writer_still_resolve() {
         let scratch = Scratch::new("race-dying");
         let root = scratch.root();
         let subject = "race-dying";
+        let racers = concurrency().max(1);
+        let gate = Gate::new(&scratch, racers);
 
         let mut runs = vec![
             Run::new(&root, subject, "envelope-from-the-race")
                 .killed_at(Phase::AfterLock)
-                .with_build_delay(Duration::from_millis(50)),
+                .gated_by(&gate, 0),
         ];
-        runs.extend((1..concurrency()).map(|_| {
-            Run::new(&root, subject, "envelope-from-the-race")
-                .with_build_delay(Duration::from_millis(50))
+        runs.extend((1..racers).map(|index| {
+            Run::new(&root, subject, "envelope-from-the-race").gated_by(&gate, index)
         }));
 
-        let deaths = run_all(&runs);
+        let deaths = run_all_gated(&runs, &gate);
         children += u32::try_from(deaths.len()).expect("a bounded child count fits u32");
         assert_eq!(
             deaths[0],
@@ -966,6 +1150,13 @@ fn external_deletion_causes_rebuilding_and_never_invalid_bytes() {
 /// back as a validated entry or not read back at all. Nothing here asserts *how
 /// many* children published, because that is genuinely nondeterministic; the
 /// claim is about what is readable, which is not.
+///
+/// Both assertions hold however the race falls, so neither depends on the timing
+/// below. What the timing decides is whether the race is entered at all, and the
+/// [`Gate`] is what settles that: the first removal happens with every writer
+/// already inside the protocol, rather than possibly before any of them started.
+/// The build delay then keeps them there long enough for the loop to remove
+/// repeatedly under them, which is the one thing a barrier cannot express.
 #[test]
 fn recursive_deletion_racing_writers_never_yields_an_invalid_read() {
     let started = Instant::now();
@@ -974,17 +1165,22 @@ fn recursive_deletion_racing_writers_never_yields_an_invalid_read() {
         let scratch = Scratch::new("active-deletion");
         let root = scratch.root();
         let subject = "active-deletion";
+        let gate = Gate::new(&scratch, concurrency());
 
         let runs: Vec<Run<'_>> = (0..concurrency())
-            .map(|_| {
+            .map(|index| {
                 Run::new(&root, subject, "envelope-under-deletion")
                     .with_build_delay(Duration::from_millis(40))
+                    .gated_by(&gate, index)
             })
             .collect();
         let mut racing: Vec<Child> = runs
             .iter()
             .map(|run| run.command().spawn().expect("a child process spawns"))
             .collect();
+        // The gate's files live beside the cache root rather than inside it, so
+        // the removals below cannot unmake the rendezvous they are racing.
+        gate.open(&mut racing);
 
         // Delete repeatedly while they work, so the race is entered more than
         // once rather than depending on one well-timed removal.
@@ -1098,9 +1294,13 @@ fn collector_command(root: &Path, max_entries: u64, rounds: u32, log: &Path) -> 
         .env(COLLECT_MAX_ENTRIES_VARIABLE, max_entries.to_string())
         .env(COLLECT_ROUNDS_VARIABLE, rounds.to_string())
         .env(COLLECT_LOG_VARIABLE, log)
-        // A collecting child must never inherit a publication fault phase from a
-        // parent that is itself an armed child under a repeated run.
+        // No child inherits a seam it was not given. A collector reaches neither
+        // of these — it does not publish — so removing them keeps that invariant
+        // uniform across the entry points rather than resting on which paths a
+        // collection happens to take today.
         .env_remove(fault::PHASE_VARIABLE)
+        .env_remove(fault::ARRIVAL_VARIABLE)
+        .env_remove(fault::RELEASE_VARIABLE)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     command
@@ -1245,22 +1445,33 @@ fn collection_races_active_processes_at_one_eight_and_thirty_two() {
                 }
             })
             .collect();
+        let gate = Gate::new(&scratch, writers);
         let racing: Vec<Run<'_>> = racing_subjects
             .iter()
-            .map(|subject| {
+            .enumerate()
+            .map(|(index, subject)| {
                 Run::new(&root, subject, "envelope-under-collection")
                     .with_build_delay(Duration::from_millis(30))
+                    .gated_by(&gate, index)
             })
             .collect();
         let mut spawned: Vec<Child> = racing
             .iter()
             .map(|run| run.command().spawn().expect("a child process spawns"))
             .collect();
+        // Every writer is inside the protocol before the collector exists, and
+        // none proceeds until it does, so collection and publication overlap by
+        // construction instead of by however fast this host spawns processes.
+        // The build delay then holds the shared key's lock long enough for a
+        // collector to meet a contended candidate, which is a span rather than
+        // an order and so is not something the barrier can supply.
+        gate.await_arrivals(&mut spawned);
         spawned.push(
             collector_command(&root, 2, ROUNDS, &log)
                 .spawn()
                 .expect("a collecting child spawns"),
         );
+        gate.release();
 
         // This process is the active reader for the duration.
         let deadline = Instant::now() + Duration::from_millis(150);
