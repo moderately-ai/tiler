@@ -27,10 +27,11 @@
 //! ```
 //!
 //! It writes two files: `<path>`, the canonical envelope bytes, and
-//! `<path>.identity`, the artifact identity this producer derived from the
-//! program it built. `prototypes/serial-sum-run` consumes both, and that pair is
-//! the whole interface between the two halves of this vertical slice — no
-//! module, type, or Cargo edge crosses it.
+//! `<path>.proof`, the proof-case sidecar — the artifact identity, the operands,
+//! and the expected outputs the governed reference produced for them.
+//! `prototypes/serial-sum-run` consumes both, and that pair is the whole
+//! interface between the two halves of this vertical slice — no module, type,
+//! or Cargo edge crosses it.
 //!
 //! The path is required rather than defaulted because a producer run that emits
 //! nothing produces nothing. It used to take no arguments and print a summary,
@@ -47,6 +48,15 @@
 //! envelope, a mixed-up path, or a producer run that did not complete. It does
 //! not resist an adversary who rewrites both files, and nothing unsigned could.
 //! A torn write between the two is caught the same way: as a mismatch, loudly.
+//!
+//! # The filename is the interface, and both halves pin it
+//!
+//! Because no code crosses between the two prototypes, the suffix below is a
+//! fact each derives on its own, and nothing mechanical compares them: this
+//! producer wrote one name and the runner opened another for a whole commit,
+//! while the complete gate stayed green over a slice that could not run. Both
+//! crates now pin [`SIDECAR_SUFFIX`] in a test that names the other side, so a
+//! rename fails on the half that was not updated.
 
 mod bundle;
 mod payload;
@@ -94,6 +104,13 @@ const ROWS: u64 = 4;
 /// any reduction with two or more contributors. The bound is now `tiler-ir`'s
 /// own for that value, so the runner's two paths carry the same program.
 const COLUMNS: u64 = 3;
+
+/// Suffix appended to the envelope path to name the proof-case sidecar.
+///
+/// `prototypes/serial-sum-run` derives the same name from the path it is given.
+/// Nothing links the two crates, so each pins this in a test rather than
+/// sharing a constant neither may import.
+const SIDECAR_SUFFIX: &str = ".proof";
 
 /// The target facts this producer emits for.
 ///
@@ -335,7 +352,7 @@ fn run() -> Result<(), ProducerError> {
 /// path it is given.
 fn proof_sidecar(envelope: &std::path::Path) -> PathBuf {
     let mut name = envelope.as_os_str().to_owned();
-    name.push(".proof");
+    name.push(SIDECAR_SUFFIX);
     PathBuf::from(name)
 }
 
@@ -401,7 +418,9 @@ impl fmt::Display for ProducerError {
 
 #[cfg(test)]
 mod tests {
-    use super::{payload, serial_sum_program, target_facts};
+    use super::{bundle, payload, serial_sum_program, sidecar, target_facts};
+    use crate::{ArtifactCodecFailure, decode_artifact};
+    use tiler_artifact::proof::decode_proof_sidecar;
     use tiler_compiler::session::{NumericalContract, compile_governed};
     use tiler_metal::emit::emit_translation_unit;
 
@@ -543,6 +562,278 @@ mod tests {
                 .map(|binding| binding.index())
                 .collect::<Vec<_>>(),
             "the transport slots are the emitted argument-table indices",
+        );
+    }
+
+    /// The published pair is consistent: the sidecar names these exact bytes.
+    ///
+    /// This is the check the runner makes before it trusts anything, and the
+    /// reason it exists here too is that the producer/runner handoff is a pair
+    /// of files read at run time, which no compilation sees. When the producer
+    /// stopped writing `.identity` and the runner still read it, the complete
+    /// gate stayed green over a slice that was broken end to end.
+    #[test]
+    fn the_published_sidecar_binds_to_the_published_envelope() {
+        let (artifact, envelope, sidecar_bytes) = published();
+        let sidecar = decode_proof_sidecar(&sidecar_bytes).expect("the published sidecar decodes");
+        sidecar
+            .bind_to_envelope(&envelope)
+            .expect("the sidecar names the envelope published beside it");
+        sidecar
+            .bind_to_artifact(&artifact)
+            .expect("and re-proves its cases against the declared interface");
+        assert_eq!(
+            sidecar.artifact_identity_bytes(),
+            artifact.canonical_identity().as_bytes(),
+            "the runner takes its expected identity from here",
+        );
+    }
+
+    /// A sidecar paired with a different envelope is refused, not tolerated.
+    #[test]
+    fn a_perturbed_envelope_no_longer_binds_its_sidecar() {
+        let (_artifact, envelope, sidecar_bytes) = published();
+        let sidecar = decode_proof_sidecar(&sidecar_bytes).expect("the published sidecar decodes");
+        let mut perturbed = envelope.clone();
+        let last = perturbed.len() - 1;
+        perturbed[last] ^= 0x01;
+        sidecar
+            .bind_to_envelope(&perturbed)
+            .expect_err("one flipped byte is a different envelope");
+        sidecar
+            .bind_to_envelope(&envelope[..envelope.len() - 1])
+            .expect_err("a truncated envelope is a different envelope");
+    }
+
+    /// The producer validates the real bundle without a device, on the negative
+    /// paths as well as the positive one.
+    ///
+    /// The codec's own cases pin these against synthetic content. This is where
+    /// they meet a bundle a real `xcrun` link produced, which is the only place
+    /// a field the encoder writes but the decoder ignores would show up.
+    #[test]
+    fn the_produced_bundle_is_refused_by_the_class_each_damage_earns() {
+        let (_artifact, envelope, _sidecar) = published();
+        decode_artifact(&envelope).expect("the undamaged bundle decodes");
+
+        let mut trailing = envelope.clone();
+        trailing.push(0x00);
+
+        // Each offset names the header field it lands in, read from this
+        // envelope's own layout. They are positions rather than names because
+        // the codec exposes no way to address a header field, so a layout change
+        // is expected to land here — and should, since the refusal a damaged
+        // field earns is the property under test.
+        let forms: [(&str, Vec<u8>, &str); 12] = [
+            ("no bytes at all", Vec::new(), "malformed"),
+            (
+                "half the envelope",
+                envelope[..envelope.len() / 2].to_vec(),
+                "malformed",
+            ),
+            (
+                "one byte short",
+                envelope[..envelope.len() - 1].to_vec(),
+                "malformed",
+            ),
+            ("the magic alone", envelope[..8].to_vec(), "malformed"),
+            ("one trailing byte", trailing, "malformed"),
+            ("a damaged magic", flip(&envelope, 0), "malformed"),
+            (
+                "an envelope format this reader does not implement",
+                flip(&envelope, 8),
+                "unsupported",
+            ),
+            (
+                "a canonical encoding this reader does not implement",
+                flip(&envelope, 13),
+                "unsupported",
+            ),
+            (
+                "a digest algorithm this reader does not implement",
+                flip(&envelope, 16),
+                "unsupported",
+            ),
+            (
+                "a declared total length that is not the actual one",
+                flip(&envelope, 24),
+                "malformed",
+            ),
+            (
+                "a section count past the governed bound",
+                flip(&envelope, 36),
+                "limit",
+            ),
+            (
+                "a damaged payload section",
+                flip(&envelope, envelope.len() - 2),
+                "integrity",
+            ),
+        ];
+
+        for (form, bytes, expected) in forms {
+            let refusal = decode_artifact(&bytes)
+                .map(|_| ())
+                .expect_err(&format!("{form} is refused"));
+            assert_eq!(
+                class(&refusal),
+                expected,
+                "{form} was refused, but as {refusal}",
+            );
+        }
+    }
+
+    /// A structural violation cannot be reached by damaging these bytes,
+    /// because the manifest digest refuses first.
+    ///
+    /// This is the boundary of what the case above can measure, stated rather
+    /// than left as apparent coverage. `ArtifactCodecFailure::Invalid` is the
+    /// class carrying noncanonical order, duplicate items, and dangling or
+    /// missing references, and `ArtifactIdentityMismatch` is an integrity
+    /// failure over the same covered bytes. Every one of them lives inside the
+    /// region the manifest digest covers, so byte surgery on a published
+    /// envelope always earns `IntegrityFailure` before any structural check
+    /// runs. Reaching them needs a manifest *re-encoded* around the violation,
+    /// which is a codec-internal construction this producer cannot perform and
+    /// should not gain a way to.
+    ///
+    /// They are covered there instead, against content built for the purpose:
+    /// `a_forged_identity_is_rejected`, `a_repeated_interface_key_is_rejected`,
+    /// `an_unreferenced_section_is_rejected`,
+    /// `a_repeated_expression_node_is_rejected`, and
+    /// `an_expression_reference_outside_the_arena_is_rejected` in
+    /// `crates/tiler-artifact/src/program/codec/tests.rs`.
+    ///
+    /// To refute the precedence claim rather than the conclusion, flip any byte
+    /// at or past the manifest digest at offset 37 and observe the class.
+    #[test]
+    fn a_structural_violation_is_unreachable_behind_the_manifest_digest() {
+        let (_artifact, envelope, _sidecar) = published();
+        for offset in [40, envelope.len() / 3, envelope.len() / 2] {
+            let refusal = decode_artifact(&flip(&envelope, offset))
+                .map(|_| ())
+                .expect_err("a damaged manifest is refused");
+            assert_eq!(
+                class(&refusal),
+                "integrity",
+                "a digest-covered byte earned {refusal} rather than an integrity failure",
+            );
+        }
+    }
+
+    /// Returns `bytes` with the byte at `offset` inverted.
+    fn flip(bytes: &[u8], offset: usize) -> Vec<u8> {
+        let mut damaged = bytes.to_vec();
+        damaged[offset] ^= 0xff;
+        damaged
+    }
+
+    /// Names one refusal's class.
+    ///
+    /// The five classes are the codec's own account of *why* it refused, and a
+    /// bare `expect_err` cannot tell them apart: a bundle rejected as malformed
+    /// where it should have been rejected as unsupported would pass a test that
+    /// only asked whether it was rejected.
+    ///
+    /// `ArtifactCodecFailure` is `#[non_exhaustive]`, so this match cannot be
+    /// exhaustive and a sixth class would not be a build error here. The
+    /// wildcard therefore returns a name no case expects, which fails the
+    /// assertion carrying the refusal's own text, rather than folding an
+    /// unrecognized class into one of the five and reporting agreement.
+    fn class(failure: &ArtifactCodecFailure) -> &'static str {
+        match failure {
+            ArtifactCodecFailure::Malformed { .. } => "malformed",
+            ArtifactCodecFailure::IntegrityFailure { .. } => "integrity",
+            ArtifactCodecFailure::Unsupported { .. } => "unsupported",
+            ArtifactCodecFailure::Invalid { .. } => "invalid",
+            ArtifactCodecFailure::Limit { .. } => "limit",
+            _ => "a class this test does not name",
+        }
+    }
+
+    /// Produces the exact triple the producer publishes, through the real path.
+    fn published() -> (
+        tiler_artifact::program::VerifiedArtifactProgram,
+        Vec<u8>,
+        Vec<u8>,
+    ) {
+        let program = serial_sum_program();
+        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed program compiles");
+        let compilation = compilations.first().expect("one governed target");
+        let selected = compilation.selected().expect("a selected alternative");
+        let kernels: Vec<_> = selected.kernels().iter().collect();
+        let (unit, compiled) = super::emit_and_compile(&kernels);
+        let payload = payload::carried_payload(&unit, &compiled.provenance, &compiled.metallib)
+            .expect("the payload assembles");
+        let artifact = bundle::assemble(&program, compilation, selected, payload)
+            .expect("the artifact assembles");
+        let envelope = artifact.encode().expect("the artifact encodes");
+        let sidecar_bytes = sidecar::encoded(&artifact, &program).expect("the sidecar builds");
+        (artifact, envelope, sidecar_bytes)
+    }
+
+    /// The producer's half of the filename interface, pinned.
+    ///
+    /// `prototypes/serial-sum-run` carries the identical assertion. Changing
+    /// one without the other fails there, which is the whole point: the two
+    /// crates share no code, so this pair of tests is the only thing that
+    /// compares their idea of the name.
+    #[test]
+    fn the_sidecar_suffix_is_the_one_the_runner_opens() {
+        assert_eq!(super::SIDECAR_SUFFIX, ".proof");
+        assert_eq!(
+            super::proof_sidecar(std::path::Path::new("/tmp/a.tiler")),
+            std::path::PathBuf::from("/tmp/a.tiler.proof"),
+        );
+    }
+
+    /// Measures whether `xcrun` produced byte-identical `metallib` output twice.
+    ///
+    /// Recorded as evidence, never asserted. Reproducibility of the linker's
+    /// bytes is a property of a toolchain this repository does not control and
+    /// has not proven for any version; turning an observation on one host into
+    /// a gate would make an unrelated Xcode update look like a Tiler defect.
+    /// What *is* asserted is the part Tiler owns -- the emitted MSL and the
+    /// artifact identity derived from it, both pinned by the determinism case
+    /// above.
+    ///
+    /// The provenance printed here is what makes the measurement quotable: a
+    /// reproducibility claim with no toolchain attached names no environment.
+    #[test]
+    fn metallib_byte_reproducibility_is_measured_and_recorded() {
+        let program = serial_sum_program();
+        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed program compiles");
+        let compilation = compilations.first().expect("one governed target");
+        let selected = compilation.selected().expect("a selected alternative");
+        let kernels: Vec<_> = selected.kernels().iter().collect();
+
+        let (_first_unit, first) = super::emit_and_compile(&kernels);
+        let (_second_unit, second) = super::emit_and_compile(&kernels);
+
+        let reproducible = first.metallib == second.metallib;
+        let provenance = &first.provenance;
+        println!(
+            "metallib reproducibility: {} ({} and {} bytes)",
+            if reproducible {
+                "byte-identical across two links on this host"
+            } else {
+                "NOT byte-identical across two links on this host"
+            },
+            first.metallib.len(),
+            second.metallib.len(),
+        );
+        println!(
+            "  toolchain: metal {:?}, metallib {:?}",
+            provenance.fingerprint.metal_version, provenance.fingerprint.metallib_version,
+        );
+        println!(
+            "  sdk: {} {} (build {}), target {:?}",
+            provenance.sdk.canonical_name,
+            provenance.sdk.version,
+            provenance.sdk.build,
+            provenance.compile_flags,
         );
     }
 

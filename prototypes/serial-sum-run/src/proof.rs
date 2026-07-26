@@ -110,6 +110,9 @@ use tiler_artifact::program::{
     AbiFactBinder, AbiFacts, ArtifactCodecFailure, AvailabilityPhase, BackendKey, BindingTarget,
     RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
+use tiler_artifact::proof::{
+    DecodedProofSidecar, ProofAssociationError, ProofCodecError, decode_proof_sidecar,
+};
 use tiler_compiler::session::{Compilation, CompileFailure, NumericalContract, compile_governed};
 use tiler_ir::kernel::KernelType;
 use tiler_ir::semantic::{
@@ -152,6 +155,13 @@ const BUFFER_BINDING_LIMIT: u32 = 31;
 const INPUT_KEY: &str = "input";
 /// Interface key of the program's one output.
 const OUTPUT_KEY: &str = "result";
+/// Suffix appended to the envelope path to name the proof-case sidecar.
+///
+/// `prototypes/serial-sum-compile` writes this name. Nothing links the two
+/// crates, so each pins it in a test rather than sharing a constant neither may
+/// import: the producer wrote `.proof` while this half still opened `.identity`
+/// for a whole commit, and no compilation could see it.
+const SIDECAR_SUFFIX: &str = ".proof";
 /// Governed backend family key this host executes.
 const BACKEND_KEY: &str = "tiler.metal";
 /// Governed executable-representation key this host consumes.
@@ -187,6 +197,47 @@ fn input_bits(rows: u64, columns: u64) -> Vec<u32> {
         }
     }
     bits
+}
+
+/// Reads exactly `elements` big-endian `f32` bit patterns out of a sidecar
+/// payload, or refuses the payload.
+///
+/// Most-significant byte first, matching the order the producer wrote, so the
+/// operands never depend on host endianness. Bit patterns throughout: a signed
+/// zero, a subnormal, and a non-canonical NaN must survive to the comparison
+/// unchanged, which they would not if these were parsed as numbers.
+///
+/// The length is checked rather than truncated to a whole number of elements.
+/// A payload that decodes short would reach the comparison as a shorter vector
+/// and be reported as [`ProofError::Mismatch`] — a claim about the *device's*
+/// arithmetic, made about a defect in the record. Refusing here keeps a
+/// malformed sidecar in the sidecar's own error class.
+fn decode_f32_bits(
+    role: &'static str,
+    elements: u64,
+    bytes: &[u8],
+) -> Result<Vec<u32>, ProofError> {
+    let needed = elements
+        .checked_mul(F32_BYTES)
+        .and_then(|needed| usize::try_from(needed).ok())
+        .ok_or(ProofError::SidecarShapeMismatch {
+            role,
+            declared: elements,
+            recorded: bytes.len(),
+        })?;
+    if bytes.len() != needed {
+        return Err(ProofError::SidecarShapeMismatch {
+            role,
+            declared: elements,
+            recorded: bytes.len(),
+        });
+    }
+    Ok(bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_be_bytes(*chunk))
+        .collect())
 }
 
 /// The measured Apple row, one subnormal behaviour per arithmetic type: `f32`
@@ -294,21 +345,32 @@ fn artifact_path() -> Result<PathBuf, ProofError> {
 /// anything here: an identity re-read from the envelope would be a tautology, so
 /// the expected one has to come from whatever named the artifact, and here that
 /// is the producer.
-fn read_artifact(path: &Path) -> Result<(Vec<u8>, Vec<u8>), ProofError> {
-    let mut sidecar = path.as_os_str().to_owned();
-    sidecar.push(".identity");
-    let sidecar = PathBuf::from(sidecar);
+fn read_artifact(path: &Path) -> Result<(Vec<u8>, DecodedProofSidecar), ProofError> {
+    let mut sidecar_path = path.as_os_str().to_owned();
+    sidecar_path.push(SIDECAR_SUFFIX);
+    let sidecar_path = PathBuf::from(sidecar_path);
     let bytes =
         std::fs::read(path).map_err(|cause| ProofError::Read(path.display().to_string(), cause))?;
-    let identity = std::fs::read(&sidecar)
-        .map_err(|cause| ProofError::Read(sidecar.display().to_string(), cause))?;
+    let sidecar_bytes = std::fs::read(&sidecar_path)
+        .map_err(|cause| ProofError::Read(sidecar_path.display().to_string(), cause))?;
+    let sidecar = decode_proof_sidecar(&sidecar_bytes).map_err(ProofError::Sidecar)?;
+
+    // The record names an exact envelope by digest and by artifact identity, so
+    // a sidecar paired with the wrong artifact is caught here rather than
+    // surviving to be compared against bits it never described. A torn write
+    // between the two files fails the same way, loudly.
+    sidecar
+        .bind_to_envelope(&bytes)
+        .map_err(ProofError::SidecarAssociation)?;
     println!(
-        "artifact: {} ({} bytes), expected identity {} bytes",
+        "artifact: {} ({} bytes), sidecar {} ({} bytes, {} case(s))",
         path.display(),
         bytes.len(),
-        identity.len(),
+        sidecar_path.display(),
+        sidecar_bytes.len(),
+        sidecar.cases().len(),
     );
-    Ok((bytes, identity))
+    Ok((bytes, sidecar))
 }
 
 /// Reads the shape the artifact declares, proves it is this program's *form*,
@@ -986,7 +1048,7 @@ fn run() -> Result<(), ProofError> {
     let direct = dispatch_direct(device, &compiled.metallib, emitted.symbol(), &bits)?;
 
     // ---- the envelope path -----------------------------------------------
-    let (bytes, expected) = read_artifact(&envelope_path)?;
+    let (bytes, sidecar) = read_artifact(&envelope_path)?;
     let decoded = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
     println!(
         "decoded: {} variant(s), required features {:?}",
@@ -1003,13 +1065,13 @@ fn run() -> Result<(), ProofError> {
     println!("fail-closed probes against these exact bytes:");
     probe_fail_closed(&ProbeSubject {
         bytes: &bytes,
-        expected: &expected,
+        expected: sidecar.artifact_identity_bytes(),
         environment: &environment,
         abi: &abi,
     })?;
 
     let preflight = decoded
-        .preflight(&environment, &expected, &abi)
+        .preflight(&environment, sidecar.artifact_identity_bytes(), &abi)
         .map_err(ProofError::Load)?;
 
     // Compiled here only to *name* the program the artifact claims to package.
@@ -1066,8 +1128,29 @@ fn run() -> Result<(), ProofError> {
             binding.binding().target(),
         );
     }
-    let envelope_bits = input_bits(rows, columns);
-    let envelope_reference = reference_bits(&envelope_program, &envelope_bits, rows, columns);
+    // Read from the record the producer published, never re-derived here. This
+    // process could evaluate the same reference over the same operands and
+    // usually get the same answer, and that is exactly the problem: it would be
+    // checking the device against its own opinion rather than against the claim
+    // the artifact was published under. A producer and a runner that each derive
+    // the normative bits agree until the day they do not.
+    let case = sidecar
+        .cases()
+        .next()
+        .ok_or(ProofError::SidecarWithoutCases)?;
+    // Both payloads are checked against the element count the *artifact*
+    // declares, not against each other: a record that agrees with itself and
+    // not with the interface it names is still describing another program.
+    let envelope_bits = case
+        .inputs()
+        .next()
+        .ok_or(ProofError::SidecarWithoutCases)
+        .and_then(|payload| decode_f32_bits("input", rows * columns, payload.bytes()))?;
+    let envelope_reference = case
+        .expected()
+        .next()
+        .ok_or(ProofError::SidecarWithoutCases)
+        .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
     let envelope = dispatch_routed(device, &routed, &plan, &envelope_bits, rows)?;
 
     // ---- numerical verification ------------------------------------------
@@ -1110,6 +1193,14 @@ fn run() -> Result<(), ProofError> {
 enum ProofError {
     Usage,
     Read(String, std::io::Error),
+    Sidecar(ProofCodecError),
+    SidecarWithoutCases,
+    SidecarShapeMismatch {
+        role: &'static str,
+        declared: u64,
+        recorded: usize,
+    },
+    SidecarAssociation(ProofAssociationError),
     Compile(CompileFailure),
     NoTarget,
     NoSelection,
@@ -1167,6 +1258,26 @@ impl fmt::Display for ProofError {
                  `cargo run -p tiler-prototype-compile -- --out <path>`",
             ),
             Self::Read(path, cause) => write!(formatter, "{path} could not be read: {cause}"),
+            Self::SidecarWithoutCases => formatter.write_str(
+                "the proof sidecar carries no case with an input and an expected output",
+            ),
+            Self::SidecarShapeMismatch {
+                role,
+                declared,
+                recorded,
+            } => write!(
+                formatter,
+                "the artifact declares {declared} {role} element(s), which is {} byte(s), \
+                 and the sidecar records {recorded}",
+                declared.saturating_mul(F32_BYTES),
+            ),
+            Self::Sidecar(cause) => {
+                write!(formatter, "the proof sidecar did not decode: {cause}")
+            }
+            Self::SidecarAssociation(cause) => write!(
+                formatter,
+                "the proof sidecar does not describe this envelope: {cause}"
+            ),
             Self::Compile(failure) => write!(formatter, "the program did not compile: {failure:?}"),
             Self::NoTarget => formatter.write_str("the compilation returned no target profile"),
             Self::NoSelection => formatter.write_str("the portfolio retained no selected plan"),
@@ -1678,6 +1789,46 @@ mod tests {
             }
         }
         reached
+    }
+
+    /// This half of the filename interface, pinned.
+    ///
+    /// `prototypes/serial-sum-compile` carries the identical assertion. The two
+    /// crates share no code, so this pair of tests is the only thing that
+    /// compares their idea of the name, and a rename that updates one fails in
+    /// the other.
+    #[test]
+    fn the_sidecar_suffix_is_the_one_the_producer_writes() {
+        assert_eq!(super::SIDECAR_SUFFIX, ".proof");
+    }
+
+    /// A payload that is not exactly the declared element count is refused as a
+    /// sidecar defect, not carried into the numerical comparison.
+    ///
+    /// The three lengths are the three ways a record can disagree with the
+    /// interface it names, and the middle one is why this is a length check
+    /// rather than a chunk count: a payload one byte short of two elements has
+    /// a whole first element, so truncating to whole chunks would decode it and
+    /// report the missing element as a device disagreement.
+    #[test]
+    fn a_payload_that_is_not_the_declared_length_is_a_sidecar_defect() {
+        assert_eq!(
+            super::decode_f32_bits("input", 2, &[0, 0, 0, 1, 0, 0, 0, 2])
+                .expect("the exact length decodes"),
+            vec![1, 2],
+        );
+        for bytes in [
+            &[0, 0, 0, 1, 0, 0, 0][..],       // one byte short of two elements
+            &[0, 0, 0, 1][..],                // one element where two are declared
+            &[0, 0, 0, 1, 0, 0, 0, 2, 0][..], // two elements and a trailing byte
+        ] {
+            let refusal = super::decode_f32_bits("input", 2, bytes)
+                .expect_err("a payload of the wrong length is refused");
+            assert!(
+                matches!(refusal, super::ProofError::SidecarShapeMismatch { .. }),
+                "a malformed record must not be reported as arithmetic: {refusal}",
+            );
+        }
     }
 
     /// The accepted neighbour every refusal below is evidence against.
