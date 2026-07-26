@@ -21,8 +21,8 @@ program covers for bounded tiny DAGs, retaining legality and rejection reasons.
 Run from the repository root:
 
 ```sh
-uv run --locked python spikes/region-search/exhaustive_oracle.py
-uv run --locked python -O spikes/region-search/exhaustive_oracle.py
+uv run python spikes/region-search/exhaustive_oracle.py
+uv run python -O spikes/region-search/exhaustive_oracle.py
 ```
 
 Both modes produce the same output; verdicts use explicit checks that optimized

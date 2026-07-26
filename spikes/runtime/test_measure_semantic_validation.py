@@ -3,7 +3,7 @@
 The repository gate collects these: `spikes/runtime` is in the canonical pytest
 `testpaths`. Run them alone with
 
-    uv run --locked pytest spikes/runtime/test_measure_semantic_validation.py
+    uv run --with pytest pytestspikes/runtime/test_measure_semantic_validation.py
 """
 
 from __future__ import annotations

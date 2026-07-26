@@ -30,8 +30,8 @@ domains.
 From the repository root:
 
 ```sh
-uv run --locked python spikes/numerics/reduction_contract_probe.py
-uv run --locked python -O spikes/numerics/reduction_contract_probe.py
+uv run python spikes/numerics/reduction_contract_probe.py
+uv run python -O spikes/numerics/reduction_contract_probe.py
 ```
 
 The script uses explicit checks that remain active under `python -O`, exits

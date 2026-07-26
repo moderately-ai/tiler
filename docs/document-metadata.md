@@ -28,7 +28,7 @@ IDs are graph identity. A document move changes links but not relationships.
 
 ## Prose source form
 
-A paragraph is one source line. Do not insert a newline into a paragraph to hold it inside a column width: the renderer wraps, so a hand-wrapped paragraph fixes a presentation choice into the source, where every later edit must either reflow lines the change did not touch or leave the paragraph ragged. The rule governs the prose inside a list item, a table cell, a block quotation, and a footnote exactly as it governs a top-level paragraph. `scripts/docs.py render` already emits generated catalog entries in this form.
+A paragraph is one source line. Do not insert a newline into a paragraph to hold it inside a column width: the renderer wraps, so a hand-wrapped paragraph fixes a presentation choice into the source, where every later edit must either reflow lines the change did not touch or leave the paragraph ragged. The rule governs the prose inside a list item, a table cell, a block quotation, and a footnote exactly as it governs a top-level paragraph.
 
 It governs prose only, and says nothing about the newlines that carry structure. A fenced code block keeps whatever line breaks its content needs. A heading, a front-matter key, a table row, and a list marker each occupy their own line, and the newline between two list items is structure rather than a wrap — the rule never asks for two list items to be joined, only for the sentence inside one item not to be broken. A line may also pass any width because a link destination or an identifier admits no break point, which is not a violation because no wrap was available to omit.
 
@@ -159,25 +159,16 @@ derived from metadata and checked in for ordinary GitHub reading.
 
 ## Validation and catalog updates
 
-The documentation validator uses the locked `markdown-it-py` CommonMark parser
-in the repository development environment. The canonical repository gate
-invokes it together with its mutation tests and the other governed checks:
+There is no validator and no renderer. Both were deleted along with the rest of
+the repository's Python tooling, and there is no CI. Everything this document
+specifies — the schemas, the typed graph and its supersession rules, ticket and
+entrypoint references, local links, and the catalog blocks — is maintained by
+hand and checked by reading.
 
-```sh
-uv run --locked python scripts/check_repository.py
-```
-
-After changing cataloged metadata, regenerate the checked-in views and validate
-the result:
-
-```sh
-uv run --locked python scripts/docs.py render
-uv run --locked python scripts/check_repository.py
-```
-
-CI runs the same complete gate on the supported macOS arm64 and Ubuntu x64
-profiles. `render --check` is available when a caller needs only the
-deterministic generated-block freshness check.
+The practical consequence is the catalogs. They were generated views over
+frontmatter, so they no longer update themselves when a record is added,
+retitled, or superseded. Edit the affected catalog entry in the same change that
+edits the metadata behind it; nothing will tell you later that you did not.
 
 ## Ownership
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Check the gated dependent-static-shape fixtures against their recorded claims.
 
-`scripts/check_rust.py` names this workspace in `GATED_SPIKE_WORKSPACES`, so the
-Rust gate compiles it on the pinned nightly on every run and `trybuild` compares
-each fixture against the `.stderr` beside it byte for byte. `verify_fixture_coverage`
-then requires the run transcript to name every case, and
+`check.sh` beside this file compiles the workspace on the pinned nightly, and
+`trybuild` compares each fixture against the `.stderr` beside it byte for byte.
 `retained_fixture_inventory_is_complete` in `conformance/tests/ui.rs` requires the
-inventory on disk to equal a named list. Between them, a diagnostic that no longer
+inventory on disk to equal a named list, which is what catches a glob that stopped
+matching. Nothing runs either automatically, so both are checks you invoke.
+Between them, a diagnostic that no longer
 matches its fixture, a glob that stopped matching, and a case deleted from the tree
 all fail.
 
@@ -189,10 +189,10 @@ def read_record(path: Path) -> dict[str, object]:
 def verify_toolchain(root: Path, label: str, record: dict[str, object], pinned: str) -> str:
     """Require the record to describe a run of the compiler the gate actually uses.
 
-    The equality is the whole point of the gated posture. `scripts/check_rust.py`
-    invokes `check.sh` with the channel `rust-toolchain.toml` names, so a record
-    naming any other compiler is a record of a run that no longer happens, and a
-    pin migration has to re-derive these claims instead of inheriting them.
+    The equality is the whole point of this spike's posture. `check.sh` runs under
+    the channel `rust-toolchain.toml` names, so a record naming any other compiler
+    is a record of a run that no longer happens, and a pin migration has to
+    re-derive these claims instead of inheriting them.
     """
     toolchain = record.get("toolchain")
     if not isinstance(toolchain, dict):

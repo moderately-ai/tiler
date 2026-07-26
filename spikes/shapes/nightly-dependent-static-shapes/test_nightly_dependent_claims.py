@@ -5,7 +5,7 @@ is already in the canonical pytest `testpaths`, so the record check below runs o
 every `scripts/check_repository.py` invocation without a `pyproject.toml` change.
 Run them alone with
 
-    uv run --locked pytest \
+    uv run --with pytest pytest \
       spikes/shapes/nightly-dependent-static-shapes/test_nightly_dependent_claims.py
 
 The first test is the assertion the gate depends on. Everything after it exists

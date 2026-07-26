@@ -21,8 +21,8 @@ broadcasting, reshape semantics, multiple outputs, and stable shape errors.
 Run from the repository root:
 
 ```sh
-uv run --locked python spikes/reference/reference_evaluator.py
-uv run --locked python -O spikes/reference/reference_evaluator.py
+uv run python spikes/reference/reference_evaluator.py
+uv run python -O spikes/reference/reference_evaluator.py
 ```
 
 Both modes produce the same output; verdicts use explicit checks that optimized

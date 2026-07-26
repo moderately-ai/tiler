@@ -82,8 +82,6 @@ def validate(values: dict[str, str]) -> None:
     require(values, "probe.source_sha256", SHA256)
     require(values, "probe.harness_sha256", SHA256)
     require(values, "probe.validator_sha256", SHA256)
-    require(values, "probe.project_sha256", SHA256)
-    require(values, "probe.lock_sha256", SHA256)
     require(values, "probe.input_manifest_file", re.compile(r"input-manifest[.]tsv"))
     require(values, "probe.input_manifest_sha256", SHA256)
     if require(values, "probe.compiler_flags") != COMPILER_FLAGS:
@@ -169,8 +167,6 @@ def validate_retained_files(values: dict[str, str], record: Path) -> None:
         "spikes/apple-targets/validate_compatibility_record.py": require(
             values, "probe.validator_sha256", SHA256
         ),
-        "pyproject.toml": require(values, "probe.project_sha256", SHA256),
-        "uv.lock": require(values, "probe.lock_sha256", SHA256),
     }
     manifest_values = read_record(manifest)
     if manifest_values != expected_inputs:

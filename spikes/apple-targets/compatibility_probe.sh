@@ -78,16 +78,12 @@ capture "probe.repository_base_revision" '^[0-9a-f]{40}$' git -C "$repo_root" re
 record_digest "probe.source_sha256" "$script_dir/copy.metal"
 record_digest "probe.harness_sha256" "$script_dir/compatibility_probe.sh"
 record_digest "probe.validator_sha256" "$script_dir/validate_compatibility_record.py"
-record_digest "probe.project_sha256" "$repo_root/pyproject.toml"
-record_digest "probe.lock_sha256" "$repo_root/uv.lock"
 input_manifest="$result_root/input-manifest.tsv"
 : >"$input_manifest"
 for input_path in \
   "$script_dir/compatibility_probe.sh" \
   "$script_dir/copy.metal" \
-  "$script_dir/validate_compatibility_record.py" \
-  "$repo_root/pyproject.toml" \
-  "$repo_root/uv.lock"; do
+  "$script_dir/validate_compatibility_record.py"; do
   relative_path=${input_path#"$repo_root/"}
   digest=$(shasum -a 256 "$input_path" 2>/dev/null) \
     || fail "could not hash input manifest member: $input_path"

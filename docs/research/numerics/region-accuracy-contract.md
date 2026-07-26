@@ -227,8 +227,8 @@ interval proofs and do not establish worst-case bounds.
 Run:
 
 ```sh
-uv run --locked python spikes/numerics/region_accuracy_probe.py
-uv run --locked python -O spikes/numerics/region_accuracy_probe.py
+uv run --with mpmath python spikes/numerics/region_accuracy_probe.py
+uv run --with mpmath python -O spikes/numerics/region_accuracy_probe.py
 ```
 
 The checked-in [bounded result](../../../spikes/numerics/region_accuracy/results.json)

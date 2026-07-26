@@ -61,7 +61,7 @@ outcome. Run its portable record-mutation tests and, on macOS, its compiled
 runtime-stage injections with:
 
 ```sh
-uv run --locked python spikes/apple-targets/test_probes.py
+uv run python spikes/apple-targets/test_probes.py
 ```
 
 Old OS/GPU devices and cross-machine reproducibility remain unmeasured. See the
@@ -204,7 +204,7 @@ attempts, because a refusal seen after earlier faults could be the simulator's
 compiler service degrading instead:
 
 ```sh
-uv run --locked python spikes/apple-targets/bfloat_dispatch_probe.py
+uv run python spikes/apple-targets/bfloat_dispatch_probe.py
 ```
 
 The measured order and outcome: `materialize_f16` dispatched, `materialize_bf16`
@@ -243,23 +243,22 @@ literal is a portable test failure rather than a silently wrong classification.
 Print a run and rewrite the retained record with:
 
 ```sh
-uv run --locked python spikes/apple-targets/numerical_probe.py \
+uv run python spikes/apple-targets/numerical_probe.py \
   --record spikes/apple-targets/results/<yyyy-mm-dd>-numerics-covering-<toolchain>/record.tsv
 
 TILER_APPLE_NUMERICS_EXHAUSTIVE=1 \
-  uv run --locked python spikes/apple-targets/numerical_probe.py \
+  uv run python spikes/apple-targets/numerical_probe.py \
   --record spikes/apple-targets/results/<yyyy-mm-dd>-numerics-exhaustive-<toolchain>/record.tsv
 ```
 
 Pass `--work-dir spikes/apple-targets/local-work` to keep the generated
 sources, IR, AIR, and libraries for inspection; that directory is ignored.
 
-The assertions live in `test_numerical_probe.py`, which the repository gate
-collects through `pytest`'s `spikes/apple-targets` test path, so every finding
-is re-established on every gate run rather than trusted from a document:
+The assertions live in `test_numerical_probe.py`. Nothing runs them for you —
+re-establish a finding by running them yourself before citing it:
 
 ```sh
-uv run --locked python -m pytest -c pyproject.toml spikes/apple-targets
+uv run --with pytest pytest spikes/apple-targets
 ```
 
 **The guard, which matters more than the numbers.** A relaxed math mode can

@@ -3,7 +3,7 @@
 The repository gate collects these: `spikes/shapes/shape-evidence` is in the
 canonical pytest `testpaths`. Run them alone with
 
-    uv run --locked pytest spikes/shapes/shape-evidence/test_shape_evidence_measure.py
+    uv run --with pytest pytestspikes/shapes/shape-evidence/test_shape_evidence_measure.py
 """
 
 from __future__ import annotations

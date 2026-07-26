@@ -87,7 +87,7 @@ single weakest-to-strongest ladder.
 ### Documentation governance
 
 - [Blank-agent documentation acceptance audit](documentation/blank-agent-acceptance-audit.md) — informational; unknown; informs: [Documentation metadata and traceability](../document-metadata.md)
-- [Information architecture and provenance audit](documentation/information-architecture-audit.md) — adopted; primary-source-synthesis; informs: [Documentation metadata and traceability](../document-metadata.md), [Use typed documentation metadata and derived backlinks](../decisions/0054-use-typed-documentation-metadata.md); experiments: [Documentation integrity gate](../../spikes/documentation/README.md)
+- [Information architecture and provenance audit](documentation/information-architecture-audit.md) — adopted; primary-source-synthesis; informs: [Documentation metadata and traceability](../document-metadata.md), [Use typed documentation metadata and derived backlinks](../decisions/0054-use-typed-documentation-metadata.md)
 <!-- END GENERATED RESEARCH CATALOG -->
 
 Use the linked report for exact environment, source revision, limitations, and

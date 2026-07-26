@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
+# Re-verify this spike's retained `trybuild` diagnostics.
+#
+# Run it when you are working on this spike. Nothing else runs it: the
+# repository's `make` targets cover `crates/` only, and a spike is a recorded
+# measurement rather than something to re-execute on every change.
+#
+# The goldens are byte-compared, so they are only meaningful under the toolchain
+# they were captured on. Plain `cargo` gets that here: this directory sits under
+# the repository root, so rustup walks up and resolves the same
+# `rust-toolchain.toml` pin -- including `rust-src`, without which a const-eval
+# panic renders differently and every golden mismatches.
+
 set -euo pipefail
 
-spike_dir="$(cd "$(dirname "$0")" && pwd)"
-readonly spike_dir
-if [[ $# -ne 2 || ! -x "$1" || "$2" != nightly-* ]]; then
-    echo "usage: $0 <absolute-rustup> <exact-dated-nightly>" >&2
-    exit 2
-fi
-readonly rustup="$1"
-readonly toolchain="$2"
+cd "$(dirname "$0")"
 
-cd "$spike_dir"
-"$rustup" run "$toolchain" cargo fmt --all --check
-"$rustup" run "$toolchain" cargo check --workspace --all-targets --locked
-"$rustup" run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
-"$rustup" run "$toolchain" cargo test --workspace --locked
-RUSTDOCFLAGS="-D warnings" \
-    "$rustup" run "$toolchain" cargo doc --workspace --no-deps --locked
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked

@@ -385,7 +385,7 @@ xcrun --sdk macosx swiftc \
 ```
 
 The control returns nonzero for every unexpected library/function/pipeline
-outcome. `uv run --locked python spikes/apple-targets/test_probes.py` removes
+outcome. `uv run python spikes/apple-targets/test_probes.py` removes
 or corrupts each required provenance field and, on macOS, compiles the Swift
 control and injects every declared unexpected runtime stage; every mutation
 must fail.

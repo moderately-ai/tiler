@@ -5,7 +5,7 @@ canonical pytest `testpaths`, so the record check below runs on every
 `scripts/check_repository.py` invocation without a `pyproject.toml` change. Run
 them alone with
 
-    uv run --locked pytest spikes/shapes/shape-evidence/test_shape_evidence_record.py
+    uv run --with pytest pytestspikes/shapes/shape-evidence/test_shape_evidence_record.py
 
 The first test is the assertion the gate depends on. Everything after it exists
 because a predicate that never refuses anything is not a check: each case copies

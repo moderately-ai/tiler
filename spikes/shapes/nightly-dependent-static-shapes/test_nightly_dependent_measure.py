@@ -3,7 +3,7 @@
 The repository gate collects these: `spikes/shapes/nightly-dependent-static-shapes`
 is in the canonical pytest `testpaths`. Run them alone with
 
-    uv run --locked pytest \
+    uv run --with pytest pytest \
       spikes/shapes/nightly-dependent-static-shapes/test_nightly_dependent_measure.py
 """
 

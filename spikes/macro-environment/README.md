@@ -56,7 +56,7 @@ python3 spikes/macro-environment/probe.py verify \
   spikes/macro-environment/results/native-2026-07-24.json
 python3 spikes/macro-environment/probe.py verify \
   spikes/macro-environment/results/family-cfg-2026-07-24.json
-uv run --locked pytest spikes/macro-environment/test_probe.py
+uv run --with pytest pytest spikes/macro-environment/test_probe.py
 ```
 
 `cleanup_signal_demonstration.py` drives a harness's bounded entry point with a

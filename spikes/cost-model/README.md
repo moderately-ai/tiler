@@ -22,8 +22,8 @@ component terms.
 Run from the repository root:
 
 ```sh
-uv run --locked python spikes/cost-model/bootstrap_model.py
-uv run --locked python -O spikes/cost-model/bootstrap_model.py
+uv run python spikes/cost-model/bootstrap_model.py
+uv run python -O spikes/cost-model/bootstrap_model.py
 ```
 
 Both modes produce the same output; verdicts use explicit checks that optimized

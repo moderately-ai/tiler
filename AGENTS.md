@@ -238,10 +238,10 @@ These are failure modes observed in practice, not hypotheticals.
   failure, so "never commit on a red gate" needs its mechanism stated beside it.
 - **Gate the exact commit you hand out.** A base is a starting point several
   workers build on, so a red one multiplies. Running the gate on a later state
-  does not cover it: a ticket-status edit made only to unblock a claim once left
-  a pushed base failing documentation validation, and the worker that inherited
-  it had to prove no intermediate commit could be green. Gate, then push, then
-  dispatch, in that order.
+  does not cover it: an edit made only to unblock a claim once left a pushed base
+  failing validation, and the worker that inherited it had to prove no
+  intermediate commit could be green. Gate, then push, then dispatch, in that
+  order.
 - **A brief's assertions are claims, held to the same standard as any other.** A
   dispatch that states a fact saves a worker the lookup and costs it the
   verification, so a wrong one propagates with your authority behind it. Cite
@@ -293,6 +293,14 @@ Preserve reproducible experiments, prototypes, fixtures, and referenced
 measurements in the appropriate dedicated directory under `spikes/`. Research
 documents should link to the checked-in harness or fixture supporting a claim.
 
+**A spike is exercised only when someone is working on it.** No `make` target
+reaches `spikes/`, so a spike's harness runs from its own directory, by hand,
+with the invocation its README records. This is what a spike is for: a bounded
+measurement, kept because its result is worth citing, not because re-running it
+on every unrelated change proves anything. The trade is stated rather than
+hidden — a retained `trybuild` golden or result fixture can drift from the
+source beside it, and only running that spike will say so.
+
 Do not delete an experiment directory merely because a run completed. Keep the
 reusable source, inputs, harness, and any result fixture cited by documentation.
 Add a narrow `.gitignore` in the experiment area for regenerable local data such
@@ -327,9 +335,8 @@ consults. Accepting an ADR means moving its `decision_status`, regenerating the
 catalogs that view it, correcting every contract sentence whose truth depended
 on the old status, and releasing whatever the work graph gated on it. Note the
 asymmetry: a disclosure required while a decision is proposed becomes *wrong*
-once it is accepted, and the check enforcing it stops applying at exactly that
-moment — so that staleness is invisible to the gate and has to be found by
-reading.
+once it is accepted. Nothing checks either half now, so both directions have to
+be found by reading.
 
 **A doc comment is a claim, and it is load-bearing.** Text describing what a
 type exposes is read by the next worker as fact, and an overstated one makes
@@ -343,26 +350,19 @@ logical properties, candidate physical plans, rejected alternatives, and the
 observable result. Do not let an example quietly introduce semantics that the
 normative text has not defined.
 
-Before completing documentation work, run:
+**Nothing validates the documentation corpus.** There is no renderer and no
+documentation gate; both were deleted along with the rest of the Python tooling.
+Local link targets, the typed frontmatter graph and its supersession rules,
+declared entrypoints, and the generated catalog blocks are all maintained by
+hand and checked only by reading. Write as though a reader is the only check,
+because one is.
 
-```sh
-uv run --locked python scripts/docs.py render
-uv run --locked python scripts/check_repository.py
-```
-
-Generated catalog blocks are checked-in views over frontmatter. Edit source
-metadata, not generated list items, and rerun the renderer. The complete gate
-owns documentation validation, the Python test suite, Ruff, ShellCheck and
-shell syntax, ticketsplease lint, and the Rust gate; do not substitute a
-hand-picked subset of those commands.
-
-The documentation gate checks structure, not prose. It resolves every local
-link, enforces the typed metadata graph and its supersession rules, requires a
-declared entrypoint to exist and be executable, and keeps the generated
-catalogs fresh. It does not check that a quotation still matches its source, or
-that an open question carries an owner — both were tried and retired, the first
-because it silently examined 42 of 471 quoted spans while reading like a
-corpus-wide audit. Those remain review work.
+Two consequences follow, and neither is hypothetical. The catalog blocks under
+`docs/` and `docs/decisions/README.md` were generated views over frontmatter;
+they are now ordinary prose that a new or superseded record will not update on
+its own, so edit them in the same change that changes the metadata behind them.
+And a broken link now costs a reader rather than a gate — a moved or deleted
+file will not announce itself.
 
 ## Ticketsplease and parallel work
 
@@ -453,16 +453,15 @@ than duplicate or weaken it.
   The workspace deliberately declares no stable `rust-version` while accepted
   dependent-array const parameters require nightly. A future stable MSRV needs
   separate conformance evidence and an explicit policy change.
-- Keep workspace Rust and Clippy lints inherited by every crate, with the single exception `scripts/check_workspace.py` pins in `UNINHERITED_LINT_MEMBERS`. That table names the one member permitted to diverge and the exact lint table it may declare instead, so a second member dropping inheritance fails the gate. New public APIs require documentation, and warnings fail the repository gate.
+- Keep workspace Rust and Clippy lints inherited by every crate. One member diverges deliberately: `prototypes/serial-sum-run` declares its own `[lints.rust]` and `[lints.clippy]` and says why in its manifest. No check enforces this any more — a member that drops `[lints] workspace = true` still compiles, and is simply not linted. A `[lints]` change in a manifest diff is therefore something to look at. New public APIs require documentation, and warnings fail `make check`.
 - Unsafe code is forbidden except at an individual function or module admitted case by case under [ADR 0079](docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md), which states the four conditions a site must meet: a foreign API leaves no safe route, the `#[allow]` carries a `reason`, an assertion checked against the foreign object's own report bounds what the block touches, and a `SAFETY` comment names the invariant relied on. A crate-level `unsafe_code = "allow"`, a second member dropping lint inheritance, and any relaxation of the workspace `forbid` are all outside that decision and each remains Tom's. Citing ADR 0079 is not sufficient to admit a new site; its four conditions are what generalize. The compiler enforces the rule — `forbid` at the workspace, `deny` in the one crate permitted to diverge, so a site exists only if it carries `#[allow(unsafe_code, reason = …)]` — and no check keeps an inventory of admitted sites. A new one is caught by review of the diff that adds it, which is what "case by case" asks for.
 - Preserve the workspace dev-profile defaults: line-table debug information,
   unpacked split debug information, and optimization level 1 for dependencies.
   If a debugger needs full information, add a temporary or justified
   per-package override rather than inflating the whole workspace.
 - Keep release tuning local to an actual shipping package. Do not enable
-  workspace-wide LTO for ordinary development; CI or release automation may
-  select it through Cargo profile environment variables when measured need
-  justifies it.
+  workspace-wide LTO for ordinary development; select it through Cargo profile
+  environment variables for a specific measurement when need justifies it.
 - Do not vendor third-party Rust repositories as submodules. Pin an actively
   used fork by exact Git revision and keep editable checkouts in the workspace
   hierarchy outside this repository.
@@ -473,84 +472,50 @@ than duplicate or weaken it.
   pinned toolchain is nightly and the setting is explicitly required. Do not
   introduce ambient user configuration as a repository requirement.
 
-Run the Rust-only sub-gate from the repository root with:
+Verification is a short list of Cargo commands over `crates/` and `prototypes/`,
+collected in the root `Makefile`:
 
 ```sh
-uv run --locked python scripts/check_rust.py
+make check    # cargo fmt --check, cargo check, clippy -D warnings, cargo test — the working loop
+make full     # check, plus rustdoc, the release-profile numerical tests, tkt lint, shellcheck
 ```
 
-The Rust sub-gate checks workspace lint levels, per-member lint inheritance, the
-ADR-decided edges between workspace crates, each package's primary target,
-formatting, all targets, strict Clippy, development tests, optimized numerical
-tests, doctests, warning-free rustdoc, immutable Cargo locks, and each governed
-spike workspace named below. It supports macOS arm64 and GNU Linux x86-64. Two
-packages are Apple-only — `tiler-prototype-compile` drives `xcrun` and
-`tiler-prototype-run` links Metal — and the gate skips them off Apple rather
-than making a Metal proof build as an empty shell on a host that cannot run it;
-`APPLE_ONLY_PACKAGES` names them. Use explicit dated-toolchain selectors in
-compiler-migration probes; never replace the repository pin with rolling
-`nightly`.
+Run `make check` while working and `make full` before pushing to `main`. Every
+target is one command you can also type directly; there is no wrapper, and
+nothing is gained by adding one.
+
+`rust-toolchain.toml` is the sole toolchain authority, and plain `cargo` already
+honours it: rustup reads the file by directory ancestry and resolves the pinned
+dated nightly with its components, without a selector on the command line. That
+also holds inside a spike workspace nested under this root, which is why **no
+spike may carry its own `rust-toolchain.toml`** — a directory-local file would
+silently select another compiler for the evidence. Use explicit dated-toolchain
+selectors in compiler-migration probes; never replace the repository pin with
+rolling `nightly`.
 
 `rust-toolchain.toml` pins `rust-src` for reproducibility rather than for
 building: a const-eval panic renders the offending `core` line only when the
 standard library sources are present, so without it the byte-compared
 `trybuild` goldens differ between two hosts on the same toolchain.
 
-**The Rust sub-gate owns every Cargo invocation the repository gate makes.** It
-is the only phase that selects the pinned toolchain explicitly, rejects rather
-than merely strips hostile Rust environment controls, snapshots the governed
-lockfiles, and gives each workspace its own `CARGO_TARGET_DIR`. A Cargo command
-run from the pytest phase, a shell script, or a research harness has none of
-those and is a weaker check wearing the same name, so add it here instead.
+**No `make` target touches `spikes/`.** A spike is a recorded measurement whose
+value is its record, not its re-execution. Run one from its own directory when
+you are working on it — `spikes/shapes/nightly-dependent-static-shapes/check.sh`
+recompiles that spike's retained `trybuild` goldens, and the Python harnesses
+elsewhere under `spikes/` are run ad hoc as `spikes/README.md` describes. The
+consequence is explicit: a retained `.stderr` is a positive claim about what a
+compiler emits, it outlives whatever produced it, and nothing compares it to the
+source beside it until someone runs that spike. Treat a golden as evidence of
+what was measured, not as a live check.
 
-One exception is worth knowing rather than fixing: the length-framing check
-lives in `scripts/check_workspace.py` but runs from the pytest phase, not from
-the Rust sub-gate, which calls `validate_manifest_contract` alone.
+`rust-toolchain.toml` and `tool-versions.toml` are the sole Rust and
+ticketsplease version authorities. Do not duplicate their values elsewhere.
 
-**A spike Cargo workspace is compiled by the gate exactly when it retains a
-compiler-produced golden artifact — a `trybuild` `.stderr` — captured on the
-toolchain `rust-toolchain.toml` pins.** Such a file is a positive claim about
-what a compiler emits and it outlives whatever produced it: the claim stays on
-disk unchanged when the source beside it is edited, and only a compilation
-compares the two. Every other predicate over a spike compares a record to a
-file that a source edit silently invalidates. A spike whose evidence is
-deliberately tied to a *different* toolchain is not gate-compilable at all —
-reproducing it needs a compiler the gate has no authority to install, and
-re-recording it on the pin would destroy the claim the spike exists to make;
-it is named as an explicit off-pin exclusion instead, and its diagnostics
-remain retained evidence verified against their record rather than reproduced.
-A spike that retains no such artifact is not compiled: its conclusion is about
-whatever code is present, so there is nothing checked in that can go stale
-against it. `scripts/check_rust.py` enforces the rule in both directions —
-`GATED_SPIKE_WORKSPACES`, `OFF_PIN_SPIKE_WORKSPACES`, and a custody predicate
-that fails when a retained diagnostic appears outside both sets, so admitting a
-golden fixture without deciding its posture is not reachable. Each gated
-workspace must also name every one of its `trybuild` cases in its own run
-transcript, because a glob that stops matching reports a passing test having
-compiled nothing.
-
-**Do not add a `rust-toolchain.toml` to a spike workspace.** The repository pin
-is the sole toolchain authority for everything the gate compiles, and a
-directory-local file would silently select another compiler for the evidence.
-
-The canonical complete contributor and CI gate is:
-
-```sh
-uv run --locked python scripts/check_repository.py
-```
-
-`rust-toolchain.toml`, `.python-version`, `pyproject.toml`, and
-`tool-versions.toml` are the sole Rust, Python, uv/development-dependency, and
-ticketsplease version authorities respectively. Do not duplicate their values
-in scripts or CI configuration.
-
-Bootstrap a fresh development checkout with `./deps.sh`. It installs or
-verifies the supported host prerequisites, the pinned Rust toolchain, uv,
-Python, pytest, Ruff, ticketsplease, and the locked development environment.
-`./deps.sh --check` is the non-mutating diagnostic form. Tiler supports this
-bootstrap path on macOS and Debian-family Linux only; Windows and other Linux
-distributions are explicitly unsupported rather than maintained as untested
-branches.
+Bootstrap a fresh development checkout with `./deps.sh`. It installs or verifies
+Homebrew prerequisites, the pinned Rust toolchain, ticketsplease, and the Apple
+Metal toolchain. `./deps.sh --check` is the non-mutating diagnostic form. Tiler
+develops on macOS only; other platforms are unsupported rather than maintained
+as untested branches, and the repository runs no CI.
 
 When cloning any repository for research, use only the workspace-aware helper:
 

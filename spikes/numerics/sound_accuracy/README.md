@@ -54,8 +54,8 @@ From the Tiler checkout:
 ```sh
 PATH="/path/to/java8/bin:/opt/homebrew/bin:/usr/bin:/bin" \
   spikes/numerics/sound_accuracy/run_daisy.sh /path/to/daisy
-uv run --locked python spikes/numerics/sound_accuracy/observe.py
-uv run --locked python -O spikes/numerics/sound_accuracy/observe.py
+uv run python spikes/numerics/sound_accuracy/observe.py
+uv run python -O spikes/numerics/sound_accuracy/observe.py
 ```
 
 `/opt/homebrew/bin` is needed only for profiles that invoke the measured Z3
@@ -97,7 +97,7 @@ The shell entrypoint owns the pinned-checkout preflight. The separately tested
 parsing. Its parser and timeout behavior can be exercised without Daisy:
 
 ```sh
-uv run --locked pytest spikes/numerics/sound_accuracy/test_daisy_runner.py
+uv run --with pytest pytest spikes/numerics/sound_accuracy/test_daisy_runner.py
 ```
 
 ### 2026-07-21 verification boundary

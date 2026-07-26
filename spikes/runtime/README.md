@@ -30,7 +30,7 @@ Regenerate the retained semantic-validation CPU measurement through the locked
 repository environment:
 
 ```sh
-uv run --locked python spikes/runtime/measure_semantic_validation.py
+uv run python spikes/runtime/measure_semantic_validation.py
 ```
 
 [`measurements/semantic-validation.json`](measurements/semantic-validation.json)
@@ -46,7 +46,7 @@ research report:
 ```sh
 zsh -ic 'gwc https://github.com/huggingface/candle.git'
 git -C /path/to/candle checkout --detach 31f35b147389700ed2a178ee66a91c3cc25cc80d
-uv run --locked python spikes/runtime/check_candle_post_wait_source.py \
+uv run python spikes/runtime/check_candle_post_wait_source.py \
   /path/to/candle
 ```
 

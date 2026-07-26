@@ -3,10 +3,9 @@
 
 `spikes/shapes/shape-evidence` is the repository's sole off-pin spike. Its six
 `trybuild` `.stderr` files were captured on stable Rust 1.89.0, which is not the
-toolchain `rust-toolchain.toml` pins, so `scripts/check_rust.py` names it in
-`OFF_PIN_SPIKE_WORKSPACES` and never compiles it: re-deriving the fixtures needs
-a compiler the gate has no authority to install, and re-recording them on the
-pin would destroy the stable-Rust claim the spike exists to make.
+toolchain `rust-toolchain.toml` pins, so nothing here recompiles them: re-deriving
+the fixtures needs a compiler this checkout does not select, and re-recording them
+on the pin would destroy the stable-Rust claim the spike exists to make.
 
 Excluding a workspace from *reproduction* is not the same as leaving its
 evidence unchecked. This module is the other half. It compares every retained

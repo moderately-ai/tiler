@@ -23,7 +23,7 @@ Mach-O constant sections, and exact payload occurrences in the linked binary.
 Run the full matrix on macOS:
 
 ```sh
-uv run --locked python spikes/embedding/measure.py \
+uv run python spikes/embedding/measure.py \
   --preset decision \
   --output /tmp/tiler-embedding-measurement
 ```
@@ -70,7 +70,7 @@ binary evidence needed to attribute the cause. Verify
 its retained structure and exact file digests without rerunning Cargo:
 
 ```sh
-uv run --locked python spikes/embedding/measure.py \
+uv run python spikes/embedding/measure.py \
   --verify-retained \
   docs/research/embedding/measurements/2026-07-20-macos-arm64
 ```

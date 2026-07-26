@@ -145,7 +145,7 @@ error, never be treated as a validation miss or trigger fallback.
 audits the concrete checkout rather than relying on a prose transcription:
 
 ```sh
-uv run --locked python spikes/runtime/check_candle_post_wait_source.py \
+uv run python spikes/runtime/check_candle_post_wait_source.py \
   /Users/tsanterre/workspace/github.com/huggingface/candle
 ```
 

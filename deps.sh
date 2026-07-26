@@ -2,7 +2,7 @@
 # Bootstrap or verify Tiler's supported development hosts.
 #
 # Usage:
-#   ./deps.sh          Install missing dependencies and sync the uv environment.
+#   ./deps.sh          Install missing dependencies.
 #   ./deps.sh --check  Verify without changing the host or project environment.
 #   ./deps.sh --help   Show this help.
 
@@ -75,14 +75,6 @@ REQUIRED_RUST_TOOLCHAIN="$(toml_string "$ROOT_DIR/rust-toolchain.toml" toolchain
 # copy here would install a different set than the gate requires.
 REQUIRED_RUST_COMPONENTS="$(toml_string_array "$ROOT_DIR/rust-toolchain.toml" toolchain components)" \
     || { printf 'invalid Rust component authority\n' >&2; exit 1; }
-uv_requirement="$(toml_string "$ROOT_DIR/pyproject.toml" tool.uv required-version)" \
-    || { printf 'invalid uv version authority\n' >&2; exit 1; }
-if [[ "$uv_requirement" =~ ^==([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-    REQUIRED_UV_VERSION="${BASH_REMATCH[1]}"
-else
-    printf 'uv required-version must be an exact ==X.Y.Z pin\n' >&2
-    exit 1
-fi
 tool_versions_schema="$(toml_integer "$ROOT_DIR/tool-versions.toml" '' schema_version)" \
     || { printf 'invalid tool version authority schema\n' >&2; exit 1; }
 [ "$tool_versions_schema" = '1' ] \
@@ -95,13 +87,9 @@ REQUIRED_TICKETSPLEASE_REV="$(
 )" || { printf 'invalid ticketsplease revision authority\n' >&2; exit 1; }
 [[ "$REQUIRED_TICKETSPLEASE_REV" =~ ^[0-9a-f]{40}$ ]] \
     || { printf 'invalid ticketsplease revision authority\n' >&2; exit 1; }
-readonly REQUIRED_RUST_TOOLCHAIN REQUIRED_UV_VERSION REQUIRED_TICKETSPLEASE_VERSION
+readonly REQUIRED_RUST_TOOLCHAIN REQUIRED_TICKETSPLEASE_VERSION
 readonly REQUIRED_TICKETSPLEASE_REV
-REQUIRED_PYTHON="$(tr -d '[:space:]' < "$ROOT_DIR/.python-version")"
-[[ "$REQUIRED_PYTHON" =~ ^3\.11(\.[0-9]+)?$ ]] \
-    || { printf 'invalid Python version authority\n' >&2; exit 1; }
-readonly REQUIRED_PYTHON
-unset uv_requirement tool_versions_schema
+unset tool_versions_schema
 
 CHECK_ONLY=0
 for argument in "$@"; do
@@ -139,31 +127,12 @@ warn() { printf '  %s[warn]%s %s\n' "$C_YELLOW" "$C_RESET" "$1"; }
 die() { printf '  %s[fail]%s %s\n' "$C_RED" "$C_RESET" "$1" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-OS_FAMILY=''
-LINUX_ID=''
-case "$(uname -s)" in
-    Darwin)
-        OS_FAMILY='macos'
-        ;;
-    Linux)
-        OS_FAMILY='debian'
-        [ -r /etc/os-release ] || die 'Linux host lacks /etc/os-release'
-        # shellcheck disable=SC1091
-        . /etc/os-release
-        LINUX_ID="${ID:-unknown}"
-        case " ${ID:-} ${ID_LIKE:-} " in
-            *' debian '*|*' ubuntu '*) ;;
-            *) die "unsupported Linux distribution: ${ID:-unknown}; only Debian/Ubuntu are supported" ;;
-        esac
-        ;;
-    *)
-        die "unsupported operating system: $(uname -s); use macOS or Debian/Ubuntu"
-        ;;
-esac
-readonly OS_FAMILY LINUX_ID
+[ "$(uname -s)" = 'Darwin' ] \
+    || die "unsupported operating system: $(uname -s); Tiler develops on macOS"
 
-ensure_brew_packages() {
-    have brew || die 'Homebrew is required on macOS; install it from https://brew.sh'
+ensure_system_packages() {
+    info 'system packages (macos)'
+    have brew || die 'Homebrew is required; install it from https://brew.sh'
     local package
     local missing=()
     for package in pkg-config shellcheck; do
@@ -178,43 +147,6 @@ ensure_brew_packages() {
     fi
     info "installing Homebrew formulae: ${missing[*]}"
     brew install "${missing[@]}"
-}
-
-apt_command() {
-    if [ "$(id -u)" -eq 0 ]; then
-        apt-get "$@"
-    else
-        have sudo || die 'sudo is required to install Debian/Ubuntu packages'
-        sudo apt-get "$@"
-    fi
-}
-
-ensure_apt_packages() {
-    have apt-get || die 'apt-get is required on Debian/Ubuntu'
-    local package
-    local packages=(build-essential ca-certificates curl git pkg-config shellcheck time zsh)
-    local missing=()
-    for package in "${packages[@]}"; do
-        dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed' || missing+=("$package")
-    done
-    if [ "${#missing[@]}" -eq 0 ]; then
-        ok 'Debian/Ubuntu development packages present'
-        return
-    fi
-    if [ "$CHECK_ONLY" -eq 1 ]; then
-        die "missing Debian/Ubuntu packages: ${missing[*]}"
-    fi
-    info "installing Debian/Ubuntu packages: ${missing[*]}"
-    apt_command update
-    apt_command install -y "${missing[@]}"
-}
-
-ensure_system_packages() {
-    info "system packages ($OS_FAMILY${LINUX_ID:+/$LINUX_ID})"
-    case "$OS_FAMILY" in
-        macos) ensure_brew_packages ;;
-        debian) ensure_apt_packages ;;
-    esac
 }
 
 load_cargo_path() {
@@ -325,75 +257,7 @@ ensure_ticketsplease() {
     ok "ticketsplease $current"
 }
 
-uv_version() {
-    uv --version | awk '{print $2}'
-}
-
-install_uv_standalone() {
-    have curl || die 'curl is required to install uv'
-    curl -LsSf "https://astral.sh/uv/${REQUIRED_UV_VERSION}/install.sh" | sh
-    export PATH="$HOME/.local/bin:$PATH"
-}
-
-sanitize_uv_environment() {
-    local name
-    while IFS= read -r name; do
-        unset "$name"
-    done < <(compgen -A variable UV_)
-}
-
-ensure_uv() {
-    info 'uv'
-    export PATH="$HOME/.local/bin:$PATH"
-    if ! have uv; then
-        if [ "$CHECK_ONLY" -eq 1 ]; then
-            die 'uv is missing; run ./deps.sh to install it'
-        fi
-        if [ "$OS_FAMILY" = 'macos' ]; then
-            brew install uv
-        else
-            install_uv_standalone
-        fi
-    fi
-
-    local current
-    current="$(uv_version)"
-    if [ "$current" != "$REQUIRED_UV_VERSION" ]; then
-        if [ "$CHECK_ONLY" -eq 1 ]; then
-            die "uv $current does not match required $REQUIRED_UV_VERSION"
-        fi
-        if ! uv self update "$REQUIRED_UV_VERSION"; then
-            install_uv_standalone
-        fi
-        current="$(uv_version)"
-        [ "$current" = "$REQUIRED_UV_VERSION" ] \
-            || die "uv $current does not match $REQUIRED_UV_VERSION after installation"
-    fi
-    ok "uv $current"
-}
-
-ensure_python_environment() {
-    info 'locked Python development environment'
-    cd "$ROOT_DIR"
-    uv --project "$ROOT_DIR" --no-config lock --check
-    if [ "$CHECK_ONLY" -eq 1 ]; then
-        uv --project "$ROOT_DIR" --no-config sync --locked --check
-        [ -x .venv/bin/python ] || die 'the project environment is missing; run ./deps.sh'
-        [ -x .venv/bin/pytest ] || die 'pytest is missing from the locked environment; run ./deps.sh'
-        [ -x .venv/bin/ruff ] || die 'Ruff is missing from the locked environment; run ./deps.sh'
-        ok "$(.venv/bin/python --version) with the locked development dependencies"
-    else
-        uv --project "$ROOT_DIR" --no-config python install "$REQUIRED_PYTHON"
-        uv --project "$ROOT_DIR" --no-config sync --locked
-        ok "$(uv --project "$ROOT_DIR" --no-config run --locked python --version) with the locked development dependencies"
-    fi
-}
-
 ensure_metal_toolchain() {
-    [ "$OS_FAMILY" = 'macos' ] || {
-        warn 'Metal toolchain is macOS-only; Linux supports target-independent development'
-        return
-    }
     info 'Apple Metal toolchain'
     have xcode-select || die 'xcode-select is missing; install Xcode from Apple'
     if ! xcode-select -p >/dev/null 2>&1; then
@@ -413,34 +277,22 @@ ensure_metal_toolchain() {
 verify_tools() {
     info 'tool versions'
     shellcheck --version | head -n 2
+    make --version | head -n 1
     rustup run "$REQUIRED_RUST_TOOLCHAIN" cargo --version
+    # Unqualified, to show that `rust-toolchain.toml` resolves the pin without a
+    # wrapper. Everything in the Makefile relies on exactly this.
+    cargo --version
     ticketsplease --version
-    uv --version
-    if [ "$CHECK_ONLY" -eq 1 ]; then
-        .venv/bin/python --version
-        .venv/bin/python -c 'import mpmath; print("mpmath", mpmath.__version__)'
-        .venv/bin/pytest --version
-        .venv/bin/ruff --version
-    else
-        uv --project "$ROOT_DIR" --no-config run --locked python --version
-        uv --project "$ROOT_DIR" --no-config run --locked python \
-            -c 'import mpmath; print("mpmath", mpmath.__version__)'
-        uv --project "$ROOT_DIR" --no-config run --locked pytest --version
-        uv --project "$ROOT_DIR" --no-config run --locked ruff --version
-    fi
 }
 
 main() {
     cd "$ROOT_DIR"
-    sanitize_uv_environment
     local mode='install'
     [ "$CHECK_ONLY" -eq 1 ] && mode='check-only'
     printf 'tiler dependencies (%s)\n' "$mode"
     ensure_system_packages
     ensure_rust
     ensure_ticketsplease
-    ensure_uv
-    ensure_python_environment
     ensure_metal_toolchain
     verify_tools
     printf '%sdevelopment dependencies are ready%s\n' "$C_GREEN" "$C_RESET"

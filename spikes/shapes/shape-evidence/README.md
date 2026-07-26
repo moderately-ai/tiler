@@ -36,9 +36,9 @@ cargo +1.89.0 clippy --manifest-path spikes/shapes/shape-evidence/Cargo.toml --a
 
 ## Custody of the retained diagnostics
 
-This is the repository's sole off-pin spike, and that posture decides how its evidence is checked. `AGENTS.md` compiles a spike Cargo workspace in the Rust gate exactly when it retains a `trybuild` `.stderr` captured on the toolchain `rust-toolchain.toml` pins. These six were captured on stable 1.89.0, which is not that pin, so `scripts/check_rust.py` names this directory in `OFF_PIN_SPIKE_WORKSPACES` and never compiles it: re-deriving them needs a compiler the gate has no authority to install, and re-recording them on the nightly pin would destroy the stable-Rust claim the spike exists to make.
+This is the repository's sole off-pin spike, and that posture decides how its evidence is checked. These six diagnostics were captured on stable 1.89.0, which is not the toolchain `rust-toolchain.toml` pins, so they are never recompiled here: re-deriving them needs a compiler this checkout does not select, and re-recording them on the nightly pin would destroy the stable-Rust claim the spike exists to make.
 
-Excluding a workspace from *reproduction* is not the same as leaving its evidence unchecked. [`results/2026-07-24-macos-arm64.json`](results/2026-07-24-macos-arm64.json) is the other half. It records, for each compile-fail case, the exact toolchain, the expected first line, the ordered sequence of diagnostic codes the file emits, the fragments that must appear, and — where two cases share an error code — the fragments that must not; for each compile-pass case it records that no diagnostic may be retained beside it. It also digests every input that determines what those diagnostics say: the manifest, the lockfile, `src/lib.rs`, `tests/ui.rs`, and each fixture. [`verify_evidence.py`](verify_evidence.py) checks all of that without invoking Cargo, and `test_shape_evidence_record.py` runs it inside the repository gate through the canonical pytest `testpaths` entry, alongside twenty-four cases that each corrupt a copy of the spike and require the exact refusal that corruption should produce.
+Excluding a workspace from *reproduction* is not the same as leaving its evidence unchecked. [`results/2026-07-24-macos-arm64.json`](results/2026-07-24-macos-arm64.json) is the other half. It records, for each compile-fail case, the exact toolchain, the expected first line, the ordered sequence of diagnostic codes the file emits, the fragments that must appear, and — where two cases share an error code — the fragments that must not; for each compile-pass case it records that no diagnostic may be retained beside it. It also digests every input that determines what those diagnostics say: the manifest, the lockfile, `src/lib.rs`, `tests/ui.rs`, and each fixture. [`verify_evidence.py`](verify_evidence.py) checks all of that without invoking Cargo, and `test_shape_evidence_record.py` exercises it alongside twenty-four cases that each corrupt a copy of the spike and require the exact refusal that corruption should produce. Nothing runs either automatically; the commands are in the section above.
 
 Two rules follow from being off-pin rather than gated, and both differ from the equivalent for `spikes/extensions/non-exhaustive-visibility`.
 
@@ -51,8 +51,8 @@ Refresh a diagnostic with `TRYBUILD=overwrite` **only** after deciding the claim
 Check the retained evidence on its own:
 
 ```sh
-uv run --locked python spikes/shapes/shape-evidence/verify_evidence.py
-uv run --locked pytest spikes/shapes/shape-evidence/test_shape_evidence_record.py
+uv run python spikes/shapes/shape-evidence/verify_evidence.py
+uv run --with pytest pytest spikes/shapes/shape-evidence/test_shape_evidence_record.py
 ```
 
 Regenerate the 1/10/100/1,000-shape workloads and repeat the bounded host

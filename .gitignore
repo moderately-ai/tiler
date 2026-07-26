@@ -6,8 +6,6 @@
 # narrowing this rule, so a generated artifact cannot arrive as a side effect.
 /.agents/
 /.claude/
-.pytest_cache/
-.venv/
 __pycache__/
 *.py[cod]
 /target/

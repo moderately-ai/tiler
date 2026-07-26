@@ -2434,7 +2434,7 @@ def test_the_retained_record_still_holds_when_a_toolchain_and_gpu_resolve() -> N
     differences = PROBE.compare_record(run, stored)
     assert not differences, (
         "the retained record no longer describes this toolchain row. If the change is intended, "
-        "regenerate it with `uv run --locked python spikes/apple-targets/numerical_probe.py "
+        "regenerate it with `uv run python spikes/apple-targets/numerical_probe.py "
         f"--record {RECORDS[PROBE.matrix()]}` and say in the research record what moved. "
         f"Differences: {differences}"
     )

@@ -29,11 +29,11 @@ that drafted the record — drafting a proposed ADR is a completed outcome, so t
 drafting ticket is correctly `done` the moment the file exists, and a dependency
 on it cannot tell written from decided. That convention lives in
 [`ticketsplease.toml`](../ticketsplease.toml), beside
-`[workflow.states.awaiting-decision]`, and that file is its authority;
-`scripts/docs.py` enforces it, so a dispatchable or open ticket depending on
-such a drafting ticket fails the documentation gate. `deferred` means the work
-is intentionally parked until its stated trigger. Neither belongs in
-`tkt ready`.
+`[workflow.states.awaiting-decision]`, and that file is its authority. Nothing
+enforces it any more, so a dispatchable or open ticket depending on such a
+drafting ticket is now caught by reading rather than by a check. `deferred`
+means the work is intentionally parked until its stated trigger. Neither belongs
+in `tkt ready`.
 
 Before work: read [AGENTS.md](../AGENTS.md), inspect `git status`, atomically
 claim the ticket, then immediately create or enter its dedicated branch/worktree

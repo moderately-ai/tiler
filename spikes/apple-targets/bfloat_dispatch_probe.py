@@ -26,7 +26,7 @@ about `bfloat` and must be discarded rather than reported.
 
 Usage, from the repository root:
 
-    uv run --locked python spikes/apple-targets/bfloat_dispatch_probe.py [work-directory]
+    uv run python spikes/apple-targets/bfloat_dispatch_probe.py [work-directory]
 
 Omitting the directory uses a fresh temporary one. Exits nonzero when the
 trailing control fails, because that is the case whose result is not evidence.

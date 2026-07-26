@@ -356,7 +356,7 @@ tiler-prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-com
 tiler-prototype-run     -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal, tiler-metal-aot, tiler-runtime] + metal
 ```
 
-`scripts/check_workspace.py` pins the exact member set, the exact `[workspace.dependencies]` table, and every package's complete normal and development dependency list including third-party crates, so these edges are a checked contract rather than a description. The runner's `metal` binding is a landed edge rather than a planned one: `prototypes/serial-sum-run` executes the value proof on a real device, and it is the one member that talks to one.
+These edges are a description maintained by reading, not a checked contract: nothing pins the member set or any package's dependency list, so a manifest that gains an edge crossing a boundary an ADR decided is caught in review of that manifest diff. The runner's `metal` binding is a landed edge rather than a planned one: `prototypes/serial-sum-run` executes the value proof on a real device, and it is the one member that talks to one.
 
 `tiler-metal-aot` is the offline Apple Metal compiler driver. Its empty dependency closure is a decided property rather than an accident of ordering: the crate spawns `xcrun metal` and `xcrun metallib`, and its whole value is that the exact compiler invocation can be read and audited without the lowering stack behind it. `crates/tiler-metal-aot/src/input.rs` records that property and what follows from it.
 
@@ -426,9 +426,7 @@ dependency. Reading a flow arrow as a dependency claim inverts the first case an
 asserts, in the second, exactly the normal edge the packaging profile forbids.
 
 Intra-workspace Cargo edges belong to the accepted packaging profile above, and
-`scripts/check_workspace.py` pins every package's complete normal and development
-dependency list, so that block is a checked contract and this section is
-deliberately not a second copy of it. The emitter/AOT pair in particular must not
+this section is deliberately not a second copy of it. The emitter/AOT pair in particular must not
 be read here as a dependency claim in either direction: the `tiler-metal` →
 `tiler-metal-aot` edge is development-only for the two reasons the profile
 states, and the eventual `tiler-metal-aot` → `tiler-metal` production direction

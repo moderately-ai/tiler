@@ -11,7 +11,31 @@ topics: ["experiments", "evidence"]
 Spikes are preserved executable evidence for bounded questions. They are not a
 production implementation or a universal guarantee. `Reproducible` means the
 checked-in procedure is complete under its recorded prerequisites; it does not
-mean dependency-free, hermetic, portable to every host, or rerun by CI.
+mean dependency-free, hermetic, or portable to every host.
+
+## Running a spike
+
+Nothing runs these automatically. The repository's `make` targets cover
+`crates/` and `prototypes/` only, so a spike is exercised by whoever is working
+on it, from its own directory.
+
+A spike that is a Cargo workspace uses plain `cargo`, or the entrypoint beside
+it — `spikes/shapes/nightly-dependent-static-shapes/check.sh` recompiles that
+spike's retained `trybuild` goldens. These directories sit under the repository
+root, so rustup resolves the same `rust-toolchain.toml` pin without a selector.
+
+A spike with a Python harness has no repository-managed interpreter; there is no
+project virtual environment and no locked development dependency set. Run one
+with `uv`, which fetches what it needs per invocation:
+
+```sh
+uv run --with pytest pytest spikes/embedding
+uv run --with mpmath python spikes/numerics/check_witnesses.py
+```
+
+Only `spikes/numerics/check_witnesses.py` and
+`spikes/numerics/region_accuracy_probe.py` need a third-party package
+(`mpmath`); every other harness is standard library plus `pytest`.
 
 <!-- BEGIN GENERATED EXPERIMENT CATALOG -->
 ### Foundation, semantics, and extensions
@@ -53,7 +77,6 @@ mean dependency-free, hermetic, portable to every host, or rerun by CI.
 
 ### Documentation governance
 
-- [Documentation integrity gate](documentation/README.md) — reproducible; executable-model; supports: [Information architecture and provenance audit](../docs/research/documentation/information-architecture-audit.md)
 <!-- END GENERATED EXPERIMENT CATALOG -->
 
 Each experiment entry identifies its supported research claim, exact entry

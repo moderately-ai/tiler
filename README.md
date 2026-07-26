@@ -30,8 +30,14 @@ production compiler implementation.
 - **Continue the work:** read [AGENTS.md](AGENTS.md) and the
   [work-tracking guide](docs/work-tracking.md) before editing.
 
-Bootstrap a supported macOS or Debian/Ubuntu development host with
-`./deps.sh`. Use `./deps.sh --check` for a non-mutating dependency diagnosis.
+Bootstrap a macOS development host with `./deps.sh`. Use `./deps.sh --check` for
+a non-mutating dependency diagnosis.
+
+Verify with `make check` (format, Clippy, tests) while working, and `make full`
+before pushing to `main`. Every target is a single command you can also type
+directly; `rust-toolchain.toml` selects the compiler, so plain `cargo` is
+already the pinned one. Spikes are not covered by either target — run a spike
+from its own directory when you are working on it.
 
 Accepted ADRs govern durable architectural choices. A `mixed` contract treats
 unmarked field-level detail as proposed unless an accepted ADR is cited; every

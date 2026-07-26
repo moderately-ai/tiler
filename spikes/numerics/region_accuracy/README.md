@@ -25,8 +25,8 @@ worst-case bound.
 From the repository root:
 
 ```sh
-uv run --locked python spikes/numerics/region_accuracy_probe.py
-uv run --locked python -O spikes/numerics/region_accuracy_probe.py
+uv run --with mpmath python spikes/numerics/region_accuracy_probe.py
+uv run --with mpmath python -O spikes/numerics/region_accuracy_probe.py
 ```
 
 The probe uses explicit verdict checks rather than Python `assert`, so optimized

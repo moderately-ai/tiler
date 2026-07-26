@@ -100,8 +100,6 @@ def assert_validator_mutations() -> None:
                     "spikes/apple-targets/validate_compatibility_record.py": (
                         "probe.validator_sha256"
                     ),
-                    "pyproject.toml": "probe.project_sha256",
-                    "uv.lock": "probe.lock_sha256",
                 }.items()
             ),
             encoding="utf-8",

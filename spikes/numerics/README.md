@@ -19,7 +19,7 @@ commands, evidence strength, and limitations:
 Run the complete Python witness acceptance check from the repository root:
 
 ```sh
-uv run --locked python spikes/numerics/check_witnesses.py
+uv run --with mpmath python spikes/numerics/check_witnesses.py
 ```
 
 The checker rejects executable `assert` syntax in every governed witness, then
