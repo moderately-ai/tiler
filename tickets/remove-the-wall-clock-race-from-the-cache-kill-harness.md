@@ -1,7 +1,7 @@
 ---
 id: remove-the-wall-clock-race-from-the-cache-kill-harness
 title: Remove the wall-clock race from the expansion cache kill-phase harness
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [prototype-expansion-content-cache, inject-deterministic-expansion-cache-io-failures, design-bounded-expansion-cache-garbage-collection]
@@ -9,9 +9,6 @@ scopes: [implementation/cache]
 shared_scopes: []
 paths: []
 tags: [implementation, cache, tests, flake]
-claimed_from: todo
-assignee: agent-remove-the-wall-clock-race-from-the-cache-kill-harness
-lease_expires_at: 1785045284
 ---
 **Measurement — 2026-07-25, this host, during a full-gate run with four concurrent agent worktrees compiling.** `expansion::harness::processes_racing_a_dying_writer_still_resolve` failed the repository gate:
 
@@ -37,3 +34,21 @@ The same test passed 3/3 in isolation and the full `-p tiler-cache --lib` suite 
 ## Closes when
 
 No assertion in the kill-phase harness depends on a wall-clock margin to be true, every sibling sharing the idiom is fixed or shown not to share the defect, the recoverability and resolution properties are still proven, and the full gate passes — including under concurrent load, which is the condition that produced the failure.
+
+## Outcome
+
+**Landed in `bc4e1ff`. The race named above is real; this ticket's account of its mechanism was backwards, and the correction is the interesting part.**
+
+**Fact — `store.rs:471` puts `fault::reach(Phase::AfterLock)` *below* the lock-free lookup, and `resolve` returns `Hit` at line 449 when that lookup succeeds, before the fault seam.** So an armed child whose lookup hits never reaches `after-lock` at all. There is no separate killer and no "killer scheduled late": the child kills itself, and it never builds. The 50 ms delay was not keeping the armed child alive — it was keeping the **other** children from publishing before the armed child's lookup ran. Under load the armed child's process startup exceeds a survivor's entire publish, so it hits, exits zero, and reports `Completed`. Confirmed directly by a throwaway probe: publish first, then arm a child at `AfterLock`, and it completes 100% of the time.
+
+**Delivered — `fault::rendezvous()`**, called from `resolve` at the one decidable point: the lookup has run and missed, and no lock is held. A gated child writes its own arrival file and blocks; the parent releases them only once **every** arrival file exists. From there the armed child reaches `after-lock` regardless of what any other process does, including down the fall-open path, because `reach` sits after the `lock.is_some()` fork. It cannot race, because the precondition — a missed lookup — is established by observation before any process is permitted to lock. Arrival is one file per child rather than a counter, so the parent names its population and counts it.
+
+**The ticket's sibling instruction was wrong and the sweep was done properly anyway.** Sharing the `with_build_delay` idiom is *not* sharing the defect: three siblings use it and none has an assertion whose truth depends on it. They were gated regardless, because the barrier converts claims that were previously unverifiable hopes — "concurrent", "overlap" — into checked facts. Two delays were deliberately **kept** with stated reasons: one widens a *span*, which a barrier cannot express, and one holds a shared key's lock long enough for a collector to meet a contended candidate. `a_stuck_child_is_killed_at_its_deadline` is legitimately time-dependent — the deadline *is* its subject — and is untouched.
+
+**The new checks can say no, proven rather than asserted.** Four deliberate breaks, each reverted: a no-op rendezvous fails in 0.016 s naming how many of how many children arrived; parking without announcing fails at the deadline with children reaped and no orphans; disarming the child reproduces the original gate failure exactly; and removing the post-lock recheck yields four compiles where a serial execution could only ever produce one — which is positive proof the barrier works, since it means all four children genuinely passed their lookup before any published.
+
+**Two-sided evidence.** 25 idle repeats and 20 under load pass; harness stress passes at 25×16 and 40×24 children under load. Restoring the base files and running the identical stress **failed on run 1**, so the flake reproduces at roughly 50% in that configuration and the fix survives both it and a harder load.
+
+**Nothing was weakened.** No assertion deleted, no test `#[ignore]`d, no retry loop, no conditional assertion. All 86 tests run with unchanged assertions.
+
+**One time bound remains and is correct.** `CHILD_DEADLINE = 30s` in `wait_bounded` bounds a hang and fails loud; no property is true *because* 30 s elapsed, which is the distinction that separates it from the margin removed here.

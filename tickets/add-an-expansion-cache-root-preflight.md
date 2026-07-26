@@ -1,7 +1,7 @@
 ---
 id: add-an-expansion-cache-root-preflight
 title: Add an expansion cache root preflight
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [define-supported-expansion-cache-filesystems, accept-the-tiler-cache-public-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/cache]
 shared_scopes: [contracts/navigation]
 paths: []
 tags: [cache, portability]
+claimed_from: todo
+assignee: agent-cache-preflight
+lease_expires_at: 1785047404
 ---
 The supported-filesystem contract states six properties a cache root must provide and decides **not** to refuse an unrecognized filesystem. That decision is derived, not a shortcut: no filesystem failure can produce a wrong artifact, so a refusal would make an optional accelerator a correctness dependency, would fail closed on every filesystem nobody enumerated, and would still not detect the case that motivates it.
 
