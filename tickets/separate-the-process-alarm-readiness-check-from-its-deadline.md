@@ -1,7 +1,7 @@
 ---
 id: separate-the-process-alarm-readiness-check-from-its-deadline
 title: Separate the process-alarm readiness check from the deadline it tests
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [remove-the-wall-clock-race-from-the-cache-kill-harness]
@@ -37,3 +37,24 @@ Command '[... 'spikes/extensions/run.py', '--self-test']' returned non-zero exit
 ## Closes when
 
 No assertion in the extension probe's self-test depends on work completing inside the window whose expiry is the thing being proven; the readiness check still fails when a child genuinely does not start, demonstrated by a deliberate break; every sibling deadline is classified as subject or budget; and the full gate passes under concurrent load, which is the condition that produced the failure.
+
+## Outcome
+
+**Fixed. The diagnosis above named the wrong timer — the second time in one session that this class was mis-diagnosed on first reading, which is itself the finding.**
+
+**Fact — the margin is `signal.setitimer(signal.ITIMER_REAL, 0.2)`, not `time.monotonic() + 5`.** The 5 s value is `run_command`'s own deadline and is generous. The window the readiness check actually raced is **200 milliseconds**, inside which a freshly spawned CPython interpreter had to boot, import three modules, and complete a `write_text`. On an idle machine that is comfortable; under seven concurrent Rust builds it is not, so the alarm fired first and the probe reported "child did not start" for a child that started and was merely slow.
+
+**Delivered — the alarm is armed from the child's own announcement.** `arm_alarm_once_started` polls for the announcement file and only then calls `setitimer(..., 0.05)`. The ordering the block depends on — child running, *then* alarm — becomes an observed fact rather than a margin. Polling is used deliberately rather than a synchronization primitive: the announcement is written by a separate process, and a file appearing is the only signal both sides already share.
+
+**The poll is unbounded on purpose, and that is what keeps the failure loud.** `run_command` already holds its own deadline, so a child that never announces surfaces there, with its own distinct message, instead of as an alarm this thread invents. Both assertions in the block survive: that the alarm interrupts a running child, and that the child got far enough to record its pid.
+
+**Measurement — the check can still say no.** Two deliberate breaks, each reverted:
+
+- Child never writes its pid → `overall timeout expired during process-alarm self-test`, exit 1. That message is *not* `extension-suite timeout`, so the `except` arm re-raises rather than accepting a timeout it did not mean.
+- Alarm never armed → identical loud failure, exit 1.
+
+**Measurement — the fix holds where the defect fired.** 5/5 consecutive passes idle; 3/3 under eight artificial spinners. The unfixed harness failed the full repository gate twice in a row under the session's real load.
+
+**Sibling classification.** The `time.monotonic() + N` deadlines at the `timeout self-test` (0.05 s) and `output-limit self-test` (5 s) are *subjects*, not budgets: each proves that its own expiry or limit fires, and no other assertion in either block depends on work completing inside the window. `require_time` and `overall_timeout_handler` are called directly with no child process. This block was the only one holding two assertions on one timer.
+
+**Recorded for the next occurrence.** Both instances of this class today were mis-diagnosed on first reading, and in the same direction: the timer named in the failure message was not the timer that caused it. The cache harness's stated mechanism was backwards, and this ticket blamed the wrong constant. The reliable move is to find *every* timer governing the failing block and ask which assertions each one bounds, rather than reading the nearest one.

@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tomllib
 from collections.abc import Callable
@@ -38,6 +39,20 @@ CLEANUP_REAP_SECONDS = 5.0
 
 class ProbeFailure(RuntimeError):
     """An extension experiment did not satisfy its explicit success predicate."""
+
+
+def arm_alarm_once_started(announcement: Path) -> None:
+    """Arms the overall-timeout alarm after `announcement` exists.
+
+    Polls rather than blocking on a primitive, because the announcement is
+    written by a separate process and a file appearing is the only signal both
+    sides already share. The poll is unbounded on purpose: the caller holds a
+    deadline of its own, so a child that never announces surfaces there as its
+    own distinct failure rather than as an alarm this thread invents.
+    """
+    while not announcement.is_file():
+        time.sleep(0.005)
+    signal.setitimer(signal.ITIMER_REAL, 0.05)
 
 
 def overall_timeout_handler(_signum: int, _frame: object) -> None:
@@ -736,7 +751,22 @@ def self_test() -> None:
     with tempfile.TemporaryDirectory(prefix="tiler-extension-alarm-") as scratch:
         child_pid = Path(scratch) / "pid"
         signal.signal(signal.SIGALRM, overall_timeout_handler)
-        signal.setitimer(signal.ITIMER_REAL, 0.2)
+        # Arm the alarm from the child's own announcement rather than from a
+        # fixed delay. Two assertions live in this block -- that the alarm
+        # interrupts a running child, and that the child got far enough to
+        # record its pid -- and a fixed itimer made the second one race the
+        # first: a fresh interpreter must boot and write a file inside the
+        # window, which a loaded machine does not guarantee. Observing the
+        # announcement first makes the ordering a fact instead of a margin.
+        # If the child never starts, nothing arms the alarm, `run_command`'s
+        # own deadline fires with a different message, and the `except` arm
+        # below re-raises it rather than accepting a timeout it did not mean.
+        alarm = threading.Thread(
+            target=arm_alarm_once_started,
+            args=(child_pid,),
+            daemon=True,
+        )
+        alarm.start()
         try:
             run_command(
                 "process-alarm self-test",
