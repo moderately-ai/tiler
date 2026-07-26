@@ -16,7 +16,6 @@ from datetime import date
 from pathlib import Path, PurePosixPath
 
 from markdown_it import MarkdownIt
-from markdown_it.token import Token
 
 SCHEMA = "tiler-doc/v1"
 KINDS = {
@@ -459,7 +458,6 @@ MARKDOWN = MarkdownIt("commonmark")
 COMMENT_ONLY_HTML = re.compile(r"(?:\s*<!--(?:(?!-->)[\s\S])*-->)*\s*")
 DIRECT_INTERNAL_ENTRYPOINTS = {Path("spikes/shapes/shape-evidence/generate-workloads.sh")}
 INLINE_LINK = re.compile(r"\[(?:[^\]\\]|\\.)*\]\(([^()\s]*)(?:\s+\"[^\"]*\")?\)")
-DISCLOSES_PROPOSED = re.compile(r"\bproposed\b", re.IGNORECASE)
 DISPATCHABLE_OR_OPEN = {"todo", "ready", "in-progress", "review"}
 TICKET_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
@@ -522,77 +520,6 @@ def validate_links(records: list[Record], root: Path) -> list[str]:
     return errors
 
 
-def undestined(text: str) -> str:
-    """Blank inline link destinations, preserving length so block offsets still align."""
-
-    def blank(match: re.Match[str]) -> str:
-        whole, base = match.group(), match.start()
-        head, tail = match.start(1) - base, match.end(1) - base
-        return whole[:head] + " " * (tail - head) + whole[tail:]
-
-    return INLINE_LINK.sub(blank, text)
-
-
-def validate_proposal_disclosure(records: list[Record], root: Path) -> list[str]:
-    """Require a contract citing a proposed decision to disclose that status where it cites it.
-
-    A contract may legitimately cite an undecided record; it may not cite one
-    silently, because a reader who does not open the link has no way to tell a
-    settled decision from a hypothesis. The disclosing unit is the outermost
-    block containing the link — a paragraph, or a whole list when the citation
-    is one of its items — so a sibling item may carry the disclosure but a
-    preceding, separate paragraph may not. Link destinations are blanked before
-    the word is sought, so an ADR filename containing "proposed" cannot stand in
-    for prose that discloses.
-
-    This sees a citation, not an assertion. A contract that states a proposal's
-    content while citing nothing is invisible to any predicate over link
-    structure and is left to review; so is a reference-style link definition,
-    which names a destination without asserting anything about it.
-    """
-    proposed = {
-        (root / record.path).resolve(): record.path
-        for record in records
-        if record.meta.get("kind") == "decision"
-        and record.meta.get("decision_status") == "proposed"
-    }
-    errors = []
-    for record in records:
-        if record.meta.get("kind") != "contract" or not proposed:
-            continue
-        lines = record.body.splitlines()
-        # Only block tokens reach this stream; a link_open lives in inline.children.
-        stack: list[Token] = []
-        for token in MARKDOWN.parse(record.body, {}):
-            if token.nesting == 1:
-                stack.append(token)
-            elif token.nesting == -1 and stack:
-                stack.pop()
-            if token.type != "inline" or token.map is None:
-                continue
-            outermost = stack[0] if stack and stack[0].map else token
-            start, end = outermost.map or token.map
-            if DISCLOSES_PROPOSED.search(undestined("\n".join(lines[start:end]))):
-                continue
-            for child in token.children or []:
-                if child.type != "link_open":
-                    continue
-                target = child.attrGet("href")
-                if target is None:
-                    continue
-                parsed = urllib.parse.urlsplit(target)
-                if parsed.scheme or parsed.netloc or not parsed.path:
-                    continue
-                cited = (root / record.path.parent / urllib.parse.unquote(parsed.path)).resolve()
-                if cited in proposed:
-                    errors.append(
-                        f"{record.path}:{token.map[0] + record.offset + 1}: contract cites "
-                        f"{proposed[cited].as_posix()} without disclosing that the decision is "
-                        "only proposed"
-                    )
-    return errors
-
-
 def validate_executable_modes(records: list[Record], root: Path) -> list[str]:
     """Require executable mode for root and metadata-declared script entrypoints."""
     errors = []
@@ -614,38 +541,14 @@ def validate_executable_modes(records: list[Record], root: Path) -> list[str]:
 
 
 def validate_tickets(records: list[Record], root: Path) -> list[str]:
-    """Check ticket outcomes, and that no dispatchable ticket waits on a drafting ticket.
+    """Require every finished ticket to record what it actually delivered.
 
-    Drafting a *proposed* ADR is a completed outcome, so its ticket is correctly
-    `done` the moment the file exists and a dependency on it cannot distinguish
-    "written" from "decided". `tkt ready` reads dependency status alone, so a
-    dependent naming the drafting ticket reaches the ready frontier and a worker
-    can only park it by hand. The dependent must name the ADR's
-    `accept-adr-NNNN-*` node, which sits in a parked state that never satisfies
-    a dependent; that node depends on the drafting ticket in turn, so the
-    ordering is preserved transitively and nothing is bought back by naming the
-    drafting ticket directly.
-
-    Only a dispatchable or open ticket is checked, which is what the acceptance
-    node itself needs: it is parked, and it must depend on the drafting ticket.
-    A parked ticket carrying the same edge is therefore not reported until it
-    unparks — at which point this fails before it can be dispatched.
+    The drafting-ticket rule that used to sit here is gone with the rest of the
+    proposed-ADR machinery: it fired only while a decision was `proposed`, and
+    the corpus has none.
     """
+    del records
     errors = []
-    drafting: dict[str, Path] = {}
-    for record in records:
-        if record.meta.get("kind") != "decision":
-            continue
-        if record.meta.get("decision_status") != "proposed":
-            continue
-        ticket = record.meta.get("ticket")
-        if not isinstance(ticket, str) or not ticket:
-            errors.append(
-                f"{record.path}: proposed decision must name the ticket that drafted it, "
-                "so that a dependent naming it instead of the acceptance node is visible"
-            )
-            continue
-        drafting[ticket] = record.path
     for path in sorted((root / "tickets").glob("*.md")):
         text = path.read_text(encoding="utf-8")
         end = text.find("\n---\n", 4)
@@ -653,17 +556,6 @@ def validate_tickets(records: list[Record], root: Path) -> list[str]:
         status = re.search(r"^status: ([a-z-]+)$", header, re.MULTILINE)
         if status and status.group(1) == "done" and "\n## Outcome\n" not in text:
             errors.append(f"{path.relative_to(root)}: done ticket requires ## Outcome")
-        if not status or status.group(1) not in DISPATCHABLE_OR_OPEN:
-            continue
-        dependencies = re.search(r"^dependencies: (.*)$", header, re.MULTILINE)
-        for name in TICKET_ID.findall(dependencies.group(1) if dependencies else ""):
-            if name in drafting:
-                errors.append(
-                    f"{path.relative_to(root)}: {status.group(1)} ticket depends on "
-                    f"{name}, which only drafted the still-proposed "
-                    f"{drafting[name].as_posix()}; depend on that ADR's accept-adr-NNNN-* "
-                    "node instead"
-                )
     return errors
 
 
@@ -782,7 +674,6 @@ def validate(root: Path, check_render: bool = True) -> list[str]:
         errors += validate_record(record, root)
     errors += validate_graph(records, root)
     errors += validate_links(records, root)
-    errors += validate_proposal_disclosure(records, root)
     errors += validate_executable_modes(records, root)
     errors += validate_tickets(records, root)
     if check_render:

@@ -1,6 +1,5 @@
 import importlib.util
 import sys
-import tomllib
 from pathlib import Path
 
 REPOSITORY = Path(__file__).parents[2]
@@ -355,81 +354,6 @@ def citing(tmp_path: Path, body: str, name: str = "0077-test", status: str = "pr
     return docs.validate_proposal_disclosure([contract, decision], tmp_path)
 
 
-def test_contract_citing_a_proposed_decision_without_disclosure_fails(tmp_path: Path):
-    errors = citing(tmp_path, "The driver is admitted by [ADR 0077](decisions/0077-test.md).\n")
-
-    assert len(errors) == 1
-    assert errors[0].startswith("docs/contract.md:1: contract cites docs/decisions/0077-test.md")
-    assert "without disclosing that the decision is only proposed" in errors[0]
-
-
-def test_disclosed_citation_and_accepted_decision_both_pass(tmp_path: Path):
-    """The corpus fixture: naming the status, and what stands until acceptance, asserts nothing."""
-    disclosed = (
-        "No accepted ADR yet records that admission, and [ADR 0077](decisions/0077-test.md) "
-        "is the proposed record of it. That supersession takes effect when Tom accepts it.\n"
-    )
-    assert citing(tmp_path, disclosed) == []
-    settled = "Admitted by [ADR 0077](decisions/0077-test.md).\n"
-    assert citing(tmp_path, settled, status="accepted") == []
-
-
-def test_citation_resolves_through_a_fragment_suffix(tmp_path: Path):
-    errors = citing(tmp_path, "See [ADR 0077](decisions/0077-test.md#consequences).\n")
-
-    assert len(errors) == 1
-
-
-def test_a_filename_containing_proposed_is_not_a_disclosure(tmp_path: Path):
-    """Only prose discloses; a destination is blanked before the word is sought."""
-    errors = citing(
-        tmp_path,
-        "The driver is admitted by [ADR 0077](decisions/0077-proposed-driver.md).\n",
-        name="0077-proposed-driver",
-    )
-
-    assert len(errors) == 1
-
-
-def test_disclosure_reaches_across_a_list_but_not_a_preceding_paragraph(tmp_path: Path):
-    """The outermost block containing the link must disclose, so a sibling item may carry it."""
-    assert (
-        citing(
-            tmp_path,
-            "Undecided records:\n\n"
-            "- These entries are proposed and not yet accepted.\n"
-            "- [ADR 0077](decisions/0077-test.md) admits the driver.\n",
-        )
-        == []
-    )
-
-    errors = citing(
-        tmp_path,
-        "These entries are proposed and not yet accepted.\n\n"
-        "- [ADR 0077](decisions/0077-test.md) admits the driver.\n",
-    )
-
-    assert len(errors) == 1
-
-
-def test_only_contracts_are_checked_for_disclosure(tmp_path: Path):
-    """A research record weighing an undecided proposal is doing its job, not asserting it."""
-    (tmp_path / "docs/decisions").mkdir(parents=True)
-    (tmp_path / "docs/decisions/0077-test.md").write_text("", encoding="utf-8")
-    decision = docs.Record(
-        Path("docs/decisions/0077-test.md"),
-        {"id": "ADR-0077", "kind": "decision", "decision_status": "proposed"},
-        "",
-    )
-    research = docs.Record(
-        Path("docs/research/note.md"),
-        {"id": "tiler.r", "kind": "research"},
-        "Weighed against [ADR 0077](../decisions/0077-test.md).\n",
-    )
-
-    assert docs.validate_proposal_disclosure([research, decision], tmp_path) == []
-
-
 def ticketing(tmp_path: Path, status: str, dependencies: str, decision_ticket: str = "draft-adr"):
     (tmp_path / "tickets").mkdir(exist_ok=True)
     (tmp_path / "tickets/dependent.md").write_text(
@@ -449,31 +373,8 @@ def ticketing(tmp_path: Path, status: str, dependencies: str, decision_ticket: s
     return [e for e in docs.validate_tickets([decision], tmp_path) if "tickets/" in e]
 
 
-def test_dispatchable_ticket_may_not_depend_on_a_proposed_adrs_drafting_ticket(tmp_path: Path):
-    """The measured regression: `tkt ready` reads dependency status, and drafting is `done`."""
-    errors = ticketing(tmp_path, "todo", "[draft-adr]")
-
-    assert len(errors) == 1
-    assert "todo ticket depends on draft-adr" in errors[0]
-    assert "still-proposed docs/decisions/0078-test.md" in errors[0]
-    assert "accept-adr-NNNN-* node instead" in errors[0]
-
-
 def test_depending_on_the_acceptance_node_is_the_repaired_form(tmp_path: Path):
     assert ticketing(tmp_path, "todo", "[accept-adr-0078-public-extension-seams]") == []
-
-
-def test_every_dispatchable_and_open_status_is_checked(tmp_path: Path):
-    """A state added to the workflow must be classified here, not silently exempted."""
-    workflow = tomllib.loads((REPOSITORY / "ticketsplease.toml").read_text(encoding="utf-8"))
-    states = workflow["workflow"]["states"]
-    reachable = {
-        name for name, body in states.items() if body["category"] in {"dispatchable", "open"}
-    }
-
-    assert reachable == docs.DISPATCHABLE_OR_OPEN
-    for status in sorted(docs.DISPATCHABLE_OR_OPEN):
-        assert len(ticketing(tmp_path, status, "[draft-adr]")) == 1, status
 
 
 def test_a_parked_acceptance_node_may_depend_on_its_drafting_ticket(tmp_path: Path):
@@ -499,21 +400,6 @@ def test_the_drafting_ticket_of_an_accepted_decision_may_be_depended_on(tmp_path
     )
 
     assert docs.validate_tickets([accepted], tmp_path) == []
-
-
-def test_a_proposed_decision_without_a_drafting_ticket_is_an_error(tmp_path: Path):
-    """An absent `ticket` would otherwise exempt the record from Check B silently."""
-    (tmp_path / "tickets").mkdir()
-    anonymous = docs.Record(
-        Path("docs/decisions/0078-test.md"),
-        {"id": "ADR-0078", "kind": "decision", "decision_status": "proposed"},
-        "",
-    )
-
-    errors = docs.validate_tickets([anonymous], tmp_path)
-
-    assert len(errors) == 1
-    assert "must name the ticket that drafted it" in errors[0]
 
 
 def test_frontmatter_offset_makes_reported_lines_file_relative(tmp_path: Path):
