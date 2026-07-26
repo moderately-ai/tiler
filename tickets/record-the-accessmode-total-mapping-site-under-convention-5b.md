@@ -2,7 +2,7 @@
 id: record-the-accessmode-total-mapping-site-under-convention-5b
 title: Record the AccessMode total-mapping site under ADR 0074 convention 5b
 status: todo
-priority: p2
+priority: p3
 dependencies: []
 related: [implement-boundary-property-model, harden-public-enums-non-exhaustive]
 scopes: [contracts/decisions]

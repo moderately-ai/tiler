@@ -2,7 +2,7 @@
 id: correct-the-artifact-identity-post-compilation-claim
 title: Correct the claim that artifact identity needs compiled bytes
 status: todo
-priority: p1
+priority: p3
 dependencies: []
 related: [derive-the-pre-compilation-artifact-program-subject, accept-the-tiler-cache-public-boundary]
 scopes: [contracts/decisions, implementation/cache]

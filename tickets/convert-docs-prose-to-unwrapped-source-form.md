@@ -1,7 +1,7 @@
 ---
 id: convert-docs-prose-to-unwrapped-source-form
 title: Convert the documentation corpus to unwrapped prose source form
-status: deferred
+status: closed
 priority: p3
 dependencies: []
 related: [record-prose-wrapping-convention-for-docs]
@@ -9,6 +9,7 @@ scopes: [contracts/artifacts, contracts/decisions, contracts/foundation, contrac
 shared_scopes: []
 paths: []
 tags: [documentation, conventions]
+closed_reason: wontdo
 ---
 `docs/document-metadata.md` records unwrapped prose as the convention and accepts a mixed corpus as the transitional state: a paragraph converts when it is edited, and an untouched document keeps whatever form it has. That policy is deliberately gradual, and this ticket is the alternative it declines to take today. Do not start it without Tom accepting the trade-off below.
 
@@ -53,3 +54,11 @@ EOF
 ## Outcome
 
 Not started.
+
+## Closed
+
+A rewrite of roughly 96% of the documentation corpus, across 29 declared
+scopes, for no change in what any document says. It is also a guaranteed
+conflict surface for every branch open at the time. The convention stays as
+`docs/document-metadata.md` records it -- a paragraph converts when it is
+edited -- which reaches the same end state without a flag day.

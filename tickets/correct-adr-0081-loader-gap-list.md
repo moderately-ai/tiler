@@ -2,7 +2,7 @@
 id: correct-adr-0081-loader-gap-list
 title: Correct ADR 0081's loader gap list against the projected dispatch record
 status: todo
-priority: p1
+priority: p3
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record, expose-the-dispatch-record-on-a-decoded-artifact, carry-reconstructable-kernel-programs-in-the-neutral-envelope, correct-artifact-abi-reconstruction-ownership]
 scopes: [contracts/decisions]

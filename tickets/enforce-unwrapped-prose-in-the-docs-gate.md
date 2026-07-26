@@ -1,7 +1,7 @@
 ---
 id: enforce-unwrapped-prose-in-the-docs-gate
 title: Enforce unwrapped prose in the documentation gate
-status: deferred
+status: closed
 priority: p3
 dependencies: [convert-docs-prose-to-unwrapped-source-form]
 related: [record-prose-wrapping-convention-for-docs]
@@ -9,6 +9,7 @@ scopes: [contracts/navigation]
 shared_scopes: []
 paths: []
 tags: [documentation, conventions, tooling]
+closed_reason: wontdo
 ---
 `docs/document-metadata.md` records that no mechanical check enforces the prose-wrapping convention, and states why: the check that expresses the rule would fail on most of the corpus today.
 
@@ -23,3 +24,10 @@ This is blocked on the conversion rather than merely sequenced after it, because
 ## Outcome
 
 Not started.
+
+## Closed
+
+Blocked on a corpus-wide conversion that is itself closed, and the check it
+proposed is prose-shape policing of the kind the documentation gate has just
+been trimmed of. Wrapping is a convention; a reviewer sees it, and a gate that
+fires on honest prose gets argued with rather than obeyed.
