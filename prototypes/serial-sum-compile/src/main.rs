@@ -50,6 +50,7 @@
 
 mod bundle;
 mod payload;
+mod sidecar;
 mod target;
 
 use std::fmt;
@@ -303,21 +304,25 @@ fn run() -> Result<(), ProducerError> {
         decoded.identity().as_bytes().len(),
     );
 
+    // Built before either file is written, so a sidecar the artifact layer
+    // refuses stops the publication instead of leaving an envelope on disk with
+    // no record describing it.
+    let sidecar_bytes = sidecar::encoded(&artifact, &program).map_err(ProducerError::Sidecar)?;
+
     // Published only after the round trip above proved these exact bytes decode
     // and re-encode to themselves. Writing first and validating afterwards would
     // leave a consumer able to read an envelope this producer had not accepted.
-    let identity_path = identity_sidecar(&path);
-    let identity = artifact.canonical_identity();
+    let sidecar_path = proof_sidecar(&path);
     std::fs::write(&path, &bytes)
         .map_err(|cause| ProducerError::Write(path.display().to_string(), cause))?;
-    std::fs::write(&identity_path, identity.as_bytes())
-        .map_err(|cause| ProducerError::Write(identity_path.display().to_string(), cause))?;
+    std::fs::write(&sidecar_path, &sidecar_bytes)
+        .map_err(|cause| ProducerError::Write(sidecar_path.display().to_string(), cause))?;
     println!(
         "wrote {} ({} bytes) and {} ({} bytes)",
         path.display(),
         bytes.len(),
-        identity_path.display(),
-        identity.as_bytes().len(),
+        sidecar_path.display(),
+        sidecar_bytes.len(),
     );
     Ok(())
 }
@@ -328,9 +333,9 @@ fn run() -> Result<(), ProducerError> {
 /// cannot collide with each other and the pair stays obviously one unit on disk.
 /// Shared with `prototypes/serial-sum-run`, which derives the same name from the
 /// path it is given.
-fn identity_sidecar(envelope: &std::path::Path) -> PathBuf {
+fn proof_sidecar(envelope: &std::path::Path) -> PathBuf {
     let mut name = envelope.as_os_str().to_owned();
-    name.push(".identity");
+    name.push(".proof");
     PathBuf::from(name)
 }
 
@@ -356,6 +361,7 @@ enum ProducerError {
     Encode(ArtifactCodecFailure),
     Decode(ArtifactCodecFailure),
     UnstableEncoding,
+    Sidecar(sidecar::SidecarError),
 }
 
 impl fmt::Display for ProducerError {
@@ -388,6 +394,7 @@ impl fmt::Display for ProducerError {
             Self::UnstableEncoding => {
                 formatter.write_str("re-encoding the decoded envelope did not reproduce its bytes")
             }
+            Self::Sidecar(cause) => write!(formatter, "{cause}"),
         }
     }
 }

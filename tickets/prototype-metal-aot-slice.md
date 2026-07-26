@@ -1,14 +1,17 @@
 ---
 id: prototype-metal-aot-slice
 title: Produce and validate the serial Sum Metal AOT bundle
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prototype-metal-bundle-assembly, prototype-proof-case-sidecar, promote-the-proof-sidecar-facade]
 related: []
-scopes: [implementation/metal, implementation/artifact, research/apple-targets, research/artifacts, implementation/metal-aot]
+scopes: [implementation/metal, implementation/artifact, research/apple-targets, research/artifacts, implementation/metal-aot, implementation/runtime]
 shared_scopes: [project/tickets, contracts/artifacts, contracts/numerics, implementation/cargo-lock]
 paths: []
 tags: [implementation, prototype, metal, vertical-slice]
+claimed_from: todo
+assignee: integrator
+lease_expires_at: 1785093620
 ---
 Integration gate only: wire the already-implemented component capabilities into
 the non-published `serial-sum-compile` producer and prove the complete offline
