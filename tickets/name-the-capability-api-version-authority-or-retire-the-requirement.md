@@ -31,4 +31,4 @@ Do not add a field before answering. A slot every producer must fill with someth
 
 ## Closes when
 
-`docs/operation-extensions.md` either names an authority for a capability-API version and a compiler version, with the mismatch behaviour each implies, or records that the requirement is retired and what covers it instead; `docs/artifact-abi.md`'s selected-provider record agrees; any field added has a producer that can supply it; and `uv run --locked python scripts/check_repository.py` passes.
+`docs/operation-extensions.md` either names an authority for a capability-API version and a compiler version, with the mismatch behaviour each implies, or records that the requirement is retired and what covers it instead; `docs/artifact-abi.md`'s selected-provider record agrees; any field added has a producer that can supply it; and `make full` passes.

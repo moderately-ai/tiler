@@ -36,4 +36,4 @@ Eliminate before presenting. A bound picked in `tiler-artifact` with no authorit
 
 ## Closes when
 
-A target-profile descriptor is bounded by a constant its declaring authority publishes and enforces where the descriptor is built; `crates/tiler-compiler/src/session.rs`'s literal `1_024` is gone or is a reference to that constant; `TargetProfileDescriptorDigest`'s documentation no longer calls its bound provisional; and `uv run --locked python scripts/check_repository.py` passes.
+A target-profile descriptor is bounded by a constant its declaring authority publishes and enforces where the descriptor is built; `crates/tiler-compiler/src/session.rs`'s literal `1_024` is gone or is a reference to that constant; `TargetProfileDescriptorDigest`'s documentation no longer calls its bound provisional; and `make full` passes.

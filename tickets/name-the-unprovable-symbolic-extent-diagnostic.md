@@ -20,4 +20,4 @@ tags: [implementation, indexing, diagnostics]
 
 ## Closes when
 
-An unprovable symbolic extent reports a distinct diagnostic naming the dimension and the symbol whose bound is missing, the existing refusal taxonomy is preserved, a test pairs it with the interval-proved neighbour, and `uv run --locked python scripts/check_repository.py` passes.
+An unprovable symbolic extent reports a distinct diagnostic naming the dimension and the symbol whose bound is missing, the existing refusal taxonomy is preserved, a test pairs it with the interval-proved neighbour, and `make full` passes.

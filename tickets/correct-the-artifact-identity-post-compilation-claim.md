@@ -26,4 +26,4 @@ Three checked-in statements assert something the code disproves, and they were t
 
 ## Closes when
 
-All three sites state what the payload digest is derived from, with the check that proves it; no site claims artifact identity requires an object; the ADR's decision status and rationale are untouched; and `uv run --locked python scripts/docs.py render` and the full gate pass.
+All three sites state what the payload digest is derived from, with the check that proves it; no site claims artifact identity requires an object; the ADR's decision status and rationale are untouched; any catalog block quoting the record is updated by hand in the same change; and `make full` passes.

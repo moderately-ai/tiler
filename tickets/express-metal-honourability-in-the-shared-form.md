@@ -43,4 +43,4 @@ Do not pick by convenience. Whichever siting is chosen must keep the fact declar
 
 ## Closes when
 
-The Metal subnormal fact is expressed as a per-dimension honourability declaration in the shared form; `feasibility` assesses it before emission and rejects with the shape `compose-numerical-honourability-and-retire-the-strict-boolean` defines — naming the dimension, the required behaviour, the declared target behaviour, and the declaring profile's versioned identity; the siting is recorded in ADR 0076; and `uv run --locked python scripts/check_repository.py` passes.
+The Metal subnormal fact is expressed as a per-dimension honourability declaration in the shared form; `feasibility` assesses it before emission and rejects with the shape `compose-numerical-honourability-and-retire-the-strict-boolean` defines — naming the dimension, the required behaviour, the declared target behaviour, and the declaring profile's versioned identity; the siting is recorded in ADR 0076; and `make full` passes.

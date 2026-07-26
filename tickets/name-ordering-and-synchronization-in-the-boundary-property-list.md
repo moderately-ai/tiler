@@ -25,4 +25,4 @@ lease_expires_at: 1785042783
 
 ## Closes when
 
-The list either names ordering and synchronization or states why they are excluded; the open-versus-closed question is answered normatively; each named dimension's maturity is not overstated; and `uv run --locked python scripts/docs.py render` and the full gate pass.
+The list either names ordering and synchronization or states why they are excluded; the open-versus-closed question is answered normatively; each named dimension's maturity is not overstated; any catalog block quoting the record is updated by hand in the same change; and `make full` passes.

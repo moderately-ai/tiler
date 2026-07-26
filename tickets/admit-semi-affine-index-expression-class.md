@@ -34,4 +34,4 @@ The consequence is mechanical and load-bearing: the positivity query must read t
 
 ## Closes when
 
-`IndexExprClass` admits `SemiAffine` without a breaking public change, a symbolic coefficient and a symbolic divisor are expressible and refused explicitly when their positivity is not proved from semantic constraints alone, a pass that cannot analyze the class declines rather than approximating it, the `docs/ir.md` pointer is current, and `uv run --locked python scripts/check_repository.py` passes.
+`IndexExprClass` admits `SemiAffine` without a breaking public change, a symbolic coefficient and a symbolic divisor are expressible and refused explicitly when their positivity is not proved from semantic constraints alone, a pass that cannot analyze the class declines rather than approximating it, the `docs/ir.md` pointer is current, and `make full` passes.

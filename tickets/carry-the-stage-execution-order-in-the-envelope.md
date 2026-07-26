@@ -26,4 +26,4 @@ Decide and encode what a reader needs in order to sequence a multi-stage variant
 
 ## Closes when
 
-A consumer holding only encoded bytes can sequence a multi-stage variant's entries and name the dependency each edge rests on; `tiler.artifact.feature.multi-stage-program` is either supported or replaced by a key naming what actually remains unsupported; the refusal this build relies on is removed or restated as a narrower one with its reason; `docs/artifact-abi.md`'s required-feature table and item 3 of "Where the implemented profile is narrower than this contract" are updated to match; and `uv run --locked python scripts/check_repository.py` passes.
+A consumer holding only encoded bytes can sequence a multi-stage variant's entries and name the dependency each edge rests on; `tiler.artifact.feature.multi-stage-program` is either supported or replaced by a key naming what actually remains unsupported; the refusal this build relies on is removed or restated as a narrower one with its reason; `docs/artifact-abi.md`'s required-feature table and item 3 of "Where the implemented profile is narrower than this contract" are updated to match; and `make full` passes.

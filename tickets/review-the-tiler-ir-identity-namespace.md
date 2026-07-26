@@ -22,4 +22,4 @@ tags: [implementation, ir, decisions, identity]
 
 ## Closes when
 
-Either an accepted ADR places the canonical identity framing where it now lives with its public contract stated, or the namespace is narrowed and the decision recorded. `uv run --locked python scripts/check_repository.py` passes.
+Either an accepted ADR places the canonical identity framing where it now lives with its public contract stated, or the namespace is narrowed and the decision recorded. `make full` passes.

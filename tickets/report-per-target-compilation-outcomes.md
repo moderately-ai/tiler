@@ -29,4 +29,4 @@ The shape is a public-boundary change and is Tom's to accept.
 
 ## Closes when
 
-A compilation declaring several target profiles reports each target's outcome separately, a whole-compilation refusal stays distinguishable from a per-target one, a test covers a request in which one target succeeds and another is refused, and `uv run --locked python scripts/check_repository.py` passes.
+A compilation declaring several target profiles reports each target's outcome separately, a whole-compilation refusal stays distinguishable from a per-target one, a test covers a request in which one target succeeds and another is refused, and `make full` passes.

@@ -150,4 +150,4 @@ Recorded rather than escalated, under Tom's standing instruction to resolve rath
 
 The request itself is still not exposed — `compile_governed` names the governed profile rather than letting a caller assemble a `CompilationRequest`, which ADR 0069 specifies and which the bounded profile cannot yet honour. That remains this ticket's stated gap and is unaffected by the seven answers.
 
-`uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py` pass.
+Any catalog block quoting a record this work changes is updated by hand in the same change, and `make full` passes.

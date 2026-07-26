@@ -30,4 +30,4 @@ Rewrite that bullet against the code, keeping the `partial` status honest rather
 
 ## Closes when
 
-No sentence in either record states a capability the code has as absent, or names a `done` ticket as a present owner; both records' `decision_status` and rationale are untouched; and `uv run --locked python scripts/docs.py render` and `uv run --locked python scripts/check_repository.py` pass.
+No sentence in either record states a capability the code has as absent, or names a `done` ticket as a present owner; both records' `decision_status` and rationale are untouched; any catalog block quoting either record is updated by hand in the same change; and `make full` passes.

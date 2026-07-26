@@ -24,4 +24,4 @@ ADR 0074 convention 5b governs public enums that are exhaustively matched from o
 
 ## Closes when
 
-The site is enumerated in ADR 0074, the must-not-gain-`#[non_exhaustive]` reason is stated where a future editor will see it, and `uv run --locked python scripts/docs.py render` and the full gate pass.
+The site is enumerated in ADR 0074, the must-not-gain-`#[non_exhaustive]` reason is stated where a future editor will see it, any catalog block quoting ADR 0074 is updated by hand in the same change, and `make full` passes.

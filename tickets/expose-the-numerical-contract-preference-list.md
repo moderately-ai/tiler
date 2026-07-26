@@ -20,7 +20,7 @@ tags: [implementation, numerics, api]
 
 ## Closes when
 
-Either the public boundary gains a reviewed way to state an ordered preference and both `#[allow(dead_code)]` attributes are removed, or ADR 0076's open question is settled the other way and the crate-internal list is withdrawn with the record amended to say so. `uv run --locked python scripts/check_repository.py` passes.
+Either the public boundary gains a reviewed way to state an ordered preference and both `#[allow(dead_code)]` attributes are removed, or ADR 0076's open question is settled the other way and the crate-internal list is withdrawn with the record amended to say so. `make full` passes.
 
 ## Decision — Tom, 2026-07-25
 

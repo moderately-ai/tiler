@@ -37,4 +37,4 @@ Whoever takes this should build the intermediate-role fixture the artifact crate
 
 ## Closes when
 
-A binding may address a partial window, its offset is carried and proven against the packaged program, `PartialBindingView` is gone, `AliasedInternalBinding` has a regression test, and `uv run --locked python scripts/check_repository.py` passes.
+A binding may address a partial window, its offset is carried and proven against the packaged program, `PartialBindingView` is gone, `AliasedInternalBinding` has a regression test, and `make full` passes.

@@ -26,7 +26,7 @@ Changing the stage coverage type is a public-boundary change in `tiler_ir::progr
 
 ## Closes when
 
-A verified kernel program names the refinement identity behind each covered occurrence, program identity separates two programs that differ only in which verified index region proves a stage, a recorded proof gap stays distinguishable from a refinement, and `uv run --locked python scripts/check_repository.py` passes.
+A verified kernel program names the refinement identity behind each covered occurrence, program identity separates two programs that differ only in which verified index region proves a stage, a recorded proof gap stays distinguishable from a refinement, and `make full` passes.
 
 ## Scope finding 2026-07-25: this is not landable inside `implementation/ir` + `implementation/compiler`
 

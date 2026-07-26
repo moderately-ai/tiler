@@ -71,3 +71,11 @@ Ten mutation tests in `scripts/tests/test_rust_gate_integrity.py`, each against 
 ### Records updated
 
 ADR 0079's Consequences bullet naming this gap is struck through and replaced with a dated closure recording the predicate, the scan limits, and the mutation evidence; its Implementation boundary now names three of item 3's four conditions as review-only rather than four, because the `reason` condition's presence and stability are now checked (whether the reason is *true* is still review's, and no check can decide that); and the "Enumerate the admitted sites" alternative records that the split ticket landed it and which option it chose. `AGENTS.md`'s unsafe clause gains the pin. `implementation_status` stays `implemented`.
+
+## What this ticket delivered no longer exists — 2026-07-26
+
+`e197176` replaced the Python gate with the root `Makefile` and deleted `scripts/` entire, which took `ADMITTED_UNSAFE_SITES`, `validate_unsafe_site_pins`, and all ten mutation tests in `scripts/tests/test_rust_gate_integrity.py` with it. Everything recorded above is an accurate account of work that landed and was reviewed; none of it is in the tree now, and the gap this ticket closed is open again.
+
+The record was corrected in the same change that added this note: ADR 0079's Consequences bullet is un-struck and marked reopened, its Implementation boundary again names four review-only conditions rather than three, and the predicate rationale is preserved there for whoever re-implements the check. `AGENTS.md` already told the truth — it states that no check keeps an inventory of admitted sites — so the ADR and the working contract now agree.
+
+**The disposition of this ticket is Tom's**, and it is not a rename away from being satisfiable: its closing condition names a file that will not exist again under the same design, because the gate it extended is gone. Reopening it to re-implement the pin against the `Makefile`, or closing it as obsolete and letting ADR 0079's reopened gap carry the debt, are different decisions about how much of the deleted enforcement is worth rebuilding. Nothing in this landing decides that.

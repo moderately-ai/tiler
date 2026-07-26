@@ -31,4 +31,4 @@ Whatever is chosen, `tiler.artifact-program.v2` identity changes meaning if a va
 
 ## Closes when
 
-An artifact variant's applicability guard, launch geometry, and per-binding accessible ranges are provably the ones its bound `VerifiedKernelProgram` states; a variant that disagrees is rejected with a typed diagnostic naming the use site; the artifact-owned launch preconditions, deferred predicates, and routing rank are unaffected; any changed identity domain is bumped with its reason recorded at the site; and `uv run --locked python scripts/check_repository.py` passes.
+An artifact variant's applicability guard, launch geometry, and per-binding accessible ranges are provably the ones its bound `VerifiedKernelProgram` states; a variant that disagrees is rejected with a typed diagnostic naming the use site; the artifact-owned launch preconditions, deferred predicates, and routing rank are unaffected; any changed identity domain is bumped with its reason recorded at the site; and `make full` passes.

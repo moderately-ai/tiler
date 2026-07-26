@@ -38,7 +38,7 @@ ticket: "admit-the-device-free-runtime-validation-crate"
 
 ### 2. Its dependency closure is `[tiler-artifact]`, and that is decided rather than incidental
 
-**Decided.** `scripts/check_workspace.py`'s `EXPECTED_DEPENDENCIES` pins `"tiler-runtime": [tiler-artifact]`, so the closure is mechanically checked in the same table that pins `"tiler-metal-aot": []`.
+**Decided.** `scripts/check_workspace.py`'s `EXPECTED_DEPENDENCIES` pinned `"tiler-runtime": [tiler-artifact]`, so the closure was mechanically checked in the same table that pinned `"tiler-metal-aot": []`. **Correction — 2026-07-26:** `scripts/check_workspace.py` was deleted by `e197176`, which replaced the Python gate with the root `Makefile`, so neither closure is checked now. The decision stands; its enforcement is review.
 
 **Why each absent edge is absent.** `tiler-compiler` is absent because a loader that could reach the optimizer could rebuild a plan instead of validating the one it was handed, which is the boundary ADR 0056 created the crate split to enforce. A platform binding is absent because it would make a load undecidable without hardware, and the value of this crate is precisely that its whole contract is testable on a machine with no GPU. `tiler-ir` is absent as a *direct* edge because every type the loader names is an artifact-layer type; `tiler-artifact` links it transitively, and recording that as a direct edge would claim a dependency the source does not have.
 
@@ -50,7 +50,7 @@ ticket: "admit-the-device-free-runtime-validation-crate"
 
 ### 4. The admission moves five things together or it moves nothing
 
-**Decided.** A crate admission is complete when `Cargo.toml`'s `members` and `[workspace.dependencies]`, `scripts/check_workspace.py`'s four pinned tables, the [architecture contract](../architecture.md)'s accepted packaging profile, `ticketsplease.toml`'s `[scope_crates]` owner, and this record all agree. Landing a subset would leave the mechanically checked contract disagreeing with the accepted architecture text, which is the exact state ADR 0077 was written to end.
+**Decided.** A crate admission is complete when `Cargo.toml`'s `members` and `[workspace.dependencies]`, the [architecture contract](../architecture.md)'s accepted packaging profile, `ticketsplease.toml`'s `[scope_crates]` owner, and this record all agree. It also required `scripts/check_workspace.py`'s four pinned tables until `e197176` deleted that script; one of the five authorities this completeness rule named is simply gone, and the remaining four are checked by reading. Landing a subset would leave the mechanically checked contract disagreeing with the accepted architecture text, which is the exact state ADR 0077 was written to end.
 
 ## Consequences
 
