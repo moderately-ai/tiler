@@ -1,4 +1,10 @@
 [toolchain]
 channel = "nightly-2026-07-19"
 profile = "minimal"
-components = ["clippy", "rustfmt"]
+# `rust-src` is required for a *reproducible* diagnostic, not for building.
+# When the standard library sources are present rustc renders the offending
+# line from `core` inside a const-eval panic; when they are absent it emits the
+# note alone. The retained `trybuild` `.stderr` files are byte-compared, so
+# without this pin the same toolchain produces two different goldens and the
+# gate's verdict depends on which components a host happens to have installed.
+components = ["clippy", "rust-src", "rustfmt"]

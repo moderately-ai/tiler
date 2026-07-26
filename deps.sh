@@ -30,6 +30,27 @@ toml_string() {
     ' "$file"
 }
 
+toml_string_array() {
+    local file="$1" section="$2" key="$3"
+    awk -v section="$section" -v key="$key" '
+        BEGIN { active = (section == "") }
+        $0 == "[" section "]" { active = 1; next }
+        /^\[/ { active = 0 }
+        active && $0 ~ "^" key " = \\[" {
+            count += 1
+            value = $0
+            sub("^" key " = \\[", "", value)
+            sub("\\]$", "", value)
+            gsub("[\" ]", "", value)
+            gsub(",", " ", value)
+        }
+        END {
+            if (count != 1 || value == "") exit 1
+            print value
+        }
+    ' "$file"
+}
+
 toml_integer() {
     local file="$1" section="$2" key="$3"
     awk -v section="$section" -v key="$key" '
@@ -50,6 +71,10 @@ toml_integer() {
 
 REQUIRED_RUST_TOOLCHAIN="$(toml_string "$ROOT_DIR/rust-toolchain.toml" toolchain channel)" \
     || { printf 'invalid Rust toolchain authority\n' >&2; exit 1; }
+# Read rather than restate: the manifest is the sole component authority, and a
+# copy here would install a different set than the gate requires.
+REQUIRED_RUST_COMPONENTS="$(toml_string_array "$ROOT_DIR/rust-toolchain.toml" toolchain components)" \
+    || { printf 'invalid Rust component authority\n' >&2; exit 1; }
 uv_requirement="$(toml_string "$ROOT_DIR/pyproject.toml" tool.uv required-version)" \
     || { printf 'invalid uv version authority\n' >&2; exit 1; }
 if [[ "$uv_requirement" =~ ^==([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
@@ -214,11 +239,11 @@ ensure_rust() {
 
     if [ "$CHECK_ONLY" -eq 0 ]; then
         rustup toolchain install "$REQUIRED_RUST_TOOLCHAIN" \
-            --profile minimal --component clippy,rustfmt
+            --profile minimal --component "${REQUIRED_RUST_COMPONENTS// /,}"
     fi
     rustup toolchain list | grep -q "^${REQUIRED_RUST_TOOLCHAIN}" \
         || die "Rust $REQUIRED_RUST_TOOLCHAIN is not installed"
-    for component in clippy rustfmt; do
+    for component in $REQUIRED_RUST_COMPONENTS; do
         rustup component list --toolchain "$REQUIRED_RUST_TOOLCHAIN" --installed \
             | grep -qE "^${component}(-|$)" \
             || die "$component is missing for Rust $REQUIRED_RUST_TOOLCHAIN"

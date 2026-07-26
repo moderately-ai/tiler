@@ -311,16 +311,6 @@ FRAMING_SITE_CITATIONS: dict[tuple[str, str], tuple[str, str]] = {
         "one primitive pair",
     ),
     (
-        "crates/tiler-ir/src/semantic/identity.rs",
-        "fn encode_string(output: &mut Vec<u8>, value: &str)",
-    ): (
-        "a `&str`-to-`&[u8]` adapter, not a framing: `str::len` is already the UTF-8 "
-        "byte length and the body delegates to `push_slice`. Pinned rather than "
-        "exempted by shape, so a later edit that puts a real framing in this body is "
-        "a diff someone must look at.",
-        "not for a second framing rule",
-    ),
-    (
         "crates/tiler-cache/src/expansion/subject.rs",
         "fn push_count(bytes: &mut Vec<u8>, count: usize)",
     ): (
@@ -414,20 +404,6 @@ ALLOW_ATTRIBUTE_START = re.compile(r"^#!?\[allow\(")
 ATTRIBUTE_START = re.compile(r"^#!?\[")
 REASON_LITERAL = re.compile(r'\breason\s*=\s*"((?:[^"\\]|\\.)*)"')
 STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
-
-EXPECTED_TESTS = {
-    "tiler-ir": {
-        "index_region": "crates/tiler-ir/tests/index_region.rs",
-        "index_region_ui": "crates/tiler-ir/tests/index_region_ui.rs",
-        "shape_evidence": "crates/tiler-ir/tests/shape_evidence.rs",
-        "shape_evidence_ui": "crates/tiler-ir/tests/shape_evidence_ui.rs",
-        "typed_handles": "crates/tiler-ir/tests/typed_handles.rs",
-    },
-    "tiler-reference": {
-        "index_region_oracle": "crates/tiler-reference/tests/index_region_oracle.rs",
-        "serial_sum_slice": "crates/tiler-reference/tests/serial_sum_slice.rs",
-    },
-}
 
 
 def expected_member_manifest(name: str) -> dict[str, object]:
@@ -915,6 +891,28 @@ def item_documentation(lines: list[str], line_number: int) -> str:
     return " ".join(reversed(collected))
 
 
+def frames_in_body(code: str, parameters_end: int) -> bool:
+    """Whether the function body starting after `parameters_end` frames a length.
+
+    The sink-plus-payload signature is necessary but not sufficient. It is also
+    the shape of any ordinary serializer helper, and matching on it alone
+    rejected a `fn f(bytes: &mut Vec<u8>, value: &[u8])` whose whole body was
+    one `extend_from_slice` -- a function that frames nothing -- telling its
+    author to use a framing primitive instead. Every copy this check exists to
+    catch either converts a length to fixed-width bytes or reads one to hand to
+    something that does, so the body must show one of those two halves.
+
+    A declaration with no body (a trait method) frames nothing here; the
+    implementation is what gets scanned.
+    """
+    body_start = code.find("{", parameters_end)
+    terminator = code.find(";", parameters_end)
+    if body_start < 0 or (terminator >= 0 and terminator < body_start):
+        return False
+    body = code[body_start : balanced_end(code, body_start, "{", "}")]
+    return bool(FRAMING_LENGTH_SOURCE.search(body) or FRAMING_FIXED_WIDTH.search(body))
+
+
 def scan_length_framing_sites(
     root: Path, package_dirs: dict[str, str]
 ) -> tuple[dict[tuple[str, str], str], list[str], dict[str, int]]:
@@ -965,6 +963,8 @@ def scan_length_framing_sites(
                     continue
                 end = balanced_end(code, opening, "(", ")")
                 if not framing_payload(code[opening + 1 : end - 1]):
+                    continue
+                if not frames_in_body(code, end):
                     continue
                 line_number = code.count("\n", 0, keyword.start())
                 start = code.rfind("\n", 0, keyword.start()) + 1
@@ -1095,49 +1095,72 @@ def normalize_target(root: Path, raw: dict[str, object]) -> dict[str, object]:
     }
 
 
-def expected_targets(name: str) -> list[dict[str, object]]:
-    """Return the exact target set for one governed package."""
+def expected_primary_target(name: str) -> dict[str, object]:
+    """Return the one library or binary target a governed package must declare.
+
+    Only this target is pinned exactly. Its `doc`, `doctest`, and `test` flags
+    are the load-bearing part: switching any of them off silently removes a
+    whole class of checking from a package that still looks governed.
+    """
     package_dir = PACKAGE_DIRS[name]
     if name.startswith("tiler-prototype-"):
-        targets = [
-            {
-                "name": name,
-                "kind": ["bin"],
-                "crate_types": ["bin"],
-                "src_path": f"{package_dir}/src/main.rs",
-                "edition": "2024",
-                "doc": True,
-                "doctest": False,
-                "test": True,
-            }
-        ]
-    else:
-        targets = [
-            {
-                "name": name.replace("-", "_"),
-                "kind": ["lib"],
-                "crate_types": ["lib"],
-                "src_path": f"{package_dir}/src/lib.rs",
-                "edition": "2024",
-                "doc": True,
-                "doctest": True,
-                "test": True,
-            }
-        ]
-    for test_name, test_path in EXPECTED_TESTS.get(name, {}).items():
-        targets.append(
-            {
-                "name": test_name,
-                "kind": ["test"],
-                "crate_types": ["bin"],
-                "src_path": test_path,
-                "edition": "2024",
-                "doc": False,
-                "doctest": False,
-                "test": True,
-            }
-        )
-    return sorted(targets, key=lambda target: (str(target["kind"]), str(target["name"])))
+        return {
+            "name": name,
+            "kind": ["bin"],
+            "crate_types": ["bin"],
+            "src_path": f"{package_dir}/src/main.rs",
+            "edition": "2024",
+            "doc": True,
+            "doctest": False,
+            "test": True,
+        }
+    return {
+        "name": name.replace("-", "_"),
+        "kind": ["lib"],
+        "crate_types": ["lib"],
+        "src_path": f"{package_dir}/src/lib.rs",
+        "edition": "2024",
+        "doc": True,
+        "doctest": True,
+        "test": True,
+    }
+
+
+def validate_targets(name: str, actual: list[dict[str, object]] | None) -> list[str]:
+    """Check one package's targets without pinning which tests exist.
+
+    The set is deliberately open. Pinning it made adding an ordinary
+    `tests/*.rs` to a crate an edit to this file, which taxes the writing of
+    Tiler's own tests to catch nothing: a new integration test that Cargo
+    discovers and runs is not a defect, and the wall-of-dict rejection it
+    produced named no cause.
+
+    What is checked is what a reviewer cannot see: the primary target exactly,
+    and that no discovered integration test has been switched off. `test =
+    false` on a `tests/*.rs` target leaves the file present, compiling, and
+    never run -- which reads exactly like a passing suite.
+    """
+    if actual is None:
+        return [f"package.{name}.targets: metadata declared no target list"]
+    primary = expected_primary_target(name)
+    matched = [target for target in actual if target["kind"] == primary["kind"]]
+    if matched != [primary]:
+        return [f"package.{name}.targets: expected primary {primary!r}, got {matched!r}"]
+    errors = []
+    for target in actual:
+        if target["kind"] == primary["kind"]:
+            continue
+        if target["edition"] != "2024":
+            errors.append(
+                f"package.{name}.targets: {target['name']!r} declares edition "
+                f"{target['edition']!r}, not the workspace edition"
+            )
+        if target["kind"] == ["test"] and target["test"] is not True:
+            errors.append(
+                f"package.{name}.targets: integration test {target['name']!r} sets "
+                "test = false and is compiled but never run"
+            )
+    return errors
 
 
 def validate_manifest_contract(root: Path, metadata: dict[str, object]) -> list[str]:
@@ -1288,11 +1311,7 @@ def validate_manifest_contract(root: Path, metadata: dict[str, object]) -> list[
             if isinstance(raw_targets, list)
             else None
         )
-        target_contract = expected_targets(name)
-        if actual_targets != target_contract:
-            errors.append(
-                f"package.{name}.targets: expected {target_contract!r}, got {actual_targets!r}"
-            )
+        errors.extend(validate_targets(name, actual_targets))
     return errors
 
 
@@ -1328,8 +1347,14 @@ def configured_toolchain(root: Path) -> str:
         raise ValueError("rust-toolchain.toml: [toolchain] is missing")
     if toolchain.get("profile") != "minimal":
         raise ValueError("rust-toolchain.toml: profile must be 'minimal'")
-    if toolchain.get("components") != ["clippy", "rustfmt"]:
-        raise ValueError("rust-toolchain.toml: components must be ['clippy', 'rustfmt']")
+    # `rust-src` is load-bearing for the retained `trybuild` goldens rather than
+    # for compilation: its presence decides whether a const-eval panic renders
+    # the offending `core` line, so dropping it makes the byte-compared `.stderr`
+    # files depend on the host instead of on the pin.
+    if toolchain.get("components") != ["clippy", "rust-src", "rustfmt"]:
+        raise ValueError(
+            "rust-toolchain.toml: components must be ['clippy', 'rust-src', 'rustfmt']"
+        )
     channel = toolchain.get("channel")
     if not isinstance(channel, str) or not channel.startswith("nightly-"):
         raise ValueError("rust-toolchain.toml: channel must be an exact dated nightly")

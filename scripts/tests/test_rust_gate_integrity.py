@@ -157,18 +157,41 @@ def test_library_target_enablement_is_required(
     assert "package.tiler-artifact.targets" in errors_for(root, copied_metadata)
 
 
-def test_expected_integration_test_and_proof_binary_role_are_required(
+def test_which_integration_tests_exist_is_not_pinned(
     tmp_path: Path, metadata: dict[str, object]
 ) -> None:
+    """Adding or removing a `tests/*.rs` is ordinary work, not a contract change.
+
+    The set used to be pinned, which made writing a Tiler test an edit to this
+    checker and rejected it with a whole-target-list diff naming no cause.
+    Cargo discovers these targets and runs them; a new one is not a defect.
+    """
+    root, copied_metadata = contract_copy(tmp_path, metadata)
+    ir = next(package for package in copied_metadata["packages"] if package["name"] == "tiler-ir")
+    ir["targets"] = [target for target in ir["targets"] if target["name"] != "typed_handles"]
+    assert "package.tiler-ir.targets" not in errors_for(root, copied_metadata)
+
+
+def test_a_target_that_is_compiled_but_never_run_is_rejected(
+    tmp_path: Path, metadata: dict[str, object]
+) -> None:
+    """What the open target set still refuses, in both of its shapes.
+
+    `test = false` leaves the source present and compiling while removing it
+    from every run, which is indistinguishable from a passing suite. On the
+    primary target it also disables doctests and documentation for a whole
+    package.
+    """
     root, copied_metadata = contract_copy(tmp_path, metadata)
     packages = copied_metadata["packages"]
-    ir = next(package for package in packages if package["name"] == "tiler-ir")
-    ir["targets"] = [target for target in ir["targets"] if target["name"] != "typed_handles"]
     runner = next(package for package in packages if package["name"] == "tiler-prototype-run")
     runner["targets"][0]["test"] = False
+    ir = next(package for package in packages if package["name"] == "tiler-ir")
+    integration = next(target for target in ir["targets"] if target["kind"] == ["test"])
+    integration["test"] = False
     rendered = errors_for(root, copied_metadata)
-    assert "package.tiler-ir.targets" in rendered
     assert "package.tiler-prototype-run.targets" in rendered
+    assert "compiled but never run" in rendered
 
 
 @pytest.mark.parametrize(
@@ -732,7 +755,10 @@ def test_the_admitted_form_is_recognized_and_its_tests_are_not(tmp_path: Path) -
 def test_a_second_copy_in_a_permitted_crate_fails(tmp_path: Path) -> None:
     """The whole point of admitting a forced copy: a second one is a diff."""
     added = ADMITTED_FRAMING + (
-        "/// A second framing.\npub fn push_count(bytes: &mut Vec<u8>, count: usize) {\n}\n"
+        "/// A second framing.\n"
+        "pub fn push_count(bytes: &mut Vec<u8>, count: usize) {\n"
+        "    bytes.extend_from_slice(&(count as u64).to_be_bytes());\n"
+        "}\n"
     )
     root = planted_framing(tmp_path, added)
     assert "`pub fn push_count(bytes: &mut Vec<u8>, count: usize)` frames a length" in (
@@ -752,9 +778,30 @@ def test_a_copy_under_any_helper_name_is_caught(tmp_path: Path) -> None:
     root = planted_framing(
         tmp_path,
         "/// Frames a length under a name no list held.\n"
-        "fn scribble_ordinal(sink: &mut Vec<u8>, value: usize) {\n}\n",
+        "fn scribble_ordinal(sink: &mut Vec<u8>, value: usize) {\n"
+        "    sink.extend_from_slice(&(value as u64).to_be_bytes());\n"
+        "}\n",
     )
     assert framing_subjects(root) == {"fn scribble_ordinal(sink: &mut Vec<u8>, value: usize)"}
+
+
+def test_a_sink_helper_that_frames_nothing_is_not_a_site(tmp_path: Path) -> None:
+    """The signature is necessary, not sufficient.
+
+    `&mut Vec<u8>` plus one payload is also the shape of any ordinary
+    serializer helper. Matching on it alone rejected a body that was a single
+    `extend_from_slice` -- framing no length at all -- and told its author to
+    call a framing primitive instead, which in a workspace this full of
+    canonical encoding blocked the most common function there is to write.
+    """
+    root = planted_framing(
+        tmp_path,
+        "/// Appends a payload verbatim, framing nothing.\n"
+        "fn append(sink: &mut Vec<u8>, value: &[u8]) {\n"
+        "    sink.extend_from_slice(value);\n"
+        "}\n",
+    )
+    assert framing_subjects(root) == set()
 
 
 def test_a_helper_less_copy_wrapped_across_lines_is_caught(tmp_path: Path) -> None:
