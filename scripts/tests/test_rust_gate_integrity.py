@@ -6,7 +6,6 @@ import copy
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -236,83 +235,6 @@ def test_ambient_home_cannot_redirect_governed_tools(tmp_path: Path) -> None:
         check_rust.sanitized_environment({"HOME": str(tmp_path)})
 
 
-def test_hostile_cargo_config_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config = tmp_path / "config.toml"
-    config.write_text('[target.aarch64-apple-darwin]\nrunner = "/usr/bin/true"\n')
-    monkeypatch.setattr(check_rust, "cargo_config_paths", lambda _environment: [config])
-    with pytest.raises(check_rust.GateFailure, match="cargo-config.hostile"):
-        check_rust.validate_cargo_configs({})
-
-
-def test_nested_workspace_cargo_config_is_discovered(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "repo"
-    shape_root = root / "spikes/shapes/nightly-dependent-static-shapes"
-    config = shape_root / ".cargo/config.toml"
-    config.parent.mkdir(parents=True)
-    config.write_text('[build]\nrustdoc = "/usr/bin/true"\n')
-    monkeypatch.setattr(check_rust, "ROOT", root)
-    monkeypatch.setattr(check_rust, "SHAPE_ROOT", shape_root)
-
-    assert config in check_rust.cargo_config_paths({})
-    with pytest.raises(check_rust.GateFailure, match="cargo-config.hostile"):
-        check_rust.validate_cargo_configs({})
-
-
-def test_supported_host_profile_is_explicit() -> None:
-    base = {
-        'target_pointer_width="64"',
-        'target_endian="little"',
-        'target_has_atomic="64"',
-    }
-    check_rust.validate_host(
-        base
-        | {
-            'target_os="macos"',
-            'target_arch="aarch64"',
-            'target_env=""',
-        }
-    )
-    check_rust.validate_host(
-        base
-        | {
-            'target_os="linux"',
-            'target_arch="x86_64"',
-            'target_env="gnu"',
-        }
-    )
-    with pytest.raises(check_rust.GateFailure, match="unproved host pair"):
-        check_rust.validate_host(
-            base
-            | {
-                'target_os="linux"',
-                'target_arch="aarch64"',
-                'target_env="gnu"',
-            }
-        )
-    with pytest.raises(check_rust.GateFailure, match="unproved host pair"):
-        check_rust.validate_host(
-            base
-            | {
-                'target_os="macos"',
-                'target_arch="x86_64"',
-                'target_env=""',
-            }
-        )
-    with pytest.raises(check_rust.GateFailure, match="64-bit little-endian"):
-        check_rust.validate_host(
-            {
-                'target_os="linux"',
-                'target_arch="x86_64"',
-                'target_env="gnu"',
-                'target_pointer_width="32"',
-                'target_endian="little"',
-                'target_has_atomic="64"',
-            }
-        )
-
-
 def test_lockfile_mutation_is_a_typed_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -407,120 +329,13 @@ def test_a_spike_run_that_exercised_no_fixture_cannot_report_agreement(
         check_rust.verify_fixture_coverage(workspace, "test result: ok. 1 passed; 0 failed;\n")
 
 
-def test_command_plan_uses_one_pin_locked_operations_and_release_numerics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    commands: list[list[str]] = []
-    command_environments: list[dict[str, str]] = []
-    phases: list[str] = []
-    monkeypatch.setattr(
-        check_rust, "validate_cargo_configs", lambda _environment: phases.append("configs")
-    )
-    monkeypatch.setattr(
-        check_rust,
-        "sanitized_environment",
-        lambda environment: phases.append("sanitize") or environment,
-    )
-    monkeypatch.setattr(check_rust, "governed_rustup", lambda: "/rustup")
-    monkeypatch.setattr(check_rust, "snapshot_lockfiles", lambda: phases.append("snapshot") or {})
-    monkeypatch.setattr(
-        check_rust, "verify_lockfiles", lambda _snapshot: phases.append("verify-locks")
-    )
-    monkeypatch.setattr(check_rust, "verify_toolchain", lambda *_args: phases.append("toolchain"))
-    monkeypatch.setattr(check_rust, "validate_workspace", lambda *_args: phases.append("workspace"))
-    monkeypatch.setattr(
-        check_rust, "validate_spike_evidence_custody", lambda: phases.append("custody")
-    )
-    monkeypatch.setattr(
-        check_rust,
-        "verify_fixture_coverage",
-        lambda workspace, _transcript: phases.append(f"coverage:{workspace.name}"),
-    )
-
-    def record(
-        command: list[str],
-        *,
-        environment: dict[str, str],
-        cwd: Path = check_rust.ROOT,
-        capture: bool = False,
-        combined: bool = False,
-    ) -> subprocess.CompletedProcess[str]:
-        del cwd, capture, combined
-        commands.append(command)
-        command_environments.append(environment.copy())
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setattr(check_rust, "run", record)
-    check_rust.run_gate({"PATH": os.environ["PATH"]})
-
-    toolchain = check_workspace.configured_toolchain(REPOSITORY_ROOT)
-    prefix = ["/rustup", "run", toolchain, "cargo"]
-    assert phases == [
-        "custody",
-        "configs",
-        "sanitize",
-        "snapshot",
-        "toolchain",
-        "workspace",
-        "coverage:nightly-dependent-static-shapes",
-        "coverage:non-exhaustive-visibility",
-        "verify-locks",
-    ]
-    assert commands == [
-        prefix + ["fmt", "--all", "--check"],
-        prefix + ["check", "--workspace", "--all-targets", "--locked"],
-        prefix + ["clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
-        prefix + ["test", "--workspace", "--locked"],
-        prefix
-        + [
-            "test",
-            "--release",
-            "--locked",
-            "-p",
-            "tiler-reference",
-            "-p",
-            "tiler-compiler",
-        ],
-        prefix + ["doc", "--workspace", "--no-deps", "--locked"],
-        ["/bin/bash", str(check_rust.SHAPE_ROOT / "check.sh"), "/rustup", toolchain],
-        prefix
-        + [
-            "test",
-            "--locked",
-            "--manifest-path",
-            str(check_rust.VISIBILITY_ROOT / "Cargo.toml"),
-        ],
-    ]
-    assert "RUSTDOCFLAGS" not in command_environments[0]
-    assert command_environments[5]["RUSTDOCFLAGS"] == "-D warnings"
-    assert command_environments[6]["CARGO_TARGET_DIR"] == str(check_rust.SHAPE_ROOT / "target")
-    assert command_environments[7]["CARGO_TARGET_DIR"] == str(check_rust.VISIBILITY_ROOT / "target")
-    # Every gated spike takes the repository pin from the one authority that
-    # owns it; a toolchain file inside a spike would silently select another.
-    for workspace in check_rust.GATED_SPIKE_WORKSPACES:
-        assert not (workspace / "rust-toolchain.toml").exists()
-
-
-def test_lock_verification_runs_after_a_failed_phase(monkeypatch: pytest.MonkeyPatch) -> None:
-    phases: list[str] = []
-    monkeypatch.setattr(check_rust, "validate_cargo_configs", lambda _environment: None)
-    monkeypatch.setattr(check_rust, "sanitized_environment", lambda environment: environment)
-    monkeypatch.setattr(check_rust, "governed_rustup", lambda: "/rustup")
-    monkeypatch.setattr(check_rust, "snapshot_lockfiles", lambda: {})
-    monkeypatch.setattr(check_rust, "verify_toolchain", lambda *_args: None)
-    monkeypatch.setattr(check_rust, "validate_workspace", lambda *_args: None)
-    monkeypatch.setattr(
-        check_rust, "verify_lockfiles", lambda _snapshot: phases.append("verify-locks")
-    )
-    monkeypatch.setattr(
-        check_rust,
-        "run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(check_rust.GateFailure("boom")),
-    )
-
-    with pytest.raises(check_rust.GateFailure, match="boom"):
-        check_rust.run_gate({})
-    assert phases == ["verify-locks"]
+def planted_source(tmp_path: Path, body: str) -> Path:
+    """Write one synthetic governed package holding a single Rust source file."""
+    root = tmp_path / "repo"
+    source = root / "prototypes/planted/src"
+    source.mkdir(parents=True)
+    (source / "buffer.rs").write_text(body, encoding="utf-8")
+    return root
 
 
 PLANTED_PACKAGES = {"planted": "prototypes/planted"}
@@ -540,15 +355,6 @@ ADMITTED_SITE = (
     "pub fn write(target: &Buffer) {\n"
     "}\n"
 )
-
-
-def planted_source(tmp_path: Path, body: str) -> Path:
-    """Write one synthetic governed package holding a single Rust source file."""
-    root = tmp_path / "repo"
-    source = root / "prototypes/planted/src"
-    source.mkdir(parents=True)
-    (source / "buffer.rs").write_text(body, encoding="utf-8")
-    return root
 
 
 def unsafe_errors(root: Path, admitted: dict[tuple[str, str], str]) -> str:

@@ -1,13 +1,22 @@
-"""Mutation tests for the exact supported GitHub Actions contract."""
+"""Mutation tests for the structural CI workflow checks.
+
+The twelve cases this file used to carry -- `if: false`, `continue-on-error`,
+an unpinned action tag, a swapped runner, a replaced gate command -- tested a
+Python copy of the workflow that no longer exists. Each of those edits is
+visible in a one-line diff of `rust.yml`, and the copy that caught them had to
+be edited in the same change by the same author, so it detected nothing an
+author had not already decided to do.
+
+What remains is what a diff does not show: a second workflow file shadowing the
+first, a symlink pointing outside version control, and a duplicate YAML key
+that silently discards the block above it.
+"""
 
 from __future__ import annotations
 
 import importlib.util
 import sys
-from collections.abc import Callable
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/rust.yml"
@@ -18,64 +27,16 @@ sys.modules[SPEC.name] = ci
 SPEC.loader.exec_module(ci)
 
 
-def replace_once(old: str, new: str) -> Callable[[str], str]:
-    """Construct a mutation that must affect exactly one expected token."""
-
-    def mutate(source: str) -> str:
-        assert source.count(old) == 1
-        return source.replace(old, new, 1)
-
-    return mutate
-
-
-def append(text: str) -> Callable[[str], str]:
-    """Construct an append-only mutation."""
-    return lambda source: source + text
-
-
-def test_checked_in_workflow_satisfies_supported_profile_contract() -> None:
+def test_checked_in_workflow_is_structurally_sound() -> None:
     assert ci.validate_repository(ROOT) == []
 
 
-@pytest.mark.parametrize(
-    "mutation",
-    (
-        replace_once("jobs:\n", "jobs\n"),
-        replace_once("jobs:\n", "jobs:\n  check:\n    if: false\n"),
-        replace_once(
-            "      - name: Run the complete repository gate\n",
-            "      - name: Run the complete repository gate\n        continue-on-error: true\n",
-        ),
-        replace_once(
-            "      - name: Run the complete repository gate\n",
-            "      - name: Run the complete repository gate\n        if: false\n",
-        ),
-        replace_once("runner: macos-15", "runner: macos-latest"),
-        replace_once("runner: ubuntu-24.04", "runner: macos-15"),
-        replace_once(
-            "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
-            "actions/checkout@v4",
-        ),
-        replace_once(
-            "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
-            "example/unknown@11bd71901bbe5b1630ceea73d27597364c9af683",
-        ),
-        replace_once(
-            "uv run --locked python scripts/check_repository.py",
-            "uv run --locked python -c 'pass'",
-        ),
-        replace_once("permissions:\n  contents: read", "permissions:\n  contents: write"),
-        replace_once("pull_request:\n", "pull_request:\n    paths-ignore: ['docs/**']\n"),
-        append("\njobs:\n  bypass:\n    runs-on: ubuntu-24.04\n    steps: []\n"),
-    ),
-)
-def test_ci_contract_rejects_disabling_mutations(mutation: Callable[[str], str]) -> None:
-    assert ci.validate_source(mutation(WORKFLOW.read_text(encoding="utf-8")))
-
-
-def test_ci_contract_rejects_duplicate_yaml_keys() -> None:
+def test_ci_contract_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
+    workflow_root = tmp_path / ".github/workflows"
+    workflow_root.mkdir(parents=True)
     source = WORKFLOW.read_text(encoding="utf-8") + "\nname: duplicate\n"
-    assert any("malformed YAML" in error for error in ci.validate_source(source))
+    (workflow_root / "rust.yml").write_text(source, encoding="utf-8")
+    assert any("malformed YAML" in error for error in ci.validate_repository(tmp_path))
 
 
 def test_ci_contract_rejects_an_extra_workflow(tmp_path: Path) -> None:

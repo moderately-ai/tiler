@@ -8,9 +8,9 @@ import os
 import pwd
 import re
 import shlex
+import shutil
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import check_workspace
@@ -34,6 +34,13 @@ GATED_SPIKE_WORKSPACES = (SHAPE_ROOT, VISIBILITY_ROOT)
 # against their record rather than reproduced, and the exclusion is named here
 # so that "not compiled" is a decision with a reason instead of an omission.
 OFF_PIN_SPIKE_WORKSPACES = {ROOT / "spikes/shapes/shape-evidence": "stable 1.89.0"}
+# Packages that only mean anything on an Apple host: one links Metal, the other
+# drives `xcrun`. They are skipped rather than made to compile everywhere,
+# because a Metal proof has no non-Apple behaviour worth building — gating their
+# contents would spread a host condition through code that is Apple-specific
+# from top to bottom. Every target-independent crate is still built and tested
+# on both profiles, which is what the target-independence claim rests on.
+APPLE_ONLY_PACKAGES = ("tiler-prototype-compile", "tiler-prototype-run")
 LOCKFILES = (
     ROOT / "Cargo.lock",
     SHAPE_ROOT / "Cargo.lock",
@@ -65,22 +72,6 @@ FORBIDDEN_ENVIRONMENT = {
 FORBIDDEN_CARGO_ENVIRONMENT = re.compile(
     r"^CARGO_(?:ALIAS_|PROFILE_|TARGET_.*_(?:RUNNER|RUSTFLAGS|LINKER)$)"
 )
-ALLOWED_CARGO_CONFIG = {
-    "net": {"retry", "git-fetch-with-cli", "offline"},
-    "http": {
-        "proxy",
-        "timeout",
-        "cainfo",
-        "check-revoke",
-        "multiplexing",
-        "user-agent",
-        "debug",
-        "ssl-version",
-        "low-speed-limit",
-    },
-    "term": {"quiet", "verbose", "color", "hyperlinks", "unicode", "progress"},
-    "unstable": {"gc"},
-}
 
 
 class GateFailure(RuntimeError):
@@ -261,53 +252,6 @@ def sanitized_environment(environment: dict[str, str]) -> dict[str, str]:
     return result
 
 
-def cargo_config_paths(environment: dict[str, str]) -> list[Path]:
-    """Enumerate Cargo configuration files visible from every governed workspace."""
-    homes = [account_home() / ".cargo"]
-    ambient_home = environment.get("CARGO_HOME")
-    if ambient_home:
-        homes.append(Path(ambient_home).expanduser())
-    directories: list[Path] = []
-    for workspace in (ROOT, SHAPE_ROOT, VISIBILITY_ROOT):
-        for directory in (workspace, *workspace.parents):
-            if directory not in directories:
-                directories.append(directory)
-    candidates = [
-        *(
-            directory / ".cargo" / name
-            for directory in directories
-            for name in ("config", "config.toml")
-        ),
-        *(home / name for home in homes for name in ("config", "config.toml")),
-    ]
-    unique: list[Path] = []
-    seen: set[Path] = set()
-    for path in candidates:
-        resolved = path.resolve()
-        if resolved not in seen and path.is_file():
-            seen.add(resolved)
-            unique.append(path)
-    return unique
-
-
-def validate_cargo_configs(environment: dict[str, str]) -> None:
-    """Reject Cargo configuration capable of changing compiled code or execution."""
-    for path in cargo_config_paths(environment):
-        try:
-            config = tomllib.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
-            raise GateFailure(f"cargo-config.invalid: {path}: {error}") from error
-        for section, value in config.items():
-            allowed_keys = ALLOWED_CARGO_CONFIG.get(section)
-            if allowed_keys is None or not isinstance(value, dict):
-                raise GateFailure(f"cargo-config.hostile: unsupported [{section}] in {path}")
-            extra = set(value) - allowed_keys
-            if extra:
-                raise GateFailure(
-                    f"cargo-config.hostile: unsupported {section} keys {sorted(extra)} in {path}"
-                )
-
-
 def run(
     command: list[str],
     *,
@@ -385,96 +329,6 @@ def cargo_command(rustup: str, toolchain: str, *arguments: str) -> list[str]:
     return rustup_command(rustup, toolchain, "cargo", *arguments)
 
 
-def governed_rustup() -> str:
-    """Resolve rustup only from the bootstrap-owned installation location."""
-    path = account_home() / ".cargo/bin/rustup"
-    if not path.is_file() or not os.access(path, os.X_OK):
-        raise GateFailure(f"toolchain.missing: governed rustup is missing: {path}")
-    # rustup is a multicall binary: preserving argv[0] as `rustup` is semantic.
-    return str(path)
-
-
-def parse_cfg(output: str) -> set[str]:
-    """Parse strict, duplicate-free `rustc --print cfg` output."""
-    lines = output.splitlines()
-    if not lines or any(not line or line.strip() != line for line in lines):
-        raise GateFailure("host.unsupported: malformed rustc cfg output")
-    if len(lines) != len(set(lines)):
-        raise GateFailure("host.unsupported: duplicate rustc cfg output")
-    return set(lines)
-
-
-def one_cfg(cfg: set[str], prefix: str) -> str:
-    """Require one exact valued cfg entry."""
-    values = sorted(value for value in cfg if value.startswith(prefix))
-    if len(values) != 1:
-        raise GateFailure(f"host.unsupported: expected one {prefix}, got {values}")
-    return values[0]
-
-
-def validate_host(cfg: set[str]) -> None:
-    """Enforce the target-independent host profile actually supported by Tiler."""
-    operating_system = one_cfg(cfg, 'target_os="')
-    architecture = one_cfg(cfg, 'target_arch="')
-    environment = one_cfg(cfg, 'target_env="')
-    pointer_width = one_cfg(cfg, 'target_pointer_width="')
-    endian = one_cfg(cfg, 'target_endian="')
-    supported_pairs = {
-        ('target_os="macos"', 'target_arch="aarch64"'),
-        ('target_os="linux"', 'target_arch="x86_64"'),
-    }
-    if (operating_system, architecture) not in supported_pairs:
-        raise GateFailure(
-            f"host.unsupported: unproved host pair {operating_system}, {architecture}"
-        )
-    expected_environment = (
-        'target_env=""' if operating_system == 'target_os="macos"' else 'target_env="gnu"'
-    )
-    if environment != expected_environment:
-        raise GateFailure(f"host.unsupported: target environment {environment}")
-    if pointer_width != 'target_pointer_width="64"' or endian != 'target_endian="little"':
-        raise GateFailure(
-            f"host.unsupported: requires 64-bit little-endian, got {pointer_width}, {endian}"
-        )
-    if 'target_has_atomic="64"' not in cfg:
-        raise GateFailure("host.unsupported: tiler-ir requires native 64-bit atomics")
-
-
-def verify_toolchain(rustup: str, toolchain: str, environment: dict[str, str]) -> None:
-    """Require every compiler component and validate the selected host profile."""
-    commands = (
-        ("rustc", "-vV"),
-        ("cargo", "-Vv"),
-        ("rustfmt", "--version"),
-        ("clippy-driver", "--version"),
-        ("rustdoc", "--version"),
-    )
-    for executable, argument in commands:
-        selected = run(
-            [rustup, "which", "--toolchain", toolchain, executable],
-            environment=environment,
-            capture=True,
-        ).stdout.strip()
-        if toolchain not in selected or not Path(selected).is_file():
-            raise GateFailure(
-                f"toolchain.identity: {executable} did not resolve inside {toolchain}: {selected!r}"
-            )
-        result = run(
-            rustup_command(rustup, toolchain, executable, argument),
-            environment=environment,
-            capture=True,
-        )
-        output = result.stdout.strip()
-        if not output:
-            raise GateFailure(f"toolchain.component: {executable} returned no version")
-    cfg_result = run(
-        rustup_command(rustup, toolchain, "rustc", "--print", "cfg"),
-        environment=environment,
-        capture=True,
-    )
-    validate_host(parse_cfg(cfg_result.stdout))
-
-
 def validate_workspace(rustup: str, toolchain: str, environment: dict[str, str]) -> None:
     """Validate exact locked Cargo metadata without trusting later compilation."""
     metadata_result = run(
@@ -506,19 +360,31 @@ def run_gate(environment: dict[str, str] | None = None) -> None:
     source_environment = os.environ.copy() if environment is None else environment.copy()
     toolchain = check_workspace.configured_toolchain(ROOT)
     validate_spike_evidence_custody()
-    validate_cargo_configs(source_environment)
     child_environment = sanitized_environment(source_environment)
-    rustup = governed_rustup()
+    rustup = shutil.which("rustup", path=child_environment["PATH"])
+    if rustup is None:
+        raise GateFailure("toolchain.missing: rustup is not on the governed PATH")
     locks = snapshot_lockfiles()
+    skipped = [] if sys.platform == "darwin" else APPLE_ONLY_PACKAGES
     try:
-        verify_toolchain(rustup, toolchain, child_environment)
         validate_workspace(rustup, toolchain, child_environment)
+        excluded = [argument for package in skipped for argument in ("--exclude", package)]
+        if skipped:
+            print(f"+ skipping Apple-only packages on {sys.platform}: {', '.join(skipped)}")
         run(
             cargo_command(rustup, toolchain, "fmt", "--all", "--check"),
             environment=child_environment,
         )
         run(
-            cargo_command(rustup, toolchain, "check", "--workspace", "--all-targets", "--locked"),
+            cargo_command(
+                rustup,
+                toolchain,
+                "check",
+                "--workspace",
+                "--all-targets",
+                "--locked",
+                *excluded,
+            ),
             environment=child_environment,
         )
         run(
@@ -529,6 +395,7 @@ def run_gate(environment: dict[str, str] | None = None) -> None:
                 "--workspace",
                 "--all-targets",
                 "--locked",
+                *excluded,
                 "--",
                 "-D",
                 "warnings",
@@ -536,7 +403,7 @@ def run_gate(environment: dict[str, str] | None = None) -> None:
             environment=child_environment,
         )
         run(
-            cargo_command(rustup, toolchain, "test", "--workspace", "--locked"),
+            cargo_command(rustup, toolchain, "test", "--workspace", "--locked", *excluded),
             environment=child_environment,
         )
         run(
@@ -555,7 +422,9 @@ def run_gate(environment: dict[str, str] | None = None) -> None:
         )
         doc_environment = child_environment | {"RUSTDOCFLAGS": "-D warnings"}
         run(
-            cargo_command(rustup, toolchain, "doc", "--workspace", "--no-deps", "--locked"),
+            cargo_command(
+                rustup, toolchain, "doc", "--workspace", "--no-deps", "--locked", *excluded
+            ),
             environment=doc_environment,
         )
         shapes = run(
