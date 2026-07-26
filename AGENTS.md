@@ -352,9 +352,17 @@ uv run --locked python scripts/check_repository.py
 
 Generated catalog blocks are checked-in views over frontmatter. Edit source
 metadata, not generated list items, and rerun the renderer. The complete gate
-owns documentation validation, Python discovery and execution, Ruff,
-ShellCheck and shell syntax, ticketsplease lint, and the Rust gate; do not
-substitute a hand-picked subset of those commands.
+owns documentation validation, the Python test suite, Ruff, ShellCheck and
+shell syntax, ticketsplease lint, and the Rust gate; do not substitute a
+hand-picked subset of those commands.
+
+The documentation gate checks structure, not prose. It resolves every local
+link, enforces the typed metadata graph and its supersession rules, requires a
+declared entrypoint to exist and be executable, and keeps the generated
+catalogs fresh. It does not check that a quotation still matches its source, or
+that an open question carries an owner — both were tried and retired, the first
+because it silently examined 42 of 471 quoted spans while reading like a
+corpus-wide audit. Those remain review work.
 
 ## Ticketsplease and parallel work
 
@@ -446,7 +454,7 @@ than duplicate or weaken it.
   dependent-array const parameters require nightly. A future stable MSRV needs
   separate conformance evidence and an explicit policy change.
 - Keep workspace Rust and Clippy lints inherited by every crate, with the single exception `scripts/check_workspace.py` pins in `UNINHERITED_LINT_MEMBERS`. That table names the one member permitted to diverge and the exact lint table it may declare instead, so a second member dropping inheritance fails the gate. New public APIs require documentation, and warnings fail the repository gate.
-- Unsafe code is forbidden except at an individual function or module admitted case by case under [ADR 0079](docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md), which states the four conditions a site must meet: a foreign API leaves no safe route, the `#[allow]` carries a `reason`, an assertion checked against the foreign object's own report bounds what the block touches, and a `SAFETY` comment names the invariant relied on. A crate-level `unsafe_code = "allow"`, a second member dropping lint inheritance, and any relaxation of the workspace `forbid` are all outside that decision and each remains Tom's. Citing ADR 0079 is not sufficient to admit a new site; its four conditions are what generalize. `scripts/check_workspace.py` pins every admitted site as a `(path, item signature, reason)` triple in `ADMITTED_UNSAFE_SITES`, so adding, moving, renaming, removing, or rewording one fails the gate until the pin is updated in the same change.
+- Unsafe code is forbidden except at an individual function or module admitted case by case under [ADR 0079](docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md), which states the four conditions a site must meet: a foreign API leaves no safe route, the `#[allow]` carries a `reason`, an assertion checked against the foreign object's own report bounds what the block touches, and a `SAFETY` comment names the invariant relied on. A crate-level `unsafe_code = "allow"`, a second member dropping lint inheritance, and any relaxation of the workspace `forbid` are all outside that decision and each remains Tom's. Citing ADR 0079 is not sufficient to admit a new site; its four conditions are what generalize. The compiler enforces the rule — `forbid` at the workspace, `deny` in the one crate permitted to diverge, so a site exists only if it carries `#[allow(unsafe_code, reason = …)]` — and no check keeps an inventory of admitted sites. A new one is caught by review of the diff that adds it, which is what "case by case" asks for.
 - Preserve the workspace dev-profile defaults: line-table debug information,
   unpacked split debug information, and optimization level 1 for dependencies.
   If a debugger needs full information, add a temporary or justified
@@ -471,22 +479,33 @@ Run the Rust-only sub-gate from the repository root with:
 uv run --locked python scripts/check_rust.py
 ```
 
-The Rust sub-gate checks the exact workspace/dependency/target contract,
+The Rust sub-gate checks workspace lint levels, per-member lint inheritance, the
+ADR-decided edges between workspace crates, each package's primary target,
 formatting, all targets, strict Clippy, development tests, optimized numerical
 tests, doctests, warning-free rustdoc, immutable Cargo locks, and each governed
-spike workspace named below. It accepts only the CI-proven macOS
-arm64 and GNU Linux x86-64 profiles, each with a 64-bit little-endian address
-space and native 64-bit atomics. Use explicit dated-toolchain selectors in
+spike workspace named below. It supports macOS arm64 and GNU Linux x86-64. Two
+packages are Apple-only — `tiler-prototype-compile` drives `xcrun` and
+`tiler-prototype-run` links Metal — and the gate skips them off Apple rather
+than making a Metal proof build as an empty shell on a host that cannot run it;
+`APPLE_ONLY_PACKAGES` names them. Use explicit dated-toolchain selectors in
 compiler-migration probes; never replace the repository pin with rolling
 `nightly`.
 
+`rust-toolchain.toml` pins `rust-src` for reproducibility rather than for
+building: a const-eval panic renders the offending `core` line only when the
+standard library sources are present, so without it the byte-compared
+`trybuild` goldens differ between two hosts on the same toolchain.
+
 **The Rust sub-gate owns every Cargo invocation the repository gate makes.** It
 is the only phase that selects the pinned toolchain explicitly, rejects rather
-than merely strips hostile Rust environment controls, validates the Cargo
-configuration visible from each workspace, snapshots the governed lockfiles,
-and gives each workspace its own `CARGO_TARGET_DIR`. A Cargo command run from
-the pytest phase, a shell script, or a research harness has none of those and
-is a weaker check wearing the same name, so add it here instead.
+than merely strips hostile Rust environment controls, snapshots the governed
+lockfiles, and gives each workspace its own `CARGO_TARGET_DIR`. A Cargo command
+run from the pytest phase, a shell script, or a research harness has none of
+those and is a weaker check wearing the same name, so add it here instead.
+
+One exception is worth knowing rather than fixing: the length-framing check
+lives in `scripts/check_workspace.py` but runs from the pytest phase, not from
+the Rust sub-gate, which calls `validate_manifest_contract` alone.
 
 **A spike Cargo workspace is compiled by the gate exactly when it retains a
 compiler-produced golden artifact — a `trybuild` `.stderr` — captured on the
