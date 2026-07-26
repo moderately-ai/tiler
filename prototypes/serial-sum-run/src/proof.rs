@@ -104,7 +104,7 @@ use std::process::ExitCode;
 
 use metal::{
     Buffer, ComputeCommandEncoderRef, ComputePipelineDescriptor, ComputePipelineState, Device,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLCommandBufferStatus, MTLGPUFamily, MTLResourceOptions, MTLSize,
 };
 use tiler_artifact::program::{
     AbiFactBinder, AbiFacts, ArtifactCodecFailure, AvailabilityPhase, BackendKey, BindingTarget,
@@ -887,10 +887,11 @@ struct PlacedSlot {
 /// fallback only before the commit, so a check that could have run before it
 /// must not run after.
 ///
-/// What deliberately stays *after* the commit is everything that needs a device:
-/// the pipeline's maximum threadgroup size, and the length of an allocation that
-/// has actually been made. Those are not decidable here, and reporting one after
-/// the commit is a failure reported rather than a fallback taken.
+/// What this function cannot decide is everything that needs a device — the
+/// library, the pipeline, the threadgroup capacity, the allocations. Those are
+/// not device-*free*, but they are decidable, and [`device_preflight`] takes
+/// them before the same commit. Nothing that a device can answer is left for
+/// after it.
 fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<PlacedSlot>, ProofError> {
     let launch = preflight.launch();
     if launch.grid_threads() == 0 {
@@ -929,65 +930,519 @@ fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<PlacedSlot>, ProofError> 
     Ok(plan)
 }
 
-/// Dispatches a committed route, using nothing this process compiled.
+/// Which stage of the device preflight reached a decision.
 ///
-/// The object image, the entry symbol, the argument-table index of every buffer,
-/// how many bytes each must reach, and the launch geometry are all read from the
-/// route. The only thing this function contributes is the host storage the
-/// artifact's own interface keys name, following the placement decision
-/// [`plan_route`] already made and the commit already ratified.
-fn dispatch_routed(
-    device: &Device,
-    routed: &RoutedDispatch<'_>,
-    plan: &[PlacedSlot],
-    bits: &[u32],
-    rows: u64,
-) -> Result<Vec<u32>, ProofError> {
-    let pipeline = pipeline_for(device, routed.object(), routed.entry_symbol())?;
-    let (input, output, count) = host_storage(device, bits, rows);
+/// Ordered as they run, and the order is the useful one: a refusal names the
+/// earliest obligation that failed, so a library that will not load is never
+/// reported as a launch-geometry problem.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreflightPhase {
+    /// Building an executable library from the payload's object bytes.
+    Library,
+    /// Resolving the entry symbol the payload's subject names.
+    Function,
+    /// Creating compute pipeline state for a resolved function.
+    Pipeline,
+    /// Comparing the declared launch against what the pipeline admits.
+    LaunchGeometry,
+    /// Allocating and sizing every bound buffer and every internal scratch slot.
+    Resources,
+}
 
-    // Retained until the command buffer completes: entry-internal storage is the
-    // loader's to allocate, and dropping it at the end of this loop would leave
-    // the encoder holding a binding to a freed allocation. `placements` outlives
-    // the `submit` call below, which waits for the command buffer's terminal
-    // state, so every buffer is alive through its final device use.
-    let mut placements = Vec::with_capacity(plan.len());
-    for (slot, placed) in plan.iter().enumerate() {
-        let storage = match placed.placement {
-            Placement::Input => input.clone(),
-            Placement::Output => output.clone(),
-            Placement::Internal => {
-                device.new_buffer(placed.needed.max(1), MTLResourceOptions::StorageModePrivate)
+impl PreflightPhase {
+    /// A stable lowercase identifier for this stage.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Library => "library",
+            Self::Function => "function",
+            Self::Pipeline => "pipeline",
+            Self::LaunchGeometry => "launch-geometry",
+            Self::Resources => "resources",
+        }
+    }
+}
+
+/// What a caller should do about a refusal, which is why phases are typed at all.
+///
+/// A host that cannot tell these apart either retries work that can never
+/// succeed or abandons an artifact that had a working route. They are a
+/// contract, not a diagnostic convenience.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreflightClass {
+    /// This route does not fit *this device*, and another variant might.
+    ///
+    /// A fallback is permitted and is the indicated response. Every refusal in
+    /// this class compares something the artifact declared against something the
+    /// device reported, so a differently-declared variant is exactly the remedy.
+    RouteMiss,
+    /// These bytes passed decode and integrity validation and still do not yield
+    /// a runnable library.
+    ///
+    /// Distinct from an integrity failure, which the codec already refused
+    /// before any of this ran: the digest matched, so the object *is* what the
+    /// producer published, and it is content that will not execute. A caller
+    /// re-fetches or rebuilds; retrying another variant of the same bytes is not
+    /// indicated.
+    CorruptArtifact,
+    /// The host cannot serve any route, whatever it declares.
+    Systemic,
+}
+
+impl PreflightClass {
+    /// A stable lowercase identifier for this class.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::RouteMiss => "route-miss",
+            Self::CorruptArtifact => "corrupt-artifact",
+            Self::Systemic => "systemic",
+        }
+    }
+}
+
+/// One refusal the device preflight reached, before any commit.
+///
+/// Carries the numbers the decision was made from rather than a rendered
+/// sentence, so [`Self::phase`] and [`Self::class`] are total functions over the
+/// variant and a caller acts on the class without parsing anything.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PreflightRefusal {
+    /// The payload's object bytes did not produce a library.
+    LibraryRejected { detail: String },
+    /// The library loaded and publishes no function by the entry symbol.
+    FunctionAbsent { symbol: String, detail: String },
+    /// The device refused pipeline state for a function it did publish.
+    PipelineRejected { symbol: String, detail: String },
+    /// The declared workgroup is larger than this pipeline admits.
+    WorkgroupTooLarge {
+        symbol: String,
+        declared: u64,
+        capacity: u64,
+    },
+    /// A binding must reach more bytes than one buffer can hold here.
+    BindingExceedsBufferLimit {
+        slot: usize,
+        needed: u64,
+        limit: u64,
+    },
+    /// An allocation came back shorter than the route requires.
+    UndersizedAllocation { slot: usize, needed: u64, held: u64 },
+}
+
+impl PreflightRefusal {
+    /// The stage this refusal came from.
+    ///
+    /// Exhaustive rather than a wildcard, so a refusal added later is placed in
+    /// a stage deliberately instead of inheriting whichever one a catch-all
+    /// named.
+    const fn phase(&self) -> PreflightPhase {
+        match self {
+            Self::LibraryRejected { .. } => PreflightPhase::Library,
+            Self::FunctionAbsent { .. } => PreflightPhase::Function,
+            Self::PipelineRejected { .. } => PreflightPhase::Pipeline,
+            Self::WorkgroupTooLarge { .. } => PreflightPhase::LaunchGeometry,
+            Self::BindingExceedsBufferLimit { .. } | Self::UndersizedAllocation { .. } => {
+                PreflightPhase::Resources
             }
-        };
-        if storage.length() < placed.needed {
-            return Err(ProofError::UndersizedBinding {
+        }
+    }
+
+    /// What a caller should do about this refusal.
+    ///
+    /// **`PipelineRejected` is a route miss, and the direction is derived rather
+    /// than guessed.** Metal reports pipeline-creation failure as a message
+    /// string that does not reliably separate "this function exceeds a device
+    /// limit" from "the device is out of resources". Of the two ways to be
+    /// wrong, calling a systemic failure a route miss costs a retry that then
+    /// fails; calling a route miss systemic abandons an artifact that had a
+    /// working variant. Only the second forfeits the fallback ADR 0051 grants
+    /// while it is still held, so the classification takes the recoverable
+    /// direction.
+    ///
+    /// `UndersizedAllocation` is systemic rather than a route miss because it is
+    /// an assertion against the device's own report — every buffer is requested
+    /// at the length the route states — so reaching it means the allocator did
+    /// not honour a request it accepted, which no other variant improves.
+    const fn class(&self) -> PreflightClass {
+        match self {
+            Self::LibraryRejected { .. } | Self::FunctionAbsent { .. } => {
+                PreflightClass::CorruptArtifact
+            }
+            Self::PipelineRejected { .. }
+            | Self::WorkgroupTooLarge { .. }
+            | Self::BindingExceedsBufferLimit { .. } => PreflightClass::RouteMiss,
+            Self::UndersizedAllocation { .. } => PreflightClass::Systemic,
+        }
+    }
+}
+
+impl fmt::Display for PreflightRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}/{}: ",
+            self.phase().as_str(),
+            self.class().as_str(),
+        )?;
+        match self {
+            Self::LibraryRejected { detail } => {
+                write!(formatter, "the carried object did not load: {detail}")
+            }
+            Self::FunctionAbsent { symbol, detail } => {
+                write!(formatter, "the library publishes no {symbol:?}: {detail}")
+            }
+            Self::PipelineRejected { symbol, detail } => {
+                write!(formatter, "no pipeline state for {symbol:?}: {detail}")
+            }
+            Self::WorkgroupTooLarge {
+                symbol,
+                declared,
+                capacity,
+            } => write!(
+                formatter,
+                "{symbol:?} admits {capacity} thread(s) per threadgroup and the artifact declares {declared}"
+            ),
+            Self::BindingExceedsBufferLimit {
                 slot,
-                needed: placed.needed,
-                held: storage.length(),
-            });
+                needed,
+                limit,
+            } => write!(
+                formatter,
+                "slot {slot} must reach {needed} byte(s) and one buffer holds at most {limit}"
+            ),
+            Self::UndersizedAllocation { slot, needed, held } => write!(
+                formatter,
+                "slot {slot} needs {needed} byte(s) and the allocation returned {held}"
+            ),
+        }
+    }
+}
+
+/// What the device reported about itself, recorded rather than checked.
+///
+/// **No artifact field names a required GPU family, a threadgroup floor, or a
+/// buffer-length floor**, so there is nothing here to compare these against.
+/// Declaring a requirement the artifact never made would be inventing one, so
+/// these are provenance: they say which device produced a measurement, and they
+/// are what a future artifact-side family declaration would be checked against.
+///
+/// The two limits that *do* have an artifact-side counterpart — the pipeline's
+/// threadgroup capacity and the per-buffer length bound — are checked in
+/// [`device_preflight`] rather than recorded here, because a declared launch and
+/// a declared accessible range are things the artifact does state.
+#[derive(Clone, Debug)]
+struct DeviceFacts {
+    name: String,
+    max_threads_per_threadgroup: u64,
+    max_buffer_length: u64,
+    recommended_working_set: u64,
+    highest_apple_family: Option<&'static str>,
+}
+
+/// One route this device has proved it can carry out, with everything it needs.
+///
+/// Held across the commit: every device object the encode touches is created
+/// here, so the post-commit path allocates nothing, looks nothing up, and has no
+/// failure to report. That is the property the stage exists for.
+struct PreparedRoute {
+    pipeline: ComputePipelineState,
+    /// Buffers in the route's own binding order, paired with the argument-table
+    /// index each occupies.
+    ///
+    /// Retained here until the command buffer completes: entry-internal storage
+    /// is the loader's to allocate, and dropping it would leave the encoder
+    /// holding a binding to a freed allocation. This value outlives the `submit`
+    /// call, which waits for the command buffer's terminal state, so every
+    /// buffer is alive through its final device use.
+    placements: Vec<(u32, Buffer)>,
+    /// The buffer the program's output lands in, for read-back.
+    output: Buffer,
+    /// How many `f32` elements to read back out of it.
+    readback: usize,
+    facts: DeviceFacts,
+}
+
+/// Proves this device can carry out a route, while declining is still permitted.
+///
+/// **This is the stage the ticket exists to add, and the ordering is its whole
+/// substance.** `Preflight::commit` is infallible and documents why: every
+/// decidable obligation is supposed to have been discharged before it. Three
+/// were not. The library, the pipeline, and the comparison of the declared
+/// workgroup against the capacity that pipeline reports all ran inside the
+/// dispatch, after the commit. The last of those is what makes it a correctness
+/// bug rather than an ordering preference: a workgroup this pipeline cannot run
+/// is a fact about *this route on this device*, so another variant might satisfy
+/// it, and ADR 0051 permits that fallback only while the commit has not been
+/// taken. Reporting it afterwards converts a fallback the host was still owed
+/// into a failure it merely reports.
+///
+/// Nothing here is observable if the route is then abandoned: it allocates and
+/// fills host-visible storage and creates pipeline state, and encodes nothing.
+fn device_preflight(
+    device: &Device,
+    preflight: &Preflight<'_>,
+    plan: &[PlacedSlot],
+    operands: &[u32],
+    rows: u64,
+) -> Result<PreparedRoute, PreflightRefusal> {
+    let facts = device_facts(device);
+
+    // The library and the entry symbol come from the artifact, never from this
+    // process. The identical call in `dispatch_direct` cannot fail this way for
+    // the same reason: there the object is one this build just emitted, so a
+    // rejection is a defect in Tiler, and here it is a statement about published
+    // bytes. Same device call, different meaning, because the provenance of the
+    // bytes differs — which is why the two paths do not share a refusal type.
+    let library = device
+        .new_library_with_data(preflight.object())
+        .map_err(|detail| PreflightRefusal::LibraryRejected { detail })?;
+    let symbol = preflight.entry_symbol();
+    let function =
+        library
+            .get_function(symbol, None)
+            .map_err(|detail| PreflightRefusal::FunctionAbsent {
+                symbol: symbol.to_owned(),
+                detail,
+            })?;
+
+    // One function, because the loader routes one entry: `accept_entry` selects
+    // exactly one, and this reader refuses a multi-stage variant outright.
+    // Looping over a collection that cannot hold two would claim coverage that
+    // does not exist; `carry-the-stage-execution-order-in-the-envelope` owns
+    // making a route carry more than one.
+    let descriptor = ComputePipelineDescriptor::new();
+    descriptor.set_compute_function(Some(&function));
+    let pipeline = device
+        .new_compute_pipeline_state(&descriptor)
+        .map_err(|detail| PreflightRefusal::PipelineRejected {
+            symbol: symbol.to_owned(),
+            detail,
+        })?;
+
+    let launch = preflight.launch();
+    workgroup_fits(
+        symbol,
+        launch.threads_per_workgroup(),
+        pipeline.max_total_threads_per_threadgroup(),
+    )?;
+
+    // Sized from the route rather than from the operand slice: the artifact
+    // states how many bytes each binding must reach, and deriving a length from
+    // the host's own data would re-answer a question the artifact answered.
+    let mut placements = Vec::with_capacity(plan.len());
+    let mut output = None;
+    for (slot, placed) in plan.iter().enumerate() {
+        binding_fits(slot, placed.needed, facts.max_buffer_length)?;
+        let options = match placed.placement {
+            Placement::Input | Placement::Output => MTLResourceOptions::StorageModeShared,
+            Placement::Internal => MTLResourceOptions::StorageModePrivate,
+        };
+        let storage = device.new_buffer(placed.needed.max(1), options);
+        allocation_fits(slot, placed.needed, storage.length())?;
+        match placed.placement {
+            Placement::Input => {
+                // The assertion inside `write_f32` is the backstop for a length
+                // disagreement, and it is unreachable here: the operand count
+                // was checked against the shape the artifact declares, and this
+                // buffer's length is that same shape's accessible byte range.
+                let values: Vec<f32> = operands.iter().map(|bits| f32::from_bits(*bits)).collect();
+                crate::buffer::write_f32(&storage, &values);
+            }
+            Placement::Output => output = Some(storage.clone()),
+            Placement::Internal => {}
         }
         placements.push((placed.transport, storage));
     }
 
-    let launch = routed.launch();
-    let workgroup = launch.threads_per_workgroup();
-    let capacity = pipeline.max_total_threads_per_threadgroup();
-    if workgroup > capacity {
-        return Err(ProofError::WorkgroupTooLarge {
-            declared: workgroup,
+    Ok(PreparedRoute {
+        pipeline,
+        placements,
+        // `plan_route` refuses every binding target this proof does not place,
+        // and this program declares one output, so the placement pass bound it.
+        output: output.expect("the placement pass bound this program's one output"),
+        readback: usize::try_from(rows).expect("the proof's row count fits a usize"),
+        facts,
+    })
+}
+
+/// Whether a declared workgroup fits what a pipeline admits.
+///
+/// Split from the device call so the decision is testable without hardware: the
+/// device contributes two numbers and this contributes the comparison.
+fn workgroup_fits(symbol: &str, declared: u64, capacity: u64) -> Result<(), PreflightRefusal> {
+    if declared > capacity {
+        return Err(PreflightRefusal::WorkgroupTooLarge {
+            symbol: symbol.to_owned(),
+            declared,
             capacity,
         });
     }
+    Ok(())
+}
 
-    submit(device, &output, count, |encoder| {
-        encoder.set_compute_pipeline_state(&pipeline);
-        for (transport, storage) in &placements {
+/// Whether one binding's accessible range fits in a single buffer here.
+fn binding_fits(slot: usize, needed: u64, limit: u64) -> Result<(), PreflightRefusal> {
+    if needed > limit {
+        return Err(PreflightRefusal::BindingExceedsBufferLimit {
+            slot,
+            needed,
+            limit,
+        });
+    }
+    Ok(())
+}
+
+/// Whether an allocation the device returned reaches the length it was asked for.
+fn allocation_fits(slot: usize, needed: u64, held: u64) -> Result<(), PreflightRefusal> {
+    if held < needed {
+        return Err(PreflightRefusal::UndersizedAllocation { slot, needed, held });
+    }
+    Ok(())
+}
+
+/// Reads what this device reports about itself.
+fn device_facts(device: &Device) -> DeviceFacts {
+    // Highest first: the families are cumulative, so the first supported one is
+    // the most specific true statement. `None` is reported rather than guessed
+    // when the device claims none of them.
+    let highest_apple_family = [
+        (MTLGPUFamily::Apple9, "Apple9"),
+        (MTLGPUFamily::Apple8, "Apple8"),
+        (MTLGPUFamily::Apple7, "Apple7"),
+        (MTLGPUFamily::Apple6, "Apple6"),
+        (MTLGPUFamily::Apple5, "Apple5"),
+    ]
+    .into_iter()
+    .find(|(family, _)| device.supports_family(*family))
+    .map(|(_, name)| name);
+
+    DeviceFacts {
+        name: device.name().to_owned(),
+        max_threads_per_threadgroup: device.max_threads_per_threadgroup().width,
+        max_buffer_length: device.max_buffer_length(),
+        recommended_working_set: device.recommended_max_working_set_size(),
+        highest_apple_family,
+    }
+}
+
+/// Injects each device-preflight refusal against the real route, before the
+/// commit.
+///
+/// The device-free unit cases pin the comparisons and the classification; these
+/// pin that the *device* produces the refusal this code claims it does. A Metal
+/// binding's rejection of an object that is not a `metallib`, or of a symbol a
+/// library does not publish, is a fact about Metal rather than about this file,
+/// and asserting it needs a device. Run by the hardware proof, like
+/// [`probe_fail_closed`], because `make full` reaches no device.
+///
+/// Every probe here perturbs one input and leaves the rest alone, so a refusal
+/// is evidence about the perturbation: the same device, the same route, and the
+/// same operands succeeded moments earlier in [`run`].
+fn probe_device_preflight(
+    device: &Device,
+    preflight: &Preflight<'_>,
+    plan: &[PlacedSlot],
+    operands: &[u32],
+    rows: u64,
+) -> Result<(), ProofError> {
+    // A library built from bytes that are not a metallib. The digest over these
+    // bytes matched, so this is content that will not execute rather than an
+    // integrity failure — the distinction `PreflightClass::CorruptArtifact`
+    // exists to carry.
+    let refusal = device
+        .new_library_with_data(b"tiler probe object; not an executable image")
+        .err()
+        .map(|detail| PreflightRefusal::LibraryRejected { detail })
+        .ok_or(ProofError::ProbeAccepted(
+            "a library from non-metallib bytes",
+        ))?;
+    report_refusal("an object that is not a metallib", &refusal);
+
+    // A symbol the real library does not publish.
+    let library = device
+        .new_library_with_data(preflight.object())
+        .map_err(|detail| {
+            ProofError::DevicePreflight(Box::new(PreflightRefusal::LibraryRejected { detail }))
+        })?;
+    let refusal = library
+        .get_function("tiler_kernel_this_object_does_not_publish", None)
+        .err()
+        .map(|detail| PreflightRefusal::FunctionAbsent {
+            symbol: "tiler_kernel_this_object_does_not_publish".to_owned(),
+            detail,
+        })
+        .ok_or(ProofError::ProbeAccepted("an absent entry symbol"))?;
+    report_refusal("an entry symbol the object does not publish", &refusal);
+
+    // A workgroup one thread larger than the pipeline admits, using the capacity
+    // this device actually reported rather than an invented number. This is the
+    // refusal that used to arrive after the commit.
+    let function = library
+        .get_function(preflight.entry_symbol(), None)
+        .map_err(|detail| {
+            ProofError::DevicePreflight(Box::new(PreflightRefusal::FunctionAbsent {
+                symbol: preflight.entry_symbol().to_owned(),
+                detail,
+            }))
+        })?;
+    let descriptor = ComputePipelineDescriptor::new();
+    descriptor.set_compute_function(Some(&function));
+    let pipeline = device
+        .new_compute_pipeline_state(&descriptor)
+        .map_err(|detail| {
+            ProofError::DevicePreflight(Box::new(PreflightRefusal::PipelineRejected {
+                symbol: preflight.entry_symbol().to_owned(),
+                detail,
+            }))
+        })?;
+    let capacity = pipeline.max_total_threads_per_threadgroup();
+    let refusal = workgroup_fits(preflight.entry_symbol(), capacity + 1, capacity)
+        .err()
+        .ok_or(ProofError::ProbeAccepted(
+            "a workgroup larger than the pipeline admits",
+        ))?;
+    report_refusal("a workgroup one thread past this pipeline", &refusal);
+
+    // A binding needing one byte more than this device holds in one buffer.
+    let limit = device_facts(device).max_buffer_length;
+    let refusal = binding_fits(0, limit + 1, limit)
+        .err()
+        .ok_or(ProofError::ProbeAccepted("a binding past the buffer limit"))?;
+    report_refusal("a binding one byte past the buffer limit", &refusal);
+
+    // The unperturbed route still prepares, which is what makes each refusal
+    // above evidence about its own perturbation rather than about the route.
+    device_preflight(device, preflight, plan, operands, rows)
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+    println!("  the unperturbed route prepares: every stage cleared before the commit");
+    Ok(())
+}
+
+/// Prints one injected refusal with the phase and class it was classified into.
+fn report_refusal(probe: &str, refusal: &PreflightRefusal) {
+    println!("  {probe}: {refusal}");
+}
+
+/// Dispatches a route this device already proved it can carry out.
+///
+/// Every device object was created before the commit, so this function looks
+/// nothing up, allocates nothing, and has no refusal of its own to report. What
+/// remains is encoding and submission, and `submit` owns the one thing that can
+/// still go wrong: a command buffer that does not reach `Completed`, checked
+/// before the host reads anything back.
+fn dispatch_prepared(
+    device: &Device,
+    routed: &RoutedDispatch<'_>,
+    prepared: &PreparedRoute,
+) -> Result<Vec<u32>, ProofError> {
+    let launch = routed.launch();
+    submit(device, &prepared.output, prepared.readback, |encoder| {
+        encoder.set_compute_pipeline_state(&prepared.pipeline);
+        for (transport, storage) in &prepared.placements {
             encoder.set_buffer(u64::from(*transport), Some(storage), 0);
         }
         encoder.dispatch_threads(
             MTLSize::new(launch.grid_threads(), 1, 1),
-            MTLSize::new(workgroup, 1, 1),
+            MTLSize::new(launch.threads_per_workgroup(), 1, 1),
         );
     })
 }
@@ -1106,10 +1561,55 @@ fn run() -> Result<(), ProofError> {
         });
     }
 
-    // The last decision taken while a fallback is still permitted: everything
-    // this host can decide about whether it can *carry out* the route is decided
-    // from the preflight, and only then is the commit taken. See `plan_route`.
+    // Read from the record the producer published, never re-derived here. This
+    // process could evaluate the same reference over the same operands and
+    // usually get the same answer, and that is exactly the problem: it would be
+    // checking the device against its own opinion rather than against the claim
+    // the artifact was published under. A producer and a runner that each derive
+    // the normative bits agree until the day they do not.
+    //
+    // Read before the commit because the operands are an input to the device
+    // preflight: the input buffer is allocated and filled while declining the
+    // route is still permitted.
+    let case = sidecar
+        .cases()
+        .next()
+        .ok_or(ProofError::SidecarWithoutCases)?;
+    // Both payloads are checked against the element count the *artifact*
+    // declares, not against each other: a record that agrees with itself and
+    // not with the interface it names is still describing another program.
+    let envelope_bits = case
+        .inputs()
+        .next()
+        .ok_or(ProofError::SidecarWithoutCases)
+        .and_then(|payload| decode_f32_bits("input", rows * columns, payload.bytes()))?;
+    let envelope_reference = case
+        .expected()
+        .next()
+        .ok_or(ProofError::SidecarWithoutCases)
+        .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
+
+    // Placement first, then the device. Both are decided while a fallback is
+    // still permitted, and between them they discharge every obligation this
+    // host can decide — which is what makes the commit below infallible in fact
+    // and not only in signature. See `plan_route` and `device_preflight`.
     let plan = plan_route(&preflight)?;
+    let prepared = device_preflight(device, &preflight, &plan, &envelope_bits, rows)
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+    let facts = &prepared.facts;
+    println!(
+        "device preflight: {} ({}), {} thread(s) per threadgroup, buffers to {} byte(s), \
+         working set {} byte(s)",
+        facts.name,
+        facts
+            .highest_apple_family
+            .unwrap_or("no Apple family reported"),
+        facts.max_threads_per_threadgroup,
+        facts.max_buffer_length,
+        facts.recommended_working_set,
+    );
+    println!("device-preflight refusals against this exact route:");
+    probe_device_preflight(device, &preflight, &plan, &envelope_bits, rows)?;
 
     let routed = preflight.commit();
     println!(
@@ -1128,30 +1628,7 @@ fn run() -> Result<(), ProofError> {
             binding.binding().target(),
         );
     }
-    // Read from the record the producer published, never re-derived here. This
-    // process could evaluate the same reference over the same operands and
-    // usually get the same answer, and that is exactly the problem: it would be
-    // checking the device against its own opinion rather than against the claim
-    // the artifact was published under. A producer and a runner that each derive
-    // the normative bits agree until the day they do not.
-    let case = sidecar
-        .cases()
-        .next()
-        .ok_or(ProofError::SidecarWithoutCases)?;
-    // Both payloads are checked against the element count the *artifact*
-    // declares, not against each other: a record that agrees with itself and
-    // not with the interface it names is still describing another program.
-    let envelope_bits = case
-        .inputs()
-        .next()
-        .ok_or(ProofError::SidecarWithoutCases)
-        .and_then(|payload| decode_f32_bits("input", rows * columns, payload.bytes()))?;
-    let envelope_reference = case
-        .expected()
-        .next()
-        .ok_or(ProofError::SidecarWithoutCases)
-        .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
-    let envelope = dispatch_routed(device, &routed, &plan, &envelope_bits, rows)?;
+    let envelope = dispatch_prepared(device, &routed, &prepared)?;
 
     // ---- numerical verification ------------------------------------------
     // Each path is compared against the oracle's evaluation of the program that
@@ -1227,18 +1704,22 @@ enum ProofError {
         slot: usize,
         target: String,
     },
-    UndersizedBinding {
-        slot: usize,
-        needed: u64,
-        held: u64,
-    },
-    WorkgroupTooLarge {
-        declared: u64,
-        capacity: u64,
-    },
     EmptyLaunch {
         skipped: bool,
     },
+    /// The device refused the route, before any commit.
+    ///
+    /// Boxed because it is the largest variant by a wide margin and every other
+    /// one would otherwise pay for it. It carries the phase and the class rather
+    /// than a rendered string, so a caller decides whether to re-route,
+    /// re-fetch, or stop without parsing this.
+    DevicePreflight(Box<PreflightRefusal>),
+    /// An injected device-preflight perturbation was *accepted*.
+    ///
+    /// A probe that cannot fail measures nothing, so a perturbation the device
+    /// admits is reported as loudly as a refusal that arrives in the wrong
+    /// stage.
+    ProbeAccepted(&'static str),
     LibraryLoad(String),
     FunctionLookup(String),
     Pipeline(String),
@@ -1315,19 +1796,18 @@ impl fmt::Display for ProofError {
                 formatter,
                 "ABI slot {slot} addresses {target}, which this proof binds no storage for",
             ),
-            Self::UndersizedBinding { slot, needed, held } => write!(
-                formatter,
-                "ABI slot {slot} must reach {needed} byte(s) and the bound storage holds {held}",
-            ),
-            Self::WorkgroupTooLarge { declared, capacity } => write!(
-                formatter,
-                "the artifact declares {declared} threads per workgroup and this pipeline admits \
-                 {capacity}",
-            ),
             Self::EmptyLaunch { skipped } => write!(
                 formatter,
                 "the routed launch covers no threads (skipped: {skipped}), so there is no result \
                  to compare",
+            ),
+            Self::DevicePreflight(refusal) => write!(
+                formatter,
+                "this device refused the route before the commit: {refusal}",
+            ),
+            Self::ProbeAccepted(probe) => write!(
+                formatter,
+                "the device preflight accepted {probe}, so that probe proves nothing",
             ),
             Self::LibraryLoad(cause) => write!(formatter, "the metallib did not load: {cause}"),
             Self::FunctionLookup(cause) => write!(formatter, "the entry point is absent: {cause}"),
@@ -1829,6 +2309,121 @@ mod tests {
                 "a malformed record must not be reported as arithmetic: {refusal}",
             );
         }
+    }
+
+    /// Every device-preflight refusal lands in the phase and class it claims.
+    ///
+    /// The classification is what a caller acts on — re-route, re-fetch, or stop
+    /// — so a refusal filed under the wrong class is a wrong instruction rather
+    /// than a wrong label. Each variant is listed explicitly rather than derived
+    /// from the functions under test, so a variant that silently changed class
+    /// fails here instead of agreeing with itself.
+    #[test]
+    fn each_device_preflight_refusal_carries_its_phase_and_class() {
+        let cases = [
+            (
+                super::PreflightRefusal::LibraryRejected {
+                    detail: "not a metallib".to_owned(),
+                },
+                super::PreflightPhase::Library,
+                super::PreflightClass::CorruptArtifact,
+            ),
+            (
+                super::PreflightRefusal::FunctionAbsent {
+                    symbol: "absent".to_owned(),
+                    detail: "no such function".to_owned(),
+                },
+                super::PreflightPhase::Function,
+                super::PreflightClass::CorruptArtifact,
+            ),
+            (
+                super::PreflightRefusal::PipelineRejected {
+                    symbol: "k".to_owned(),
+                    detail: "too many registers".to_owned(),
+                },
+                super::PreflightPhase::Pipeline,
+                super::PreflightClass::RouteMiss,
+            ),
+            (
+                super::PreflightRefusal::WorkgroupTooLarge {
+                    symbol: "k".to_owned(),
+                    declared: 2,
+                    capacity: 1,
+                },
+                super::PreflightPhase::LaunchGeometry,
+                super::PreflightClass::RouteMiss,
+            ),
+            (
+                super::PreflightRefusal::BindingExceedsBufferLimit {
+                    slot: 0,
+                    needed: 2,
+                    limit: 1,
+                },
+                super::PreflightPhase::Resources,
+                super::PreflightClass::RouteMiss,
+            ),
+            (
+                super::PreflightRefusal::UndersizedAllocation {
+                    slot: 0,
+                    needed: 2,
+                    held: 1,
+                },
+                super::PreflightPhase::Resources,
+                super::PreflightClass::Systemic,
+            ),
+        ];
+        assert_eq!(cases.len(), 6, "a refusal was added without a case here");
+        for (refusal, phase, class) in cases {
+            assert_eq!(refusal.phase(), phase, "wrong phase for {refusal}");
+            assert_eq!(refusal.class(), class, "wrong class for {refusal}");
+            // The rendered form leads with both, because a log line that does
+            // not carry the class makes the reader infer what the type states.
+            let rendered = refusal.to_string();
+            assert!(
+                rendered.starts_with(&format!("{}/{}: ", phase.as_str(), class.as_str())),
+                "the rendering drops the phase or the class: {rendered}",
+            );
+        }
+    }
+
+    /// The three comparisons refuse exactly at their boundary, not near it.
+    ///
+    /// Each is tested at the largest accepted value and the smallest refused
+    /// one, because an off-by-one here either rejects a route the device would
+    /// have run or admits one it cannot — and the second is the failure the
+    /// whole stage exists to move before the commit.
+    #[test]
+    fn the_device_comparisons_refuse_exactly_at_their_boundary() {
+        super::workgroup_fits("k", 1024, 1024).expect("a workgroup at capacity fits");
+        assert!(matches!(
+            super::workgroup_fits("k", 1025, 1024),
+            Err(super::PreflightRefusal::WorkgroupTooLarge {
+                declared: 1025,
+                capacity: 1024,
+                ..
+            })
+        ));
+
+        super::binding_fits(0, 4096, 4096).expect("a binding at the limit fits");
+        assert!(matches!(
+            super::binding_fits(0, 4097, 4096),
+            Err(super::PreflightRefusal::BindingExceedsBufferLimit {
+                slot: 0,
+                needed: 4097,
+                limit: 4096,
+            })
+        ));
+
+        super::allocation_fits(0, 48, 48).expect("an allocation of exactly the needed length fits");
+        super::allocation_fits(0, 48, 64).expect("a longer allocation fits");
+        assert!(matches!(
+            super::allocation_fits(0, 48, 47),
+            Err(super::PreflightRefusal::UndersizedAllocation {
+                slot: 0,
+                needed: 48,
+                held: 47,
+            })
+        ));
     }
 
     /// The accepted neighbour every refusal below is evidence against.

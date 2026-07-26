@@ -201,6 +201,32 @@ impl<'a> Preflight<'a> {
         &self.bindings
     }
 
+    /// Returns the exact emitted object bytes the artifact carries.
+    ///
+    /// The same bytes [`RoutedDispatch::object`] returns, published here because
+    /// a host with a device must be able to build its executable state *before*
+    /// the commit. Loading a library, resolving the entry symbol, and creating a
+    /// pipeline are all decidable while a fallback is still permitted, and ADR
+    /// 0051 says a check that could have run before the commit must not run
+    /// after it. Reaching these bytes only through [`Self::commit`] would force
+    /// exactly that.
+    #[must_use]
+    pub const fn object(&self) -> &'a [u8] {
+        self.object
+    }
+
+    /// Returns the backend's own entry-point symbol to look up in that object.
+    ///
+    /// Read from the carried payload's compilation subject, never supplied by
+    /// the host, for the reason [`RoutedDispatch::entry_symbol`] gives. Exposed
+    /// before the commit for the reason [`Self::object`] gives: a symbol the
+    /// object does not publish is a fact about these bytes that a host can
+    /// establish while it may still decline.
+    #[must_use]
+    pub const fn entry_symbol(&self) -> &'a str {
+        self.symbol
+    }
+
     /// Commits to executing this route. One way, and infallible.
     ///
     /// There is no `Result` here on purpose. Every decidable obligation was
