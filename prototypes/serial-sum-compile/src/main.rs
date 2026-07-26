@@ -498,9 +498,19 @@ mod tests {
         text.extend(provenance.compile_flags.iter().cloned());
         text.extend(provenance.link_flags.iter().cloned());
         for value in text {
+            // Any absolute path anywhere in the value, not merely one the value
+            // starts with or one under `/Applications`. The narrower predicate
+            // passed on a host whose toolchain reported its `InstalledDir`
+            // under `/private/var/...` while failing on one that reported
+            // `/Applications/Xcode_16.4.app/...`, so it was deciding by which
+            // host ran it rather than by whether identity stayed portable.
+            let local = value
+                .split_whitespace()
+                .find(|token| token.starts_with('/') && token.len() > 1);
             assert!(
-                !value.starts_with('/') && !value.contains("/Applications"),
-                "{value:?} looks like a local path and must not be portable identity",
+                local.is_none(),
+                "{value:?} carries the local path {:?} and must not be portable identity",
+                local.unwrap_or_default(),
             );
         }
     }

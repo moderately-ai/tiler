@@ -179,13 +179,32 @@ impl Toolchain {
             })
     }
 
-    /// Reads one offline tool's version via `xcrun --sdk <sdk> <tool> --version`.
+    /// Reads one offline tool's reported version via
+    /// `xcrun --sdk <sdk> <tool> --version`.
+    ///
+    /// Only the leading version banner is retained, because this string reaches
+    /// a portable artifact subject. The remaining lines are host facts, not
+    /// compiler identity: `Target:` names the *host* triple rather than the
+    /// emitted one (which travels separately as the target provenance),
+    /// `Thread model:` is invariant, and `InstalledDir:` is an absolute path
+    /// that differs across two hosts running the very same toolchain. Folding
+    /// any of them would give those hosts two artifact identities for one
+    /// compilation and defeat cross-host reuse.
     fn tool_version(&self, sdk: AppleSdk, tool: &str) -> Result<String, DriverError> {
-        self.capture(sdk, &[OsStr::new(tool), OsStr::new("--version")])
+        let reported = self
+            .capture(sdk, &[OsStr::new(tool), OsStr::new("--version")])
             .map_err(|detail| DriverError::ToolchainUnavailable {
                 tool: tool.to_owned(),
                 detail,
-            })
+            })?;
+        let banner = reported.lines().next().unwrap_or_default().trim();
+        if banner.is_empty() {
+            return Err(DriverError::ToolchainUnavailable {
+                tool: tool.to_owned(),
+                detail: format!("{tool} --version reported no version banner"),
+            });
+        }
+        Ok(banner.to_owned())
     }
 
     /// Reads one SDK identity field via `xcrun --sdk <sdk> <flag>`.
