@@ -528,8 +528,8 @@ fn a_bundle_round_trips() {
     let (key, bytes) = encoded(b"subject", b"envelope-bytes");
     let view = bundle::decode(&bytes, &key, &Limits::default()).expect("a fresh bundle validates");
     assert_eq!(view.key, key);
-    assert_eq!(view.subject, b"subject");
-    assert_eq!(view.envelope, b"envelope-bytes");
+    assert_eq!(&bytes[view.subject], b"subject");
+    assert_eq!(&bytes[view.envelope], b"envelope-bytes");
 }
 
 /// The bundle encoder derives the key rather than accepting one.
@@ -705,7 +705,7 @@ fn a_published_entry_validates_when_it_is_read_back() {
         .read_entry(&key, &any_payload)
         .expect("a published entry validates");
     assert_eq!(entry.key, key);
-    assert_eq!(entry.envelope, b"envelope");
+    assert_eq!(entry.envelope(), b"envelope");
     assert_eq!(entry.payload, b"envelope");
 }
 
@@ -977,7 +977,7 @@ fn a_directory_sync_failure_after_the_rename_reports_a_published_entry() {
     let reread = cache
         .read_entry(&entry.key, &any_payload)
         .expect("another reader observes the published entry");
-    assert_eq!(reread.envelope, b"envelope");
+    assert_eq!(reread.envelope(), b"envelope");
 }
 
 /// A failed lock release after the rename is cleanup, not a refusal.
@@ -1111,7 +1111,7 @@ fn a_rejected_entry_is_replaced_and_retained() {
         panic!("a corrupt entry is rebuilt and republished");
     };
     assert!(published);
-    assert_eq!(entry.envelope, b"rebuilt-envelope");
+    assert_eq!(entry.envelope(), b"rebuilt-envelope");
     assert!(
         matches!(
             report.recheck_miss(),
@@ -1252,7 +1252,7 @@ fn a_waiter_rechecks_after_the_lock_and_does_not_rebuild() {
             report,
         } => {
             assert!(!published, "the waiter did not publish");
-            assert_eq!(entry.envelope, b"envelope");
+            assert_eq!(entry.envelope(), b"envelope");
             // Either the lock-free read already saw it or the recheck did. Both
             // are correct; what must not happen is a rebuild, and the build
             // closure returns an error, so a rebuild would have failed the call.
@@ -1294,7 +1294,7 @@ fn concurrent_callers_for_one_key_agree_on_one_entry() {
 
     for handle in handles {
         match handle.join().expect("no caller panics") {
-            ProtocolOutcome::Hit { entry, .. } => assert_eq!(entry.envelope, b"envelope"),
+            ProtocolOutcome::Hit { entry, .. } => assert_eq!(entry.envelope(), b"envelope"),
             ProtocolOutcome::Uncached { report, .. } => panic!(
                 "a caller fell open: {:?}",
                 report.publication_refusal().map(ToString::to_string),
@@ -1335,7 +1335,7 @@ fn concurrent_callers_for_distinct_keys_do_not_collide() {
                 let ProtocolOutcome::Hit { entry, .. } = outcome else {
                     panic!("every distinct key publishes");
                 };
-                assert_eq!(entry.envelope, envelope.as_bytes());
+                assert_eq!(entry.envelope(), envelope.as_bytes());
                 assert_eq!(entry.key, CacheKey::derive_bytes(subject.as_bytes()));
             })
         })
@@ -1368,7 +1368,7 @@ fn an_unusable_root_falls_open_with_a_reason() {
     let ProtocolOutcome::Uncached { entry, report } = outcome else {
         panic!("an unusable root cannot publish");
     };
-    assert_eq!(entry.envelope, b"envelope");
+    assert_eq!(entry.envelope(), b"envelope");
     assert!(
         report.publication_refusal().is_some(),
         "the refusal is reported rather than silent",
@@ -1804,7 +1804,7 @@ fn an_entry_replaced_since_the_scan_is_not_removed() {
         cache
             .read_entry(&key, &any_payload)
             .expect("the replacement survives")
-            .envelope,
+            .envelope(),
         b"a-considerably-longer-replacement-envelope",
     );
 }
@@ -1929,7 +1929,7 @@ fn a_reader_holding_a_descriptor_reads_across_a_collection() {
     }
     let view = bundle::decode(&bytes, &key, &Limits::default())
         .expect("the bytes an open descriptor yields are still a valid bundle");
-    assert_eq!(view.envelope, b"envelope-before-collection");
+    assert_eq!(&bytes[view.envelope], b"envelope-before-collection");
 }
 
 /// Concurrent collectors over one cache never double-count and never fail.
@@ -2018,7 +2018,7 @@ fn a_purge_retires_the_namespace_and_a_later_writer_starts_clean() {
         cache
             .read_entry(&key, &any_payload)
             .expect("the fresh namespace serves the new entry")
-            .envelope,
+            .envelope(),
         b"envelope-after-purge",
     );
 }
@@ -2105,10 +2105,12 @@ fn a_retired_namespace_is_invisible_to_a_reader() {
 /// *every* hit, precisely so a corrupt or stale entry cannot be served. So this
 /// number is mostly the price of that rule.
 ///
-/// What it is worth watching for is the part that is not: the bundle is read
-/// into an owned buffer and then `to_vec()`d again to split it into subject and
-/// envelope. `stop-copying-bytes-the-process-already-owns` owns that; this is
-/// the number it moves.
+/// The duplicate buffering this comment used to point at is gone: a hit reads
+/// the bundle into one pre-sized buffer and keeps it, naming the two sections by
+/// span instead of copying both back out. That removed two allocations and two
+/// copies per hit and moved this number by a few percent, because the digesting
+/// above dominates it — see [`super::hot_path`] for the sweep that shows the
+/// cost is per-byte and for where the remaining time actually goes.
 ///
 /// **This is the protocol cost alone, and must not be read as the cost of a
 /// real hit.** These fixtures store a short byte string under `any_payload`,

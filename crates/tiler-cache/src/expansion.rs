@@ -88,6 +88,8 @@ mod collect;
 mod fault;
 #[cfg(test)]
 mod harness;
+#[cfg(test)]
+mod hot_path;
 mod key;
 mod layout;
 mod limits;

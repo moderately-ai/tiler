@@ -624,7 +624,7 @@ fn read_back(root: &Path, subject: &str) -> Option<Vec<u8>> {
     cache
         .read_entry(&key, &any_payload)
         .ok()
-        .map(|entry| entry.envelope)
+        .map(|entry| entry.envelope().to_vec())
 }
 
 /// Returns the entry path one subject is filed at.
@@ -1277,7 +1277,7 @@ fn a_reader_holding_a_descriptor_reads_across_eviction() {
     let key = CacheKey::derive(&subject_of(subject));
     let view = super::bundle::decode(&bytes, &key, &super::limits::Limits::default())
         .expect("the bytes an open descriptor yields are still a valid bundle");
-    assert_eq!(view.envelope, b"envelope-before-eviction");
+    assert_eq!(&bytes[view.envelope], b"envelope-before-eviction");
 }
 
 // -------------------------------------------------------------------------
@@ -1501,7 +1501,7 @@ fn collection_races_active_processes_at_one_eight_and_thirty_two() {
             .expect("an open descriptor survives a collector's unlink");
         let view = super::bundle::decode(&bytes, &held_key, &super::limits::Limits::default())
             .expect("a descriptor opened before collection still yields a valid bundle");
-        assert_eq!(view.envelope, b"seed-envelope");
+        assert_eq!(&bytes[view.envelope], b"seed-envelope");
 
         let (removed_total, deferred_total) = audit_collection_log(&log, ROUNDS, writers);
         assert!(
