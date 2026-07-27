@@ -1,7 +1,7 @@
 ---
 id: correct-the-artifact-identity-post-compilation-claim
 title: Correct the claim that artifact identity needs compiled bytes
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [derive-the-pre-compilation-artifact-program-subject, accept-the-tiler-cache-public-boundary]
@@ -27,3 +27,15 @@ Three checked-in statements assert something the code disproves, and they were t
 ## Closes when
 
 All three sites state what the payload digest is derived from, with the check that proves it; no site claims artifact identity requires an object; the ADR's decision status and rationale are untouched; any catalog block quoting the record is updated by hand in the same change; and `make full` passes.
+
+## Outcome — corrected at four sites, not three (2026-07-27)
+
+**Every fact was re-verified against the current source before editing, as the ticket asked.** `crates/tiler-artifact/src/program/codec/payload.rs` states in its own module documentation that the payload-metadata bytes "contain the source, the target, the flags, and the toolchain provenance and **no object byte at all**"; `check_payload_identity` is at `codec/validate.rs:246`; `payload_identity_follows_the_compilation_subject_and_not_the_object` is at `codec/tests.rs:1831`. `PayloadMetadata::identity` (`codec/payload.rs:236`) and `ArtifactProgramBuilder::push_pending_payload` (`program/builder.rs:335`) both exist and are `pub`.
+
+**A fourth site carried the same claim and is corrected too.** The ticket named ADR 0050, `expansion/subject.rs`, and `expansion/key.rs`. `docs/decisions/0082-admit-tiler-cache-as-the-expansion-cache-owner.md` line 55 repeated it nearly verbatim — "derived from a verified artifact, which needs the payload digest and therefore the compiled bytes". Found by searching for the claim's wording rather than by trusting the ticket's site list.
+
+**The claim was stale in a second way the ticket did not anticipate.** `subject.rs` said no producer existed for `SubjectFacet::ArtifactProgram`. That is now false on both halves: the reason was wrong, *and* `derive-the-pre-compilation-artifact-program-subject` has since landed the producer. The facet that actually blocks an end-to-end key is `BackendCompilations` — `tiler-metal-aot` declares `mod identity;` privately and `CompilationIdentity::as_bytes` is `pub(crate)` (verified at `crates/tiler-metal-aot/src/identity.rs:245`), so no other crate can obtain those bytes. Both corrected sites now name that blocker and `promote-the-metal-aot-compilation-identity`, so the "composable, not yet usable" state stays accurate rather than becoming a second stale claim.
+
+**Each site states what the digest is *of*, per the "do not overcorrect" instruction** — the compilation subject, with the check that re-proves it — rather than only what it is not. The `digest` field is not renamed; whether that name misleads is left as a separate question.
+
+**Both ADRs keep their decision status and rationale.** The corrections are marked in place as corrections to what each record *described*, with the old reasoning quoted and refuted so a reader can see why the sentence changed and cannot re-derive it. Neither ADR's decision changed, so neither is superseded, and `docs/decisions/README.md`'s two catalog entries for 0050 carry only title and status — both unchanged — so no catalog block needed editing.
