@@ -89,8 +89,21 @@ The complete key is now composed as one canonical byte run:
 `tiler_cache::expansion::ComposedSubject` frames the backend compilations and the
 artifact program wrapped around them as separately tagged, counted,
 length-prefixed facets, and `lookup` and `get_or_publish` accept nothing else, so
-under-keying is unrepresentable rather than merely documented. One facet has no
-producer — an artifact-program subject derivable *before* compilation, which
-`CanonicalArtifactProgramIdentity` is not, because it needs the payload digest.
-The composer refuses an empty facet, so the cache is composable and not yet
-usable, and `derive-the-pre-compilation-artifact-program-subject` closes that.
+under-keying is unrepresentable rather than merely documented. One facet is still
+unreachable, and it is the backend-compilation one: `tiler-metal-aot` keeps
+`CompilationIdentity::as_bytes` `pub(crate)`, so no other crate can obtain those
+bytes, which `promote-the-metal-aot-compilation-identity` covers. The composer
+refuses an empty facet, so the cache is composable and not yet usable.
+
+An earlier revision of this paragraph named the *artifact-program* facet as the
+one without a producer, on the ground that `CanonicalArtifactProgramIdentity`
+needs the payload digest and so cannot exist before compilation. That was a
+description of the code and it was wrong: the payload digest is derived from the
+payload *metadata* — source, target, flags, and toolchain provenance, and no
+object byte — so every fact the identity folds is a compilation input.
+`check_payload_identity` re-proves this on every decode, and
+`payload_identity_follows_the_compilation_subject_and_not_the_object` asserts
+that relinking one source leaves artifact identity equal. `PayloadMetadata::identity`
+and `ArtifactProgramBuilder::push_pending_payload` now expose that derivation
+without an object. The correction is to what this section *described*, not to
+what this ADR decided; the decision, its rationale, and its status are unchanged.

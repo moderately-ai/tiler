@@ -46,7 +46,7 @@ pub const KEY_LABEL_BYTES: usize = DIGEST_BYTES * 2;
 /// Telling a genuine artifact-program subject from an invented one means parsing
 /// an encoding this crate does not own, which is exactly what ADR 0082 rejected
 /// for the digest. [`super::SubjectFacets`] states what the composition does and
-/// does not cover, and names the producer that does not exist yet.
+/// does not cover, and names which facet is still unreachable and why.
 ///
 /// **It does not prove the subject describes the carried artifact.** Even given a
 /// complete subject, a bundle proves it was published under key `K` and that `K`
