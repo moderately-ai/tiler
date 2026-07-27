@@ -20,39 +20,38 @@
 //! this crate — in `schedule/model.rs`, `semantic/{types,registry,identity}.rs`,
 //! and `index/scalar.rs` — after this module already existed and already said
 //! the rule. Stating a convention did not hold it, so a mechanical check
-//! replaced the prose.
+//! replaced the prose. That check is now gone too, which is the subject of the
+//! next section.
 //!
 //! # Where the rule is enforced
 //!
-//! **In `scripts/check_workspace.py`, over every workspace member.** Its
-//! `FRAMING_SITE_CITATIONS` table pins each permitted definition as a
-//! `(path, signature, reason)` triple with a citation the site's own
-//! documentation must carry, so adding, moving, renaming, or unciting one fails
-//! the repository gate until the pin is updated in the same change.
+//! **Nowhere mechanically. It is held by review of the diff that adds an
+//! encoder.** A `scripts/check_workspace.py` pass once pinned every permitted
+//! framing definition in a `FRAMING_SITE_CITATIONS` table; that table went in
+//! `0b31488`, and the Python gate itself in `e197176`, which replaced it with
+//! the `Makefile` of cargo commands. Neither has a successor, so nothing fails
+//! today when a new encoder frames a length by hand.
 //!
-//! A crate-local test lived here first and was retired rather than kept as a
-//! faster loop, on evidence rather than tidiness. It walked one crate, so seven
-//! copies in `tiler-compiler` and `tiler-reference` were outside its reach by
-//! construction. It matched a list of four helper names, so `tiler-compiler`'s
-//! `encode_count` was outside its reach by spelling. And it searched for
-//! `.len() as u64`, so three open-coded copies *in this crate* — in
-//! `index/integer.rs` and `semantic/operation.rs` — were outside its reach for
-//! writing the same bytes as `u64::try_from(…).expect(…).to_be_bytes()`. Keeping
-//! it would have meant two recognizers for one rule, whose divergence is the
-//! failure this module exists to prevent.
+//! The history is kept because it says what a replacement would have to do. A
+//! crate-local test came first: it walked one crate, so copies in
+//! `tiler-compiler` and `tiler-reference` were outside its reach by
+//! construction; it matched a list of four helper names, so `tiler-compiler`'s
+//! `encode_count` was outside its reach by spelling; and it searched for
+//! `.len() as u64`, so open-coded copies *in this crate* were outside its reach
+//! for writing the same bytes as `u64::try_from(…).expect(…).to_be_bytes()`.
+//! The workspace pass that replaced it recognized a *shape* — a `&mut Vec<u8>`
+//! sink plus one `usize`, `&[u8]`, or `&str` payload, or one statement that
+//! both reads a length and writes it as fixed-width bytes — because every name
+//! list tried had been incomplete. A future check needs that property; a name
+//! list reintroduces the blind spot it was built to close.
 //!
-//! The workspace check recognizes a *shape* — a `&mut Vec<u8>` sink plus one
-//! `usize`, `&[u8]`, or `&str` payload, or one statement that both reads a
-//! length and writes it as fixed-width bytes — because every name list tried so
-//! far has been incomplete. Its two stated blind spots, a framing method and a
-//! length bound to a local before it is written, are recorded in its own
-//! docstring rather than here.
-//!
-//! It reads production code only. `shape/env.rs` and `tiler-compiler`'s
-//! `feasibility.rs` each assert an identity opens with its domain's length by
-//! spelling the eight-byte prefix out by hand, and that independence from the
-//! encoder is exactly what would catch this module changing the framing width —
-//! a test written with the encoder's own helper could not.
+//! One live check does bear on the framing, and it is not a recognizer.
+//! `shape/env.rs` and `tiler-compiler`'s `feasibility.rs` each assert that an
+//! identity opens with its domain's length by spelling the eight-byte prefix
+//! out by hand. That independence from the encoder is exactly what would catch
+//! this module changing the framing *width* — a test written with the encoder's
+//! own helper could not. It says nothing about a second definition appearing
+//! elsewhere, which is the failure this module exists to prevent.
 //!
 //! # The framing rule
 //!
@@ -68,8 +67,9 @@
 /// Appends the fixed-width canonical framing prefix for `len` items.
 ///
 /// The workspace's **sole definition of canonical length framing**. Every crate
-/// that can reach `tiler-ir` calls this and defines none of its own;
-/// `scripts/check_workspace.py` pins the two crates that cannot reach it.
+/// that can reach `tiler-ir` is expected to call this and define none of its
+/// own. Nothing checks that expectation any more — see the module documentation
+/// — so a diff adding an encoder is where it is kept.
 ///
 /// Callers that follow this with the content itself should use [`push_slice`]
 /// instead. This is for the cases where the content is not a byte run — a

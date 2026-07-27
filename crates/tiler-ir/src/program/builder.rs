@@ -613,8 +613,8 @@ impl KernelProgramBuilder {
     ///
     /// Returns a [`KernelProgramVerificationError`] carrying every whole-program
     /// diagnostic and the recoverable builder when verification fails.
-    pub fn build(self) -> Result<VerifiedKernelProgram, KernelProgramVerificationError> {
-        let data = self.assemble();
+    pub fn build(mut self) -> Result<VerifiedKernelProgram, KernelProgramVerificationError> {
+        let data = self.take_data();
         match super::verify::verify_program(&data, &self.subject).and_then(|(derived, keys)| {
             let identity = encode_identity(&data, &keys, &derived.definitions)?;
             Ok((derived, identity))
@@ -624,26 +624,51 @@ impl KernelProgramBuilder {
                 derived,
                 identity,
             }),
-            Err(diagnostic) => Err(KernelProgramVerificationError {
-                builder: Box::new(self),
-                diagnostics: vec![diagnostic],
-            }),
+            Err(diagnostic) => {
+                self.restore_data(data);
+                Err(KernelProgramVerificationError {
+                    builder: Box::new(self),
+                    diagnostics: vec![diagnostic],
+                })
+            }
         }
     }
 
-    fn assemble(&self) -> KernelProgramData {
+    /// Moves the arena into a [`KernelProgramData`], emptying the builder.
+    ///
+    /// As in [`super::super::kernel::builder`], the builder is recoverable
+    /// rather than consistent between this and [`Self::restore_data`], and
+    /// [`Self::build`] is the only caller. Verification reads the assembled
+    /// value, so nothing observes the window.
+    ///
+    /// `semantic_graph` is still copied because `verify_program` reads
+    /// `self.subject` on the same call, so the builder must keep its own.
+    fn take_data(&mut self) -> KernelProgramData {
         KernelProgramData {
             semantic_graph: self.subject.graph.clone(),
-            stages: self.stages.clone(),
-            values: self.values.clone(),
-            views: self.views.clone(),
-            allocations: self.allocations.clone(),
-            dependencies: self.dependencies.clone(),
-            outputs: self.outputs.clone(),
-            abi_expressions: self.expressions.clone(),
+            stages: std::mem::take(&mut self.stages),
+            values: std::mem::take(&mut self.values),
+            views: std::mem::take(&mut self.views),
+            allocations: std::mem::take(&mut self.allocations),
+            dependencies: std::mem::take(&mut self.dependencies),
+            outputs: std::mem::take(&mut self.outputs),
+            abi_expressions: std::mem::take(&mut self.expressions),
             applicability_guard: self.applicability_guard,
-            routing_commit: self.routing_commit.clone(),
+            routing_commit: std::mem::take(&mut self.routing_commit),
         }
+    }
+
+    /// Returns a taken arena to the builder, restoring the recoverable state
+    /// [`KernelProgramVerificationError`] documents.
+    fn restore_data(&mut self, data: KernelProgramData) {
+        self.stages = data.stages;
+        self.values = data.values;
+        self.views = data.views;
+        self.allocations = data.allocations;
+        self.dependencies = data.dependencies;
+        self.outputs = data.outputs;
+        self.expressions = data.abi_expressions;
+        self.routing_commit = data.routing_commit;
     }
 
     /// Interns one ABI arena node, returning the handle of an equal earlier one.

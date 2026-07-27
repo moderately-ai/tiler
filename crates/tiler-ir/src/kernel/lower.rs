@@ -119,7 +119,7 @@ pub(super) fn derive_canonical(
             KernelDiagnostic::BodyRefinement
         }
     })?;
-    builder.assemble()
+    builder.into_data()
 }
 
 fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnostic> {
