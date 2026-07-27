@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [derive-the-pre-compilation-artifact-program-subject, accept-the-tiler-cache-public-boundary]
 scopes: [contracts/decisions, implementation/cache]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [contract, cache, identity, correction]
 ---
