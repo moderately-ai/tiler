@@ -1,11 +1,11 @@
 ---
 id: remove-the-remaining-duplicate-work-in-the-planner
 title: Remove the remaining duplicate work in the planner
-status: todo
+status: done
 priority: p2
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, compiler]
@@ -60,3 +60,52 @@ Each item above is removed or justified in place; compile time is measured befor
 ## Remaining
 
 Every item in the Facts section above is untouched. They are still real duplicated work and still worth removing, but the profile says the whole set is worth a low single-digit percentage, so they should be attacked as maintainability rather than as performance — or reprioritized behind whatever a re-profile now shows at the top. Re-profile before picking the next one; the composition will have shifted.
+
+## Outcome — re-profiled, and the premise is largely spent (2026-07-27)
+
+The previous outcome ended "Re-profile before picking the next one; the composition will have shifted." It had. This is that re-profile, plus the two items it justified acting on.
+
+**Measurement.** `samply --rate 4000 --unstable-presymbolicate` against a `CARGO_PROFILE_RELEASE_DEBUG=true` build of `hot_path_profile_loop`, 20 s, 28,032 compiles, analyzed with the quiltdb attribution script. Self time alone is misleading here — it puts `_platform_memmove` and the allocator on top without naming a caller — so each sample was also charged to the nearest enclosing non-generic frame of ours. `RawVecInner::finish_grow` is monomorphized into our binary and masks its caller unless generic frames are skipped explicitly.
+
+Where the active leaves land: **47.1% our own code, 33.3% allocator, 18.0% memmove/memcmp.** Half the compile is allocation and copying, diffused across everything rather than concentrated in one place.
+
+### Every item in the Facts section, with its measured share
+
+| item | inclusive share | disposition |
+| --- | --- | --- |
+| alternative built then rebuilt to compare (`verify_portfolio`) | **23.26%** | **justified in place — it is the check, not waste** |
+| `assemble_cover` before the dedup check | 2.49% | justified — cannot be reordered, see below |
+| `SelectedPlanIdentity::label` allocating for comparisons | 2.14% | **partly removed** |
+| `derive_materializations` | 2.00% | **claim was stale — already fixed** |
+| `enumerate_frontier` per (cover, region) | 1.57% | justified — available, but see the ceiling below |
+| `verify_request` twice per compilation | 0.35% | justified — below the noise floor |
+| `RecognizedSerialSumMembers::all()` | 0.26% | justified — below the noise floor |
+| Pareto scan run twice (`select_non_dominated`) | 0.06% | justified — below the noise floor |
+| `encode_record(&record).len()` | 0.00% | justified — never appeared in the profile |
+| `singleton_occurrence_identity` | 0.00% | justified — never appeared in the profile |
+
+### The 23% is not duplicate work, and removing it would be a defect
+
+`verify_portfolio` is called unconditionally on the compile path (`pipeline.rs:851`), not behind a debug assertion. Underneath it the profile finds `KernelBuilder::emit`, `resolve_capabilities`, `build_artifact_plan`, `verify_kernel`, `verify_artifact_plan`, `canonical_member_order`, `region::assemble` — it re-derives the whole downstream pipeline and requires it to reproduce the receipt exactly, so a tampered plan, cost, program, or artifact receipt fails closed.
+
+**This is the one item on the list that must not be memoized.** The ticket framed it as "exactly 2× per alternative with no shared intermediate", as though the missing shared intermediate were the defect. The independence *is* the mechanism: a verifier that reuses the value it is checking compares that value to itself and can never say no. Sharing an intermediate here would convert the most expensive part of the compile into a check that always passes, which is worse than the cost it saves. So the largest single cost in the compiler is deliberate, and reducing it is a decision about the verification architecture rather than a performance cleanup.
+
+The corollary is that allocation reductions in the shared building blocks pay twice, once in the build and once in the verify — which is where the two changes below land.
+
+### `assemble_cover` cannot be moved after the dedup
+
+The dedup key *is* the assembled cover identity, and it depends on the sorted regions, the duplication policy, and the derived materializations. There is no cheaper key that decides the same question: the recursion already emits each exact partition once (the anchor rule guarantees it), so the map is not catching repeated partitions — it is catching *distinct* partitions that canonicalize to one cover identity. A candidate-index-set key would therefore retain covers the current code discards, which changes which plans exist and what the budgets count. That is a semantic change, not an optimization.
+
+### What was removed
+
+**`push_slice` reserves once instead of twice** (`tiler-ir/src/identity.rs`). The profile put it at 8.93% of active self time, spread over twenty-odd encoders with no dominant caller — systemic to the primitive, not to any encoder. Its two `extend_from_slice` calls each tested capacity and each could reallocate and move the buffer; one exact `reserve` makes that at most one growth.
+
+**`is_labelled` replaces a formatted-`String` comparison** (`selection.rs`, `pipeline.rs:2537`). The verification pass built a fresh label per alternative purely to compare and drop it. The replacement is exactly equivalent, not looser: `{:016x}` over a `u64` emits exactly sixteen lowercase hex digits, so prefix + length + alphabet + value admits precisely the one string `label` returns. The alphabet check is load-bearing — `u64::from_str_radix` also accepts uppercase, and `is_labelled_admits_only_the_label_it_replaces` was watched failing on `selected-plan:4C9BD785BA1158B3` with that check deleted, so the guard is known reachable rather than assumed.
+
+**Measured: 686.05 µs → 683.31 µs, −0.40%.** M3 Pro, quiet, twelve interleaved pairs, min-of-200 per reading, all twelve in the same clock state. **12/12 pairs favour the candidate** (sign test p ≈ 0.02%), so the direction is solid even though the magnitude is small. An earlier six-pair run read ≈1% only because it compared readings across the host's two clock states (≈640 µs and ≈686 µs); that spread is 7% and swamps the effect, which is why the pairs must land in one state to mean anything.
+
+Artifact identity is byte-identical — the pinned serial-sum identity and the two-process determinism test are unmoved. No memoization was added, so no work-count guard was needed; the one test added guards an equivalence, not a count.
+
+### Why this closes rather than continuing
+
+Everything left on the list is under 2.5% and the largest single entry is a correctness check that must stay. The remaining cost is not duplicated computation any more — it is 51% allocator-and-memmove traffic spread thinly across every encoder and builder, which is a different problem with a different shape: it wants fewer transient buffers, not fewer recomputations. That is filed as `reduce-transient-allocation-in-the-compile-path` rather than left implied here, because attacking it under this ticket's title would keep re-deriving the same profile.
