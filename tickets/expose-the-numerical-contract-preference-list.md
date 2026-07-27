@@ -1,7 +1,7 @@
 ---
 id: expose-the-numerical-contract-preference-list
 title: Expose the numerical contract preference list on the public compiler boundary
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [compose-numerical-honourability-and-retire-the-strict-boolean]
@@ -32,3 +32,13 @@ removed, and `make full` passes.
 ## Decision — Tom, 2026-07-25
 
 **Approved: promote.** The capability is implemented, resolved, subject-bound and tested; only the public spelling was missing. Remove the two `#[allow(dead_code)]` that name this ticket — implemented-and-tested capability sitting unreachable behind a dead-code allow is exactly the state that decays into nobody knowing whether it still works.
+
+## Outcome (2026-07-27)
+
+`CompileRequest::preferring(program, contracts)` states an ordered preference and refuses an empty list with a `CompileFailureClass::InvalidRequest`. `CompileRequest::new` is now that path with one entry, so the two cannot drift. Both `#[allow(dead_code)]` naming this ticket are gone: `NumericalContractPreference::ordered` and `VerifiedTargetRequest::numerical_contracts` are both on the live path.
+
+Readers: `Compilation::stated_numerical_contract_keys` and `resolved_numerical_contract_key`.
+
+**Keys rather than the public `NumericalContract` enum, and the reason is a correctness one.** Mapping a resolved contract back onto that enum needs an inverse of `NumericalContract::resolve`, and every total spelling of it absorbs an unrecognized key into one of the two variants — a silently wrong answer about which numerics a program was compiled under, in an accessor a caller would reasonably trust. ADR 0076 already makes the key a contract's governed name, so the key is what identifies one. This was the second design attempted; the first carried the enum and was withdrawn when the inverse turned out to need a fallback.
+
+**Test covers what a caller-side retry could not.** The stated list survives compilation in full, not just the winner; a reversed list is a different stated list even though it names the same two contracts; and an empty list is refused as an invalid request. The middle assertion is the one that matters — it is what proves order reaches the request subject rather than being normalized away, which is exactly what a caller looping over contracts itself could never establish.

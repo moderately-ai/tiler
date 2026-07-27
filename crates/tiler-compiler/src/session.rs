@@ -67,8 +67,8 @@ use crate::pipeline::{
 };
 use crate::program::KernelProgram;
 use crate::request::{
-    CompilationRequest, CompilerCapabilitySnapshot, LoweringProviderIdentity, RequestError,
-    StrictF32NumericalContract,
+    CompilationRequest, CompilerCapabilitySnapshot, LoweringProviderIdentity,
+    NumericalContractPreference, RequestError, StrictF32NumericalContract,
 };
 use tiler_ir::index::FrozenScalarRegistry;
 
@@ -209,6 +209,8 @@ impl fmt::Debug for CompileFailure {
 /// One target profile's compilation result.
 #[derive(Clone, Debug)]
 pub struct Compilation {
+    stated_contracts: Vec<StrictF32NumericalContract>,
+    resolved_contract: StrictF32NumericalContract,
     target_profile_key: &'static str,
     target_profile_descriptor: Vec<u8>,
     feasibility_rule_set: FeasibilityRuleSetIdentity,
@@ -218,6 +220,35 @@ pub struct Compilation {
 }
 
 impl Compilation {
+    /// The governed keys of the contracts this compilation was told to accept.
+    ///
+    /// Keys rather than the public [`NumericalContract`] enum, and deliberately:
+    /// mapping a resolved contract back onto that enum needs an inverse of
+    /// `resolve`, and the only total spelling of it absorbs an unrecognized key
+    /// into one of the two variants — a silently wrong answer about which
+    /// numerics a program was compiled under. ADR 0076 makes the key a
+    /// contract's governed name, so it is the value that identifies one.
+    ///
+    /// In the caller's stated order, which is the order bound into the request
+    /// subject. The first entry is not necessarily the one that was used — read
+    /// [`Self::resolved_numerical_contract_key`] for that. Exposing both is the
+    /// point: "what I would have accepted" and "what I got" are different facts,
+    /// and a reader seeing only the second cannot tell a compilation that got
+    /// its first choice from one that fell back.
+    #[must_use]
+    pub fn stated_numerical_contract_keys(&self) -> Vec<&'static str> {
+        self.stated_contracts
+            .iter()
+            .map(|contract| contract.key)
+            .collect()
+    }
+
+    /// The numerical contract this compilation actually resolved to.
+    #[must_use]
+    pub const fn resolved_numerical_contract_key(&self) -> &'static str {
+        self.resolved_contract.key
+    }
+
     /// Returns the governed key of the target profile this result is for.
     #[must_use]
     pub fn target_profile_key(&self) -> &str {
@@ -727,7 +758,7 @@ impl InstalledCapabilities {
 #[derive(Clone, Debug)]
 pub struct CompileRequest<'a> {
     program: &'a SemanticProgram,
-    contract: NumericalContract,
+    contracts: Vec<NumericalContract>,
     capabilities: InstalledCapabilities,
 }
 
@@ -740,9 +771,47 @@ impl<'a> CompileRequest<'a> {
     pub fn new(program: &'a SemanticProgram, contract: NumericalContract) -> Self {
         Self {
             program,
-            contract,
+            contracts: vec![contract],
             capabilities: InstalledCapabilities::governed(),
         }
+    }
+
+    /// States an ordered preference over several acceptable contracts.
+    ///
+    /// **Why the compiler needs the list rather than the caller retrying.** A
+    /// caller that compiled under the strictest contract, saw a refusal, and
+    /// tried the next one would get the same answer only by accident: the
+    /// compiler would never have seen the alternatives, so it could not record
+    /// which were acceptable, could not bind them into the request subject, and
+    /// could not tell a reader which one it resolved to. The stated list is part
+    /// of what the compilation *is*, not a retry policy outside it — two
+    /// requests accepting different fallbacks are different requests even when
+    /// they resolve identically.
+    ///
+    /// Order is the caller's and is preserved into request identity, so a
+    /// reordered list is a different subject.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`CompileFailure`] classed
+    /// [`CompileFailureClass::InvalidRequest`] for an empty list. There is no
+    /// default and no implicit strictest reading: a request stating no contract
+    /// does not compile.
+    pub fn preferring(
+        program: &'a SemanticProgram,
+        contracts: impl IntoIterator<Item = NumericalContract>,
+    ) -> Result<Self, CompileFailure> {
+        let contracts: Vec<NumericalContract> = contracts.into_iter().collect();
+        if contracts.is_empty() {
+            return Err(CompileFailure::from(CompileError::InvalidRequest(
+                RequestError::UnstatedNumericalContract,
+            )));
+        }
+        Ok(Self {
+            program,
+            contracts,
+            capabilities: InstalledCapabilities::governed(),
+        })
     }
 
     /// Installs the lowering authority this compilation resolves through.
@@ -763,10 +832,16 @@ impl<'a> CompileRequest<'a> {
 pub fn compile(request: CompileRequest<'_>) -> Result<Vec<Compilation>, CompileFailure> {
     let CompileRequest {
         program,
-        contract,
+        contracts,
         capabilities,
     } = request;
-    let mut internal = CompilationRequest::governed_under(program, contract.resolve());
+    let stated: Vec<_> = contracts
+        .iter()
+        .map(|contract| contract.resolve())
+        .collect();
+    let preference = NumericalContractPreference::ordered(stated)
+        .map_err(|error| CompileFailure::from(CompileError::InvalidRequest(error)))?;
+    let mut internal = CompilationRequest::governed_preferring(program, preference);
     internal.capabilities = capabilities.0;
     let product = compile_internal(internal)?;
     Ok(into_compilations(product))
@@ -797,6 +872,8 @@ fn into_compilations(product: CompilationProduct) -> Vec<Compilation> {
         .targets
         .into_iter()
         .map(|target| Compilation {
+            stated_contracts: target.stated_contracts,
+            resolved_contract: target.resolved_contract,
             target_profile_key: target.target_profile_key,
             target_profile_descriptor: target.target_profile_descriptor,
             feasibility_rule_set: target.feasibility_rule_set,
@@ -810,8 +887,8 @@ fn into_compilations(product: CompilationProduct) -> Vec<Compilation> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompilationRequest, CompileFailure, CompileFailureClass, NumericalContract,
-        StrictF32NumericalContract, compile_governed, compile_internal,
+        CompilationRequest, CompileFailure, CompileFailureClass, CompileRequest, NumericalContract,
+        StrictF32NumericalContract, compile, compile_governed, compile_internal,
     };
     use tiler_ir::program::abi::ExprNode;
     use tiler_ir::semantic::{
@@ -966,6 +1043,65 @@ mod tests {
              capability, not a malformed request: {:?}",
             failure.class(),
         );
+    }
+
+    /// A stated preference reaches the compiler, and both halves are readable.
+    ///
+    /// **The fallback has to be visible to the compiler, not applied by the
+    /// caller.** A caller that compiled under the strict contract, saw a
+    /// refusal, and retried under the relaxed one would get an answer the
+    /// compiler never recorded as a preference: the stated list would not be in
+    /// the request subject, so two requests accepting different fallbacks would
+    /// be indistinguishable, and no reader could tell which contract was used.
+    #[test]
+    fn a_stated_preference_is_carried_and_both_halves_are_readable() {
+        let program = semantic_program();
+        let request = CompileRequest::preferring(
+            &program,
+            [
+                NumericalContract::FlushSubnormalsToZeroF32,
+                NumericalContract::StrictF32,
+            ],
+        )
+        .expect("a non-empty preference is admitted");
+        let compilations = compile(request).expect("the governed program compiles");
+        let compilation = compilations.first().expect("one governed target");
+
+        assert_eq!(
+            compilation.stated_numerical_contract_keys().len(),
+            2,
+            "the whole stated list is retained, not only the winner",
+        );
+        assert_eq!(
+            compilation.stated_numerical_contract_keys()[0],
+            compilation.resolved_numerical_contract_key(),
+            "the first acceptable contract is the one resolved on this profile",
+        );
+
+        // Order is the caller's, so the reversed list states a different
+        // preference even though it names the same two contracts.
+        let reversed = CompileRequest::preferring(
+            &program,
+            [
+                NumericalContract::StrictF32,
+                NumericalContract::FlushSubnormalsToZeroF32,
+            ],
+        )
+        .expect("a non-empty preference is admitted");
+        let reversed = compile(reversed).expect("the governed program compiles");
+        assert_ne!(
+            reversed[0].stated_numerical_contract_keys(),
+            compilation.stated_numerical_contract_keys(),
+            "a reordered preference is a different stated list",
+        );
+
+        // An empty list has no default and no implicit strictest reading.
+        let empty = CompileRequest::preferring(&program, [])
+            .expect_err("an empty preference states no contract");
+        assert!(matches!(
+            empty.class(),
+            CompileFailureClass::InvalidRequest { .. }
+        ));
     }
 
     /// The failure vocabulary keeps a Tiler defect distinct from a refused

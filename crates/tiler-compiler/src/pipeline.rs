@@ -55,6 +55,10 @@ pub(crate) struct CompilationProduct {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TargetCompilationProduct {
+    /// The caller's stated contract preference, in the order it stated them.
+    pub(crate) stated_contracts: Vec<crate::request::StrictF32NumericalContract>,
+    /// The one contract this target resolved to.
+    pub(crate) resolved_contract: crate::request::StrictF32NumericalContract,
     pub(crate) target_profile_key: &'static str,
     /// Canonical descriptor bytes of the profile every alternative was assessed
     /// against, and the rules they were assessed under.
@@ -445,6 +449,8 @@ fn compile_target(
             )?;
             let (target_profile_descriptor, feasibility_rule_set) = target_assessment(&portfolio)?;
             Ok(TargetCompilationProduct {
+                stated_contracts: verified.numerical_contracts().stated().to_vec(),
+                resolved_contract: verified.numerical_contract(),
                 target_profile_key: verified.target_profile().key,
                 target_profile_descriptor,
                 feasibility_rule_set,

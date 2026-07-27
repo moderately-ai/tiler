@@ -276,10 +276,6 @@ impl NumericalContractPreference {
     /// There is no default and no implicit strictest reading: a request that
     /// states no contract does not compile, and the diagnostic says the contract
     /// is unstated rather than naming a dimension.
-    #[allow(
-        dead_code,
-        reason = "the multi-entry constructor of the caller preference list; its only in-crate callers are this boundary's own tests until the reviewed public facade exposes a preference list, which `expose-the-numerical-contract-preference-list` owns"
-    )]
     pub(crate) fn ordered(stated: Vec<StrictF32NumericalContract>) -> Result<Self, RequestError> {
         if stated.is_empty() {
             return Err(RequestError::UnstatedNumericalContract);
@@ -870,10 +866,6 @@ impl VerifiedTargetRequest {
     /// It is bound into the request subject, and therefore into every explain
     /// record and receipt, already; this accessor exists so a consumer can *read*
     /// the fallback intent rather than only distinguish two requests by it.
-    #[allow(
-        dead_code,
-        reason = "the stated-preference read accessor; the compile path reads the one resolved contract, and the caller's fallback intent becomes readable to a consumer when the reviewed public facade exposes a preference list"
-    )]
     pub(crate) fn numerical_contracts(&self) -> &NumericalContractPreference {
         &self.numerical_contracts
     }
