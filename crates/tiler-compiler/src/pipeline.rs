@@ -960,15 +960,21 @@ fn enumerate_complete_plans(
             } else {
                 legality_cause
             };
-            let outcome =
-                derive_fusion_legality(semantic, budgets, contract, &capabilities, candidate)
-                    .map_err(|source| {
-                        failure_at_source(
-                            source.into(),
-                            ExplainStage::NumericalLegality,
-                            record_cause(cover_record),
-                        )
-                    })?;
+            let outcome = derive_fusion_legality(
+                semantic,
+                budgets,
+                contract,
+                &capabilities,
+                formation,
+                candidate,
+            )
+            .map_err(|source| {
+                failure_at_source(
+                    source.into(),
+                    ExplainStage::NumericalLegality,
+                    record_cause(cover_record),
+                )
+            })?;
             legality_cause =
                 record_fusion_legality(explain, &capabilities, candidate, &outcome, cause)?;
             match outcome {
@@ -2620,6 +2626,7 @@ fn verify_equivalence(
             request.budgets(),
             request.numerical_contract(),
             &capabilities,
+            formation,
             candidate,
             proof,
         )?;

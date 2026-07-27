@@ -1,7 +1,7 @@
 ---
 id: remove-the-remaining-duplicate-work-in-the-planner
 title: Remove the remaining duplicate work in the planner
-status: todo
+status: in-progress
 priority: p2
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, compiler]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785178411
 ---
 The Phase 1 remainder, after region formation and the request subject are dealt with. Each is a pure function recomputed; none changes semantics.
 
@@ -31,3 +34,32 @@ The Phase 1 remainder, after region formation and the request subject are dealt 
 ## Closes when
 
 Each item above is removed or justified in place; compile time is measured before and after; work-count guards cover the memoisations; artifact identity is byte-identical; `make full` passes.
+
+## Outcome — the profile reprioritized this ticket (2026-07-27)
+
+**Measurement.** A sampling profile of the compile loop, recorded with `samply --rate 4000 --unstable-presymbolicate` against a `CARGO_PROFILE_RELEASE_DEBUG=true` build and cross-checked against macOS `sample`. The harness is `hot_path_profile_loop` in `crates/tiler-compiler/src/hot_path.rs`, which documents the exact recording commands. Active self time, excluding the parked test-harness thread:
+
+| | share of active self time |
+| --- | --- |
+| `_platform_memmove` | 13.6% |
+| allocator (`malloc`/`free`/`realloc`) | 12.7% |
+| **`region::canonical_member_order`** | **10.6%** |
+| `_platform_memcmp` | 8.5% |
+| `region::form_candidate` | 2.3% |
+| `pipeline::verify_portfolio` | 1.0% |
+| `pipeline::select_non_dominated` | 0.7% |
+| `explain::encode_record` | 0.3% |
+
+**Fact: this ticket's own item list was written from code reading, and the profile does not support its ordering.** The four items it names most prominently — the double alternative build, the twice-run Pareto scan, `encode_record().len()`, and `derive_materializations` — sum to under 2.5% of active self time. The single hottest function in the crate is not mentioned in the ticket at all.
+
+**Fact: `RegionGraph::from_program` ran 15 times per compile.** Counted by `REGION_GRAPH_BUILDS`, not inferred. `derive_fusion_legality` (`fusion_legality.rs`) built its own whole-program graph per candidate, and `RegionGraph::from_program` ends by running `canonical_member_order` over every operation — a colour refinement that rebuilds and re-digests a byte buffer per member per round, so it is quadratic in the program and is the source of much of the `memmove`/allocator/`memcmp` traffic above it in the table.
+
+**Inference: this is the same defect [`enumerate_covers`](../crates/tiler-compiler/src/cover.rs) already had.** `RegionFormationOutcome` owns the graph, every caller holds the formation, and the pipeline's own call site was already reading `formation.candidates()` two lines above the derivation that rebuilt the graph. `derive_fusion_legality` and `verify_fusion_legality` now take `&RegionFormationOutcome` and use `formation.graph()`, with the same "taken rather than derived" rationale recorded on the signature.
+
+**Measurement: 1.08 ms → 0.95 ms per compile, ~12%.** Minimum of 200 compiles, three runs each, before and after, on a quiet host. Graph builds per compile 15 → 1, pinned by `one_compile_builds_the_region_graph_once`.
+
+**The measurement harness was wrong and is fixed.** It reported the mean of five compiles. The first reading of this change was 1.96 ms against a 1.49 ms baseline — an apparent 30% regression — and three reruns read 1.16–1.30 ms. Host noise only ever makes a compile slower, so the distribution has a hard floor and an unbounded tail; the harness now reports the minimum of 200 runs beside the mean. Every earlier number in this programme was a mean of five and is not comparable to a number produced after this change.
+
+## Remaining
+
+Every item in the Facts section above is untouched. They are still real duplicated work and still worth removing, but the profile says the whole set is worth a low single-digit percentage, so they should be attacked as maintainability rather than as performance — or reprioritized behind whatever a re-profile now shows at the top. Re-profile before picking the next one; the composition will have shifted.

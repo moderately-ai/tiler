@@ -577,6 +577,8 @@ pub(crate) struct RegionGraph {
 impl RegionGraph {
     /// Derives the dataflow view of one verified program.
     pub(crate) fn from_program(program: &SemanticProgram) -> Result<Self, RegionError> {
+        #[cfg(test)]
+        crate::workcount::REGION_GRAPH_BUILDS.record();
         let ordinals: BTreeMap<ValueId, u32> = program
             .values()
             .enumerate()

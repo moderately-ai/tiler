@@ -49,8 +49,9 @@ use tiler_ir::semantic::{
 };
 
 use crate::region::{
-    MemberOperationFacts, RegionCandidate, RegionContentIdentity, RegionError, RegionGraph,
-    RegionOccurrenceIdentity, SemanticMemberId, verify_candidate,
+    MemberOperationFacts, RegionCandidate, RegionContentIdentity, RegionError,
+    RegionFormationOutcome, RegionGraph, RegionOccurrenceIdentity, SemanticMemberId,
+    verify_candidate,
 };
 use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 
@@ -765,18 +766,28 @@ struct MemberDerivation {
 /// Returns a [`FusionLegalityError`] when the candidate does not re-derive or a
 /// member operation lacks a semantic-registry definition. A legality outcome
 /// (`Rejected`/`Unknown`) is a successful `Ok`, not an error.
+///
+/// The region formation is **taken rather than derived**, for the same reason
+/// [`crate::cover::enumerate_covers`] takes it: it is a pure function of the
+/// program this derivation already observes, and every caller holds one.
+/// Building a graph here re-ran `canonical_member_order` over the whole
+/// program — a colour refinement quadratic in the operation count — once per
+/// candidate. A sampling profile of one compile put that single function above
+/// every other in the crate at 10.6% of active self time, and the graph was
+/// being built fifteen times per compile to produce fifteen equal values.
 pub(crate) fn derive_fusion_legality(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
     contract: StrictF32NumericalContract,
     capabilities: &FusionNumericalCapabilities,
+    formation: &RegionFormationOutcome,
     candidate: &RegionCandidate,
 ) -> Result<FusionLegality, FusionLegalityError> {
-    let graph = RegionGraph::from_program(program)?;
-    verify_candidate(&graph, budgets, contract, candidate)?;
+    let graph = formation.graph();
+    verify_candidate(graph, budgets, contract, candidate)?;
     let registry = program.semantic_registry();
 
-    let ordered = ordered_members(&graph, candidate)?;
+    let ordered = ordered_members(graph, candidate)?;
     let governed_dtype = F32::resolved_type().canonical_encoding();
     let governed_dtype = governed_dtype.as_bytes();
 
@@ -785,7 +796,7 @@ pub(crate) fn derive_fusion_legality(
     // arithmetic obligations cannot be soundly derived.
     let mut members = Vec::with_capacity(ordered.len());
     for member in &ordered {
-        match derive_member(&graph, registry, capabilities, governed_dtype, *member)? {
+        match derive_member(graph, registry, capabilities, governed_dtype, *member)? {
             Some(derivation) => members.push(derivation),
             None => {
                 return Ok(FusionLegality::Unknown(FusionUnknown {
@@ -823,10 +834,18 @@ pub(crate) fn verify_fusion_legality(
     budgets: DeterministicBudgets,
     contract: StrictF32NumericalContract,
     capabilities: &FusionNumericalCapabilities,
+    formation: &RegionFormationOutcome,
     candidate: &RegionCandidate,
     proof: &FusionLegalityProof,
 ) -> Result<(), FusionLegalityError> {
-    match derive_fusion_legality(program, budgets, contract, capabilities, candidate)? {
+    match derive_fusion_legality(
+        program,
+        budgets,
+        contract,
+        capabilities,
+        formation,
+        candidate,
+    )? {
         FusionLegality::Legal(expected) if expected.as_ref() == proof => Ok(()),
         _ => Err(FusionLegalityError::Structure {
             rule: "legality-proof-subject",
@@ -1270,7 +1289,7 @@ mod tests {
         FusionNumericalCapabilities, FusionObligation, ObligationAssessment,
         derive_fusion_legality, verify_fusion_legality,
     };
-    use crate::region::{RegionCandidate, form_region_candidates};
+    use crate::region::{RegionCandidate, RegionFormationOutcome, form_region_candidates};
     use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
@@ -1306,17 +1325,25 @@ mod tests {
         builder.build().unwrap()
     }
 
-    fn whole_program_candidate(program: &SemanticProgram) -> RegionCandidate {
+    /// Returns a program's region formation beside its whole-program candidate.
+    ///
+    /// Both, because the derivation now takes the formation instead of building
+    /// its own graph: a helper that returned only the candidate would leave every
+    /// caller re-deriving the formation this one already has.
+    fn whole_program_candidate(
+        program: &SemanticProgram,
+    ) -> (RegionFormationOutcome, RegionCandidate) {
         let outcome = form_region_candidates(
             program,
             DeterministicBudgets::governed(),
             StrictF32NumericalContract::governed(),
         )
         .unwrap();
-        outcome
+        let candidate = outcome
             .whole_program_candidate()
             .expect("a connected program has a whole-program region")
-            .clone()
+            .clone();
+        (outcome, candidate)
     }
 
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -1329,14 +1356,20 @@ mod tests {
     #[test]
     fn whole_program_serial_sum_is_legal_with_replayable_evidence() {
         let program = serial_sum_program();
-        let candidate = whole_program_candidate(&program);
+        let (formation, candidate) = whole_program_candidate(&program);
         let budgets = DeterministicBudgets::governed();
         let contract = StrictF32NumericalContract::governed();
         let capabilities = FusionNumericalCapabilities::governed();
 
-        let FusionLegality::Legal(proof) =
-            derive_fusion_legality(&program, budgets, contract, &capabilities, &candidate).unwrap()
-        else {
+        let FusionLegality::Legal(proof) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            &candidate,
+        )
+        .unwrap() else {
             panic!("the governed serial sum fuses legally");
         };
 
@@ -1346,6 +1379,7 @@ mod tests {
             budgets,
             contract,
             &capabilities,
+            &formation,
             &candidate,
             &proof,
         )
@@ -1391,14 +1425,20 @@ mod tests {
     #[test]
     fn content_identity_excludes_provider_and_occurrence() {
         let program = serial_sum_program();
-        let candidate = whole_program_candidate(&program);
+        let (formation, candidate) = whole_program_candidate(&program);
         let budgets = DeterministicBudgets::governed();
         let contract = StrictF32NumericalContract::governed();
         let capabilities = FusionNumericalCapabilities::governed();
 
-        let FusionLegality::Legal(proof) =
-            derive_fusion_legality(&program, budgets, contract, &capabilities, &candidate).unwrap()
-        else {
+        let FusionLegality::Legal(proof) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            &candidate,
+        )
+        .unwrap() else {
             panic!("legal");
         };
 
@@ -1428,14 +1468,20 @@ mod tests {
     #[test]
     fn a_pure_pointwise_square_is_legal_with_no_reduction() {
         let program = square_program();
-        let candidate = whole_program_candidate(&program);
+        let (formation, candidate) = whole_program_candidate(&program);
         let budgets = DeterministicBudgets::governed();
         let contract = StrictF32NumericalContract::governed();
         let capabilities = FusionNumericalCapabilities::governed();
 
-        let FusionLegality::Legal(proof) =
-            derive_fusion_legality(&program, budgets, contract, &capabilities, &candidate).unwrap()
-        else {
+        let FusionLegality::Legal(proof) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            &candidate,
+        )
+        .unwrap() else {
             panic!("a pure square fuses legally");
         };
         assert_eq!(proof.content().structure().reduction_count(), 0);
@@ -1453,15 +1499,21 @@ mod tests {
     #[test]
     fn an_unregistered_operation_capability_is_unknown() {
         let program = serial_sum_program();
-        let candidate = whole_program_candidate(&program);
+        let (formation, candidate) = whole_program_candidate(&program);
         let budgets = DeterministicBudgets::governed();
         let contract = StrictF32NumericalContract::governed();
         // Drop the add capability so a member operation has no fusion role.
         let capabilities = FusionNumericalCapabilities::governed_without(&add_f32_op());
 
-        let FusionLegality::Unknown(unknown) =
-            derive_fusion_legality(&program, budgets, contract, &capabilities, &candidate).unwrap()
-        else {
+        let FusionLegality::Unknown(unknown) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            &candidate,
+        )
+        .unwrap() else {
             panic!("a missing capability fails closed to unknown");
         };
         assert_eq!(
@@ -1474,7 +1526,7 @@ mod tests {
     #[test]
     fn a_contract_with_foreign_nan_bits_is_unknown() {
         let program = serial_sum_program();
-        let candidate = whole_program_candidate(&program);
+        let (formation, candidate) = whole_program_candidate(&program);
         let budgets = DeterministicBudgets::governed();
         let capabilities = FusionNumericalCapabilities::governed();
         // Keep the governed contract key (so the candidate re-derives) but demand
@@ -1482,9 +1534,15 @@ mod tests {
         let mut contract = StrictF32NumericalContract::governed();
         contract.canonical_arithmetic_nan_bits ^= 1;
 
-        let FusionLegality::Unknown(unknown) =
-            derive_fusion_legality(&program, budgets, contract, &capabilities, &candidate).unwrap()
-        else {
+        let FusionLegality::Unknown(unknown) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            &candidate,
+        )
+        .unwrap() else {
             panic!("a foreign NaN contract cannot be proved");
         };
         assert_eq!(unknown.obligation(), FusionObligation::ExceptionalValues);
@@ -1494,14 +1552,20 @@ mod tests {
     #[test]
     fn a_forged_proof_fails_replay() {
         let program = serial_sum_program();
-        let candidate = whole_program_candidate(&program);
+        let (formation, candidate) = whole_program_candidate(&program);
         let budgets = DeterministicBudgets::governed();
         let contract = StrictF32NumericalContract::governed();
         let capabilities = FusionNumericalCapabilities::governed();
 
-        let FusionLegality::Legal(mut proof) =
-            derive_fusion_legality(&program, budgets, contract, &capabilities, &candidate).unwrap()
-        else {
+        let FusionLegality::Legal(mut proof) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            &candidate,
+        )
+        .unwrap() else {
             panic!("legal");
         };
         // Tamper with the recorded provider revision.
@@ -1511,6 +1575,7 @@ mod tests {
             budgets,
             contract,
             &capabilities,
+            &formation,
             &candidate,
             &proof,
         )
@@ -1526,16 +1591,27 @@ mod tests {
     #[test]
     fn a_candidate_from_another_graph_fails_re_derivation() {
         let program = serial_sum_program();
-        let candidate = whole_program_candidate(&program);
+        let (_, candidate) = whole_program_candidate(&program);
         let budgets = DeterministicBudgets::governed();
         let contract = StrictF32NumericalContract::governed();
         let capabilities = FusionNumericalCapabilities::governed();
 
         // A structurally different program yields a different graph, so the
-        // stored occurrence identity no longer re-derives.
+        // stored occurrence identity no longer re-derives. The formation passed
+        // here is the *other* program's: taking the graph rather than building
+        // one does not weaken this check, because `verify_candidate` still runs
+        // the candidate against whatever graph it is handed.
         let other = square_program();
-        let error = derive_fusion_legality(&other, budgets, contract, &capabilities, &candidate)
-            .unwrap_err();
+        let (other_formation, _) = whole_program_candidate(&other);
+        let error = derive_fusion_legality(
+            &other,
+            budgets,
+            contract,
+            &capabilities,
+            &other_formation,
+            &candidate,
+        )
+        .unwrap_err();
         assert!(matches!(error, FusionLegalityError::Region(_)));
     }
 

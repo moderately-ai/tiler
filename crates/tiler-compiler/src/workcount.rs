@@ -84,3 +84,24 @@ thread_local! {
 /// compile, so more than one per target is duplicated work by definition.
 pub(crate) static REGION_FORMATIONS: WorkCounter =
     WorkCounter::new("region formation", &REGION_FORMATION);
+
+thread_local! {
+    static REGION_GRAPH_BUILD: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts constructions of the whole-program region graph.
+///
+/// This is the counter a profiler asked for rather than a reading of the code.
+/// `RegionGraph::from_program` ends by running `canonical_member_order` over
+/// every operation in the program — a colour refinement that rebuilds and
+/// re-digests a byte buffer per member per round, so it is quadratic in the
+/// program and allocation-heavy. A sampling profile of one compile attributed
+/// **10.6% of active self time to `canonical_member_order` alone**, above every
+/// other function in the crate, with the allocator and `memmove` traffic it
+/// generates on top of that.
+///
+/// The graph is a pure function of the program, and `RegionFormationOutcome`
+/// already owns one. More than one construction per compile is therefore a call
+/// site rebuilding a value it could have been handed.
+pub(crate) static REGION_GRAPH_BUILDS: WorkCounter =
+    WorkCounter::new("region-graph build", &REGION_GRAPH_BUILD);

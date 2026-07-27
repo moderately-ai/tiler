@@ -30,7 +30,7 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 
 use crate::session::{NumericalContract, compile_governed};
-use crate::workcount::{REGION_FORMATIONS, REQUEST_SUBJECT_REBUILDS};
+use crate::workcount::{REGION_FORMATIONS, REGION_GRAPH_BUILDS, REQUEST_SUBJECT_REBUILDS};
 
 /// The governed scale-then-reduce program at one shape.
 fn program(rows: u64, columns: u64) -> SemanticProgram {
@@ -59,21 +59,87 @@ fn program(rows: u64, columns: u64) -> SemanticProgram {
 /// **The flatness is the finding, not the absolute number.** The cost is fixed
 /// per compilation and independent of problem size, so it is structural rather
 /// than data-driven — which is what makes it worth attacking at all.
+///
+/// **Report the minimum, not the mean.** Every perturbation a host applies —
+/// a scheduler preemption, a frequency drop, a competing build — makes a
+/// compile *slower*; none makes it faster. So the distribution has a hard floor
+/// at the true cost and an unbounded tail of noise, and the minimum of enough
+/// runs estimates that floor while the mean estimates the floor plus whatever
+/// else the machine happened to be doing. The first measurement of this change
+/// read 1.96 ms against a 1.49 ms baseline and looked like a regression; three
+/// reruns read 1.16-1.30 ms. The mean of five was reporting the machine.
 #[test]
 fn hot_path_compile_time_by_shape() {
-    const REPEATS: u32 = 5;
+    /// Enough that the minimum is a stable floor rather than a lucky sample;
+    /// at ~1 ms per compile the whole test still costs a fraction of a second.
+    const REPEATS: u32 = 200;
+
     for (rows, columns) in [(4, 3), (1024, 3), (4, 1024)] {
         let program = program(rows, columns);
-        let _ = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32);
-        let start = Instant::now();
-        for _ in 0..REPEATS {
+        // Warm the allocator and the branch predictors so the first timed run is
+        // not measuring first-touch page faults.
+        for _ in 0..8 {
             let _ = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32);
         }
+        let mut best = std::time::Duration::MAX;
+        let total = Instant::now();
+        for _ in 0..REPEATS {
+            let start = Instant::now();
+            let _ = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32);
+            best = best.min(start.elapsed());
+        }
         println!(
-            "MEASURE compile {rows}x{columns}: {:?} per compile",
-            start.elapsed() / REPEATS
+            "MEASURE compile {rows}x{columns}: min {best:?}, mean {:?} over {REPEATS}",
+            total.elapsed() / REPEATS,
         );
     }
+}
+
+/// Compiles in a loop long enough for a sampling profiler to attribute the cost.
+///
+/// **This is the harness that says *where* the time goes; the counters say
+/// *how often* something ran.** A counter only reports on a site somebody
+/// already suspected, so a programme driven by counters alone optimizes the
+/// list it started with. A sampler has no such blind spot, and it is what
+/// should choose which counters are worth keeping as guards.
+///
+/// It is `#[ignore]`d because it deliberately runs for seconds and asserts
+/// nothing. Record it with `samply`, which is what found the region-graph
+/// rebuild:
+///
+/// ```text
+/// CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --tests -p tiler-compiler
+/// TILER_PROFILE_SECONDS=20 samply record --save-only --unstable-presymbolicate \
+///     --rate 4000 -o compile.profile.json.gz \
+///     -- target/release/deps/tiler_compiler-<hash> \
+///        --ignored --exact hot_path::hot_path_profile_loop --nocapture
+/// ```
+///
+/// Three details are load-bearing. `CARGO_PROFILE_RELEASE_DEBUG=true` is
+/// required: the release profile carries no debug information, and without it
+/// every frame symbolicates to a bare hex address. `--unstable-presymbolicate`
+/// writes the `*.syms.json` sidecar that holds the names — the profile's own
+/// string table does not. And the harness must run long enough to sample; a
+/// single compile is a millisecond, which is one sample.
+///
+/// `TILER_PROFILE_SECONDS` sets the duration and defaults to ten.
+#[test]
+#[ignore = "runs for seconds under a profiler; not part of the gate"]
+fn hot_path_profile_loop() {
+    let seconds = std::env::var("TILER_PROFILE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(10);
+    let program = program(4, 3);
+    let deadline = Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut compiles = 0_u64;
+    while Instant::now() < deadline {
+        for _ in 0..64 {
+            let _ = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32);
+        }
+        compiles += 64;
+    }
+    println!("MEASURE profile loop: {compiles} compiles in {seconds}s");
 }
 
 /// Reports how much of a compilation is planning rather than the request
@@ -122,6 +188,29 @@ fn the_request_subject_rebuild_count_does_not_regress() {
         "one compile reconstructed the request subject {rebuilds} times, above the measured \
          baseline of {MEASURED_BASELINE}; a new call site is calling \
          `reconstructs_its_authority` where `subject()` would do",
+    );
+}
+
+/// One compilation builds the whole-program region graph exactly once.
+///
+/// **The profiler found this one, not a reading of the code.** See
+/// [`REGION_GRAPH_BUILDS`] for what the graph construction costs and why a
+/// second one is duplicated work.
+#[test]
+fn one_compile_builds_the_region_graph_once() {
+    let program = program(4, 3);
+    let (compiled, builds) = REGION_GRAPH_BUILDS
+        .observe(|| compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32));
+    compiled.expect("the governed program compiles");
+    println!(
+        "MEASURE {}s per compile: {builds}",
+        REGION_GRAPH_BUILDS.name()
+    );
+    assert_eq!(
+        builds, 1,
+        "one compile built the whole-program region graph {builds} times; \
+         `RegionFormationOutcome` owns one and every planner entry point is handed it, so \
+         anything above one is a call site deriving a value it already has",
     );
 }
 
