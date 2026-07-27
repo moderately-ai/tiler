@@ -1,12 +1,12 @@
 ---
 id: record-the-accessmode-total-mapping-site-under-convention-5b
 title: Record the AccessMode total-mapping site under ADR 0074 convention 5b
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [implement-boundary-property-model, harden-public-enums-non-exhaustive]
-scopes: [contracts/decisions]
-shared_scopes: []
+scopes: [contracts/decisions, implementation/ir]
+shared_scopes: [project/tickets]
 paths: []
 tags: [contract, adr, api-conventions]
 ---
@@ -28,3 +28,17 @@ tags at two out-of-crate sites:
 ## Closes when
 
 The site is enumerated in ADR 0074, the must-not-gain-`#[non_exhaustive]` reason is stated where a future editor will see it, any catalog block quoting ADR 0074 is updated by hand in the same change, and `make full` passes.
+
+## Outcome — enumerated, with the reason verified rather than asserted (2026-07-27)
+
+**Both call sites confirmed present and total.** `access_mode_tag` at `crates/tiler-compiler/src/selection.rs:1640` and `crates/tiler-compiler/src/frontier.rs:1425` each match `Read => 1` and `Write => 2` with no wildcard. `AccessMode` at `crates/tiler-ir/src/schedule/model.rs` carries no `#[non_exhaustive]`.
+
+**The enumeration is illustrative, not normative, and the ADR already said so.** The check this ticket demanded returns the answer it warned about: the paragraph above the new entry states outright that "the enumeration above is a snapshot", and the clause's closing test makes the classification "a property of the consumers that exist", with the ticket adding a consumer owning the re-check. So adding a site is *not* sufficient on its own, exactly as this ticket anticipated. The ADR now says so in its own voice: a new paragraph records that nothing in the repository enumerates 5b sites, that no command produces the complete set, and that the list is worked examples plus evidence the convention is live — while pointing a reader at the decidable per-type test, which is what they can actually run.
+
+**The must-not reason lives at the definition, and it is now measured.** The doc comment on `AccessMode` states why the attribute must not be added. Rather than assert that, the attribute was added and the build watched: `cargo check -p tiler-compiler` fails with two `E0004`s naming `frontier.rs:1426` and `selection.rs:1641`, each reporting that `AccessMode` "is marked as non-exhaustive, so a wildcard `_` is necessary" and offering `_ => todo!()`. That wildcard is precisely the failure the comment describes — an arm that would have to invent an identity tag the variant alone determines. The probe was reverted and the crate re-checked clean.
+
+**One process note worth keeping.** The first attempt at that probe silently did not modify the file, and `cargo check` passed — which read as "the attribute is harmless" and would have refuted the comment I had just written. The edit was only trusted once it printed whether the attribute was actually present. A verification whose subject was never applied is indistinguishable from a verification that passed.
+
+**No contradiction with `harden-public-enums-non-exhaustive`.** That ticket is `done` and classified `AppleSdk`, `OptimizationLevel`, `ArtifactProvenance`, `CompiledArtifact`, and `IndexExprClass`. It never touched `AccessMode`, so nothing there says this type should gain the attribute.
+
+**Catalogs.** `docs/decisions/README.md` carries two lines for ADR 0074, both title-and-status only; neither moved, so no catalog block needed editing. The ADR keeps `decision_status: accepted` and its rationale.
