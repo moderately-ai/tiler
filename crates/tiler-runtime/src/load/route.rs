@@ -283,6 +283,51 @@ impl<'a> Preflight<'a> {
     ///     let (_spare, _route) = duplicate(preflight);
     /// }
     /// ```
+    ///
+    /// # Neither can a second authority be minted
+    ///
+    /// The three examples above all start from a `Preflight` a caller already
+    /// holds, so on their own they prove only that *one* authority is
+    /// single-use. They were the whole of the evidence until
+    /// `make-runtime-routing-commit-authority-one-shot`, and they left the real
+    /// hole open: a caller could mint a second authority from the program and
+    /// commit that instead.
+    ///
+    /// Holding a committed route keeps the program exclusively borrowed, so
+    /// preflighting it again does not compile (`E0499`):
+    ///
+    /// ```compile_fail,E0499
+    /// use tiler_artifact::program::AbiFacts;
+    /// use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment};
+    ///
+    /// fn commit_then_mint_another(
+    ///     program: &mut DecodedProgram,
+    ///     environment: &ExecutionEnvironment,
+    ///     expected: &[u8],
+    ///     facts: &AbiFacts,
+    /// ) {
+    ///     let route = program.preflight(environment, expected, facts).unwrap().commit();
+    ///     let _second = program.preflight(environment, expected, facts);
+    ///     let _still_held = route;
+    /// }
+    /// ```
+    ///
+    /// And the program cannot be duplicated to escape that borrow, because
+    /// [`DecodedProgram`] is deliberately not [`Clone`] (`E0277`):
+    ///
+    /// ```compile_fail,E0277
+    /// use tiler_runtime::load::DecodedProgram;
+    ///
+    /// fn duplicate<T: Clone>(value: T) -> (T, T) {
+    ///     (value.clone(), value)
+    /// }
+    ///
+    /// fn two_programs_one_artifact(program: DecodedProgram) {
+    ///     let (_spare, _original) = duplicate(program);
+    /// }
+    /// ```
+    ///
+    /// [`DecodedProgram`]: super::DecodedProgram
     #[must_use]
     pub fn commit(self) -> RoutedDispatch<'a> {
         let Self {

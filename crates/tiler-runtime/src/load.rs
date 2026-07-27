@@ -14,6 +14,23 @@
 //! and nothing can refuse after it. That is ADR 0051's one-way routing commit
 //! expressed as three types rather than as a rule to remember.
 //!
+//! # One authority per attempt, not merely one use per authority
+//!
+//! Those three types alone are not enough, and the gap is worth naming because
+//! this module claimed the stronger property while only holding the weaker one.
+//! A non-`Clone` [`Preflight`] and a consuming `commit` prove that *a given*
+//! authority is single-use. They say nothing about how many a caller may mint.
+//! While [`DecodedProgram`] was `Clone` and `preflight` took `&self`, a caller
+//! could mint one per clone, commit one, and still hold an uncommitted authority
+//! for the same attempt — the exact state the commit exists to forbid.
+//!
+//! So [`DecodedProgram`] is not `Clone` and [`DecodedProgram::preflight`] takes
+//! `&mut self`. A committed [`RoutedDispatch`] carries the borrow forward, so
+//! the program stays exclusively borrowed for as long as the route lives and a
+//! second `preflight` does not compile. Abandoning a `Preflight` instead of
+//! committing it releases the borrow, which is precisely the fallback ADR 0051
+//! permits and is deliberately still allowed.
+//!
 //! The validation is [`tiler_artifact`]'s, not this crate's.
 //! [`decode_artifact`] proves framing, manifest and section digests, component
 //! schemas, canonical order, expression-arena closure, required-feature
@@ -55,13 +72,15 @@
 //!
 //! # What is still refused, and why each reason survives
 //!
-//! - **A variant whose entry count is not one.** An envelope carries each
-//!   stage's canonical identity rather than the program's dependency graph, so
-//!   declaration order is not execution order and a multi-entry variant cannot
-//!   be sequenced from an artifact alone. Unreachable today, because the decoder
-//!   already refuses such an envelope through
-//!   `tiler.artifact.feature.multi-stage-program`; kept because this loader must
-//!   not be correct only by another layer's refusal.
+//! - **A variant whose entry count is not one.** This loader's limit, not the
+//!   envelope's, and the distinction is recent: an envelope now carries the
+//!   execution order and the typed dependency edges that order discharges, so a
+//!   multi-entry variant *can* be sequenced from an artifact alone. What is
+//!   missing is here — this loader routes one entry and has no per-entry
+//!   preflight or dispatch. The refusal is reachable rather than shadowed by a
+//!   decoder that rejected such an envelope one layer earlier, which is the
+//!   point: a loader correct only by another layer's refusal is not correct.
+//!   `preflight-every-entry-of-a-multi-stage-route` owns lifting it.
 //! - **A variant with deferred feasibility predicates.** Answering one means
 //!   querying the provider it names, and this crate holds no provider registry.
 //!   Ignoring them would route past a feasibility condition the producer
@@ -94,7 +113,21 @@ use std::fmt;
 /// [`DecodedArtifact`]: this crate's job is to add host-relative obligations on
 /// top of a decode, and handing out the raw view would let a caller skip them
 /// while still appearing to have gone through the runtime.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// # Deliberately not `Clone`, and that is half of the routing authority
+///
+/// It *was* `Clone`, and that made ADR 0051's one-way commit weaker than the
+/// doc-tests on [`Preflight::commit`] suggested. Those prove a single
+/// [`Preflight`] cannot be committed twice or duplicated. They say nothing about
+/// *minting a second one*, and a clonable program reachable through `&self`
+/// could mint as many as a caller liked: clone the program, preflight both,
+/// commit one, and keep an uncommitted authority for the same attempt — exactly
+/// the state the commit exists to make unreachable.
+///
+/// The other half is that [`Self::preflight`] takes `&mut self`. Together they
+/// make the property structural rather than documented: see that method for how
+/// the borrow discharges it.
+#[derive(Debug, Eq, PartialEq)]
 pub struct DecodedProgram {
     decoded: DecodedArtifact,
 }
@@ -223,6 +256,24 @@ impl DecodedProgram {
     /// the point where a fallback is still permitted, which is the one thing the
     /// commit exists to prevent.
     ///
+    /// # `&mut self`, because the route authority is consumable
+    ///
+    /// Taking `&mut self` is not about mutation — nothing here mutates. It is
+    /// what makes "one authority per attempt" a fact the compiler enforces.
+    ///
+    /// The returned [`Preflight`] borrows this program, and [`Preflight::commit`]
+    /// passes that borrow into the [`RoutedDispatch`] it returns. So for as long
+    /// as a caller holds a committed route, the program stays exclusively
+    /// borrowed and a second `preflight` call does not compile. Combined with
+    /// [`DecodedProgram`] not being [`Clone`], there is no way to hold a
+    /// committed route and an uncommitted authority for the same attempt.
+    ///
+    /// **Preflighting again after *abandoning* is legal and stays legal.**
+    /// Dropping a `Preflight` without committing is how a caller takes the
+    /// fallback ADR 0051 permits, and the borrow ends with it, so the next
+    /// attempt may preflight again. What is refused is minting a second
+    /// authority while one has already been *carried across* the commit.
+    ///
     /// # Errors
     ///
     /// Returns the [`LoadRejection`] naming the first obligation that failed.
@@ -237,7 +288,7 @@ impl DecodedProgram {
     /// binding. Each would be a defect in `tiler-artifact` rather than a caller
     /// error, which is why none is a returned variant a caller would handle.
     pub fn preflight(
-        &self,
+        &mut self,
         environment: &ExecutionEnvironment,
         expected: &[u8],
         facts: &AbiFacts,

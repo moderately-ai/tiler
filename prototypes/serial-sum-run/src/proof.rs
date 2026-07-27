@@ -669,7 +669,7 @@ fn refused(probe: &'static str, outcome: String) -> ProofError {
 /// first is what makes each refusal below attributable to the one thing that
 /// probe changed.
 fn probe_accepted_baseline(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let preflight = decoded
         .preflight(subject.environment, subject.expected, subject.abi)
         .map_err(ProofError::ProbeBaseline)?;
@@ -789,7 +789,7 @@ fn probe_truncated_envelope(subject: &ProbeSubject<'_>) -> Result<String, ProofE
 /// artifact, which is a stale cache entry or a mixed-up path rather than a plan
 /// to rebuild.
 fn probe_foreign_expected_identity(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let mut foreign = subject.expected.to_vec();
     if let Some(last) = foreign.last_mut() {
         *last ^= 0x01;
@@ -816,7 +816,7 @@ fn probe_foreign_expected_identity(subject: &ProbeSubject<'_>) -> Result<String,
 /// another family entirely. Asserting only that something refused would erase
 /// both distinctions at the moment a caller needs them.
 fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let mut descriptor = subject
         .environment
         .target_profile
@@ -859,7 +859,7 @@ fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, 
 /// offers the exact profile the variant was assessed against, so the refusal
 /// cannot come from the compatibility classification.
 fn probe_other_backend_family(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let other_backend = ExecutionEnvironment {
         target_profile: subject.environment.target_profile.clone(),
         backend: BackendKey::new("tiler.some-other-backend")
@@ -1594,7 +1594,7 @@ fn run() -> Result<(), ProofError> {
 
     // ---- the envelope path -----------------------------------------------
     let (bytes, sidecar) = read_artifact(&envelope_path)?;
-    let decoded = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
+    let mut decoded = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
     println!(
         "decoded: {} variant(s), required features {:?}",
         decoded.variant_count(),
