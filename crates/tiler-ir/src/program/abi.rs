@@ -36,11 +36,21 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::identity::push_slice;
+use crate::identity::{push_len, push_slice};
 use crate::semantic::InputKey;
 use crate::shape::Axis;
 
 const EXPR_DOMAIN: &[u8] = b"tiler.artifact-program.abi-expr.v1\0";
+
+/// Canonical-arena encoding domain.
+///
+/// Separate from [`EXPR_DOMAIN`] because it frames a different subject: that one
+/// names one node's whole subtree standalone, this one names a whole arena once
+/// and lets its use sites reference nodes by canonical position.
+const ARENA_DOMAIN: &[u8] = b"tiler.kernel-program.abi-arena.v1\0";
+
+const CANONICAL_ID_BYTES: usize = size_of::<u64>();
+const LENGTH_BYTES: usize = size_of::<u64>();
 
 /// The value type of one ABI expression.
 ///
@@ -247,6 +257,28 @@ impl AbiRoot {
             }
         }
     }
+
+    /// Returns the exact byte count [`Self::encode`] appends.
+    ///
+    /// It exists to size an arena encoding's buffer once instead of growing it,
+    /// and it is a second statement of the same layout — so every caller that
+    /// reserves by it also `debug_assert`s the encoder wrote exactly that, which
+    /// is what keeps the two from drifting apart silently.
+    fn encoded_len(&self) -> usize {
+        let tag = 1_usize;
+        match self {
+            Self::UnsignedLiteral(_) => tag + size_of::<u64>(),
+            Self::BooleanLiteral(_) => tag + 1,
+            Self::InputExtent { key, .. } => tag
+                .saturating_add(LENGTH_BYTES)
+                .saturating_add(key.as_str().len())
+                .saturating_add(size_of::<u32>()),
+            Self::TargetProperty { key, .. } => tag
+                .saturating_add(LENGTH_BYTES)
+                .saturating_add(key.as_str().len())
+                .saturating_add(1),
+        }
+    }
 }
 
 /// One admitted unary ABI operation.
@@ -419,7 +451,14 @@ impl AbiBinaryOp {
 /// Operands are stored as arena positions and are always strictly smaller than
 /// the node's own position, so the arena is acyclic by construction and needs
 /// no cycle check.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// [`Hash`] is derived so a builder can intern the arena through a hash map
+/// keyed on the node itself. Matching a node this way is a *shallow* comparison
+/// — the constructor, the operation, and the operands' arena positions — and it
+/// decides deep structural equality only because those operands index an arena
+/// that is already interned. `KernelProgramBuilder::push_abi_node` states the
+/// induction.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ExprNode {
     /// A typed root fact naming a program, interface, or target value.
     Root(AbiRoot),
@@ -566,6 +605,22 @@ impl AbiFacts {
 /// The key names the node's whole subtree by content, never its arena position,
 /// so two structurally equal expressions assembled in different orders produce
 /// the same bytes and cross-references by key stay injective.
+///
+/// # Cost, and what uses this
+///
+/// A standalone key for one node has to determine that node's whole subtree, so
+/// it cannot be smaller than the subtree — and because this form nests each
+/// operand's key rather than referencing it, a node whose operand is shared *k*
+/// times pays for that operand *k* times. On a chain the array of all keys is
+/// quadratic in arena size; on a shared DAG one key alone doubles per level.
+///
+/// Kernel-program identity therefore no longer uses this. It encodes the arena
+/// once, in a canonical numbering, and references nodes by canonical position,
+/// which is linear in arena size and equally injective. `tiler-artifact`
+/// still derives per-node keys this way for envelope identity and for the
+/// canonical arena order its codec writes; moving it to the same flat form is
+/// `encode-artifact-abi-identity-in-linear-space`, which has to change all four
+/// of that crate's key derivations at once or they stop agreeing.
 #[must_use]
 pub fn expr_key(node: &ExprNode, keys: &[Vec<u8>]) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -598,6 +653,180 @@ pub fn expr_key(node: &ExprNode, keys: &[Vec<u8>]) -> Vec<u8> {
         }
     }
     bytes
+}
+
+/// A canonical numbering of every arena node one ordered root list reaches.
+///
+/// Canonical means derived from content: the numbering is a function of the
+/// roots' order and of the expression DAG under them, never of where a node
+/// happens to sit in the builder's arena. Two programs that mean the same thing
+/// therefore number their nodes the same way even when they were assembled in
+/// different orders.
+pub(crate) struct AbiArenaTraversal {
+    /// Canonical position of each arena node, or `None` for an unreached one.
+    canonical_ids: Vec<Option<u64>>,
+    /// Arena positions in canonical order; index into this *is* the canonical ID.
+    order: Vec<u32>,
+}
+
+/// Numbers every node reachable from `roots`, operands before the nodes naming
+/// them.
+///
+/// `roots` is consumed in order and its order is part of the numbering, so a
+/// caller must pass use sites in whatever order it already treats as canonical.
+/// A root list that is not canonical yields a numbering that is not canonical;
+/// it does not yield an ambiguous one, because [`AbiArenaTraversal::encode`]
+/// writes the arena in that same numbering rather than assuming an agreed one.
+pub(crate) fn canonical_arena_traversal(
+    nodes: &[ExprNode],
+    roots: impl IntoIterator<Item = u32>,
+) -> AbiArenaTraversal {
+    enum Work {
+        Enter(u32),
+        Exit(u32),
+    }
+
+    let mut canonical_ids = vec![None; nodes.len()];
+    let mut order = Vec::with_capacity(nodes.len());
+    let mut work: Vec<Work> = Vec::new();
+    for root in roots {
+        work.push(Work::Enter(root));
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Enter(node) => {
+                    if canonical_ids[position(node)].is_some() {
+                        continue;
+                    }
+                    // Exit first so it pops last: every operand is numbered
+                    // before the node that names it.
+                    work.push(Work::Exit(node));
+                    match &nodes[position(node)] {
+                        ExprNode::Root(_) => {}
+                        ExprNode::Unary { operand, .. } => work.push(Work::Enter(*operand)),
+                        ExprNode::Binary { left, right, .. } => {
+                            work.push(Work::Enter(*right));
+                            work.push(Work::Enter(*left));
+                        }
+                        ExprNode::Select {
+                            condition,
+                            if_true,
+                            if_false,
+                        } => {
+                            work.push(Work::Enter(*if_false));
+                            work.push(Work::Enter(*if_true));
+                            work.push(Work::Enter(*condition));
+                        }
+                    }
+                }
+                Work::Exit(node) => {
+                    // A node reachable by two paths is entered twice and exits
+                    // once; the second exit finds it already numbered.
+                    if canonical_ids[position(node)].is_some() {
+                        continue;
+                    }
+                    canonical_ids[position(node)] =
+                        Some(u64::try_from(order.len()).expect("a bounded arena fits u64"));
+                    order.push(node);
+                }
+            }
+        }
+    }
+    AbiArenaTraversal {
+        canonical_ids,
+        order,
+    }
+}
+
+impl AbiArenaTraversal {
+    /// Returns the canonical position of one reached arena node.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `node` was not reached from the roots this traversal was
+    /// built with. Whole-program verification proves every arena node is
+    /// reachable from the use sites before identity is encoded, so an unreached
+    /// node here means an unverified program was encoded rather than a bad
+    /// value — which is why it is not a returned error.
+    pub(crate) fn canonical_id(&self, node: u32) -> u64 {
+        self.canonical_ids[position(node)]
+            .expect("verification proves every use site's expression is reached")
+    }
+
+    /// Returns how many nodes the traversal reached.
+    pub(crate) fn reached(&self) -> usize {
+        self.order.len()
+    }
+
+    /// Returns the exact byte count [`Self::encode`] appends.
+    pub(crate) fn encoded_len(&self, nodes: &[ExprNode]) -> usize {
+        self.order
+            .iter()
+            .map(|node| node_encoded_len(&nodes[position(*node)]))
+            .fold(
+                ARENA_DOMAIN.len().saturating_add(LENGTH_BYTES),
+                usize::saturating_add,
+            )
+    }
+
+    /// Appends the whole reached arena, once, in canonical order.
+    ///
+    /// # Injectivity
+    ///
+    /// The section is a framed count followed by that many self-delimiting node
+    /// records, so a reader can recover the exact node list without knowing
+    /// anything but these bytes. Each record opens with a constructor tag that
+    /// fixes the width of everything after it — fixed-width operation tags and
+    /// canonical IDs, and [`AbiRoot::encode`]'s own tagged, length-prefixed
+    /// payload. Operands are canonical IDs of nodes already written, so the DAG
+    /// itself is recovered too, sharing and all. Two arenas that differ in any
+    /// node, operand, or shape of sharing therefore differ in these bytes.
+    pub(crate) fn encode(&self, nodes: &[ExprNode], bytes: &mut Vec<u8>) {
+        let expected = self.encoded_len(nodes);
+        bytes.reserve(expected);
+        let start = bytes.len();
+        bytes.extend_from_slice(ARENA_DOMAIN);
+        push_len(bytes, self.order.len());
+        for node in &self.order {
+            match &nodes[position(*node)] {
+                ExprNode::Root(root) => {
+                    bytes.push(0x01);
+                    root.encode(bytes);
+                }
+                ExprNode::Unary { op, operand } => {
+                    bytes.push(0x02);
+                    bytes.push(op.tag());
+                    bytes.extend_from_slice(&self.canonical_id(*operand).to_be_bytes());
+                }
+                ExprNode::Binary { op, left, right } => {
+                    bytes.push(0x03);
+                    bytes.push(op.tag());
+                    bytes.extend_from_slice(&self.canonical_id(*left).to_be_bytes());
+                    bytes.extend_from_slice(&self.canonical_id(*right).to_be_bytes());
+                }
+                ExprNode::Select {
+                    condition,
+                    if_true,
+                    if_false,
+                } => {
+                    bytes.push(0x04);
+                    bytes.extend_from_slice(&self.canonical_id(*condition).to_be_bytes());
+                    bytes.extend_from_slice(&self.canonical_id(*if_true).to_be_bytes());
+                    bytes.extend_from_slice(&self.canonical_id(*if_false).to_be_bytes());
+                }
+            }
+        }
+        debug_assert_eq!(bytes.len() - start, expected);
+    }
+}
+
+fn node_encoded_len(node: &ExprNode) -> usize {
+    let tag = 1_usize;
+    match node {
+        ExprNode::Root(root) => tag.saturating_add(root.encoded_len()),
+        ExprNode::Unary { .. } => tag.saturating_add(1).saturating_add(CANONICAL_ID_BYTES),
+        ExprNode::Binary { .. } => tag.saturating_add(1).saturating_add(2 * CANONICAL_ID_BYTES),
+        ExprNode::Select { .. } => tag.saturating_add(3 * CANONICAL_ID_BYTES),
+    }
 }
 
 /// Returns the value type one node produces, given its operands' types.

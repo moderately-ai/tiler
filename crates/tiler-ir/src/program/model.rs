@@ -22,7 +22,7 @@ use crate::semantic::{InputKey, OutputKey, SemanticGraphIdentity};
 use crate::shape::Shape;
 
 use super::MAX_PROGRAM_IDENTITY_BYTES;
-use super::abi::{ExprNode, expr_key};
+use super::abi::{AbiArenaTraversal, ExprNode, canonical_arena_traversal};
 use super::error::KernelProgramDiagnostic;
 use super::handles::{AbiExprId, ViewId};
 
@@ -994,16 +994,30 @@ const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v1\0";
 const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
-/// Program identity domain, bumped to `v2`.
+/// Program identity domain, bumped to `v3`.
 ///
-/// What the identity *means* changed: `v1` folded the semantic graph, bound
-/// implementations, coverage and program structure only, and was blind to two
-/// programs that differed in their entry ABI, applicability guard, or
-/// routing-commit contract. `v2` folds all three, so a cache keyed on this
-/// identity can no longer serve one program's bytes for another's guard. The
-/// tag is versioned exactly so that change is explicit rather than a silent
-/// re-encoding of every subject ever produced.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v2\0";
+/// `v2` folded the semantic graph, bound implementations, coverage, program
+/// structure, the entry ABI, the applicability guard and the routing-commit
+/// contract — and `v3` folds exactly the same subject. What changed is the
+/// *encoding* of the ABI expressions inside it, and that is precisely why the
+/// tag steps: every program ever encoded maps to different bytes now, so a
+/// cache or artifact holding a `v2` identity must miss rather than match.
+///
+/// `v2` named each use site's expression by [`expr_key`], a standalone content
+/// key that embeds its operands' keys. A key therefore restated its whole
+/// subtree, so an identity was quadratic in arena size along a chain and
+/// doubled per level wherever one node was shared — a five-operation program
+/// measured 13,623 bytes. `v3` writes the reachable arena once, in the
+/// canonical order of the use sites that reach it, and each use site names its
+/// expression by canonical position. Injectivity is unchanged: the arena
+/// section determines the whole DAG including its sharing, and an 8-byte
+/// canonical position determines which node a use site means.
+///
+/// The change is deliberate and its cost is stated: no external consumer holds
+/// a `v2` identity, so invalidating every artifact identity and cache entry
+/// costs a rebuild rather than a migration. See
+/// `encode-abi-expression-identity-in-linear-space`.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v3\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -1035,20 +1049,20 @@ fn push_origin(bytes: &mut Vec<u8>, origin: &MaterializedOrigin) {
 /// Each key is a domain-tagged, length-prefixed encoding of what the entity
 /// *is*, never of where it happens to sit in a builder arena. The verifier
 /// proves the keys of each category are pairwise distinct, which makes the
-/// canonical order they induce total and makes cross-references by key
-/// injective.
+/// canonical order they induce total.
+///
+/// That order is what these keys are for. They are **not** written into
+/// identity: [`encode_identity`] writes each entity once and cross-references
+/// it by its rank in this order, because a key that embeds its operands' keys
+/// restates a whole subtree everywhere it appears. Ranking still needs the
+/// nested form — a rank has to be a function of the entity's full content — but
+/// only one comparison sort pays for it, instead of every reference.
 #[derive(Clone, Debug)]
 pub(super) struct CanonicalKeys {
     pub(super) stages: Vec<Vec<u8>>,
     pub(super) values: Vec<Vec<u8>>,
     pub(super) views: Vec<Vec<u8>>,
     pub(super) allocations: Vec<Vec<u8>>,
-    /// Canonical content key of every ABI expression arena node.
-    ///
-    /// Not a category the verifier proves pairwise distinct: the builder
-    /// deduplicates the arena by exactly these bytes, so distinctness is an
-    /// insertion-time invariant rather than a whole-program obligation.
-    pub(super) expressions: Vec<Vec<u8>>,
 }
 
 /// Derives the canonical content key of every entity.
@@ -1084,22 +1098,7 @@ pub(super) fn canonical_keys(
         values,
         views,
         allocations,
-        expressions: expression_keys(&data.abi_expressions),
     }
-}
-
-/// Derives the canonical content key of every ABI expression arena node.
-///
-/// The recurrence is [`expr_key`]'s: each key names the node's whole subtree by
-/// content, so it is independent of where in the arena the node happens to sit.
-/// Operands always precede the node naming them, so one forward pass suffices.
-pub(super) fn expression_keys(nodes: &[ExprNode]) -> Vec<Vec<u8>> {
-    let mut keys: Vec<Vec<u8>> = Vec::with_capacity(nodes.len());
-    for node in nodes {
-        let key = expr_key(node, &keys);
-        keys.push(key);
-    }
-    keys
 }
 
 fn stage_key(stage: &StageData) -> Vec<u8> {
@@ -1182,7 +1181,91 @@ fn canonical_order(keys: &[Vec<u8>]) -> Vec<usize> {
     order
 }
 
+/// One canonical entity numbering: declared position in, canonical position out.
+///
+/// The numbering is content-derived because [`canonical_order`] ranks by
+/// canonical key, and the verifier proves those keys pairwise distinct within a
+/// category — so the rank is total and two programs that mean the same thing
+/// number their entities identically.
+struct CanonicalIds {
+    /// Canonical position of each declared entity.
+    of_declared: Vec<u64>,
+    /// Declared positions in canonical order.
+    order: Vec<usize>,
+}
+
+fn canonical_ids(keys: &[Vec<u8>]) -> CanonicalIds {
+    let order = canonical_order(keys);
+    let mut of_declared = vec![0_u64; order.len()];
+    for (canonical, declared) in order.iter().enumerate() {
+        of_declared[*declared] = u64::try_from(canonical).expect("a bounded program fits u64");
+    }
+    CanonicalIds { of_declared, order }
+}
+
+impl CanonicalIds {
+    /// Names one entity by its canonical position, at fixed width.
+    ///
+    /// Eight big-endian bytes are self-delimiting, so this replaces a
+    /// length-prefixed key without losing framing.
+    fn push(&self, bytes: &mut Vec<u8>, declared: u32) {
+        bytes.extend_from_slice(&self.of_declared[position(declared)].to_be_bytes());
+    }
+}
+
+/// The ABI use sites of one program, in the order identity folds them.
+///
+/// This seeds the canonical arena numbering, so it must be an order derived
+/// from program content — hence the canonical stage order rather than the
+/// declared one. It is deliberately *not* the authority on where each reference
+/// is written: [`encode_identity`] names each use site directly, and a drift
+/// between the two would change which node gets which number without making an
+/// identity ambiguous, because the arena is written in whatever numbering this
+/// produced and every reference resolves through that same numbering.
+fn abi_use_sites(data: &KernelProgramData, stage_order: &[usize]) -> Vec<u32> {
+    // The applicability guard leads because it decides whether any stage runs
+    // at all.
+    let mut sites = vec![
+        data.applicability_guard
+            .expect("verification proves an applicability guard is declared"),
+    ];
+    for stage in stage_order {
+        let stage = &data.stages[*stage];
+        sites.push(stage.launch.grid_threads);
+        sites.push(stage.launch.threads_per_workgroup);
+        sites.extend(stage.accesses.iter().map(|access| access.accessible_bytes));
+    }
+    sites
+}
+
+/// Names one arena node by its canonical position, at fixed width.
+///
+/// Fixed width is what lets this replace a length-prefixed key without losing
+/// framing: eight big-endian bytes are self-delimiting on their own.
+fn push_abi_reference(bytes: &mut Vec<u8>, arena: &AbiArenaTraversal, node: u32) {
+    bytes.extend_from_slice(&arena.canonical_id(node).to_be_bytes());
+}
+
 /// Encodes the canonical identity of one verified kernel program.
+///
+/// # Shape
+///
+/// Every entity is written **once**, in a count-prefixed section in canonical
+/// order, and every cross-reference to it is its canonical position. Sections
+/// are ordered so a record only names entities an earlier section already
+/// defined — stages, then values, then views and allocations, then the program
+/// structure that names all of them.
+///
+/// # Injectivity
+///
+/// Each section is a framed count followed by that many self-delimiting
+/// records, so a reader recovers the exact entity list from these bytes alone.
+/// A canonical position is eight fixed-width bytes and the section it indexes
+/// is complete, so a reference determines its entity exactly as a full copy of
+/// that entity's key did. What the encoding stops restating, it does not stop
+/// determining.
+///
+/// See [`PROGRAM_DOMAIN`] for why this is a `v3` step and what `v2` did instead.
 ///
 /// # Errors
 ///
@@ -1191,56 +1274,88 @@ fn canonical_order(keys: &[Vec<u8>]) -> Vec<usize> {
 pub(super) fn encode_identity(
     data: &KernelProgramData,
     keys: &CanonicalKeys,
+    definitions: &[Option<ValueDefinition>],
 ) -> Result<CanonicalKernelProgramIdentity, KernelProgramDiagnostic> {
+    let stages = canonical_ids(&keys.stages);
+    let values = canonical_ids(&keys.values);
+    let views = canonical_ids(&keys.views);
+    let allocations = canonical_ids(&keys.allocations);
+
+    let use_sites = abi_use_sites(data, &stages.order);
+    let arena = canonical_arena_traversal(&data.abi_expressions, use_sites.iter().copied());
+    debug_assert_eq!(
+        arena.reached(),
+        data.abi_expressions.len(),
+        "verification proves every arena node is reached by a use site"
+    );
+
     let mut bytes = Vec::new();
     bytes.extend_from_slice(PROGRAM_DOMAIN);
     push_slice(&mut bytes, data.semantic_graph.as_bytes());
+    arena.encode(&data.abi_expressions, &mut bytes);
 
-    // The applicability guard is folded before the stages because it decides
-    // whether any of them run at all.
-    push_slice(
-        &mut bytes,
-        &keys.expressions[position(
-            data.applicability_guard
-                .expect("verification proves an applicability guard is declared"),
-        )],
-    );
-
+    // A stage names only its bound implementation and the occurrences it
+    // covers, so it depends on no other entity and leads.
     push_len(&mut bytes, data.stages.len());
-    for stage in canonical_order(&keys.stages) {
-        push_slice(&mut bytes, &keys.stages[stage]);
-        let launch = data.stages[stage].launch;
-        push_slice(&mut bytes, &keys.expressions[position(launch.grid_threads)]);
-        push_slice(
-            &mut bytes,
-            &keys.expressions[position(launch.threads_per_workgroup)],
-        );
-        let accesses = &data.stages[stage].accesses;
-        push_len(&mut bytes, accesses.len());
-        for access in accesses {
-            push_slice(&mut bytes, &keys.views[position(access.view)]);
-            bytes.push(access.mode.tag());
-            push_slice(
-                &mut bytes,
-                &keys.expressions[position(access.accessible_bytes)],
-            );
+    for stage in &stages.order {
+        let stage = &data.stages[*stage];
+        push_slice(&mut bytes, stage.kernel.canonical_identity().as_bytes());
+        push_len(&mut bytes, stage.coverage.len());
+        for occurrence in &stage.coverage {
+            bytes.extend_from_slice(&occurrence.get().to_be_bytes());
         }
     }
 
     push_len(&mut bytes, data.values.len());
-    for value in canonical_order(&keys.values) {
-        push_slice(&mut bytes, &keys.values[value]);
+    for value in &values.order {
+        push_value(
+            &mut bytes,
+            &data.values[*value],
+            definitions[*value],
+            &stages,
+        );
+    }
+
+    push_len(&mut bytes, data.views.len());
+    for view in &views.order {
+        let view = &data.views[*view];
+        values.push(&mut bytes, view.value);
+        bytes.extend_from_slice(&view.window.offset.to_be_bytes());
+        bytes.extend_from_slice(&view.window.length.to_be_bytes());
     }
 
     push_len(&mut bytes, data.allocations.len());
-    for allocation in canonical_order(&keys.allocations) {
-        push_slice(&mut bytes, &keys.allocations[allocation]);
+    for allocation in &allocations.order {
+        push_allocation(&mut bytes, *allocation, data, &values);
+    }
+
+    // The applicability guard is folded before the stage detail because it
+    // decides whether any stage runs at all.
+    push_abi_reference(
+        &mut bytes,
+        &arena,
+        data.applicability_guard
+            .expect("verification proves an applicability guard is declared"),
+    );
+
+    // The launch geometry and accesses of each stage, in the same canonical
+    // stage order the section above established.
+    for stage in &stages.order {
+        let stage = &data.stages[*stage];
+        push_abi_reference(&mut bytes, &arena, stage.launch.grid_threads);
+        push_abi_reference(&mut bytes, &arena, stage.launch.threads_per_workgroup);
+        push_len(&mut bytes, stage.accesses.len());
+        for access in &stage.accesses {
+            views.push(&mut bytes, access.view);
+            bytes.push(access.mode.tag());
+            push_abi_reference(&mut bytes, &arena, access.accessible_bytes);
+        }
     }
 
     let mut edges: Vec<Vec<u8>> = data
         .dependencies
         .iter()
-        .map(|dependency| encode_dependency(dependency, keys))
+        .map(|dependency| encode_dependency(dependency, &stages, &values, &allocations))
         .collect();
     edges.sort_unstable();
     push_len(&mut bytes, edges.len());
@@ -1254,7 +1369,7 @@ pub(super) fn encode_identity(
         .map(|output| {
             let mut encoded = Vec::new();
             push_slice(&mut encoded, output.key.as_str().as_bytes());
-            push_slice(&mut encoded, &keys.values[position(output.value)]);
+            values.push(&mut encoded, output.value);
             encoded
         })
         .collect();
@@ -1282,18 +1397,77 @@ pub(super) fn encode_identity(
     Ok(CanonicalKernelProgramIdentity(bytes))
 }
 
-fn encode_dependency(dependency: &DependencyData, keys: &CanonicalKeys) -> Vec<u8> {
+fn push_value(
+    bytes: &mut Vec<u8>,
+    value: &MaterializedValueData,
+    definition: Option<ValueDefinition>,
+    stages: &CanonicalIds,
+) {
+    bytes.push(value.role.tag());
+    push_origin(bytes, &value.origin);
+    push_shape(bytes, &value.shape);
+    push_element_type(bytes, value.element_type);
+    bytes.extend_from_slice(&value.required_bytes.to_be_bytes());
+    bytes.extend_from_slice(&value.alignment.to_be_bytes());
+    bytes.push(value.memory_space.tag());
+    match definition {
+        None => bytes.push(0x00),
+        Some(definition) => {
+            bytes.push(0x01);
+            stages.push(bytes, definition.stage);
+            bytes.extend_from_slice(&definition.write_position.to_be_bytes());
+        }
+    }
+}
+
+/// Writes one allocation, naming the values bound to it in canonical order.
+///
+/// The bound set is what carries the storage binding into identity — a value's
+/// own record does not name its allocation — so it stays part of the encoding
+/// rather than being dropped along with the nesting.
+fn push_allocation(
+    bytes: &mut Vec<u8>,
+    index: usize,
+    data: &KernelProgramData,
+    values: &CanonicalIds,
+) {
+    let index = u32::try_from(index).expect("bounded allocation count fits u32");
+    let allocation = &data.allocations[position(index)];
+    let mut bound: Vec<u64> = data
+        .values
+        .iter()
+        .enumerate()
+        .filter(|(_, value)| value.allocation == index)
+        .map(|(declared, _)| values.of_declared[declared])
+        .collect();
+    bound.sort_unstable();
+    bytes.extend_from_slice(&allocation.capacity_bytes.to_be_bytes());
+    bytes.extend_from_slice(&allocation.alignment.to_be_bytes());
+    bytes.push(allocation.memory_space.tag());
+    bytes.push(allocation.ownership.tag());
+    push_len(bytes, bound.len());
+    for value in bound {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+}
+
+fn encode_dependency(
+    dependency: &DependencyData,
+    stages: &CanonicalIds,
+    values: &CanonicalIds,
+    allocations: &CanonicalIds,
+) -> Vec<u8> {
     let mut bytes = Vec::new();
-    push_slice(&mut bytes, &keys.stages[position(dependency.predecessor)]);
-    push_slice(&mut bytes, &keys.stages[position(dependency.successor)]);
+    stages.push(&mut bytes, dependency.predecessor);
+    stages.push(&mut bytes, dependency.successor);
     match dependency.reason {
         DependencyReasonData::Data(value) => {
             bytes.push(0x01);
-            push_slice(&mut bytes, &keys.values[position(value)]);
+            values.push(&mut bytes, value);
         }
         DependencyReasonData::StorageHandoff(allocation) => {
             bytes.push(0x02);
-            push_slice(&mut bytes, &keys.allocations[position(allocation)]);
+            allocations.push(&mut bytes, allocation);
         }
     }
     bytes
