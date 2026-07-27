@@ -752,33 +752,21 @@ Evidence is not semantic identity, but changing the evidence record, target or
 toolchain scope, or classification changes manifest, bundle, and expansion-
 cache identity even when generated code bytes happen to remain equal.
 
-**Two constructs are named alike below and are not the same thing.** ADR 0074 convention 2 makes a canonical identity an opaque newtype over its exact canonical byte encoding, with short digests presentation-only, and every layered identity the workspace derives is built that way: the semantic graph, index region, scheduled region, kernel program, and artifact program identities are canonical bytes compared byte for byte, never hashes. Hashing occurs at exactly three sites, all of them envelope framing. The first five derivations below are therefore a proposal for deriving a compact key from a subject rather than a description of how those subjects are represented today, and the domain-separator spellings in this block are illustrative — each governed constant is owned by the encoder that derives it, and the three envelope-level constants this build writes are recorded verbatim under "The governed digest" above. `decide-whether-layered-subject-digests-exist-as-hashes` owns closing the question.
+**Decision — 2026-07-27, on `decide-whether-layered-subject-digests-exist-as-hashes`: canonical bytes are the only layered identity Tiler has, and there are no layered digests.** This block previously carried five further derivations — `semantic_digest`, `index_digest`, `schedule_digest`, `refinement_digest`, and `plan_digest` — described as a proposal for deriving a compact key from a subject. They are removed rather than specified.
 
-```text
-semantic_digest = H("tiler-semantic-v1" || canonical semantic bytes)
-index_digest = H("tiler-index-v1" || canonical index-structure bytes)
-schedule_digest = H("tiler-schedule-v1" || index_digest
-                    || canonical schedule-structure bytes)
-refinement_digest = H("tiler-refinement-v1" || region occurrence/binding
-                      || index_digest || reached definitions
-                      || selected providers/evidence)
-plan_digest = H("tiler-program-v1" || semantic_digest
-                || bound refinements/implementations
-                || canonical complete-program bytes)
-section_digest[i] = H("tiler-section-v1" || section_type/schema
-                      || exact section bytes)
-manifest_digest = H("tiler-manifest-v1" || exact canonical manifest bytes)
-envelope_digest = H("tiler-envelope-v1" || exact complete envelope bytes)
-```
+ADR 0074 convention 2 makes a canonical identity an opaque newtype over its exact canonical byte encoding, with short digests presentation-only, and every layered identity the workspace derives is built that way: the semantic graph, index region, scheduled region, kernel program, and artifact program identities are canonical bytes compared byte for byte, never hashes. Hashing occurs at exactly three sites, all of them envelope framing, and all three are specified verbatim under "The governed digest" above — `manifest_digest`, `section_digest`, and `envelope_digest`, each over a NUL-terminated `tiler.artifact-envelope.*` constant. They are not restated here: this block previously carried its own spellings of the same three, they did not match the crate constants, and only the caveat calling every separator in the block illustrative kept that from being an error. One authority for a governed constant is the point.
+
+**Why specifying them was rejected rather than deferred.** A compact key's only value is being shorter than the canonical bytes, which means trading collision-freedom for width. Applied to a subject that *already* has a canonical-byte identity, that produces a second identity authority over one subject — the shape ADR 0082 names, whose agreement with the real identity could only ever be argued and never checked. Nothing in the tree computes or consumes such a key, no crate exposes one on any of the five types, and the expansion cache keys on a `ComposedSubject` of length-prefixed canonical byte runs rather than on layered digests. Writing a more precise promise that nothing implements would have deepened the divergence this block existed to flag, not closed it.
+
+**What would reopen it.** A consumer that genuinely needs a bounded-width cross-reference to a layer — an external index over layers is the plausible one, and none exists. Such a proposal has to answer the second-authority problem first: which of the two values *is* the identity, what happens when they disagree, and what checks that they do not. Until then the answer is that a consumer wanting a bounded value for presentation uses a presentation label, which is explicitly not an identity.
 
 Section digests are stored only in manifest section descriptors. The manifest
 digest is stored only in the framing header and covers the exact manifest bytes,
 which contain no `manifest_digest` or `envelope_digest` field. `EnvelopeDigest`
-is externally derived and never stored inside the envelope it covers. Semantic,
-index, schedule, refinement, and plan digests may appear as cross-reference values, but their
-canonical subject bytes and domain separators are fixed and independently
-validated. No field is hashed through a zeroing convention or recursive
-definition.
+is externally derived and never stored inside the envelope it covers. A layer's identity is
+carried as its canonical bytes, so a cross-reference to one is those bytes and
+not a digest of them. No field is hashed through a zeroing convention or
+recursive definition.
 
 Stable canonical IR, MSL, manifest, and cache keys are required. Tiler promises
 deterministic source, manifest, and identity construction; it does not promise
