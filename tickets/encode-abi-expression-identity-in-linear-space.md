@@ -1,7 +1,7 @@
 ---
 id: encode-abi-expression-identity-in-linear-space
 title: Encode ABI expression identity in linear space
-status: review
+status: done
 priority: p1
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: [encode-artifact-abi-identity-in-linear-space]

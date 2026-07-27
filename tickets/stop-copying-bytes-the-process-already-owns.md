@@ -1,7 +1,7 @@
 ---
 id: stop-copying-bytes-the-process-already-owns
 title: Stop copying bytes the process already owns
-status: todo
+status: done
 priority: p2
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []

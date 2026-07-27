@@ -1,7 +1,7 @@
 ---
 id: fix-the-sha-256-inner-loop-and-encoder-presizing
 title: Fix the SHA-256 inner loop and encoder pre-sizing
-status: todo
+status: done
 priority: p2
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
