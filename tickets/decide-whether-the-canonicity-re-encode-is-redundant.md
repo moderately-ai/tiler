@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-canonicity-re-encode-is-redundant
 title: Decide whether the canonicity re-encode is redundant
-status: todo
+status: in-progress
 priority: p1
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets, contracts/artifacts]
 paths: []
 tags: [performance, artifact, correctness]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785180315
 ---
 **Measured: the re-encode at `decode.rs:113` is 50% of decode time — 274 µs of 548 µs on a 26 KB envelope — and it runs on every artifact load and every cache hit.**
 

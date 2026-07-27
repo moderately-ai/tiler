@@ -1,7 +1,7 @@
 ---
 id: encode-abi-expression-identity-in-linear-space
 title: Encode ABI expression identity in linear space
-status: todo
+status: in-progress
 priority: p1
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets, contracts/artifacts]
 paths: []
 tags: [performance, identity, ir]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785180315
 ---
 **Measured: a five-operation program has a 13,623-byte kernel-program identity.**
 
