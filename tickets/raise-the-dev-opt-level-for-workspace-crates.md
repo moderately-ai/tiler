@@ -1,7 +1,7 @@
 ---
 id: raise-the-dev-opt-level-for-workspace-crates
 title: Decide the dev optimization level for workspace crates
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [audit-the-suite-s-slowest-tests]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [tooling, performance]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785195539
 ---
 Filed by `audit-the-suite-s-slowest-tests`. Workspace crates compile unoptimized in the dev profile, and the test suite pays for it.
 
