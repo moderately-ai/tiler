@@ -1,7 +1,7 @@
 ---
 id: encode-artifact-abi-identity-in-linear-space
 title: Encode artifact ABI identity in linear space
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [encode-abi-expression-identity-in-linear-space]
@@ -45,3 +45,23 @@ Apply the shape `tiler-ir/src/program/model.rs:encode_identity` now uses, and wh
 ## Closes when
 
 Artifact expression identity is linear in arena size; a deep-chain and a shared-DAG case are measured with a checked-in instrument as `tiler-ir`'s `abi_identity_size_grows_linearly_with_the_arena` is; injectivity is unchanged and tested; `ARTIFACT_DOMAIN` is stepped with its reason recorded; and `make full` passes.
+
+## Outcome — the builder half landed; the identity half is split out (2026-07-27)
+
+**What landed.** `ArtifactProgramBuilder::push_node` interned by deriving the node's full content key and scanning it against every key already held. Since a key embeds copies of its operands' keys, the key is itself quadratic in depth on a chain and doubles per level on a shared DAG, so the scan was cubic in bytes. It now hash-conses on `ExprNode` directly.
+
+**Fact: the arena is byte-identical.** Dedup by shallow structural equality decides deep structural equality by induction — a node's operands are arena ids rather than subtrees, and every operand was interned before the node naming it could be built, so equal operand ids already denote equal subtrees. The change is to how a duplicate is *recognized*, not to which nodes are duplicates. `make full` passes with **no golden moved and no identity byte changed**, which is the check that matters here.
+
+**What did not land, and why it is not a descope.** The four key-derivation sites this ticket names still embed operand keys:
+
+- `program/model.rs:encode_identity` — `push_slice(&keys[node_at(x)])` at every use site (variant guards, binding accessible-bytes, launch dimensions, deferred predicates, preconditions)
+- `codec/model.rs:expression_keys` and `canonical_expression_order`
+- `codec/validate.rs`, `codec/decode.rs` — re-derivation and the canonical-order check
+
+Moving those is a **wire-format change** that must land in one piece: the codec stores the arena in canonical *key* order, so the key ordering is part of the format, and a partially converted set of four derivations does not merely regress — it stops agreeing, and the disagreement surfaces as an artifact that decodes to a different identity than it was published under. It also requires stepping `ARTIFACT_DOMAIN` and rebaselining the artifact identity and serial-sum proof goldens.
+
+`tiler-ir` already has the machinery: `canonical_arena_traversal` / `AbiArenaTraversal` in `program/abi.rs`, currently `pub(crate)`, which numbers every node reachable from an ordered root list, operands before the nodes naming them. Making it `pub` is the first step; re-implementing it in `tiler-artifact` would create two encoders that must agree, which is the defect this ticket exists to remove.
+
+**Also resolved:** `canonical_expression_order`'s sort becomes unnecessary under a canonical numbering, because a canonical numbering *is* a canonical order. That decision is recorded here rather than left to the implementer.
+
+Split into `flatten-artifact-expression-identity` so this ticket's stated outcome — the builder no longer scanning quadratic keys — is actually supported and its dependents are released.

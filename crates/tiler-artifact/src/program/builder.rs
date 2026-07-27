@@ -194,6 +194,8 @@ pub struct ArtifactProgramBuilder {
     payload_content: Vec<Option<PayloadContent>>,
     expressions: Vec<ExprNode>,
     expression_keys: Vec<Vec<u8>>,
+    /// Arena position of every node already interned, keyed by the node itself.
+    interned: std::collections::HashMap<ExprNode, usize>,
     expression_types: Vec<AbiType>,
     expression_phases: Vec<AvailabilityPhase>,
     expression_interface_only: Vec<bool>,
@@ -225,6 +227,7 @@ impl ArtifactProgramBuilder {
             payload_content: Vec::new(),
             expressions: Vec::new(),
             expression_keys: Vec::new(),
+            interned: std::collections::HashMap::new(),
             expression_types: Vec::new(),
             expression_phases: Vec::new(),
             expression_interface_only: Vec::new(),
@@ -593,9 +596,24 @@ impl ArtifactProgramBuilder {
         }
     }
 
+    /// Interns one expression node and returns the arena id that now denotes it.
+    ///
+    /// **Dedup is by shallow structural equality, and that decides deep
+    /// structural equality by induction.** A node's operands are arena ids, not
+    /// subtrees, and every operand was interned by this same function before the
+    /// node naming it could be built — so two nodes with equal operand ids
+    /// already denote equal subtrees, and equal shallow nodes therefore denote
+    /// equal expressions. The same argument is written out at
+    /// `KernelProgramBuilder::push_abi_node`.
+    ///
+    /// It replaces a scan that derived this node's full content key and compared
+    /// it against every key already held. Because a key embeds copies of its
+    /// operands' keys, that key is itself quadratic in the depth of the arena on
+    /// a chain and doubles per level on a shared DAG, so the scan was cubic in
+    /// bytes. The interned arena is byte-identical either way: this changes how
+    /// a duplicate is *recognized*, not which nodes are duplicates.
     fn push_node(&mut self, node: ExprNode) -> Result<AbiExprId, ArtifactBuildError> {
-        let key = expr_key(&node, &self.expression_keys);
-        if let Some(existing) = self.expression_keys.iter().position(|held| *held == key) {
+        if let Some(existing) = self.interned.get(&node).copied() {
             return AbiExprId::from_len(self.owner, existing).ok_or(
                 ArtifactBuildError::StructuralLimit {
                     resource: ArtifactLimitKind::Expressions,
@@ -604,6 +622,7 @@ impl ArtifactProgramBuilder {
                 },
             );
         }
+        let key = expr_key(&node, &self.expression_keys);
         limit(
             self.expressions.len().saturating_add(1),
             MAX_ABI_EXPRESSIONS,
@@ -624,6 +643,8 @@ impl ArtifactProgramBuilder {
             &node,
             &self.expression_interface_only,
         ));
+        self.interned
+            .insert(node.clone(), self.expression_keys.len());
         self.expression_keys.push(key);
         self.expressions.push(node);
         Ok(id)
