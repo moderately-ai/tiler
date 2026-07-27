@@ -15,7 +15,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::diagnostic::{CompileStage, DriverError};
+use crate::diagnostic::{CompileStage, DriverError, ToolOutput, ToolStatus, ToolchainPhase};
 use crate::input::{AppleSdk, CompileRequest};
 use crate::record::{
     ArtifactProvenance, CompiledArtifact, ResolvedTool, ResolvedToolchain, SdkIdentity,
@@ -180,6 +180,7 @@ impl Toolchain {
             .map(PathBuf::from)
             .map_err(|detail| DriverError::ToolchainUnavailable {
                 tool: tool.to_owned(),
+                phase: ToolchainPhase::Discovery,
                 detail,
             })
     }
@@ -199,6 +200,7 @@ impl Toolchain {
         let reported = Self::capture_tool(path, &[OsStr::new("--version")]).map_err(|detail| {
             DriverError::ToolchainUnavailable {
                 tool: tool.to_owned(),
+                phase: ToolchainPhase::VersionProbe,
                 detail,
             }
         })?;
@@ -206,6 +208,7 @@ impl Toolchain {
         if banner.is_empty() {
             return Err(DriverError::ToolchainUnavailable {
                 tool: tool.to_owned(),
+                phase: ToolchainPhase::VersionProbe,
                 detail: format!("{tool} --version reported no version banner"),
             });
         }
@@ -290,17 +293,39 @@ impl Toolchain {
             .output()
             .map_err(|error| DriverError::ToolchainUnavailable {
                 tool: stage.tool().to_owned(),
+                // Discovery, not a version probe: the tool was located and then
+                // could not be executed at all, which is the same class of
+                // answer as never having found it.
+                phase: ToolchainPhase::Discovery,
                 detail: format!("could not run {}: {error}", tool.path.display()),
             })?;
         if !output.status.success() {
             return Err(DriverError::ToolFailure {
                 stage,
-                status: output.status.to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                executable: tool.path.clone(),
+                status: exit_status(output.status),
+                stderr: ToolOutput::capture(&output.stderr),
             });
         }
         Ok(())
     }
+}
+
+/// Reads how a finished process ended, without formatting it.
+///
+/// `ExitStatus`'s `Display` is the host's wording; a caller that had to parse
+/// it would be depending on a string this crate does not own. `code` and
+/// `signal` are the two answers a Unix host reports, and neither being present
+/// is kept as its own case rather than substituted with a code no tool
+/// returned.
+fn exit_status(status: std::process::ExitStatus) -> ToolStatus {
+    use std::os::unix::process::ExitStatusExt as _;
+    if let Some(code) = status.code() {
+        return ToolStatus::Code(code);
+    }
+    status
+        .signal()
+        .map_or(ToolStatus::Unreported, ToolStatus::Signal)
 }
 
 /// An owned scratch directory removed when the compilation finishes.
