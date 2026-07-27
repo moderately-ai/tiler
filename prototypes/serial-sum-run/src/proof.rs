@@ -1207,8 +1207,8 @@ fn device_preflight(
     // One function, because the loader routes one entry: `accept_entry` selects
     // exactly one, and this reader refuses a multi-stage variant outright.
     // Looping over a collection that cannot hold two would claim coverage that
-    // does not exist; `carry-the-stage-execution-order-in-the-envelope` owns
-    // making a route carry more than one.
+    // does not exist. `preflight-every-entry-of-a-multi-stage-route` owns the
+    // runtime half when a route can carry more than one.
     let descriptor = ComputePipelineDescriptor::new();
     descriptor.set_compute_function(Some(&function));
     let pipeline = device
