@@ -1,7 +1,7 @@
 ---
 id: add-an-expansion-cache-root-preflight
 title: Add an expansion cache root preflight
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [define-supported-expansion-cache-filesystems, accept-the-tiler-cache-public-boundary]
@@ -33,3 +33,25 @@ What it leaves is a user with no way to ask. A cache root on a network share, or
 - Staged `pub(crate)` under ADR 0074 convention 7, with the surface appended to `accept-the-tiler-cache-public-boundary` rather than promoted.
 
 `spikes/cache/filesystem_probe.rs` already implements every check above as a standalone program and is the reference for what each one measures and how it avoids a vacuous pass.
+
+## Outcome (2026-07-27)
+
+`ExpansionCache::preflight` runs the five locally decidable checks and returns a `PreflightReport`. Shaped like `account`: explicit, decides nothing, and reachable from no expansion path — `lookup`, `get_or_publish`, and `resolve` are untouched.
+
+**Three verdicts rather than two, and this is the shape that mattered most.** `NotRun` is distinct from `Refuted` because the remedies differ: a refuted property says this root is unsuitable, while a probe that could not run says nothing was learned — most often that the root is not writable, which is a fact about the root rather than a filesystem verdict. Reporting the second as the first would send a caller to replace a filesystem when the answer is a permission.
+
+**`all_probed_properties_hold` does not count `NotRun` as holding.** A report where nothing ran would otherwise read as a clean bill of health, which is exactly the vacuous pass the spike's own design avoids. The read-only test asserts that it returns false when every row is `NotRun`.
+
+**The cross-host caveat is text on the report, not a `bool`.** It began as `cross_host_exclusion_is_unchecked() -> bool` returning a constant `true`; clippy's `unused_self` was right that it ignored the report, and the fix improved it. It is now an associated function returning the sentence a caller renders — a property of the probe, not of any one report. That is what stops a passing lock row from implying the stronger claim, since Darwin's `locallocks` and Linux's `local_lock=` both make a lock succeed while excluding only the local client.
+
+**No `statfs` and no new `unsafe`**, as required: `MetadataExt::dev` is the only identity these checks need. No dependency added.
+
+### The probes are non-vacuous by construction
+
+The lock probe does not merely take a lock. It takes one, asserts a second `try_acquire` is **refused** while held, drops it, and asserts a third succeeds. A probe that only acquired would pass on a primitive that reports success while excluding nothing — the silent failure the supported-filesystem contract names. The rename probe likewise checks that the destination's *contents* changed and the source is gone, not merely that `rename` returned `Ok`.
+
+### Tests
+
+Three: every property holds on an ordinary root; a preflight leaves the root as it found it — asserted against a cache holding a real published entry, and checking that the entry still resolves as a **hit** rather than a republication, since an accounting count alone would be restored by a rebuild; and an unwritable root reports `NotRun` throughout with `all_probed_properties_hold` false.
+
+The surface is appended to `accept-the-tiler-cache-public-boundary` rather than promoted.

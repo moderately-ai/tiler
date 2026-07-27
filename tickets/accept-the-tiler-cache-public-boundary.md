@@ -35,3 +35,13 @@ decision.
 Do not accept the outcome/report vocabulary until
 `report-cache-publication-state-after-the-rename-boundary` makes a successful
 atomic rename distinguishable from a refusal to publish.
+
+## Appended surface — `ExpansionCache::preflight` (2026-07-27)
+
+Landed `pub(crate)` by `add-an-expansion-cache-root-preflight` under ADR 0074 convention 7, and staged here rather than promoted. It carries a module-level `#[allow(dead_code)]` whose reason states why no caller was wired to satisfy the lint: the only place a caller would naturally go is the expansion path, and putting a filesystem probe there is the one thing the design forbids.
+
+- `ExpansionCache::preflight(&self) -> PreflightReport` — scans, changes nothing that outlives the call, refuses nothing.
+- `PreflightReport` with five verdict accessors — `same_device`, `create_new_excludes`, `lock_excludes_locally`, `rename_publishes`, `modification_time_reported` — plus `root`, `all_probed_properties_hold`, and the associated `cross_host_exclusion_caveat`.
+- `PreflightVerdict` — `Holds`, `Refuted`, `NotRun`.
+
+**Two shapes to review rather than skim.** `PreflightVerdict::NotRun` is deliberately not a refutation: a refuted property says the root is unsuitable, while an unrunnable probe says nothing was learned, and reporting the first for the second sends a caller to replace a filesystem when the answer is a permission. And `cross_host_exclusion_caveat` is an associated function returning *text*, not a `bool`, because it is a property of the probe rather than of any report — a caller rendering the report prints the caveat instead of having to know it.

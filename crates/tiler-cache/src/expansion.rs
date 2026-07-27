@@ -94,6 +94,7 @@ mod key;
 mod layout;
 mod limits;
 mod lock;
+mod preflight;
 mod report;
 mod store;
 mod subject;

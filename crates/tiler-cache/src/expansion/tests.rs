@@ -40,6 +40,7 @@ use super::key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
 use super::layout::{PathRejection, key_of_entry_path};
 use super::limits::Limits;
 use super::lock::KeyLock;
+use super::preflight::{PreflightReport, PreflightVerdict};
 use super::report::{CacheOperation, EntryRejection, MissReason, QuarantineOutcome};
 use super::store::{Durability, ExpansionCache, Lookup, ProtocolOutcome, PublishFailure};
 use super::subject::{ComposedSubject, SubjectFacet, SubjectFacets, SubjectRefusal};
@@ -2156,4 +2157,111 @@ fn hot_path_cache_hit() {
         "MEASURE cache hit (resolve)   : {:?}",
         start.elapsed() / REPEATS
     );
+}
+
+/// A preflight on an ordinary root reports every property holding.
+///
+/// **The stronger half of this test is the second assertion.** A report whose
+/// rows were all `NotRun` would satisfy "nothing was refuted" while measuring
+/// nothing at all, which is the vacuous pass the probes are written to avoid —
+/// so the check is that every property *holds*, and `all_probed_properties_hold`
+/// deliberately does not count `NotRun` as holding.
+#[test]
+fn a_preflight_on_a_writable_root_reports_every_property_holding() {
+    let scratch = Scratch::new("preflight-holds");
+    let cache = cache(&scratch);
+
+    let report = cache.preflight();
+    assert_eq!(report.root(), scratch.root().join("cache"));
+    assert_eq!(report.same_device(), PreflightVerdict::Holds);
+    assert_eq!(report.create_new_excludes(), PreflightVerdict::Holds);
+    assert_eq!(report.lock_excludes_locally(), PreflightVerdict::Holds);
+    assert_eq!(report.rename_publishes(), PreflightVerdict::Holds);
+    assert_eq!(report.modification_time_reported(), PreflightVerdict::Holds);
+    assert!(report.all_probed_properties_hold());
+
+    // Carried beside the lock row rather than inferred from it: no probe on one
+    // host can decide whether another host is excluded, so the report says so
+    // in words a caller can render.
+    let caveat = PreflightReport::cross_host_exclusion_caveat();
+    assert!(
+        caveat.contains("this host only"),
+        "the caveat must say what the lock row does not cover: {caveat}",
+    );
+}
+
+/// A preflight changes nothing that outlives it.
+///
+/// It writes probe files by construction, so "changes nothing" has to mean the
+/// root is as it was afterwards rather than that nothing was written. Asserted
+/// against a cache holding a real entry, so a probe that removed too much would
+/// fail here rather than only leaving litter.
+#[test]
+fn a_preflight_leaves_the_root_as_it_found_it() {
+    let scratch = Scratch::new("preflight-clean");
+    let cache = cache(&scratch);
+    let key = publish(&cache, b"subject", b"envelope");
+
+    let before = cache.account().expect("the cache accounts");
+    let report = cache.preflight();
+    assert!(report.all_probed_properties_hold());
+    let after = cache.account().expect("the cache accounts");
+
+    assert_eq!(before.entries(), after.entries(), "an entry was disturbed");
+    assert!(
+        !cache.layout().version_root().join("preflight").exists(),
+        "the probe area outlived the call",
+    );
+
+    // The published entry still resolves, and resolves as a *hit* rather than a
+    // republication — which is the property an accounting count alone would not
+    // establish, since a rebuilt entry would restore the count too.
+    let outcome = cache
+        .resolve(
+            b"subject",
+            || Ok::<_, String>(b"envelope".to_vec()),
+            &any_payload,
+        )
+        .expect("the resolve runs");
+    match outcome {
+        ProtocolOutcome::Hit {
+            entry, published, ..
+        } => {
+            assert!(!published, "the entry was rebuilt rather than hit");
+            assert_eq!(entry.key, key, "a different entry answered");
+        }
+        ProtocolOutcome::Uncached { .. } => {
+            panic!("the entry stopped resolving after a preflight")
+        }
+    }
+}
+
+/// An unwritable root reports `NotRun`, never a refutation.
+///
+/// The distinction is the whole reason the verdict has three cases: a refuted
+/// property says this root is unsuitable, while a probe that could not run says
+/// nothing was learned. Reporting the first for the second would send a caller
+/// to replace a filesystem when the answer is a permission.
+#[test]
+fn an_unwritable_root_reports_not_run_rather_than_refuted() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = Scratch::new("preflight-readonly");
+    let root = scratch.root().join("cache");
+    fs::create_dir_all(&root).expect("the root is creatable");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o500))
+        .expect("the root permissions are settable");
+
+    let cache = ExpansionCache::open(root.clone());
+    let report = cache.preflight();
+
+    assert_eq!(report.same_device(), PreflightVerdict::NotRun);
+    assert_eq!(report.create_new_excludes(), PreflightVerdict::NotRun);
+    assert!(
+        !report.all_probed_properties_hold(),
+        "a report where nothing ran must not read as a clean bill of health",
+    );
+
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+        .expect("the root permissions are restorable");
 }
