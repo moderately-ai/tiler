@@ -21,14 +21,20 @@ build:
 lint:
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 
+# Two commands because nextest does not run doc-tests, at all. Dropping the
+# second would silently stop running the compile-fail doc-tests on
+# `Preflight::commit`, which are the compiler-checked evidence for ADR 0051's
+# one-way routing commit — they would pass by never being compiled.
+# `.config/nextest.toml` is what makes the first quiet on a green run.
 test:
-	cargo test --workspace --locked
+	cargo nextest run --workspace --locked
+	cargo test --workspace --doc --locked --quiet
 
 doc:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
 # What CI runs, and what to run before pushing to main.
 full: check doc
-	cargo test --release --locked -p tiler-reference -p tiler-compiler
+	cargo nextest run --release --locked -p tiler-reference -p tiler-compiler
 	ticketsplease lint
 	shellcheck --severity style deps.sh

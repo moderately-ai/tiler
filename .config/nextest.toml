@@ -1,0 +1,48 @@
+# Nextest's run configuration.
+#
+# `make test` runs the suite through nextest and doc-tests through
+# `cargo test --doc`, because **nextest does not run doc-tests at all**. That
+# split is the reason both commands appear in the Makefile: dropping the second
+# would silently stop running the compile-fail doc-tests on `Preflight::commit`,
+# which are the compiler-checked evidence for ADR 0051's one-way commit.
+
+[profile.default]
+# A green run prints its summary line and nothing else. The suite is ~960 tests
+# and a wall of PASS lines buries the only line that matters when it is not
+# green. `fail` keeps failures, and `final-status-level` keeps them in the
+# summary too.
+status-level = "fail"
+final-status-level = "fail"
+
+# Output once, where it happened. `immediate-final` was measured and rejected:
+# it reprints every failure's stdout and stderr verbatim under the summary, so a
+# run with several failures says everything twice. `final-status-level` already
+# re-lists the failing test *names* at the end, which is the part worth
+# repeating; the detail is not.
+failure-output = "immediate"
+success-output = "never"
+
+# Run the whole suite rather than stopping at the first failure. Tests here take
+# milliseconds, so finishing costs seconds and buys the complete failure list.
+# Stopping early hides the siblings of a failure, and a broken invariant in this
+# workspace usually breaks several tests at once — the shape of the failure set
+# is most of the diagnosis.
+fail-fast = false
+
+# Report a slow test; never kill one. Most tests here take milliseconds, but
+# `single_byte_corruptions_are_rejected` takes ~13s warm and was measured above
+# 30s on a machine also running a build — so any `terminate-after` low enough to
+# catch a hang is also low enough to kill that test under load, and a spurious
+# kill is worse than a slow gate. `audit-the-suite-s-slowest-tests` is where the
+# 13s itself is being investigated.
+slow-timeout = { period = "60s" }
+
+# `--profile timing` reports every test slower than a second instead of only
+# failures. The default profile is deliberately quiet, which also hides the one
+# test that is the suite's whole critical path; this is how to see it again.
+# Cited by `audit-the-suite-s-slowest-tests` as its reproduction command.
+[profile.timing]
+inherits = "default"
+status-level = "slow"
+final-status-level = "slow"
+slow-timeout = { period = "1s" }

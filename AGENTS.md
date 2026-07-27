@@ -476,13 +476,27 @@ Verification is a short list of Cargo commands over `crates/` and `prototypes/`,
 collected in the root `Makefile`:
 
 ```sh
-make check    # cargo fmt --check, cargo check, clippy -D warnings, cargo test — the working loop
+make check    # cargo fmt --check, cargo check, clippy -D warnings, nextest + doc-tests — the working loop
 make full     # check, plus rustdoc, the release-profile numerical tests, tkt lint, shellcheck
 ```
 
 Run `make check` while working and `make full` before pushing to `main`. Every
 target is one command you can also type directly; there is no wrapper, and
 nothing is gained by adding one.
+
+The test step is **two** commands, and the second is not redundant:
+`cargo nextest run --workspace` runs the suite, and `cargo test --workspace
+--doc` runs the doc-tests, which **nextest does not run at all**. Deleting the
+second would not fail — it would silently stop compiling the compile-fail
+doc-tests that are this repository's evidence for ADR 0051's one-way commit, and
+a test that is never compiled reports nothing. Keep both, and add a new
+doc-test's evidence to the same place.
+
+`.config/nextest.toml` reports failures only: a green run prints its summary line
+and nothing else, and `fail-fast` is off so one run yields the complete failure
+list rather than the first one. It is a reporting choice, not a filter — no test
+is skipped by it. `--no-fail-fast`, `--status-level`, and a `--profile` override
+still work per invocation when a run needs something else.
 
 `rust-toolchain.toml` is the sole toolchain authority, and plain `cargo` already
 honours it: rustup reads the file by directory ancestry and resolves the pinned
@@ -508,8 +522,19 @@ compiler emits, it outlives whatever produced it, and nothing compares it to the
 source beside it until someone runs that spike. Treat a golden as evidence of
 what was measured, not as a live check.
 
-`rust-toolchain.toml` and `tool-versions.toml` are the sole Rust and
-ticketsplease version authorities. Do not duplicate their values elsewhere.
+`rust-toolchain.toml` is the sole version authority in this repository, and it
+covers Rust alone. Do not duplicate its values elsewhere.
+
+**No other tool is version-pinned, deliberately.** `deps.sh` installs
+cargo-nextest and ticketsplease when they are absent and asserts nothing about
+which version it finds; `tool-versions.toml` and its revision receipt are gone
+rather than dormant. The pins cost more than they caught — a host binary that
+auto-updated repeatedly failed the gate for a drift that was never a defect —
+and the residual exposure is small and known: nextest treats an unrecognized
+configuration key as a *warning* and continues, so an old enough binary would
+run the suite with `.config/nextest.toml` partly ignored. That costs reporting
+quality, not correctness; no test is skipped by it. Do not reintroduce a tool
+version check without a specific failure that one would have prevented.
 
 Bootstrap a fresh development checkout with `./deps.sh`. It installs or verifies
 Homebrew prerequisites, the pinned Rust toolchain, ticketsplease, and the Apple
