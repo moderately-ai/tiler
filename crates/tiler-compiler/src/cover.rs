@@ -49,10 +49,10 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::semantic::{SemanticProgram, ValueId};
 
 use crate::region::{
-    RegionCandidate, RegionContentIdentity, RegionError, RegionGraph, RegionOccurrenceIdentity,
-    SemanticMemberId, SemanticValueId, form_region_candidates,
+    RegionCandidate, RegionContentIdentity, RegionError, RegionFormationOutcome, RegionGraph,
+    RegionOccurrenceIdentity, SemanticMemberId, SemanticValueId,
 };
-use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
+use crate::request::DeterministicBudgets;
 
 /// Canonical domain-separation tag for one region-cover identity.
 const COVER_IDENTITY_TAG: &[u8] = b"tiler.compiler.region-cover.v1\0";
@@ -501,12 +501,16 @@ impl From<RegionError> for CoverError {
 /// observes invalid compiler state (a missing singleton, a double-produced value,
 /// or a candidate-index fault). A program with no legal cover is a successful
 /// `Ok`, not an error.
+/// The region formation is **taken rather than derived**, because it is a pure
+/// function of the program, budgets, and contract this enumeration already runs
+/// under, and every caller holds one. Deriving it here re-ran a search bounded
+/// by `region_expansions` — ten thousand candidate formations — to reproduce a
+/// value sitting in the caller's own frame.
 pub(crate) fn enumerate_covers(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
-    contract: StrictF32NumericalContract,
+    outcome: &RegionFormationOutcome,
 ) -> Result<CoverEnumeration, CoverError> {
-    let outcome = form_region_candidates(program, budgets, contract)?;
     let graph = outcome.graph();
     let candidates = outcome.candidates();
     let operation_count = graph.operation_count();
@@ -592,13 +596,15 @@ pub(crate) fn enumerate_covers(
 /// occurrence identity, `coverage` for an uncovered or double-covered operation
 /// or an unretained named output, and `structure` for a mismatched
 /// materialization or identity.
+/// The formation is taken rather than derived, for the reason
+/// [`enumerate_covers`] gives. This runs **once per cover and once per retained
+/// plan**, so re-deriving it here was the largest single multiplier on the
+/// region search anywhere in the compile path.
 pub(crate) fn verify_cover(
     program: &SemanticProgram,
-    budgets: DeterministicBudgets,
-    contract: StrictF32NumericalContract,
+    outcome: &RegionFormationOutcome,
     cover: &RegionCover,
 ) -> Result<(), CoverError> {
-    let outcome = form_region_candidates(program, budgets, contract)?;
     let graph = outcome.graph();
     let operation_count = graph.operation_count();
 
@@ -1025,7 +1031,22 @@ mod tests {
         CoverBudgetResource, CoverEnumeration, CoverError, CoverInfeasibility, enumerate_covers,
         verify_cover,
     };
-    use crate::region::{RegionError, SemanticMemberId, form_region_candidates};
+    use crate::region::{
+        RegionError, RegionFormationOutcome, SemanticMemberId, form_region_candidates,
+    };
+
+    /// The formation these cases run under, derived once per call site.
+    ///
+    /// The entry points take it rather than deriving it, so a test supplies the
+    /// same value the compile path would have threaded in.
+    fn formation_of(program: &SemanticProgram) -> RegionFormationOutcome {
+        form_region_candidates(
+            program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed(),
+        )
+        .expect("the fixture forms regions")
+    }
     use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
     use std::collections::BTreeSet;
     use tiler_ir::semantic::{
@@ -1124,7 +1145,7 @@ mod tests {
         enumerate_covers(
             program,
             DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
+            &formation_of(program),
         )
         .unwrap()
     }
@@ -1239,20 +1260,8 @@ mod tests {
 
         // Both are distinct legal covers.
         assert_ne!(materialized.identity(), fused.identity());
-        verify_cover(
-            &program,
-            DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
-            materialized,
-        )
-        .unwrap();
-        verify_cover(
-            &program,
-            DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
-            fused,
-        )
-        .unwrap();
+        verify_cover(&program, &formation_of(&program), materialized).unwrap();
+        verify_cover(&program, &formation_of(&program), fused).unwrap();
     }
 
     #[test]
@@ -1298,13 +1307,7 @@ mod tests {
                     "a cover left an operation uncovered"
                 );
                 // Re-derivation confirms every named output is retained too.
-                verify_cover(
-                    &program,
-                    DeterministicBudgets::governed(),
-                    StrictF32NumericalContract::governed(),
-                    cover,
-                )
-                .unwrap();
+                verify_cover(&program, &formation_of(&program), cover).unwrap();
             }
         }
     }
@@ -1348,13 +1351,7 @@ mod tests {
         // Tampering a region's recorded occurrence label breaks occurrence identity.
         let mut forged = enumeration.fully_materialized_cover().unwrap().clone();
         forged.regions[0].label.push_str("-forged");
-        let error = verify_cover(
-            &program,
-            DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
-            &forged,
-        )
-        .unwrap_err();
+        let error = verify_cover(&program, &formation_of(&program), &forged).unwrap_err();
         assert_eq!(error.class(), "structure");
         assert_eq!(error.reason(), "region-occurrence-mismatch");
     }
@@ -1369,8 +1366,7 @@ mod tests {
             .clone();
         let error = verify_cover(
             &diamond_program(),
-            DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
+            &formation_of(&diamond_program()),
             &cover,
         )
         .unwrap_err();
@@ -1436,13 +1432,11 @@ mod tests {
     fn verify_cover_rejects_an_uncovered_member_and_illegal_duplication() {
         let program = shared_producer_program();
         let enumeration = enumerate(&program);
-        let budgets = DeterministicBudgets::governed();
-        let contract = StrictF32NumericalContract::governed();
 
         // Dropping a region leaves its operation uncovered.
         let mut incomplete = enumeration.fully_materialized_cover().unwrap().clone();
         incomplete.regions.pop();
-        let error = verify_cover(&program, budgets, contract, &incomplete).unwrap_err();
+        let error = verify_cover(&program, &formation_of(&program), &incomplete).unwrap_err();
         assert!(matches!(error, CoverError::UncoveredMember { .. }));
         assert_eq!(error.class(), "coverage");
 
@@ -1465,7 +1459,7 @@ mod tests {
             "the shared producer has overlapping regions"
         );
         duplicated.regions.push(doubled[0].clone());
-        let error = verify_cover(&program, budgets, contract, &duplicated).unwrap_err();
+        let error = verify_cover(&program, &formation_of(&program), &duplicated).unwrap_err();
         assert!(matches!(error, CoverError::IllegalDuplication { .. }));
         assert_eq!(error.class(), "coverage");
     }
@@ -1475,8 +1469,7 @@ mod tests {
         let program = serial_sum_program();
         let mut budgets = DeterministicBudgets::governed();
         budgets.region_covers = 1;
-        let enumeration =
-            enumerate_covers(&program, budgets, StrictF32NumericalContract::governed()).unwrap();
+        let enumeration = enumerate_covers(&program, budgets, &formation_of(&program)).unwrap();
 
         // The unconditional fully-materialized and fused covers survive the bound.
         assert!(enumeration.fully_materialized_cover().is_some());

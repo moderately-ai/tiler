@@ -71,3 +71,16 @@ thread_local! {
 /// is the ticket that reduces it; this is what proves it stays reduced.
 pub(crate) static REQUEST_SUBJECT_REBUILDS: WorkCounter =
     WorkCounter::new("request-subject rebuild", &REQUEST_SUBJECT);
+
+thread_local! {
+    static REGION_FORMATION: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts full region-formation derivations.
+///
+/// Each one runs a whole-program canonicalisation and a growth search bounded by
+/// `region_expansions` — ten thousand candidate formations. It is a pure
+/// function of the program, budgets, and contract, all fixed for a target
+/// compile, so more than one per target is duplicated work by definition.
+pub(crate) static REGION_FORMATIONS: WorkCounter =
+    WorkCounter::new("region formation", &REGION_FORMATION);

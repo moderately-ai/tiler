@@ -1,7 +1,7 @@
 ---
 id: derive-region-formation-once-per-target-compile
 title: Derive region formation once per target compile
-status: todo
+status: done
 priority: p1
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -45,3 +45,28 @@ Prefer threading a value over an interior-mutability cache: it makes the "one fo
 ## Closes when
 
 One target compile performs exactly one region formation, pinned by a work-count guard; compile time is measured before and after; artifact identity for the serial-sum program is byte-identical; and `make full` passes.
+
+## Outcome
+
+Done. **One region formation per target compile, pinned by a guard, and compile time fell from 3.5 ms to 1.4 ms — a 2.5× reduction.**
+
+| | before | after |
+| --- | --- | --- |
+| Region formations per compile | 5 sites, unmemoized | **1** |
+| Compile, 5-op program, release | 3.5 ms | **1.4 ms** |
+
+Measured with the harness `measure-compiler-and-artifact-hot-paths` landed, at 4×3, 1024×3 and 4×1024 — still flat across shapes, as expected, because the cost was never shape-driven.
+
+**What changed.** `enumerate_covers` and `verify_cover` now take `&RegionFormationOutcome` instead of deriving it, and `verify_cover` drops the `budgets` and `contract` parameters it only forwarded to the derivation. The value threads from the authoritative site in `compile_target_with_explain` through `enumerate_complete_plans`, `select_physical_plans`, `verify_selected_plan`, `verify_selected_portfolio`, `verify_portfolio`, `verify_alternative`, and `verify_equivalence`.
+
+The clearest instance of the waste: `enumerate_complete_plans` **already received the formation as a parameter**, and called `enumerate_covers` one line later, which re-derived it.
+
+**Nothing verified stopped being verified.** The outcome is a pure function of `(program, budgets, contract)`, all fixed for a target compile, so computing it once and threading it is semantically identical to recomputing it. The verify-by-reconstruction discipline is intact; only its repetition is gone. Artifact identity for the serial-sum program is unchanged, which the producer's determinism test and the 30-case hardware matrix both pin.
+
+**The maintainability half, which is why this shape was chosen over an interior cache.** Every stale call site became a *type error*, so none could be missed — the compiler enumerated all 30, production and test. And after the change, "the formation is derived once per target compile" is a property of the signatures: a new call site that wanted its own would have to call `form_region_candidates` explicitly rather than get one by default. An interior-mutability cache would have bought the same speed and left the invariant invisible.
+
+**Two of the five sites were not in the original list**, found by the guard rather than by reading: the count sat at 3 after the first pass, and `verify_equivalence` (reached through `verify_alternative`) was the remaining pair. That is the guard doing its job on its first day.
+
+`one_compile_derives_the_region_formation_once` asserts equality with 1, not a bound — there is no legitimate second derivation.
+
+Gate: `make full` green (982 nextest + 11 doc-tests, rustdoc, release numerical tests, `tkt lint`, shellcheck).

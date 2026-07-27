@@ -76,8 +76,8 @@ use crate::frontier::{
     AdmittedImplementation, BoundaryOwnership, FrontierRegionSubject, ImplementationFrontier,
 };
 use crate::honourability::HonouredDimension;
-use crate::region::RegionOccurrenceIdentity;
-use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
+use crate::region::{RegionFormationOutcome, RegionOccurrenceIdentity};
+use crate::request::DeterministicBudgets;
 
 /// Canonical domain-separation tag for one selected-plan identity.
 const SELECTED_PLAN_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-plan.v1\0";
@@ -829,7 +829,7 @@ impl CoverFrontiers {
 pub(crate) fn select_physical_plans(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
-    contract: StrictF32NumericalContract,
+    formation: &RegionFormationOutcome,
     sources: &[CoverFrontiers],
 ) -> Result<SelectedPortfolio, SelectionError> {
     let target_profile_key = coherent_target_profile(sources)?;
@@ -838,7 +838,7 @@ pub(crate) fn select_physical_plans(
     let mut budget_stops: BTreeMap<Vec<u8>, PlanBudgetStop> = BTreeMap::new();
 
     for source in sources {
-        verify_cover(program, budgets, contract, &source.cover)?;
+        verify_cover(program, formation, &source.cover)?;
         let cover_identity = source.cover.identity().as_bytes().to_vec();
         let region_impls =
             bind_region_frontiers(&source.cover, &source.regions, target_profile_key)?;
@@ -898,11 +898,10 @@ pub(crate) fn select_physical_plans(
 /// receipt whose re-derivation does not reproduce it.
 pub(crate) fn verify_selected_plan(
     program: &SemanticProgram,
-    budgets: DeterministicBudgets,
-    contract: StrictF32NumericalContract,
+    formation: &RegionFormationOutcome,
     plan: &SelectedPlan,
 ) -> Result<(), SelectionError> {
-    verify_cover(program, budgets, contract, &plan.cover)?;
+    verify_cover(program, formation, &plan.cover)?;
     let recomputed =
         assemble_plan(&plan.cover, plan.selections.clone()).map_err(PlanFault::into_error)?;
     if recomputed != *plan {
@@ -925,8 +924,7 @@ pub(crate) fn verify_selected_plan(
 /// reproduce.
 pub(crate) fn verify_selected_portfolio(
     program: &SemanticProgram,
-    budgets: DeterministicBudgets,
-    contract: StrictF32NumericalContract,
+    formation: &RegionFormationOutcome,
     portfolio: &SelectedPortfolio,
 ) -> Result<(), SelectionError> {
     if portfolio.policy_key != SELECTION_POLICY_KEY {
@@ -935,7 +933,7 @@ pub(crate) fn verify_selected_portfolio(
         });
     }
     for plan in &portfolio.plans {
-        verify_selected_plan(program, budgets, contract, plan)?;
+        verify_selected_plan(program, formation, plan)?;
     }
     for pair in portfolio.plans.windows(2) {
         if pair[0].identity.as_bytes() >= pair[1].identity.as_bytes() {
@@ -1615,6 +1613,15 @@ fn digest(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// The formation these cases run under, derived once per call site.
+    ///
+    /// The selection entry points take it rather than deriving it, so a test
+    /// supplies the same value the compile path threads in.
+    fn formation_of(program: &SemanticProgram) -> crate::region::RegionFormationOutcome {
+        crate::region::form_region_candidates(program, budgets(), contract())
+            .expect("the fixture forms regions")
+    }
     use super::{
         AccessMode, BoundaryDisagreement, CoverFrontiers, GuaranteeFacet, GuaranteedProperties,
         PlanRejection, RegionBoundary, RegionFrontier, RequiredProperties, RequirementFacet,
@@ -1791,7 +1798,7 @@ mod tests {
         let enumeration = enumerate_covers(
             program,
             DeterministicBudgets::governed(),
-            StrictF32NumericalContract::governed(),
+            &formation_of(program),
         )
         .unwrap();
         let want: std::collections::BTreeSet<Vec<u32>> = expected.iter().cloned().collect();
@@ -1832,7 +1839,8 @@ mod tests {
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
             ],
         );
-        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
+        let portfolio =
+            select_physical_plans(&program, budgets(), &formation_of(&program), &[source]).unwrap();
 
         assert_eq!(portfolio.plans().len(), 1, "exactly one complete plan");
         let plan = &portfolio.plans()[0];
@@ -1849,8 +1857,8 @@ mod tests {
         // Feasibility guards are aggregated from both regions.
         assert!(!plan.guards().is_empty());
 
-        verify_selected_plan(&program, budgets(), contract(), plan).unwrap();
-        verify_selected_portfolio(&program, budgets(), contract(), &portfolio).unwrap();
+        verify_selected_plan(&program, &formation_of(&program), plan).unwrap();
+        verify_selected_portfolio(&program, &formation_of(&program), &portfolio).unwrap();
     }
 
     /// A cover region with no admitted implementation is a valid no-plan result,
@@ -1872,7 +1880,8 @@ mod tests {
                 empty_frontier(reduction_subject, &request),
             ],
         );
-        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
+        let portfolio =
+            select_physical_plans(&program, budgets(), &formation_of(&program), &[source]).unwrap();
 
         assert!(
             portfolio.is_empty(),
@@ -2063,7 +2072,8 @@ mod tests {
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
             ],
         );
-        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
+        let portfolio =
+            select_physical_plans(&program, budgets(), &formation_of(&program), &[source]).unwrap();
         assert!(portfolio.rejections().is_empty());
         assert_eq!(portfolio.plans()[0].handoffs().len(), 1);
     }
@@ -2087,7 +2097,8 @@ mod tests {
                 ],
             )],
         );
-        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
+        let portfolio =
+            select_physical_plans(&program, budgets(), &formation_of(&program), &[source]).unwrap();
 
         // Validity retains both plans; cost never gates retention.
         assert_eq!(portfolio.plans().len(), 2);
@@ -2095,7 +2106,7 @@ mod tests {
         let non_dominated = portfolio.non_dominated();
         assert_eq!(non_dominated.len(), 1);
         assert_eq!(non_dominated[0].cost().launched_threads(), 2);
-        verify_selected_portfolio(&program, budgets(), contract(), &portfolio).unwrap();
+        verify_selected_portfolio(&program, &formation_of(&program), &portfolio).unwrap();
     }
 
     /// Plan and portfolio identities are deterministic and independent of the order
@@ -2127,7 +2138,7 @@ mod tests {
             } else {
                 vec![whole, two]
             };
-            select_physical_plans(&program, budgets(), contract(), &sources).unwrap()
+            select_physical_plans(&program, budgets(), &formation_of(&program), &sources).unwrap()
         };
 
         let first = build(true);
@@ -2162,18 +2173,20 @@ mod tests {
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
             ],
         );
-        let portfolio = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap();
+        let portfolio =
+            select_physical_plans(&program, budgets(), &formation_of(&program), &[source]).unwrap();
         let plan = portfolio.plans()[0].clone();
 
         // A genuinely different program fails cover occurrence re-derivation.
         let error =
-            verify_selected_plan(&diamond_program(), budgets(), contract(), &plan).unwrap_err();
+            verify_selected_plan(&diamond_program(), &formation_of(&diamond_program()), &plan)
+                .unwrap_err();
         assert_eq!(error.class(), "cover");
 
         // A tampered aggregate cost no longer matches the re-derived plan.
         let mut tampered = plan.clone();
         tampered.cost.launched_threads += 1;
-        let error = verify_selected_plan(&program, budgets(), contract(), &tampered).unwrap_err();
+        let error = verify_selected_plan(&program, &formation_of(&program), &tampered).unwrap_err();
         assert_eq!(error.class(), "structure");
         assert_eq!(error.reason(), "plan-mismatch");
 
@@ -2196,7 +2209,7 @@ mod tests {
             })
             .expect("the pointwise region covers four members");
         swapped.selections[pointwise_index].implementation = foreign_impl;
-        let error = verify_selected_plan(&program, budgets(), contract(), &swapped).unwrap_err();
+        let error = verify_selected_plan(&program, &formation_of(&program), &swapped).unwrap_err();
         assert_eq!(error.class(), "binding");
     }
 
@@ -2215,7 +2228,8 @@ mod tests {
                 &[("fx", PhysicalCostEstimate::structural(1, 2, 0))],
             )],
         );
-        let error = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap_err();
+        let error = select_physical_plans(&program, budgets(), &formation_of(&program), &[source])
+            .unwrap_err();
         assert_eq!(error.class(), "cover");
     }
 
@@ -2235,7 +2249,8 @@ mod tests {
                 pointwise_frontier(&request, "pw2", PhysicalCostEstimate::structural(1, 6, 0)),
             ],
         );
-        let error = select_physical_plans(&program, budgets(), contract(), &[source]).unwrap_err();
+        let error = select_physical_plans(&program, budgets(), &formation_of(&program), &[source])
+            .unwrap_err();
         assert_eq!(error.class(), "binding");
     }
 

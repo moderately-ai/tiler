@@ -30,7 +30,7 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 
 use crate::session::{NumericalContract, compile_governed};
-use crate::workcount::REQUEST_SUBJECT_REBUILDS;
+use crate::workcount::{REGION_FORMATIONS, REQUEST_SUBJECT_REBUILDS};
 
 /// The governed scale-then-reduce program at one shape.
 fn program(rows: u64, columns: u64) -> SemanticProgram {
@@ -123,5 +123,37 @@ fn the_request_subject_rebuild_count_does_not_regress() {
         rebuilds <= MEASURED_BASELINE,
         "one compile reconstructed the request subject {rebuilds} times, above the measured \
          baseline of {MEASURED_BASELINE}; a new call site is rebuilding a value it could borrow",
+    );
+}
+
+/// One compilation derives the region formation exactly once.
+///
+/// **This is the structural claim the whole optimization rests on, and it is
+/// why the entry points take the formation instead of deriving it.** The
+/// outcome is a pure function of the program, budgets, and contract, and all
+/// three are fixed for the duration of a target compile — so a second
+/// derivation reproduces a value that already exists, at the cost of a search
+/// bounded by `region_expansions`.
+///
+/// It used to run once in the pipeline, again in `enumerate_covers`, once per
+/// cover in `verify_cover`, once per retained plan, and once per alternative.
+/// After the change every one of those takes `&RegionFormationOutcome`, so a
+/// new call site that wanted to derive its own would have to say so explicitly
+/// rather than doing it by reaching for the old signature.
+#[test]
+fn one_compile_derives_the_region_formation_once() {
+    let program = program(4, 3);
+    let (compiled, formations) = REGION_FORMATIONS
+        .observe(|| compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32));
+    compiled.expect("the governed program compiles");
+    println!(
+        "MEASURE {}s per compile: {formations}",
+        REGION_FORMATIONS.name()
+    );
+    assert_eq!(
+        formations, 1,
+        "one compile derived the region formation {formations} times; it is a pure function of \
+         inputs fixed for the target, so anything above one is a call site re-deriving a value \
+         it was handed",
     );
 }

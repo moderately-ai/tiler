@@ -907,6 +907,8 @@ pub(crate) fn form_region_candidates(
     budgets: DeterministicBudgets,
     numerical_contract: StrictF32NumericalContract,
 ) -> Result<RegionFormationOutcome, RegionError> {
+    #[cfg(test)]
+    crate::workcount::REGION_FORMATIONS.record();
     let graph = RegionGraph::from_program(program)?;
     let formed = {
         let mut formation = Formation {

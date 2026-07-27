@@ -842,6 +842,7 @@ fn compile_target_with_explain(
     verify_portfolio(
         semantic,
         verified,
+        &formation,
         &plans.portfolio,
         &alternatives,
         &selected_alternative_id,
@@ -918,7 +919,7 @@ fn enumerate_complete_plans(
         }
     };
     let lowering_record = record_lowering(explain, &lowering, root)?;
-    let enumeration = enumerate_covers(semantic, budgets, contract).map_err(|source| {
+    let enumeration = enumerate_covers(semantic, budgets, formation).map_err(|source| {
         failure_at_source(
             source.into(),
             ExplainStage::CandidateEnumeration,
@@ -1093,7 +1094,7 @@ fn enumerate_complete_plans(
     }
 
     let portfolio =
-        select_physical_plans(semantic, budgets, contract, &sources).map_err(|source| {
+        select_physical_plans(semantic, budgets, formation, &sources).map_err(|source| {
             failure_at_source(
                 source.into(),
                 ExplainStage::Selection,
@@ -2414,18 +2415,14 @@ fn record_cost_and_selection(
 fn verify_portfolio(
     semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
+    formation: &crate::region::RegionFormationOutcome,
     portfolio: &SelectedPortfolio,
     alternatives: &[ProgramAlternative],
     selected_id: &str,
     cause: Option<TerminalCause>,
 ) -> Result<(), TargetFailure> {
-    verify_selected_portfolio(
-        semantic,
-        request.budgets(),
-        request.numerical_contract(),
-        portfolio,
-    )
-    .map_err(|source| failure_at_source(source.into(), ExplainStage::Selection, cause))?;
+    verify_selected_portfolio(semantic, formation, portfolio)
+        .map_err(|source| failure_at_source(source.into(), ExplainStage::Selection, cause))?;
     if alternatives.is_empty()
         || alternatives
             .iter()
@@ -2444,7 +2441,7 @@ fn verify_portfolio(
         ));
     }
     for alternative in alternatives {
-        verify_alternative(semantic, request, alternative, cause)?;
+        verify_alternative(semantic, request, formation, alternative, cause)?;
     }
     let recomputed = select_non_dominated(portfolio, alternatives)
         .map_err(|source| failure_at_source(source, ExplainStage::Selection, cause))?;
@@ -2469,6 +2466,7 @@ fn verify_portfolio(
 fn verify_alternative(
     semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
+    formation: &crate::region::RegionFormationOutcome,
     alternative: &ProgramAlternative,
     cause: Option<TerminalCause>,
 ) -> Result<(), TargetFailure> {
@@ -2553,7 +2551,7 @@ fn verify_alternative(
         providers,
     )
     .map_err(|error| failure_at_source(error.into(), ExplainStage::ArtifactPlanning, cause))?;
-    verify_equivalence(semantic, request, alternative)
+    verify_equivalence(semantic, request, formation, alternative)
         .map_err(|source| failure_at_source(source, ExplainStage::NumericalLegality, cause))
 }
 
@@ -2573,10 +2571,9 @@ fn total_members(plan: &SelectedPlan) -> u32 {
 fn verify_equivalence(
     semantic: &tiler_ir::semantic::SemanticProgram,
     request: &crate::request::VerifiedTargetRequest,
+    formation: &crate::region::RegionFormationOutcome,
     alternative: &ProgramAlternative,
 ) -> Result<(), CompileError> {
-    let formation =
-        form_region_candidates(semantic, request.budgets(), request.numerical_contract())?;
     let capabilities = FusionNumericalCapabilities::governed();
     // Every multi-occurrence region must carry exactly one replayable legality
     // proof; a fused region without one would be an unproven fusion.
@@ -4136,6 +4133,7 @@ mod tests {
             verify_portfolio(
                 &semantic,
                 &request,
+                &plan_formation(&semantic, &request),
                 &portfolio,
                 alternatives,
                 &selected,
@@ -4143,10 +4141,22 @@ mod tests {
             )
             .is_ok()
         );
-        assert!(verify_portfolio(&semantic, &request, &portfolio, &[], &selected, None).is_err());
+        assert!(
+            verify_portfolio(
+                &semantic,
+                &request,
+                &plan_formation(&semantic, &request),
+                &portfolio,
+                &[],
+                &selected,
+                None
+            )
+            .is_err()
+        );
         let selection = verify_portfolio(
             &semantic,
             &request,
+            &plan_formation(&semantic, &request),
             &portfolio,
             alternatives,
             "stale-selection",
@@ -4161,8 +4171,16 @@ mod tests {
 
         let mut forged = alternatives.clone();
         forged[0].stable_id = "forged-plan".to_owned();
-        let identity = verify_portfolio(&semantic, &request, &portfolio, &forged, &selected, None)
-            .unwrap_err();
+        let identity = verify_portfolio(
+            &semantic,
+            &request,
+            &plan_formation(&semantic, &request),
+            &portfolio,
+            &forged,
+            &selected,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(identity.context.stage, ExplainStage::Costing);
 
         let mut forged_artifact = alternatives.clone();
@@ -4170,6 +4188,7 @@ mod tests {
         let artifact = verify_portfolio(
             &semantic,
             &request,
+            &plan_formation(&semantic, &request),
             &portfolio,
             &forged_artifact,
             &selected,
@@ -4183,6 +4202,7 @@ mod tests {
         let numerical = verify_portfolio(
             &semantic,
             &request,
+            &plan_formation(&semantic, &request),
             &portfolio,
             &forged_numerics,
             &selected,
@@ -4194,6 +4214,15 @@ mod tests {
             numerical.context.reason.as_str(),
             "structure-portfolio-equivalence"
         );
+    }
+
+    /// The formation a verified target request runs under.
+    fn plan_formation(
+        semantic: &SemanticProgram,
+        request: &crate::request::VerifiedTargetRequest,
+    ) -> crate::region::RegionFormationOutcome {
+        form_region_candidates(semantic, request.budgets(), request.numerical_contract())
+            .expect("the fixture forms regions")
     }
 
     /// Re-derives the selected portfolio for a verified target request.
