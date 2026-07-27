@@ -48,9 +48,34 @@ tiler-runtime = { path = "crates/tiler-runtime" }
 trybuild = "1.0.114"
 
 # Keep useful file/line backtraces without paying for full variable debug data.
+#
+# `opt-level = 1` applies to the workspace members. The glob below reaches only
+# dependencies -- Cargo's `"*"` does not match members -- so until this line
+# existed every `tiler-*` crate compiled unoptimized. Measured on an M4 Max,
+# interleaved, min of 4 forced full-member rebuilds:
+#
+#   rebuild every member      5.52 s at 0  ->  5.22 s at 1
+#   rebuild one changed file  2.46 s at 0  ->  2.27 s at 1
+#   `cargo nextest` suite     4.11 s at 0  ->  4.06 s at 1
+#   dev-profile decode        40.9 us at 0 -> 18.3 us at 1
+#
+# So it is not a trade: level 1 is LLVM's cheapest real tier and it removes more
+# downstream work than it adds, leaving build time flat while dev-profile code
+# runs about 2.2x faster. The suite does not move because at ~4 s for 1,013
+# tests it is bound by process and harness overhead rather than by the code
+# under test -- the compute that used to dominate it is gone.
+#
+# Raising it for named digest-heavy crates only was considered and eliminated by
+# the same numbers: that option exists to dodge a build cost, and there is none
+# to dodge, so it buys nothing and costs a hand-maintained package list.
+#
+# `debug_assertions`, `overflow_checks`, and `line-tables-only` are unchanged at
+# level 1 (confirmed via `cargo build -Z unstable-options --unit-graph`), and
+# Rust never enables fast-math, so no numerical result moves.
 [profile.dev]
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
+opt-level = 1
 
 # Compile dependencies enough to keep tests and tools responsive as the
 # workspace grows. Override a specific package when debugging requires it.
