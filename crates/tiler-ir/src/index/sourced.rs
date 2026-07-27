@@ -764,6 +764,18 @@ mod tests {
             )),
             "an admissible extent of 5 can index a 4-element axis out of bounds: {error}",
         );
+        // The negative neighbour of `an_unbounded_symbolic_extent_is_refused_rather_than_enumerated`,
+        // and what makes that diagnostic mean something. Here the environment
+        // *did* bound `n` — to `1..=5` — and the proof still did not close, so
+        // the refusal is the generic one. Reporting the named diagnostic here
+        // would tell a frontend to state a constraint it has already stated.
+        assert!(
+            !reports(&error, |diagnostic| matches!(
+                diagnostic,
+                IndexRegionDiagnostic::ExtentBoundNotStated { .. }
+            )),
+            "a bounded extent that simply is not provable is not an unstated bound: {error}",
+        );
     }
 
     /// An unbounded symbolic extent is refused, never enumerated or assumed.
@@ -777,12 +789,16 @@ mod tests {
     #[test]
     fn an_unbounded_symbolic_extent_is_refused_rather_than_enumerated() {
         let error = region(Some(environment(EXTENT_PHASE_CEILING, &[])), 4).unwrap_err();
+        // Named, not generic. `BoundsNotProven` would be sound here and would
+        // not say why; only this diagnostic tells a frontend that the remedy is
+        // a constraint on `n` rather than a different region.
         assert!(
             reports(&error, |diagnostic| matches!(
                 diagnostic,
-                IndexRegionDiagnostic::BoundsNotProven { .. }
+                IndexRegionDiagnostic::ExtentBoundNotStated { symbol, .. }
+                    if symbol.ends_with("::n")
             )),
-            "an extent with no admitted bound proves nothing: {error}",
+            "an extent with no admitted bound names the symbol to constrain: {error}",
         );
         assert!(
             !reports(&error, |diagnostic| matches!(
@@ -1455,15 +1471,16 @@ mod tests {
         let error =
             undetermined_dynamic_copy(environment_over(EXTENT_PHASE_CEILING, &["m", "n"], &[]))
                 .unwrap_err();
+        // Both accesses rest on the unproved equality, and both name the extent
+        // that was never bounded rather than reporting the mode-specific
+        // refusal: nothing here is a proof that failed to close, so neither
+        // access can be reported as one.
         assert!(
             reports(&error, |diagnostic| matches!(
                 diagnostic,
-                IndexRegionDiagnostic::BoundsNotProven { .. }
-            )) && reports(&error, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::WriteOwnershipNotProven { .. }
+                IndexRegionDiagnostic::ExtentBoundNotStated { .. }
             )),
-            "an unproved equality is not a proof, and both accesses rest on it: {error}",
+            "an unproved equality over unbounded extents names them: {error}",
         );
         assert!(
             !reports(&error, |diagnostic| matches!(

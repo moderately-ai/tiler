@@ -1996,6 +1996,43 @@ impl IndexRegionBuilder {
         }
     }
 
+    /// Returns the first extent this access depends on that the environment
+    /// bounds nowhere, rendered as its symbol.
+    ///
+    /// **The discriminator is the upper bound, not determinacy, and not a
+    /// missing interval.** An extent the environment confines to `[2, 8]` is
+    /// not *determined*, so no enumeration can walk it — but it is bounded, and
+    /// the refusal that follows is a proof that did not close rather than a
+    /// fact nobody stated. An extent nothing constrains is the second case, and
+    /// only that one is fixed by adding a constraint.
+    ///
+    /// Testing for a *missing* interval would never fire: the constraint solver
+    /// seeds every symbol at the whole extent domain and narrows from there, so
+    /// an unconstrained symbol has an interval reaching the domain ceiling
+    /// rather than no interval at all. `ExtentInterval::states_no_upper_bound`
+    /// owns that condition, beside the constant that defines the ceiling.
+    ///
+    /// Both the boundary axes and the iterated domain's extents are consulted,
+    /// because either can be the unbounded one and a caller told about the
+    /// wrong half would constrain the wrong symbol. Boundary first, matching
+    /// the order the interval verdict walks them in.
+    fn unbounded_extent_symbol(&self, access: &AccessData, shape: &SourcedShape) -> Option<String> {
+        let boundary = shape.extents().collect::<Vec<_>>();
+        let domain = access
+            .domain
+            .iter()
+            .map(|dimension| self.dimensions[*dimension as usize].extent.clone());
+        boundary
+            .into_iter()
+            .chain(domain)
+            .filter(|extent| extent.symbol().is_some())
+            .find(|extent| {
+                self.extent_interval(extent)
+                    .is_none_or(|interval| interval.states_no_upper_bound())
+            })
+            .and_then(|extent| extent.symbol().map(ToString::to_string))
+    }
+
     fn verify_accesses(
         &self,
         accesses: &BTreeSet<u32>,
@@ -2058,7 +2095,22 @@ impl IndexRegionBuilder {
                 // which `docs/ir.md` defines as meaning an enumeration stopped.
                 let enumerable = points.is_some() && self.boundary_extents(shape).is_some();
                 let Some(points) = points.filter(|_| enumerable) else {
-                    diagnostics.push(self.unproved(*access_index, access.mode));
+                    // An extent the environment bounds nowhere says why the
+                    // proof was unavailable rather than only that it failed,
+                    // and it is the one case a frontend can act on. An extent
+                    // that is bounded but undetermined falls through to the
+                    // generic refusal, because there the region is as stated
+                    // and it is the proof that did not reach it.
+                    diagnostics.push(self.unbounded_extent_symbol(access, shape).map_or_else(
+                        || self.unproved(*access_index, access.mode),
+                        |symbol| IndexRegionDiagnostic::ExtentBoundNotStated {
+                            access: TensorAccessId {
+                                owner: self.owner,
+                                index: *access_index,
+                            },
+                            symbol,
+                        },
+                    ));
                     continue;
                 };
                 let (plan_len, bytes_per_point) = self.proof_plan_size(&access.coordinates);

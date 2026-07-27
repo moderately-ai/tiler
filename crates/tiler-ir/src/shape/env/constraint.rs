@@ -681,6 +681,29 @@ pub(crate) struct ExtentInterval {
     pub(crate) upper: u64,
 }
 
+impl ExtentInterval {
+    /// Returns whether the environment admits every representable extent.
+    ///
+    /// **A symbol nothing constrains is not absent from a solution; it is
+    /// present with the whole extent domain.** [`solve`] seeds every symbol at
+    /// `0..=MAX_EXTENT` and narrows from there, so "the environment says
+    /// nothing about this extent" reads as an upper bound still sitting at the
+    /// domain's ceiling rather than as a missing interval. A caller that tested
+    /// for a missing interval instead would never fire, because one is only
+    /// returned when a class bound *exceeds* the domain.
+    ///
+    /// This is the condition a frontend can act on: an extent bounded nowhere
+    /// above cannot be proved against any axis, and the remedy is to state a
+    /// constraint rather than to retry.
+    pub(crate) const fn states_no_upper_bound(&self) -> bool {
+        // `MAX_EXTENT` is `IMPOSSIBLE - 1` and `IMPOSSIBLE` is `1 << 64`, so the
+        // domain ceiling is exactly `u64::MAX`; asserted rather than assumed so
+        // widening the domain fails here instead of silently disabling this.
+        const { assert!(MAX_EXTENT == u64::MAX as u128) };
+        self.upper == u64::MAX
+    }
+}
+
 /// The per-symbol result of one satisfiable constraint set.
 ///
 /// Recomputed by every caller rather than stored on the environment: the

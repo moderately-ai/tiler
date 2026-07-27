@@ -265,6 +265,33 @@ pub enum IndexRegionDiagnostic {
         /// Unproved write access.
         access: TensorAccessId,
     },
+    /// A symbolic extent this access depends on is bounded nowhere.
+    ///
+    /// **Distinct from [`Self::BoundsNotProven`] because only this one is
+    /// fixable by the frontend.** That diagnostic means interval propagation
+    /// overlapped a boundary and the finite fallback did not close the
+    /// question — the region is as stated and the proof did not reach it. This
+    /// one means the shape environment states no bound for the named extent at
+    /// all, so nothing about the access is provable *or* refutable, and the
+    /// action is to add a semantic input constraint that bounds the symbol.
+    ///
+    /// It is a refusal in `docs/ir.md`'s taxonomy, like the two above it, and
+    /// deliberately not [`Self::ProofResourceLimit`]: no enumeration stopped,
+    /// because there was never an enumeration to budget for.
+    ExtentBoundNotStated {
+        /// The access whose proof the unbounded extent blocked.
+        access: TensorAccessId,
+        /// The extent symbol the environment states no bound for, rendered as
+        /// `scope::name`.
+        ///
+        /// A rendering rather than the symbol type, because `ShapeSymbol` and
+        /// the whole `shape::env` authority are `pub(crate)` and promoting them
+        /// is a separate reviewed step that `implement-shapeenv-index-bindings`
+        /// owns. The rendering is what a frontend needs in order to name the
+        /// symbol it must constrain, and it matches what
+        /// `ExtentSourceError`'s own messages print.
+        symbol: String,
+    },
     /// A reachable scalar value retained an unreduced dimension.
     FreeReductionDimension {
         /// Invalid scalar value.
