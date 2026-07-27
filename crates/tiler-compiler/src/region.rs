@@ -1425,17 +1425,22 @@ fn canonical_member_order(
         .enumerate()
         .map(|(position, member)| (*member, position))
         .collect();
-    let mut base = Vec::with_capacity(ordinals.len());
+    // One buffer with a span per member, rather than a `Vec<u8>` per member.
+    // The per-member spelling allocated once per member per canonicalization,
+    // and this is called for every region candidate.
+    let mut base = Vec::new();
+    let mut spans = Vec::with_capacity(ordinals.len());
     for member in &ordinals {
         let operation = graph.operation(*member)?;
-        let mut bytes = Vec::new();
-        encode_operation_facts(&mut bytes, operation)?;
-        push_len(&mut bytes, operation.results.len());
+        let start = base.len();
+        encode_operation_facts(&mut base, operation)?;
+        push_len(&mut base, operation.results.len());
         for result in &operation.results {
-            encode_value_facts(&mut bytes, graph.value(*result)?);
+            encode_value_facts(&mut base, graph.value(*result)?);
         }
-        base.push(bytes);
+        spans.push(start..base.len());
     }
+    let base_of = |position: usize| &base[spans[position].clone()];
     // Each member's `base` bytes are the same in every round, so they are folded
     // once here and the round only folds the part that actually changes. The
     // straightforward spelling — clone the base, append, re-digest the whole
@@ -1444,7 +1449,7 @@ fn canonical_member_order(
     // sampling profile put this function at 10.6% of the compile path's active
     // self time, above every other function in the crate, with the allocator and
     // `memmove` traffic it generated on top of that.
-    let base_digests: Vec<u64> = base.iter().map(|bytes| digest(bytes)).collect();
+    let base_digests: Vec<u64> = (0..ordinals.len()).map(|p| digest(base_of(p))).collect();
     let mut labels: Vec<u64> = base_digests.clone();
     let mut round = Vec::new();
     for _ in 0..ordinals.len() {
@@ -1479,9 +1484,9 @@ fn canonical_member_order(
     }
     let mut order: Vec<usize> = (0..ordinals.len()).collect();
     order.sort_by(|left, right| {
-        (labels[*left], &base[*left], ordinals[*left]).cmp(&(
+        (labels[*left], base_of(*left), ordinals[*left]).cmp(&(
             labels[*right],
-            &base[*right],
+            base_of(*right),
             ordinals[*right],
         ))
     });
