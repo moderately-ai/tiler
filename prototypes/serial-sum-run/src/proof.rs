@@ -341,6 +341,45 @@ fn artifact_path() -> Result<PathBuf, ProofError> {
 
 /// Reads the envelope bytes and the identity the producer recorded beside them.
 ///
+/// The reduction classes the producer publishes, as `(name, reduced extent)`.
+///
+/// Mirrors `prototypes/serial-sum-compile`'s own array. Nothing links the two
+/// crates, so each states the matrix independently and both pin it in a test
+/// naming the other side — the same arrangement [`SIDECAR_SUFFIX`] is under, and
+/// for the same reason: a producer that writes one set of names while the runner
+/// opens another leaves a green gate over a slice that cannot run.
+///
+/// **The empty domain is absent deliberately.** The Metal emitter refuses a
+/// reduction over zero contributors — its binding table is derived from what the
+/// body reads, and an empty reduction reads its input never — so no such member
+/// is published. `emit-an-empty-domain-reduction-to-metal` owns closing that,
+/// and this array grows a third entry with the producer's when it lands.
+const REDUCTION_CLASSES: [(&str, u64); 2] = [("singleton", 1), ("nontrivial", COLUMNS)];
+
+/// The plan roles the producer publishes for each reduction class.
+const PLAN_ROLES: [&str; 2] = ["selected", "materialized"];
+
+/// How many entries and shared allocations a member of each role must show.
+///
+/// This is the proof's central observable, not a formality. `selected` is the
+/// fused plan: one dispatch, no intermediate. `materialized` computes the same
+/// function as two dispatches through one shared allocation. Asserting the
+/// counts is what separates "both agreed" from "both ran the same program
+/// twice", and the latter would agree trivially.
+fn expected_shape(role: &str) -> (usize, usize) {
+    if role == "selected" { (1, 0) } else { (2, 1) }
+}
+
+/// Returns the envelope path for one published member of the proof matrix.
+///
+/// Derived exactly as the producer derives it, from the base path this run was
+/// given.
+fn proof_member(base: &Path, class: &str, role: &str) -> PathBuf {
+    let mut name = base.as_os_str().to_owned();
+    name.push(format!(".{class}.{role}"));
+    PathBuf::from(name)
+}
+
 /// The sidecar is the only thing that makes `preflight`'s identity check mean
 /// anything here: an identity re-read from the envelope would be a tautology, so
 /// the expected one has to come from whatever named the artifact, and here that
@@ -1698,6 +1737,125 @@ fn dispatch_prepared(
     )
 }
 
+/// Proves one published member against every operand case its sidecar carries.
+///
+/// **One routing authority per case, not one per member.** `DecodedProgram` is
+/// not `Clone` and `preflight` takes `&mut self`, so a decoded program yields
+/// exactly one commit — that is ADR 0051 expressed structurally rather than
+/// remembered. Each case therefore decodes the envelope afresh. Reusing one
+/// decode across cases would not compile, and reaching for a way to make it
+/// compile would be dismantling the property on purpose.
+///
+/// The dispatch shape is asserted per case rather than once per member because
+/// the shape is derived from the artifact on every route; checking it once would
+/// leave the remaining cases free to route differently and still be reported as
+/// agreeing.
+fn prove_member(
+    device: &Device,
+    base: &Path,
+    class: &str,
+    role: &str,
+    columns: u64,
+) -> Result<usize, ProofError> {
+    let path = proof_member(base, class, role);
+    let (bytes, sidecar) = read_artifact(&path)?;
+
+    // The program this build derives for the class, used to compose the host
+    // environment and to name what the artifact claims to package.
+    let program = serial_sum_program(ROWS, columns);
+    let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        .map_err(ProofError::Compile)?;
+    let compilation = compilations.first().ok_or(ProofError::NoTarget)?;
+    let environment = host_environment(compilation)?;
+
+    let (expected_entries, expected_shared) = expected_shape(role);
+    let mut proved = 0_usize;
+
+    for case in sidecar.cases() {
+        // A fresh decode per case: see this function's own note on why.
+        let mut decoded = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
+        let (rows, declared_columns, abi) = bind_interface(&decoded)?;
+
+        let inputs = case
+            .inputs()
+            .next()
+            .ok_or(ProofError::SidecarWithoutCases)
+            .and_then(|payload| {
+                decode_f32_bits("input", rows * declared_columns, payload.bytes())
+            })?;
+        let expected = case
+            .expected()
+            .next()
+            .ok_or(ProofError::SidecarWithoutCases)
+            .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
+
+        let preflight = decoded
+            .preflight(&environment, sidecar.artifact_identity_bytes(), &abi)
+            .map_err(ProofError::Load)?;
+
+        // Checked before the commit, because a route to a program this process
+        // did not derive is a reason to abandon rather than to execute and
+        // compare. The packaged program is matched against *some* alternative
+        // this build derives rather than against the selected one: the producer
+        // legitimately packages a plan the portfolio did not rank first, and
+        // demanding `selected` would refuse the materialized member for being
+        // exactly what it is meant to be. The set is still this build's own
+        // governed compilation of the shape the artifact declares, so this is a
+        // narrower claim than "some program" by a wide margin.
+        let packaged = preflight.kernel_program_identity();
+        let derived = compilation.alternatives().any(|alternative| {
+            alternative
+                .abi()
+                .kernel_program()
+                .canonical_identity()
+                .as_bytes()
+                == packaged
+        });
+        if !derived {
+            return Err(ProofError::ForeignProgram {
+                packaged: packaged.len(),
+                compiled: compilation.alternatives().count(),
+            });
+        }
+
+        let plan = plan_route(&preflight)?;
+        let prepared = device_preflight(device, &preflight, &plan, &inputs, rows)
+            .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+
+        let routed = preflight.commit();
+        let entries = routed.entries().len();
+        let shared = routed.shared_allocations().len();
+        if entries != expected_entries || shared != expected_shared {
+            return Err(ProofError::UnexpectedRouteShape {
+                member: format!("{class}.{role}"),
+                expected_entries,
+                entries,
+                expected_shared,
+                shared,
+            });
+        }
+
+        let observed = dispatch_prepared(device, &routed, &prepared)?;
+        if observed != expected {
+            return Err(ProofError::Mismatch {
+                path: "envelope",
+                device: observed,
+                reference: expected,
+            });
+        }
+        proved += 1;
+    }
+
+    if proved == 0 {
+        return Err(ProofError::SidecarWithoutCases);
+    }
+    println!(
+        "  {class}.{role}: {proved} case(s) agree, {expected_entries} dispatch(es), \
+         {expected_shared} shared allocation(s)",
+    );
+    Ok(proved)
+}
+
 pub(crate) fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -1713,7 +1871,12 @@ pub(crate) fn main() -> ExitCode {
     reason = "the proof is one linear narrative from a semantic program through two independent dispatches to compared bits; splitting it would hide the ordering that is its point"
 )]
 fn run() -> Result<(), ProofError> {
-    let envelope_path = artifact_path()?;
+    // A *base* path now, not an envelope. The producer publishes a matrix of
+    // members beneath it, and the deep single-member proof below runs against
+    // the nontrivial fused member because that is the one the optimizer
+    // normally selects — the case a consumer would actually get.
+    let base = artifact_path()?;
+    let envelope_path = proof_member(&base, "nontrivial", "selected");
     let program = serial_sum_program(ROWS, COLUMNS);
     let bits = input_bits(ROWS, COLUMNS);
     let reference = reference_bits(&program, &bits, ROWS, COLUMNS);
@@ -1925,6 +2088,31 @@ fn run() -> Result<(), ProofError> {
         reference.len(),
         envelope_reference.len(),
     );
+
+    // ---- the matrix ------------------------------------------------------
+    // The deep proof above establishes one member in detail: the refusals, the
+    // pre-commit boundary, the post-commit behaviour, and one operand case. It
+    // says nothing about the optimization, because a fused plan compared only
+    // against itself is self-consistent by construction.
+    //
+    // This pass is where the claim is made. Each reduction class is proved
+    // twice — once as the fused single-dispatch plan the optimizer selects, once
+    // as the materialized plan that computes the same function through two
+    // dispatches and one intermediate — over every operand class the producer
+    // published. Agreement between them is a statement about the optimizer;
+    // agreement with the sidecar's expected bytes is a statement about both.
+    println!("the proof matrix, every published member against every operand case:");
+    let mut proved = 0_usize;
+    for (class, columns) in REDUCTION_CLASSES {
+        for role in PLAN_ROLES {
+            proved += prove_member(device, &base, class, role, columns)?;
+        }
+    }
+    println!(
+        "{proved} case(s) proved across {} member(s); fused and materialized agree bit for bit \
+         with the published reference",
+        REDUCTION_CLASSES.len() * PLAN_ROLES.len(),
+    );
     Ok(())
 }
 
@@ -1968,6 +2156,19 @@ enum ProofError {
     ForeignProgram {
         packaged: usize,
         compiled: usize,
+    },
+    /// A member routed to a different number of dispatches than its role means.
+    ///
+    /// The fused and materialized members must not converge on one shape. If
+    /// they did, their bit-for-bit agreement would be the agreement of one
+    /// program with itself, which proves nothing about the optimization the
+    /// proof exists to check.
+    UnexpectedRouteShape {
+        member: String,
+        expected_entries: usize,
+        entries: usize,
+        expected_shared: usize,
+        shared: usize,
     },
     UnboundBinding {
         entry: usize,
@@ -2015,6 +2216,18 @@ enum ProofError {
 }
 
 impl fmt::Display for ProofError {
+    // One arm per variant, and the match stays exhaustive on purpose. Splitting
+    // it to satisfy the line count would need a wildcard arm in at least one
+    // half, and that wildcard is exactly what stops a newly added variant from
+    // failing to compile here -- it would render as whatever the catch-all says
+    // instead. The length is a consequence of the enum being deliberately wide,
+    // which is the same decision that keeps a route miss distinguishable from a
+    // damaged artifact.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "an exhaustive match over a wide error enum; splitting it costs the \
+                  exhaustiveness that makes a new variant a build error"
+    )]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Usage => formatter.write_str(
@@ -2069,6 +2282,17 @@ impl fmt::Display for ProofError {
             Self::Interface(detail) => write!(
                 formatter,
                 "the artifact's interface is not this program's: {detail}",
+            ),
+            Self::UnexpectedRouteShape {
+                member,
+                expected_entries,
+                entries,
+                expected_shared,
+                shared,
+            } => write!(
+                formatter,
+                "{member} routed {entries} dispatch(es) over {shared} shared allocation(s), and \
+                 its role means {expected_entries} over {expected_shared}",
             ),
             Self::ForeignProgram { packaged, compiled } => write!(
                 formatter,
@@ -2207,10 +2431,11 @@ mod tests {
     //! hardware run is what would notice.
 
     use super::{
-        BACKEND_KEY, ProbeSubject, REPRESENTATION_KEY, ROWS, bind_interface, host_environment,
-        probe_accepted_baseline, probe_damaged_interior_byte, probe_damaged_section_content,
+        BACKEND_KEY, PLAN_ROLES, Path, ProbeSubject, REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS,
+        bind_interface, expected_shape, host_environment, probe_accepted_baseline,
+        probe_damaged_interior_byte, probe_damaged_section_content,
         probe_foreign_expected_identity, probe_other_backend_family,
-        probe_other_profile_descriptor, probe_truncated_envelope, serial_sum_program,
+        probe_other_profile_descriptor, probe_truncated_envelope, proof_member, serial_sum_program,
     };
     use tiler_artifact::program::{
         AbiExprId, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
@@ -2560,6 +2785,53 @@ mod tests {
             }
         }
         reached
+    }
+
+    /// This half of the *member* filename interface, pinned.
+    ///
+    /// `prototypes/serial-sum-compile` derives the identical names and carries
+    /// the identical assertion. The two crates share no code, so this pair of
+    /// tests is the only thing that compares their idea of the matrix — both the
+    /// names and which classes exist. A producer that adds a class the runner
+    /// does not open, or renames one it does, fails here.
+    #[test]
+    fn the_member_names_are_the_ones_the_producer_writes() {
+        let base = Path::new("/tmp/a.tiler");
+        let names: Vec<String> = REDUCTION_CLASSES
+            .iter()
+            .flat_map(|(class, _)| {
+                PLAN_ROLES
+                    .iter()
+                    .map(move |role| proof_member(base, class, role))
+            })
+            .map(|path| path.display().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "/tmp/a.tiler.singleton.selected",
+                "/tmp/a.tiler.singleton.materialized",
+                "/tmp/a.tiler.nontrivial.selected",
+                "/tmp/a.tiler.nontrivial.materialized",
+            ],
+        );
+    }
+
+    /// Each role means a distinct dispatch shape, and that is the whole proof.
+    ///
+    /// If both roles expected the same shape, the matrix would compare a program
+    /// against itself and report agreement, which is true and worthless. Pinned
+    /// so a later edit cannot collapse them without saying so.
+    #[test]
+    fn the_two_roles_mean_different_dispatch_shapes() {
+        assert_eq!(expected_shape("selected"), (1, 0));
+        assert_eq!(expected_shape("materialized"), (2, 1));
+        assert_ne!(
+            expected_shape("selected"),
+            expected_shape("materialized"),
+            "a fused plan and a materialized plan agreeing is only evidence if \
+             they ran differently",
+        );
     }
 
     /// This half of the filename interface, pinned.

@@ -38,8 +38,6 @@ use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
 
-use crate::{COLUMNS, ROWS};
-
 /// Governed key of the numerical contract the expected bytes are normative
 /// under. It names the flush-to-zero contract because that is the one this
 /// producer compiles for; the strict contract is unhonourable on every governed
@@ -47,26 +45,47 @@ use crate::{COLUMNS, ROWS};
 const NUMERICAL_IDENTITY: &[u8] = b"tiler.numerical.flush-subnormals-to-zero-f32";
 /// Governed key of the implementation that produced the expected bytes.
 const REFERENCE_IDENTITY: &[u8] = b"tiler.reference.standard-evaluator.v1";
-/// Stable key of the single case this producer publishes.
-const CASE_KEY: &str = "serial-sum-mixed-operands";
+/// The operand cases this producer publishes, as `(key, one row pattern)`.
+///
+/// Each names the numerical class it exists to exercise, rather than a number
+/// that happens to be interesting. A contract either holds at these values or
+/// is decorative: a reduction that agrees on 1.0, 2.0, 3.0 and disagrees on a
+/// non-canonical NaN payload has not been shown to agree.
+///
+/// The row is cycled to fill whatever shape the artifact declares, and the
+/// interesting operand leads each row so a narrower reduction keeps it. That is
+/// what makes the same case table meaningful at extent 0, 1, and 3.
+const OPERAND_CASES: [(&str, [u32; 3]); 5] = [
+    // The ordinary case, and the only one where a reordering defect is
+    // invisible: these three sum to the same value in any order.
+    ("ordinary", [0x3f80_0000, 0x4000_0000, 0x4040_0000]),
+    // Signed zero beside the least positive subnormal. -0.0 + 0.0 is +0.0, so
+    // the sign of the result is a statement about the reduction's identity
+    // element rather than about the operands.
+    (
+        "signed-zero-and-subnormal",
+        [0x8000_0000, 0x0000_0001, 0x3f80_0000],
+    ),
+    // A NaN with a non-canonical payload. Whether the payload survives is the
+    // difference between propagating a NaN and minting a fresh one.
+    ("non-canonical-nan", [0x7fc0_1234, 0x3f80_0000, 0x4000_0000]),
+    // Infinity against a finite pair, so the result is infinite rather than a
+    // large finite number, and +inf + -1.0 stays +inf.
+    ("infinity", [0x7f80_0000, 0x3f80_0000, 0xbf80_0000]),
+    // Contraction-sensitive: a large value, its negation, and a small one. A
+    // fused multiply-add or a reassociated sum returns a different answer here
+    // than a strictly serial one, which is the whole reason the contract is
+    // stated. Serially this is (2^24 + -2^24) + 1.0 = 1.0; reassociated as
+    // 2^24 + (-2^24 + 1.0) it is 0.0.
+    (
+        "contraction-sensitive",
+        [0x4b80_0000, 0xcb80_0000, 0x3f80_0000],
+    ),
+];
 /// The artifact's declared input key.
 const INPUT_KEY: &str = "input";
 /// The artifact's declared output key.
 const OUTPUT_KEY: &str = "result";
-
-/// One row of operands, cycled to fill any declared shape.
-///
-/// Chosen to exercise the contract rather than to be arithmetically convenient:
-/// a negative zero, the least positive subnormal, a non-canonical NaN payload,
-/// and an infinity all appear, because those are the values where a numerical
-/// contract either holds or is decorative. The interesting operand leads each
-/// row, so a narrower reduction keeps every one of them.
-const ROW_PATTERNS: [[u32; 3]; 4] = [
-    [0x3f80_0000, 0x4000_0000, 0x4040_0000], // 1.0, 2.0, 3.0
-    [0x8000_0000, 0x0000_0001, 0x3f80_0000], // -0.0, least subnormal, 1.0
-    [0x7fc0_1234, 0x3f80_0000, 0x4000_0000], // non-canonical NaN, 1.0, 2.0
-    [0x7f80_0000, 0x3f80_0000, 0xbf80_0000], // +inf, 1.0, -1.0
-];
 
 /// Why a proof-case sidecar could not be published.
 #[derive(Debug)]
@@ -86,15 +105,15 @@ impl std::fmt::Display for SidecarError {
     }
 }
 
-/// Fills one `rows` by `columns` input from [`ROW_PATTERNS`].
+/// Fills one `rows` by `columns` input by cycling one operand row.
 ///
-/// Cycling rather than indexing, so the pattern defines an input for any shape
-/// an artifact might declare.
-fn input_bits(rows: u64, columns: u64) -> Vec<u32> {
+/// Cycling rather than indexing, so a case's row defines an input for any shape
+/// an artifact might declare -- including the empty domain, where this
+/// correctly produces no elements at all.
+fn input_bits(pattern: [u32; 3], rows: u64, columns: u64) -> Vec<u32> {
     let mut bits = Vec::new();
-    for row in 0..rows {
+    for _ in 0..rows {
         for column in 0..columns {
-            let pattern = ROW_PATTERNS[usize::try_from(row % 4).expect("a bounded row index")];
             bits.push(pattern[usize::try_from(column % 3).expect("a bounded column index")]);
         }
     }
@@ -102,11 +121,11 @@ fn input_bits(rows: u64, columns: u64) -> Vec<u32> {
 }
 
 /// Evaluates the program under the governed reference to get expected outputs.
-fn reference_bits(program: &SemanticProgram, bits: &[u32]) -> Vec<u32> {
+fn reference_bits(program: &SemanticProgram, bits: &[u32], rows: u64, columns: u64) -> Vec<u32> {
     let key = InputKey::new(INPUT_KEY).expect("the input key is valid");
     let tensor = Tensor::dense(
         F32::resolved_type(),
-        Shape::from_dims([ROWS, COLUMNS]),
+        Shape::from_dims([rows, columns]),
         bits.iter()
             .map(|value| {
                 ReferenceElement::from_float_bits(
@@ -153,10 +172,9 @@ fn payload_bytes(bits: &[u32]) -> Vec<u8> {
 pub fn encoded(
     artifact: &VerifiedArtifactProgram,
     program: &SemanticProgram,
+    rows: u64,
+    columns: u64,
 ) -> Result<Vec<u8>, SidecarError> {
-    let inputs = input_bits(ROWS, COLUMNS);
-    let expected = reference_bits(program, &inputs);
-
     let mut draft = ProofSidecarBuilder::new(
         artifact,
         ProofProvenance {
@@ -169,19 +187,25 @@ pub fn encoded(
     )
     .map_err(SidecarError::Build)?;
 
-    draft
-        .push_case(ProofCaseSpec {
-            key: ProofCaseKey::new(CASE_KEY).expect("the case key is valid"),
-            inputs: vec![(
-                InputKey::new(INPUT_KEY).expect("the input key is valid"),
-                payload_bytes(&inputs),
-            )],
-            expected: vec![(
-                OutputKey::new(OUTPUT_KEY).expect("the output key is valid"),
-                payload_bytes(&expected),
-            )],
-        })
-        .map_err(SidecarError::Build)?;
+    // Every case over the same program, so the runner compares one artifact
+    // against several operand classes rather than needing an artifact each.
+    for (key, pattern) in OPERAND_CASES {
+        let inputs = input_bits(pattern, rows, columns);
+        let expected = reference_bits(program, &inputs, rows, columns);
+        draft
+            .push_case(ProofCaseSpec {
+                key: ProofCaseKey::new(key).expect("the case key is valid"),
+                inputs: vec![(
+                    InputKey::new(INPUT_KEY).expect("the input key is valid"),
+                    payload_bytes(&inputs),
+                )],
+                expected: vec![(
+                    OutputKey::new(OUTPUT_KEY).expect("the output key is valid"),
+                    payload_bytes(&expected),
+                )],
+            })
+            .map_err(SidecarError::Build)?;
+    }
 
     draft
         .build()

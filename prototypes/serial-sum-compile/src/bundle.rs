@@ -384,7 +384,7 @@ impl fmt::Display for BundleError {
 #[cfg(test)]
 mod tests {
     use super::{assemble, assemble_from, reachable_from, variant_roots};
-    use crate::{emit_and_compile, payload, serial_sum_program};
+    use crate::{COLUMNS, ROWS, emit_and_compile, payload, serial_sum_program};
     use tiler_artifact::program::{
         PayloadContent, SectionPurpose, SectionView, StageDependencyReason, decode_artifact,
     };
@@ -398,7 +398,7 @@ mod tests {
     /// Compiles the proof program under the contract this target honours.
     fn compilations() -> Vec<Compilation> {
         compile_governed(
-            &serial_sum_program(),
+            &serial_sum_program(ROWS, COLUMNS),
             NumericalContract::FlushSubnormalsToZeroF32,
         )
         .expect("the governed program compiles")
@@ -426,8 +426,13 @@ mod tests {
         let payload = payload_for(selected);
         let expected_digest = payload.identity().expect("the subject has an identity");
 
-        let artifact = assemble(&serial_sum_program(), compilation, selected, payload)
-            .expect("the real bundle assembles");
+        let artifact = assemble(
+            &serial_sum_program(ROWS, COLUMNS),
+            compilation,
+            selected,
+            payload,
+        )
+        .expect("the real bundle assembles");
         let bytes = artifact.encode().expect("the envelope encodes");
 
         // A successful decode *is* the identity proof: `decode_artifact`
@@ -534,14 +539,14 @@ mod tests {
         let all: Vec<u32> =
             (0..u32::try_from(arena.len()).expect("a bounded arena fits u32")).collect();
         let pruned = assemble(
-            &serial_sum_program(),
+            &serial_sum_program(ROWS, COLUMNS),
             compilation,
             selected,
             payload_for(selected),
         )
         .expect("the pruned replay assembles");
         let wholesale = assemble_from(
-            &serial_sum_program(),
+            &serial_sum_program(ROWS, COLUMNS),
             compilation,
             selected,
             payload_for(selected),
@@ -581,7 +586,7 @@ mod tests {
         );
 
         let artifact = assemble(
-            &serial_sum_program(),
+            &serial_sum_program(ROWS, COLUMNS),
             compilation,
             materialized,
             payload_for(materialized),

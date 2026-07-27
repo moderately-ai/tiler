@@ -26,12 +26,19 @@
 //! cargo run -p tiler-prototype-compile -- --out <path>
 //! ```
 //!
-//! It writes two files: `<path>`, the canonical envelope bytes, and
-//! `<path>.proof`, the proof-case sidecar — the artifact identity, the operands,
-//! and the expected outputs the governed reference produced for them.
-//! `prototypes/serial-sum-run` consumes both, and that pair is the whole
+//! It writes eight files: one envelope and one `.proof` sidecar for each of
+//! four members, named `<path>.<class>.<role>`. The four are two reduction
+//! classes — a singleton and a nontrivial reduction — times
+//! two plan roles, the portfolio's selected (fused) plan and the retained
+//! materialized alternative that dispatches two stages through one
+//! intermediate. Each sidecar carries the artifact identity, the operands, and
+//! the expected outputs the governed reference produced for them.
+//!
+//! `prototypes/serial-sum-run` consumes the set, and those files are the whole
 //! interface between the two halves of this vertical slice — no module, type,
-//! or Cargo edge crosses it.
+//! or Cargo edge crosses it. The proof is that the fused and materialized
+//! members of a class, which are genuinely different programs on the device,
+//! return the same bits as the reference for every operand class.
 //!
 //! The path is required rather than defaulted because a producer run that emits
 //! nothing produces nothing. It used to take no arguments and print a summary,
@@ -105,6 +112,36 @@ const ROWS: u64 = 4;
 /// own for that value, so the runner's two paths carry the same program.
 const COLUMNS: u64 = 3;
 
+/// The reduction classes the proof covers, as `(name, reduced extent)`.
+///
+/// Three programs, not three operand sets. The reduced extent lives in the
+/// input shape, so it changes the semantic graph, the verified kernels, and the
+/// artifact identity; an empty domain and a singleton cannot be reached by
+/// choosing different numbers for a fixed shape.
+///
+/// The boundaries are what make the nontrivial case mean anything. A serial
+/// reduction over one contributor reduces in every order, so it cannot observe
+/// an ordering defect, and an empty domain is where a reduction's identity
+/// element is either right or silently invented.
+/// **The empty domain is absent, and that is a measured gap rather than a
+/// choice.** `emit_translation_unit` refuses both of its plans with
+/// `MalformedKernel { rule: "unreferenced-buffer-parameter" }`: the Metal
+/// emitter derives its binding table from what the kernel body reads, a
+/// reduction over zero contributors reads its input buffer never, and dropping
+/// the declared parameter would change the ABI, so emission fails closed. The
+/// refusal is correct at that boundary; what is missing is an emitter that can
+/// express the empty case at all. `emit-an-empty-domain-reduction-to-metal`
+/// owns it, and this array grows a third entry when it lands.
+const REDUCTION_CLASSES: [(&str, u64); 2] = [("singleton", 1), ("nontrivial", COLUMNS)];
+
+/// The plan roles the proof publishes for each reduction class.
+///
+/// `selected` is whatever the portfolio ranks first, which is the fused plan on
+/// this profile; `materialized` is the retained alternative that dispatches two
+/// stages through one intermediate. Publishing both is the point of the proof:
+/// the two are different programs on the device and must agree bit for bit.
+const PLAN_ROLES: [&str; 2] = ["selected", "materialized"];
+
 /// Suffix appended to the envelope path to name the proof-case sidecar.
 ///
 /// `prototypes/serial-sum-run` derives the same name from the path it is given.
@@ -143,14 +180,19 @@ fn target_facts() -> MetalTargetFacts {
     )
 }
 
-/// Builds the bounded profile's scale-then-reduce program.
-fn serial_sum_program() -> SemanticProgram {
+/// Builds the bounded profile's scale-then-reduce program over one shape.
+///
+/// Parameterized on the reduced extent because the proof must cover an empty
+/// domain, a singleton, and a nontrivial reduction, and those are three
+/// *programs* rather than three operand sets: the extent is in the shape, so it
+/// changes the semantic graph, the kernels, and the artifact identity.
+fn serial_sum_program(rows: u64, columns: u64) -> SemanticProgram {
     let mut builder =
         SemanticProgramBuilder::try_standard().expect("the governed profile composes");
     let input = builder
         .input::<F32>(
             InputKey::new("input").expect("the input key is valid"),
-            Shape::from_dims([ROWS, COLUMNS]),
+            Shape::from_dims([rows, columns]),
         )
         .expect("the input binds");
     let scale = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the scale applies");
@@ -224,31 +266,70 @@ fn main() -> ExitCode {
     }
 }
 
-/// One offline pass: compile, emit, translate to a `metallib`, and publish it.
+/// One offline pass: publish every member of the proof matrix.
+///
+/// Six members — three reduction classes times two plan roles — because the
+/// proof compares a fused single-dispatch program against the materialized
+/// two-dispatch program that computes the same function, across the reduction
+/// boundaries where they could differ. Each member is a complete, independently
+/// decodable envelope with its own sidecar; nothing is shared between them at
+/// run time, which is what lets the runner treat each as a separate proof run.
 fn run() -> Result<(), ProducerError> {
-    let path = output_path()?;
-    let program = serial_sum_program();
-    // Stated, not defaulted. The strict contract is unhonourable on every
-    // governed Apple family, so this producer says which contract its program
-    // means rather than discovering that by reading a rejection.
-    let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-        .map_err(ProducerError::Compile)?;
-    let compilation = compilations.first().ok_or(ProducerError::NoTarget)?;
-    println!("target profile: {}", compilation.target_profile_key());
+    let base = output_path()?;
+    let mut published = 0_usize;
+    for (class, columns) in REDUCTION_CLASSES {
+        let program = serial_sum_program(ROWS, columns);
+        // Stated, not defaulted. The strict contract is unhonourable on every
+        // governed Apple family, so this producer says which contract its
+        // program means rather than discovering that by reading a rejection.
+        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+            .map_err(ProducerError::Compile)?;
+        let compilation = compilations.first().ok_or(ProducerError::NoTarget)?;
+        println!(
+            "{class} (reduced extent {columns}): target profile {}",
+            compilation.target_profile_key(),
+        );
 
-    let selected = compilation.selected().ok_or(ProducerError::NoSelection)?;
+        for role in PLAN_ROLES {
+            let plan = match role {
+                "selected" => compilation.selected().ok_or(ProducerError::NoSelection)?,
+                // The retained alternative the portfolio did not rank first.
+                // Asked for by shape rather than by position: "not fused" is
+                // the property the proof needs, and an index would silently
+                // follow a reordering of the portfolio.
+                _ => compilation
+                    .alternatives()
+                    .find(|alternative| !alternative.is_fused())
+                    .ok_or(ProducerError::NoMaterializedAlternative)?,
+            };
+            publish_member(&base, class, role, columns, &program, compilation, plan)?;
+            published += 1;
+        }
+    }
     println!(
-        "selected alternative: {} ({})",
-        selected.stable_id(),
-        if selected.is_fused() {
-            "fused"
-        } else {
-            "materialized"
-        },
+        "published {published} proof member(s) under {}",
+        base.display()
     );
+    Ok(())
+}
 
+/// Emits, compiles, bundles, validates, and writes one member of the matrix.
+///
+/// The order is deliberate and is the same one a single-member producer used:
+/// everything is validated before either file is written, so a member the
+/// artifact layer refuses stops the publication instead of leaving an envelope
+/// on disk that no consumer would accept.
+fn publish_member(
+    base: &std::path::Path,
+    class: &str,
+    role: &str,
+    columns: u64,
+    program: &SemanticProgram,
+    compilation: &tiler_compiler::session::Compilation,
+    plan: tiler_compiler::session::PlanAlternative<'_>,
+) -> Result<(), ProducerError> {
     let facts = target_facts();
-    let kernels: Vec<_> = selected.kernels().iter().collect();
+    let kernels: Vec<_> = plan.kernels().iter().collect();
     let unit = emit_translation_unit(&kernels, &facts).map_err(|_| ProducerError::Emit)?;
     // Emission succeeds even when the target cannot honour the declared
     // numerical contract, so the conformance question is asked explicitly here
@@ -261,11 +342,6 @@ fn run() -> Result<(), ProducerError> {
                 .map(|gap| gap.rule().to_owned())
                 .collect(),
         })?;
-    println!(
-        "emitted {} entry point(s), {} bytes of MSL",
-        unit.entry_points().len(),
-        unit.source().len(),
-    );
 
     let request = CompileRequest::new(
         unit.source(),
@@ -273,75 +349,76 @@ fn run() -> Result<(), ProducerError> {
         OptimizationLevel::Default,
         NumericalRealization::strict_baseline(),
     );
-    let artifact = Toolchain::system()
+    let compiled = Toolchain::system()
         .compile(&request)
         .map_err(|_| ProducerError::Toolchain)?;
-    println!(
-        "compiled {} bytes of metallib for {}",
-        artifact.metallib.len(),
-        request.target.triple(),
-    );
 
     // Fill the neutral carried payload from what was just emitted and compiled.
     // The subject is the compilation *inputs*; the object travels beside it.
-    let payload = payload::carried_payload(&unit, &artifact.provenance, &artifact.metallib)
+    let payload = payload::carried_payload(&unit, &compiled.provenance, &compiled.metallib)
         .map_err(ProducerError::Payload)?;
-    let identity = payload
+    // Asked before the payload moves into the builder. A subject with no
+    // identity is one nothing downstream could content-address, and finding
+    // that out from a later refusal would name the wrong boundary.
+    payload
         .identity()
         .map_err(|_| ProducerError::PayloadIdentity)?;
-    println!(
-        "payload subject: {} entr(y/ies), {} obligation(s), identity {} bytes",
-        payload.metadata.entries.len(),
-        payload.metadata.obligations.len(),
-        identity.as_bytes().len(),
-    );
 
-    // Carry it in the neutral envelope, then read the bytes back. A payload that
-    // assembles but does not survive a round trip is not carried.
+    // Carry it in the neutral envelope, then read the bytes back. A payload
+    // that assembles but does not survive a round trip is not carried.
     //
     // A successful decode is itself the identity proof: `decode_artifact`
     // re-derives the identity from the decoded content and refuses when it does
     // not equal the one the manifest carries. The byte-identical re-encode is
-    // the complement — a field the decoder silently dropped could not be written
-    // back — and, because the encoder *derives* the identity rather than copying
-    // it, byte equality also pins the manifest's stored identity to that
-    // re-derivation.
-    let artifact = bundle::assemble(&program, compilation, selected, payload)
-        .map_err(ProducerError::Bundle)?;
+    // the complement -- a field the decoder silently dropped could not be
+    // written back -- and, because the encoder *derives* the identity rather
+    // than copying it, byte equality also pins the manifest's stored identity
+    // to that re-derivation.
+    let artifact =
+        bundle::assemble(program, compilation, plan, payload).map_err(ProducerError::Bundle)?;
     let bytes = artifact.encode().map_err(ProducerError::Encode)?;
     let decoded = decode_artifact(&bytes).map_err(ProducerError::Decode)?;
     if decoded.re_encode().map_err(ProducerError::Encode)? != bytes {
         return Err(ProducerError::UnstableEncoding);
     }
-    println!(
-        "artifact envelope: {} bytes, {} section(s), {} variant(s), identity {} bytes",
-        bytes.len(),
-        decoded.sections().len(),
-        decoded.variant_count(),
-        decoded.identity().as_bytes().len(),
-    );
 
     // Built before either file is written, so a sidecar the artifact layer
     // refuses stops the publication instead of leaving an envelope on disk with
     // no record describing it.
-    let sidecar_bytes = sidecar::encoded(&artifact, &program).map_err(ProducerError::Sidecar)?;
+    let sidecar_bytes =
+        sidecar::encoded(&artifact, program, ROWS, columns).map_err(ProducerError::Sidecar)?;
 
-    // Published only after the round trip above proved these exact bytes decode
-    // and re-encode to themselves. Writing first and validating afterwards would
-    // leave a consumer able to read an envelope this producer had not accepted.
-    let sidecar_path = proof_sidecar(&path);
-    std::fs::write(&path, &bytes)
-        .map_err(|cause| ProducerError::Write(path.display().to_string(), cause))?;
+    let envelope_path = proof_member(base, class, role);
+    let sidecar_path = proof_sidecar(&envelope_path);
+    std::fs::write(&envelope_path, &bytes)
+        .map_err(|cause| ProducerError::Write(envelope_path.display().to_string(), cause))?;
     std::fs::write(&sidecar_path, &sidecar_bytes)
         .map_err(|cause| ProducerError::Write(sidecar_path.display().to_string(), cause))?;
+
     println!(
-        "wrote {} ({} bytes) and {} ({} bytes)",
-        path.display(),
+        "  {role}: {} entr(y/ies), {} bytes of metallib, {} envelope byte(s), {} sidecar byte(s) \
+         -> {}",
+        unit.entry_points().len(),
+        compiled.metallib.len(),
         bytes.len(),
-        sidecar_path.display(),
         sidecar_bytes.len(),
+        envelope_path.display(),
     );
     Ok(())
+}
+
+/// Returns the envelope path for one published member of the proof matrix.
+///
+/// Derived by appending to the base path rather than by rewriting an extension,
+/// for the same reason [`proof_sidecar`] appends: the whole set stays obviously
+/// one unit on disk and no two members can collide. `prototypes/serial-sum-run`
+/// derives the identical names from the base path it is given, and both crates
+/// pin the derivation in a test naming the other side, because no code crosses
+/// between them.
+fn proof_member(base: &std::path::Path, class: &str, role: &str) -> PathBuf {
+    let mut name = base.as_os_str().to_owned();
+    name.push(format!(".{class}.{role}"));
+    PathBuf::from(name)
 }
 
 /// Returns the identity sidecar path for one envelope path.
@@ -369,6 +446,7 @@ enum ProducerError {
     Compile(CompileFailure),
     NoTarget,
     NoSelection,
+    NoMaterializedAlternative,
     Emit,
     UnrealizableNumerics { gaps: Vec<String> },
     Payload(String),
@@ -392,6 +470,10 @@ impl fmt::Display for ProducerError {
             Self::Compile(failure) => write!(formatter, "the program did not compile: {failure:?}"),
             Self::NoTarget => formatter.write_str("the compilation returned no target profile"),
             Self::NoSelection => formatter.write_str("the portfolio retained no selected plan"),
+            Self::NoMaterializedAlternative => formatter.write_str(
+                "the portfolio retained no materialized alternative, so the proof cannot compare \
+                 a fused program against the multi-dispatch program computing the same function",
+            ),
             Self::Emit => formatter.write_str("the selected kernels have no Metal realization"),
             Self::UnrealizableNumerics { gaps } => write!(
                 formatter,
@@ -418,7 +500,10 @@ impl fmt::Display for ProducerError {
 
 #[cfg(test)]
 mod tests {
-    use super::{bundle, payload, serial_sum_program, sidecar, target_facts};
+    use super::{
+        COLUMNS, PLAN_ROLES, REDUCTION_CLASSES, ROWS, bundle, payload, serial_sum_program, sidecar,
+        target_facts,
+    };
     use crate::{ArtifactCodecFailure, decode_artifact};
     use tiler_artifact::proof::decode_proof_sidecar;
     use tiler_compiler::session::{NumericalContract, compile_governed};
@@ -432,7 +517,7 @@ mod tests {
     /// exercised by running the producer, not by this test.
     #[test]
     fn the_selected_program_emits_deterministic_metal_source() {
-        let program = serial_sum_program();
+        let program = serial_sum_program(ROWS, COLUMNS);
         let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
         let selected = compilations[0].selected().expect("a selected alternative");
@@ -757,7 +842,7 @@ mod tests {
         Vec<u8>,
         Vec<u8>,
     ) {
-        let program = serial_sum_program();
+        let program = serial_sum_program(ROWS, COLUMNS);
         let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
         let compilation = compilations.first().expect("one governed target");
@@ -769,8 +854,45 @@ mod tests {
         let artifact = bundle::assemble(&program, compilation, selected, payload)
             .expect("the artifact assembles");
         let envelope = artifact.encode().expect("the artifact encodes");
-        let sidecar_bytes = sidecar::encoded(&artifact, &program).expect("the sidecar builds");
+        let sidecar_bytes =
+            sidecar::encoded(&artifact, &program, ROWS, COLUMNS).expect("the sidecar builds");
         (artifact, envelope, sidecar_bytes)
+    }
+
+    /// The producer's half of the *member* filename interface, pinned.
+    ///
+    /// `prototypes/serial-sum-run` derives these same twelve names from the base
+    /// path it is given and carries the identical assertion. Nothing mechanical
+    /// compares the two crates -- they share no code -- so this pair of tests is
+    /// the only thing that does, and the slice has already been broken end to
+    /// end for a whole commit by one side renaming a file the other opened.
+    #[test]
+    fn the_member_names_are_the_ones_the_runner_opens() {
+        let base = std::path::Path::new("/tmp/a.tiler");
+        let names: Vec<String> = REDUCTION_CLASSES
+            .iter()
+            .flat_map(|(class, _)| {
+                PLAN_ROLES
+                    .iter()
+                    .map(move |role| super::proof_member(base, class, role))
+            })
+            .map(|path| path.display().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "/tmp/a.tiler.singleton.selected",
+                "/tmp/a.tiler.singleton.materialized",
+                "/tmp/a.tiler.nontrivial.selected",
+                "/tmp/a.tiler.nontrivial.materialized",
+            ],
+        );
+        assert_eq!(
+            super::proof_sidecar(std::path::Path::new(&names[0]))
+                .display()
+                .to_string(),
+            "/tmp/a.tiler.singleton.selected.proof",
+        );
     }
 
     /// The producer's half of the filename interface, pinned.
@@ -802,7 +924,7 @@ mod tests {
     /// reproducibility claim with no toolchain attached names no environment.
     #[test]
     fn metallib_byte_reproducibility_is_measured_and_recorded() {
-        let program = serial_sum_program();
+        let program = serial_sum_program(ROWS, COLUMNS);
         let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
         let compilation = compilations.first().expect("one governed target");
@@ -842,7 +964,7 @@ mod tests {
         tiler_metal::record::MetalTranslationUnit,
         tiler_metal_aot::record::CompiledArtifact,
     ) {
-        let program = serial_sum_program();
+        let program = serial_sum_program(ROWS, COLUMNS);
         let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
         let plan = compilations[0].selected().expect("a selected alternative");
@@ -866,7 +988,7 @@ mod tests {
     /// second; a different contract was stated.
     #[test]
     fn the_stated_contract_decides_whether_this_target_honours_it() {
-        let program = serial_sum_program();
+        let program = serial_sum_program(ROWS, COLUMNS);
 
         let strict = compile_governed(&program, NumericalContract::StrictF32)
             .expect("the strict program still compiles");
