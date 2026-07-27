@@ -36,8 +36,10 @@
 //! measure a tidier death than a crash. `abort` is the closest a process can get
 //! to being killed at an instant it chooses.
 
+use std::cell::Cell;
 use std::env;
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::process;
 use std::thread;
@@ -191,4 +193,69 @@ pub(super) fn rendezvous() {
         );
         thread::sleep(RELEASE_POLL);
     }
+}
+
+/// A filesystem call that can be made to fail without killing the process.
+///
+/// # Why this is separate from [`Phase`]
+///
+/// A [`Phase`] names an instant a writer *dies*, and [`reach`] implements that
+/// with [`process::abort`]. Neither can make a call return an error, so neither
+/// can reach the states this ticket is about: a rename that succeeded followed
+/// by a step that failed. Killing the writer at `AfterRename` proves what a
+/// crash leaves on disk; it says nothing about what a surviving writer
+/// *reports*, which is a different property and the one that was wrong.
+///
+/// # Why a thread-local and not the environment
+///
+/// [`reach`] reads an environment variable because its harness re-executes the
+/// test binary as a child process, so the arming has to cross a process
+/// boundary. These faults are observed in-process by the test that armed them,
+/// and a thread-local keeps one test's arming off every other test's writer
+/// even when the suite runs them concurrently in one process. It is also
+/// impossible to leave armed by accident: [`InjectionGuard`] disarms on drop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Injection {
+    /// Synchronizing the containing entry directory, after publication.
+    EntryDirectorySync,
+    /// Releasing the per-key lock, after publication.
+    LockRelease,
+}
+
+thread_local! {
+    /// The fault this thread is armed to inject, if any.
+    static ARMED: Cell<Option<Injection>> = const { Cell::new(None) };
+}
+
+/// Arms `injection` on this thread until the returned guard is dropped.
+pub(super) fn inject(injection: Injection) -> InjectionGuard {
+    ARMED.with(|armed| armed.set(Some(injection)));
+    InjectionGuard
+}
+
+/// Disarms this thread's injected fault when dropped.
+///
+/// A guard rather than a bare disarm call, so a test that fails an assertion
+/// mid-way still leaves the thread clean for whatever runs next on it.
+pub(super) struct InjectionGuard;
+
+impl Drop for InjectionGuard {
+    fn drop(&mut self) {
+        ARMED.with(|armed| armed.set(None));
+    }
+}
+
+/// Returns the error this thread is armed to produce at `injection`.
+///
+/// One-shot: the arming is cleared as it fires, so a retry inside the same call
+/// observes the real filesystem rather than the fault a second time.
+pub(super) fn injected(injection: Injection) -> Option<io::Error> {
+    ARMED.with(|armed| {
+        if armed.get() == Some(injection) {
+            armed.set(None);
+            Some(io::Error::from(io::ErrorKind::Other))
+        } else {
+            None
+        }
+    })
 }

@@ -520,12 +520,19 @@ impl ExpansionCache {
             validate,
             replacing_rejected_entry,
         ) {
-            Ok(quarantine) => {
-                if let Some(outcome) = quarantine {
+            Ok(published) => {
+                if let Some(outcome) = published.quarantine {
                     report.set_quarantine(outcome);
                 }
+                if let Some(unavailable) = published.durability {
+                    report.set_durability_shortfall(unavailable);
+                }
+                // A lock this call cannot release is a housekeeping failure on
+                // an entry that is already published and valid. It was recorded
+                // as a publication refusal, which said the opposite of what had
+                // happened while the outcome beside it said `published: true`.
                 if let Err(unavailable) = self.release_lock(lock, &entry.key) {
-                    report.set_publication_refusal(PublicationRefusal::Unavailable(unavailable));
+                    report.set_cleanup_shortfall(unavailable);
                 }
                 Ok(ProtocolOutcome::Hit {
                     entry,
@@ -629,7 +636,7 @@ impl ExpansionCache {
         envelope: &[u8],
         validate: &dyn Fn(&[u8]) -> Result<T, ArtifactCodecFailure>,
         replacing_rejected_entry: bool,
-    ) -> Result<Option<QuarantineOutcome>, PublicationRefusal> {
+    ) -> Result<Published, PublicationRefusal> {
         let (encoded_key, encoded) = bundle::encode(subject, envelope, &self.limits)
             .map_err(PublicationRefusal::Oversize)?;
         debug_assert_eq!(
@@ -700,26 +707,41 @@ impl ExpansionCache {
         #[cfg(test)]
         fault::reach(fault::Phase::AfterRename);
 
+        // Past this point the entry is published. Every remaining step reports
+        // through `Published` rather than through `Err`, because the rename
+        // above is observable by other processes and no later failure can
+        // retract it. Returning an error here would describe a live entry as
+        // absent, which is the one direction this crate must not fail in.
+        let mut published = Published {
+            quarantine,
+            durability: None,
+        };
+
         if self.durability == Durability::Fsync {
             let directory = entry
                 .parent()
                 .expect("an entry path always has a shard directory")
                 .to_path_buf();
             let synced = File::open(&directory).and_then(|handle| handle.sync_all());
+            #[cfg(test)]
+            let synced = synced.and_then(|()| {
+                fault::injected(fault::Injection::EntryDirectorySync).map_or(Ok(()), Err)
+            });
             if let Err(error) = synced {
                 // The entry is already published and valid. Failing to persist
                 // the directory update weakens the durability claim and does not
-                // unpublish anything, so it is reported rather than rolled back.
-                return Err(PublicationRefusal::Unavailable(CacheUnavailable::new(
+                // unpublish anything, so it is recorded on the publication
+                // rather than rolled back or reported as a refusal.
+                published.durability = Some(CacheUnavailable::new(
                     CacheOperation::SyncEntryDirectory,
                     directory,
                     error,
-                )));
+                ));
             }
         }
         #[cfg(test)]
         fault::reach(fault::Phase::AfterDirectorySync);
-        Ok(quarantine)
+        Ok(published)
     }
 
     fn validate_written<T>(
@@ -876,7 +898,11 @@ impl ExpansionCache {
     }
 
     fn release_lock(&self, lock: KeyLock, key: &CacheKey) -> Result<(), CacheUnavailable> {
-        lock.release().map_err(|error| {
+        let released = lock.release();
+        #[cfg(test)]
+        let released = released
+            .and_then(|()| fault::injected(fault::Injection::LockRelease).map_or(Ok(()), Err));
+        released.map_err(|error| {
             CacheUnavailable::new(
                 CacheOperation::ReleaseLock,
                 self.layout.lock_path(key),
@@ -884,6 +910,23 @@ impl ExpansionCache {
             )
         })
     }
+}
+
+/// What a successful publication left behind.
+///
+/// Returned by `ExpansionCache::publish` only when the atomic rename succeeded,
+/// which is what makes the distinction structural rather than remembered: a
+/// caller holding one of these knows a content entry exists, and the only way to
+/// report a post-rename problem is a field on it. The alternative — an `Err`
+/// carrying a `PublicationRefusal` — could not say "published, but" at all, and
+/// that is precisely the state that used to be reported as unpublished.
+#[derive(Debug, Default)]
+pub(crate) struct Published {
+    /// What became of a rejected entry this publication replaced.
+    pub(crate) quarantine: Option<QuarantineOutcome>,
+    /// The entry is visible and valid; its durability claim is weaker than the
+    /// configured policy asked for.
+    pub(crate) durability: Option<CacheUnavailable>,
 }
 
 /// A validated entry, generic over what its payload validator produced.

@@ -35,11 +35,12 @@ use tiler_artifact::program::{ArtifactCodecFailure, DIGEST_BYTES, DigestAlgorith
 
 use super::bundle::{self, BundleRejection, BundleSection};
 use super::collect::{CollectionBound, CollectionOutcome, Disposition};
+use super::fault;
 use super::key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
 use super::layout::{PathRejection, key_of_entry_path};
 use super::limits::Limits;
 use super::lock::KeyLock;
-use super::report::{EntryRejection, MissReason, QuarantineOutcome};
+use super::report::{CacheOperation, EntryRejection, MissReason, QuarantineOutcome};
 use super::store::{Durability, ExpansionCache, Lookup, ProtocolOutcome, PublishFailure};
 use super::subject::{ComposedSubject, SubjectFacet, SubjectFacets, SubjectRefusal};
 
@@ -915,6 +916,174 @@ fn the_durability_policy_does_not_change_what_is_published() {
 
     assert_eq!(key, synced_key);
     assert_eq!(under_default, under_fsync);
+}
+
+/// A failed directory sync after the rename reports a *published* entry.
+///
+/// This is the defect the ticket names. The rename is the publication point:
+/// once it returns, another process may read the valid immutable entry, and no
+/// later failure retracts that. Reporting `Uncached` there told the caller no
+/// entry was published while one was sitting at the content path, readable —
+/// the one direction this crate must not fail in, because every other refusal
+/// leaves the caller free to rebuild and this one silently disagrees with the
+/// filesystem.
+///
+/// The durability claim really is weaker, and that is what the report now says
+/// instead.
+#[test]
+fn a_directory_sync_failure_after_the_rename_reports_a_published_entry() {
+    let scratch = Scratch::new("post-rename-durability");
+    let cache = cache(&scratch).with_durability(Durability::Fsync);
+
+    let outcome = {
+        let _armed = fault::inject(fault::Injection::EntryDirectorySync);
+        cache
+            .resolve(
+                b"subject",
+                || Ok::<_, String>(b"envelope".to_vec()),
+                &any_payload,
+            )
+            .expect("a publication resolves")
+    };
+
+    let ProtocolOutcome::Hit {
+        entry,
+        report,
+        published,
+    } = outcome
+    else {
+        panic!("a post-rename failure must not be reported as uncached");
+    };
+    assert!(
+        published,
+        "the rename succeeded, so the entry was published"
+    );
+
+    // The weakened claim is reported, and as durability rather than refusal.
+    let shortfall = report
+        .durability_shortfall()
+        .expect("the directory sync failed and is reported");
+    assert_eq!(shortfall.operation(), CacheOperation::SyncEntryDirectory);
+    assert!(
+        report.publication_refusal().is_none(),
+        "a published entry was described as refused: {:?}",
+        report.publication_refusal(),
+    );
+
+    // The filesystem agrees with the report, which is the whole point: the
+    // entry is at the content path and readable by anyone.
+    let path = cache.entry_path(&entry.key);
+    assert!(path.exists(), "the published entry is at its content path");
+    let reread = cache
+        .read_entry(&entry.key, &any_payload)
+        .expect("another reader observes the published entry");
+    assert_eq!(reread.envelope, b"envelope");
+}
+
+/// A failed lock release after the rename is cleanup, not a refusal.
+///
+/// The outcome was already right here; the report was not. It set a publication
+/// refusal beside `published: true`, so a caller reading the report to answer
+/// "was it published?" got a contradiction from the same record.
+#[test]
+fn a_lock_release_failure_after_the_rename_is_reported_as_cleanup() {
+    let scratch = Scratch::new("post-rename-cleanup");
+    let cache = cache(&scratch);
+
+    let outcome = {
+        let _armed = fault::inject(fault::Injection::LockRelease);
+        cache
+            .resolve(
+                b"subject",
+                || Ok::<_, String>(b"envelope".to_vec()),
+                &any_payload,
+            )
+            .expect("a publication resolves")
+    };
+
+    let ProtocolOutcome::Hit {
+        entry,
+        report,
+        published,
+    } = outcome
+    else {
+        panic!("a lock-release failure must not unpublish anything");
+    };
+    assert!(published);
+    let shortfall = report
+        .cleanup_shortfall()
+        .expect("the lock release failed and is reported");
+    assert_eq!(shortfall.operation(), CacheOperation::ReleaseLock);
+    assert!(
+        report.publication_refusal().is_none(),
+        "a published entry was described as refused",
+    );
+    assert!(
+        report.durability_shortfall().is_none(),
+        "nothing about durability failed",
+    );
+    assert!(cache.entry_path(&entry.key).exists());
+}
+
+/// An ordinary publication reports neither shortfall.
+///
+/// The negative half: without it, the two cases above would pass against a
+/// version that set both fields unconditionally.
+#[test]
+fn an_ordinary_publication_reports_no_shortfall() {
+    let scratch = Scratch::new("no-shortfall");
+    let cache = cache(&scratch).with_durability(Durability::Fsync);
+    let outcome = cache
+        .resolve(
+            b"subject",
+            || Ok::<_, String>(b"envelope".to_vec()),
+            &any_payload,
+        )
+        .expect("a publication resolves");
+    let ProtocolOutcome::Hit { report, .. } = outcome else {
+        panic!("the entry publishes");
+    };
+    assert!(report.durability_shortfall().is_none());
+    assert!(report.cleanup_shortfall().is_none());
+    assert!(report.publication_refusal().is_none());
+}
+
+/// No `Uncached` outcome ever leaves a content entry behind.
+///
+/// The property the two cases above are instances of, stated once over both
+/// sides of the publication point. A pre-rename refusal must leave nothing at
+/// the content path, and anything that does leave something there must not be
+/// reported as uncached. Asserted against a real pre-rename refusal — an
+/// oversize bundle, which is refused before any temporary is created.
+#[test]
+fn an_uncached_outcome_never_leaves_a_content_entry() {
+    let scratch = Scratch::new("uncached-leaves-nothing");
+    let cache = cache(&scratch).with_limits(Limits {
+        max_bundle_bytes: 8,
+        ..Limits::default()
+    });
+    let outcome = cache
+        .resolve(
+            b"subject",
+            || Ok::<_, String>(b"an envelope far past the bundle bound".to_vec()),
+            &any_payload,
+        )
+        .expect("an oversize bundle still resolves");
+    let ProtocolOutcome::Uncached { entry, report } = outcome else {
+        panic!("an oversize bundle is not published");
+    };
+    assert!(
+        report.publication_refusal().is_some(),
+        "a genuine pre-rename refusal is reported as one",
+    );
+    assert!(
+        report.durability_shortfall().is_none() && report.cleanup_shortfall().is_none(),
+        "nothing was published, so no post-publication fact applies",
+    );
+    assert!(
+        !cache.entry_path(&entry.key).exists(),
+        "an uncached outcome left an entry at the content path",
+    );
 }
 
 /// A rejected entry is replaced, and its bytes are retained for diagnosis.

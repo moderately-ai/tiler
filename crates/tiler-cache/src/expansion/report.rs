@@ -246,6 +246,13 @@ impl std::error::Error for MissReason {
 /// Every variant leaves the caller with a validated artifact it may still embed.
 /// None of them is a compilation failure.
 ///
+/// **Strictly pre-publication.** Every variant here means the atomic rename did
+/// not happen, so no content entry exists and the caller may rebuild and
+/// republish freely. A failure *after* the rename cannot be reported through this
+/// type, because the entry is already visible to other processes and describing
+/// it as unpublished is a false statement about durable state; those are
+/// [`CacheReport::durability_shortfall`] and [`CacheReport::cleanup_shortfall`].
+///
 /// `#[non_exhaustive]` under ADR 0074 convention 5a.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -375,11 +382,29 @@ impl fmt::Display for QuarantineOutcome {
 /// Read it to explain an outcome. Each field is `None` exactly when its step did
 /// not happen or did not refuse — a lock-free hit leaves every field `None`,
 /// and a publication after a rejected entry fills three of them.
+///
+/// # Publication, durability, and cleanup are three facts
+///
+/// The atomic rename is the publication point: once it succeeds another process
+/// may observe the valid immutable entry, and no later failure can undo that.
+/// So the fields divide on which side of it they fall.
+/// [`Self::publication_refusal`] can only be set before the rename and means no
+/// content entry exists. [`Self::durability_shortfall`] and
+/// [`Self::cleanup_shortfall`] can only be set after it and always accompany a
+/// published entry — they weaken what is claimed *about* an entry that exists,
+/// and never contradict its existence.
+///
+/// Reading them as one "did anything go wrong" flag loses exactly the
+/// distinction they were separated to preserve: a refusal means rebuild and try
+/// again, a shortfall means the entry is there and something about persisting or
+/// tidying up did not complete.
 #[derive(Debug, Default)]
 pub struct CacheReport {
     lookup_miss: Option<MissReason>,
     recheck_miss: Option<MissReason>,
     publication_refusal: Option<PublicationRefusal>,
+    durability_shortfall: Option<CacheUnavailable>,
+    cleanup_shortfall: Option<CacheUnavailable>,
     quarantine: Option<QuarantineOutcome>,
 }
 
@@ -403,6 +428,33 @@ impl CacheReport {
         self.publication_refusal.as_ref()
     }
 
+    /// A published entry whose durability claim could not be completed.
+    ///
+    /// Set only after a successful rename, and only under
+    /// [`Durability::Fsync`](crate::expansion::Durability::Fsync): the entry is
+    /// published, valid, and readable by any process, and the operating system
+    /// was not able to confirm the directory update is persisted. A power loss
+    /// could therefore lose the entry that a reader can see right now.
+    ///
+    /// It is not a reason to republish. Republishing writes the same immutable
+    /// content to the same content path and would meet the same failing
+    /// filesystem.
+    #[must_use]
+    pub const fn durability_shortfall(&self) -> Option<&CacheUnavailable> {
+        self.durability_shortfall.as_ref()
+    }
+
+    /// A published entry whose cleanup step did not complete.
+    ///
+    /// Set only after a successful rename. The entry is published and valid; a
+    /// step after it — releasing the per-key lock — failed. Nothing about the
+    /// stored content is in doubt, and the consequence is confined to the
+    /// namespace's own housekeeping.
+    #[must_use]
+    pub const fn cleanup_shortfall(&self) -> Option<&CacheUnavailable> {
+        self.cleanup_shortfall.as_ref()
+    }
+
     /// What became of a rejected entry a publication replaced.
     #[must_use]
     pub const fn quarantine(&self) -> Option<&QuarantineOutcome> {
@@ -419,6 +471,14 @@ impl CacheReport {
 
     pub(crate) fn set_publication_refusal(&mut self, refusal: PublicationRefusal) {
         self.publication_refusal = Some(refusal);
+    }
+
+    pub(crate) fn set_durability_shortfall(&mut self, unavailable: CacheUnavailable) {
+        self.durability_shortfall = Some(unavailable);
+    }
+
+    pub(crate) fn set_cleanup_shortfall(&mut self, unavailable: CacheUnavailable) {
+        self.cleanup_shortfall = Some(unavailable);
     }
 
     pub(crate) fn set_quarantine(&mut self, outcome: QuarantineOutcome) {
