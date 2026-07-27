@@ -75,9 +75,26 @@ pub(super) const MAX_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 /// accepts always survives a round trip rather than producing bytes no reader
 /// admits.
 pub(crate) fn encode(envelope: &ArtifactEnvelope) -> Result<Vec<u8>, ArtifactCodecError> {
+    let identity = envelope
+        .canonical_identity()
+        .map_err(|cause| ArtifactCodecError::IdentityDerivation { cause })?;
+    encode_with_identity(envelope, &identity)
+}
+
+/// Encodes an envelope whose canonical identity the caller has already derived.
+///
+/// **The identity is a parameter because deriving it is not cheap and the one
+/// caller that needs this already has it.** `decode` derives the identity to
+/// compare against the manifest's, and then re-encodes the envelope as its
+/// canonicity backstop — which derived the very same identity a second time,
+/// from the same value, on every decode and therefore on every cache hit.
+pub(crate) fn encode_with_identity(
+    envelope: &ArtifactEnvelope,
+    identity: &crate::program::CanonicalArtifactProgramIdentity,
+) -> Result<Vec<u8>, ArtifactCodecError> {
     check_budgets(envelope)?;
     let algorithm = DigestAlgorithm::GOVERNED;
-    let manifest = encode_manifest(envelope, algorithm)?;
+    let manifest = encode_manifest(envelope, algorithm, identity)?;
     codec_limit(
         manifest.len(),
         MAX_MANIFEST_BYTES,
@@ -145,6 +162,7 @@ pub(crate) fn envelope_digest(bytes: &[u8]) -> [u8; DIGEST_BYTES] {
 fn encode_manifest(
     envelope: &ArtifactEnvelope,
     algorithm: DigestAlgorithm,
+    identity: &crate::program::CanonicalArtifactProgramIdentity,
 ) -> Result<Vec<u8>, ArtifactCodecError> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MANIFEST_DOMAIN);
@@ -190,9 +208,6 @@ fn encode_manifest(
     encode_variants(&mut bytes, envelope).map_err(identity_cause)?;
     encode_section_descriptors(&mut bytes, envelope, algorithm)?;
 
-    let identity = envelope
-        .canonical_identity()
-        .map_err(|cause| ArtifactCodecError::IdentityDerivation { cause })?;
     push_slice(&mut bytes, identity.as_bytes());
     Ok(bytes)
 }

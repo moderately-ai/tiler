@@ -46,7 +46,7 @@ use super::super::{
 use super::digest::{Digest, DigestAlgorithm};
 use super::encode::{
     CANONICAL_ENCODING, ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN,
-    MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES, MAX_MANIFEST_BYTES, encode,
+    MANIFEST_DOMAIN, MANIFEST_SCHEMA, MAX_ENVELOPE_BYTES, MAX_MANIFEST_BYTES, encode_with_identity,
     section_digest,
 };
 use super::error::{
@@ -110,7 +110,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ArtifactEnvelope, ArtifactCodecErro
     // have one byte identity: any well-formed but non-canonical spelling a
     // named check did not already catch fails here rather than being silently
     // normalized on the way in.
-    if encode(&envelope)? != bytes {
+    if encode_with_identity(&envelope, &derived)? != bytes {
         return Err(ArtifactCodecError::NonCanonicalManifest);
     }
     Ok(envelope)
