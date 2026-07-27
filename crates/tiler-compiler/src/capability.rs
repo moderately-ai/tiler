@@ -30,7 +30,7 @@
 //! compiler-session API and must not be treated as one until Tom accepts the
 //! exact interface.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -49,7 +49,7 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Extent, Shape};
 
 /// Canonical identity domain-separation tag for a frozen registry snapshot.
-const REGISTRY_IDENTITY_TAG: &[u8] = b"tiler.compiler.lowering-capability-registry.v1\0";
+const REGISTRY_IDENTITY_TAG: &[u8] = b"tiler.compiler.lowering-capability-registry.v2\0";
 /// Maximum capabilities admitted by one frozen registry.
 const MAX_LOWERING_CAPABILITIES: usize = 65_536;
 /// Maximum operand or result types admitted by one signature.
@@ -835,6 +835,8 @@ impl LoweringCapabilityRegistryBuilder {
             .saturating_add(encoded_bytes_len(
                 scalar.snapshot_identity().as_bytes().len(),
             ))
+            .saturating_add(size_of::<u64>())
+            // The interned pool's count prefix, written once for the registry.
             .saturating_add(size_of::<u64>());
         Self {
             semantic,
@@ -1022,10 +1024,19 @@ impl LoweringCapabilityRegistryBuilder {
             self.scalar.snapshot_identity().as_bytes(),
             &self.capabilities,
         );
-        debug_assert_eq!(
+        // A bound, not an equality, since the encoding interns the authority
+        // identities that capabilities share and the running total counts each
+        // capability's in full. The direction is the one that matters: the
+        // budget checked on every insert can only be *larger* than what is
+        // written, so a registry admitted by the budget always encodes within
+        // it. An encoding that exceeded the running total would mean the
+        // accounting had stopped covering some part of the identity, which is
+        // what this catches.
+        debug_assert!(
+            identity.0.len() <= self.canonical_bytes,
+            "the frozen encoding is {} bytes, above the running budget of {}",
             identity.0.len(),
             self.canonical_bytes,
-            "the running identity byte budget matches the frozen encoding"
         );
         FrozenLoweringCapabilityRegistry(Arc::new(FrozenLoweringCapabilityRegistryData {
             capabilities: self.capabilities,
@@ -1493,25 +1504,80 @@ impl CanonicalLoweringRegistryIdentity {
     }
 }
 
+/// Encodes the registry's canonical identity with its sub-identities interned.
+///
+/// **Why a pool and not an inline copy.** Every capability names four authority
+/// identities, and capabilities registered against one registry overwhelmingly
+/// name the *same* ones — the governed profile's five capabilities restated a
+/// single 1,496-byte registry snapshot five times, 7,480 bytes of a 15,583-byte
+/// identity, which in turn was 77% of the explain subject that is hashed once
+/// per compilation and compared on every evidence binding. Writing each distinct
+/// value once and referring to it by position is the same shape
+/// `tiler_ir::semantic::identity::compute_graph_identity` already uses, and the
+/// same one that took kernel-program identity from 13,309 bytes to 3,118.
+///
+/// **Injectivity is preserved.** The pool is written in ascending byte order, is
+/// count-prefixed, and is complete before any capability refers to it, so a
+/// fixed-width position determines its referent exactly as an inline copy did.
+/// Two registries differing in any sub-identity differ in the pool; two
+/// differing only in which capability names which differ in the positions.
 fn compute_identity(
     semantic_snapshot: &[u8],
     scalar_snapshot: &[u8],
     capabilities: &BTreeMap<LoweringCapabilityKey, RegisteredLoweringCapability>,
 ) -> CanonicalLoweringRegistryIdentity {
+    let mut pool: BTreeSet<&[u8]> = BTreeSet::new();
+    for capability in capabilities.values() {
+        for blob in authority_identities(&capability.authority) {
+            pool.insert(blob);
+        }
+    }
+    let pooled: Vec<&[u8]> = pool.into_iter().collect();
+
     let mut bytes = REGISTRY_IDENTITY_TAG.to_vec();
     push_slice(&mut bytes, semantic_snapshot);
     push_slice(&mut bytes, scalar_snapshot);
+    push_len(&mut bytes, pooled.len());
+    for blob in &pooled {
+        push_slice(&mut bytes, blob);
+    }
     push_len(&mut bytes, capabilities.len());
     for (key, capability) in capabilities {
-        encode_capability(&mut bytes, key, &capability.authority, capability.revision);
+        encode_capability_key(&mut bytes, key, capability.revision);
+        for blob in authority_identities(&capability.authority) {
+            let position = pooled
+                .binary_search(&blob)
+                .expect("every authority identity was pooled above");
+            bytes.extend_from_slice(&(position as u64).to_be_bytes());
+        }
     }
     CanonicalLoweringRegistryIdentity(bytes)
 }
 
-fn encode_capability(
+/// The four authority identities one capability names, in their encoding order.
+///
+/// One function so the pool and the reference list cannot disagree about which
+/// values exist or what order they are written in; two parallel lists here would
+/// be a defect a later edit could introduce silently.
+fn authority_identities(authority: &LoweringCapabilityAuthority) -> [&[u8]; 4] {
+    [
+        authority.emitted_scalar_definitions.as_bytes(),
+        authority
+            .operation_authority
+            .reached_definitions()
+            .as_bytes(),
+        authority
+            .operation_authority
+            .admission_provenance()
+            .as_bytes(),
+        authority.operation_authority.registry_snapshot().as_bytes(),
+    ]
+}
+
+/// Appends the part of a capability that is its own, not a shared authority.
+fn encode_capability_key(
     output: &mut Vec<u8>,
     key: &LoweringCapabilityKey,
-    authority: &LoweringCapabilityAuthority,
     revision: LoweringCapabilityRevision,
 ) {
     output.push(key.family.tag());
@@ -1519,35 +1585,36 @@ fn encode_capability(
     key.signature.encode(output);
     encode_provider(output, &key.provider);
     output.extend_from_slice(&revision.get().to_be_bytes());
-    push_slice(output, authority.emitted_scalar_definitions.as_bytes());
-    push_slice(
-        output,
-        authority
-            .operation_authority
-            .reached_definitions()
-            .as_bytes(),
-    );
-    push_slice(
-        output,
-        authority
-            .operation_authority
-            .admission_provenance()
-            .as_bytes(),
-    );
-    push_slice(
-        output,
-        authority.operation_authority.registry_snapshot().as_bytes(),
-    );
 }
 
+/// A conservative upper bound on what one capability adds to the identity.
+///
+/// It measures the *un-interned* encoding — the four authority identities in
+/// full rather than as pooled positions — so it over-counts whenever a
+/// capability shares an authority with one already registered, which is the
+/// common case. That is deliberate: the bound is checked as capabilities are
+/// added, one at a time, and whether a value will end up shared is not known
+/// until the registry is closed. Over-counting rejects a registry slightly
+/// earlier than the true encoding would require, which fails closed; the
+/// alternative of accounting the pooled size would have to revise every
+/// previous capability's contribution on each insert.
 fn capability_identity_len(
     key: &LoweringCapabilityKey,
     authority: &LoweringCapabilityAuthority,
     revision: LoweringCapabilityRevision,
 ) -> usize {
     let mut scratch = Vec::new();
-    encode_capability(&mut scratch, key, authority, revision);
-    scratch.len()
+    encode_capability_key(&mut scratch, key, revision);
+    // The pool contribution, bounded by this capability's own identities written
+    // in full: interning can only make the pool smaller, never larger.
+    let pooled: usize = authority_identities(authority)
+        .iter()
+        .map(|blob| encoded_bytes_len(blob.len()))
+        .sum();
+    // Plus the four fixed-width positions this capability writes, which it pays
+    // whether or not its identities turn out to be shared with another's.
+    let references = size_of::<u64>() * authority_identities(authority).len();
+    scratch.len() + pooled + references
 }
 
 fn encode_op_key(output: &mut Vec<u8>, key: &OpKey) {

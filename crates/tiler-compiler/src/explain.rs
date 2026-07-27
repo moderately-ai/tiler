@@ -2357,7 +2357,20 @@ mod tests {
                 // where the subject carries the governed definitions' contracts
                 // *and* the per-dimension honourability declaration. Pinning
                 // either one would assert a subject this tree does not build.
-                "tiler-explain-v2 request=bb089e78b94e892c\n",
+                //
+                // Moved again when the lowering-capability registry identity
+                // began interning the authority identities its capabilities
+                // share instead of restating each in full. That is a change of
+                // *spelling*, not of subject: the same registry is described,
+                // and the pool plus fixed-width positions distinguish exactly
+                // what the inline copies did. The qualifier is a digest of the
+                // subject bytes, so a re-spelling has to move it — which is why
+                // the registry's domain tag stepped to v2 in the same change.
+                // Regenerate with:
+                //   cargo nextest run -p tiler-compiler -E \
+                //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
+                // and read the `left` value the assertion reports.
+                "tiler-explain-v2 request=107be925f836ea4e\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
