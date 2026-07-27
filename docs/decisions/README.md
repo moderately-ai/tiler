@@ -100,6 +100,7 @@ accepted. Unresolved questions are collected in
 ### Artifacts, build, and toolchains
 
 - [0082: Admit tiler-cache as the expansion cache owner](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) — accepted; contracts: [System architecture](../architecture.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Metal AOT backend](../backends/metal.md); evidence: [Expansion cache crash and race protocol](../research/cache/crash-and-race-protocol.md), [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md)
+- [0083: Keep process-crash as the default cache durability](0083-keep-process-crash-as-the-default-cache-durability.md) — accepted; contracts: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); evidence: [Expansion cache crash and race protocol](../research/cache/crash-and-race-protocol.md)
 - [0053: Gate artifact delivery and failures by consumer family](0053-gate-artifact-delivery-by-consumer-family.md) — accepted; contracts: [Frontend and proc-macro integration](../integration/frontends.md), [Metal AOT backend](../backends/metal.md); evidence: [Proc-macro build environment and freshness](../research/macro-environment/proc-macro-build-environment.md), [Apple Metal artifact compatibility](../research/apple-targets/artifact-compatibility.md)
 - [0002: Generate Metal artifacts ahead of time](0002-aot-metal-artifacts.md) — accepted; contracts: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Metal AOT backend](../backends/metal.md), [Frontend and proc-macro integration](../integration/frontends.md); evidence: [Apple Metal artifact compatibility](../research/apple-targets/artifact-compatibility.md)
 - [0079: Permit unsafe code case by case at named sites](0079-permit-unsafe-code-case-by-case-at-named-sites.md) — accepted; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Consumer-neutral runtime execution contract](../research/runtime/runtime-execution-contract.md)
@@ -205,6 +206,7 @@ accepted. Unresolved questions are collected in
 - [0080: Treat distributivity as a third numerical dimension](0080-treat-distributivity-as-a-third-numerical-dimension.md) — accepted
 - [0081: Admit tiler-runtime as a device-free artifact loader](0081-admit-tiler-runtime-as-a-device-free-artifact-loader.md) — accepted
 - [0082: Admit tiler-cache as the expansion cache owner](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) — accepted
+- [0083: Keep process-crash as the default cache durability](0083-keep-process-crash-as-the-default-cache-durability.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template

@@ -46,10 +46,13 @@ pub enum Durability {
     /// and abandoned temporaries are ignored. **No operating-system or
     /// power-loss persistence is claimed.**
     ///
-    /// This is the default because ADR 0050 recommends it, not because it has
-    /// been measured against the alternative here; the research note's fourth
-    /// follow-up gate holds that measurement open, and
-    /// `measure-expansion-cache-durability-policies` owns it.
+    /// The default, and **measured** as of ADR 0083: `Fsync` costs 6.5x to
+    /// 18.7x more per publication on the supported macOS/APFS profile, and the
+    /// cost is flat in the payload rather than proportional to it, so what it
+    /// buys is a fixed number of synchronization round-trips. Since every cache
+    /// failure resolves to repeated work rather than an incorrect artifact, an
+    /// entry lost to an operating-system crash is a recompile — and `Fsync`
+    /// does not extend to power loss on Darwin in any case.
     #[default]
     ProcessCrash,
     /// Additionally synchronize the temporary file before the rename and the

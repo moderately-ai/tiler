@@ -323,7 +323,17 @@ of scope for this ticket.
 3. Add deterministic injected errors for disk full, rename failure, directory
    sync failure, compiler failure, and retry exhaustion.
 4. Measure cache latency and survival for `process-crash` versus `fsync`; only
-   then decide the default in an ADR.
+   then decide the default in an ADR. **Closed** by
+   [ADR 0083](../../decisions/0083-keep-process-crash-as-the-default-cache-durability.md),
+   with one half measured and the other bounded by what the platform documents.
+   `Fsync` costs 6.5x to 18.7x more per publication on the supported macOS/APFS
+   profile across two hosts, and the cost is flat in the payload rather than
+   proportional to it, so what it buys is a fixed number of synchronization
+   round-trips. Survival is *not* measured and the latency cannot stand in for
+   it: Darwin's `fsync(2)` documents that data may remain in a device's volatile
+   cache, so establishing power-loss survival would need `F_FULLFSYNC` and a way
+   to cut power. `ProcessCrash` stays the default because every cache failure
+   resolves to repeated work rather than an incorrect artifact.
 5. Define supported local filesystems and add platform-specific Windows and
    network-filesystem feasibility gates before claiming portability. **Closed**
    by [the supported-filesystem note](supported-filesystems.md), with one part
