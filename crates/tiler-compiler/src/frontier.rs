@@ -69,7 +69,7 @@ use crate::feasibility::ProvenEvidence;
 use crate::honourability::UnhonouredDimension;
 use crate::physical::{PhysicalError, VerifiedScheduledRegion, verify_schedule_with_feasibility};
 use crate::region::SemanticMemberId;
-use crate::request::VerifiedTargetRequest;
+use crate::request::{TargetProfileKey, VerifiedTargetRequest};
 
 /// The single structural cost model the bounded P0 frontier attributes estimates
 /// to. It matches the pipeline's structural cost model so a later selector can
@@ -199,7 +199,7 @@ impl ProposalBody {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TargetApplicability {
     /// Governed target-profile keys, canonical ascending, unique.
-    target_profile_keys: Vec<&'static str>,
+    target_profile_keys: Vec<TargetProfileKey>,
 }
 
 #[allow(
@@ -211,8 +211,8 @@ impl TargetApplicability {
     ///
     /// The keys are normalized to a canonical, deduplicated ascending order so
     /// two predicates over the same key set share one identity encoding.
-    pub(crate) fn for_targets(keys: impl IntoIterator<Item = &'static str>) -> Self {
-        let mut target_profile_keys: Vec<&'static str> = keys.into_iter().collect();
+    pub(crate) fn for_targets(keys: impl IntoIterator<Item = TargetProfileKey>) -> Self {
+        let mut target_profile_keys: Vec<TargetProfileKey> = keys.into_iter().collect();
         target_profile_keys.sort_unstable();
         target_profile_keys.dedup();
         Self {
@@ -221,19 +221,19 @@ impl TargetApplicability {
     }
 
     /// Returns whether the proposal applies to `target_profile_key`.
-    fn applies_to(&self, target_profile_key: &'static str) -> bool {
-        self.target_profile_keys.contains(&target_profile_key)
+    fn applies_to(&self, target_profile_key: &TargetProfileKey) -> bool {
+        self.target_profile_keys.contains(target_profile_key)
     }
 
     /// Returns the governed target-profile keys in canonical order.
-    pub(crate) fn target_profile_keys(&self) -> &[&'static str] {
+    pub(crate) fn target_profile_keys(&self) -> &[TargetProfileKey] {
         &self.target_profile_keys
     }
 
     fn encode(&self, output: &mut Vec<u8>) {
         push_len(output, self.target_profile_keys.len());
         for key in &self.target_profile_keys {
-            push_slice(output, key.as_bytes());
+            push_slice(output, key.as_str().as_bytes());
         }
     }
 }
@@ -1159,6 +1159,10 @@ pub(crate) fn enumerate_frontier(
     #[cfg(test)]
     crate::workcount::FRONTIER_ENUMERATIONS.record();
     let target_profile_key = request.target_profile().key;
+    // The applicability predicate speaks in `TargetProfileKey`; the rejection
+    // diagnostics below still carry the raw key, which stays a `&'static str`
+    // until the profile itself becomes caller-declared.
+    let applicable_key = TargetProfileKey::governed(target_profile_key);
     let mut admitted = Vec::new();
     let mut rejections = Vec::new();
     for provider in providers {
@@ -1166,7 +1170,7 @@ pub(crate) fn enumerate_frontier(
         let context = ImplementationContext { request, subject };
         for proposal in provider.propose(&context) {
             let kind = proposal.body.kind();
-            if !proposal.applicability.applies_to(target_profile_key) {
+            if !proposal.applicability.applies_to(&applicable_key) {
                 rejections.push(FrontierRejection::NotApplicable {
                     provider: provenance.provider().clone(),
                     kind,
@@ -1348,7 +1352,9 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         // A materialized f32 intermediate costs four bytes per element. The
         // estimate is structural and is never a feasibility input.
         let intermediate_bytes = input_elements.saturating_mul(4);
-        let applicability = TargetApplicability::for_targets([request.target_profile().key]);
+        let applicability = TargetApplicability::for_targets([TargetProfileKey::governed(
+            request.target_profile().key,
+        )]);
         let (region, cost) = if members == recognized.pointwise() {
             (
                 crate::physical::pointwise_region(request).0,
@@ -1443,7 +1449,9 @@ mod tests {
         RequiredProperty,
     };
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
-    use crate::request::{CompilationRequest, VerifiedTargetRequest, verify_request};
+    use crate::request::{
+        CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_request,
+    };
     use tiler_ir::schedule::{
         AccessMode, NumericalPermission, ScheduledRegion, SubnormalMode, TensorRole,
     };
@@ -1496,7 +1504,7 @@ mod tests {
     }
 
     fn governed_applicability() -> TargetApplicability {
-        TargetApplicability::for_targets([GOVERNED_TARGET_KEY])
+        TargetApplicability::for_targets([TargetProfileKey::governed(GOVERNED_TARGET_KEY)])
     }
 
     /// A provider that proposes one checked scheduled-kernel body for the fused
@@ -1843,7 +1851,9 @@ mod tests {
             fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
                 vec![ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
-                    TargetApplicability::for_targets(["tiler.some-other-target.v1"]),
+                    TargetApplicability::for_targets([TargetProfileKey::governed(
+                        "tiler.some-other-target.v1",
+                    )]),
                     PhysicalCostEstimate::structural(1, 2, 0),
                 )]
             }
@@ -1965,9 +1975,14 @@ mod tests {
         assert_eq!(cost.dispatch_count(), 2);
         assert_eq!(cost.launched_threads(), 3);
         assert_eq!(cost.temporary_bytes(), 4);
-        let applicability =
-            TargetApplicability::for_targets([GOVERNED_TARGET_KEY, GOVERNED_TARGET_KEY]);
-        assert_eq!(applicability.target_profile_keys(), [GOVERNED_TARGET_KEY]);
+        let applicability = TargetApplicability::for_targets([
+            TargetProfileKey::governed(GOVERNED_TARGET_KEY),
+            TargetProfileKey::governed(GOVERNED_TARGET_KEY),
+        ]);
+        assert_eq!(
+            applicability.target_profile_keys(),
+            [TargetProfileKey::governed(GOVERNED_TARGET_KEY)],
+        );
     }
 
     /// Keeps the unused-field lint honest for the reserved seam descriptor and the

@@ -34,6 +34,76 @@ const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
 /// different canonical identities, artifacts, and cache entries.
 const FLUSH_CONTRACT_KEY: &str = "tiler.flush-f32.v1";
 const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
+
+/// Maximum byte length of one target-profile key.
+///
+/// The key enters the request subject and therefore artifact identity, so it is
+/// bounded where it is minted rather than wherever it is later encoded.
+const MAX_TARGET_PROFILE_KEY_BYTES: usize = 128;
+
+/// The governed key of one declared target profile.
+///
+/// **Opaque with a fallible constructor**, per ADR 0074 convention 2: a key
+/// names a profile that was declared, and a caller assembling one from a bare
+/// string could name a profile that never was. The bytes it encodes to are
+/// exactly the bytes the `&'static str` it replaces encoded to — `push_slice`
+/// of the same run — which is why `the_governed_descriptor_bytes_do_not_move`
+/// keeps passing across this change.
+///
+/// It holds a `Cow` rather than a `&'static str` because
+/// `admit-a-caller-declared-target-profile` needs an owned key, and moving the
+/// applicability vocabulary onto a type that already admits one is what makes
+/// that refactor tractable instead of a single 57-error commit. Nothing
+/// constructs an owned key yet; the seam exists so the next step is additive.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct TargetProfileKey(std::borrow::Cow<'static, str>);
+
+impl TargetProfileKey {
+    /// Names a key this build governs, with no validation and no allocation.
+    ///
+    /// Reserved for keys compiled into this crate. A key arriving from outside
+    /// goes through [`Self::declared`], which is where the checks are.
+    pub(crate) const fn governed(key: &'static str) -> Self {
+        Self(std::borrow::Cow::Borrowed(key))
+    }
+
+    /// Validates one caller-supplied key.
+    ///
+    /// # Errors
+    ///
+    /// [`RequestError::UnsupportedCapability`] when the key is empty, exceeds
+    /// [`MAX_TARGET_PROFILE_KEY_BYTES`], or carries a byte outside the governed
+    /// spelling. The spelling is restricted so a key cannot carry framing or
+    /// display characters into an identity encoding that frames by length.
+    #[allow(
+        dead_code,
+        reason = "the declaration path that consumes it is admit-a-caller-declared-target-profile; the seam lands with the vocabulary that has to accept it"
+    )]
+    pub(crate) fn declared(key: String) -> Result<Self, RequestError> {
+        let admitted = |byte: u8| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
+        };
+        if key.is_empty() || key.len() > MAX_TARGET_PROFILE_KEY_BYTES || !key.bytes().all(admitted)
+        {
+            return Err(RequestError::UnsupportedCapability {
+                phase: "target",
+                rule: "target-profile-key-spelling",
+            });
+        }
+        Ok(Self(std::borrow::Cow::Owned(key)))
+    }
+
+    /// Returns the key's exact bytes as encoded into identity.
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TargetProfileKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
 /// Recognized operation count when both pointwise constants are one shared value.
 const RECOGNIZED_OPERATIONS_MIN: usize = 4;
 /// Recognized operation count when each pointwise constant is a distinct value.
@@ -1728,6 +1798,39 @@ fn unsupported<T>(phase: &'static str, rule: &'static str) -> Result<T, RequestE
 
 #[cfg(test)]
 mod tests {
+    /// A declared key is validated, and the governed one encodes unchanged.
+    ///
+    /// The spelling rule exists because the key is framed by length into an
+    /// identity encoding: a key carrying whitespace or framing bytes would be
+    /// encodable but unreadable in a trace, and one carrying arbitrary bytes
+    /// would make two profiles distinguishable only by something no reader can
+    /// print. The bound is checked at the same place for the same reason.
+    #[test]
+    fn a_declared_target_profile_key_is_validated() {
+        assert!(TargetProfileKey::declared("tiler.some-target.v1".to_owned()).is_ok());
+        assert!(TargetProfileKey::declared("with_underscore-1.0".to_owned()).is_ok());
+
+        for refused in [
+            String::new(),
+            "Tiler.Capital.v1".to_owned(),
+            "has space".to_owned(),
+            "has\u{0}nul".to_owned(),
+            "x".repeat(super::MAX_TARGET_PROFILE_KEY_BYTES + 1),
+        ] {
+            assert!(
+                TargetProfileKey::declared(refused.clone()).is_err(),
+                "an unadmitted key was accepted: {refused:?}",
+            );
+        }
+
+        // The governed key round-trips to exactly the bytes it always encoded,
+        // which is what `the_governed_descriptor_bytes_do_not_move` rests on.
+        assert_eq!(
+            TargetProfileKey::governed(TARGET_PROFILE_KEY).as_str(),
+            TARGET_PROFILE_KEY,
+        );
+    }
+
     use std::sync::Arc;
 
     use super::*;

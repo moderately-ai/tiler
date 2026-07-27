@@ -1697,7 +1697,9 @@ mod tests {
     }
 
     fn governed_applicability() -> TargetApplicability {
-        TargetApplicability::for_targets([GOVERNED_TARGET_KEY])
+        TargetApplicability::for_targets([crate::request::TargetProfileKey::governed(
+            GOVERNED_TARGET_KEY,
+        )])
     }
 
     /// A provider that proposes one checked scheduled-kernel body built from a
