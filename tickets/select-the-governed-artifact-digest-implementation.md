@@ -1,7 +1,7 @@
 ---
 id: select-the-governed-artifact-digest-implementation
 title: Choose the production implementation of the governed artifact digest
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [prototype-neutral-artifact-codec]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/workspace, research/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, serialization, workspace]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785182866
 ---
 `tiler.research.artifacts.target-neutral-envelope` records "select and govern the initial cryptographic digest algorithm and domain separators" as an open bounded decision, with a measurement attached: hashing cost during proc-macro expansion and during runtime loading.
 
