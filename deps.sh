@@ -51,45 +51,13 @@ toml_string_array() {
     ' "$file"
 }
 
-toml_integer() {
-    local file="$1" section="$2" key="$3"
-    awk -v section="$section" -v key="$key" '
-        BEGIN { active = (section == "") }
-        $0 == "[" section "]" { active = 1; next }
-        /^\[/ { active = 0 }
-        active && $0 ~ "^" key " = [0-9]+$" {
-            count += 1
-            value = $0
-            sub("^" key " = ", "", value)
-        }
-        END {
-            if (count != 1) exit 1
-            print value
-        }
-    ' "$file"
-}
-
 REQUIRED_RUST_TOOLCHAIN="$(toml_string "$ROOT_DIR/rust-toolchain.toml" toolchain channel)" \
     || { printf 'invalid Rust toolchain authority\n' >&2; exit 1; }
 # Read rather than restate: the manifest is the sole component authority, and a
 # copy here would install a different set than the gate requires.
 REQUIRED_RUST_COMPONENTS="$(toml_string_array "$ROOT_DIR/rust-toolchain.toml" toolchain components)" \
     || { printf 'invalid Rust component authority\n' >&2; exit 1; }
-tool_versions_schema="$(toml_integer "$ROOT_DIR/tool-versions.toml" '' schema_version)" \
-    || { printf 'invalid tool version authority schema\n' >&2; exit 1; }
-[ "$tool_versions_schema" = '1' ] \
-    || { printf 'unsupported tool version authority schema: %s\n' "$tool_versions_schema" >&2; exit 1; }
-REQUIRED_TICKETSPLEASE_VERSION="$(
-    toml_string "$ROOT_DIR/tool-versions.toml" '' ticketsplease
-)" || { printf 'invalid ticketsplease version authority\n' >&2; exit 1; }
-REQUIRED_TICKETSPLEASE_REV="$(
-    toml_string "$ROOT_DIR/tool-versions.toml" '' ticketsplease_rev
-)" || { printf 'invalid ticketsplease revision authority\n' >&2; exit 1; }
-[[ "$REQUIRED_TICKETSPLEASE_REV" =~ ^[0-9a-f]{40}$ ]] \
-    || { printf 'invalid ticketsplease revision authority\n' >&2; exit 1; }
-readonly REQUIRED_RUST_TOOLCHAIN REQUIRED_TICKETSPLEASE_VERSION
-readonly REQUIRED_TICKETSPLEASE_REV
-unset tool_versions_schema
+readonly REQUIRED_RUST_TOOLCHAIN
 
 CHECK_ONLY=0
 for argument in "$@"; do
@@ -183,6 +151,19 @@ ensure_rust() {
     ok "$(rustup run "$REQUIRED_RUST_TOOLCHAIN" rustc --version)"
 }
 
+ensure_nextest() {
+    info 'cargo-nextest'
+    # `make test` runs the suite through nextest, so a checkout without it fails
+    # the gate rather than merely losing a convenience. Presence is the whole
+    # requirement; no version is pinned or asserted.
+    if ! have cargo-nextest; then
+        [ "$CHECK_ONLY" -eq 1 ] && die 'cargo-nextest is missing; run ./deps.sh'
+        rustup run "$REQUIRED_RUST_TOOLCHAIN" cargo install cargo-nextest --locked
+    fi
+    have cargo-nextest || die 'cargo-nextest is still missing after installation'
+    ok "$(cargo-nextest nextest --version)"
+}
+
 ensure_tkt_alias() {
     local managed_bin="$HOME/.local/bin"
     local managed_alias="$managed_bin/tkt"
@@ -205,43 +186,22 @@ ensure_tkt_alias() {
     fi
     [ "$(command -v tkt)" = "$managed_alias" ] \
         || die "tkt does not resolve through the managed alias $managed_alias"
-    [ "$(tkt --version | awk '{print $2}')" = "$REQUIRED_TICKETSPLEASE_VERSION" ] \
-        || die "tkt does not resolve to ticketsplease $REQUIRED_TICKETSPLEASE_VERSION"
 }
 
 ensure_ticketsplease() {
     info 'ticketsplease'
-    local current=''
-    local revision_receipt="$HOME/.local/share/tiler/ticketsplease-revision"
-    local installed_revision=''
+    # Presence is the whole requirement. No version or revision is pinned, so an
+    # install here tracks the upstream default branch.
     export PATH="$HOME/.local/bin:$PATH"
     hash -r
-    if have ticketsplease; then
-        current="$(ticketsplease --version | awk '{print $2}')"
-    fi
-    if [ -f "$revision_receipt" ]; then
-        installed_revision="$(tr -d '[:space:]' < "$revision_receipt")"
-    fi
-    if [ "$current" != "$REQUIRED_TICKETSPLEASE_VERSION" ] \
-        || [ "$installed_revision" != "$REQUIRED_TICKETSPLEASE_REV" ]; then
-        if [ "$CHECK_ONLY" -eq 1 ]; then
-            die "ticketsplease ${current:-missing} revision ${installed_revision:-unknown}; run ./deps.sh"
-        fi
+    if ! have ticketsplease; then
+        [ "$CHECK_ONLY" -eq 1 ] && die 'ticketsplease is missing; run ./deps.sh'
         rustup run "$REQUIRED_RUST_TOOLCHAIN" cargo install \
             --git https://github.com/moderately-ai/ticketsplease \
-            --rev "$REQUIRED_TICKETSPLEASE_REV" \
             --locked --force --root "$HOME/.local" ticketsplease-cli
-        mkdir -p "$(dirname "$revision_receipt")"
-        local receipt_temp
-        receipt_temp="$(mktemp "${revision_receipt}.XXXXXX")"
-        printf '%s\n' "$REQUIRED_TICKETSPLEASE_REV" > "$receipt_temp"
-        mv -f "$receipt_temp" "$revision_receipt"
         hash -r
     fi
-
-    current="$(ticketsplease --version | awk '{print $2}')"
-    [ "$current" = "$REQUIRED_TICKETSPLEASE_VERSION" ] \
-        || die "ticketsplease $current does not match $REQUIRED_TICKETSPLEASE_VERSION"
+    have ticketsplease || die 'ticketsplease is still missing after installation'
     ensure_tkt_alias
 
     if [ "$CHECK_ONLY" -eq 0 ]; then
@@ -254,7 +214,7 @@ ensure_ticketsplease() {
     [ -r "$ROOT_DIR/.claude/skills/ticketsplease/SKILL.md" ] \
         || die 'the Claude ticketsplease skill link is missing; run ./deps.sh'
     ticketsplease doctor --repo "$ROOT_DIR" --format json >/dev/null
-    ok "ticketsplease $current"
+    ok "$(ticketsplease --version)"
 }
 
 ensure_metal_toolchain() {
@@ -282,6 +242,7 @@ verify_tools() {
     # Unqualified, to show that `rust-toolchain.toml` resolves the pin without a
     # wrapper. Everything in the Makefile relies on exactly this.
     cargo --version
+    cargo-nextest nextest --version
     ticketsplease --version
 }
 
@@ -292,6 +253,7 @@ main() {
     printf 'tiler dependencies (%s)\n' "$mode"
     ensure_system_packages
     ensure_rust
+    ensure_nextest
     ensure_ticketsplease
     ensure_metal_toolchain
     verify_tools
