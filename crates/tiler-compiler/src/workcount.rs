@@ -105,3 +105,23 @@ thread_local! {
 /// site rebuilding a value it could have been handed.
 pub(crate) static REGION_GRAPH_BUILDS: WorkCounter =
     WorkCounter::new("region-graph build", &REGION_GRAPH_BUILD);
+
+thread_local! {
+    static FRONTIER_ENUMERATION: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts implementation-frontier enumerations.
+///
+/// `enumerate_frontier` is a pure function of the verified request, the region
+/// subject, and the provider set; only the subject varies within a target
+/// compile. Every cover that places a given region asked for that region's
+/// frontier again, so the count was the number of (cover, region) pairs rather
+/// than the number of distinct regions.
+///
+/// The bound this guards is the *distinct subject* count, so it also pins the
+/// memo's key. Keying on the presentation role instead would look like a much
+/// better ratio and be wrong: most distinct subjects in the governed program
+/// share the role `unrecognized` while covering different occurrences, and the
+/// members are what each proposal's request-subject binding is checked against.
+pub(crate) static FRONTIER_ENUMERATIONS: WorkCounter =
+    WorkCounter::new("frontier enumeration", &FRONTIER_ENUMERATION);

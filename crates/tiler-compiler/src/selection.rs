@@ -779,9 +779,14 @@ impl RegionFrontier {
 /// The regions must be a one-to-one correspondence with the cover's regions,
 /// matched by semantic members; the join fails closed if the correspondence is
 /// violated.
+///
+/// The cover is borrowed from the enumeration that produced it rather than
+/// owned. Selection only ever reads it, and the enumeration outlives every
+/// source built from it, so owning one meant deep-copying each cover's regions
+/// and materialization edges for the duration of one call.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CoverFrontiers {
-    cover: RegionCover,
+pub(crate) struct CoverFrontiers<'cover> {
+    cover: &'cover RegionCover,
     regions: Vec<RegionFrontier>,
 }
 
@@ -789,15 +794,15 @@ pub(crate) struct CoverFrontiers {
     dead_code,
     reason = "reviewed draft record accessor exercised by this authority's own tests; the compile path reads the subjects its own verification needs"
 )]
-impl CoverFrontiers {
+impl<'cover> CoverFrontiers<'cover> {
     /// Pairs a cover with one implementation frontier per region.
-    pub(crate) fn new(cover: RegionCover, regions: Vec<RegionFrontier>) -> Self {
+    pub(crate) const fn new(cover: &'cover RegionCover, regions: Vec<RegionFrontier>) -> Self {
         Self { cover, regions }
     }
 
     /// Returns the legal complete cover.
     pub(crate) const fn cover(&self) -> &RegionCover {
-        &self.cover
+        self.cover
     }
 
     /// Returns the per-region frontiers.
@@ -830,7 +835,7 @@ pub(crate) fn select_physical_plans(
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
     formation: &RegionFormationOutcome,
-    sources: &[CoverFrontiers],
+    sources: &[CoverFrontiers<'_>],
 ) -> Result<SelectedPortfolio, SelectionError> {
     let target_profile_key = coherent_target_profile(sources)?;
     let mut retained: BTreeMap<SelectedPlanIdentity, SelectedPlan> = BTreeMap::new();
@@ -838,21 +843,32 @@ pub(crate) fn select_physical_plans(
     let mut budget_stops: BTreeMap<Vec<u8>, PlanBudgetStop> = BTreeMap::new();
 
     for source in sources {
-        verify_cover(program, formation, &source.cover)?;
-        let cover_identity = source.cover.identity().as_bytes().to_vec();
+        verify_cover(program, formation, source.cover)?;
+        let cover_identity = source.cover.identity().as_bytes();
         let region_impls =
-            bind_region_frontiers(&source.cover, &source.regions, target_profile_key)?;
+            bind_region_frontiers(source.cover, &source.regions, target_profile_key)?;
 
         // A cover region with no admitted implementation cannot be completed.
+        //
+        // The rejection is keyed by role and cover, so several unimplemented
+        // regions sharing a role within one cover describe one rejection and
+        // `or_insert` kept the first. Recognising the repeat here drops it
+        // before it costs a copy of the cover identity and an encoded sort key:
+        // the governed program records 38 of these per compile, every one of
+        // them the role `unrecognized`.
         let mut unimplemented = false;
+        let mut rejected_roles: Vec<&'static str> = Vec::new();
         for entry in &region_impls {
             if entry.admitted.is_empty() {
-                let rejection = PlanRejection::RegionUnimplemented {
-                    role: entry.role,
-                    cover: cover_identity.clone(),
-                };
-                rejections.entry(rejection.sort_key()).or_insert(rejection);
                 unimplemented = true;
+                if !rejected_roles.contains(&entry.role) {
+                    rejected_roles.push(entry.role);
+                    let rejection = PlanRejection::RegionUnimplemented {
+                        role: entry.role,
+                        cover: cover_identity.to_vec(),
+                    };
+                    rejections.entry(rejection.sort_key()).or_insert(rejection);
+                }
             }
         }
         if unimplemented {
@@ -860,9 +876,9 @@ pub(crate) fn select_physical_plans(
         }
 
         enumerate_cover_plans(
-            &source.cover,
+            source.cover,
             &region_impls,
-            &cover_identity,
+            cover_identity,
             budgets.physical_plan_combinations,
             &mut retained,
             &mut rejections,
@@ -962,7 +978,7 @@ struct RegionFrontierBinding<'a> {
 /// A portfolio is a per-target artifact, so covers whose frontiers disagree on the
 /// assessed target profile cannot be joined into one portfolio.
 fn coherent_target_profile(
-    sources: &[CoverFrontiers],
+    sources: &[CoverFrontiers<'_>],
 ) -> Result<Option<&'static str>, SelectionError> {
     let mut target: Option<&'static str> = None;
     for source in sources {
@@ -1833,7 +1849,7 @@ mod tests {
         let request = request_for(&program);
         let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
         let source = CoverFrontiers::new(
-            cover,
+            &cover,
             vec![
                 pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
@@ -1873,7 +1889,7 @@ mod tests {
             request.serial_sum().members.reduction().to_vec(),
         );
         let source = CoverFrontiers::new(
-            cover,
+            &cover,
             vec![
                 pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
                 // The reduction region is deliberately left unimplemented.
@@ -2066,7 +2082,7 @@ mod tests {
         let request = request_for(&program);
         let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
         let source = CoverFrontiers::new(
-            cover,
+            &cover,
             vec![
                 pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
@@ -2088,7 +2104,7 @@ mod tests {
         // The fused whole-program cover: one region, two feasible implementations.
         let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3, 4]]);
         let source = CoverFrontiers::new(
-            cover,
+            &cover,
             vec![fused_frontier(
                 &request,
                 &[
@@ -2120,14 +2136,14 @@ mod tests {
 
         let build = |forward: bool| {
             let two = CoverFrontiers::new(
-                two_region.clone(),
+                &two_region,
                 vec![
                     pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
                     reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
                 ],
             );
             let whole = CoverFrontiers::new(
-                fused.clone(),
+                &fused,
                 vec![fused_frontier(
                     &request,
                     &[("fx", PhysicalCostEstimate::structural(1, 2, 0))],
@@ -2167,7 +2183,7 @@ mod tests {
         let request = request_for(&program);
         let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
         let source = CoverFrontiers::new(
-            cover,
+            &cover,
             vec![
                 pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
                 reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
@@ -2222,7 +2238,7 @@ mod tests {
         // A cover enumerated from a structurally different program.
         let foreign_cover = cover_with_partitions(&diamond_program(), &[vec![0, 1, 2, 3, 4]]);
         let source = CoverFrontiers::new(
-            foreign_cover,
+            &foreign_cover,
             vec![fused_frontier(
                 &request,
                 &[("fx", PhysicalCostEstimate::structural(1, 2, 0))],
@@ -2243,7 +2259,7 @@ mod tests {
         // Two frontiers, but both for the pointwise region: the reduction region has
         // no corresponding frontier.
         let source = CoverFrontiers::new(
-            cover,
+            &cover,
             vec![
                 pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
                 pointwise_frontier(&request, "pw2", PhysicalCostEstimate::structural(1, 6, 0)),

@@ -1156,6 +1156,8 @@ pub(crate) fn enumerate_frontier(
     subject: &FrontierRegionSubject,
     providers: &[&dyn PhysicalImplementationProvider],
 ) -> Result<ImplementationFrontier, FrontierError> {
+    #[cfg(test)]
+    crate::workcount::FRONTIER_ENUMERATIONS.record();
     let target_profile_key = request.target_profile().key;
     let mut admitted = Vec::new();
     let mut rejections = Vec::new();
