@@ -1,0 +1,44 @@
+---
+id: design-model-ingestion-and-complete-execution
+title: Design model ingestion and complete supported-model execution
+status: todo
+priority: p1
+dependencies: [derive-transformer-operation-and-shape-surface, design-autoregressive-state-and-kv-cache]
+related: [prototype-public-compiler-api, prototype-candle-metal-adapter, prototype-inline-proc-macro-frontend]
+scopes: [contracts/integrations, contracts/navigation, research/program-planning]
+shared_scopes: [project/tickets]
+paths: []
+tags: [design, frontend, model, weights, integration, language-model]
+---
+Define how a consumer supplies a supported model architecture, configuration,
+weights, and inference inputs and receives logits without making a consumer
+format or Candle type part of compiler semantics.
+
+## Required design
+
+- Select the bounded model-description and weight-container boundary required
+  by the representative workload.
+- Map configuration and weights into typed semantic program inputs with
+  complete identity, shape, dtype, layout, and validation rules.
+- Define whole-model composition across layers, entrypoints, artifacts,
+  runtime instances, and persistent decode state.
+- State unsupported-model, unsupported-operation, and fallback behavior before
+  routing commit.
+- Separate tokenizer and sampling concerns from compiler ownership while
+  identifying the integration contract needed to produce and consume logits.
+- Define complete-model reference comparison and failure reporting.
+
+## Ticket-producing outcome
+
+File delivery tickets for model description or adapter work, weight validation
+and binding, whole-model graph construction, artifact/program orchestration,
+consumer integration, and a complete supported-model execution proof. Reuse
+the existing public compiler, macro, Candle, artifact, and runtime tickets where
+they already own a prerequisite.
+
+## Closes when
+
+One supported model can be described end to end without an unowned boundary;
+the frontend/runtime dependency direction remains consumer-independent; every
+unsupported case has an explicit behavior; and the complete-model vertical is
+represented by scoped, dependency-ordered tickets.
