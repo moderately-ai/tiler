@@ -1,11 +1,11 @@
 ---
 id: correct-adr-0081-loader-gap-list
 title: Correct ADR 0081's loader gap list against the projected dispatch record
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record, expose-the-dispatch-record-on-a-decoded-artifact, carry-reconstructable-kernel-programs-in-the-neutral-envelope, correct-artifact-abi-reconstruction-ownership]
-scopes: [contracts/decisions]
+scopes: [contracts/decisions, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, contract, runtime, artifact]
@@ -39,3 +39,17 @@ Name those live owners.
 ## Closes when
 
 No sentence in either record states a capability the code has as absent, or names a `done` ticket as a present owner; both records' `decision_status` and rationale are untouched; any catalog block quoting either record is updated by hand in the same change; and `make full` passes.
+
+## Outcome — corrected, and one of this ticket's own instructions was stale (2026-07-27)
+
+**Every claim was re-verified against the source before editing.** All seven accessors the ticket named are `pub` in `crates/tiler-artifact/src/program/codec/view.rs`, and `crates/tiler-runtime/src/load/route.rs` carries its own retraction of the four matching clauses it used to make.
+
+**This ticket told me to name a `done` ticket as a live owner, which is the exact defect it was filed to fix.** Its Scope section says the remaining gaps are multi-entry preflight, owned by `preflight-every-entry-of-a-multi-stage-route`, and the partial binding view. That first ticket is `done`: its outcome records that `accept_entry` became `accept_entries`, that the loader now routes every entry in `DecodedVariant::execution_order` and derives shared storage before the routing commit, and that the four per-entry obligations moved inside the per-entry loop. So the corrected bullet names **one** surviving gap, `carry-the-byte-offset-of-a-partial-binding-view` (`in-progress`), and credits the multi-entry work as done. Writing the instruction as given would have reproduced the stale-owner error one ticket down.
+
+**ADR 0081.** The bullet listed five capabilities as absent that are all implemented and exercised. It now states what the loader does, names the accessors and the routing module so a reader can check rather than trust, states the one surviving gap and its live owner, and says why `partial` remains the honest status rather than rounding up.
+
+**ADR 0071.** Both halves of the boundary paragraph were overtaken. The question it deferred is decided, and the ABI-contract divergence it pointed at was reconciled under `correct-artifact-abi-reconstruction-ownership` (`done`). The paragraph now records that this entry still does not decide those questions — which remains true — while making clear nothing is waiting on them.
+
+**A fifth site, outside the ticket's original scopes, found by sweep.** `crates/tiler-artifact/src/program/codec/decode.rs` said the same `done` ticket "owns closing that, and until it does…", framing a decided design as a temporary limitation. `implementation/artifact` was added to this ticket rather than filing a new one: the fix is a single paragraph, and a dispatch for it would cost more than the change and add a merge. That scope-reach problem is precisely what this ticket documents as the reason the ADR stayed stale — `route-the-runtime-loader-through-the-dispatch-record` held `implementation/runtime` and could not reach `contracts/decisions` — so widening the scope by one is what stops the cycle rather than continuing it.
+
+**Both ADRs keep `decision_status: accepted`, their decisions, and their rationale.** Only descriptions changed. `docs/decisions/README.md` carries two catalog lines each for 0071 and 0081, both title-and-status only, and neither title nor status moved, so no catalog block needed editing. The remaining mentions of the `done` ticket in `docs/artifact-abi.md` and `view.rs` cite it as where a decision *was made*, which is correct historical attribution and was left alone.

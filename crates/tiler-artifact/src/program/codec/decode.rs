@@ -12,10 +12,16 @@
 //! is a validated *envelope*, not a `VerifiedArtifactProgram`: the shared-IR
 //! programs a variant packages are carried as their canonical identity, so a
 //! decoder can prove which program an artifact names but cannot resurrect the
-//! program itself. The ticket
-//! `carry-reconstructable-kernel-programs-in-the-neutral-envelope` owns closing
-//! that, and until it does, a consumer that needs a `VerifiedKernelProgram`
-//! must hold the one it compiled.
+//! program itself.
+//!
+//! **That is the decided design, not a gap awaiting closure.** Tom decided on
+//! 2026-07-25, on `carry-reconstructable-kernel-programs-in-the-neutral-envelope`,
+//! that a decoded envelope is a dispatch record and never a reconstruction, and
+//! full IR reconstruction was excluded on evidence rather than preference: the
+//! registry the builder needs holds behaviour, not data, so rebuilding was
+//! impossible at any encoding cost rather than merely expensive. A consumer that
+//! needs a `VerifiedKernelProgram` must hold the one it compiled — permanently,
+//! not until some ticket lands.
 
 use tiler_ir::schedule::ResourceRequirements;
 use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
