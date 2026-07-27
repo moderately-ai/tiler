@@ -34,9 +34,9 @@ use super::super::keys::{
 use super::super::model::{
     ArtifactExecutionPolicy, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
     BINDING_TARGET_PROGRAM_OUTPUT, BindingKind, BindingTarget, BindingTargetData, RoutingPolicy,
-    SchemaVersion, address_space_from_tag, address_space_tag, buffer_access_from_tag,
-    buffer_access_tag, element_type_from_tag, element_type_tag, permission_from_tag,
-    permission_tag, subnormal_from_tag, subnormal_tag,
+    SchemaVersion, StageDependencyData, StageDependencyReason, address_space_from_tag,
+    address_space_tag, buffer_access_from_tag, buffer_access_tag, element_type_from_tag,
+    element_type_tag, permission_from_tag, permission_tag, subnormal_from_tag, subnormal_tag,
 };
 use super::super::tests::{
     Formulas, OTHER_SCALE_BITS, SCALE_BITS, build_artifact, default_artifact, formulas,
@@ -52,8 +52,8 @@ use super::encode::{
 };
 use super::error::{ArtifactCodecError, OrderedSubject, ReferenceSubject, TagSubject};
 use super::model::{
-    ArtifactEnvelope, FEATURE_MULTI_STAGE_PROGRAM, FEATURE_MULTI_VARIANT_ROUTING, Section,
-    SectionDisposition, SectionKind, position,
+    ArtifactEnvelope, FEATURE_MULTI_VARIANT_ROUTING, Section, SectionDisposition, SectionKind,
+    position,
 };
 use super::payload::{
     PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
@@ -683,18 +683,78 @@ fn an_unknown_manifest_or_component_schema_is_rejected() {
 #[test]
 fn an_unsupported_required_feature_is_rejected() {
     // The feature list is derived, so an unreadable requirement can only arrive
-    // from a producer this reader does not implement. Naming the reserved
-    // multi-stage feature is the exact case that is expected to appear first.
+    // from a producer newer than this reader. The key is a fabricated future one
+    // rather than a real reserved key: every key this build knows is now
+    // supported, and a test that named one would start passing for the wrong
+    // reason the moment that stopped being true — which is exactly what happened
+    // to its previous spelling when `multi-stage-program` became readable.
+    const FUTURE_FEATURE: &str = "tiler.artifact.feature.from-a-later-producer";
     let mut envelope = envelope_of(&default_artifact());
-    envelope.features = vec![FEATURE_MULTI_STAGE_PROGRAM.to_owned()];
+    envelope.features = vec![FUTURE_FEATURE.to_owned()];
     let bytes = encode(&envelope).expect("a forged envelope still encodes");
     assert_eq!(
         decode(&bytes),
         Err(ArtifactCodecError::UnsupportedRequiredFeature {
-            feature: FEATURE_MULTI_STAGE_PROGRAM.to_owned(),
+            feature: FUTURE_FEATURE.to_owned(),
         }),
     );
 }
+
+/// An execution order that does not sequence every entry exactly once is refused.
+///
+/// Both directions of "not a permutation", because they fail for different
+/// reasons and an implementation can get one right and the other wrong: an order
+/// that omits an entry leaves a stage undispatched, and one that repeats an
+/// entry dispatches it twice. Either would run a program the artifact does not
+/// describe.
+#[test]
+fn an_execution_order_that_is_not_a_permutation_is_rejected() {
+    for order in [vec![], vec![0_u32, 0]] {
+        let mut envelope = envelope_of(&default_artifact());
+        envelope.variants[0].execution_order = order;
+        let bytes = encode(&envelope).expect("a forged envelope still encodes");
+        assert!(
+            matches!(
+                decode(&bytes),
+                Err(ArtifactCodecError::StageOrderNotAPermutation { .. })
+            ),
+            "an order that is not a permutation must be refused as such",
+        );
+    }
+}
+
+/// A dependency edge that orders an entry against itself is refused.
+///
+/// An entry cannot precede itself, and an edge saying so would make the order
+/// unsatisfiable rather than merely wrong — every order violates it. Refused as
+/// a malformed edge rather than reported as an ordering violation, so the
+/// diagnostic names the defect and not its consequence.
+#[test]
+fn a_stage_dependency_on_itself_is_rejected() {
+    let mut envelope = envelope_of(&default_artifact());
+    envelope.variants[0].dependencies = vec![StageDependencyData {
+        predecessor: 0,
+        successor: 0,
+        reason: StageDependencyReason::Data,
+    }];
+    let bytes = encode(&envelope).expect("a forged envelope still encodes");
+    assert!(
+        matches!(
+            decode(&bytes),
+            Err(ArtifactCodecError::StageDependencyOnItself { .. })
+        ),
+        "a self-edge must be refused as a malformed edge",
+    );
+}
+
+// `StageDependencyOutOfOrder` is deliberately not reached from this module, and
+// the reason is structural rather than an omission: it needs two entries whose
+// stated order contradicts an edge between them, and every fixture here packages
+// a single-stage program, where any edge with distinct endpoints cannot be
+// built at all. `prototypes/serial-sum-compile`'s
+// `a_multi_stage_variant_round_trips_with_a_recoverable_sequence` exercises the
+// satisfied direction against a real two-stage plan; the contradicting direction
+// wants a two-stage fixture here and is owed one.
 
 #[test]
 fn a_forged_identity_is_rejected() {

@@ -77,6 +77,8 @@ pub(crate) enum TagSubject {
     UnaryOperation,
     /// One admitted binary ABI operation.
     BinaryOperation,
+    /// Why one packaged stage must precede another.
+    StageDependencyReason,
     /// The purpose of one envelope section.
     SectionKind,
     /// Whether an unrecognizing reader may skip one envelope section.
@@ -118,6 +120,8 @@ pub(crate) enum OrderedSubject {
     Section,
     /// The entry mappings of one carried backend payload.
     PayloadEntryMapping,
+    /// The stage dependency edges of one plan variant.
+    StageDependency,
     /// The versioned tool components of one payload provenance record.
     ProvenanceComponent,
     /// The recorded target obligations of one carried backend payload.
@@ -139,6 +143,8 @@ pub(crate) enum ReferenceSubject {
     Payload,
     /// An envelope section.
     Section,
+    /// An executable entry of one plan variant.
+    Entry,
 }
 
 impl fmt::Display for ReferenceSubject {
@@ -390,6 +396,40 @@ pub(crate) enum ArtifactCodecError {
         /// Collection that repeated an item.
         subject: OrderedSubject,
     },
+    /// A variant's stated execution order is not a permutation of its entries.
+    ///
+    /// The order must name every entry exactly once. A short, long, or repeating
+    /// order would leave a stage unsequenced or sequenced twice, and a consumer
+    /// following it would dispatch a program the artifact does not describe.
+    StageOrderNotAPermutation {
+        /// Routing rank of the variant whose order is malformed.
+        variant: u64,
+        /// Executable entries the variant declares.
+        entries: u64,
+        /// Positions the stated order names.
+        stated: u64,
+    },
+    /// A stage dependency edge is not discharged by the stated execution order.
+    ///
+    /// The edge names an obligation the packaged program proved — the successor
+    /// reads what the predecessor writes, or reuses storage it released — so an
+    /// order that runs the successor first is not a different valid schedule but
+    /// a contradiction of the artifact's own dependency graph.
+    StageDependencyOutOfOrder {
+        /// Routing rank of the variant carrying the edge.
+        variant: u64,
+        /// Entry position that must precede.
+        predecessor: u64,
+        /// Entry position that must follow.
+        successor: u64,
+    },
+    /// A stage dependency edge orders an entry against itself.
+    StageDependencyOnItself {
+        /// Routing rank of the variant carrying the edge.
+        variant: u64,
+        /// Entry position naming itself on both sides.
+        entry: u64,
+    },
     /// Re-encoding the fully understood manifest did not reproduce its bytes.
     NonCanonicalManifest,
     /// A framed section is referenced by no plan variant.
@@ -573,6 +613,9 @@ impl Error for ArtifactCodecError {
             | Self::NonCanonicalSectionId { .. }
             | Self::NonCanonicalOrder { .. }
             | Self::DuplicateItem { .. }
+            | Self::StageOrderNotAPermutation { .. }
+            | Self::StageDependencyOutOfOrder { .. }
+            | Self::StageDependencyOnItself { .. }
             | Self::NonCanonicalManifest
             | Self::UnreferencedSection { .. }
             | Self::EmptyBindingTarget

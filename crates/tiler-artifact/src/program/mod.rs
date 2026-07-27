@@ -356,9 +356,10 @@ pub use builder::{
 };
 pub use codec::{
     ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedDeferredPredicate, DecodedEntry,
-    DecodedExpr, DecodedInput, DecodedNumerical, DecodedOutput, DecodedVariant, PayloadContent,
-    PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
-    PayloadTargetObligation, SectionPurpose, SectionView, ToolComponent, decode_artifact,
+    DecodedExpr, DecodedInput, DecodedNumerical, DecodedOutput, DecodedStageDependency,
+    DecodedVariant, PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance,
+    PayloadSdkIdentity, PayloadTargetObligation, SectionPurpose, SectionView, ToolComponent,
+    decode_artifact,
 };
 // The governed digest algorithm, which `docs/artifact-abi.md` requires every
 // digest use to name explicitly rather than choose locally.
@@ -405,13 +406,21 @@ pub use model::{
     AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,
     ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingKind, BindingRef,
     BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef, RoutingPolicy,
-    SchemaVersion, SelectedProvider, VariantRef, VerifiedArtifactProgram,
+    SchemaVersion, SelectedProvider, StageDependencyReason, VariantRef, VerifiedArtifactProgram,
 };
 
 /// Maximum plan variants admitted by one artifact program.
 pub const MAX_ARTIFACT_VARIANTS: usize = 64;
 /// Maximum executable entries admitted by one plan variant.
 pub const MAX_VARIANT_ENTRIES: usize = 4_096;
+/// Maximum stage dependency edges admitted by one plan variant.
+///
+/// A dependency graph over `n` entries admits at most `n * (n - 1) / 2` distinct
+/// edges per reason, which for [`MAX_VARIANT_ENTRIES`] is far beyond anything a
+/// plan produces. The bound is stated as a budget a parser can allocate against
+/// before reading, not as a claim about plan shape: a decoder must refuse a
+/// hostile count before it allocates for it.
+pub const MAX_STAGE_DEPENDENCIES: usize = 65_536;
 /// Maximum ABI bindings admitted by one executable entry.
 pub const MAX_ENTRY_BINDINGS: usize = 64;
 /// Maximum nodes admitted by one shared ABI expression arena.

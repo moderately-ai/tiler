@@ -61,7 +61,20 @@ use super::keys::{
 /// different selections can differ only in bytes a reader of either domain would
 /// have consumed as something else. Retagging the domain is what makes the two
 /// encodings incomparable instead of merely unlikely to collide.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v3\0";
+/// Raised to `v4` when each variant gained its stage execution order and the
+/// typed dependency edges that order discharges. The same argument as `v2` and
+/// `v3`, and it is the only one that applies: the fields landed *inside* the
+/// per-variant record, so a `v3` and a `v4` encoding of two different artifacts
+/// could in principle produce equal bytes.
+///
+/// Note what is *not* the reason, because it looks like one. Two artifacts whose
+/// stages run in different orders already differ under `v3`: [`push_variant`]
+/// folds the variant's program-section bytes, and that section is the kernel
+/// program's canonical identity, which the shared IR derives over its own
+/// dependency graph. The new rows make the order *readable* by a consumer
+/// holding only bytes; they do not make two orders distinguishable, which they
+/// already were.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v4\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -1331,6 +1344,60 @@ pub(super) fn push_binding_target(bytes: &mut Vec<u8>, target: &BindingTargetDat
     }
 }
 
+/// Why one packaged stage must precede another.
+///
+/// The shared IR's [`DependencyReasonView`](tiler_ir::program::DependencyReasonView)
+/// narrowed to what an envelope can carry. The IR's arms name the *value* read
+/// or the *allocation* reused; neither has a durable name at this layer — see
+/// [`BindingTarget`]'s own account of why a program value is unnameable here —
+/// so the envelope carries the obligation's kind and not its subject.
+///
+/// **That is a real loss and it is bounded.** A consumer learns that this edge
+/// is a read-after-write rather than a storage reuse, which is what decides
+/// whether reordering is a correctness violation or a liveness one. It does not
+/// learn which buffer, and it does not need to: the bindings it already decodes
+/// say what each entry addresses.
+///
+/// Deliberately not `#[non_exhaustive]`, matching every other governed
+/// vocabulary this codec matches totally: widening it must break the build at
+/// the encoder rather than silently encode one reason as another.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum StageDependencyReason {
+    /// The successor reads a value the predecessor fully initializes.
+    Data,
+    /// The successor reuses storage whose previous value the predecessor released.
+    StorageHandoff,
+}
+
+impl StageDependencyReason {
+    pub(super) const fn tag(self) -> u8 {
+        match self {
+            Self::Data => 0x01,
+            Self::StorageHandoff => 0x02,
+        }
+    }
+
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::Data),
+            0x02 => Some(Self::StorageHandoff),
+            _ => None,
+        }
+    }
+}
+
+/// One ordering obligation between two entries of a variant.
+///
+/// Both positions index the variant's canonical entry table. Derived from the
+/// packaged program's own `dependencies()`, never stated by a producer, so an
+/// artifact cannot claim an ordering its plan does not prove.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct StageDependencyData {
+    pub(crate) predecessor: u32,
+    pub(crate) successor: u32,
+    pub(crate) reason: StageDependencyReason,
+}
+
 /// Governed wire tag of a binding addressing a named program input.
 pub(super) const BINDING_TARGET_PROGRAM_INPUT: u8 = 0x01;
 /// Governed wire tag of a binding addressing named program output storage.
@@ -1555,6 +1622,25 @@ fn push_variant(
     for entry in &variant.entries {
         push_slice(bytes, entry.stage.as_bytes());
         push_entry(bytes, keys, entry, payload_keys)?;
+    }
+    // The order is meaning, so it is folded as stated rather than sorted: two
+    // artifacts whose stages run in different orders are different artifacts.
+    // The edges are a set and are folded in canonical order, because which
+    // obligation the producer happened to enumerate first is not.
+    push_len(bytes, variant.execution_order.len());
+    for entry in &variant.execution_order {
+        bytes.extend_from_slice(&entry.to_be_bytes());
+    }
+    push_len(bytes, variant.dependencies.len());
+    for edge in &variant.dependencies {
+        let StageDependencyData {
+            predecessor,
+            successor,
+            reason,
+        } = edge;
+        bytes.extend_from_slice(&predecessor.to_be_bytes());
+        bytes.extend_from_slice(&successor.to_be_bytes());
+        bytes.push(reason.tag());
     }
     Ok(())
 }

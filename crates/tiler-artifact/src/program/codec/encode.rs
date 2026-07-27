@@ -289,6 +289,16 @@ fn encode_variants(
         for entry in &variant.entries {
             encode_entry(bytes, entry)?;
         }
+        push_len(bytes, variant.execution_order.len());
+        for entry in &variant.execution_order {
+            bytes.extend_from_slice(&entry.to_be_bytes());
+        }
+        push_len(bytes, variant.dependencies.len());
+        for edge in &variant.dependencies {
+            bytes.extend_from_slice(&edge.predecessor.to_be_bytes());
+            bytes.extend_from_slice(&edge.successor.to_be_bytes());
+            bytes.push(edge.reason.tag());
+        }
     }
     Ok(())
 }

@@ -34,12 +34,14 @@ use super::super::model::{
     ArtifactSchema, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
     BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
     BindingTargetData, DeferredPredicateData, InterfaceEntryData, LaunchData, RoutingPolicy,
-    SchemaVersion, SelectedProvider, address_space_from_tag, buffer_access_from_tag,
-    element_type_from_tag, permission_from_tag, subnormal_from_tag,
+    SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
+    address_space_from_tag, buffer_access_from_tag, element_type_from_tag, permission_from_tag,
+    subnormal_from_tag,
 };
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
+    MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_SELECTED_PROVIDERS, MAX_STAGE_DEPENDENCIES,
+    MAX_VARIANT_ENTRIES,
 };
 use super::digest::{Digest, DigestAlgorithm};
 use super::encode::{
@@ -698,6 +700,9 @@ fn parse_variants(
         let entries = cursor.vec(MAX_VARIANT_ENTRIES, CodecLimitKind::Entries, |cursor| {
             parse_entry(cursor, expressions, payloads)
         })?;
+        let rank = u64::try_from(variants.len()).expect("supported usize fits u64");
+        let execution_order = parse_execution_order(cursor, rank, entries.len())?;
+        let dependencies = parse_dependencies(cursor, rank, entries.len(), &execution_order)?;
         variants.push(VariantRow {
             program_section,
             guard,
@@ -705,9 +710,107 @@ fn parse_variants(
             feasibility_rules,
             deferred,
             entries,
+            execution_order,
+            dependencies,
         });
     }
     Ok(variants)
+}
+
+/// Reads a variant's execution order and proves it sequences every entry once.
+///
+/// A permutation, checked rather than assumed. An order that omitted an entry
+/// would leave a stage undispatched and an order that repeated one would
+/// dispatch it twice, and a consumer following either would run a program the
+/// artifact does not describe.
+fn parse_execution_order(
+    cursor: &mut Cursor<'_>,
+    variant: u64,
+    entries: usize,
+) -> Result<Vec<u32>, ArtifactCodecError> {
+    let order = cursor.vec(MAX_VARIANT_ENTRIES, CodecLimitKind::Entries, Cursor::u32)?;
+    let mut sequenced = vec![false; entries];
+    for entry in &order {
+        let slot =
+            sequenced
+                .get_mut(position(*entry))
+                .ok_or(ArtifactCodecError::MissingReference {
+                    subject: ReferenceSubject::Entry,
+                    index: u64::from(*entry),
+                })?;
+        if std::mem::replace(slot, true) {
+            return Err(ArtifactCodecError::StageOrderNotAPermutation {
+                variant,
+                entries: u64::try_from(entries).expect("supported usize fits u64"),
+                stated: u64::try_from(order.len()).expect("supported usize fits u64"),
+            });
+        }
+    }
+    if sequenced.iter().any(|entry| !entry) {
+        return Err(ArtifactCodecError::StageOrderNotAPermutation {
+            variant,
+            entries: u64::try_from(entries).expect("supported usize fits u64"),
+            stated: u64::try_from(order.len()).expect("supported usize fits u64"),
+        });
+    }
+    Ok(order)
+}
+
+/// Reads a variant's dependency edges and proves the stated order discharges them.
+///
+/// This is what makes the order above a fact rather than a claim. Each edge is
+/// an obligation the packaged program proved; an order that runs a successor
+/// before its predecessor contradicts the artifact's own dependency graph, and
+/// is refused instead of being executed as a different valid schedule.
+fn parse_dependencies(
+    cursor: &mut Cursor<'_>,
+    variant: u64,
+    entries: usize,
+    order: &[u32],
+) -> Result<Vec<StageDependencyData>, ArtifactCodecError> {
+    let edges = cursor.vec(MAX_STAGE_DEPENDENCIES, CodecLimitKind::Entries, |cursor| {
+        let predecessor = cursor.u32()?;
+        let successor = cursor.u32()?;
+        let reason = cursor.stage_dependency_reason()?;
+        for endpoint in [predecessor, successor] {
+            if position(endpoint) >= entries {
+                return Err(ArtifactCodecError::MissingReference {
+                    subject: ReferenceSubject::Entry,
+                    index: u64::from(endpoint),
+                });
+            }
+        }
+        if predecessor == successor {
+            return Err(ArtifactCodecError::StageDependencyOnItself {
+                variant,
+                entry: u64::from(predecessor),
+            });
+        }
+        Ok(StageDependencyData {
+            predecessor,
+            successor,
+            reason,
+        })
+    })?;
+    require_sorted_and_distinct(&edges, OrderedSubject::StageDependency)?;
+
+    // Position within the stated order, so an edge is checked against the
+    // sequence a consumer will actually follow rather than against the entry
+    // table's canonical order, which carries no ordering meaning.
+    let mut step = vec![0_usize; entries];
+    for (step_index, entry) in order.iter().enumerate() {
+        step[position(*entry)] = step_index;
+    }
+    for edge in &edges {
+        if step[position(edge.predecessor)] >= step[position(edge.successor)] {
+            return Err(ArtifactCodecError::StageDependencyOutOfOrder {
+                variant,
+                predecessor: u64::from(edge.predecessor),
+                successor: u64::from(edge.successor),
+            });
+        }
+    }
+    Ok(edges)
 }
 
 fn parse_entry(
@@ -1087,6 +1190,12 @@ tag_reader!(
     BindingKind,
     BindingKind::from_tag,
     TagSubject::BindingKind
+);
+tag_reader!(
+    stage_dependency_reason,
+    StageDependencyReason,
+    StageDependencyReason::from_tag,
+    TagSubject::StageDependencyReason
 );
 tag_reader!(
     execution_policy,

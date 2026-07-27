@@ -24,6 +24,7 @@
 
 use std::collections::BTreeMap;
 
+use tiler_ir::program::{DependencyReasonView, StageRef, VerifiedKernelProgram};
 use tiler_ir::schedule::{
     NumericalPermission, NumericalRealization, ResourceRequirements, SubnormalMode,
 };
@@ -35,8 +36,8 @@ use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRe
 use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, LaunchData,
-    RoutingPolicy, SchemaVersion, SelectedProvider, VariantData, deferred_key, encode_identity,
-    stage_key,
+    RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
+    VariantData, deferred_key, encode_identity, stage_key,
 };
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::payload::{PayloadContent, encode_metadata};
@@ -74,11 +75,16 @@ pub(super) const FEATURE_DEFERRED_PREDICATES: &str = "tiler.artifact.feature.def
 pub(super) const FEATURE_LAUNCH_PRECONDITIONS: &str = "tiler.artifact.feature.launch-preconditions";
 /// Governed feature key required when any variant dispatches more than one stage.
 ///
-/// This profile's neutral program section carries a program's canonical
-/// identity, not its dependency graph, so a reader cannot recover the order in
-/// which two stages must run. Emitting the feature and refusing to read it is
-/// the fail-closed form of that gap; treating declaration order as execution
-/// order would be the silent one.
+/// Emitted *and* supported. Until `carry-the-stage-execution-order-in-the-envelope`
+/// it was emitted and refused: the neutral program section carries a program's
+/// canonical identity and not its dependency graph, so a reader could not
+/// recover the order in which two stages must run, and refusing was the
+/// fail-closed form of that gap. The envelope now carries the execution order
+/// and the typed dependency edges it discharges, both derived from the packaged
+/// program, so the order is readable and checkable rather than absent.
+///
+/// The feature key remains because it still says something true: a reader that
+/// predates those rows cannot sequence such a variant.
 pub(super) const FEATURE_MULTI_STAGE_PROGRAM: &str = "tiler.artifact.feature.multi-stage-program";
 /// Governed feature key required when any payload carries its object bytes.
 ///
@@ -99,6 +105,7 @@ pub(super) const SUPPORTED_FEATURES: &[&str] = &[
     FEATURE_DEFERRED_PREDICATES,
     FEATURE_EMBEDDED_PAYLOAD_CODE,
     FEATURE_LAUNCH_PRECONDITIONS,
+    FEATURE_MULTI_STAGE_PROGRAM,
     FEATURE_MULTI_VARIANT_ROUTING,
 ];
 
@@ -357,6 +364,29 @@ pub(crate) struct VariantRow {
     pub(crate) feasibility_rules: FeasibilityRuleSetRef,
     pub(crate) deferred: Vec<DeferredPredicateData>,
     pub(crate) entries: Vec<EntryRow>,
+    /// Positions of [`Self::entries`] in the order a consumer must dispatch them.
+    ///
+    /// A permutation of the entry table. Entry order in that table is canonical
+    /// stage-key order — identity's order — which is deliberately not execution
+    /// order, so without this row a consumer holding only bytes cannot sequence
+    /// a variant that dispatches more than one stage.
+    ///
+    /// Derived from the packaged program's own `execution_order()`, which the
+    /// shared IR documents as "a deterministic topological order of the
+    /// dependency graph, broken by canonical stage content rather than by
+    /// insertion". A producer states nothing here and so can contradict nothing.
+    pub(crate) execution_order: Vec<u32>,
+    /// The ordering obligations [`Self::execution_order`] discharges.
+    ///
+    /// Carried beside the order rather than left implicit in it, because an
+    /// order alone cannot be checked: it says *an* order and not *why*, so a
+    /// consumer could not tell a required sequence from an incidental one, and a
+    /// decoder could not refuse an order that contradicts the program. With the
+    /// edges present the order is verifiable against them, which is what makes
+    /// this a fact rather than a claim.
+    ///
+    /// Canonically ordered and distinct.
+    pub(crate) dependencies: Vec<StageDependencyData>,
 }
 
 /// The canonical neutral artifact envelope.
@@ -427,8 +457,15 @@ impl ArtifactEnvelope {
                     entity: ArtifactEntityKind::Entry,
                 });
             }
+            // `entry_of[declared] = canonical`, the inverse of the stage-key
+            // sort `project_entries` applies. Both the order and the edges name
+            // canonical positions, because a declared ordinal is exactly the
+            // transient fact this envelope replaces everywhere else.
+            let entry_of = canonical_entry_positions(&stage_keys);
             let entries =
                 project_entries(variant, &stage_keys, &expression_of, &keys, &payload_of)?;
+            let execution_order = project_execution_order(variant, &entry_of);
+            let dependencies = project_dependencies(variant, &entry_of);
 
             let content = variant.program.canonical_identity().as_bytes();
             variants.push(VariantRow {
@@ -440,6 +477,8 @@ impl ArtifactEnvelope {
                 feasibility_rules: variant.feasibility_rules.clone(),
                 deferred,
                 entries,
+                execution_order,
+                dependencies,
             });
         }
 
@@ -800,6 +839,71 @@ fn project_sections(
         programs,
         payload_content,
     }
+}
+
+/// Maps each declared entry position to its canonical stage-key position.
+///
+/// The inverse of the sort [`project_entries`] applies, factored out so the two
+/// cannot disagree about which canonical slot a declared entry landed in. Both
+/// call sites derive from the same `stage_keys`, so a change to the ordering
+/// rule moves them together.
+fn canonical_entry_positions(stage_keys: &[Vec<u8>]) -> Vec<u32> {
+    let mut order: Vec<usize> = (0..stage_keys.len()).collect();
+    order.sort_unstable_by(|left, right| stage_keys[*left].cmp(&stage_keys[*right]));
+    let mut entry_of = vec![0_u32; stage_keys.len()];
+    for (canonical, declared) in order.into_iter().enumerate() {
+        entry_of[declared] = ordinal(canonical);
+    }
+    entry_of
+}
+
+/// Reads one stage's declared position within its own program.
+///
+/// By identity rather than by content key: `StageRef`'s equality is the program
+/// it belongs to and its position in that program, so this is exact even when
+/// two stages of one program share a canonical key. Matching on `stage_key`
+/// instead would be ambiguous in precisely that case.
+fn declared_stage_position(program: &VerifiedKernelProgram, stage: StageRef<'_>) -> usize {
+    program
+        .stages()
+        .position(|candidate| candidate == stage)
+        .expect("a stage of this program is one of its own stages")
+}
+
+/// Projects the packaged program's execution order onto canonical entry slots.
+fn project_execution_order(variant: &VariantData, entry_of: &[u32]) -> Vec<u32> {
+    variant
+        .program
+        .execution_order()
+        .map(|stage| entry_of[declared_stage_position(&variant.program, stage)])
+        .collect()
+}
+
+/// Projects the packaged program's typed dependency edges onto entry slots.
+///
+/// Sorted and deduplicated: the edges are a set, and two edges between one pair
+/// of stages for one reason are one obligation however many times the program
+/// enumerated it.
+fn project_dependencies(variant: &VariantData, entry_of: &[u32]) -> Vec<StageDependencyData> {
+    let mut edges: Vec<StageDependencyData> = variant
+        .program
+        .dependencies()
+        .map(|edge| StageDependencyData {
+            predecessor: entry_of[declared_stage_position(&variant.program, edge.predecessor())],
+            successor: entry_of[declared_stage_position(&variant.program, edge.successor())],
+            // Exhaustive and wildcard-free: a widened shared-IR reason must stop
+            // the build here rather than be encoded as whichever arm a catch-all
+            // named, which would tell a consumer this edge is a data dependency
+            // when it is not.
+            reason: match edge.reason() {
+                DependencyReasonView::Data(_) => StageDependencyReason::Data,
+                DependencyReasonView::StorageHandoff(_) => StageDependencyReason::StorageHandoff,
+            },
+        })
+        .collect();
+    edges.sort_unstable();
+    edges.dedup();
+    edges
 }
 
 /// Projects one variant's executable entries into canonical stage-key order.

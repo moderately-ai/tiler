@@ -385,6 +385,15 @@ fn accept_entry(variant: DecodedVariant<'_>) -> Result<DecodedEntry<'_>, LoadRej
         });
     }
 
+    // The envelope now carries an execution order and the edges it discharges,
+    // so the reason this refuses has moved: it is no longer that a sequence
+    // cannot be recovered — `carry-the-stage-execution-order-in-the-envelope`
+    // closed that — but that this loader dispatches exactly one entry. The
+    // refusal is reachable rather than shadowed by a decoder that rejected such
+    // an envelope one layer earlier, which is the point: a loader correct only
+    // by another layer's refusal is not correct.
+    //
+    // `preflight-every-entry-of-a-multi-stage-route` owns lifting it.
     let mut entries = variant.entries();
     let declared = entries.len();
     if declared != 1 {
@@ -615,9 +624,12 @@ pub enum LoadRejection {
     },
     /// The selected variant does not dispatch as exactly one entry.
     ///
-    /// An envelope carries each stage's canonical identity and not the
-    /// program's dependency graph, so declaration order is not execution order
-    /// and a multi-entry variant cannot be sequenced from an artifact alone.
+    /// **This loader's limit, not the envelope's.** An envelope now carries the
+    /// execution order and the typed dependency edges that order discharges, so
+    /// a multi-entry variant *can* be sequenced from an artifact alone —
+    /// `DecodedVariant::execution_order` is that sequence. What is missing is
+    /// here: this loader routes one entry and has no per-entry preflight or
+    /// dispatch. `preflight-every-entry-of-a-multi-stage-route` owns closing it.
     UnroutableEntries {
         /// Zero-based routing rank of the selected variant.
         variant: usize,
@@ -704,8 +716,8 @@ impl fmt::Display for LoadRejection {
             ),
             Self::UnroutableEntries { variant, entries } => write!(
                 formatter,
-                "runtime.unroutable-entries: variant {variant} declares {entries} entries, and an \
-                 envelope carries no execution order to sequence them by",
+                "runtime.unroutable-entries: variant {variant} declares {entries} entries, and \
+                 this loader dispatches one",
             ),
             Self::UnexecutablePayload {
                 declared_backend,

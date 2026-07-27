@@ -3,7 +3,7 @@ id: prototype-metal-runtime-proof
 title: Execute and validate the serial Sum Metal proof end to end
 status: todo
 priority: p0
-dependencies: [prototype-metal-runtime-execution]
+dependencies: [prototype-metal-runtime-execution, carry-the-stage-execution-order-in-the-envelope, preflight-every-entry-of-a-multi-stage-route]
 related: []
 scopes: [implementation/runtime, research/runtime]
 shared_scopes: [project/tickets, contracts/integrations, contracts/navigation, contracts/artifacts, contracts/numerics, implementation/cargo-lock]
@@ -60,3 +60,11 @@ library, function, pipeline, guard, and routing-preflight cases, alongside at
 least one successful execution on a compatible live Metal device. Simulated
 failures do not satisfy the live success gate, and absence of a compatible
 device is an unmet evidence condition rather than success.
+
+## Two dependencies were missing — added 2026-07-27
+
+This ticket requires executing the retained **materialized** program as well as the fused one and comparing both readbacks. The materialized plan is multi-stage — `materialized.kernels().len() > 1`, pinned by a passing test in `prototypes/serial-sum-compile/src/bundle.rs` — and until `carry-the-stage-execution-order-in-the-envelope` a multi-stage envelope was refused outright, so the program could not travel in a bundle this reader accepts.
+
+Three of the twelve requirements were therefore unreachable, and they are the three the success clause leads with: the materialized proof run, the comparison of both readbacks, and the one-dispatch-versus-two-dispatches observation. The graph did not show it, so the ticket kept appearing ready.
+
+`carry-the-stage-execution-order-in-the-envelope` supplies the envelope half and has landed. `preflight-every-entry-of-a-multi-stage-route` supplies the runtime half — a loader still dispatches exactly one entry — and has not.

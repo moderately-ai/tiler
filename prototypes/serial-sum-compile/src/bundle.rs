@@ -386,7 +386,7 @@ mod tests {
     use super::{assemble, assemble_from, reachable_from, variant_roots};
     use crate::{emit_and_compile, payload, serial_sum_program};
     use tiler_artifact::program::{
-        ArtifactCodecFailure, PayloadContent, SectionPurpose, SectionView, decode_artifact,
+        PayloadContent, SectionPurpose, SectionView, StageDependencyReason, decode_artifact,
     };
     use tiler_compiler::session::{
         Compilation, NumericalContract, PlanAlternative, compile_governed,
@@ -555,22 +555,20 @@ mod tests {
         );
     }
 
-    /// A multi-stage variant encodes and is then refused by this reader.
+    /// A multi-stage variant round trips, and a decoder recovers its sequence.
     ///
-    /// Not a defect in the assembly and not a codec check to weaken. This
-    /// profile's neutral program section carries a program's canonical identity
-    /// and not its dependency graph, so a reader cannot recover the order two
-    /// stages must run in. The projector therefore derives
-    /// `tiler.artifact.feature.multi-stage-program`, which is deliberately
-    /// absent from `SUPPORTED_FEATURES`, and the decoder refuses rather than
-    /// treating declaration order as execution order.
+    /// This inverts what it asserted until `carry-the-stage-execution-order-in-
+    /// the-envelope`: the projector still derives
+    /// `tiler.artifact.feature.multi-stage-program`, but the envelope now
+    /// carries the execution order and the typed dependency edges that order
+    /// discharges, so the reader sequences the variant instead of refusing it.
     ///
-    /// `carry-reconstructable-kernel-programs-in-the-neutral-envelope` owns
-    /// closing it. Until then this is the exact measured boundary of what the
-    /// envelope can carry, and asserting it keeps the limit from being
-    /// rediscovered as a bug.
+    /// The assertion is the *sequence*, not merely that it decoded. A decode
+    /// that returned the entries in canonical stage-key order and called it an
+    /// execution order would pass a test that only checked for `Ok`, and that is
+    /// precisely the silent behaviour the old refusal existed to prevent.
     #[test]
-    fn a_multi_stage_variant_encodes_and_this_reader_refuses_it() {
+    fn a_multi_stage_variant_round_trips_with_a_recoverable_sequence() {
         let compilations = compilations();
         let compilation = compilations.first().expect("one governed target");
         let materialized = compilation
@@ -590,11 +588,47 @@ mod tests {
         )
         .expect("a multi-stage bundle assembles and verifies");
         let bytes = artifact.encode().expect("the envelope encodes");
-        let refusal =
-            decode_artifact(&bytes).expect_err("this reader refuses a multi-stage program");
-        assert!(
-            matches!(refusal, ArtifactCodecFailure::Unsupported { .. }),
-            "a feature this build cannot supply is unsupported, not corruption: {refusal}",
+        let decoded =
+            decode_artifact(&bytes).expect("this reader now sequences a multi-stage program");
+        let variant = decoded.variants().next().expect("one packaged variant");
+
+        let order: Vec<&[u8]> = variant
+            .execution_order()
+            .map(tiler_artifact::program::DecodedEntry::stage_key)
+            .collect();
+        assert_eq!(
+            order.len(),
+            materialized.kernels().len(),
+            "the recovered order sequences every stage exactly once",
         );
+
+        // The edges are what make the order checkable rather than asserted, so
+        // the test reads them rather than trusting the order alone. A serial sum
+        // materialized into two stages reduces what the first stage wrote, so
+        // the obligation is a data dependency and not a storage handoff.
+        let edges: Vec<_> = variant.stage_dependencies().collect();
+        assert!(
+            !edges.is_empty(),
+            "a materialized plan whose second stage reads the first must carry an edge",
+        );
+        for edge in &edges {
+            assert_eq!(
+                edge.reason(),
+                StageDependencyReason::Data,
+                "this plan's stages are ordered by what they read, not by storage reuse",
+            );
+            let predecessor = order
+                .iter()
+                .position(|stage| *stage == edge.predecessor().stage_key())
+                .expect("the edge names a sequenced entry");
+            let successor = order
+                .iter()
+                .position(|stage| *stage == edge.successor().stage_key())
+                .expect("the edge names a sequenced entry");
+            assert!(
+                predecessor < successor,
+                "the recovered order discharges every edge it carries",
+            );
+        }
     }
 }

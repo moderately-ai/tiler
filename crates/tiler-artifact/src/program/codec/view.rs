@@ -81,7 +81,7 @@ use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRe
 use super::super::model::{
     BackendPayloadDescriptor, BindingData, BindingKind, BindingTarget, BindingTargetData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, RoutingPolicy,
-    VerifiedArtifactProgram,
+    StageDependencyData, StageDependencyReason, VerifiedArtifactProgram,
 };
 use super::error::ArtifactCodecError;
 use super::model::{ArtifactEnvelope, EntryRow, NumericalFacts, SectionKind, VariantRow, position};
@@ -355,6 +355,52 @@ impl<'a> DecodedOutput<'a> {
     }
 }
 
+/// One ordering obligation between two entries of a decoded variant.
+///
+/// The envelope carries the obligation's *kind* and not its subject: the shared
+/// IR names the value read or the allocation reused, and neither has a durable
+/// name at the artifact layer. A consumer learns that this edge is a
+/// read-after-write rather than a storage reuse, which is what decides how a
+/// violation breaks; what each entry addresses it reads from the bindings.
+#[derive(Clone, Copy, Debug)]
+pub struct DecodedStageDependency<'a> {
+    artifact: &'a DecodedArtifact,
+    variant: usize,
+    edge: usize,
+}
+
+impl<'a> DecodedStageDependency<'a> {
+    /// Returns the entry that must be dispatched first.
+    #[must_use]
+    pub fn predecessor(self) -> DecodedEntry<'a> {
+        DecodedEntry {
+            artifact: self.artifact,
+            variant: self.variant,
+            entry: position(self.data().predecessor),
+        }
+    }
+
+    /// Returns the entry that must be dispatched after it.
+    #[must_use]
+    pub fn successor(self) -> DecodedEntry<'a> {
+        DecodedEntry {
+            artifact: self.artifact,
+            variant: self.variant,
+            entry: position(self.data().successor),
+        }
+    }
+
+    /// Returns why the two are ordered.
+    #[must_use]
+    pub fn reason(self) -> StageDependencyReason {
+        self.data().reason
+    }
+
+    fn data(self) -> &'a StageDependencyData {
+        &self.artifact.envelope.variants[self.variant].dependencies[self.edge]
+    }
+}
+
 /// One packaged plan variant of a decoded artifact.
 #[derive(Clone, Copy, Debug)]
 pub struct DecodedVariant<'a> {
@@ -417,10 +463,8 @@ impl<'a> DecodedVariant<'a> {
     ///
     /// The order is canonical stage-key order rather than the producer's
     /// declaration order, and it is **not** execution order. A single-entry
-    /// variant makes the distinction moot; a multi-stage one requires
-    /// `tiler.artifact.feature.multi-stage-program`, which this build's reader
-    /// refuses, so no consumer can reach this iterator without the question
-    /// already being decided.
+    /// variant makes the distinction moot; for a multi-stage one, dispatch in
+    /// [`Self::execution_order`] and not in this iterator's order.
     #[must_use]
     pub fn entries(self) -> impl ExactSizeIterator<Item = DecodedEntry<'a>> {
         let artifact = self.artifact;
@@ -429,6 +473,46 @@ impl<'a> DecodedVariant<'a> {
             artifact,
             variant,
             entry,
+        })
+    }
+
+    /// Returns this variant's entries in the order they must be dispatched.
+    ///
+    /// A permutation of [`Self::entries`], proven so at decode. This is the
+    /// order to follow: the entry table itself is in canonical stage-key order,
+    /// which is identity's order and carries no execution meaning.
+    ///
+    /// Derived by the producer from the packaged program's own topological
+    /// order, and checked here against [`Self::stage_dependencies`], so an order
+    /// that contradicts the program's dependency graph does not decode.
+    #[must_use]
+    pub fn execution_order(self) -> impl ExactSizeIterator<Item = DecodedEntry<'a>> {
+        let artifact = self.artifact;
+        let variant = self.variant;
+        self.data()
+            .execution_order
+            .iter()
+            .map(move |entry| DecodedEntry {
+                artifact,
+                variant,
+                entry: position(*entry),
+            })
+    }
+
+    /// Returns the ordering obligations the execution order discharges.
+    ///
+    /// Each names the two entries it orders and *why* they are ordered — a read
+    /// of what the predecessor wrote, or reuse of storage it released. A
+    /// consumer that reorders stages needs the reason, not only the order: the
+    /// two kinds break differently when violated.
+    #[must_use]
+    pub fn stage_dependencies(self) -> impl ExactSizeIterator<Item = DecodedStageDependency<'a>> {
+        let artifact = self.artifact;
+        let variant = self.variant;
+        (0..self.data().dependencies.len()).map(move |edge| DecodedStageDependency {
+            artifact,
+            variant,
+            edge,
         })
     }
 
@@ -977,7 +1061,10 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::ExpressionSelectBranchType { .. }
             | ArtifactCodecError::ModelRule { .. }
             | ArtifactCodecError::ModelObligation { .. }
-            | ArtifactCodecError::IdentityDerivation { .. } => Self::Invalid { detail },
+            | ArtifactCodecError::IdentityDerivation { .. }
+            | ArtifactCodecError::StageOrderNotAPermutation { .. }
+            | ArtifactCodecError::StageDependencyOutOfOrder { .. }
+            | ArtifactCodecError::StageDependencyOnItself { .. } => Self::Invalid { detail },
         }
     }
 }

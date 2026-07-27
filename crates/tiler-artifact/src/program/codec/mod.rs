@@ -133,8 +133,8 @@ pub use payload::{
 // decoder re-derives and which it takes on the producer's derivation.
 pub use view::{
     ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedDeferredPredicate, DecodedEntry,
-    DecodedExpr, DecodedInput, DecodedNumerical, DecodedOutput, DecodedVariant, SectionPurpose,
-    SectionView, decode_artifact,
+    DecodedExpr, DecodedInput, DecodedNumerical, DecodedOutput, DecodedStageDependency,
+    DecodedVariant, SectionPurpose, SectionView, decode_artifact,
 };
 
 #[cfg(test)]
