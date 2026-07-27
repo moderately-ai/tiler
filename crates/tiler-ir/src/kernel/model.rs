@@ -20,6 +20,15 @@ use crate::schedule::{
 };
 
 use super::MAX_KERNEL_IDENTITY_BYTES;
+
+/// The versioned domain separator opening a canonical kernel identity.
+///
+/// Named so [`encode_identity`] and [`identity_encoded_len`] measure the same
+/// bytes rather than agreeing on a literal by inspection.
+const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v1\0";
+
+/// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
+const LENGTH_BYTES: usize = size_of::<u64>();
 use super::error::{KernelDiagnostic, KernelEntityKind, VerifiedKernelHandleError};
 use super::handles::{VerifiedBufferId, VerifiedKernelOwner, VerifiedValueId};
 
@@ -1135,8 +1144,9 @@ pub(super) fn encode_identity(
     schedule_identity: &CanonicalScheduledRegionIdentity,
     data: &KernelData,
 ) -> Result<CanonicalKernelIdentity, KernelDiagnostic> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.kernel.v1\0");
+    let encoded_len = identity_encoded_len(schedule_identity, data);
+    let mut bytes = Vec::with_capacity(encoded_len);
+    bytes.extend_from_slice(KERNEL_DOMAIN);
     push_slice(&mut bytes, schedule_identity.as_bytes());
     push_len(&mut bytes, data.buffers.len());
     for buffer in &data.buffers {
@@ -1153,6 +1163,11 @@ pub(super) fn encode_identity(
         bytes.push(value.value_type.tag());
     }
     push_block(&mut bytes, data, 0);
+    debug_assert_eq!(
+        bytes.len(),
+        encoded_len,
+        "the reserved kernel-identity length must equal what the encoder wrote"
+    );
     if bytes.len() > MAX_KERNEL_IDENTITY_BYTES {
         return Err(KernelDiagnostic::IdentityLimit {
             bytes: bytes.len(),
@@ -1160,4 +1175,153 @@ pub(super) fn encode_identity(
         });
     }
     Ok(CanonicalKernelIdentity(bytes))
+}
+
+/// The exact byte length [`encode_identity`] will write.
+///
+/// **Every arm mirrors one arm of the encoder above it**, so the two are read
+/// as a pair and a new [`OperationKind`] variant is a compile error in both.
+/// Where the encoder writes an integer field, this measures *that field* with
+/// [`size_of_val`] rather than restating a width, so widening a field cannot
+/// silently desynchronize the reservation from the encoding. The
+/// `debug_assert_eq!` in [`encode_identity`] is the backstop for the rest.
+///
+/// This exists to size the identity buffer once. Growing it by doubling
+/// reallocated and copied the encoding several times per kernel, and a kernel
+/// identity is encoded on every build and every refinement check.
+fn identity_encoded_len(
+    schedule_identity: &CanonicalScheduledRegionIdentity,
+    data: &KernelData,
+) -> usize {
+    KERNEL_DOMAIN
+        .len()
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(schedule_identity.as_bytes().len())
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(
+            data.buffers
+                .iter()
+                .map(buffer_encoded_len)
+                .fold(0_usize, usize::saturating_add),
+        )
+        .saturating_add(LENGTH_BYTES)
+        // One tag byte per admitted builtin.
+        .saturating_add(data.admitted_builtins.len())
+        .saturating_add(numerical_encoded_len(&data.numerical))
+        .saturating_add(requirements_encoded_len(&data.requirements))
+        .saturating_add(LENGTH_BYTES)
+        // One tag byte per value type.
+        .saturating_add(data.values.len())
+        .saturating_add(block_encoded_len(data, 0))
+}
+
+/// Mirrors [`push_buffer`]: four tag bytes and the element count.
+fn buffer_encoded_len(buffer: &BufferParameter) -> usize {
+    4_usize.saturating_add(size_of_val(&buffer.element_count))
+}
+
+/// Mirrors [`push_numerical`].
+fn numerical_encoded_len(numerical: &NumericalRealization) -> usize {
+    LENGTH_BYTES
+        .saturating_add(numerical.profile_key.len())
+        .saturating_add(size_of_val(&numerical.canonical_arithmetic_nan_bits))
+        // Two subnormal modes and two permissions, one tag byte each.
+        .saturating_add(4)
+}
+
+/// Mirrors [`push_requirements`].
+fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
+    size_of_val(&requirements.buffer_bindings)
+        .saturating_add(size_of_val(&requirements.threads_per_workgroup))
+        .saturating_add(size_of_val(&requirements.local_memory_bytes))
+        .saturating_add(size_of_val(&requirements.barriers))
+        // The device-memory flag, two subnormal modes, and two permissions.
+        .saturating_add(5)
+}
+
+/// Mirrors [`push_constant`]: a discriminant tag and the payload.
+fn constant_encoded_len(value: KernelConstant) -> usize {
+    1_usize.saturating_add(match value {
+        KernelConstant::Bool(_) => 1,
+        KernelConstant::Index(index) => size_of_val(&index),
+        KernelConstant::F32Bits(pattern) => size_of_val(&pattern),
+    })
+}
+
+/// Mirrors [`push_barrier`].
+fn barrier_encoded_len(spec: &BarrierSpec) -> usize {
+    // Execution scope, memory scope, then the framed fenced spaces at one tag
+    // byte each, then the ordering.
+    2_usize
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(spec.fenced_spaces.len())
+        .saturating_add(1)
+}
+
+/// Mirrors [`push_indices`].
+fn indices_encoded_len(indices: &[u32]) -> usize {
+    LENGTH_BYTES.saturating_add(indices.len().saturating_mul(size_of::<u32>()))
+}
+
+/// Mirrors [`push_block`], recursing through nested blocks exactly as it does.
+fn block_encoded_len(data: &KernelData, block: u32) -> usize {
+    let block = &data.blocks[block as usize];
+    indices_encoded_len(&block.parameters)
+        .saturating_add(LENGTH_BYTES)
+        .saturating_add(
+            block
+                .operations
+                .iter()
+                .map(|operation| operation_encoded_len(data, operation))
+                .fold(0_usize, usize::saturating_add),
+        )
+}
+
+/// Mirrors [`push_operation`], one arm per encoded operation kind.
+fn operation_encoded_len(data: &KernelData, operation: &OperationData) -> usize {
+    let kind = match &operation.kind {
+        OperationKind::Builtin { .. } => 1,
+        OperationKind::Constant { value } => constant_encoded_len(*value),
+        OperationKind::Binary { lhs, rhs, .. } | OperationKind::Compare { lhs, rhs, .. } => 1_usize
+            .saturating_add(size_of_val(lhs))
+            .saturating_add(size_of_val(rhs)),
+        OperationKind::Convert { source, .. } => 1_usize.saturating_add(size_of_val(source)),
+        OperationKind::Load {
+            buffer,
+            offset,
+            bounds,
+        } => size_of_val(buffer)
+            .saturating_add(size_of_val(offset))
+            .saturating_add(size_of_val(&bounds.get())),
+        OperationKind::Store {
+            buffer,
+            offset,
+            value,
+            bounds,
+            ownership,
+        } => size_of_val(buffer)
+            .saturating_add(size_of_val(offset))
+            .saturating_add(size_of_val(value))
+            .saturating_add(size_of_val(&bounds.get()))
+            .saturating_add(size_of_val(&ownership.get())),
+        OperationKind::Predicated { predicate, body } => {
+            size_of_val(predicate).saturating_add(block_encoded_len(data, *body))
+        }
+        OperationKind::SerialLoop {
+            start,
+            end,
+            initial,
+            body,
+            yields,
+        } => size_of_val(start)
+            .saturating_add(size_of_val(end))
+            .saturating_add(indices_encoded_len(initial))
+            .saturating_add(indices_encoded_len(yields))
+            .saturating_add(block_encoded_len(data, *body)),
+        OperationKind::Barrier { spec } => barrier_encoded_len(spec),
+    };
+    // Every arm is preceded by its one-byte kind tag and followed by results.
+    1_usize
+        .saturating_add(kind)
+        .saturating_add(indices_encoded_len(&operation.results))
 }

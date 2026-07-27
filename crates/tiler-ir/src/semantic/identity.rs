@@ -348,8 +348,9 @@ fn encode_operation(output: &mut Vec<u8>, operation: &OperationData) {
 ///
 /// `str::len` is the UTF-8 byte length, so this is exactly the run
 /// [`push_slice`] frames: the wrapper exists for the `&str` conversion and not
-/// for a second framing rule. `scripts/check_workspace.py` pins it on that
-/// basis, so a body that stopped delegating would have to be re-admitted.
+/// for a second framing rule. A body that stopped delegating would become a
+/// second definition of the framing, which is the one thing this must not be;
+/// no check enforces that now, so it rests on review of the diff.
 fn encode_string(output: &mut Vec<u8>, value: &str) {
     push_slice(output, value.as_bytes());
 }

@@ -538,39 +538,63 @@ impl KernelBuilder {
     ///
     /// Returns a [`KernelVerificationError`] carrying every whole-kernel
     /// diagnostic and the recoverable builder when verification fails.
-    pub fn build(self) -> Result<VerifiedKernel, KernelVerificationError> {
-        match self.assemble_and_verify() {
-            Ok((data, identity)) => Ok(VerifiedKernel {
-                owner: self.owner.verified_owner(),
-                region: self.region,
-                schedule_identity: self.schedule_identity.clone(),
-                data,
-                identity,
-            }),
-            Err(diagnostics) => Err(KernelVerificationError {
-                builder: Box::new(self),
-                diagnostics,
-            }),
-        }
-    }
-
-    fn assemble_and_verify(
-        &self,
-    ) -> Result<(KernelData, super::model::CanonicalKernelIdentity), Vec<KernelDiagnostic>> {
-        let data = self.assemble().map_err(|diagnostic| vec![diagnostic])?;
-        super::verify::verify_kernel(
+    pub fn build(mut self) -> Result<VerifiedKernel, KernelVerificationError> {
+        // Completeness is checked before anything moves, so an incomplete
+        // builder is returned in exactly the state it arrived in.
+        let data = match self.take_data() {
+            Ok(data) => data,
+            Err(diagnostic) => {
+                return Err(KernelVerificationError {
+                    builder: Box::new(self),
+                    diagnostics: vec![diagnostic],
+                });
+            }
+        };
+        let verified = super::verify::verify_kernel(
             &data,
             &self.schedule,
             &self.schedule_identity,
             self.derived_requirements,
         )
-        .map_err(|diagnostic| vec![diagnostic])?;
-        let identity = encode_identity(&self.schedule_identity, &data)
-            .map_err(|diagnostic| vec![diagnostic])?;
-        Ok((data, identity))
+        .and_then(|()| encode_identity(&self.schedule_identity, &data));
+        match verified {
+            Ok(identity) => Ok(VerifiedKernel {
+                owner: self.owner.verified_owner(),
+                region: self.region,
+                schedule_identity: self.schedule_identity,
+                data,
+                identity,
+            }),
+            Err(diagnostic) => {
+                self.restore_data(data);
+                Err(KernelVerificationError {
+                    builder: Box::new(self),
+                    diagnostics: vec![diagnostic],
+                })
+            }
+        }
     }
 
-    pub(super) fn assemble(&self) -> Result<KernelData, KernelDiagnostic> {
+    /// Moves the assembled arena out of a builder that is about to be dropped.
+    pub(super) fn into_data(mut self) -> Result<KernelData, KernelDiagnostic> {
+        self.take_data()
+    }
+
+    /// Moves the arena into a [`KernelData`], emptying the builder's storage.
+    ///
+    /// **The builder is left recoverable, not consistent.** Its arena is gone
+    /// until [`Self::restore_data`] puts it back, so the only admissible use is
+    /// the one in [`Self::build`]: take, verify, and either publish the data or
+    /// restore it before the builder becomes reachable again. Verification reads
+    /// the `KernelData` it was handed and never the builder's storage, so the
+    /// window is not observable.
+    ///
+    /// This replaced a deep clone of all four arenas. The clone was paid on
+    /// every kernel build *and* on every refinement check — `verify_kernel`
+    /// re-derives the canonical body through this same builder — while the
+    /// verifier only ever reads the assembled copy, so the original was
+    /// duplicated to be dropped.
+    fn take_data(&mut self) -> Result<KernelData, KernelDiagnostic> {
         let numerical = self.numerical.ok_or(KernelDiagnostic::IncompleteKernel {
             component: KernelComponent::NumericalRealization,
         })?;
@@ -580,13 +604,22 @@ impl KernelBuilder {
                 component: KernelComponent::ResourceRequirements,
             })?;
         Ok(KernelData {
-            buffers: self.buffers.clone(),
-            admitted_builtins: self.admitted_builtins.clone(),
+            buffers: std::mem::take(&mut self.buffers),
+            admitted_builtins: std::mem::take(&mut self.admitted_builtins),
             numerical,
             requirements,
-            values: self.values.clone(),
-            blocks: self.blocks.clone(),
+            values: std::mem::take(&mut self.values),
+            blocks: std::mem::take(&mut self.blocks),
         })
+    }
+
+    /// Returns a taken arena to the builder, restoring the recoverable state
+    /// [`KernelVerificationError`] documents.
+    fn restore_data(&mut self, data: KernelData) {
+        self.buffers = data.buffers;
+        self.admitted_builtins = data.admitted_builtins;
+        self.values = data.values;
+        self.blocks = data.blocks;
     }
 
     fn run_loop_body<F>(
