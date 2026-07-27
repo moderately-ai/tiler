@@ -334,6 +334,21 @@ pub(crate) fn fused_reduction_kernel() -> VerifiedKernel {
     .expect("bounded fused reduction fixture lowers")
 }
 
+/// A reduction whose reduced axis has extent zero.
+///
+/// Its body writes the reduction's identity element for every output element
+/// and reads its input buffer never, which is what made it unemittable while
+/// the argument table was derived from body use.
+pub(crate) fn empty_domain_reduction_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&reduction_region(
+        RegionId::new(4),
+        &Shape::from_dims([2, 0]),
+        &[Axis::new(1)],
+        false,
+    ))
+    .expect("bounded empty-domain reduction fixture lowers")
+}
+
 fn emit_one(kernel: &VerifiedKernel) -> String {
     emit_translation_unit(&[kernel], &target())
         .expect("bounded fixture emits")
@@ -1221,4 +1236,71 @@ fn a_symbol_claimed_by_two_identities_is_rejected() {
         }
     );
     assert_eq!(error.rule(), "symbol-collision");
+}
+
+/// A reduction over an empty domain emits, and declares every parameter.
+///
+/// The case `prototype-metal-runtime-proof` could not cover. Emission refused it
+/// with `unreferenced-buffer-parameter` because the argument table was derived
+/// from what the body read, and a reduction over zero contributors reads its
+/// input never — so the declared input had no position and the count check
+/// fired. The table now comes from the declaration, so the parameter is declared
+/// and simply not read, which is legal MSL and leaves the ABI as declared.
+#[test]
+fn an_empty_domain_reduction_emits_every_declared_parameter() {
+    let kernel = empty_domain_reduction_kernel();
+    let declared = kernel.buffers().len();
+    assert_eq!(declared, 2, "the fixture declares an input and an output");
+
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("an empty domain emits");
+    unit.require_declared_realization()
+        .expect("an empty domain honours the declared contract");
+
+    let entry = &unit.entry_points()[0];
+    assert_eq!(
+        entry.buffers().len(),
+        declared,
+        "every declared parameter occupies an argument-table position",
+    );
+    let source = unit.source();
+    assert!(
+        source.contains("[[buffer(0)]]") && source.contains("[[buffer(1)]]"),
+        "both declared parameters appear in the signature:\n{source}",
+    );
+}
+
+/// The argument table follows declaration order, not the order the body reads.
+///
+/// This is the property the empty-domain kernel is the sharpest witness for, and
+/// it is a correctness claim rather than a stylistic one. The table used to be
+/// built in first-use order while the artifact's own binding table is in
+/// declaration order, and the runtime pairs artifact slot *i* with the emitted
+/// table's *i*-th transport. For a body that does not touch its buffers in
+/// declaration sequence those two disagree, and the disagreement is silent: each
+/// side is internally consistent and the wrong buffer is bound.
+///
+/// Here the input is never read at all, so first-use order would have given the
+/// output index 0 — the position the input declares. Asserting the output sits
+/// at its declared ordinal is what distinguishes the two schemes.
+#[test]
+fn the_argument_table_follows_declaration_order() {
+    let kernel = empty_domain_reduction_kernel();
+    let declared: Vec<_> = kernel.buffers().collect();
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("an empty domain emits");
+    let emitted = unit.entry_points()[0].buffers();
+
+    for (ordinal, (parameter, binding)) in declared.iter().zip(emitted).enumerate() {
+        let ordinal = u32::try_from(ordinal).expect("a bounded parameter count");
+        assert_eq!(
+            binding.index(),
+            ordinal,
+            "parameter {ordinal} was emitted at argument-table index {}",
+            binding.index(),
+        );
+        assert_eq!(
+            binding.parameter().tensor,
+            parameter.tensor,
+            "the table's {ordinal}th entry is the {ordinal}th declared parameter",
+        );
+    }
 }

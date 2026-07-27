@@ -542,6 +542,34 @@ impl VerifiedKernel {
         self.data.buffers.iter().copied()
     }
 
+    /// Returns each declared buffer parameter with the handle naming it.
+    ///
+    /// Declaration order, which *is* the signature order: a parameter's position
+    /// here is its argument-table ordinal.
+    ///
+    /// [`Self::buffers`] yields the parameters alone and cannot say which handle
+    /// each belongs to, so a backend building a signature from it has no way to
+    /// relate a parameter to the loads and stores that reference it. The only
+    /// alternative is to assign ordinals in first-use order, which disagrees
+    /// with this order for any kernel whose body does not happen to touch its
+    /// buffers in declaration sequence, and which cannot place a parameter the
+    /// body never touches at all.
+    #[must_use]
+    pub fn declared_buffers(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (VerifiedBufferId, BufferParameter)> + '_ {
+        // Counted in `u32`, the width a handle's ordinal is, so no fallible
+        // conversion appears in the mapping and this cannot panic. `zip` stops
+        // at the shorter side, so the saturating count below cannot invent a
+        // parameter even in the unrepresentable case it guards against: a
+        // kernel with more than `u32::MAX` buffers has no handle for the last
+        // of them and could not have been verified.
+        let count = u32::try_from(self.data.buffers.len()).unwrap_or(u32::MAX);
+        (0..count)
+            .zip(self.data.buffers.iter().copied())
+            .map(|(index, parameter)| (self.buffer_id(index), parameter))
+    }
+
     /// Returns the launch builtins this kernel signature admits.
     #[must_use]
     pub fn admitted_builtins(&self) -> &[Builtin] {

@@ -26,9 +26,9 @@
 //! cargo run -p tiler-prototype-compile -- --out <path>
 //! ```
 //!
-//! It writes eight files: one envelope and one `.proof` sidecar for each of
-//! four members, named `<path>.<class>.<role>`. The four are two reduction
-//! classes — a singleton and a nontrivial reduction — times
+//! It writes twelve files: one envelope and one `.proof` sidecar for each of
+//! six members, named `<path>.<class>.<role>`. The six are three reduction
+//! classes — an empty domain, a singleton, and a nontrivial reduction — times
 //! two plan roles, the portfolio's selected (fused) plan and the retained
 //! materialized alternative that dispatches two stages through one
 //! intermediate. Each sidecar carries the artifact identity, the operands, and
@@ -123,16 +123,14 @@ const COLUMNS: u64 = 3;
 /// reduction over one contributor reduces in every order, so it cannot observe
 /// an ordering defect, and an empty domain is where a reduction's identity
 /// element is either right or silently invented.
-/// **The empty domain is absent, and that is a measured gap rather than a
-/// choice.** `emit_translation_unit` refuses both of its plans with
-/// `MalformedKernel { rule: "unreferenced-buffer-parameter" }`: the Metal
-/// emitter derives its binding table from what the kernel body reads, a
-/// reduction over zero contributors reads its input buffer never, and dropping
-/// the declared parameter would change the ABI, so emission fails closed. The
-/// refusal is correct at that boundary; what is missing is an emitter that can
-/// express the empty case at all. `emit-an-empty-domain-reduction-to-metal`
-/// owns it, and this array grows a third entry when it lands.
-const REDUCTION_CLASSES: [(&str, u64); 2] = [("singleton", 1), ("nontrivial", COLUMNS)];
+/// The empty domain leads, because it is the boundary the other two cannot
+/// speak for: it is where a reduction's identity element is either right or
+/// silently invented, and its kernel reads its input buffer never.
+const REDUCTION_CLASSES: [(&str, u64); 3] = [
+    ("empty-domain", 0),
+    ("singleton", 1),
+    ("nontrivial", COLUMNS),
+];
 
 /// The plan roles the proof publishes for each reduction class.
 ///
@@ -881,6 +879,8 @@ mod tests {
         assert_eq!(
             names,
             [
+                "/tmp/a.tiler.empty-domain.selected",
+                "/tmp/a.tiler.empty-domain.materialized",
                 "/tmp/a.tiler.singleton.selected",
                 "/tmp/a.tiler.singleton.materialized",
                 "/tmp/a.tiler.nontrivial.selected",
@@ -891,7 +891,7 @@ mod tests {
             super::proof_sidecar(std::path::Path::new(&names[0]))
                 .display()
                 .to_string(),
-            "/tmp/a.tiler.singleton.selected.proof",
+            "/tmp/a.tiler.empty-domain.selected.proof",
         );
     }
 

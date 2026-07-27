@@ -349,12 +349,14 @@ fn artifact_path() -> Result<PathBuf, ProofError> {
 /// for the same reason: a producer that writes one set of names while the runner
 /// opens another leaves a green gate over a slice that cannot run.
 ///
-/// **The empty domain is absent deliberately.** The Metal emitter refuses a
-/// reduction over zero contributors — its binding table is derived from what the
-/// body reads, and an empty reduction reads its input never — so no such member
-/// is published. `emit-an-empty-domain-reduction-to-metal` owns closing that,
-/// and this array grows a third entry with the producer's when it lands.
-const REDUCTION_CLASSES: [(&str, u64); 2] = [("singleton", 1), ("nontrivial", COLUMNS)];
+/// The empty domain leads, because it is the boundary the other two cannot
+/// speak for: a reduction over zero contributors reads its input buffer never,
+/// and its result is a reduction's identity element rather than a sum.
+const REDUCTION_CLASSES: [(&str, u64); 3] = [
+    ("empty-domain", 0),
+    ("singleton", 1),
+    ("nontrivial", COLUMNS),
+];
 
 /// The plan roles the producer publishes for each reduction class.
 const PLAN_ROLES: [&str; 2] = ["selected", "materialized"];
@@ -1000,14 +1002,18 @@ fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<Vec<PlacedSlot>>, ProofEr
     let mut plan = Vec::with_capacity(preflight.entries().len());
     for (position, routed) in preflight.entries().iter().enumerate() {
         let launch = routed.launch();
-        if launch.grid_threads() == 0 {
-            // The artifact states whether an empty launch is skipped or encoded,
-            // so the answer is read rather than assumed. Either way this proof
-            // has no output to compare and says so instead of reporting
-            // agreement on whatever the output buffer happened to hold.
+        // An entry covering no threads is legitimate rather than exceptional: a
+        // reduction over an empty domain maps zero elements before reducing them
+        // to its identity element, so its first stage has nothing to run and its
+        // second still produces every output. The artifact *states* which of the
+        // two an empty launch is, so the answer is read rather than assumed, and
+        // a route that demands a zero-thread dispatch be encoded is refused —
+        // `dispatch_threads` has no meaning at zero and inventing one thread
+        // would run a body the plan did not ask for.
+        if launch.grid_threads() == 0 && !launch.zero_work_skips_dispatch() {
             return Err(ProofError::EmptyLaunch {
                 entry: position,
-                skipped: launch.zero_work_skips_dispatch(),
+                skipped: false,
             });
         }
 
@@ -1298,6 +1304,12 @@ struct PreparedEntry {
     placements: Vec<(u32, Buffer)>,
     grid_threads: u64,
     threads_per_workgroup: u64,
+    /// This entry covers no threads and the artifact says to skip its dispatch.
+    ///
+    /// Its buffers are still allocated and still retained: an empty producing
+    /// stage shares its intermediate with the consumer that follows, and the
+    /// consumer must bind an allocation rather than nothing.
+    skipped: bool,
 }
 
 /// One route this device has proved it can carry out, with everything it needs.
@@ -1453,6 +1465,12 @@ fn device_preflight(
             placements,
             grid_threads: launch.grid_threads(),
             threads_per_workgroup: launch.threads_per_workgroup(),
+            // The pipeline above was still built for a skipped entry, and
+            // deliberately: a route is only ready if every object it names
+            // loads, and an entry that runs no threads on this input may run
+            // some on the next one. Skipping preparation as well would make
+            // readiness depend on the operands.
+            skipped: launch.grid_threads() == 0,
         });
     }
 
@@ -1722,6 +1740,12 @@ fn dispatch_prepared(
             // with an implicit barrier between them, so a separate encoder per
             // entry needs no assumption about dispatch type at all.
             for entry in &prepared.entries {
+                // Skipped entries are not encoded at all. Encoding an empty
+                // encoder would be harmless and pointless; encoding a
+                // zero-thread dispatch is what `plan_route` already refused.
+                if entry.skipped {
+                    continue;
+                }
                 let encoder = command_buffer.new_compute_command_encoder();
                 encoder.set_compute_pipeline_state(&entry.pipeline);
                 for (transport, storage) in &entry.placements {
@@ -2799,6 +2823,8 @@ mod tests {
         assert_eq!(
             names,
             [
+                "/tmp/a.tiler.empty-domain.selected",
+                "/tmp/a.tiler.empty-domain.materialized",
                 "/tmp/a.tiler.singleton.selected",
                 "/tmp/a.tiler.singleton.materialized",
                 "/tmp/a.tiler.nontrivial.selected",

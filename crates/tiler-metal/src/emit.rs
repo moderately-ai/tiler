@@ -387,6 +387,32 @@ fn emit_entry_point(
     );
     numerical.extend(realization_requirements(kernel.numerical()));
 
+    // The signature is the kernel's declaration, in declaration order, and the
+    // argument-table index is the declaration ordinal. Two things follow, and
+    // both were previously wrong.
+    //
+    // A parameter the body never references still occupies its position. That
+    // is what a reduction over an empty domain needs: it writes its identity
+    // element for every output element and reads its input never, so under a
+    // table derived from *use* it had no position at all and emission refused
+    // it. Declaring it and not reading it is legal MSL and leaves the ABI
+    // exactly what the artifact's own binding table says it is.
+    //
+    // And the ordinals no longer depend on the order the body happens to touch
+    // its buffers in. Under first-use order a body that stored before it loaded
+    // produced a table whose positions disagreed with the declaration the
+    // artifact records, and nothing compared the two.
+    let mut buffers = BTreeMap::new();
+    let mut bindings = Vec::with_capacity(declared);
+    for (ordinal, (handle, parameter)) in kernel.declared_buffers().enumerate() {
+        let index = u32::try_from(ordinal).map_err(|_| MetalEmitError::BufferBindingLimit {
+            required: declared,
+            limit: target.buffer_binding_limit,
+        })?;
+        buffers.insert(handle, index);
+        bindings.push(MetalBufferBinding::new(index, parameter));
+    }
+
     let mut emitter = KernelEmitter {
         kernel,
         target,
@@ -396,8 +422,8 @@ fn emit_entry_point(
         unstated,
         names: BTreeMap::new(),
         next: 0,
-        buffers: BTreeMap::new(),
-        bindings: Vec::new(),
+        buffers,
+        bindings,
         out: String::new(),
         indent: 1,
     };
@@ -407,14 +433,6 @@ fn emit_entry_point(
         out: body,
         ..
     } = emitter;
-    // The binding table is derived from body use, so a declared parameter the
-    // body never touches has no argument-table position to occupy. Emitting a
-    // signature that silently drops it would change the ABI.
-    if bindings.len() != declared {
-        return Err(MetalEmitError::MalformedKernel {
-            rule: "unreferenced-buffer-parameter",
-        });
-    }
 
     let mut text = String::new();
     emit!(text, "// Entry point {symbol}\n");
@@ -715,35 +733,25 @@ impl KernelEmitter<'_> {
         msl_type(self.kernel.value_type(value)?)
     }
 
-    /// Returns the argument-table index bound to one verified buffer handle.
+    /// Returns the argument-table index of one verified buffer handle.
     ///
-    /// The structured kernel IR does not expose the signature ordinal of a
-    /// [`VerifiedBufferId`], so this backend assigns argument-table indices in
-    /// first-use order and reports exactly the table it emitted. Every emitted
-    /// subscript and the reported binding table therefore agree by
-    /// construction, and a declared parameter the body never references is
-    /// rejected in [`emit_entry_point`] rather than dropped.
+    /// A lookup rather than an assignment: [`emit_entry_point`] built the table
+    /// from [`VerifiedKernel::declared_buffers`] before the body was walked, so
+    /// every declared handle already has its ordinal and emitting a subscript
+    /// cannot invent one. Every emitted subscript and the reported binding table
+    /// agree because they are the same table.
+    ///
+    /// `self.kernel.buffer` still runs, so a handle belonging to another kernel
+    /// or naming no retained parameter is refused by the IR's own check rather
+    /// than silently missing from the map.
     fn buffer_binding(&mut self, buffer: VerifiedBufferId) -> Result<u32, MetalEmitError> {
-        if let Some(index) = self.buffers.get(&buffer) {
-            return Ok(*index);
-        }
-        let parameter = self.kernel.buffer(buffer)?;
-        let assigned = self.bindings.len();
-        let limit = self.target.buffer_binding_limit;
-        let index = u32::try_from(assigned).map_err(|_| MetalEmitError::BufferBindingLimit {
-            required: assigned.saturating_add(1),
-            limit,
-        })?;
-        if index >= limit {
-            return Err(MetalEmitError::BufferBindingLimit {
-                required: assigned.saturating_add(1),
-                limit,
-            });
-        }
-        self.buffers.insert(buffer, index);
-        self.bindings
-            .push(MetalBufferBinding::new(index, parameter));
-        Ok(index)
+        self.kernel.buffer(buffer)?;
+        self.buffers
+            .get(&buffer)
+            .copied()
+            .ok_or(MetalEmitError::MalformedKernel {
+                rule: "unresolvable-buffer-parameter",
+            })
     }
 
     /// Emits every operation of one structured block in order.
