@@ -17,6 +17,8 @@
 //! reject it anyway, with the named cause. The byte-level cases separately
 //! prove that an incompetent corruption cannot slip through either.
 
+use std::time::Instant;
+
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
 use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
@@ -1989,5 +1991,72 @@ fn a_changed_payload_compatibility_contract_changes_the_artifact() {
     assert_eq!(
         decode(&encoded(&elsewhere)).unwrap(),
         envelope_of(&elsewhere)
+    );
+}
+
+// -------------------------------------------------------------------------
+// Hot-path measurements
+// -------------------------------------------------------------------------
+//
+// These print and assert nothing about time. A timing assertion fails on a
+// loaded machine and passes on a fast one, which is a flake rather than a
+// guard; what they are for is a reproducible number to read before and after a
+// change. Reproduce with:
+//
+//   cargo nextest run --release -p tiler-artifact -E 'test(hot_path)' --no-capture
+//
+// Release matters: workspace crates build at `opt-level = 0` by default and the
+// codec measures ~5x slower in dev.
+
+/// Reports decode cost, and how much of it is the canonicity re-encode.
+///
+/// **The share is the finding.** `decode` re-encodes the whole envelope to
+/// prove one artifact has one byte spelling, and that backstop is the only
+/// thing enforcing it: a non-canonical spelling of the same content derives the
+/// same identity, so neither the identity check nor the digests can catch it.
+/// Its cost is therefore worth knowing exactly rather than estimating, and
+/// `decide-whether-the-canonicity-re-encode-is-redundant` is where keeping it
+/// is settled on evidence rather than on argument.
+#[test]
+fn hot_path_decode_and_reencode_share() {
+    const REPEATS: u32 = 50;
+    let bytes = encoded(&default_artifact());
+
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        let _ = decode(&bytes).expect("the fixture decodes");
+    }
+    let full = start.elapsed() / REPEATS;
+
+    let envelope = decode(&bytes).expect("the fixture decodes");
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        let _ = super::encode::encode(&envelope).expect("the envelope re-encodes");
+    }
+    let reencode = start.elapsed() / REPEATS;
+
+    println!("MEASURE envelope bytes   : {}", bytes.len());
+    println!("MEASURE decode           : {full:?}");
+    println!("MEASURE re-encode alone  : {reencode:?}");
+    println!(
+        "MEASURE re-encode share  : {:.1}%",
+        (reencode.as_secs_f64() / full.as_secs_f64()) * 100.0
+    );
+}
+
+/// Reports how large a canonical identity is relative to the bytes it names.
+///
+/// Identities are canonical byte strings rather than digests, and the ABI
+/// expression encoding embeds each operand's whole key, so a node's key carries
+/// its entire subtree. `encode-abi-expression-identity-in-linear-space` is the
+/// ticket; this is the number it moves.
+#[test]
+fn hot_path_identity_size() {
+    let artifact = default_artifact();
+    let bytes = encoded(&artifact);
+    println!("MEASURE envelope bytes   : {}", bytes.len());
+    println!(
+        "MEASURE artifact identity: {} bytes",
+        artifact.canonical_identity().as_bytes().len()
     );
 }

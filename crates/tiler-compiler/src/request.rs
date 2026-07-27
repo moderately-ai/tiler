@@ -1068,6 +1068,8 @@ fn request_subject(
     target_profile: PrototypeTargetProfile,
     capabilities: &CompilerCapabilitySnapshot,
 ) -> VerifiedRequestSubject {
+    #[cfg(test)]
+    crate::workcount::REQUEST_SUBJECT_REBUILDS.record();
     let normalized = normalized.serial_sum();
     VerifiedRequestSubject {
         normalized: NormalizedSerialSumSubject {

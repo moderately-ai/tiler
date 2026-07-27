@@ -13,6 +13,8 @@ mod fusion;
 mod fusion_legality;
 mod governed;
 mod honourability;
+#[cfg(test)]
+mod hot_path;
 pub mod legality;
 mod lowering;
 mod normalize;
@@ -23,6 +25,8 @@ mod region;
 mod request;
 mod selection;
 pub mod session;
+#[cfg(test)]
+mod workcount;
 
 // Keep the bounded compiler path in the ordinary library target while its
 // reviewed public facade is introduced by the capability and conformance

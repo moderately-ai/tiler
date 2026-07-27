@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tiler_artifact::program::{ArtifactCodecFailure, DIGEST_BYTES, DigestAlgorithm};
 
@@ -2086,5 +2086,72 @@ fn a_retired_namespace_is_invisible_to_a_reader() {
         cache.account().expect("the cache accounts").entry_count(),
         0,
         "a scan does not walk a retired tree either",
+    );
+}
+
+// -------------------------------------------------------------------------
+// Hot-path measurement
+// -------------------------------------------------------------------------
+//
+// Prints; asserts nothing about time. Reproduce with:
+//
+//   cargo nextest run --release -p tiler-cache -E 'test(hot_path)' --no-capture
+
+/// Reports the cost of a lock-free cache hit.
+///
+/// **A hit is not a cheap path, and that is by design rather than by accident.**
+/// ADR 0050 requires a reader to validate bounded framing, the embedded key,
+/// schemas, the manifest, section lengths and digests, and required meanings on
+/// *every* hit, precisely so a corrupt or stale entry cannot be served. So this
+/// number is mostly the price of that rule.
+///
+/// What it is worth watching for is the part that is not: the bundle is read
+/// into an owned buffer and then `to_vec()`d again to split it into subject and
+/// envelope. `stop-copying-bytes-the-process-already-owns` owns that; this is
+/// the number it moves.
+///
+/// **This is the protocol cost alone, and must not be read as the cost of a
+/// real hit.** These fixtures store a short byte string under `any_payload`,
+/// which accepts anything, so no artifact decode runs. A production hit pins
+/// the validator to `decode_artifact`, which adds the decode measured by
+/// `hot_path_decode_and_reencode_share` in `tiler-artifact` — hundreds of
+/// microseconds against the tens below. The two numbers are complementary and
+/// neither is the whole answer on its own.
+#[test]
+fn hot_path_cache_hit() {
+    const REPEATS: u32 = 20;
+    let scratch = Scratch::new("hot-path-hit");
+    let cache = cache(&scratch);
+    let key = publish(
+        &cache,
+        b"subject",
+        b"envelope-bytes-for-the-hot-path-measurement",
+    );
+
+    // Warm the page cache so the number is the protocol rather than the disk.
+    let _ = cache
+        .read_entry(&key, &any_payload)
+        .expect("the entry is present");
+
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        let _ = cache
+            .read_entry(&key, &any_payload)
+            .expect("the entry is present");
+    }
+    println!(
+        "MEASURE cache hit (read_entry): {:?}",
+        start.elapsed() / REPEATS
+    );
+
+    let start = Instant::now();
+    for _ in 0..REPEATS {
+        let _ = cache
+            .resolve(b"subject", || Ok::<_, String>(Vec::new()), &any_payload)
+            .expect("the entry resolves");
+    }
+    println!(
+        "MEASURE cache hit (resolve)   : {:?}",
+        start.elapsed() / REPEATS
     );
 }
