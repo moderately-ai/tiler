@@ -1,7 +1,7 @@
 ---
 id: expose-the-governed-fact-field-vocabulary
 title: Expose the governed fact-field vocabulary that facts() readers need
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [declare-governed-scalar-numerical-facts]
@@ -31,3 +31,21 @@ different records merely because their storage shape matches.
 **Approved: promote.** ADR 0075 reserves public-surface promotions to the owner; this one is granted.
 
 `facts()` is publicly readable while its field IDs are private at both layers, so a reader can obtain facts it cannot interpret. Publishing the vocabulary makes it a durable identity surface: state that renumbering is thereafter a breaking change, so nobody treats the IDs as internal later.
+
+## Outcome (2026-07-27)
+
+Both layers published together, which is what the ticket required — exposing one would have asserted that its record is the interpretable one, a distinction nothing decided.
+
+**Semantic layer** (`tiler_ir::semantic`), eleven constants, each naming a field of *one* record: `F32_TYPE_FACT_CLASS`/`_WIDTH_BITS`; `CONSTANT_F32_FACT_PAYLOAD_RULE`; `ARITHMETIC_F32_FACT_ROUNDING`/`_CANONICAL_NAN_BITS`/`_CONTRACTION_PERMITTED`; `SERIAL_SUM_F32_FACT_FOLD_ORDER`/`_ACCUMULATION`/`_CANONICAL_NAN_BITS`; `CONFORMANCE_FACT_IDENTITY`/`_VERSION`. Every construction site in `registry.rs` now uses them instead of a bare `AttributeFieldId::new(N)`, so a name and the record it describes cannot drift apart.
+
+**Scalar layer** (`tiler_ir::index`): the four `SCALAR_FACT_*` constants and the two profile strings a consumer must compare against — `CANONICAL_ARITHMETIC_NAN_PROFILE` and `DECLARED_PAYLOAD_PRESERVED` — promoted from private. They already carried the presence and absence rules in their documentation; publishing them makes those rules readable by the consumer they were written for.
+
+**Record-local numbering is stated at both sites and tested.** The pair that proves it is contraction: field **3** on the semantic arithmetic record and field **4** on the scalar one. Reading either number against the other record answers a different question, and `the_published_scalar_fact_fields_read_the_governed_records` asserts the two constants differ so a later "cleanup" that normalized them would fail rather than silently repoint every conforming reader.
+
+**Renumbering is now a breaking identity change**, stated in both vocabulary blocks, per Tom's decision that publishing makes this a durable identity surface.
+
+**One field's meaning was derived rather than read.** The semantic arithmetic record's field 3 is a bare `boolean(false)` with no name at its construction site. It is contraction: the normative references for the standard multiply and add say "separate binary32 multiply" and "separate binary32 addition", and the scalar layer mirrors the same concept as an explicit contraction fact. The constant is named accordingly and the derivation is recorded on it.
+
+### Measurement boundary
+
+The test reads the **scalar** records through `FrozenScalarRegistry::definition`. It does not read the semantic ones, because `FrozenSemanticRegistry` exposes no accessor returning a registered `OperationDefinition` or value-type definition — there is no `value_type()` or `operation()` on it. The semantic constants are therefore proven correct at their *construction* sites, where they are now used, and not at a read site, because this crate offers no public read path to exercise. **That is worth naming rather than glossing:** this ticket's premise is that "`facts()` is publicly readable while its field IDs are private", and for the semantic layer the readable half appears to be reachable only to a provider holding a definition it built. Whether a consumer can obtain a governed semantic definition at all is a separate question this ticket did not settle.

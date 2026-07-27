@@ -1893,10 +1893,13 @@ impl SemanticRegistryProvider for StandardSemantics {
         let facts = TypeDefinitionFacts::new(
             CanonicalValue::record([
                 CanonicalField::new(
-                    AttributeFieldId::new(1),
+                    super::operation::F32_TYPE_FACT_CLASS,
                     CanonicalValue::utf8("ieee-binary").expect("the governed F32 class is bounded"),
                 ),
-                CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::unsigned_u32(32)),
+                CanonicalField::new(
+                    super::operation::F32_TYPE_FACT_WIDTH_BITS,
+                    CanonicalValue::unsigned_u32(32),
+                ),
             ])
             .expect("the governed F32 facts are canonical"),
         );
@@ -1923,7 +1926,7 @@ impl SemanticRegistryProvider for StandardSemantics {
             NormativeDefinitionRef::new("tiler::constant-f32@1; exact IEEE-754 payload")?,
             OperationDefinitionFacts::new(
                 CanonicalValue::record([CanonicalField::new(
-                    AttributeFieldId::new(1),
+                    super::operation::CONSTANT_F32_FACT_PAYLOAD_RULE,
                     CanonicalValue::utf8("exact-binary32-bits")
                         .expect("the governed constant fact is bounded"),
                 )])
@@ -1967,17 +1970,17 @@ impl SemanticRegistryProvider for StandardSemantics {
             OperationDefinitionFacts::new(
                 CanonicalValue::record([
                     CanonicalField::new(
-                        AttributeFieldId::new(1),
+                        super::operation::SERIAL_SUM_F32_FACT_FOLD_ORDER,
                         CanonicalValue::utf8("strict-left-fold")
                             .expect("the governed reduction fact is bounded"),
                     ),
                     CanonicalField::new(
-                        AttributeFieldId::new(2),
+                        super::operation::SERIAL_SUM_F32_FACT_ACCUMULATION,
                         CanonicalValue::utf8("binary32-each-step")
                             .expect("the governed accumulation fact is bounded"),
                     ),
                     CanonicalField::new(
-                        AttributeFieldId::new(3),
+                        super::operation::SERIAL_SUM_F32_FACT_CANONICAL_NAN_BITS,
                         canonical_f32_bits(super::operation::CANONICAL_F32_ARITHMETIC_NAN_BITS),
                     ),
                 ])
@@ -2007,11 +2010,14 @@ fn standard_conformance(name: &str) -> OperationConformance {
     OperationConformance::new(
         CanonicalValue::record([
             CanonicalField::new(
-                AttributeFieldId::new(1),
+                super::operation::CONFORMANCE_FACT_IDENTITY,
                 CanonicalValue::utf8_owned(format!("tiler.conformance.{name}"))
                     .expect("governed conformance identity is bounded"),
             ),
-            CanonicalField::new(AttributeFieldId::new(2), CanonicalValue::unsigned_u32(1)),
+            CanonicalField::new(
+                super::operation::CONFORMANCE_FACT_VERSION,
+                CanonicalValue::unsigned_u32(1),
+            ),
         ])
         .expect("governed conformance identity is canonical"),
     )
@@ -2020,15 +2026,18 @@ fn standard_conformance(name: &str) -> OperationConformance {
 fn arithmetic_f32_facts() -> CanonicalValue {
     CanonicalValue::record([
         CanonicalField::new(
-            AttributeFieldId::new(1),
+            super::operation::ARITHMETIC_F32_FACT_ROUNDING,
             CanonicalValue::utf8("binary32-round-to-nearest-ties-even")
                 .expect("the governed rounding fact is bounded"),
         ),
         CanonicalField::new(
-            AttributeFieldId::new(2),
+            super::operation::ARITHMETIC_F32_FACT_CANONICAL_NAN_BITS,
             canonical_f32_bits(super::operation::CANONICAL_F32_ARITHMETIC_NAN_BITS),
         ),
-        CanonicalField::new(AttributeFieldId::new(3), CanonicalValue::boolean(false)),
+        CanonicalField::new(
+            super::operation::ARITHMETIC_F32_FACT_CONTRACTION_PERMITTED,
+            CanonicalValue::boolean(false),
+        ),
     ])
     .expect("the governed f32 arithmetic facts are canonical")
 }

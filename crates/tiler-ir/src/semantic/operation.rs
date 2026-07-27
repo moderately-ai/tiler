@@ -19,6 +19,63 @@ pub const CANONICAL_F32_ARITHMETIC_NAN_BITS: u32 = 0x7fc0_0000;
 pub const F32_CONSTANT_BITS_ATTRIBUTE: AttributeFieldId = AttributeFieldId::new(1);
 /// Stable field ID carrying canonical axes on the standard strict Sum.
 pub const REDUCTION_AXES_ATTRIBUTE: AttributeFieldId = AttributeFieldId::new(1);
+/// # The governed fact-field vocabulary
+///
+/// `facts()` is publicly readable on every governed definition, and these are
+/// the identifiers that make what it returns interpretable. Before they were
+/// published a reader could obtain a fact record and had no stated way to read
+/// it — it had to hardcode a bare integer against a numbering no contract
+/// stated, or ignore the record and rely on prose in the normative reference.
+/// The first breaks silently the moment a field is renumbered; the second is
+/// the situation these facts were declared to end.
+///
+/// **Field IDs are record-local.** Each constant below names a field of *one*
+/// record, and equal integers in different records are unrelated: field 1 of
+/// the `f32` type record names a class, field 1 of the arithmetic operation
+/// record names a rounding rule, and nothing normalizes them merely because
+/// both are stored as field 1. A shared vocabulary across records would have to
+/// be introduced explicitly and is not what these are.
+///
+/// **Renumbering a published ID is a breaking identity change.** These reach
+/// out-of-crate reference capabilities and index-access lowering providers,
+/// which are exactly the consumers the facts exist for, so a renumbering
+/// silently changes what a conforming provider reads.
+///
+/// Presence and absence both carry meaning, and only where stated. A field
+/// documented as conditional is absent when its condition does not hold rather
+/// than present with a value the operation never produces; absence of an
+/// unconditional field is a malformed record rather than a default.
+/// Field naming the `f32` type's representation class.
+pub const F32_TYPE_FACT_CLASS: AttributeFieldId = AttributeFieldId::new(1);
+/// Field naming the `f32` type's storage width in bits.
+pub const F32_TYPE_FACT_WIDTH_BITS: AttributeFieldId = AttributeFieldId::new(2);
+
+/// Field naming how the standard constant operation treats its declared payload.
+pub const CONSTANT_F32_FACT_PAYLOAD_RULE: AttributeFieldId = AttributeFieldId::new(1);
+
+/// Field naming the rounding rule the standard `f32` arithmetic applies.
+pub const ARITHMETIC_F32_FACT_ROUNDING: AttributeFieldId = AttributeFieldId::new(1);
+/// Field carrying the canonical arithmetic-NaN payload the arithmetic installs.
+pub const ARITHMETIC_F32_FACT_CANONICAL_NAN_BITS: AttributeFieldId = AttributeFieldId::new(2);
+/// Field stating whether the arithmetic may be contracted with an adjacent one.
+///
+/// `false` on the standard multiply and add, whose normative references name
+/// them "separate" — the semantic layer's counterpart to the scalar layer's own
+/// contraction fact, which is a different record and numbers it differently.
+pub const ARITHMETIC_F32_FACT_CONTRACTION_PERMITTED: AttributeFieldId = AttributeFieldId::new(3);
+
+/// Field naming the strict serial Sum's contributor fold order.
+pub const SERIAL_SUM_F32_FACT_FOLD_ORDER: AttributeFieldId = AttributeFieldId::new(1);
+/// Field naming the width each accumulation step is performed at.
+pub const SERIAL_SUM_F32_FACT_ACCUMULATION: AttributeFieldId = AttributeFieldId::new(2);
+/// Field carrying the canonical arithmetic-NaN payload the reduction installs.
+pub const SERIAL_SUM_F32_FACT_CANONICAL_NAN_BITS: AttributeFieldId = AttributeFieldId::new(3);
+
+/// Field carrying a governed conformance record's stable identity.
+pub const CONFORMANCE_FACT_IDENTITY: AttributeFieldId = AttributeFieldId::new(1);
+/// Field carrying a governed conformance record's version.
+pub const CONFORMANCE_FACT_VERSION: AttributeFieldId = AttributeFieldId::new(2);
+
 /// Maximum declared fields in one operation-attribute schema.
 pub const MAX_OPERATION_ATTRIBUTES: usize = 1_024;
 /// Maximum aggregate canonical default-value bytes in one operation schema.

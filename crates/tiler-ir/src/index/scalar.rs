@@ -852,11 +852,26 @@ struct RegisteredScalarOperation {
     provider: ProviderIdentity,
 }
 
+/// # The governed scalar fact-field vocabulary
+///
+/// Published for the same reason the semantic layer's is: `facts()` is
+/// publicly readable and an out-of-crate reference capability or index-access
+/// lowering provider is the consumer these facts were declared for. Without
+/// these it must hardcode a bare integer against a numbering no contract
+/// states.
+///
+/// **These identifiers are local to the scalar fact record.** They are not the
+/// semantic layer's, and an equal integer there names a different field —
+/// scalar field 4 is contraction, while the semantic arithmetic record spells
+/// contraction as its field 3. Nothing normalizes them, and the storage shape
+/// matching is not a reason to.
+///
+/// **Renumbering a published ID is a breaking identity change.**
 /// Rounding rule a governed scalar operation applies to its result.
 ///
 /// Its meaning is the same on every governed scalar definition, so a consumer
 /// that reads this field on one operation reads it the same way on all of them.
-const SCALAR_FACT_ROUNDING: AttributeFieldId = AttributeFieldId::new(1);
+pub const SCALAR_FACT_ROUNDING: AttributeFieldId = AttributeFieldId::new(1);
 
 /// Rule deciding which NaN payload a governed scalar operation's result carries.
 ///
@@ -864,14 +879,14 @@ const SCALAR_FACT_ROUNDING: AttributeFieldId = AttributeFieldId::new(1);
 /// makes a *preserving* operation distinguishable from one whose payload
 /// behaviour was merely never written down: absence of
 /// [`SCALAR_FACT_CANONICAL_NAN_BITS`] never carries meaning on its own.
-const SCALAR_FACT_NAN_RESULT_RULE: AttributeFieldId = AttributeFieldId::new(2);
+pub const SCALAR_FACT_NAN_RESULT_RULE: AttributeFieldId = AttributeFieldId::new(2);
 
 /// Exact canonical arithmetic-NaN payload the operation installs, when it does.
 ///
 /// Present exactly when [`SCALAR_FACT_NAN_RESULT_RULE`] names the canonical
 /// arithmetic-NaN profile; an operation that installs no payload omits it
 /// rather than declaring one it never produces.
-const SCALAR_FACT_CANONICAL_NAN_BITS: AttributeFieldId = AttributeFieldId::new(3);
+pub const SCALAR_FACT_CANONICAL_NAN_BITS: AttributeFieldId = AttributeFieldId::new(3);
 
 /// Whether the operation may be contracted with an adjacent arithmetic scalar.
 ///
@@ -879,20 +894,20 @@ const SCALAR_FACT_CANONICAL_NAN_BITS: AttributeFieldId = AttributeFieldId::new(3
 /// a pattern of arithmetic operations; a constant or a conversion is not a
 /// participant, and asserting `false` there would answer a question the
 /// numerical contract does not pose.
-const SCALAR_FACT_CONTRACTION_PERMITTED: AttributeFieldId = AttributeFieldId::new(4);
+pub const SCALAR_FACT_CONTRACTION_PERMITTED: AttributeFieldId = AttributeFieldId::new(4);
 
 /// Names the versioned NaN profile the governed arithmetic scalars realize.
 ///
 /// This is the exact profile `docs/numerical-semantics.md` names, not a
 /// synonym, so a reader can trace the fact to the normative clause that decides
 /// it.
-const CANONICAL_ARITHMETIC_NAN_PROFILE: &str = "tiler::canonical-arithmetic-nan-f32@1";
+pub const CANONICAL_ARITHMETIC_NAN_PROFILE: &str = "tiler::canonical-arithmetic-nan-f32@1";
 
 /// Names the opposite rule: the declared payload survives verbatim.
 ///
 /// `docs/numerical-semantics.md` states it as "Constants retain their declared
 /// bit pattern until an operation's semantics produce a new value."
-const DECLARED_PAYLOAD_PRESERVED: &str = "declared-payload-preserved";
+pub const DECLARED_PAYLOAD_PRESERVED: &str = "declared-payload-preserved";
 
 /// Facts of the governed `f32` constant: an exact payload, canonicalized never.
 fn constant_f32_facts() -> Result<CanonicalValue, ScalarRegistryError> {
@@ -2070,7 +2085,7 @@ mod governed_fact_tests {
             let definition = registry
                 .definition(&key)
                 .expect("the definition is governed");
-            let rule = field(definition.facts(), SCALAR_FACT_NAN_RESULT_RULE)
+            let rule = field(definition.facts(), super::SCALAR_FACT_NAN_RESULT_RULE)
                 .unwrap_or_else(|| panic!("{} states no NaN-result rule", key.name()));
             assert!(
                 matches!(rule, CanonicalValueView::Utf8(_)),
@@ -2086,6 +2101,58 @@ mod governed_fact_tests {
                 key.name()
             );
         }
+    }
+
+    /// The published scalar fact-field vocabulary reads the records it names.
+    ///
+    /// **Without this the constants are an assertion about the records rather
+    /// than a fact about them.** An out-of-crate reference capability reads
+    /// facts through exactly these identifiers, so a constant naming the wrong
+    /// field would compile, publish, and mislead every consumer that trusted it.
+    #[test]
+    fn the_published_scalar_fact_fields_read_the_governed_records() {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        for key in [multiply_f32_scalar_op(), add_f32_scalar_op()] {
+            let definition = registry
+                .definition(&key)
+                .expect("the governed scalar is registered");
+            assert!(
+                field(definition.facts(), super::SCALAR_FACT_ROUNDING).is_some(),
+                "{} states its rounding rule in the published field",
+                key.name(),
+            );
+            assert!(
+                field(definition.facts(), super::SCALAR_FACT_NAN_RESULT_RULE).is_some(),
+                "{} states its NaN-result rule in the published field",
+                key.name(),
+            );
+            assert!(
+                field(definition.facts(), super::SCALAR_FACT_CONTRACTION_PERMITTED).is_some(),
+                "an arithmetic scalar states contraction in the published field",
+            );
+        }
+
+        // Absence carries meaning only where stated. Contraction is defined
+        // over a pattern of arithmetic operations, so a constant is not a
+        // participant and omits the field rather than asserting `false` — which
+        // would answer a question the numerical contract does not pose.
+        let constant = registry
+            .definition(&constant_f32_scalar_op())
+            .expect("the governed constant scalar is registered");
+        assert!(
+            field(constant.facts(), super::SCALAR_FACT_CONTRACTION_PERMITTED).is_none(),
+            "a constant is not a contraction participant and must omit the field",
+        );
+
+        // Record-local numbering, and this is the pair that proves it: the
+        // semantic arithmetic record spells contraction as its field 3 and this
+        // one as field 4. Reading either number against the other record
+        // answers a different question, which is why nothing normalizes them.
+        assert_ne!(
+            super::SCALAR_FACT_CONTRACTION_PERMITTED,
+            crate::semantic::ARITHMETIC_F32_FACT_CONTRACTION_PERMITTED,
+            "the two layers number the same concept differently, deliberately",
+        );
     }
 
     /// A canonicalizing scalar declares the payload it installs; the preserving
