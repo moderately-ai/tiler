@@ -1,7 +1,7 @@
 ---
 id: remove-the-remaining-duplicate-work-in-the-planner
 title: Remove the remaining duplicate work in the planner
-status: todo
+status: in-progress
 priority: p2
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, compiler]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785179841
 ---
 The Phase 1 remainder, after region formation and the request subject are dealt with. Each is a pure function recomputed; none changes semantics.
 

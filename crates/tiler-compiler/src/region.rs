@@ -1436,14 +1436,24 @@ fn canonical_member_order(
         }
         base.push(bytes);
     }
-    let mut labels: Vec<u64> = base.iter().map(|bytes| digest(bytes)).collect();
+    // Each member's `base` bytes are the same in every round, so they are folded
+    // once here and the round only folds the part that actually changes. The
+    // straightforward spelling — clone the base, append, re-digest the whole
+    // buffer — re-allocated and re-hashed the prefix once per member per round,
+    // which is quadratic in the member count for a value that never moves. A
+    // sampling profile put this function at 10.6% of the compile path's active
+    // self time, above every other function in the crate, with the allocator and
+    // `memmove` traffic it generated on top of that.
+    let base_digests: Vec<u64> = base.iter().map(|bytes| digest(bytes)).collect();
+    let mut labels: Vec<u64> = base_digests.clone();
+    let mut round = Vec::new();
     for _ in 0..ordinals.len() {
         let mut refined = Vec::with_capacity(ordinals.len());
         for (position, member) in ordinals.iter().enumerate() {
-            let mut bytes = base[position].clone();
-            bytes.extend_from_slice(&labels[position].to_be_bytes());
+            round.clear();
+            round.extend_from_slice(&labels[position].to_be_bytes());
             let operation = graph.operation(*member)?;
-            push_len(&mut bytes, operation.operands.len());
+            push_len(&mut round, operation.operands.len());
             for operand in &operation.operands {
                 if let Some(producer) = internal_producer(graph, members, *operand)? {
                     let source =
@@ -1452,15 +1462,15 @@ fn canonical_member_order(
                             .ok_or(RegionError::Structure {
                                 rule: "canonical-order-member",
                             })?;
-                    bytes.push(1);
-                    bytes.extend_from_slice(&labels[*source].to_be_bytes());
-                    bytes.extend_from_slice(&producer.result_position.to_be_bytes());
+                    round.push(1);
+                    round.extend_from_slice(&labels[*source].to_be_bytes());
+                    round.extend_from_slice(&producer.result_position.to_be_bytes());
                 } else {
-                    bytes.push(2);
-                    encode_value_facts(&mut bytes, graph.value(*operand)?);
+                    round.push(2);
+                    encode_value_facts(&mut round, graph.value(*operand)?);
                 }
             }
-            refined.push(digest(&bytes));
+            refined.push(digest_from(base_digests[position], &round));
         }
         if refined == labels {
             break;
@@ -1697,7 +1707,18 @@ fn value_mut(values: &mut [GraphValue], value: u32) -> Result<&mut GraphValue, R
 }
 
 fn digest(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+    digest_from(0xcbf2_9ce4_8422_2325, bytes)
+}
+
+/// Continues an FNV-1a fold over further bytes.
+///
+/// FNV-1a is a left fold over bytes, so `digest_from(digest(prefix), suffix)`
+/// equals `digest(prefix || suffix)` exactly — the state after consuming a
+/// prefix *is* that prefix's digest. That identity is what lets
+/// [`canonical_member_order`] hash each member's fixed prefix once instead of
+/// once per refinement round, without changing a single resulting label.
+fn digest_from(state: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(state, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
