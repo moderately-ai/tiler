@@ -41,7 +41,9 @@ use super::layout::{PathRejection, key_of_entry_path};
 use super::limits::Limits;
 use super::lock::KeyLock;
 use super::preflight::{PreflightReport, PreflightVerdict};
-use super::report::{CacheOperation, EntryRejection, MissReason, QuarantineOutcome};
+use super::report::{
+    CacheOperation, EntryRejection, MissReason, PublicationRefusal, QuarantineOutcome,
+};
 use super::store::{Durability, ExpansionCache, Lookup, ProtocolOutcome, PublishFailure};
 use super::subject::{ComposedSubject, SubjectFacet, SubjectFacets, SubjectRefusal};
 
@@ -2264,4 +2266,150 @@ fn an_unwritable_root_reports_not_run_rather_than_refuted() {
 
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
         .expect("the root permissions are restorable");
+}
+
+/// Makes `path` read-only for the duration of `body`, restoring it after.
+///
+/// Restored through a guard rather than at the end of the closure, so a failed
+/// assertion still leaves the scratch directory removable.
+fn while_read_only<T>(path: &Path, body: impl FnOnce() -> T) -> T {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    struct Restore<'a>(&'a Path);
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(self.0, fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o500))
+        .expect("the directory permissions are settable");
+    let _restore = Restore(path);
+    body()
+}
+
+/// A temporary that cannot be created refuses, and leaves nothing behind.
+///
+/// **Induced through the real `std` call, not a seam.** The ticket's own
+/// preference: a read-only shard makes `File::create_new` fail for the reason a
+/// full or read-only filesystem would, so what is exercised is the same code
+/// path a real failure takes rather than an injected return value.
+///
+/// The classification is asserted, not merely the refusal. A version that
+/// reported this as a corrupt entry or an oversize bundle would still "fail
+/// closed" and would send a caller to do the wrong thing.
+#[test]
+fn a_temporary_that_cannot_be_created_refuses_and_publishes_nothing() {
+    let scratch = Scratch::new("io-create-temporary");
+    let cache = cache(&scratch);
+    // Derived the way `resolve` derives it, from the raw subject bytes rather
+    // than a composed subject: taking the wrong key would make the read-only
+    // shard a different shard and the test would pass by publishing normally.
+    let key = CacheKey::derive_bytes(b"compilation");
+
+    // Create the shard so it exists to be made read-only; a missing shard would
+    // fail at `CreateDirectory` instead, which is a different boundary.
+    let temporaries = cache.layout().temporary_dir(&key);
+    fs::create_dir_all(&temporaries).expect("the temporary shard is creatable");
+
+    let outcome = while_read_only(&temporaries, || {
+        cache.resolve(
+            b"compilation",
+            || Ok::<_, String>(b"program".to_vec()),
+            &any_payload,
+        )
+    })
+    .expect("a refused publication is still a resolved protocol outcome");
+
+    let ProtocolOutcome::Uncached { report, .. } = outcome else {
+        panic!("a temporary that cannot be created must not report a hit");
+    };
+    let Some(PublicationRefusal::Unavailable(unavailable)) = report.publication_refusal() else {
+        panic!(
+            "expected an unavailable namespace, got {:?}",
+            report.publication_refusal()
+        );
+    };
+    assert_eq!(unavailable.operation(), CacheOperation::CreateTemporary);
+
+    // Pre-rename, so no content entry exists and no temporary was left.
+    assert!(
+        !cache.layout().entry_path(&key).exists(),
+        "a refused publication must not leave a content entry",
+    );
+    assert!(
+        fs::read_dir(&temporaries)
+            .expect("the shard is listable once writable again")
+            .next()
+            .is_none(),
+        "a refused publication must not leave a temporary",
+    );
+
+    // The next call recovers normally rather than inheriting the failure.
+    let recovered = cache
+        .resolve(
+            b"compilation",
+            || Ok::<_, String>(b"program".to_vec()),
+            &any_payload,
+        )
+        .expect("the retry resolves");
+    let ProtocolOutcome::Hit { published, .. } = recovered else {
+        panic!("the retry must publish once the shard is writable");
+    };
+    assert!(
+        published,
+        "the retry publishes the entry the refusal did not"
+    );
+}
+
+/// A rename that cannot land refuses, and leaves no half-published entry.
+///
+/// The other side of the publication point: `CreateTemporary` fails before any
+/// bytes are written, while this fails after a complete, validated temporary
+/// exists. Both must leave the same observable state — no entry, no temporary —
+/// which is what makes the rename the single publication instant.
+#[test]
+fn a_rename_that_cannot_land_refuses_and_leaves_no_entry() {
+    let scratch = Scratch::new("io-publish");
+    let cache = cache(&scratch);
+    let key = CacheKey::derive_bytes(b"compilation");
+
+    let entries = cache.layout().entry_path(&key);
+    let shard = entries
+        .parent()
+        .expect("an entry path has a shard")
+        .to_path_buf();
+    fs::create_dir_all(&shard).expect("the entry shard is creatable");
+
+    let outcome = while_read_only(&shard, || {
+        cache.resolve(
+            b"compilation",
+            || Ok::<_, String>(b"program".to_vec()),
+            &any_payload,
+        )
+    })
+    .expect("a refused publication is still a resolved protocol outcome");
+
+    let ProtocolOutcome::Uncached { report, .. } = outcome else {
+        panic!("a rename that cannot land must not report a hit");
+    };
+    let Some(PublicationRefusal::Unavailable(unavailable)) = report.publication_refusal() else {
+        panic!(
+            "expected an unavailable namespace, got {:?}",
+            report.publication_refusal()
+        );
+    };
+    assert_eq!(unavailable.operation(), CacheOperation::Publish);
+
+    assert!(
+        !entries.exists(),
+        "a refused rename must not leave a content entry"
+    );
+    assert!(
+        fs::read_dir(cache.layout().temporary_dir(&key))
+            .expect("the temporary shard is listable")
+            .next()
+            .is_none(),
+        "a refused rename must clean up the temporary it wrote",
+    );
 }
