@@ -21,8 +21,25 @@
 //!   [`input::NumericalRealization`] has no `Default`; the caller must state it.
 //!
 //! The driver fails closed. When the toolchain or SDK cannot be resolved, when a
-//! tool reports failure, or when the linker yields no usable library, it returns
-//! a typed [`diagnostic::DriverError`] and never a partial artifact.
+//! tool reports failure, or when the linker's output does not begin with the
+//! `MTLB` magic, it returns a typed [`diagnostic::DriverError`] and never a
+//! partial artifact.
+//!
+//! # What a success here proves, and what it does not
+//!
+//! **This crate produces offline compilation evidence, not runtime
+//! compatibility evidence.** A returned [`record::CompiledArtifact`] means the
+//! selected toolchain linked a `metallib`-shaped file for the compilation
+//! target the request named. It is not evidence that any device or deployment
+//! target can load or execute that library.
+//!
+//! The distinction is not pedantic: nothing in this crate opens a Metal device,
+//! and the only check applied to the linker's output is that it begins with the
+//! four magic bytes `MTLB`. Whether a given GPU family can run the library is
+//! decided by the declared family and profile checks and by successful runtime
+//! preparation, all of which belong to the runtime contract and none of which
+//! run here. Describing an artifact from this crate as "usable" would merge two
+//! evidence classes that the rest of the workspace keeps apart.
 //!
 //! ```
 //! use tiler_metal_aot::input::{
