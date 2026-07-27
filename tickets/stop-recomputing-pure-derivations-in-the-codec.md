@@ -1,7 +1,7 @@
 ---
 id: stop-recomputing-pure-derivations-in-the-codec
 title: Stop recomputing pure derivations in the artifact codec
-status: in-progress
+status: done
 priority: p1
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, artifact]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785180316
 ---
 Duplicate work inside `decode`, each item a pure function of the same value computed more than once. No semantic change.
 
@@ -58,3 +55,45 @@ Three items from this ticket remain, each independent of the one above:
 Reopening rather than closing would misstate the state: the identity half is done and measured, the rest is untouched.
 
 Gate: `make full` green (982 nextest + 11 doc-tests, rustdoc, release numerical tests, `tkt lint`, shellcheck). Every existing codec test passes unchanged, which is what shows the encoding is byte-identical.
+
+## Outcome, second pass: the fourth fact was the only one that paid
+
+**Decode fell from 494.9 µs to 419.0 µs — 15.3% — on the same 26,126-byte envelope.** The item that produced it is the one this ticket listed under *Facts* and then dropped from its own "not done" list: **every hashed byte was hashed twice.** The other three were measured and skipped, and the numbers are below.
+
+Measurement protocol: minimum of 400 in-process repeats, and the minimum of four such runs reported. Host noise only ever makes a run slower, so the distribution has a hard floor and an unbounded tail; a mean is a report about the machine. Before and after were taken with the *same* harness (`hot_path_decode_stage_budget`), reverting the source between them.
+
+### What landed: the section digests are derived once
+
+`decode` digests every section to compare against its descriptor, and then re-encoded the envelope as its canonicity backstop — which digested the very same `Section` values a second time. Section content is 8,075 of the 26,045 hashed bytes, 31%, and the governed digest is where a decode spends nearly all of its time, so the repetition was 75.4 µs of a 494.9 µs decode.
+
+`read_sections` now returns the digests it derived alongside the sections, and `encode_with_identity` takes them as a required parameter — required rather than optional, because its one production caller already holds them and a future caller should have to pass them deliberately.
+
+**This does not weaken the backstop, and the symmetric change to the manifest digest would.** A section digest is a pure function of the `Section` the envelope holds, so a caller passing the one it derived from that same value supplies nothing the encoder did not already have; a wrong one would make the re-encoded bytes differ from the wire and fail *closed*. The manifest digest is different in kind — it covers the manifest bytes the encoder is rebuilding, and whether those reproduce the wire's is the very question the backstop asks — so it is still derived on every re-encode. That asymmetry is recorded at the site.
+
+### What was measured and skipped
+
+| Item | Measured | Verdict |
+|---|---|---|
+| `expression_keys` 4× per decode | 541 ns per call, **0.1%** of decode | skipped; all four are 0.4% |
+| `decode_metadata` `2 + E` times | 583 ns per call, **0.11%** of decode | skipped; removing two of three is 0.22% |
+| `DecodedExpr::value_type()` | **not on the decode path at all** | skipped |
+
+`decode_metadata` was measured against a carried-payload fixture, since the default fixture carries no payload content and never reaches it. Hoisting it would mean removing the per-entry re-parse whose comment states that the check must not depend on `check_payload_identity` having been reached — trading a stated correctness property for 0.22% is the wrong direction.
+
+`DecodedExpr::value_type()` is a reader accessor on `DecodedArtifact`. `decode` never calls it; the only call sites in the repository are two assertions in this crate's own tests. Its cost is 0% of a decode, and there is no production caller to speed up.
+
+### Where the remaining time actually goes
+
+The profile, not the source, answers this, and it names a function neither this ticket nor its sibling mentions. **~90% of a decode is the governed SHA-256 at ~120 MB/s**; a sampling profile attributes 57% of active self time to `_platform_memmove` and 10% to `<[u32]>::rotate_right`, both reached from `Sha256::compress`, which shifts its `[u32; 8]` working state with the *slice* `rotate_right(1)` — a `memmove` call, 64 times per 64-byte block. A standalone A/B of the same rounds, asserted to produce identical state, measures 280.7 MB/s for that spelling against 407.2 MB/s for named-variable reassignment. Everything else this ticket named sums to under 1%.
+
+Also worth recording: **the first pass's headline is not reproducible.** It reported decode falling 662 µs → 501 µs, 24%, from deriving the canonical identity once instead of twice. Deriving it measures **1.5 µs, 0.3% of a decode** — removing one duplicate cannot save 161 µs. That change is still correct and still worth keeping; its measured effect was host noise read as a mean.
+
+### New measurement harness
+
+`hot_path_decode_stage_budget` reports the four stages of a decode against one another, `hot_path_digest_throughput` reports what the budget actually is, `hot_path_carried_metadata_decode` prices the carried-payload path, and `hot_path_decode_profile_loop` is the `#[ignore]`d loop a sampling profiler attaches to, with the exact recording commands in its doc comment. `min_and_mean` is shared by all of them and prints both numbers.
+
+## Closes when
+
+Done for the items this ticket named. One decode derives the canonical identity once, the section digests once, and the expression keys the same four times it always did — that last deliberately, with the number that says why. Decode is measured before and after, every existing codec test passes unchanged, which is what shows the encoding is byte-identical, and `make full` passes.
+
+`encode-abi-expression-identity-in-linear-space` still owns what the expression keys cost; at 0.1% of a decode it is not a decode-path concern. Making the governed digest fast is the remaining decode work by an order of magnitude and belongs to whoever owns `codec/digest.rs`.
