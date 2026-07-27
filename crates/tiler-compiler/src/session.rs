@@ -58,6 +58,7 @@ use tiler_ir::program::abi::ExprNode;
 use tiler_ir::program::{StageRef, VerifiedKernelProgram};
 use tiler_ir::semantic::{ProviderIdentity, SemanticProgram};
 
+use crate::capability::FrozenLoweringCapabilityRegistry;
 use crate::explain::VerifiedExplainTrace;
 use crate::feasibility::FeasibilityRuleSetIdentity;
 use crate::pipeline::{
@@ -66,8 +67,10 @@ use crate::pipeline::{
 };
 use crate::program::KernelProgram;
 use crate::request::{
-    CompilationRequest, LoweringProviderIdentity, RequestError, StrictF32NumericalContract,
+    CompilationRequest, CompilerCapabilitySnapshot, LoweringProviderIdentity, RequestError,
+    StrictF32NumericalContract,
 };
+use tiler_ir::index::FrozenScalarRegistry;
 
 /// Which boundary refused a compilation.
 ///
@@ -649,6 +652,107 @@ impl NumericalContract {
     }
 }
 
+/// The installed lowering authority a compilation resolves occurrences through.
+///
+/// This is the half of the compiler boundary that was missing. Everything needed
+/// to *build* a registry was already public — [`crate::capability`]'s builder,
+/// the provider traits, `LoweringSignature`, `ProviderIdentity` — and nothing
+/// could install one, so an out-of-crate provider could be written and never
+/// reached the compile path. ADR 0078 item 4 names that asymmetry and states its
+/// closing condition as exactly this: a public path by which a caller supplies
+/// its own [`FrozenLoweringCapabilityRegistry`] to a compilation.
+///
+/// An opaque wrapper rather than the internal snapshot, so the request model
+/// behind it stays private and the caller's obligation is the one that matters:
+/// pairing a registry with the scalar authority its capabilities were registered
+/// against. The request boundary re-checks that pairing and refuses a mismatched
+/// pair rather than resolving through an authority the capabilities were never
+/// admitted under.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstalledCapabilities(CompilerCapabilitySnapshot);
+
+impl InstalledCapabilities {
+    /// The lowering capabilities this build ships.
+    #[must_use]
+    pub fn governed() -> Self {
+        Self(CompilerCapabilitySnapshot::governed())
+    }
+
+    /// A caller's own registry, with the scalar authority it was frozen against.
+    ///
+    /// The two are taken together rather than separately because they are only
+    /// meaningful as a pair: every resolved provider emits against, and is
+    /// revalidated under, that scalar snapshot. Supplying a registry frozen over
+    /// one authority and a different authority beside it is refused at the
+    /// request boundary, not silently reconciled.
+    #[must_use]
+    pub fn installed(
+        lowering: FrozenLoweringCapabilityRegistry,
+        scalars: FrozenScalarRegistry,
+    ) -> Self {
+        Self(CompilerCapabilitySnapshot::new(lowering, scalars))
+    }
+}
+
+/// One compilation a caller composes.
+///
+/// Built and consumed: [`compile`] takes it by value, so a request cannot be
+/// submitted twice or mutated after the compiler has begun reading it.
+///
+/// The inputs a caller may state are deliberately fewer than the internal
+/// request carries. Budgets, the shape environment, and target-profile
+/// *declaration* stay internal: the first two admit exactly one governed value
+/// today, and declaring a target profile is a validation job rather than a
+/// visibility change — `express-metal-honourability-in-the-shared-form` is the
+/// ticket that needs it and it is not delivered here.
+#[derive(Clone, Debug)]
+pub struct CompileRequest<'a> {
+    program: &'a SemanticProgram,
+    contract: NumericalContract,
+    capabilities: InstalledCapabilities,
+}
+
+impl<'a> CompileRequest<'a> {
+    /// States the program to compile and the contract it means.
+    ///
+    /// Capabilities default to [`InstalledCapabilities::governed`], which is
+    /// what makes [`compile_governed`] expressible through this same path.
+    #[must_use]
+    pub fn new(program: &'a SemanticProgram, contract: NumericalContract) -> Self {
+        Self {
+            program,
+            contract,
+            capabilities: InstalledCapabilities::governed(),
+        }
+    }
+
+    /// Installs the lowering authority this compilation resolves through.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: InstalledCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+}
+
+/// Compiles one caller-composed request.
+///
+/// # Errors
+///
+/// Returns a [`CompileFailure`] naming the class of boundary that refused. See
+/// [`CompileFailureClass`] for what each class means and which of them are
+/// statements about the request rather than about Tiler.
+pub fn compile(request: CompileRequest<'_>) -> Result<Vec<Compilation>, CompileFailure> {
+    let CompileRequest {
+        program,
+        contract,
+        capabilities,
+    } = request;
+    let mut internal = CompilationRequest::governed_under(program, contract.resolve());
+    internal.capabilities = capabilities.0;
+    let product = compile_internal(internal)?;
+    Ok(into_compilations(product))
+}
+
 /// Compiles one semantic program under a stated numerical contract.
 ///
 /// # Errors
@@ -657,15 +761,16 @@ impl NumericalContract {
 /// unsupported program, an infeasible target, an exhausted budget, and invalid
 /// compiler output are kept distinct: the first three are statements about the
 /// request, and the last is a defect in Tiler.
+/// It is the bounded convenience profile and not a second compile path: it
+/// composes the same [`CompileRequest`] a caller would and calls the same
+/// [`compile`]. One path rather than two is what stops the convenient one and
+/// the general one from drifting, and expressing this wrapper through the
+/// general surface is the cheapest proof that surface is usable at all.
 pub fn compile_governed(
     program: &SemanticProgram,
     contract: NumericalContract,
 ) -> Result<Vec<Compilation>, CompileFailure> {
-    let product = compile_internal(CompilationRequest::governed_under(
-        program,
-        contract.resolve(),
-    ))?;
-    Ok(into_compilations(product))
+    compile(CompileRequest::new(program, contract))
 }
 
 fn into_compilations(product: CompilationProduct) -> Vec<Compilation> {

@@ -115,6 +115,41 @@ pub(crate) fn governed_lowering_capabilities(
     Ok(builder.freeze())
 }
 
+/// Registers the shipped index-access capabilities onto a caller's builder,
+/// except the operation families the caller is substituting for.
+///
+/// This is the affordance [`GovernedIndexAccess`]'s own documentation describes
+/// — composing a registry from a chosen subset so an external provider replaces
+/// one governed family without re-implementing the other three — made reachable
+/// from outside the crate. Until now it existed and was crate-private, which is
+/// why the conformance gate that exercises exactly this could only live inside
+/// `pipeline.rs`.
+///
+/// # Errors
+///
+/// Returns [`LoweringRegistryError`] when the builder refuses a registration,
+/// which for a governed capability means the composed authority is not the one
+/// it was written against.
+///
+/// # Panics
+///
+/// Panics when Tiler's own governed signatures violate their governed
+/// structural bound, which is a defect in this crate rather than a caller error.
+pub(crate) fn install_governed_index_access(
+    builder: &mut LoweringCapabilityRegistryBuilder,
+    substituted: &[OpKey],
+) -> Result<(), LoweringRegistryError> {
+    let capabilities =
+        governed_index_access_capabilities().expect("the governed signatures are well formed");
+    for capability in capabilities {
+        if substituted.contains(&capability.operation) {
+            continue;
+        }
+        capability.register(builder)?;
+    }
+    Ok(())
+}
+
 /// One shipped index-access capability, before it is registered.
 ///
 /// Keeping the four descriptors addressable lets a caller compose a registry

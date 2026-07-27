@@ -1566,6 +1566,30 @@ const fn encoded_bytes_len(bytes: usize) -> usize {
     size_of::<u64>().saturating_add(bytes)
 }
 
+/// Registers the lowering capabilities this build ships onto `builder`, skipping
+/// the operation families named in `substituted`.
+///
+/// The composition an external provider needs: register your own capability for
+/// one family and take Tiler's for the rest, in one registry that resolves them
+/// all. Pass an empty slice to install all four.
+///
+/// Without this, an out-of-crate caller substituting one family had to
+/// re-implement the other three, because the shipped descriptors were
+/// crate-private — which is why the conformance case that exercises exactly this
+/// composition could only live inside the compiler.
+///
+/// # Errors
+///
+/// Returns [`LoweringRegistryError`] when the builder refuses a registration —
+/// in practice, when `builder` was composed over a different scalar authority
+/// than the governed capabilities were written against.
+pub fn install_governed_index_access(
+    builder: &mut LoweringCapabilityRegistryBuilder,
+    substituted: &[OpKey],
+) -> Result<(), LoweringRegistryError> {
+    crate::governed::install_governed_index_access(builder, substituted)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

@@ -504,7 +504,15 @@ mod tests {
     };
     use crate::{ArtifactCodecFailure, decode_artifact};
     use tiler_artifact::proof::decode_proof_sidecar;
+    use tiler_compiler::capability::{
+        LoweringCapabilityRegistryBuilder, install_governed_index_access,
+    };
+    use tiler_compiler::session::{
+        CompileFailureClass, CompileRequest, InstalledCapabilities, compile,
+    };
     use tiler_compiler::session::{NumericalContract, compile_governed};
+    use tiler_ir::index::FrozenScalarRegistry;
+    use tiler_ir::semantic::multiply_f32_op;
     use tiler_metal::emit::emit_translation_unit;
 
     /// The offline path composes as far as deterministic MSL, without a
@@ -855,6 +863,85 @@ mod tests {
         let sidecar_bytes =
             sidecar::encoded(&artifact, &program, ROWS, COLUMNS).expect("the sidecar builds");
         (artifact, envelope, sidecar_bytes)
+    }
+
+    /// An out-of-crate caller composes its own lowering registry and compiles
+    /// through it.
+    ///
+    /// **This is the ticket's closing condition, and it can only be asserted from
+    /// here.** ADR 0078 item 4 records the asymmetry it closes: everything needed
+    /// to *build* a `FrozenLoweringCapabilityRegistry` was already public, and
+    /// nothing could install one, so a provider written against the public
+    /// surface could never reach the compile path. The compiler's own conformance
+    /// case for this composition had to live inside `tiler-compiler` because two
+    /// steps of the recipe and one field assignment were `pub(crate)`.
+    ///
+    /// This crate takes `tiler-compiler` as an ordinary dependency and sees only
+    /// its public surface, so if this compiles and passes, the path is genuinely
+    /// reachable rather than reachable-looking.
+    #[test]
+    fn an_out_of_crate_caller_installs_its_own_capability_registry() {
+        let program = serial_sum_program(ROWS, COLUMNS);
+        let scalars = FrozenScalarRegistry::standard().expect("the standard scalar authority");
+        let mut builder = LoweringCapabilityRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        );
+        install_governed_index_access(&mut builder, &[])
+            .expect("the governed capabilities install onto a caller's builder");
+        let installed = InstalledCapabilities::installed(builder.freeze(), scalars);
+
+        let compilations = compile(
+            CompileRequest::new(&program, NumericalContract::FlushSubnormalsToZeroF32)
+                .with_capabilities(installed),
+        )
+        .expect("a caller-installed registry compiles the governed program");
+        assert_eq!(compilations.len(), 1);
+        assert!(
+            compilations[0].selected().is_some(),
+            "the caller's own registry resolved every occurrence",
+        );
+    }
+
+    /// Omitting one family from the installed registry fails closed.
+    ///
+    /// The negative half, and the one that makes the positive mean anything: a
+    /// `with_capabilities` that silently ignored its argument and used Tiler's
+    /// governed snapshot would pass the case above and fail this one. It also
+    /// shows the installed authority is genuinely what resolution runs through
+    /// rather than a value the request records and never consults.
+    #[test]
+    fn an_installed_registry_missing_a_family_fails_closed() {
+        let program = serial_sum_program(ROWS, COLUMNS);
+        let scalars = FrozenScalarRegistry::standard().expect("the standard scalar authority");
+        let mut builder = LoweringCapabilityRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        );
+        // Everything except the multiply family this program needs.
+        install_governed_index_access(&mut builder, &[multiply_f32_op()])
+            .expect("the remaining governed capabilities install");
+        let installed = InstalledCapabilities::installed(builder.freeze(), scalars);
+
+        // Matched rather than `expect_err`: the success value is a whole
+        // compilation, and unwrapping it on failure renders megabytes of plan
+        // where one sentence is wanted.
+        let outcome = compile(
+            CompileRequest::new(&program, NumericalContract::FlushSubnormalsToZeroF32)
+                .with_capabilities(installed),
+        );
+        let Err(failure) = outcome else {
+            panic!(
+                "a registry with no multiply capability compiled the program anyway, so the \
+                 installed authority was not the one resolution ran through",
+            );
+        };
+        // The program is valid; this installed authority does not cover it. That
+        // is a capability statement, never invalid compiler output.
+        assert!(
+            !matches!(failure.class(), CompileFailureClass::InvalidCompilerOutput),
+            "an uncovered occurrence was reported as a Tiler defect: {failure:?}",
+        );
     }
 
     /// The producer's half of the *member* filename interface, pinned.
