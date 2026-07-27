@@ -1,7 +1,7 @@
 ---
 id: name-the-capability-api-version-authority-or-retire-the-requirement
 title: Name the capability-API version authority or retire the requirement
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [record-the-capability-revision-in-selected-provider-identity, name-the-resolved-lowering-capability]
@@ -42,3 +42,17 @@ Do not add a field before answering. A slot every producer must fill with someth
 ## Closes when
 
 `docs/operation-extensions.md` either names an authority for a capability-API version and a compiler version, with the mismatch behaviour each implies, or records that the requirement is retired and what covers it instead; `docs/artifact-abi.md`'s selected-provider record agrees; any field added has a producer that can supply it; and `make full` passes.
+
+## Outcome — option 2, retired, with the derivation (2026-07-27)
+
+Recorded in `docs/operation-extensions.md` and agreed by `docs/artifact-abi.md`. **No field was added**, which the ticket asked for explicitly.
+
+**The capability-API half is eliminated by this document's own scope statement.** Its "Initial trust and linkage model" states that providers are "trusted native compiler code, statically linked into the process", and that "native dynamic loading, hot reload, a stable Rust plugin ABI, untrusted plugins, and cross-process providers are deferred". A provider and the capability API it is written against are therefore compiled into one binary. A provider not rebuilt against a changed API does not produce a mismatched artifact — **it fails to compile.** There is no reader implementing one version and no producer implementing another, so no mismatch a recorded version could detect, and the ticket's own test applies: a version that cannot be violated is not an identity component.
+
+The requirement becomes live again only if one of those deferred linkage models is admitted, which is where it should be reconsidered rather than pre-emptively met.
+
+**The compiler half is discharged by content addressing, and this is the part I had wrong first.** My initial reading was that the payload digest covers only the compilation *subject* and not the emitted object, so two Tiler builds emitting different MSL from one semantic program would share an identity — a real gap. Reading `crates/tiler-artifact/src/program/codec/payload.rs` in full corrected it: the subject **contains the exact source that was compiled**, along with the target, the compile and link flags, and the toolchain provenance. A Tiler build that emits different source therefore yields a different artifact identity by construction, and one that emits the same source, flags, ABI, and schedule cannot change executable meaning. A backend-toolchain change is covered by the folded provenance.
+
+**Inference — recording a compiler version would be weaker.** It asserts what produced an artifact rather than what the artifact is, so two builds emitting identical source would get different identities and lose a legitimate cache hit, while the case it claims to catch is already caught by the source it alters.
+
+**Not covered, and recorded as such in the contract.** A provider changing output-affecting behaviour without bumping its declared revision remains a provider bug — and no capability-API version would have caught it, since the API is unchanged. Separately, two bundles built from one subject by a non-reproducible linker share an identity and differ in envelope digest; that is an already-decided property of content addressing over inputs, not a gap this opens.
