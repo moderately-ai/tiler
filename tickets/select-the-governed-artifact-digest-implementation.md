@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: []
 related: [prototype-neutral-artifact-codec]
-scopes: []
+scopes: [implementation/artifact, implementation/workspace, research/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, serialization, workspace]
@@ -18,4 +18,10 @@ tags: [artifact, serialization, workspace]
 
 **What closes this.** A comparison of the in-crate implementation against an audited crate on: build-time cost, binary size, dependency-policy fit under `AGENTS.md`, and measured hashing throughput on a real artifact during expansion and loading. Record the measurement and either adopt the dependency or record the in-crate implementation as the accepted one with its audit basis.
 
-**Measurement boundary already available.** The bounded fixture envelope of the serial-sum artifact is 25,183 bytes; a full single-byte corruption sweep over it costs about 35 seconds in the unoptimized profile, which is the current evidence that the unoptimized hashing path is the dominant cost in tests.
+**Measurement boundary already available.** The codec's corruption test
+exhausts the framing header and framed section stream, then samples the
+25,000-byte manifest interior at a prime stride of 61 because one manifest
+digest already covers every interior byte. It is evidence about corruption
+detection, not a current throughput measurement. Measure hashing cost directly
+on a representative artifact before using performance to select an
+implementation.

@@ -1,95 +1,63 @@
 ---
 id: widen-shapeenv-factorization-fragment
-title: Widen the ShapeEnv fragment to nonlinear split-axis factorizations
-status: todo
+title: Decide support for factorizations with multiple runtime-unknown terms
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [implement-shapeenv-constraints, implement-shapeenv-index-bindings]
-scopes: [implementation/ir]
+scopes: [implementation/ir, contracts/foundation]
 shared_scopes: []
 paths: []
-tags: [implementation, shapes, indexing, mature-product]
-claimed_from: todo
-assignee: agent-ir2
-lease_expires_at: 1784999471
+tags: [shapes, indexing, mature-product, needs-tom]
 ---
-`implement-shapeenv-constraints` landed the constraint environment with a stated decidable fragment. This is the one case that fragment refuses and that a mature product will need.
+The current ShapeEnv deliberately accepts a decidable fragment. It rejects a
+split relation such as `parent == outer * tile` when more than one factor
+remains unknown at runtime.
 
-**Fact — the boundary that landed.** `crates/tiler-ir/src/shape/env/constraint.rs` admits a `Factorization` relation when at most one of its terms is undetermined, where determined means the term's equality class holds a constant from a literal, an `Equal` against a literal, or a `BindingSource::StaticValue` root binding. Two or more undetermined terms is `FragmentViolation::UnderdeterminedFactorization` and rejects the environment.
+## Facts
 
-**Fact — why it was drawn there.** `docs/ir.md` leaves "the solver algorithm and exact supported arithmetic fragment" an implementation choice but makes contradiction rejection normative: "contradictory semantic constraints reject the graph." A procedure that missed contradictions would answer *satisfiable* for a set the contract calls invalid. The fragment was therefore narrowed until the interval-congruence propagation is provably complete on it, and `p == a * b` with both factors dynamic is nonlinear integer arithmetic that no such propagation decides.
+- Non-static `BindingSource` variants name where a future value comes from; they
+  do not carry that value.
+- `AvailabilityPhase` says when a binding may become available. It cannot make
+  an unknown value determined.
+- Only `BindingSource::Static(Extent)` currently contributes a constant to
+  fragment checking.
+- General nonlinear integer constraints over multiple 64-bit unknowns do not
+  have a bounded complete procedure suitable for this compile path without a
+  budget and an explicit undecided result.
 
-**Fact — the case this excludes is a real one.** `docs/ir.md` layer 0 requires that "composed axes have factorization constraints". A split axis whose tile size is static is in-fragment today: `128 == 8 * outer` solves to `outer == 16`. A split whose outer count *and* tile size are both caller parameters is not, and rejects.
+The former proposed resolution—treat a compile-phase caller parameter as known
+from its phase—cannot be implemented in the current model because no supplied
+value exists to substitute.
 
-## Scope
+## Atomic product decision
 
-Decide whether the fragment widens and how. The alternatives encode different priorities and the choice is not correctness-derived, so this is research before it is implementation:
+Must one artifact support a split whose factors remain unknown until launch?
 
-- **Widen with a complete procedure.** Bounded nonlinear integer constraints over extents are decidable in principle. Establish what algorithm decides the actual relation shapes — products of two or three symbols under interval and congruence bounds — and at what cost. Bit-blasting to a small SAT core, or a bounded-domain enumeration justified by a real bound on extents, are both candidates.
-- **Widen the representation but not the decision, with an explicit typed status.** Admit the relation and make the environment report a third outcome distinct from satisfiable and contradictory. This preserves the rule that unknown never masquerades as decided, at the cost of making every consumer handle a third case.
-- **Keep the refusal and require the frontend to bind a factor.** The narrowest option; it makes the tile size a compile-time parameter of the region rather than a runtime one, which has consequences for artifact identity and specialization that must be stated rather than assumed.
+- **Refuse it.** Every built ShapeEnv remains decided; a frontend specializes
+  on a static factor and that value participates in artifact identity. This is
+  the current fail-closed behavior.
+- **Support it.** First introduce either an explicit specialization input that
+  supplies and identities a compile-time value before ShapeEnv construction,
+  or an `Undecided` constraint state propagated through every consumer. An
+  availability phase alone is not a third option.
 
-Whichever is chosen, record it against the contract: the fragment is named in the module documentation and in `implement-shapeenv-constraints`'s outcome, and widening it changes what "the environment decided" means to every downstream consumer.
+## Recommendation
+
+Keep fully launch-dynamic factorizations unsupported until a frontend or product
+requirement needs one artifact to serve arbitrary runtime factors. Explicit
+refusal preserves the accepted meaning that a built environment is decided and
+does not preclude a later specialization-input design.
+
+## Counterpoint
+
+If one artifact must serve arbitrary runtime tile sizes without recompilation,
+specialization is insufficient; Tiler must accept the broader undecided-state
+cost and define how every optimizer, verifier, artifact, and runtime consumer
+handles it.
 
 ## Closes when
 
-The choice is made with its evidence, the contract text that names the fragment agrees with the implementation, any newly admitted relation is decided rather than approximated or is reported through an explicit third status that consumers must handle, and the repository gate passes.
-
-## Outcome
-
-**Research done; the decision is Tom's and the ticket is `awaiting-decision`.** The ticket states the choice "is not correctness-derived" and that the alternatives "encode different priorities", which is exactly the case AGENTS.md reserves for an atomic question rather than an autonomous call. No code changed. What follows is the evidence that makes the question decidable, including two findings that change the option set.
-
-### Finding 1 — the ticket's enumeration candidate has no bound to appeal to
-
-The ticket offers "bounded-domain enumeration justified by a real bound on extents". There is no such bound. `crates/tiler-ir/src/shape.rs` bounds only rank — `const MAX_SHAPE_RANK: usize = 4_096` — and a `Dim` is a full `u64` with no magnitude limit; reproducible as `grep -n "const MAX" crates/tiler-ir/src/shape.rs`, which returns only the rank. `constraint.rs` accordingly solves over `MAX_EXTENT = 2^64 - 1`. Enumeration over that domain is not a candidate, and introducing an extent bound to make it one would be a far larger contract change than this ticket contemplates.
-
-### Finding 2 — a complete procedure with a resource budget *is* the third-status option
-
-This collapses the option set from three to two, and it is the most important thing here.
-
-Deciding `p == f0 * f1` with all three terms free, under interval and congruence bounds, is nonlinear integer arithmetic. With `p` determined and the factors free it is exactly "does `p` have a divisor in `[a, b]`" — bounded-divisor search over a 64-bit integer. With `p` free too, and several relations sharing symbols, it is a general nonlinear system. Bit-blasting to SAT decides it, at thousands of clauses per 64-bit multiplier and with cost that is not a function of the program's size.
-
-Every other authority in this crate is resource-bounded, and this solver runs on the compile path. A complete procedure would therefore need a budget — and exceeding the budget yields neither *satisfiable* nor *contradictory*. So **option 1 does not avoid option 2's third status; it adds a solver in front of it.** The real question is not "complete procedure or third status" but "is the solver worth building, given that the third status has to exist either way".
-
-That reframing matters because option 2's stated cost — "making every consumer handle a third case" — is unavoidable under option 1 as well, and is only avoided under option 3.
-
-### Finding 3 — the environment already carries the fact that would make many real cases decidable
-
-The ticket's option 3 says binding a factor "makes the tile size a compile-time parameter of the region rather than a runtime one". The environment already models that distinction and does not currently use it for fragment membership.
-
-`crates/tiler-ir/src/shape/env.rs` gives every `RootBinding` an `AvailabilityPhase` alongside its `BindingSource`, validated against `BindingSource::earliest_phase()`. `BindingSource::CallerParameter` is documented as "A value supplied by the caller at compilation **or** launch" — one source class spanning both sides of the specialization boundary. Determination in `check_fragment` reads only `Resolved::Known`, which comes from a literal, an `Equal` against a literal, or `BindingSource::StaticValue`. A caller parameter that is in fact supplied at compile time is treated exactly like one supplied at launch.
-
-So `128 == outer * tile` where `tile` is a compile-time caller parameter is refused today, and is arithmetically identical to the in-fragment `128 == 8 * outer` once the value is substituted. Closing that gap needs no nonlinear reasoning at all — it needs a specialization step that substitutes compile-time-available bindings before deciding, and it makes the substituted values part of artifact identity, which is the consequence option 3 already says must be stated.
-
-This is not a fourth option so much as the mechanism option 3 was missing. It also bounds how much option 1 or 2 would actually buy: they are only needed for factorizations with two or more terms that stay unknown until *launch*.
-
-### The question
-
-**Should a factorization with two or more launch-dynamic terms be refused, or admitted with an explicit undecided status?**
-
-A concrete program. A caller splits a dynamic axis where neither the tile size nor the outer count is known before launch:
-
-```text
-input:  x with shape [p]            p  from InputMetadata, LaunchPreflight
-params: outer, tile                 both CallerParameter, LaunchPreflight
-constraint: p == outer * tile
-```
-
-- **Refuse (extend today's rule).** `build` rejects with `UnderdeterminedFactorization`. Every environment that builds is decided, and `satisfiable` keeps meaning what it means now. The frontend must make one of `outer` or `tile` compile-time available, which specializes the artifact on that value. Enables: one meaning of "decided", no third case in any consumer, no solver on the compile path. Prevents: a single artifact serving a fully dynamic split; the caller pays an artifact per tile size.
-- **Admit as undecided.** `build` succeeds and reports a third outcome distinct from satisfiable and contradictory. Enables: a fully dynamic split reaches the compiler, which may still reject it later on other grounds. Prevents: the current guarantee that a built environment is decided — every consumer must handle the third case, and the contract's normative "contradictory semantic constraints reject the graph" becomes "reject when we could tell", which is a weaker promise that has to be written down as such.
-
-**Recommendation: refuse, and separately close the phase gap from Finding 3.** The evidence is that the refusal's cost is much smaller than the ticket assumes once compile-time caller parameters are treated as determined — that change alone admits the split-with-static-tile case that motivates most of layer 0's factorization constraints, with a procedure that is still provably complete. Paying either a nonlinear solver or a workspace-wide third status to also serve the fully-launch-dynamic split is a large, irreversible widening of what "decided" means, bought for a case no current frontend requirement names. Specializing on tile size is also normal for kernel compilation and usually wanted for performance.
-
-**Counterpoint, stated plainly.** If Tiler is meant to ship one artifact that serves arbitrary runtime shapes without recompilation — a reasonable product goal that no accepted decision currently rules out — then the refusal is a real limit and the third status is the honest way to represent it. Choosing refusal now does not preclude the third status later, but it does mean consumers get written against a two-outcome contract and would all need revisiting.
-
-**If refusal is chosen, this splits into:** a ticket making compile-time-available bindings determined for fragment membership (with the artifact-identity consequence recorded), and no change to the arithmetic fragment at all.
-
-## Resolved by the coordinator — 2026-07-25
-
-**Refuse launch-dynamic factorizations; close the availability-phase gap instead.** Auto-resolved: the alternative does not survive the correctness rules.
-
-Admitting them under an explicit third `Undecided` status would put a shape environment into a state the contract calls invalid while reporting that it does not know — and `docs/ir.md` makes contradiction rejection normative, not best-effort. `AGENTS.md` requires the unsupported to be rejected explicitly rather than approximated, and the constraint half was deliberately built narrow-but-COMPLETE for exactly this reason: a procedure that can answer 'unknown' is one that can miss a contradiction.
-
-**The real defect the agent found is the one to fix.** `check_fragment` reads only `BindingSource::StaticValue`, even though `RootBinding` already carries an `AvailabilityPhase`. So a caller parameter known at `CompileProfile` is refused today despite being arithmetically identical to the literal case that is admitted. That is a phase gap, not a fragment limit, and closing it admits the cases that should always have been in the fragment without weakening the procedure.
-
-Rescope this ticket to that fix. A genuinely launch-dynamic factorization stays refused, explicitly.
+Tom confirms the product requirement. The shape contract records either the
+explicit refusal and reopening trigger or the admitted value/undecided model,
+and no implementation infers a known value from availability alone.

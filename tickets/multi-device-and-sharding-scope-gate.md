@@ -5,14 +5,16 @@ status: deferred
 priority: p2
 dependencies: [transfer-synchronization-and-resource-lifetime-contract]
 related: [spike-cuda-multi-device-transfers, spike-metal-multi-device-transfers, device-placement-and-memory-domain-contract, numerical-policy-contract]
-scopes: [research/distributed]
-shared_scopes: [project/tickets]
+scopes: [research/distributed, contracts/decisions, contracts/foundation, contracts/integrations]
+shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [tiler-research, decision, distributed, sharding]
 ---
-Decide whether multi-device placement and distributed tensor planning enter an
-early product milestone or remain a deliberately reserved later execution
-layer. Do not treat multiple devices as another intra-kernel schedule axis.
+Decide whether users may express collective or sharded tensor meaning, whether
+Tiler may choose physical sharding, and what failure, numerical, topology, and
+lifetime guarantees either promise requires. If the triggering workload does
+not justify that surface, record explicit deferral without placeholder IR. Do
+not treat multiple devices as another intra-kernel schedule axis.
 
 The gate must decide:
 

@@ -1,6 +1,6 @@
 ---
 id: reconcile-index-oracle-ownership-prose
-title: Reconcile index-oracle ownership prose and registry accessor
+title: Reconcile index-oracle ownership prose and authority construction
 status: todo
 priority: p2
 dependencies: []
@@ -14,4 +14,23 @@ Two residuals the oracle implementation could not close inside its own scopes.
 
 First, `docs/correctness-and-testing.md` still says the generic slow evaluator "remains owned by" the now-complete `prototype-index-region-reference-oracle` ticket. Restate it as implemented, naming `tiler_reference::IndexRegionEvaluator` and the independence property that matters: the oracle shares no arithmetic implementation with the structural verifier it checks, so one shared defect cannot make both agree on an incorrect coordinate.
 
-Second, `IndexRegionAuthority` currently takes both the scalar and semantic registries because `tiler_ir::index::FrozenScalarRegistry` exposes no accessor for the semantic registry it was frozen against; the oracle verifies the pairing through `ScalarAuthorityEvidence::semantic_snapshot` instead. Adding that accessor to `tiler-ir` would let the authority take one registry and derive the other, removing a redundant parameter and a class of caller mismatch. Treat the accessor as a public-boundary change on `tiler-ir`: present it before hardening, and leave the current two-registry form in place if the accessor is not accepted.
+Second, `IndexRegionAuthority` still takes both the scalar and semantic
+registries even though `FrozenScalarRegistry::semantic_authority()` now exposes
+the exact semantic registry it was frozen against. That accessor removes the
+ticket's former public-API blocker. Make it impossible for a caller to pair a
+scalar authority with a different semantic authority by deriving the latter
+inside `IndexRegionAuthority`.
+
+## User-visible outcome
+
+The documentation must describe the checked index-region evaluator as present,
+and a caller must be able to select its scalar authority without separately
+supplying a semantic authority that could disagree. Preserve the evaluator's
+independence from the structural verifier; the refactor is not permission to
+share their arithmetic implementation.
+
+## Closes when
+
+The stale ownership prose names the implemented evaluator and its independence
+property, `IndexRegionAuthority` derives its semantic authority from the scalar
+registry, redundant caller arguments are removed, and the full gate passes.

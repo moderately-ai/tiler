@@ -3,15 +3,12 @@ id: promote-the-metal-aot-compilation-identity
 title: Promote the tiler-metal-aot compilation identity
 status: in-progress
 priority: p1
-dependencies: []
+dependencies: [bind-recorded-metal-toolchain-to-the-tools-that-execute]
 related: [derive-the-pre-compilation-artifact-program-subject, accept-the-tiler-cache-public-boundary, prototype-expansion-content-cache]
 scopes: [implementation/metal-aot]
 shared_scopes: []
 paths: []
 tags: [api, review, cache, identity]
-claimed_from: todo
-assignee: agent-promote-the-metal-aot-compilation-identity
-lease_expires_at: 1785045284
 ---
 The expansion cache frames a subject over two facets. One now has a producer and the other is unreachable, which is the whole of what keeps the cache composable rather than usable.
 

@@ -3,15 +3,12 @@ id: exercise-the-expansion-cache-under-cargo-and-rust-analyzer
 title: Exercise the expansion cache under Cargo and rust-analyzer
 status: in-progress
 priority: p2
-dependencies: [port-the-cache-harness-to-the-production-bundle]
+dependencies: [port-the-cache-harness-to-the-production-bundle, prototype-inline-proc-macro-frontend]
 related: [implement-the-expansion-cache-protocol]
 scopes: [research/cache]
 shared_scopes: []
 paths: []
 tags: [cache, concurrency, frontend]
-claimed_from: todo
-assignee: agent-cache-exercise
-lease_expires_at: 1785046812
 ---
 The research note's seventh follow-up gate: run the harness under Cargo and rust-analyzer process patterns once the proc-macro spike exists.
 

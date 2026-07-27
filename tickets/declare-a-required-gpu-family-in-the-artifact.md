@@ -1,6 +1,6 @@
 ---
 id: declare-a-required-gpu-family-in-the-artifact
-title: Let an artifact declare the GPU family and device limits its route needs
+title: Decide which live-device requirements an artifact route must declare
 status: todo
 priority: p2
 dependencies: []
@@ -22,7 +22,12 @@ Split from `prototype-metal-runtime-preflight`, which added the device-side pref
 
 ## The question this ticket has to answer
 
-Whether an artifact should declare device requirements at all, and if so in what vocabulary. The candidates are not equivalent and none is obviously right:
+A user should receive an explainable preflight refusal before committing a
+route the selected device cannot execute. Determine the smallest readable
+requirement set sufficient to make that refusal precise without putting
+Apple-specific semantics in the neutral artifact layer.
+
+The candidates are not equivalent:
 
 - **A governed family key on the target profile.** Readable, comparable against `supportsFamily`, and it makes the host's check a real one. It also puts an Apple vocabulary into a consumer-agnostic artifact layer, which `AGENTS.md` guards against, so it needs a neutral spelling or an explicit backend-scoped extension point.
 - **Numeric floors rather than a family.** A minimum threadgroup size and a minimum buffer length are backend-neutral and directly checkable, and they under-describe a family: two devices with equal limits can differ in features a kernel used.

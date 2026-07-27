@@ -18,17 +18,20 @@ tags: [implementation, artifact, abi, identity]
 
 **The one existing consumer already does the right thing by hand.** `prototypes/serial-sum-compile/src/bundle.rs::assemble` transliterates the program's arena onto the artifact's and resolves each variant use site from the replayed handle map, so its variant ABI *is* the program's. That is a producer convention, not a checked one, and this ticket is about making the artifact layer require it.
 
-## Scope
+## User-visible outcome
 
-Decide and implement how a variant's ABI is bound to its program's. The candidates, with what each preserves:
-
-- **Derive.** `push_variant` reads the program's arena, guard, launch and accessible ranges and replays them itself; `VariantSpec` stops carrying them. Preserves one authority and removes the transliteration every assembler would otherwise repeat. It must not remove what a program cannot carry: launch preconditions, deferred feasibility predicates, and a portfolio's variant priority are artifact-owned and stay in `VariantSpec`.
-- **Check.** `VariantSpec` keeps declaring them and `push_variant` proves each declared expression is content-equal to the program's, by `tiler_ir::program::abi::expr_key`. Preserves the artifact's freedom to re-spell an expression and costs a rejection surface for a re-spelling that means the same thing — which is exactly the freedom that has no use case.
-
-Recommendation: derive. The check branch preserves a freedom nothing wants and leaves two arenas that a reader must diff to trust.
+The runtime ABI packaged for a variant is the ABI of the verified program it
+carries. Program-owned applicability, launch, and accessible-range expressions
+are derived from the program; callers cannot independently restate them.
+Artifact-owned routing priority, launch preconditions, and deferred feasibility
+remain explicit.
 
 Whatever is chosen, `tiler.artifact-program.v2` identity changes meaning if a variant stops carrying its own expressions, so its domain tag and the `guard_and_routing` schema version are both in scope.
 
 ## Closes when
 
-An artifact variant's applicability guard, launch geometry, and per-binding accessible ranges are provably the ones its bound `VerifiedKernelProgram` states; a variant that disagrees is rejected with a typed diagnostic naming the use site; the artifact-owned launch preconditions, deferred predicates, and routing rank are unaffected; any changed identity domain is bumped with its reason recorded at the site; and `make full` passes.
+An artifact variant derives its applicability guard, launch geometry, and
+per-binding accessible ranges from its bound `VerifiedKernelProgram`; callers
+cannot construct a disagreement; artifact-owned launch preconditions, deferred
+predicates, and routing rank are unaffected; any changed identity domain is
+bumped with its reason recorded at the site; and `make full` passes.

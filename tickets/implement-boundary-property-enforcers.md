@@ -10,9 +10,11 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, transfers, lifetimes]
 ---
-Implement explicit materialization, layout/dtype conversion, placement transfer,
-synchronization, and storage-handoff operations after the property vocabulary
-exists. Verify device/memory ownership, ordering, resource lifetimes, failure
-boundaries, and costs; never satisfy a property through an implicit annotation.
+Make physically compatible region implementations composable by inserting
+explicit, value-preserving materialization, layout conversion, encoding
+repacking, placement transfer, synchronization, and storage-handoff steps.
+Verify ownership, ordering, resource lifetime, failure boundary, feasibility,
+and cost. A boundary enforcer may change storage, addressing, placement, or
+delivery, but never semantic dtype or tensor value.
 
 Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.

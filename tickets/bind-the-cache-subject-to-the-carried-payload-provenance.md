@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: [compose-the-complete-expansion-cache-subject]
 related: [implement-the-expansion-cache-protocol]
-scopes: [implementation/cache]
+scopes: [implementation/cache, implementation/artifact, implementation/frontend]
 shared_scopes: []
 paths: []
 tags: [cache, identity, correctness]
@@ -16,14 +16,23 @@ A writer that derived `K` from one subject and packaged an artifact compiled fro
 
 The carried envelope does record its own compilation subject: `PayloadMetadata` holds the exact source, target, flags, and toolchain provenance, and `decode_artifact` already proves the payload descriptor's digest equals `payload_identity` of those bytes. So the material for a cross-check exists on both sides; what is missing is a component that may read both.
 
-## What this ticket owes
+## User-visible outcome
 
-- Decide whether the check belongs in the cache (needing a narrow, versioned way to read a subject's compilation facts) or in the orchestrator that holds both crates.
-- Decide what a mismatch is. It is a rejection either way, but whether it is a miss under ADR 0050's fall-open rule or a hard error deserves an explicit argument: unlike a corrupt entry, a mismatch means a *writer* is wrong, and falling open would hide a defect that reproduces on every publication.
-- Whatever is decided, the rejection carries a typed reason like every other one in this crate.
+A cache result is never used as though it were built from a different
+compilation subject. The cache validates framing, cardinality, ordering, and
+artifact integrity. The orchestrator that legitimately understands both the
+producer's compilation facts and artifact metadata validates their semantic
+correspondence before publication and before accepting a hit.
+
+A mismatch is a typed producer/protocol defect, not an ordinary cache miss:
+rebuilding and republishing the same mismatch would hide and repeat the bug.
+The cache must not parse the foreign inner subject encoding; that would make it
+a second authority.
 
 ## What composing the subject changed, and what it did not
 
 `compose-the-complete-expansion-cache-subject` landed and this ticket is **not** made unnecessary by it. Composition decides what a key covers; this ticket decides whether the covered subject describes the artifact beside it. A writer that composed a correct subject and packaged an envelope from a different compilation still produces a bundle every reader accepts.
 
-What changed is the first decision above. The cache now owns the composed frame — versioned domain, facet tags, counted and length-prefixed runs — so it can count the backend-compilation facet's runs and reach each one's bounds **without parsing any producer's encoding**. The "narrow, versioned way to read a subject's compilation facts" this ticket asked for exists for the outer frame; what is still foreign is the inside of a facet, which is where `PayloadMetadata`'s source, target, flags, and toolchain would have to be compared. So the choice is now narrower than it was: a cardinality and ordering cross-check is available to the cache today, and a facts-level comparison still needs an authority that may read both encodings.
+The cache now owns the composed outer frame, so it can check cardinality and
+ordering without parsing a producer encoding. The facts-level comparison
+belongs to the orchestrator that owns both inputs.

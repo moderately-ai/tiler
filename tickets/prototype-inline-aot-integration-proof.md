@@ -3,7 +3,7 @@ id: prototype-inline-aot-integration-proof
 title: Prove the complete inline AOT workflow
 status: todo
 priority: p1
-dependencies: [prototype-macro-embedding-and-cargo-behavior, prototype-metal-runtime-proof]
+dependencies: [prototype-macro-embedding-and-cargo-behavior, prototype-metal-runtime-proof, promote-the-metal-aot-compilation-identity, make-runtime-routing-commit-authority-one-shot]
 related: []
 scopes: [implementation/frontend, implementation/cache, implementation/compiler, implementation/artifact, implementation/metal-aot, implementation/runtime]
 shared_scopes: [project/tickets]

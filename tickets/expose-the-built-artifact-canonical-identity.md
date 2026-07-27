@@ -1,7 +1,7 @@
 ---
 id: expose-the-built-artifact-canonical-identity
 title: Expose the canonical identity a built artifact already derived
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [carry-the-metal-payload-in-an-artifact-envelope, route-the-runtime-proof-through-the-artifact-envelope]
@@ -35,3 +35,9 @@ An out-of-crate producer can assert that the identity of the artifact it built e
 **Approved: promote.** ADR 0075 reserves public-surface promotions to the owner; this one is granted.
 
 One accessor over a value `build` already derives and already folds into the envelope. Without it a producer cannot say "the artifact I built is the artifact these bytes name" — a gap in exactly the identity discipline enforced everywhere else this session.
+
+## Outcome
+
+`VerifiedArtifactProgram::canonical_identity()` now returns the same
+`CanonicalArtifactProgramIdentity` concept exposed by the decoded view. Producer
+and codec tests compare built and decoded identities directly.

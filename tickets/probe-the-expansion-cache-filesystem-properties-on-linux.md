@@ -1,7 +1,7 @@
 ---
 id: probe-the-expansion-cache-filesystem-properties-on-linux
 title: Probe the expansion cache filesystem properties on Linux
-status: todo
+status: closed
 priority: p2
 dependencies: []
 related: [define-supported-expansion-cache-filesystems]
@@ -28,3 +28,12 @@ rustc --edition 2021 spikes/cache/filesystem_probe.rs -o /tmp/tiler-fs-probe
 - The `mtime` granularity figure for each, because that is what the collector's re-`stat` accuracy depends on.
 
 **One thing worth watching.** Every required property held on both filesystems the original run could reach, so the probe's `REFUTED` branch has been read and never observed. A Linux run is the natural place to see it fire — a `tmpfs` `/tmp` beside an ext4 home makes the cross-device case trivial to construct without root, which is what blocked it on macOS.
+
+## Closed as obsolete under current support policy
+
+Tiler now develops on macOS only; Linux is explicitly unsupported. A Linux
+measurement cannot establish a supported product row while that policy holds.
+`reconcile-cache-filesystem-claims-with-macos-support-policy` owns removal of
+the stale supported-Linux claim while preserving this derivation as inactive
+future evidence. Reopen a bounded Linux measurement only after Linux support is
+admitted.

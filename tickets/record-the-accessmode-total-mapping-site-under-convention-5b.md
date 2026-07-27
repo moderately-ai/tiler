@@ -12,7 +12,10 @@ tags: [contract, adr, api-conventions]
 ---
 ADR 0074 convention 5b governs public enums that are exhaustively matched from outside their defining crate, and enumerates the sites where that holds. `implement-boundary-property-model` created a new one and could not record it, holding only `implementation/compiler`.
 
-**Fact.** `tiler_ir::schedule::AccessMode` is now mapped totally onto an identity tag from `crates/tiler-compiler/src/boundary.rs` at two sites.
+**Fact.** `tiler_ir::schedule::AccessMode` is now mapped totally onto identity
+tags at two out-of-crate sites:
+`crates/tiler-compiler/src/selection.rs::access_mode_tag` and
+`crates/tiler-compiler/src/frontier.rs::access_mode_tag`.
 
 **Fact.** It carries no `#[non_exhaustive]`, and under convention 5b it must not gain one: a total mapping from outside the crate is exactly what `#[non_exhaustive]` would break, and the mapping is deliberate — an identity encoding must be exhaustive with no wildcard arm, so that adding a variant is a compile error at every encoder rather than a silently mis-encoded subject.
 

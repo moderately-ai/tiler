@@ -3,7 +3,7 @@ id: prototype-metal-runtime-proof
 title: Execute and validate the serial Sum Metal proof end to end
 status: todo
 priority: p0
-dependencies: [prototype-metal-runtime-execution, carry-the-stage-execution-order-in-the-envelope, preflight-every-entry-of-a-multi-stage-route]
+dependencies: [prototype-metal-runtime-execution, carry-the-stage-execution-order-in-the-envelope, preflight-every-entry-of-a-multi-stage-route, make-runtime-routing-commit-authority-one-shot]
 related: []
 scopes: [implementation/runtime, research/runtime]
 shared_scopes: [project/tickets, contracts/integrations, contracts/navigation, contracts/artifacts, contracts/numerics, implementation/cargo-lock]
@@ -45,13 +45,16 @@ The integration must:
 The proof succeeds only when both device programs agree bitwise with the
 normative reference, normal routing selects the fused program, its observed
 execution uses one dispatch and no intermediate instead of two dispatches and
-one intermediate, and every failed preflight exits before device work. Admitted
+one intermediate, and every admitted precommit refusal exits before output or
+scratch allocation, command encoding, or submission. Library, symbol, and
+pipeline preparation may interact with the device during preflight. Admitted
 applicability/capability misses preserve precommit fallback authority; corrupt
 artifacts, inconsistent proof data, and systemic preparation failures fail
 closed rather than masquerading as route misses.
 The prototype need not implement a semantic fallback evaluator, but it must
-demonstrate that fallback authority still exists before commit and is
-unrecoverable afterward. No Candle integration, fallback after
+demonstrate that all routes are prepared before one route-level fallback
+authority is consumed and that authority is unrecoverable afterward. No Candle
+integration, fallback after
 partial submission, reusable Metal runtime crate, or production runtime API
 belongs in this ticket.
 

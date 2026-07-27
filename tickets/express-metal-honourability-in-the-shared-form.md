@@ -18,16 +18,28 @@ The remaining half of `declare-metal-numerical-honourability`, split out when it
 
 **Fact — `crates/tiler-metal/src/target.rs`.** `MetalSubnormalArithmetic::{FlushesToZero { zero_sign }, PreservesSubnormals}` is a required caller-stated field of `MetalTargetFacts`, with its measurement recorded on the type. It is consulted in exactly one place, `emit::subnormal_gap`, and only during emission.
 
-**Fact — `crates/tiler-compiler/src/request.rs:350`.** The compiler's target profile is `PrototypeTargetProfile { supports_strict_f32: bool, .. }`. No Metal fact reaches it. The boolean is what `compose-numerical-honourability-and-retire-the-strict-boolean` replaces.
+**Fact — the old strict-f32 boolean has been retired.** The compiler now has a
+private per-dimension honourability form, but no measured Metal fact reaches it.
 
 **Fact — the two crates cannot see each other.** `tiler-metal` depends on `tiler-ir` and `tiler-artifact`; `tiler-compiler` depends on `tiler-ir`. Neither depends on the other, and `AGENTS.md` requires the compiler core to stay independent of Metal types. Verified with `grep -n 'tiler-' crates/tiler-metal/Cargo.toml crates/tiler-compiler/Cargo.toml` at `94fb26e`.
 
-## The knot this ticket has to cut
+## User-visible outcome
+
+Make measured Metal numerical behavior available to compiler feasibility before
+emission, keyed by both numerical dimension and arithmetic dtype, while
+retaining one authoritative declaration and preserving backend
+re-verification.
+
+## The ownership decision
 
 **Inference — no existing crate can hold both the shared honourability form and the Metal fact.** The form is a compiler authority and the fact is a Metal target property, so a declaration expressed in the shared form has three candidate sitings and they are not equivalent:
 
 - **`tiler-ir` owns the vocabulary.** The honourability declaration becomes a target-neutral IR type both crates already depend on, and `tiler-metal` states its value. This keeps the compiler free of Metal types and gives one declaration both sides read. It widens `tiler-ir`'s remit from program vocabulary toward target vocabulary, which needs an argument rather than an assumption. `FlushedZeroSign` already lives there, which is evidence the boundary is not obviously wrong.
-- **The consumer constructs it.** A component depending on both — `prototypes/serial-sum-compile` today, an orchestrator later — reads `MetalTargetFacts` and builds the compiler's profile. This needs no new dependency and keeps both cores clean, but it puts a correctness-bearing translation in a consumer, where nothing checks that it is total or faithful.
+- **A checked adapter owned by an orchestrator.** A component depending on both
+  reads `MetalTargetFacts` and constructs the compiler profile, but only if the
+  adapter is total, versioned, and tested against every vocabulary member. An
+  unchecked consumer-written translation is eliminated because it cannot prove
+  completeness or faithfulness.
 - **A third crate owns the declaration.** Clean dependency-wise and the most machinery for the least immediate return.
 
 Do not pick by convenience. Whichever siting is chosen must keep the fact declared exactly once: `declare-metal-numerical-honourability` recorded that a second declaration of the same target property is the failure mode to avoid, because two checkpoints reading one declaration cannot diverge and two declarations can.

@@ -17,7 +17,10 @@ That is a deliberate boundary and not an oversight, but the reason it was cheap 
 - `-ffp-contract=off` is the measured defence against contraction (finding 6), and it is not a defence against a source-level `fma` (finding 16). Whether an `f16` multiply-add contracts under the same settings is unmeasured.
 - `relaxed` and `fast` reassociate a two-add chain (finding 17), which is the measurement behind "a target profile that admits `relaxed` or `fast` cannot promise a reduction order". `f16`'s ulp is 2**-10 at 1.0, so the same shape is expressible with `1.0h`, `2**-11`, and `2**-11` and needs no new machinery.
 
-**Trigger for doing it now rather than later.** Any of: a numerical contract that states a contraction or reduction-order obligation per dtype; an emitter that lowers a `MultiplyThenAdd` at `f16`; or a second dtype landing from `measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes`, at which point the `f32`-only shape of these three findings becomes the odd one out rather than the default.
+**Why this is live now.** Numerical behavior is already recorded per dtype, and
+both `f16` and `bf16` have landed while contraction, source-level FMA, and
+reassociation remain measured only for `f32`. The record must either reproduce
+findings 6, 16, and 17 for `f16` or state those conclusions as dtype-specific.
 
 **Cost.** One kernel each for the contraction pair, the fused pair, and the reassociation chain, plus a contraction axis for the first two. Keep the covering set bounded: the contraction settings belong behind `TILER_APPLE_NUMERICS_EXHAUSTIVE` unless a finding cites them.
 

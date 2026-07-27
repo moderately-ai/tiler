@@ -16,4 +16,9 @@ tags: [research, numerics, metal, measurement]
 
 **What it would confirm or overturn.** Finding 11 measured the subnormal flush declared identically in every family's emitted module and observed identically on the two dispatchable families, so `declare-metal-numerical-honourability` can declare the flush once as an Apple-toolchain property rather than per family. A physical-device dispatch that flushed the same way would upgrade the iOS-device leg from Inference (compile-side agreement) to Fact; one that differed would force `MetalSubnormalArithmetic` to vary by family and reopen that decision. This ticket is the explicit trigger the honourability decision should name.
 
-**Harness reuse.** `spikes/apple-targets/numerical_probe.py` already builds the `IOsDevice` metallib and `numerical_probe_host.m` already runs a per-family manifest; extend `attachments()` with an `Execution` variant that resolves an attached device (e.g. via `devicectl`) and launches the host on it, keeping `Execution.NONE` as the fail-closed default when none is attached. Keep the execution-witness guard and the fail-closed refusal to compare across environment rows intact.
+**Harness reuse.** Reuse the existing case manifests, expected-row schema,
+execution witness, and terminal-status-checked comparison logic. Add the
+smallest signed iOS runner needed to install and execute those cases on an
+attached physical device. Record device model, iOS build, Xcode/toolchain,
+provisioning route, GPU identity, and exact deployment procedure. A simulator
+or a Mac loading an iOS metallib is not device evidence.

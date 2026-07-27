@@ -20,7 +20,13 @@ Every module involved carries a `dead_code` allow whose stated reason is exactly
 
 ## Closes when
 
-Tom has reviewed the exact boundary, the accepted subset is `pub` with its documentation and `#[non_exhaustive]` decisions made, the draft `dead_code` allowances are gone rather than relocated, and `make full` passes.
+Tom has reviewed the exact boundary, the accepted subset is `pub` with its
+documentation and `#[non_exhaustive]` decisions made, and draft `dead_code`
+allows are removed or narrowed for every promoted item. A still-private
+reservation may keep an item- or submodule-level allow whose reason names the
+unavailable producer or consumer and reopening trigger; a whole-file draft
+allow must not survive merely because some reserved work remains. `make full`
+passes.
 
 ## Decision — Tom, 2026-07-25
 

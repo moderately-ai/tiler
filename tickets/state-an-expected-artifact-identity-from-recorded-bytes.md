@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record]
-scopes: [implementation/artifact]
+scopes: [implementation/artifact, implementation/runtime]
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, needs-tom]
@@ -28,8 +28,19 @@ That rule is right for what it was protecting — nobody should mint an artifact
 
 No comparison is weakened — byte equality of canonical identity is exactly what the typed comparison did. What is lost is that the call site no longer names the concept, so a caller can pass any slice and the compiler will not object.
 
+## User-visible outcome
+
+A cold consumer can state the expected identity it recorded without presenting
+that assertion as encoder-derived evidence, and runtime preflight rejects a
+different loaded artifact with both concepts named clearly.
+
 ## What closes this
 
-A decision on whether `CanonicalArtifactProgramIdentity` gains a checked `from_bytes` — making "an identity someone recorded" a first-class value and letting `preflight` be typed again — or whether the byte-slice signature is the honest one because recorded bytes genuinely are not a derived identity and should not wear its type. The second is a defensible answer and would close this ticket by accepting the current state rather than changing it.
+Decide whether to keep `expected: &[u8]`, introduce a distinct bounded
+`RecordedArtifactProgramIdentity` (or `ExpectedArtifactProgramIdentity`), or
+explicitly broaden `CanonicalArtifactProgramIdentity` to represent both
+derived and recorded claims. A checked byte constructor cannot prove
+derivation, so prefer a distinct type if typed call-site intent is wanted. The
+artifact and runtime APIs must agree on the selected evidence distinction.
 
 `needs-tom`: it is a public constructor on a type whose absence of one is a stated decision.

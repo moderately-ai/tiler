@@ -14,6 +14,12 @@ ADR 0076 item 4 requires a produced artifact to carry a readable record of the n
 
 Nothing is public today. `mod realization;` is private and not re-exported, every item is `pub(crate)`, and the module carries the convention-7 `#![allow(dead_code, reason = …)]`. `wire-the-delivered-realization-record-into-the-artifact` depends on this ticket because nothing outside the crate can construct or read a record until the facade is accepted.
 
+## User-visible outcome
+
+Make the tested delivered-realization record constructible by artifact
+producers and readable from verified and decoded artifacts, without exposing a
+second authority over compiler-owned honourability vocabulary.
+
 ## What would become public
 
 - **`DeliveredNumericalRealization`** — the record. Private fields, read through `profile()` and `honoured(dimension)`. One record per artifact, because `ArtifactProgramBuilder` already enforces one numerical contract and one target profile across every variant (`NumericalContractMismatch`, `TargetProfileMismatch`).
@@ -25,11 +31,9 @@ Nothing is public today. `mod realization;` is private and not re-exported, ever
 - **`MAX_HONOURING_MEANS_KEY_BYTES`**.
 - On the artifact itself, whatever `wire-the-delivered-realization-record-into-the-artifact` adds: a builder entry point, `VerifiedArtifactProgram`'s reader, and `DecodedArtifact`'s reader.
 
-## Two shape questions worth confirming rather than inheriting
-
-**The builder's failure does not return the builder.** ADR 0074 convention 4 requires a consuming terminal; ADR 0058's rationale for *recoverable* ownership is that a large arena-backed draft must be correctable rather than discarded. This draft is four slots and a profile reference, so the draft returns nothing and a caller re-declares. `ArtifactProgramBuilder::build` does return its builder, so this is a deliberate asymmetry inside one crate.
-
-**`UnrecordedRealization` carries its rule as an associated constant, not a `rule()` method.** The rejection has no data to vary over, so a method would take a `self` it cannot read — Clippy's `unused_self` says so directly. Every sibling rejection in this crate spells it `rule()`, so the boundary now has both spellings for one role.
+Builder-error recovery and rejection-rule spelling follow existing artifact
+conventions or move to separately scoped reviews; they are not additional
+owner questions in this ticket.
 
 ## The question this record does *not* reopen, and its trigger
 

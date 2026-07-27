@@ -1,7 +1,7 @@
 ---
 id: pair-verified-buffer-handles-with-signature-ordinals
 title: Let a KIR consumer map a VerifiedBufferId to its signature ordinal
-status: review
+status: awaiting-decision
 priority: p1
 dependencies: []
 related: [prototype-structured-kir-slice, prototype-metal-kir-lowering]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, backend-contract]
-claimed_from: todo
-assignee: agent-ir2
-lease_expires_at: 1784998648
 ---
 A real gap in `tiler_ir::kernel`, found by the first backend actually consuming
 it rather than by inspection.
@@ -52,7 +49,7 @@ accepted, so the change goes to him under the approval policy.
 
 ## Outcome
 
-**Status `review`, not `done`: every way to close this adds a public item, which is owner-reserved.** The gap is confirmed by reading the source, the fact the fix would publish is now pinned by a test, and the API choice is reduced to one decision for Tom. No public surface was changed.
+**Status `awaiting-decision`, not `done`: every way to close this adds a public item, which is owner-reserved.** The gap is confirmed by reading the source, the fact the fix would publish is now pinned by a test, and the API choice is reduced to one decision for Tom. No public surface was changed.
 
 **Confirmed (inspected source, base `f286289`).** `VerifiedKernel::buffers()` in `crates/tiler-ir/src/kernel/model.rs` yields `BufferParameter` by value through an `ExactSizeIterator` and exposes no ordinal. `OperationView::Load`/`Store` carry a `VerifiedBufferId`. `VerifiedKernel::buffer(id)` resolves a handle to a parameter but not to a position. The pairing therefore genuinely cannot be obtained from the public API.
 
@@ -75,4 +72,4 @@ The one substantive argument for the pairing iterator is that it makes the corre
 
 **Take the additive `buffer_id` accessor; do not change `buffers()`.** Auto-resolved on maintainability: changing `buffers()` churns eight call sites to deliver what an added accessor delivers at none, and a signature change to a widely-used reader is the kind of edit whose blast radius is discovered rather than planned.
 
-The promotion itself still needs the owner's approval under ADR 0075 and is not covered by the four promotions approved today. Land the accessor and leave the ticket in `review` naming that as the remaining step.
+The promotion itself still needs the owner's approval under ADR 0075 and is not covered by the four promotions approved today. The ticket remains `awaiting-decision` until that approval is recorded.

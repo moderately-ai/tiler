@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi]
-claimed_from: todo
-assignee: agent-carry-the-byte-offset-of-a-partial-binding-view
-lease_expires_at: 1785045285
 ---
 Split from `expose-the-dispatch-record-on-a-decoded-artifact`, which encoded *which* buffer each ABI binding slot addresses and deliberately did not encode *where in it*.
 
@@ -27,14 +24,18 @@ Carry the offset as a second ABI expression on the binding row, with its own `Ab
 
 An expression rather than a constant, for the same reason the extent is one: both are concrete at build time and both generalize over bound extents at run time, and a constant offset beside a formula extent would be two spellings of one contract.
 
-This is a manifest schema step. `MANIFEST_SCHEMA` is at `3.0` and `ARTIFACT_DOMAIN` at `v2` after the binding target landed; both move again, for the reason recorded at those sites.
+This changes an encoded binding row. Advance the then-current manifest major
+and artifact identity domain with the reason recorded at both sites; do not pin
+the ticket to historical version numbers.
 
-## Also unblocks the two untested refusals
+## Separate neighboring refusal
 
-`PartialBindingView` and `AliasedInternalBinding` are implemented and **not covered by a test**, and the reason is exact rather than an oversight: only a `ValueRole::Temporary` value can be larger than what one stage addresses or be addressed by two slots of one entry, and binding a temporary needs a kernel declaring a `TensorRole::Intermediate` buffer. `grep -rn "TensorRole::Intermediate" crates/tiler-artifact` is empty — every fixture in that crate binds exactly one program input and one program output. `tiler-compiler`'s multi-stage plans do produce intermediate roles (`crates/tiler-compiler/src/physical.rs:232-315`), so the case is real rather than hypothetical.
-
-Whoever takes this should build the intermediate-role fixture the artifact crate lacks; it makes `AliasedInternalBinding` testable in the same pass even though this ticket removes the other refusal rather than testing it.
+`AliasedInternalBinding` is an existing, separate refusal. An intermediate-role
+fixture may make it convenient to test, but that regression is not required to
+make partial offsets packageable and should not expand this ticket's outcome.
 
 ## Closes when
 
-A binding may address a partial window, its offset is carried and proven against the packaged program, `PartialBindingView` is gone, `AliasedInternalBinding` has a regression test, and `make full` passes.
+A binding may address a partial window, its offset is carried and proven against
+the packaged program, `PartialBindingView` is gone, identity/schema versions
+state the change, and `make full` passes.

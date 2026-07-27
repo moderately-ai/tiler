@@ -10,11 +10,17 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, numerics, decision]
 ---
-`settle-contraction-chain-distributivity-permission` derived that regrouping a tensor-contraction chain consumes **distributivity** — exchanging a product of a sum for a sum of products — which is independent of reassociation and operand permutation and which no permission in `docs/numerical-semantics.md` grants. That derivation follows from the contract's own definitions and is settled. What it deliberately did not settle is a product choice, stated here as two atomic questions for Tom.
+`settle-contraction-chain-distributivity-permission` derived that regrouping a tensor-contraction chain consumes **distributivity** — exchanging a product of a sum for a sum of products — which is independent of reassociation and operand permutation and which no permission in `docs/numerical-semantics.md` grants. That derivation follows from the contract's own definitions and is settled. This ticket owns one atomic product choice.
 
-1. **Whether to admit a distributivity permission at all.** Admitting it makes contraction-order exploration reachable under a relaxed contract and gives Milestone 6's first bullet a subject. Declining it makes contraction association permanently a normalization or planning choice over one node's declared semantics rather than a logical-exploration rewrite over a chain, and removes a numerical freedom that no other rewrite in the corpus currently needs. Declining is not a gap: nothing in the compiler can express a contract permitting reassociation today either, since `NumericalPermission` in `crates/tiler-ir/src/schedule/numerics.rs` has exactly one variant, `Forbidden`.
+**Whether to admit a distributivity permission at all.** Admitting it makes
+contraction-order exploration reachable under a relaxed contract. Declining it
+makes contraction association a planning choice within one semantic
+contraction rather than a logical rewrite over a chain. Declining is not a gap:
+no admitted contract currently grants this freedom.
 
-2. **If admitted, whether one permission covers both directions of the identity.** Factoring `sum of (x * c)` into `(sum of x) * c` and expanding it back have the same algebraic justification but different structural preconditions and different error behaviour. ADR 0014 split reassociation from permutation because some combiners have one capability and not the other; whether an analogous asymmetry exists here has not been established and would be the evidence that justifies cutting the dimension in two.
+If admitted,
+`decide-whether-distributivity-directions-share-one-permission` owns the
+dependent question of whether factoring and expansion share a permission.
 
 Both questions are downstream of Q-SEM-015's semantic half. The Milestone 6 framing in `docs/roadmap.md` already reserves two contraction choices for Tom — one keyed family versus fixed-arity keys, and whether a semantic contraction node may consume more than two operands — and this is a third that belongs in the same decision record. Note that the derivation holds under either answer to the multi-operand question, so this does not depend on it.
 

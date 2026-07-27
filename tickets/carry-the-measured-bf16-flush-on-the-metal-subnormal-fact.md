@@ -1,7 +1,7 @@
 ---
 id: carry-the-measured-bf16-flush-on-the-metal-subnormal-fact
 title: Carry the measured bf16 flush on the Metal subnormal fact
-status: in-progress
+status: todo
 priority: p1
 dependencies: []
 related: [carry-the-dtype-on-the-metal-subnormal-flush-fact, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, decide-per-dtype-dispatchability-as-a-target-capability, express-metal-honourability-in-the-shared-form]
@@ -9,9 +9,6 @@ scopes: [implementation/metal, research/apple-targets]
 shared_scopes: []
 paths: []
 tags: [implementation, metal, numerics, dtype]
-claimed_from: todo
-assignee: agent-bf16-row
-lease_expires_at: 1785042783
 ---
 Two tickets landed within an hour of each other from the same base and compose correctly but incompletely: the fact learned to carry a dtype, and a third dtype was measured, and nothing joined them.
 
@@ -25,7 +22,13 @@ Two tickets landed within an hour of each other from the same base and compose c
 
 **The result is macOS-only and the record must not lose that.** The iOS Simulator compiled *and linked* every `bf16` module, then failed `newComputePipelineStateWithFunction:` with `XPC_ERROR_CONNECTION_INTERRUPTED` — both compilation paths, including the arithmetic-free kernel — while running every `f32` and `f16` kernel in the same invocation. `bf16` is therefore `Unknown` for both iOS families, with the cause unmeasured rather than guessed. A row that states "bf16 flushes" without its family bound would be a portable guarantee derived from one tested host, which `AGENTS.md` forbids in terms.
 
-**Whether family-scoping is expressible is the real design question of this ticket.** The existing shape is one behaviour per arithmetic type. This measurement is one behaviour per (arithmetic type, target family), with a value that is `Unknown` for two of three families. Decide whether the fact gains a family dimension, whether `Unknown` is representable per family, or whether the Metal facts are already family-scoped upstream so the row needs nothing. Read before assuming — the `f32` and `f16` rows carry family coverage in the *record*, and where that coverage lives in the *type* is the thing to check.
+**Family scoping already exists at the enclosing authority.**
+`MetalSubnormalArithmeticFacts` belongs to one `MetalTargetFacts`, and
+`MetalTargetFacts` already names its `MetalPlatform`. Add `Bf16` to the
+arithmetic-type vocabulary and state the measured flush behavior only in the
+macOS target-fact rows whose evidence supports it. Leave iOS device and
+simulator rows unstated (`Unknown`); do not duplicate the platform dimension
+inside each dtype row.
 
 **`decide-per-dtype-dispatchability-as-a-target-capability` (`contracts/decisions`) owns the adjacent contract question** raised by a device that refuses a dtype at pipeline creation. Do not decide it here; state what this row assumes and link it.
 

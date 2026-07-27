@@ -18,13 +18,13 @@ Both IR layers publish their numerical facts as readable canonical records while
 
 **The consequence to weigh.** An out-of-crate reference capability or index-access lowering provider is exactly the consumer these facts were declared *for* — it is supposed to read them and conform. Today it must either hardcode `AttributeFieldId::new(2)` against a record whose numbering no contract states, or ignore the facts and rely on the prose in `NormativeDefinitionRef`. The first is a silent-breakage hazard the moment a field is renumbered; the second is the situation the facts were added to end.
 
-**What closes this.** One decision, applied to both layers together:
+## Approved implementation outcome
 
-1. Decide whether the fact-field vocabulary is public API. If it is, name the constants at both layers and document each field's meaning and the exact conditions under which it is present or absent — for the scalar layer, that fields 1 and 2 are stated by every governed definition while 3 and 4 are stated only where defined.
-2. Decide whether the semantic layer's operation-local numbering is intended. `arithmetic_f32_facts` puts the canonical NaN payload at field 2 and `strict-serial-sum-f32` puts it at field 3; a published vocabulary either has to state that field IDs are record-local, or normalize them.
-3. If the vocabulary stays private, say so in the accessor documentation, so a consumer learns from the API that the record is opaque to it rather than discovering it by reading the crate.
-
-Requires an owner decision on the public boundary before implementation; ADR 0075 scopes public-boundary approval by change category.
+Publish the field names in the namespace of the record they interpret, document
+presence and absence rules, and state that field IDs are record-local unless a
+shared vocabulary is explicitly introduced. Renumbering a published ID is a
+breaking identity change. Do not normalize equal integer values across
+different records merely because their storage shape matches.
 
 ## Decision — Tom, 2026-07-25
 

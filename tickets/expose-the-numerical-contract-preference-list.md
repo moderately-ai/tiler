@@ -16,11 +16,18 @@ tags: [implementation, numerics, api]
 
 **Fact — what is missing.** `session::compile_governed(program, contract: NumericalContract)` takes exactly one contract. No public path states a list. `NumericalContractPreference::ordered` and `VerifiedTargetRequest::numerical_contracts` each carry a targeted `#[allow(dead_code)]` naming this ticket as the reason, so removing the allow is part of closing it.
 
-**The decision this ticket carries to Tom.** ADR 0076's second open question is whether an ordered preference list is the right shape at all, or whether one contract plus an explicit caller retry is. The implementation gives evidence the record did not have: the list costs one `Vec` on the request, one resolution loop, and one length-framed run in the subject encoding, and it is what lets the *stated fallback* enter identity — a retry loop cannot, because the compiler never sees the alternatives the caller would have accepted. That is an argument for the list and not a settlement; the public spelling is the point at which it becomes hard to reverse.
+## Approved implementation outcome
+
+Expose a nonempty ordered list of acceptable numerical contracts. Preserve
+caller order in request identity and expose both the stated list and resolved
+choice to readers. A caller-side retry cannot substitute because the compiler
+would not see or identify the alternatives the caller accepted.
 
 ## Closes when
 
-Either the public boundary gains a reviewed way to state an ordered preference and both `#[allow(dead_code)]` attributes are removed, or ADR 0076's open question is settled the other way and the crate-internal list is withdrawn with the record amended to say so. `make full` passes.
+The public boundary accepts the approved ordered preference, readers expose the
+stated and resolved values, both targeted `#[allow(dead_code)]` attributes are
+removed, and `make full` passes.
 
 ## Decision — Tom, 2026-07-25
 

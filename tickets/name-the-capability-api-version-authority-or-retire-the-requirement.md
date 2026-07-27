@@ -14,13 +14,23 @@ Split from `record-the-capability-revision-in-selected-provider-identity`, which
 
 **Fact — the contract requires it.** `docs/operation-extensions.md`: "Compiler and capability-API versions also participate in identity." That sentence sits beside the provider-revision trust contract, so it is naming two further identity components rather than restating the provider revision in other words.
 
-**Fact — no component mints either.** Exact check on the commit this was split from: `grep -rni "api_version\|api version" crates/` returned hits only inside `tiler-artifact`, and after the split it returns none at all. `tiler-compiler` publishes `SelectedCapability::capability_revision` and nothing else version-shaped; there is no compiler-version constant either. Neither value has an authority, a mint site, or a stated definition of what it versions.
+**Fact — no component mints either.** Construction-site inspection shows that
+`SelectedCapability` and the artifact selected-provider row carry provider
+identity/revision plus capability key/revision. No production type carries a
+capability-API or Tiler compiler version, and no producer mints or compares
+either. Textual mentions remain in artifact schema history, so a substring
+search is not an absence check.
 
 **Fact — what a producer did with the field while it existed.** `prototypes/serial-sum-compile/src/bundle.rs` narrowed the compiler's `u32` capability revision into the `u16` `capability_api_version` slot through a checked conversion that refused rather than truncating, with the conflation named at the call site. That was the honest form of an unanswerable question, and it still put a value into artifact identity under a name that meant something else.
 
 **Inference — an absent component is safer than an invented one, and it is still a gap.** Removing the field means an artifact no longer asserts a version nothing established. It does not mean the contract's requirement was satisfied, and a reader of `docs/operation-extensions.md` alone would still expect the value to travel. Both documents now say so explicitly; this ticket closes the difference between saying so and answering it.
 
 ## The decision this ticket owes
+
+Ensure artifact identity changes whenever a compiler or capability-interface
+change can change executable meaning or bytes. Either name enforceable version
+authorities and mismatch behavior, or prove that existing provider/capability
+revisions cover that risk and retire the extra requirement.
 
 One of two, with the derivation rather than the preference:
 

@@ -16,8 +16,14 @@ tags: [implementation, indexing, diagnostics]
 
 **What is missing.** The diagnostic does not say *why*. A consumer reading `BoundsNotProven` cannot distinguish "interval propagation overlapped a boundary and the finite fallback disproved it" from "the extent is symbolic and the environment bounds it nowhere". Only the second is fixable by adding a constraint, and that is the action a frontend would need to be told to take.
 
-**Why it was not done in that ticket.** Adding a variant to the public `IndexRegionDiagnostic` is a public API addition, which that ticket's worker was not authorized to make. It is filed rather than implied.
+`IndexRegionDiagnostic` is already `#[non_exhaustive]`, so adding this
+diagnostic follows the repository's additive-growth convention. The public
+meaning still needs to be documented and tested rather than hidden under the
+older generic refusal.
 
 ## Closes when
 
-An unprovable symbolic extent reports a distinct diagnostic naming the dimension and the symbol whose bound is missing, the existing refusal taxonomy is preserved, a test pairs it with the interval-proved neighbour, and `make full` passes.
+A missing symbolic bound produces a distinct diagnostic naming the affected
+access or dimension and extent symbol. Genuine interval failure continues to
+produce `BoundsNotProven` or `WriteOwnershipNotProven`; positive and negative
+neighbors prove the distinction, and `make full` passes.

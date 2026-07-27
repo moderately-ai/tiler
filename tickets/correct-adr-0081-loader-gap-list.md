@@ -18,11 +18,19 @@ tags: [documentation, contract, runtime, artifact]
 
 **Fact — the ownership half.** `carry-reconstructable-kernel-programs-in-the-neutral-envelope` is `done`; Tom decided on 2026-07-25 that a decoded envelope is a dispatch record and never a reconstruction, so it is no longer anyone's open question. The same pattern in `docs/artifact-abi.md` was corrected under [`correct-artifact-abi-reconstruction-ownership`](correct-artifact-abi-reconstruction-ownership.md), which holds `contracts/artifacts` and could not reach this record either.
 
-**Why p1 rather than a wording nit.** An accepted ADR is a current decision, and a reader has every reason to believe its `implementation_status` rationale. This one makes implemented, public, exercised capability look absent, and points at a closed ticket for work nobody is doing.
+**Why this is not a wording nit.** An accepted ADR is a current decision, and a reader has every reason to believe its `implementation_status` rationale. This one makes implemented, public, exercised capability look absent, and points at a closed ticket for work nobody is doing.
 
 ## Scope
 
-Rewrite that bullet against the code, keeping the `partial` status honest rather than rounding it up: state which gaps genuinely remain — a variant that dispatches more than one stage is still refused ([`carry-the-stage-execution-order-in-the-envelope`](carry-the-stage-execution-order-in-the-envelope.md)), and a binding addressing part of a value is still unpackageable ([`carry-the-byte-offset-of-a-partial-binding-view`](carry-the-byte-offset-of-a-partial-binding-view.md)) — and name those live owners.
+Rewrite that bullet against the code, keeping the `partial` status honest rather
+than rounding it up. The decoded dispatch record now exposes and validates
+guards, ranges, launch formulas, binding targets, symbols, execution order, and
+dependency obligations. The remaining gaps are that runtime preflight and
+selection still cover one entry rather than a complete multi-entry route
+([`preflight-every-entry-of-a-multi-stage-route`](preflight-every-entry-of-a-multi-stage-route.md)),
+and a binding addressing part of a value is still unpackageable
+([`carry-the-byte-offset-of-a-partial-binding-view`](carry-the-byte-offset-of-a-partial-binding-view.md)).
+Name those live owners.
 
 **Preserve the ADR's decision status and rationale.** Correcting a factual sentence inside an accepted record is not a superseding decision and must not be written as one. If the correction turns out to change what the ADR *decided* rather than what it *described*, stop and say so.
 

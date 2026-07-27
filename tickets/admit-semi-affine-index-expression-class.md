@@ -3,7 +3,7 @@ id: admit-semi-affine-index-expression-class
 title: Admit ADR 0046's semi-affine index expression class
 status: todo
 priority: p1
-dependencies: []
+dependencies: [harden-public-enums-non-exhaustive]
 related: [bind-shapeenv-sources-into-tensor-boundaries-and-coefficients, harden-public-enums-non-exhaustive, implement-index-domain-predicates]
 scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]

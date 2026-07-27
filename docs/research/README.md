@@ -88,6 +88,8 @@ single weakest-to-strongest ladder.
 
 - [Blank-agent documentation acceptance audit](documentation/blank-agent-acceptance-audit.md) — informational; unknown; informs: [Documentation metadata and traceability](../document-metadata.md)
 - [Information architecture and provenance audit](documentation/information-architecture-audit.md) — adopted; primary-source-synthesis; informs: [Documentation metadata and traceability](../document-metadata.md), [Use typed documentation metadata and derived backlinks](../decisions/0054-use-typed-documentation-metadata.md)
+- [Open-ticket accuracy, scope, and outcome-language audit](documentation/open-ticket-audit-2026-07-27.md) — pending; primary-source-synthesis; informs: [Project status](../status.md)
+- [Production crate architecture and maintainability audit](documentation/production-crate-codebase-audit.md) — pending; primary-source-synthesis; informs: [System architecture](../architecture.md)
 <!-- END GENERATED RESEARCH CATALOG -->
 
 Use the linked report for exact environment, source revision, limitations, and

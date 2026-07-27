@@ -1,7 +1,7 @@
 ---
 id: add-subgroup-memory-scope-when-collectives-land
 title: Add a subgroup memory scope when subgroup collectives enter the profile
-status: todo
+status: deferred
 priority: p2
 dependencies: []
 related: [prototype-structured-kir-slice, prototype-metal-kir-lowering]

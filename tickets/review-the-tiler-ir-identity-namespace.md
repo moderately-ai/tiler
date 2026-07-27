@@ -5,7 +5,7 @@ status: todo
 priority: p1
 dependencies: []
 related: []
-scopes: [implementation/ir]
+scopes: [implementation/ir, implementation/artifact, implementation/cache, implementation/compiler, implementation/metal-aot, implementation/reference]
 shared_scopes: []
 paths: []
 tags: [implementation, ir, decisions, identity]
@@ -14,12 +14,31 @@ tags: [implementation, ir, decisions, identity]
 
 **What it is.** Two functions, `push_len` and `push_slice`, writing the canonical fixed-width big-endian length prefix every identity digest in the workspace is framed with.
 
-**Why it was made public rather than kept private.** It had four definitions — `tiler-ir/src/program/model.rs`, `tiler-ir/src/kernel/model.rs`, the relocated ABI module, and `tiler-artifact/src/program/model.rs` — and `tiler-artifact`'s codec imported a fifth path to one of them. They had already drifted in form: the kernel copy narrowed with `len as u64` where the others used a checked `u64::try_from`. Because `tiler-artifact` is a separate crate, one definition serving all five callers has to be `pub`.
+**Current use.** The namespace is no longer an artifact-only convenience.
+`tiler-artifact`, `tiler-cache`, `tiler-compiler`, `tiler-metal-aot`, and
+`tiler-reference` all use the framing helpers, often at several identity
+construction sites. Narrowing it now would recreate a workspace-wide
+duplication rather than one local copy.
 
-**The question review must actually settle.** Publishing this says the canonical length framing is part of `tiler-ir`'s public contract, which is a real commitment: a consumer could depend on the exact byte framing of identities. The alternatives are (a) keep it public and state the framing as a governed contract, (b) make it `pub(crate)` and give `tiler-artifact` its own copy, restoring the duplication this closed, or (c) give the framing a named domain-separated encoder type rather than two loose functions, so the contract is nominal instead of structural.
+**User-visible outcome.** Every canonical identity must use one governed,
+fallible length-framing rule, so artifacts, caches, compiler products, backend
+provenance, and reference authorities cannot silently disagree. Consumers
+should encounter the identity contract, not a pair of unexplained byte-pushing
+utilities.
 
-**Inference, not measurement:** (c) looks right because the framing rule is already load-bearing across crates and a type can carry the invariant its doc comment currently only asserts. That is an argument, not evidence, and it should be tested against what an out-of-crate identity consumer actually needs before being adopted.
+**The question review must actually settle.** Publishing the helpers makes
+canonical length framing part of `tiler-ir`'s public contract. Determine whether
+that ownership is correct and whether the public surface should remain the two
+functions or become a nominal encoder that carries the invariant. A private
+copy per consumer no longer survives the single-authority requirement and is
+not a live alternative.
+
+**Inference, not measurement:** a nominal encoder looks preferable because the
+framing rule is already load-bearing across crates and a type can carry the
+invariant its doc comment currently only asserts. Test that shape against the
+actual consumers before proposing a public change.
 
 ## Closes when
 
-Either an accepted ADR places the canonical identity framing where it now lives with its public contract stated, or the namespace is narrowed and the decision recorded. `make full` passes.
+The framing has one accepted owner and a reviewed public contract, every current
+consumer uses that authority, and `make full` passes.
