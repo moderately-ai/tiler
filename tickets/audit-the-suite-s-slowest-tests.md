@@ -1,7 +1,7 @@
 ---
 id: audit-the-suite-s-slowest-tests
 title: Audit why five tests dominate the suite's wall clock
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -56,3 +56,29 @@ For each of the five, determine where the time actually goes — by measurement,
 ## Closes when
 
 Each of the five tests has a measured explanation of its cost, and every one that admits a worthwhile improvement has a follow-up ticket filed naming the specific change and the expected saving. Tests that should stay as they are are recorded as such, with the reason, so the next person reading the timing table does not re-open the question. No test or production code changes on this ticket.
+
+## Outcome
+
+Done. All five explained by measurement; one has real improvements available and two follow-ups are filed. No test or production code changed.
+
+**Both hypotheses this ticket offered are true of the dominant test, and they compound.** That was not the expected shape — the ticket read as though one category would apply.
+
+### `single_byte_corruptions_are_rejected` — 13.025s, and it *is* the suite's critical path
+
+**Sweep density.** The test visits 8,451 offsets: 69 header bytes one by one, 295 manifest samples at `.step_by(61)`, and 8,087 post-manifest bytes one by one. Bucketing every offset's refusal by region and variant gives thirteen distinct outcomes — and **8,075 offsets produce a single one of them**, `SectionDigestMismatch`, because the fixture has one section and every content byte is under that one digest. **8,370 of 8,451 offsets (99.0%) reproduce an outcome another offset already produced.**
+
+The density is already inconsistent with itself: the manifest interior is sampled 1-in-61 and is *still* uniform across all 295 samples, while the larger section region is not sampled at all. The header is the opposite and must stay exhaustive — eight distinct classes in 69 bytes.
+
+**Dev-profile optimization.** `Cargo.toml` sets `[profile.dev.package."*"] opt-level = 1`, and Cargo's `"*"` matches dependencies rather than workspace members, so every `tiler-*` crate compiles at `opt-level = 0` for `make check`. The same decode measured in both profiles: 962 µs dev against 182 µs release for a damaged envelope, 2.878 ms against 531 µs for a valid one — **5.3×**. The workload is digest-dominated, which is the shape that suffers most unoptimized, and the multiplier is paid by every digest, encode, and identity derivation in the suite rather than only here.
+
+Filed: `reduce-the-codec-corruption-sweep-to-its-distinct-classes` and `raise-the-dev-opt-level-for-workspace-crates`. They attack the same 13s from opposite sides and compose — the first ticket says to re-measure after the second, because a 5.3× cheaper decode leaves an exhaustive sweep at ~1.5s, which may make keeping exhaustive byte coverage affordable and moot the question of whether sampling it would weaken the property.
+
+### The other four — leave them alone, and here is why
+
+- **`typed_authoring_contract` (2.872s)** and **`shape_evidence_contract` (1.857s)** — inherent compile cost. Seven `trybuild` cases each (one `pass`, six `fail`), so seven `rustc` invocations, at ~0.41s and ~0.27s per case. The cost is compilation, not the code under test, and there is nothing to make faster short of having fewer cases — which would be removing coverage, not waste.
+- **`the_integer_nan_predicate_compiles_under_every_realization` (1.256s)** — a genuinely expensive property. Nine real `xcrun metal` compilations, ~0.14s each, which is fast for a real toolchain. The matrix *is* the assertion: it proves the numerical flags reach the compiler, and the test explicitly fails if every combination produced identical bytes.
+- **`semantic_graph_identity_handles_a_deep_chain_iteratively` (1.183s)** — a genuinely expensive property. `DEPTH = 50_000` is what the test asserts: that identity derivation over a deep chain is iterative rather than recursive. Reducing the depth would weaken precisely the thing it exists to prove.
+
+Recorded so the next person reading the timing table does not reopen these three.
+
+**Method note.** The per-region refusal bucketing and the dev-versus-release comparison were taken with a temporary instrumented test in `codec/tests.rs`, which was removed; this outcome is the retained record. Reproduce the timing table with `cargo nextest run --workspace --locked --profile timing`, which reports every test over one second.
