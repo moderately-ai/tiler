@@ -854,6 +854,140 @@ fn an_expression_no_use_site_reaches_is_rejected() {
     );
 }
 
+/// A section identifier that is not its own position is rejected by name.
+///
+/// The identifier is a *wire-only* field: a `Section` in the model carries its
+/// purpose and its bytes, and both the framing identifier and the descriptor's
+/// copy of it are derived from position when encoding. That makes this one of
+/// the few spellings the canonicity backstop could in principle catch, and the
+/// experiment recorded on
+/// `decide-whether-the-canonicity-re-encode-is-redundant` confirms it does — so
+/// the named check is what keeps the rejection legible rather than reporting
+/// only that some byte differed.
+#[test]
+fn a_non_canonical_section_id_is_rejected() {
+    // The descriptor's identifier opens a fixed-width record that ends in the
+    // section's content digest, so it is located from that digest rather than by
+    // scanning for a zero word — several unrelated fields also encode zero.
+    // Identifier, purpose, disposition, and schema, then the framed length.
+    const DESCRIPTOR_PREFIX_BYTES: usize = 4 + 1 + 1 + 2 + 2 + 8;
+
+    let envelope = envelope_of(&default_artifact());
+    let mut forged = encode(&envelope).expect("the envelope encodes");
+    // The descriptor's identifier and the framed section's identifier are the
+    // same value written twice, so both must move for the forgery to be a
+    // consistent non-canonical spelling rather than a length desync.
+    let digest = section_digest(DigestAlgorithm::GOVERNED, &envelope.sections()[0]);
+    let descriptor_id_at = manifest_offset(&forged, digest.as_bytes()) - DESCRIPTOR_PREFIX_BYTES;
+    let manifest_len = usize::try_from(u64::from_be_bytes(
+        forged[MANIFEST_LENGTH_AT..MANIFEST_LENGTH_AT + 8]
+            .try_into()
+            .expect("a fixed-width field"),
+    ))
+    .expect("the fixture manifest fits usize");
+    let framed_id_at = HEADER_BYTES + manifest_len;
+    for at in [descriptor_id_at, framed_id_at] {
+        assert_eq!(
+            forged[at..at + 4],
+            [0, 0, 0, 0],
+            "identifier zero is written"
+        );
+        forged[at..at + 4].copy_from_slice(&7_u32.to_be_bytes());
+    }
+    reseal(&mut forged);
+    assert_eq!(
+        decode(&forged),
+        Err(ArtifactCodecError::NonCanonicalSectionId {
+            position: 0,
+            declared: 7,
+        }),
+    );
+}
+
+/// Two deferred predicates spelled out of canonical key order are rejected.
+#[test]
+fn a_non_canonical_deferred_predicate_order_is_rejected() {
+    let error = reject_guarded_forgery(|envelope| {
+        // A second predicate over the arena's boolean literal, distinct from the
+        // first by its predicate key alone, so only the order can reject.
+        let mut second = envelope.variants[0].deferred[0].clone();
+        second.predicate = boolean_literal(envelope);
+        envelope.variants[0].deferred.push(second);
+        let keys = super::model::expression_keys(&envelope.expressions);
+        let ordered = super::super::model::deferred_key(&keys, &envelope.variants[0].deferred[0])
+            < super::super::model::deferred_key(&keys, &envelope.variants[0].deferred[1]);
+        if ordered {
+            envelope.variants[0].deferred.swap(0, 1);
+        }
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::NonCanonicalOrder {
+            subject: OrderedSubject::DeferredPredicate,
+        },
+    );
+}
+
+/// Two launch preconditions spelled out of canonical key order are rejected.
+#[test]
+fn a_non_canonical_launch_precondition_order_is_rejected() {
+    let error = reject_guarded_forgery(|envelope| {
+        let extra = envelope.variants[0].deferred[0].predicate;
+        let held = envelope.variants[0].entries[0].launch.preconditions[0];
+        let keys = super::model::expression_keys(&envelope.expressions);
+        let descending = if keys[position(held)] < keys[position(extra)] {
+            vec![extra, held]
+        } else {
+            vec![held, extra]
+        };
+        envelope.variants[0].entries[0].launch.preconditions = descending;
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::NonCanonicalOrder {
+            subject: OrderedSubject::LaunchPrecondition,
+        },
+    );
+}
+
+/// Two entries spelled out of canonical stage order are rejected.
+///
+/// The fixture packages a single-stage program, so the second entry is forged
+/// from the first with a distinct stage subject and backend entry key. That is
+/// enough for the order obligation, which reads the stage subject alone; the
+/// correspondence between a stage and the program that established it is not
+/// decidable from a decoded envelope at all, as `super::validate` records.
+#[test]
+fn a_non_canonical_entry_order_is_rejected() {
+    let error = reject_forged(|envelope| {
+        let mut second = envelope.variants[0].entries[0].clone();
+        second.stage = super::model::StageSubject::from_bytes(b"\xffzzz-later-stage")
+            .expect("a bounded stage subject");
+        second.entry_key =
+            super::super::keys::BackendEntryKey::from_bytes(b"spare").expect("a bounded entry key");
+        // Descending by stage subject, which is exactly the non-canonical form.
+        envelope.variants[0].entries.insert(0, second);
+        envelope.variants[0].execution_order = vec![0, 1];
+        envelope.features = envelope.derived_features();
+    });
+    assert_eq!(
+        error,
+        ArtifactCodecError::NonCanonicalOrder {
+            subject: OrderedSubject::Entry,
+        },
+    );
+}
+
+/// Returns the arena position of the fixture's boolean literal root.
+fn boolean_literal(envelope: &ArtifactEnvelope) -> u32 {
+    let found = envelope
+        .expressions
+        .iter()
+        .position(|node| matches!(node, ExprNode::Root(AbiRoot::BooleanLiteral(_))))
+        .expect("the fixture carries a boolean literal");
+    u32::try_from(found).expect("a bounded arena fits u32")
+}
+
 #[test]
 fn a_non_canonical_expression_order_is_rejected() {
     assert_eq!(
@@ -2008,40 +2142,233 @@ fn a_changed_payload_compatibility_contract_changes_the_artifact() {
 // Release matters: workspace crates build at `opt-level = 0` by default and the
 // codec measures ~5x slower in dev.
 
+/// Times one closure and reports the minimum and the mean of many runs.
+///
+/// **The minimum is the number to compare; the mean is printed beside it to
+/// show how loaded the host was.** Every perturbation a machine applies — a
+/// scheduler preemption, a frequency drop, a competing build — makes a run
+/// *slower* and none makes it faster, so the distribution has a hard floor at
+/// the true cost and an unbounded tail of noise. The minimum of enough runs
+/// estimates that floor; the mean estimates the floor plus whatever else the
+/// machine happened to be doing, which is why a mean-of-five once read a real
+/// improvement in this codec as a regression.
+fn min_and_mean(repeats: u32, mut run: impl FnMut()) -> (std::time::Duration, std::time::Duration) {
+    // Warm the allocator and the branch predictors so the first timed run is
+    // not measuring first-touch page faults.
+    for _ in 0..16 {
+        run();
+    }
+    let mut best = std::time::Duration::MAX;
+    let total = Instant::now();
+    for _ in 0..repeats {
+        let start = Instant::now();
+        run();
+        best = best.min(start.elapsed());
+    }
+    (best, total.elapsed() / repeats)
+}
+
 /// Reports decode cost, and how much of it is the canonicity re-encode.
 ///
 /// **The share is the finding.** `decode` re-encodes the whole envelope to
-/// prove one artifact has one byte spelling, and that backstop is the only
-/// thing enforcing it: a non-canonical spelling of the same content derives the
-/// same identity, so neither the identity check nor the digests can catch it.
-/// Its cost is therefore worth knowing exactly rather than estimating, and
-/// `decide-whether-the-canonicity-re-encode-is-redundant` is where keeping it
-/// is settled on evidence rather than on argument.
+/// prove one artifact has one byte spelling. Its cost is therefore worth
+/// knowing exactly rather than estimating, and
+/// `decide-whether-the-canonicity-re-encode-is-redundant` settled on evidence
+/// which non-canonical spellings only that re-encode rejects.
 #[test]
 fn hot_path_decode_and_reencode_share() {
-    const REPEATS: u32 = 50;
+    const REPEATS: u32 = 400;
     let bytes = encoded(&default_artifact());
 
-    let start = Instant::now();
-    for _ in 0..REPEATS {
+    let (full, full_mean) = min_and_mean(REPEATS, || {
         let _ = decode(&bytes).expect("the fixture decodes");
-    }
-    let full = start.elapsed() / REPEATS;
+    });
 
     let envelope = decode(&bytes).expect("the fixture decodes");
-    let start = Instant::now();
-    for _ in 0..REPEATS {
+    let (reencode, reencode_mean) = min_and_mean(REPEATS, || {
         let _ = super::encode::encode(&envelope).expect("the envelope re-encodes");
-    }
-    let reencode = start.elapsed() / REPEATS;
+    });
 
     println!("MEASURE envelope bytes   : {}", bytes.len());
-    println!("MEASURE decode           : {full:?}");
-    println!("MEASURE re-encode alone  : {reencode:?}");
+    println!("MEASURE decode           : min {full:?}, mean {full_mean:?} over {REPEATS}");
+    println!("MEASURE re-encode alone  : min {reencode:?}, mean {reencode_mean:?} over {REPEATS}");
     println!(
         "MEASURE re-encode share  : {:.1}%",
         (reencode.as_secs_f64() / full.as_secs_f64()) * 100.0
     );
+}
+
+/// Reports what one decode spends on each of its four stages.
+///
+/// **The split is the finding, and it is not the one reading the source
+/// suggests.** `decode` parses the framing and manifest, re-proves the model's
+/// obligations, derives the canonical identity to compare against the manifest's,
+/// and re-encodes as its canonicity backstop. Deriving the identity is the
+/// single largest stage, and it is paid *twice* over the decode as a whole —
+/// once directly and once inside the re-encode's manifest, which embeds the
+/// identity bytes but is dominated by the expression-key derivation it shares
+/// with them. The stages are measured against the same decoded envelope so the
+/// numbers add up against the full decode above them.
+#[test]
+fn hot_path_decode_stage_budget() {
+    const REPEATS: u32 = 400;
+    let bytes = encoded(&default_artifact());
+    let envelope = decode(&bytes).expect("the fixture decodes");
+    let identity = envelope.canonical_identity().expect("the envelope derives");
+    let digests: Vec<_> = envelope
+        .sections()
+        .iter()
+        .map(|section| section_digest(DigestAlgorithm::GOVERNED, section))
+        .collect();
+
+    let (full, _) = min_and_mean(REPEATS, || {
+        let _ = decode(&bytes).expect("the fixture decodes");
+    });
+    let (validate, _) = min_and_mean(REPEATS, || {
+        super::validate::validate(&envelope).expect("the envelope validates");
+    });
+    let (derive, _) = min_and_mean(REPEATS, || {
+        let _ = envelope.canonical_identity().expect("the envelope derives");
+    });
+    let (reencode, _) = min_and_mean(REPEATS, || {
+        let _ = super::encode::encode_with_identity(&envelope, &identity, &digests)
+            .expect("the envelope re-encodes");
+    });
+    let (section_hash, _) = min_and_mean(REPEATS, || {
+        for section in envelope.sections() {
+            let _ = section_digest(DigestAlgorithm::GOVERNED, section);
+        }
+    });
+    let (keys, _) = min_and_mean(REPEATS, || {
+        let _ = super::model::expression_keys(envelope.expressions());
+    });
+
+    let share = |part: std::time::Duration| (part.as_secs_f64() / full.as_secs_f64()) * 100.0;
+    println!("MEASURE envelope bytes    : {}", bytes.len());
+    println!("MEASURE decode total      : {full:?}");
+    println!(
+        "MEASURE   validate        : {validate:?} ({:.1}%)",
+        share(validate)
+    );
+    println!(
+        "MEASURE   derive identity : {derive:?} ({:.1}%)",
+        share(derive)
+    );
+    println!(
+        "MEASURE   re-encode       : {reencode:?} ({:.1}%)",
+        share(reencode)
+    );
+    println!(
+        "MEASURE   section digests : {section_hash:?} ({:.1}%, no longer paid twice)",
+        share(section_hash)
+    );
+    println!(
+        "MEASURE     of which keys : {keys:?} ({:.1}% of decode)",
+        share(keys)
+    );
+}
+
+/// Reports what a carried payload's repeated metadata decode costs.
+///
+/// `super::validate` decodes each carried payload's compilation subject once to
+/// bind it to the descriptor's digest, and again per realized entry to resolve
+/// that entry's backend mapping — `2 + E` decodes of the same bytes, each
+/// re-allocating a `PayloadMetadata` including a copy of the carried source.
+/// The repetition is real; this is what one of them is worth.
+#[test]
+fn hot_path_carried_metadata_decode() {
+    const REPEATS: u32 = 400;
+    let artifact = carried_artifact(b"kernel void fused() {}", b"\x00metallib\xff");
+    let bytes = encoded(&artifact);
+    let envelope = decode(&bytes).expect("a carried envelope decodes");
+    let sections = envelope.payload_content()[0].expect("the payload is carried");
+    let metadata = envelope.sections()[position(sections.metadata)]
+        .bytes
+        .clone();
+
+    let (full, _) = min_and_mean(REPEATS, || {
+        let _ = decode(&bytes).expect("a carried envelope decodes");
+    });
+    let (once, _) = min_and_mean(REPEATS, || {
+        decode_metadata(&metadata).expect("the carried subject decodes");
+    });
+    println!("MEASURE carried envelope  : {} bytes", bytes.len());
+    println!("MEASURE decode total      : {full:?}");
+    println!(
+        "MEASURE decode_metadata x1: {once:?} ({:.2}% of decode)",
+        (once.as_secs_f64() / full.as_secs_f64()) * 100.0
+    );
+}
+
+/// Reports the governed digest's throughput against the bytes a decode hashes.
+///
+/// **This is what the decode budget above actually is.** A decode hashes the
+/// manifest once and every section once; its canonicity re-encode hashes both
+/// again. So a decode of an `N`-byte envelope drives roughly `2N` bytes through
+/// SHA-256, and at the throughput printed here that product is most of the
+/// decode. Neither the parse, the model re-proof, nor the identity derivation is
+/// close to it.
+#[test]
+fn hot_path_digest_throughput() {
+    const REPEATS: u32 = 400;
+    let bytes = encoded(&default_artifact());
+    let algorithm = DigestAlgorithm::GOVERNED;
+    let (hash, _) = min_and_mean(REPEATS, || {
+        let _ = algorithm.digest(MANIFEST_DIGEST_DOMAIN, &bytes);
+    });
+    println!("MEASURE envelope bytes    : {}", bytes.len());
+    println!("MEASURE digest once over  : {hash:?}");
+    println!(
+        "MEASURE digest throughput : {:.1} MB/s",
+        (f64::from(u32::try_from(bytes.len()).expect("the fixture fits u32")) / hash.as_secs_f64())
+            / 1e6
+    );
+}
+
+/// Decodes in a loop long enough for a sampling profiler to attribute the cost.
+///
+/// **This is the harness that says *where* decode time goes.** A single decode
+/// is microseconds, which is one sample; reading a list of suspected costs off
+/// the source instead optimizes the list it started with. Recording this loop is
+/// what showed that the canonical-identity derivation, not the framing parse,
+/// dominates a decode.
+///
+/// It is `#[ignore]`d because it deliberately runs for seconds and asserts
+/// nothing. Record it with:
+///
+/// ```text
+/// CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --tests -p tiler-artifact
+/// TILER_PROFILE_SECONDS=20 samply record --save-only --unstable-presymbolicate \
+///     --rate 4000 -o decode.profile.json.gz \
+///     -- target/release/deps/tiler_artifact-<hash> \
+///        --ignored --exact program::codec::tests::hot_path_decode_profile_loop --nocapture
+/// ```
+///
+/// Three details are load-bearing. `CARGO_PROFILE_RELEASE_DEBUG=true` is
+/// required: the release profile carries no debug information, and without it
+/// every frame symbolicates to a bare hex address. `--unstable-presymbolicate`
+/// writes the `*.syms.json` sidecar that holds the names — the profile's own
+/// string table does not. And `--release` matters on its own: workspace crates
+/// build at `opt-level = 0` by default and the codec measures ~5x slower in dev.
+///
+/// `TILER_PROFILE_SECONDS` sets the duration and defaults to ten.
+#[test]
+#[ignore = "runs for seconds under a profiler; not part of the gate"]
+fn hot_path_decode_profile_loop() {
+    let seconds: u64 = std::env::var("TILER_PROFILE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(10);
+    let bytes = encoded(&default_artifact());
+    let deadline = Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut decodes = 0_u64;
+    while Instant::now() < deadline {
+        for _ in 0..64 {
+            let _ = decode(&bytes).expect("the fixture decodes");
+        }
+        decodes += 64;
+    }
+    println!("MEASURE profile loop: {decodes} decodes in {seconds}s");
 }
 
 /// Reports how large a canonical identity is relative to the bytes it names.

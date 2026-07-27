@@ -90,7 +90,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ArtifactEnvelope, ArtifactCodecErro
             manifest: parsed.sections.len(),
         });
     }
-    let sections = read_sections(&mut cursor, &parsed.sections, header.algorithm)?;
+    let (sections, section_digests) =
+        read_sections(&mut cursor, &parsed.sections, header.algorithm)?;
     if cursor.remaining() != 0 {
         return Err(ArtifactCodecError::TrailingBytes {
             count: cursor.remaining(),
@@ -110,7 +111,23 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ArtifactEnvelope, ArtifactCodecErro
     // have one byte identity: any well-formed but non-canonical spelling a
     // named check did not already catch fails here rather than being silently
     // normalized on the way in.
-    if encode_with_identity(&envelope, &derived)? != bytes {
+    //
+    // **What it uniquely covers is the manifest's wire-only fields**, measured
+    // rather than argued — see the per-form table on
+    // `decide-whether-the-canonicity-re-encode-is-redundant`. Every ordered
+    // collection above (sections, providers, payloads, expressions, features,
+    // entries, deferred predicates, launch preconditions) is read into the model
+    // verbatim and written back verbatim, so re-encoding reproduces a
+    // non-canonical spelling of any of them exactly and this comparison is blind
+    // to all eight; their named checks are the only thing rejecting them. What
+    // the wire carries and the model does not is a different class, and there
+    // this comparison is the last line: neutering the section-identifier check
+    // at `read_sections` leaves *this* rejecting the forgery, and a component
+    // schema declared below the governed minor is normalized to the governed
+    // constant by `parse_component_schemas` and caught by nothing else at all.
+    // That last one is unreachable only because every governed component minor
+    // is zero today; it becomes live the moment one is raised.
+    if encode_with_identity(&envelope, &derived, &section_digests)? != bytes {
         return Err(ArtifactCodecError::NonCanonicalManifest);
     }
     Ok(envelope)
@@ -180,12 +197,18 @@ fn read_header(
 ///
 /// A section's bytes are retained only once its declared identifier, exact
 /// length, and content digest all agree with what the manifest described.
+///
+/// The derived content digests are returned alongside the sections because the
+/// canonicity backstop needs the same values and deriving them is the single
+/// most expensive thing a decode does; see [`encode_with_identity`] for why
+/// handing them on is a memoization rather than a weakened check.
 fn read_sections(
     cursor: &mut Cursor<'_>,
     descriptors: &[SectionDescriptor],
     algorithm: DigestAlgorithm,
-) -> Result<Vec<Section>, ArtifactCodecError> {
+) -> Result<(Vec<Section>, Vec<Digest>), ArtifactCodecError> {
     let mut sections = Vec::with_capacity(descriptors.len());
+    let mut digests = Vec::with_capacity(descriptors.len());
     for (index, descriptor) in descriptors.iter().enumerate() {
         let declared_id = cursor.u32()?;
         if position(declared_id) != index || descriptor.id != declared_id {
@@ -208,14 +231,16 @@ fn read_sections(
             kind: descriptor.kind,
             bytes: content.to_vec(),
         };
-        if section_digest(algorithm, &section) != descriptor.digest {
+        let digest = section_digest(algorithm, &section);
+        if digest != descriptor.digest {
             return Err(ArtifactCodecError::SectionDigestMismatch {
                 section: declared_id,
             });
         }
         sections.push(section);
+        digests.push(digest);
     }
-    Ok(sections)
+    Ok((sections, digests))
 }
 
 /// The decoded manifest and the two derived values validated against it.

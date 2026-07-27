@@ -78,23 +78,51 @@ pub(crate) fn encode(envelope: &ArtifactEnvelope) -> Result<Vec<u8>, ArtifactCod
     let identity = envelope
         .canonical_identity()
         .map_err(|cause| ArtifactCodecError::IdentityDerivation { cause })?;
-    encode_with_identity(envelope, &identity)
+    let digests: Vec<Digest> = envelope
+        .sections()
+        .iter()
+        .map(|section| section_digest(DigestAlgorithm::GOVERNED, section))
+        .collect();
+    encode_with_identity(envelope, &identity, &digests)
 }
 
-/// Encodes an envelope whose canonical identity the caller has already derived.
+/// Encodes an envelope whose identity and section digests the caller has derived.
 ///
-/// **The identity is a parameter because deriving it is not cheap and the one
-/// caller that needs this already has it.** `decode` derives the identity to
-/// compare against the manifest's, and then re-encodes the envelope as its
-/// canonicity backstop — which derived the very same identity a second time,
-/// from the same value, on every decode and therefore on every cache hit.
+/// **Both are parameters because deriving them is not cheap and the one caller
+/// that needs this already holds them.** `decode` derives the identity to
+/// compare against the manifest's and digests every section to compare against
+/// its descriptor, and then re-encodes the envelope as its canonicity backstop —
+/// which derived the very same identity and the very same digests a second time,
+/// from the same values, on every decode and therefore on every cache hit.
+/// Section content is 31% of the bytes a decode drives through SHA-256, and the
+/// governed digest is where a decode spends most of its time.
+///
+/// **Reusing the section digests does not weaken the backstop, and reusing the
+/// *manifest* digest would.** A section digest is a pure function of the
+/// `Section` this envelope holds, so a caller passing the one it derived from
+/// that same value supplies no information the encoder did not already have.
+/// The manifest digest is different in kind: it covers the manifest bytes this
+/// function is *rebuilding*, and whether those reproduce the ones on the wire is
+/// the very question the backstop asks — so it is derived here, every time.
+///
+/// # Panics
+///
+/// Panics when `section_digests` does not have exactly one entry per section.
+/// Zipping the two instead would silently encode the shorter of them, which is
+/// the framing desync [`encode_provenance_tables`] refuses for the same reason.
 pub(crate) fn encode_with_identity(
     envelope: &ArtifactEnvelope,
     identity: &crate::program::CanonicalArtifactProgramIdentity,
+    section_digests: &[Digest],
 ) -> Result<Vec<u8>, ArtifactCodecError> {
+    assert_eq!(
+        section_digests.len(),
+        envelope.sections().len(),
+        "a section digest per section",
+    );
     check_budgets(envelope)?;
     let algorithm = DigestAlgorithm::GOVERNED;
-    let manifest = encode_manifest(envelope, algorithm, identity)?;
+    let manifest = encode_manifest(envelope, identity, section_digests)?;
     codec_limit(
         manifest.len(),
         MAX_MANIFEST_BYTES,
@@ -161,8 +189,8 @@ pub(crate) fn envelope_digest(bytes: &[u8]) -> [u8; DIGEST_BYTES] {
 /// Encodes the canonical manifest bytes the framing header digests.
 fn encode_manifest(
     envelope: &ArtifactEnvelope,
-    algorithm: DigestAlgorithm,
     identity: &crate::program::CanonicalArtifactProgramIdentity,
+    section_digests: &[Digest],
 ) -> Result<Vec<u8>, ArtifactCodecError> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MANIFEST_DOMAIN);
@@ -206,7 +234,7 @@ fn encode_manifest(
     encode_provenance_tables(&mut bytes, envelope);
     encode_expressions(&mut bytes, envelope);
     encode_variants(&mut bytes, envelope).map_err(identity_cause)?;
-    encode_section_descriptors(&mut bytes, envelope, algorithm)?;
+    encode_section_descriptors(&mut bytes, envelope, section_digests)?;
 
     push_slice(&mut bytes, identity.as_bytes());
     Ok(bytes)
@@ -345,15 +373,17 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) -> Result<(), ArtifactDia
     Ok(())
 }
 
-/// Derives and encodes one section descriptor per framed section.
+/// Encodes one section descriptor per framed section.
 ///
-/// A descriptor is never stored beside the bytes it describes; it is derived
-/// here from the section's position and exact content, so the two cannot
-/// disagree.
+/// A descriptor is never stored beside the bytes it describes; every field is
+/// derived from the section's position and exact content, so the two cannot
+/// disagree. The content digest is the one field the caller supplies, having
+/// derived it from these same sections — see [`encode_with_identity`] for why
+/// that is a memoized derivation rather than a claim this function trusts.
 fn encode_section_descriptors(
     bytes: &mut Vec<u8>,
     envelope: &ArtifactEnvelope,
-    algorithm: DigestAlgorithm,
+    section_digests: &[Digest],
 ) -> Result<(), ArtifactCodecError> {
     push_len(bytes, envelope.sections().len());
     for (position, section) in envelope.sections().iter().enumerate() {
@@ -369,7 +399,7 @@ fn encode_section_descriptors(
         bytes.extend_from_slice(&schema.major().to_be_bytes());
         bytes.extend_from_slice(&schema.minor().to_be_bytes());
         push_len(bytes, section.bytes.len());
-        bytes.extend_from_slice(section_digest(algorithm, section).as_bytes());
+        bytes.extend_from_slice(section_digests[position].as_bytes());
     }
     Ok(())
 }
