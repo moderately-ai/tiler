@@ -262,8 +262,8 @@ impl LaunchIndexRealization {
 /// [`MetalSubnormalArithmeticFacts`], which states one behaviour per type and
 /// answers `Unknown` for a type nothing has measured.
 ///
-/// The set is deliberately open. `bf16`, `f64` where a target has it, and every
-/// other format are unmeasured; two dtypes disagreeing establishes that the
+/// The set is deliberately open. `f64` where a target has it, and every integer
+/// and quantized format, are unmeasured; dtypes disagreeing establishes that the
 /// flush *depends on* the dtype and establishes nothing about which dtypes
 /// flush. Adding a variant is a build error at this type's private `index` map
 /// and at [`Self::ALL`], never a silent inheritance of another type's fact.
@@ -279,6 +279,12 @@ pub enum MetalFloatArithmeticType {
     F32,
     /// MSL `half`, IEEE-754 binary16.
     F16,
+    /// MSL `bfloat`, `bfloat16` — `f32` truncated to its high 16 bits.
+    ///
+    /// Named third because it is what distinguished the two mechanisms `f16`
+    /// alone could not: every `bf16` subnormal *is* an `f32` subnormal, where
+    /// every `f16` subnormal is an `f32` normal.
+    Bf16,
 }
 
 impl MetalFloatArithmeticType {
@@ -286,7 +292,7 @@ impl MetalFloatArithmeticType {
     ///
     /// The order is the derived one, so it agrees with the `Ord` a `BTreeSet`
     /// of these uses and with the order emission reports them in.
-    pub const ALL: [Self; 2] = [Self::F32, Self::F16];
+    pub const ALL: [Self; 3] = [Self::F32, Self::F16, Self::Bf16];
 
     /// How many arithmetic types this vocabulary names.
     pub const COUNT: usize = Self::ALL.len();
@@ -297,6 +303,7 @@ impl MetalFloatArithmeticType {
         match self {
             Self::F32 => "f32",
             Self::F16 => "f16",
+            Self::Bf16 => "bf16",
         }
     }
 
@@ -311,6 +318,7 @@ impl MetalFloatArithmeticType {
         match self {
             Self::F32 => 0,
             Self::F16 => 1,
+            Self::Bf16 => 2,
         }
     }
 }
@@ -457,15 +465,49 @@ impl MetalSubnormalArithmetic {
 /// witnessed dispatch says what was delivered. Nothing readable on the compile
 /// side would have caught the divergence.
 ///
-/// # Fact — what two dtypes establish
+/// # Measurement — `bf16`, and it is macOS-only
 ///
-/// That the flush depends on the dtype. Not which dtypes flush. `bf16`, `f64`,
-/// and every integer and quantized format are unmeasured, and a third dtype
-/// could agree with either measured one, so they are `Unknown` here rather than
-/// assumed. The `IOsDevice` family's arithmetic is unmeasured for both types
-/// alike — its compile side agrees and nothing dispatched it — so a caller
-/// stating facts for that family states them from the same inference it already
-/// makes for `f32`.
+/// On the same host, GPU, and toolchain row, every flush dimension returns the
+/// **flushed** value at `bfloat16` width, in all three math modes, at `-O0` and
+/// `-O2`, and on both compilation paths: `0040` → `0000` and `0080` → `0000`,
+/// and the sign rows `8040` → `8000` twice over, which is what makes the zero a
+/// measured `PreservesSign` rather than an assumed `+0.0`. Each verdict carries
+/// an execution witness reporting `executed`, and `materialize_bf16` returns all
+/// eight operands unchanged, so the zeros are the output of arithmetic that ran
+/// rather than of a buffer round trip that normalized. Finding 24 of the [Apple
+/// numerical behaviour
+/// record](../../../docs/research/apple-targets/numerical-behaviour.md) owns it.
+///
+/// **`bf16` is `Unknown` for both iOS families, for two different reasons.** The
+/// iOS Simulator compiles and links every `bfloat` module and then refuses to
+/// create a pipeline for it — `XPC_ERROR_CONNECTION_INTERRUPTED`, on both the
+/// offline and runtime paths, and for an arithmetic-free `materialize_bf16` too,
+/// so the refusal is about the format and not about an operation. `IOsDevice`
+/// was never asked. Finding 26 owns the refusal and does not diagnose its cause.
+/// So a caller states this row only for a macOS target, which is why the
+/// platform dimension stays on [`MetalTargetFacts`] rather than being duplicated
+/// inside each dtype row.
+///
+/// # Fact — what three dtypes establish
+///
+/// That the flush depends on the dtype. Not which dtypes flush. `f64` and every
+/// integer and quantized format are unmeasured, and a fourth dtype could agree
+/// with any measured one, so they are `Unknown` here rather than assumed. The
+/// `IOsDevice` family's arithmetic is unmeasured for all three types alike — its
+/// compile side agrees and nothing dispatched it — so a caller stating facts for
+/// that family states them from the same inference it already makes for `f32`.
+///
+/// **The mechanism is narrowed and not settled.** One explanation — narrow
+/// arithmetic evaluated at `f32` precision and rounded once — predicts all three
+/// measured dtypes with no free parameter, and the competing native-support
+/// explanation survives only weakened to a per-format claim this record has no
+/// independent evidence for. It is *not* separated from native `bfloat16`
+/// arithmetic flushing at its own boundary, and no single operation can separate
+/// them: a value is `bf16`-subnormal exactly when it is `f32`-subnormal, and
+/// `f32`'s 24-bit significand exceeds the 18 bits that would make a second
+/// rounding to `bfloat16`'s 8-bit significand innocuous. A two-operation chain
+/// with a rounding-sensitive intermediate would; none has been measured. Nothing
+/// here may be read as a rule for a dtype nobody measured.
 ///
 /// # Fact — which way a wrong reading errs
 ///

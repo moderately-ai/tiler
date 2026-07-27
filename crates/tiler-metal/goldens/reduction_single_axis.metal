@@ -8,6 +8,7 @@
 // Arithmetic subnormals, per floating-point type:
 //   f32: flushes-to-zero-preserving-sign
 //   f16: preserves-subnormals
+//   bf16: flushes-to-zero-preserving-sign
 //
 // Carried by these operations under every math mode: every f32 immediate
 // is its exact bit pattern, every arithmetic operation is one statement,

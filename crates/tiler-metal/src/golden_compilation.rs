@@ -175,6 +175,12 @@ fn emitter_facts() -> MetalTargetFacts {
             .stating(
                 MetalFloatArithmeticType::F16,
                 MetalSubnormalArithmetic::PreservesSubnormals,
+            )
+            .stating(
+                MetalFloatArithmeticType::Bf16,
+                MetalSubnormalArithmetic::FlushesToZero {
+                    zero_sign: MetalFlushedZeroSign::PreservesSign,
+                },
             ),
         31,
     )

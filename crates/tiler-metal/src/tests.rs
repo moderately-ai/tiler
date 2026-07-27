@@ -64,16 +64,24 @@ fn target() -> MetalTargetFacts {
 
 /// The Apple row's per-type subnormal facts, with the `f32` entry varied.
 ///
-/// The `f16` entry is the measured preserving one in every case: no test here
-/// emits `f16` arithmetic, so varying it would exercise nothing, and stating it
-/// keeps the fixtures a faithful copy of the measured row rather than a target
-/// that happens to be silent about the second dtype.
+/// The `f16` and `bf16` entries are the measured ones in every case: no test
+/// here emits arithmetic at either width, so varying them would exercise
+/// nothing, and stating them keeps the fixtures a faithful copy of the measured
+/// macOS row rather than a target that happens to be silent about two of the
+/// three dtypes. This is a `MacOs` profile, which is the only family `bf16` was
+/// dispatched on.
 const fn subnormal_facts(f32_behaviour: MetalSubnormalArithmetic) -> MetalSubnormalArithmeticFacts {
     MetalSubnormalArithmeticFacts::unmeasured()
         .stating(MetalFloatArithmeticType::F32, f32_behaviour)
         .stating(
             MetalFloatArithmeticType::F16,
             MetalSubnormalArithmetic::PreservesSubnormals,
+        )
+        .stating(
+            MetalFloatArithmeticType::Bf16,
+            MetalSubnormalArithmetic::FlushesToZero {
+                zero_sign: MetalFlushedZeroSign::PreservesSign,
+            },
         )
 }
 
@@ -720,6 +728,47 @@ fn every_arithmetic_type_indexes_to_its_own_slot() {
         );
     }
     assert_eq!(seen.len(), MetalFloatArithmeticType::COUNT);
+}
+
+/// `bf16` is its own slot and inherits nothing, including from a dtype that
+/// happens to behave identically.
+///
+/// The measured `bf16` flush and the measured `f32` flush are the same value,
+/// which is exactly why this needs asserting: a record that answered `bf16` from
+/// the `f32` entry would look correct on this row and be a guess. It would also
+/// be wrong in the one direction that matters -- `f16` preserves, so a
+/// neighbour-reading record has an even chance of reporting a flush against a
+/// subnormal the device carries exactly.
+#[test]
+fn bf16_is_unknown_until_it_is_stated_even_beside_an_identical_f32_fact() {
+    let flush = MetalSubnormalArithmetic::FlushesToZero {
+        zero_sign: MetalFlushedZeroSign::PreservesSign,
+    };
+    let without = MetalSubnormalArithmeticFacts::unmeasured()
+        .stating(MetalFloatArithmeticType::F32, flush)
+        .stating(
+            MetalFloatArithmeticType::F16,
+            MetalSubnormalArithmetic::PreservesSubnormals,
+        );
+    let unstated = without
+        .behaviour(MetalFloatArithmeticType::Bf16)
+        .expect_err("an unstated bf16 is Unknown, not the f32 fact beside it");
+    assert_eq!(
+        unstated.arithmetic_type(),
+        MetalFloatArithmeticType::Bf16,
+        "the rejection names the dtype nothing was stated for",
+    );
+    assert_eq!(unstated.rule(), "unstated-subnormal-arithmetic");
+
+    // Stated, it answers with its own measured row and leaves the others alone.
+    let with = without.stating(MetalFloatArithmeticType::Bf16, flush);
+    assert_eq!(with.behaviour(MetalFloatArithmeticType::Bf16), Ok(flush));
+    assert_eq!(with.behaviour(MetalFloatArithmeticType::F32), Ok(flush));
+    assert_eq!(
+        with.behaviour(MetalFloatArithmeticType::F16),
+        Ok(MetalSubnormalArithmetic::PreservesSubnormals),
+        "adding a third row did not disturb the two already stated",
+    );
 }
 
 /// A fact stated twice for one arithmetic type is a rejection, not a last-wins.
