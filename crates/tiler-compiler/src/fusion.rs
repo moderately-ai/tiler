@@ -164,7 +164,7 @@ pub(crate) fn prove_fused_numerics(
     }
     let proof = FusionNumericalProof {
         candidate: candidate.clone(),
-        request_subject: request.subject(),
+        request_subject: request.subject().clone(),
         atomic_operations: AtomicOperationProof::MultiplyThenAdd,
         contributor_order: ContributorOrderProof::OriginalAxisLexicographic,
         nan_boundaries: NaNBoundaryProof::CanonicalizeAfterEveryArithmeticOperation,

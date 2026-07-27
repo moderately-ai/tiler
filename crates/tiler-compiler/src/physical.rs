@@ -94,7 +94,7 @@ impl VerifiedScheduledRegion {
         &self.semantic_members
     }
     pub(crate) fn matches_request(&self, request: &VerifiedTargetRequest) -> bool {
-        self.request_subject == request.subject()
+        self.request_subject == *request.subject()
     }
 }
 
@@ -503,7 +503,7 @@ pub(crate) fn verify_schedule_with_feasibility(
 ) -> Result<(VerifiedScheduledRegion, ProvenEvidence), PhysicalError> {
     let id = region.index.id;
     let subject = request.subject();
-    if !request.is_authoritative()
+    if !request.reconstructs_its_authority()
         || request.target_profile() != PrototypeTargetProfile::governed()
         || !request.numerical_contract().is_governed()
     {
@@ -515,7 +515,7 @@ pub(crate) fn verify_schedule_with_feasibility(
     if verified.region().index.numerical != request.numerical_contract().realization() {
         return intrinsic("numerical-realization", id);
     }
-    verify_region_subject_binding(verified.region(), &semantic_members, &subject)?;
+    verify_region_subject_binding(verified.region(), &semantic_members, subject)?;
     let evidence = assess_region(
         id,
         verified.requirements(),
@@ -527,7 +527,7 @@ pub(crate) fn verify_schedule_with_feasibility(
             verified,
             semantic_members,
             target_profile_key: request.target_profile().key,
-            request_subject: subject,
+            request_subject: subject.clone(),
         },
         evidence,
     ))

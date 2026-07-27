@@ -1,7 +1,7 @@
 ---
 id: store-the-verified-request-subject-instead-of-rebuilding-it
 title: Store the verified request subject instead of rebuilding it
-status: todo
+status: done
 priority: p1
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -40,3 +40,22 @@ Compute the subject once in `for_target`; return a borrow from `subject()`; redu
 ## Closes when
 
 One compile rebuilds the subject at most once per target, pinned by a work-count guard; the authority check is preserved; artifact identity is byte-identical; `make full` passes.
+
+## Outcome
+
+Done. **Request-subject reconstructions per compile fell from 57 to 12**, and the 12 that remain are the verification rather than waste.
+
+**One method was serving two roles.** `subject()` was both the accessor every reader used and the reconstruction the tamper check needed, so every reader paid the verifier's price. They are now separate:
+
+- `subject()` returns `&VerifiedRequestSubject` — a borrow of the stored `authority`. The subject is a pure function of fields that are private and never mutated after `for_target` verified them, so rebuilding it per call reproduced a value the type already holds.
+- `reconstructs_its_authority()` re-derives and compares. Same behaviour as the old `is_authoritative()`, same cost, and now named so a caller choosing it is choosing the cost.
+
+**Nothing was removed.** The forged-request tests that assert the check catches tampering still pass unchanged — they now call the method that actually performs the check. Deleting the reconstruction entirely would have been faster still and would have removed a tested guarantee, which is why it was split rather than dropped.
+
+The remaining 12 are `reconstructs_its_authority` at the sites that genuinely verify, plus `for_target` computing the authority in the first place.
+
+**The maintainability half.** The naming is the point. `subject()` reading as free and costing a deep clone of the semantic identity, both shapes, the members and the contract preference is precisely how the count reached 57 — every new reader took the obvious-looking method. A borrow cannot be misused that way, and a caller who wants the check now has to name it.
+
+`physical.rs` had the sharpest instance: it called `subject()` and then `is_authoritative()` back to back, building the value twice, once per proposal per region per cover.
+
+Gate: `make full` green (982 nextest + 11 doc-tests, rustdoc, release numerical tests, `tkt lint`, shellcheck). Artifact identity unchanged.

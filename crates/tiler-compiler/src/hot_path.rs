@@ -92,24 +92,22 @@ fn hot_path_planning_share() {
     );
 }
 
-/// The request-subject rebuild count does not regress.
+/// The request subject is reconstructed only where it is being *verified*.
 ///
-/// **A ratchet, not the target.** The subject is a pure function of an
-/// immutable request, and `VerifiedTargetRequest` already stores it as its
-/// `authority`, so every reconstruction beyond the first is duplicated work by
-/// definition. The bound below is the *measured current* count, not a number
-/// anybody chose: it exists so the figure cannot quietly grow while the ticket
-/// that reduces it is still open.
+/// **What the remaining count is, and why it is not zero.** `subject()` is now
+/// a borrow of the stored authority, so no reader rebuilds. What still rebuilds
+/// is `reconstructs_its_authority`, which exists to re-derive and compare —
+/// the tamper check — plus `for_target`, which computes the authority in the
+/// first place. Those are the verification, not waste, and removing them would
+/// remove a check rather than a cost.
 ///
-/// `store-the-verified-request-subject-instead-of-rebuilding-it` lowers this to
-/// a small constant and tightens the bound in the same change. Until then, a
-/// failure here means a new call site started reconstructing the subject —
-/// which is worth knowing immediately, because the sites that already do it are
-/// inside per-region and per-candidate loops.
+/// The bound is the measured count after that split. It fell from 57, and the
+/// 45 that went were readers paying a verifier's price because one method
+/// served both roles.
 #[test]
 fn the_request_subject_rebuild_count_does_not_regress() {
-    /// Measured on 2026-07-27, before any reduction. See the note above.
-    const MEASURED_BASELINE: usize = 57;
+    /// Measured after separating the accessor from the tamper check.
+    const MEASURED_BASELINE: usize = 12;
 
     let program = program(4, 3);
     let (compiled, rebuilds) = REQUEST_SUBJECT_REBUILDS
@@ -122,7 +120,8 @@ fn the_request_subject_rebuild_count_does_not_regress() {
     assert!(
         rebuilds <= MEASURED_BASELINE,
         "one compile reconstructed the request subject {rebuilds} times, above the measured \
-         baseline of {MEASURED_BASELINE}; a new call site is rebuilding a value it could borrow",
+         baseline of {MEASURED_BASELINE}; a new call site is calling \
+         `reconstructs_its_authority` where `subject()` would do",
     );
 }
 

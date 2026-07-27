@@ -755,7 +755,29 @@ impl VerifiedTargetRequest {
         self.normalized.serial_sum()
     }
 
-    pub(crate) fn subject(&self) -> VerifiedRequestSubject {
+    /// The request subject this target compiles under.
+    ///
+    /// **A borrow of the stored authority, not a reconstruction.** The subject
+    /// is a pure function of fields that are private and never mutated after
+    /// `for_target` verified them, so rebuilding it per call reproduced a value
+    /// this type already holds — and it was called once per proposal, per
+    /// region, per cover.
+    ///
+    /// [`Self::reconstructs_its_authority`] is the separate operation that
+    /// re-derives and compares; the two were one method, so every reader paid
+    /// the verifier's cost.
+    pub(crate) const fn subject(&self) -> &VerifiedRequestSubject {
+        &self.authority
+    }
+
+    /// Re-derives the subject from this request's fields and compares it to the
+    /// stored authority.
+    ///
+    /// Deliberately **not** what [`Self::subject`] does. This is the tamper
+    /// check, it costs a full reconstruction, and it is named so a caller
+    /// choosing it is choosing the cost. A reader that only wants the subject
+    /// wants the borrow.
+    pub(crate) fn reconstructs_its_authority(&self) -> bool {
         request_subject(
             &self.normalized,
             &self.semantic_identity,
@@ -764,11 +786,7 @@ impl VerifiedTargetRequest {
             self.budgets,
             self.target_profile,
             &self.capabilities,
-        )
-    }
-
-    pub(crate) fn is_authoritative(&self) -> bool {
-        self.subject() == self.authority
+        ) == self.authority
     }
 
     /// The one contract this target compiles under, resolved from the caller's
@@ -2265,27 +2283,27 @@ mod tests {
 
         let mut forged = target.clone();
         forged.target_profile.max_buffer_bindings_per_entry -= 1;
-        assert!(!forged.is_authoritative());
+        assert!(!forged.reconstructs_its_authority());
 
         let mut forged = target.clone();
         forged.capabilities = CompilerCapabilitySnapshot::without_capabilities();
-        assert!(!forged.is_authoritative());
+        assert!(!forged.reconstructs_its_authority());
 
         let mut forged = target.clone();
         forged.budgets.regions += 1;
-        assert!(!forged.is_authoritative());
+        assert!(!forged.reconstructs_its_authority());
 
         let mut forged = target.clone();
         forged.semantic_identity = program_with_unused_provider(11).semantic_identity().clone();
-        assert!(!forged.is_authoritative());
+        assert!(!forged.reconstructs_its_authority());
 
         let mut forged = target.clone();
         forged.normalized.serial_sum_mut().bias_bits ^= 1;
-        assert!(!forged.is_authoritative());
+        assert!(!forged.reconstructs_its_authority());
 
         let mut forged = target;
         forged.normalized.serial_sum_mut().input_key = InputKey::new("forged").unwrap();
-        assert!(!forged.is_authoritative());
+        assert!(!forged.reconstructs_its_authority());
     }
 
     #[test]

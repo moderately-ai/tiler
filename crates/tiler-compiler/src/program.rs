@@ -800,7 +800,7 @@ pub(crate) fn build_artifact_plan(
             .collect(),
         applicability_guard: program.core.applicability_guard(),
         lowering_providers: providers,
-        request_subject: request.subject(),
+        request_subject: request.subject().clone(),
         verified_program: program.clone(),
         verified_schedules: scheduled.to_vec(),
         verified_kernels: kernels.to_vec(),
