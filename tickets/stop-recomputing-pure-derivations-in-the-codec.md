@@ -1,7 +1,7 @@
 ---
 id: stop-recomputing-pure-derivations-in-the-codec
 title: Stop recomputing pure derivations in the artifact codec
-status: in-progress
+status: todo
 priority: p1
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, artifact]
-claimed_from: todo
-assignee: integrator
-lease_expires_at: 1785178085
 ---
 Duplicate work inside `decode`, each item a pure function of the same value computed more than once. No semantic change.
 
