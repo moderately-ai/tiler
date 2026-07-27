@@ -46,7 +46,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tiler_artifact::program::ArtifactCodecFailure;
 
 use super::key::CacheKey;
-use super::store::ExpansionCache;
+use super::store::{Durability, ExpansionCache, ProtocolOutcome};
 use super::subject::{ComposedSubject, SubjectFacets};
 
 /// Bundle body sizes the sweep reports, in bytes of artifact envelope.
@@ -136,6 +136,69 @@ fn published(scratch: &Scratch, envelope_bytes: usize) -> (ExpansionCache, Cache
         )
         .expect("the fixture publishes");
     (cache, key)
+}
+
+/// Reports publication time under both durability policies.
+///
+/// **This is the measurement `measure-expansion-cache-durability-policies`
+/// holds open**, and what it can and cannot say is fixed by what `fsync` means
+/// on this platform. It measures the *latency* the two policies cost. It says
+/// nothing about survival: Darwin's `fsync(2)` documents that data may remain
+/// in a device's volatile cache, so no timing here is evidence about power
+/// loss, and a survival claim would need `F_FULLFSYNC` and a way to cut power.
+///
+/// Each publication is a fresh cache under a fresh scratch root, because a
+/// second publication of the same subject is a hit and would measure a read.
+/// The minimum of many runs is reported for the reason
+/// `tiler-compiler`'s harness states: host noise only ever makes a run slower.
+#[test]
+fn hot_path_publication_by_durability() {
+    for envelope_bytes in ENVELOPE_SIZES {
+        for (name, durability) in [
+            ("process-crash", Durability::ProcessCrash),
+            ("fsync", Durability::Fsync),
+        ] {
+            let repeats = repeats_for(envelope_bytes).min(64);
+            let mut best = Duration::MAX;
+            let mut total = Duration::ZERO;
+            for round in 0..repeats {
+                let scratch = Scratch::new(&format!("publish-{name}-{envelope_bytes}-{round}"));
+                let cache =
+                    ExpansionCache::open(scratch.root().join("cache")).with_durability(durability);
+                let subject = subject_of(envelope_bytes);
+                let envelope = envelope_of(envelope_bytes);
+                let start = Instant::now();
+                let outcome = cache
+                    .resolve(
+                        subject.as_bytes(),
+                        || Ok::<_, String>(envelope),
+                        &no_payload,
+                    )
+                    .expect("the fixture publishes");
+                let elapsed = start.elapsed();
+                // Asserted rather than assumed: a hit here would mean the
+                // measurement timed a read under a policy that does not affect
+                // reads, and every row would be indistinguishable for a reason
+                // that has nothing to do with durability.
+                assert!(
+                    matches!(
+                        outcome,
+                        ProtocolOutcome::Hit {
+                            published: true,
+                            ..
+                        }
+                    ),
+                    "each round must publish rather than hit",
+                );
+                best = best.min(elapsed);
+                total += elapsed;
+            }
+            println!(
+                "MEASURE publish {name} envelope {envelope_bytes}B: min {best:?}, mean {:?} over {repeats}",
+                total / repeats,
+            );
+        }
+    }
 }
 
 /// Reports validated-read time by bundle size.

@@ -1,7 +1,7 @@
 ---
 id: measure-expansion-cache-durability-policies
 title: Measure expansion cache durability policies
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [implement-the-expansion-cache-protocol]
@@ -9,6 +9,9 @@ scopes: [research/cache, implementation/cache, contracts/decisions, contracts/ar
 shared_scopes: [contracts/navigation]
 paths: []
 tags: [cache, durability, measurement]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785194688
 ---
 The research note's fourth follow-up gate: "Measure cache latency and survival for `process-crash` versus `fsync`; only then decide the default in an ADR."
 
