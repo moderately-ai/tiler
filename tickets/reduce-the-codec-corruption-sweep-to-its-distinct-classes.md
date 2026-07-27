@@ -1,7 +1,7 @@
 ---
 id: reduce-the-codec-corruption-sweep-to-its-distinct-classes
 title: Reduce the codec corruption sweep to the distinctions it establishes
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [audit-the-suite-s-slowest-tests]
@@ -45,3 +45,19 @@ Note that [`raise-the-dev-opt-level-for-workspace-crates`](raise-the-dev-opt-lev
 ## Closes when
 
 The sweep's cost is proportionate to the distinctions it establishes; the header stays byte-exhaustive; whichever of exhaustive-or-representative coverage is chosen is stated at the site with its reason; and every one of the thirteen outcomes above is still reached.
+
+## Outcome — the tension dissolved, and the sweep got *stronger* (2026-07-27)
+
+This ticket said to measure before deciding, and anticipated that a cheaper decode might make exhaustive coverage affordable enough that the exhaustive-versus-representative question would not need answering. That is what happened, by a different route than the one it named.
+
+**Measurement.** The sweep now runs in **132 ms fully exhaustive** — every byte of the envelope, no sampling anywhere — against ~70 ms for the sampled form it replaces and **13.0 s** when this ticket was written. Two changes landed earlier the same day did it: artifact decode fell from 662 µs to 18.7 µs across the codec work, and the envelope shrank from 26,126 bytes to 15,030 when ABI expression identity moved to a linear encoding. `raise-the-dev-opt-level-for-workspace-crates`, which this ticket expected to be the cause, has not landed and was not needed.
+
+**So the stride-61 sampling is removed rather than extended.** The ticket's fallback plan — sample per *section* instead of per *region*, and cover the section-structure boundaries — is unnecessary: for 62 ms the property under test is "no single-byte corruption of this envelope is accepted" rather than "no sampled single-byte corruption is", and the stronger claim needs no argument about which bytes are representative. `audit-the-suite-s-slowest-tests` records the rule that a correctness property must not be weakened to make a test faster; here it was not weakened in either direction.
+
+**All thirteen outcomes are still reached** — the sweep is a superset of what it covered before, so nothing that was exercised has stopped being.
+
+**The check can say no**, verified rather than assumed: mutating the corruption to `^= 0x00` fails the test at byte 0. Without that, a sweep in which every decode errored for an unrelated reason would pass identically. Recorded at the site.
+
+**Stale figures corrected in two siblings.** `audit-the-suite-s-slowest-tests` and `raise-the-dev-opt-level-for-workspace-crates` both cite this sweep's 13.0 s as evidence; both now say the measurement is superseded and what replaced it. The second used this test as its headline case, so its motivation is genuinely weaker now — recorded there rather than left for someone to discover after starting the work. Its question stands on its own merits.
+
+The doc comment also carried "25,000 bytes" for the manifest interior, which was already wrong before this change: the manifest was 18,013 bytes and is now smaller still.

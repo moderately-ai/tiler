@@ -65,7 +65,7 @@ Done. All five explained by measurement; one has real improvements available and
 
 ### `single_byte_corruptions_are_rejected` — 13.025s, and it *is* the suite's critical path
 
-**Sweep density.** The test visits 8,451 offsets: 69 header bytes one by one, 295 manifest samples at `.step_by(61)`, and 8,087 post-manifest bytes one by one. Bucketing every offset's refusal by region and variant gives thirteen distinct outcomes — and **8,075 offsets produce a single one of them**, `SectionDigestMismatch`, because the fixture has one section and every content byte is under that one digest. **8,370 of 8,451 offsets (99.0%) reproduce an outcome another offset already produced.**
+**Sweep density.** *(Superseded 2026-07-27 — the sweep is now exhaustive over 15,030 bytes and runs in 132 ms; see `reduce-the-codec-corruption-sweep-to-its-distinct-classes`. The figures below describe the 26,126-byte envelope and the 662 µs decode that preceded the codec and ABI-identity work.)* The test visits 8,451 offsets: 69 header bytes one by one, 295 manifest samples at `.step_by(61)`, and 8,087 post-manifest bytes one by one. Bucketing every offset's refusal by region and variant gives thirteen distinct outcomes — and **8,075 offsets produce a single one of them**, `SectionDigestMismatch`, because the fixture has one section and every content byte is under that one digest. **8,370 of 8,451 offsets (99.0%) reproduce an outcome another offset already produced.**
 
 The density is already inconsistent with itself: the manifest interior is sampled 1-in-61 and is *still* uniform across all 295 samples, while the larger section region is not sampled at all. The header is the opposite and must stay exhaustive — eight distinct classes in 69 bytes.
 

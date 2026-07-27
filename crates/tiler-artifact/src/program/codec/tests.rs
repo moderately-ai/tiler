@@ -486,23 +486,34 @@ fn every_governed_tag_table_round_trips() {
 // Byte-level corruption
 // -------------------------------------------------------------------------
 
-/// Sweeps single-byte corruptions of one encoded envelope.
+/// Sweeps single-byte corruptions of one encoded envelope, exhaustively.
 ///
-/// **The framing header and the framed section stream are swept exhaustively.**
-/// Those are the regions whose fields are read *before* any digest can speak for
-/// them — the magic, the versions, the digest algorithm, the declared lengths
-/// and counts, each section identifier and length, and each section's exact
-/// bytes — so every one of them is worth its own case.
+/// **Every byte, with no sampling anywhere.** The header and the framed section
+/// stream carry fields read *before* any digest can speak for them — the magic,
+/// the versions, the digest algorithm, the declared lengths and counts, each
+/// section identifier and length, and each section's exact bytes — and the
+/// manifest interior is covered by one digest over the whole run.
 ///
-/// **The manifest interior is sampled at a stride of 61.** Every byte of it is
-/// covered by one digest over the whole run, so flipping each of its 25,000
-/// bytes exercises the same check 25,000 times rather than 25,000 different
-/// ones; the sample is there to show the digest really covers the whole run
-/// rather than a prefix. The stride is prime and therefore coprime with every
-/// field width the encoding uses — one, two, four, eight, and thirty-two bytes
-/// — so the sample lands on every byte offset of every field width instead of
-/// repeatedly on the same one. The boundary is recorded here rather than left
-/// as an unexplained loop bound.
+/// **The manifest interior used to be sampled at a stride of 61, and the reason
+/// is gone rather than overridden.** Sampling was a cost decision: the sweep
+/// took ~13 s, and flipping each interior byte exercises the same digest check
+/// once per byte rather than a different check each time. Neither half of that
+/// still holds. The envelope shrank from 26,126 bytes to 15,030 when ABI
+/// expression identity moved to a linear encoding, and a decode fell from
+/// 662 µs to 18.7 µs across the codec work of 2026-07-27.
+///
+/// **Measurement, 2026-07-27:** the fully exhaustive sweep runs in **132 ms**,
+/// against ~70 ms for the sampled form it replaces. `reduce-the-codec-corruption-sweep-to-its-distinct-classes`
+/// asked which of exhaustive or representative coverage the suite's standard
+/// should be, and anticipated that a cheaper decode might dissolve the question.
+/// It did: for 62 ms the property under test is "no single-byte corruption of
+/// this envelope is accepted" rather than "no sampled single-byte corruption
+/// is", and the stronger one needs no argument about which bytes are
+/// representative.
+///
+/// A no-op corruption (`^= 0x00`) fails this test at byte 0, so the sweep can
+/// say no rather than passing because every decode errors for some other
+/// reason.
 #[test]
 fn single_byte_corruptions_are_rejected() {
     let bytes = encoded(&default_artifact());
@@ -514,7 +525,7 @@ fn single_byte_corruptions_are_rejected() {
     .expect("the fixture manifest fits usize");
     let manifest_end = HEADER_BYTES + manifest_len;
     let swept = (0..HEADER_BYTES)
-        .chain((HEADER_BYTES..manifest_end).step_by(61))
+        .chain(HEADER_BYTES..manifest_end)
         .chain(manifest_end..bytes.len());
     let mut forged = bytes.clone();
     for index in swept {

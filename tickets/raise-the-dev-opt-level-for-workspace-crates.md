@@ -25,7 +25,7 @@ Filed by `audit-the-suite-s-slowest-tests`. Workspace crates compile unoptimized
 | valid envelope | 2.878 ms | 531 µs | 5.4× |
 | damaged envelope | 962 µs | 182 µs | 5.3× |
 
-The workload is digest-dominated, which is the shape that suffers most at `opt-level = 0`. `single_byte_corruptions_are_rejected` performs 8,451 such decodes: 13.0s in dev against a projected ~1.5s at release speed.
+The workload is digest-dominated, which is the shape that suffers most at `opt-level = 0`. `single_byte_corruptions_are_rejected` performed 8,451 such decodes: 13.0s in dev against a projected ~1.5s at release speed. **Superseded as motivation on 2026-07-27:** that sweep is now exhaustive over every byte and runs in **132 ms**, because the decode path fell from 662 µs to 18.7 µs and the envelope from 26,126 bytes to 15,030. This ticket's question stands on its own merits; it no longer has this test as its headline case.
 
 **Inference.** A meaningful part of the suite's wall clock is unoptimized workspace code rather than the work the tests describe. The effect is not confined to that one test — every digest, encode, and identity derivation in the suite pays the same multiplier — though that test is where it is most visible.
 
