@@ -1368,6 +1368,65 @@ KERNELS: tuple[Kernel, ...] = (
         subnormal_probes=(DIVIDED_RESULT_FLUSH_F16,),
         dtype=F16,
     ),
+    # Contraction, a source-level `fma`, and reassociation at `f16`. Finding 21
+    # measured the two dtypes' arithmetic differing while their emitted modules
+    # did not, which removed the assumption that an `f32` measurement of what a
+    # licence does carries to `f16` -- so findings 6, 16, and 17 needed their own
+    # `f16` rows rather than a reading across.
+    #
+    # The scale is `0x3E02` (1.501953125) and not `1.5h`, and the reason is the
+    # whole point of these three kernels. At ten mantissa bits, `x * 1.5 + 1.0`
+    # rounds identically whether it is fused or separately rounded for **every**
+    # operand in the `f16` vector -- checked exhaustively, and 1,876 of the
+    # 32,768 finite non-negative `f16` patterns would discriminate, none of them
+    # in the vector. A kernel spelled `1.5h` therefore returns identical bytes
+    # under every contraction setting while proving nothing, which is finding
+    # 7's no-witness trap wearing a contraction costume. `0x3E02` is one ulp off
+    # `1.5h` -- the smallest perturbation that makes the property observable at
+    # the vector's ordinary normal `0x3555`, where separate rounding gives
+    # `0x3E00` and single rounding gives `0x3E01`. The witness operand `1.0h`
+    # gives `0x4101` under both, so the witness stays contraction-independent
+    # exactly as the `f32` pair's does.
+    Kernel(
+        name="contraction_pair_f16",
+        purpose="a multiply and an add as two statements, with no canonicalization between them",
+        steps=scale_then_bias(0x3E02, 0x3C00),
+        canonicalized=False,
+        witness=Witness(operand=0x3C00, executed=0x4101, deleted=0x3C00),
+        dtype=F16,
+    ),
+    Kernel(
+        name="contraction_pair_canonicalized_f16",
+        purpose="the same pair with the emitter's canonicalization interposed",
+        steps=scale_then_bias(0x3E02, 0x3C00),
+        canonicalized=True,
+        witness=Witness(operand=0x3C00, executed=0x4101, deleted=0x3C00),
+        dtype=F16,
+    ),
+    Kernel(
+        name="fused_pair_f16",
+        purpose="the same two constants as a source-level fma, which contraction cannot unfuse",
+        steps=scale_then_bias(0x3E02, 0x3C00),
+        canonicalized=False,
+        witness=Witness(operand=0x3C00, executed=0x4101, deleted=0x3C00),
+        fused=True,
+        dtype=F16,
+    ),
+    # `f16`'s ulp at 1.0 is 2**-10, so half an ulp is 2**-11 = `0x1000` -- the
+    # same shape as the `f32` chain's 2**-24, and the reason no new machinery is
+    # needed. The discriminator is the operand `1.0h`: added sequentially each
+    # half-ulp ties to even and the result stays `0x3C00`, while reassociating
+    # the two addends gives `1.0h + 2**-10` = `0x3C01`. The witness operand is
+    # the smallest normal `0x0400`, whose chain evaluates left to right to
+    # `0x1440`; every value here was computed at `float16` rather than by hand.
+    Kernel(
+        name="reassociation_chain_f16",
+        purpose="two adds of half an ulp, whose value says where the parentheses went",
+        steps=(Step(0x1000, "+"), Step(0x1000, "+")),
+        canonicalized=False,
+        witness=Witness(operand=0x0400, executed=0x1440, deleted=0x0400),
+        dtype=F16,
+    ),
     # The third dtype, and the one the second could not stand in for. Each kernel
     # below is its `f32` twin with the constants respelled at `bfloat16`'s
     # boundaries and nothing else changed. The operation vocabulary matches the
@@ -1701,6 +1760,17 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     # difference in one thing.
     for contract in FP_CONTRACTS:
         add("fused_pair", "safe", "2", contract)
+    # The same three questions at `f16`. Finding 21 measured the two dtypes'
+    # arithmetic differing while their emitted modules did not, so an `f32`
+    # measurement of what a contraction licence does is not evidence about
+    # `f16`, and these rows are what make findings 6 and 16 per-dtype rather
+    # than stated once and read across. The contraction axis is carried here
+    # rather than left to the exhaustive selection because these findings cite
+    # it directly.
+    for contract in FP_CONTRACTS:
+        add("contraction_pair_f16", "safe", "2", contract)
+        add("contraction_pair_canonicalized_f16", "safe", "2", contract)
+        add("fused_pair_f16", "safe", "2", contract)
     # Division, which the operation vocabulary did not previously reach. The two
     # power-of-two divisors are compiled under `safe` alone, because what they
     # establish is a compile-side fact about the driver rather than a second
@@ -1720,6 +1790,7 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     # on is a device-side question every math mode has to answer.
     for mode in MATH_MODES:
         add("reassociation_chain", mode, "2", "off")
+        add("reassociation_chain_f16", mode, "2", "off")
     # `-fmetal-math-fp32-functions=fast`, against the two findings that would
     # move if it were not confined to the transcendental functions: the flush
     # and the signed-zero divergence.

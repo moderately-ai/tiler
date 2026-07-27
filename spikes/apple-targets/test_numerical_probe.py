@@ -53,9 +53,9 @@ sys.modules[_SPEC.name] = PROBE
 _SPEC.loader.exec_module(PROBE)
 
 RESULTS = HERE / "results"
-RECORD = RESULTS / "2026-07-25-numerics-covering-xcode26.6-metal32023.883" / "record.tsv"
+RECORD = RESULTS / "2026-07-27-numerics-covering-xcode26.6-metal32023.883" / "record.tsv"
 EXHAUSTIVE_RECORD = (
-    RESULTS / "2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883" / "record.tsv"
+    RESULTS / "2026-07-27-numerics-exhaustive-xcode26.6-metal32023.883" / "record.tsv"
 )
 RECORDS = {PROBE.COVERING: RECORD, PROBE.EXHAUSTIVE_MATRIX: EXHAUSTIVE_RECORD}
 """The retained record for each case matrix, because a run measures exactly one of them.
