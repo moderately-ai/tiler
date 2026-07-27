@@ -3,7 +3,7 @@ id: express-metal-honourability-in-the-shared-form
 title: Express the Metal subnormal fact as a per-dimension honourability declaration
 status: todo
 priority: p0
-dependencies: [compose-numerical-honourability-and-retire-the-strict-boolean]
+dependencies: [compose-numerical-honourability-and-retire-the-strict-boolean, prototype-public-compiler-api]
 related: [declare-metal-numerical-honourability, draft-target-honourable-numerical-contract-adr]
 scopes: [implementation/metal, implementation/compiler]
 shared_scopes: [project/tickets]
