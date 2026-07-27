@@ -1,7 +1,7 @@
 ---
 id: fix-the-sha-256-inner-loop-and-encoder-presizing
 title: Fix the SHA-256 inner loop and encoder pre-sizing
-status: in-progress
+status: todo
 priority: p2
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, artifact]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785180316
 ---
 Constant factors, deliberately sequenced last: they multiply work that the earlier phases largely eliminate, so measuring them first would overstate their value.
 

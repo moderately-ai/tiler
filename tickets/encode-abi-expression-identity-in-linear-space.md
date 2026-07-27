@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets, contracts/artifacts]
 paths: []
 tags: [performance, identity, ir]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785180315
 ---
 **Measured: a five-operation program has a 13,623-byte kernel-program identity.**
 

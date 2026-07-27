@@ -1,7 +1,7 @@
 ---
 id: stop-copying-bytes-the-process-already-owns
 title: Stop copying bytes the process already owns
-status: in-progress
+status: todo
 priority: p2
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/cache, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, cache, artifact]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785180316
 ---
 Copies that exist only because a borrow was available and not taken. Paid on every cache hit.
 
