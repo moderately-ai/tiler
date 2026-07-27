@@ -48,6 +48,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::semantic::{
@@ -169,9 +170,17 @@ pub(crate) struct RetainedOutput {
 /// Members are renumbered to region-local positions before encoding, so the same
 /// reusable content occurring at a different graph site produces equal bytes.
 /// Graph-local ordinals are deliberately absent.
+///
+/// The bytes are held behind an [`Arc`] because an identity is immutable once
+/// encoded and is copied far more often than it is built: cover assembly,
+/// materialization edges, and cover verification each duplicate one per region
+/// per cover. Sharing makes a clone a refcount bump instead of an allocation and
+/// a `memcpy` of the whole encoding, and it changes nothing observable —
+/// [`Self::as_bytes`] yields the same bytes and the derived `Ord`/`Eq` still
+/// compare content, not the pointer.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RegionContentIdentity {
-    canonical: Box<[u8]>,
+    canonical: Arc<[u8]>,
 }
 
 impl RegionContentIdentity {
@@ -184,7 +193,7 @@ impl RegionContentIdentity {
     /// The label is a digest of the canonical bytes and is presentation only.
     /// Equality decisions always use [`Self::as_bytes`].
     pub(crate) fn label(&self) -> String {
-        format!("region-content:{:016x}", digest(&self.canonical))
+        hex_label("region-content:", digest(&self.canonical))
     }
 }
 
@@ -192,9 +201,13 @@ impl RegionContentIdentity {
 ///
 /// This is region content plus the exact graph site: member ordinals, boundary
 /// input values, and retained output values.
+///
+/// Shared behind an [`Arc`] for the reason [`RegionContentIdentity`] gives, and
+/// more sharply: an occurrence encoding embeds the whole content encoding, so it
+/// is the largest identity the cover stages copy.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RegionOccurrenceIdentity {
-    canonical: Box<[u8]>,
+    canonical: Arc<[u8]>,
 }
 
 impl RegionOccurrenceIdentity {
@@ -207,8 +220,8 @@ impl RegionOccurrenceIdentity {
     /// Region formation proves the labels of one compilation's emitted
     /// candidates are pairwise distinct before returning, so within a trace this
     /// label is an injective handle for the occurrence identity.
-    fn label(&self) -> String {
-        format!("region:{:016x}", digest(&self.canonical))
+    fn label(&self) -> Arc<str> {
+        Arc::from(hex_label("region:", digest(&self.canonical)))
     }
 }
 
@@ -221,7 +234,9 @@ pub(crate) struct RegionCandidate {
     duplication: DuplicationPolicy,
     content: RegionContentIdentity,
     occurrence: RegionOccurrenceIdentity,
-    label: String,
+    /// Shared rather than owned: every cover that places this region copies the
+    /// label, so an `Arc<str>` makes that copy a refcount bump.
+    label: Arc<str>,
     program_operation_count: u32,
 }
 
@@ -259,6 +274,14 @@ impl RegionCandidate {
     /// Returns the bounded explain label of this occurrence.
     pub(crate) fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Returns the shared handle to the bounded explain label.
+    ///
+    /// A cover retains the label of every region it places; handing out the
+    /// shared handle keeps that retention free.
+    pub(crate) fn label_handle(&self) -> Arc<str> {
+        Arc::clone(&self.label)
     }
 
     /// Returns whether the region covers every operation of its program.
@@ -665,7 +688,7 @@ impl RegionGraph {
             values,
             canonical_positions: Vec::new(),
         };
-        let whole: BTreeSet<u32> = (0..graph.operation_count()).collect();
+        let whole: Vec<u32> = (0..graph.operation_count()).collect();
         let order = canonical_member_order(&graph, &whole)?;
         graph.canonical_positions = vec![0; order.len()];
         for (position, member) in order.into_iter().enumerate() {
@@ -731,69 +754,91 @@ impl RegionGraph {
     }
 
     /// Returns operations adjacent to `members` through one value edge.
-    fn neighbours(&self, members: &BTreeSet<u32>) -> Result<BTreeSet<u32>, RegionError> {
-        let mut adjacent = BTreeSet::new();
+    ///
+    /// The result is ascending and deduplicated, which is the order growth
+    /// relies on to generate each connected set exactly once.
+    fn neighbours(&self, members: &[u32]) -> Result<Vec<u32>, RegionError> {
+        let mut adjacent = Vec::new();
         for member in members {
             let operation = self.operation(*member)?;
             for operand in &operation.operands {
                 if let Some(producer) = self.value(*operand)?.producer
-                    && !members.contains(&producer.operation)
+                    && !is_member(members, producer.operation)
                 {
-                    adjacent.insert(producer.operation);
+                    adjacent.push(producer.operation);
                 }
             }
             for result in &operation.results {
                 for consumer in &self.value(*result)?.consumers {
-                    if !members.contains(consumer) {
-                        adjacent.insert(*consumer);
+                    if !is_member(members, *consumer) {
+                        adjacent.push(*consumer);
                     }
                 }
             }
         }
+        adjacent.sort_unstable();
+        adjacent.dedup();
         Ok(adjacent)
     }
 
     /// Returns whether `members` is connected through producer/consumer edges.
-    fn is_connected(&self, members: &BTreeSet<u32>) -> Result<bool, RegionError> {
+    fn is_connected(&self, members: &[u32]) -> Result<bool, RegionError> {
         let Some(start) = members.first().copied() else {
             return Ok(false);
         };
-        let mut reached = BTreeSet::new();
+        // Reachedness is marked by position within the member set rather than by
+        // graph ordinal, so the mark vector is the size of the region and the
+        // whole traversal touches one cache line for a region of any usual size.
+        let mut reached = vec![false; members.len()];
+        let mut count = 0_usize;
         let mut queue = VecDeque::from([start]);
         while let Some(member) = queue.pop_front() {
-            if !reached.insert(member) {
+            // Every enqueued ordinal is a member, so a miss here is invalid
+            // compiler state rather than a set element to skip.
+            let position = members
+                .binary_search(&member)
+                .map_err(|_| RegionError::Structure {
+                    rule: "member-ordinal",
+                })?;
+            let slot = reached.get_mut(position).ok_or(RegionError::Structure {
+                rule: "member-ordinal",
+            })?;
+            if std::mem::replace(slot, true) {
                 continue;
             }
+            count = count.saturating_add(1);
             let operation = self.operation(member)?;
             for operand in &operation.operands {
                 if let Some(producer) = self.value(*operand)?.producer
-                    && members.contains(&producer.operation)
+                    && is_member(members, producer.operation)
                 {
                     queue.push_back(producer.operation);
                 }
             }
             for result in &operation.results {
                 for consumer in &self.value(*result)?.consumers {
-                    if members.contains(consumer) {
+                    if is_member(members, *consumer) {
                         queue.push_back(*consumer);
                     }
                 }
             }
         }
-        Ok(reached.len() == members.len())
+        Ok(count == members.len())
     }
 
     /// Returns whether no directed path leaves `members` and re-enters it.
     ///
     /// The forward closure of the region through non-members is computed once;
     /// the region is non-convex exactly when that closure reaches a member.
-    fn is_convex(&self, members: &BTreeSet<u32>) -> Result<bool, RegionError> {
-        let mut visited = BTreeSet::new();
+    fn is_convex(&self, members: &[u32]) -> Result<bool, RegionError> {
+        // Indexed by graph ordinal, because the closure ranges over the whole
+        // graph rather than over the region.
+        let mut visited = vec![false; self.operations.len()];
         let mut queue = VecDeque::new();
         for member in members {
             for result in &self.operation(*member)?.results {
                 for consumer in &self.value(*result)?.consumers {
-                    if !members.contains(consumer) && visited.insert(*consumer) {
+                    if !is_member(members, *consumer) && mark(&mut visited, *consumer)? {
                         queue.push_back(*consumer);
                     }
                 }
@@ -802,10 +847,10 @@ impl RegionGraph {
         while let Some(outside) = queue.pop_front() {
             for result in &self.operation(outside)?.results {
                 for consumer in &self.value(*result)?.consumers {
-                    if members.contains(consumer) {
+                    if is_member(members, *consumer) {
                         return Ok(false);
                     }
-                    if visited.insert(*consumer) {
+                    if mark(&mut visited, *consumer)? {
                         queue.push_back(*consumer);
                     }
                 }
@@ -954,19 +999,19 @@ pub(crate) fn verify_candidate(
     let members: Vec<u32> = candidate.members.iter().map(|member| member.0).collect();
     if members.is_empty() || members.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(RegionError::Invalid {
-            region: candidate.label.clone(),
+            region: candidate.label.to_string(),
             rule: "membership",
         });
     }
     let rebuilt = form_candidate(graph, budgets, numerical_contract, &members)?;
     match rebuilt {
         Err(rejection) => Err(RegionError::Invalid {
-            region: candidate.label.clone(),
+            region: candidate.label.to_string(),
             rule: rejection.rule(),
         }),
         Ok(rebuilt) if rebuilt == *candidate => Ok(()),
         Ok(_) => Err(RegionError::Invalid {
-            region: candidate.label.clone(),
+            region: candidate.label.to_string(),
             rule: "identity",
         }),
     }
@@ -1022,8 +1067,15 @@ impl Formation<'_> {
         let member_limit = u64::from(self.budgets.region_members);
         let seed_limit = u64::from(self.budgets.region_candidates_per_seed);
         let expansion_limit = u64::from(self.budgets.region_expansions);
-        let mut visited = BTreeSet::from([BTreeSet::from([seed])]);
-        let mut queue = VecDeque::from([BTreeSet::from([seed])]);
+        // Ascending member vectors rather than `BTreeSet`s. A set is cloned once
+        // per expansion attempt and again into the visited set, and the whole
+        // search runs under the expansion budget, so the representation of one
+        // grown set is multiplied by the search space: a `BTreeSet` of a handful
+        // of ordinals costs a node allocation of its own, where the vector costs
+        // its ordinals. Ordering is unchanged — both compare lexicographically
+        // over ascending ordinals.
+        let mut visited: BTreeSet<Vec<u32>> = BTreeSet::from([vec![seed]]);
+        let mut queue: VecDeque<Vec<u32>> = VecDeque::from([vec![seed]]);
         let mut emitted = 0_u64;
         while let Some(set) = queue.pop_front() {
             let grown = count(set.len()).saturating_add(1);
@@ -1045,13 +1097,25 @@ impl Formation<'_> {
                     return Ok(GrowthOutcome::ExpansionsExhausted);
                 }
                 let mut next = set.clone();
-                next.insert(neighbour);
+                // `neighbours` excludes current members, so the neighbour is
+                // absent and its insertion point keeps `next` ascending.
+                let Err(position) = next.binary_search(&neighbour) else {
+                    return Err(RegionError::Structure {
+                        rule: "growth-neighbour",
+                    });
+                };
+                next.insert(position, neighbour);
                 if !visited.insert(next.clone()) {
                     continue;
                 }
-                let members: Vec<u32> = next.iter().copied().collect();
+                // Formed before the set is queued rather than after, which lets
+                // the queue take the vector instead of a copy of it. Nothing
+                // observes the difference: every path that leaves between the
+                // two discards the queue.
+                let formed =
+                    form_candidate(self.graph, self.budgets, self.numerical_contract, &next)?;
                 queue.push_back(next);
-                match form_candidate(self.graph, self.budgets, self.numerical_contract, &members)? {
+                match formed {
                     Ok(candidate) => {
                         if emitted == seed_limit {
                             self.record_stop(
@@ -1112,7 +1176,7 @@ impl Formation<'_> {
             keyed.into_iter().map(|(_, candidate)| candidate).collect();
         let labels: BTreeSet<&str> = candidates
             .iter()
-            .map(|candidate| candidate.label.as_str())
+            .map(|candidate| &*candidate.label)
             .collect();
         if labels.len() != candidates.len() {
             return Err(RegionError::Structure {
@@ -1154,34 +1218,39 @@ fn form_candidate(
     numerical_contract: StrictF32NumericalContract,
     members: &[u32],
 ) -> Result<Result<RegionCandidate, RegionRejection>, RegionError> {
-    let membership: BTreeSet<u32> = members.iter().copied().collect();
-    if membership.len() != members.len() || membership.is_empty() {
+    // The set is *required* ascending and distinct rather than sorted into that
+    // shape here. Every caller already produces it that way — singleton
+    // coverage, growth, and re-verification alike — so a set arriving in another
+    // spelling is invalid compiler state rather than something to canonicalize
+    // silently, and requiring it is what lets the stage carry a member set as a
+    // slice instead of building a `BTreeSet` per candidate.
+    if members.is_empty() || members.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(RegionError::Structure {
             rule: "member-multiset",
         });
     }
-    for member in &membership {
+    for member in members {
         graph.operation(*member)?;
     }
-    if let Some(rejection) = classify(graph, budgets, &membership)? {
+    if let Some(rejection) = classify(graph, budgets, members)? {
         return Ok(Err(rejection));
     }
-    let shape = region_shape(graph, &membership)?;
+    let shape = region_shape(graph, members)?;
     // Singleton coverage is unconditional, so a boundary or live-value budget
     // bounds fused growth without ever removing the unfused plan.
-    if membership.len() > 1
+    if members.len() > 1
         && let Some(rejection) = classify_shape(budgets, &shape)
     {
         return Ok(Err(rejection));
     }
-    assemble(graph, numerical_contract, &membership, shape).map(Ok)
+    assemble(graph, numerical_contract, members, shape).map(Ok)
 }
 
 /// Decides the structural legality rules that do not need boundary derivation.
 fn classify(
     graph: &RegionGraph,
     budgets: DeterministicBudgets,
-    members: &BTreeSet<u32>,
+    members: &[u32],
 ) -> Result<Option<RegionRejection>, RegionError> {
     let member_limit = u64::from(budgets.region_members);
     let member_count = count(members.len());
@@ -1233,7 +1302,7 @@ fn classify_shape(budgets: DeterministicBudgets, shape: &RegionShape) -> Option<
 }
 
 /// Derives boundary inputs, retained outputs, and live values for one set.
-fn region_shape(graph: &RegionGraph, members: &BTreeSet<u32>) -> Result<RegionShape, RegionError> {
+fn region_shape(graph: &RegionGraph, members: &[u32]) -> Result<RegionShape, RegionError> {
     let mut boundary_inputs = Vec::new();
     let mut retained_outputs = Vec::new();
     let mut member_results = 0_u64;
@@ -1243,7 +1312,7 @@ fn region_shape(graph: &RegionGraph, members: &BTreeSet<u32>) -> Result<RegionSh
             let produced_inside = graph
                 .value(*operand)?
                 .producer
-                .is_some_and(|producer| members.contains(&producer.operation));
+                .is_some_and(|producer| is_member(members, producer.operation));
             if !produced_inside && !boundary_inputs.contains(operand) {
                 boundary_inputs.push(*operand);
             }
@@ -1254,7 +1323,7 @@ fn region_shape(graph: &RegionGraph, members: &BTreeSet<u32>) -> Result<RegionSh
             let external_consumers = value
                 .consumers
                 .iter()
-                .any(|consumer| !members.contains(consumer));
+                .any(|consumer| !is_member(members, *consumer));
             if value.named_result || external_consumers {
                 retained_outputs.push(RetainedOutput {
                     value: SemanticValueId(*result),
@@ -1278,7 +1347,7 @@ fn region_shape(graph: &RegionGraph, members: &BTreeSet<u32>) -> Result<RegionSh
 fn assemble(
     graph: &RegionGraph,
     numerical_contract: StrictF32NumericalContract,
-    members: &BTreeSet<u32>,
+    members: &[u32],
     shape: RegionShape,
 ) -> Result<RegionCandidate, RegionError> {
     let duplication = DuplicationPolicy::Disabled;
@@ -1313,16 +1382,11 @@ fn assemble(
 fn encode_content(
     graph: &RegionGraph,
     numerical_contract: StrictF32NumericalContract,
-    members: &BTreeSet<u32>,
+    members: &[u32],
     shape: &RegionShape,
     duplication: DuplicationPolicy,
 ) -> Result<RegionContentIdentity, RegionError> {
     let canonical = canonical_member_order(graph, members)?;
-    let local: BTreeMap<u32, u32> = canonical
-        .iter()
-        .enumerate()
-        .map(|(position, member)| Ok((*member, index(position)?)))
-        .collect::<Result<_, RegionError>>()?;
     let mut boundary_order = Vec::with_capacity(shape.boundary_inputs.len());
     for member in &canonical {
         for operand in &graph.operation(*member)?.operands {
@@ -1332,11 +1396,6 @@ fn encode_content(
             }
         }
     }
-    let boundary_local: BTreeMap<u32, u32> = boundary_order
-        .iter()
-        .enumerate()
-        .map(|(position, value)| Ok((*value, index(position)?)))
-        .collect::<Result<_, RegionError>>()?;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"tiler.compiler.region-content.v1\0");
     push_slice(&mut bytes, numerical_contract.key.as_bytes());
@@ -1348,18 +1407,13 @@ fn encode_content(
         push_len(&mut bytes, operation.operands.len());
         for operand in &operation.operands {
             if let Some(producer) = internal_producer(graph, members, *operand)? {
-                let position = local
-                    .get(&producer.operation)
-                    .ok_or(RegionError::Structure {
-                        rule: "content-local-member",
-                    })?;
+                let position =
+                    local_position(&canonical, producer.operation, "content-local-member")?;
                 bytes.push(1);
                 bytes.extend_from_slice(&position.to_be_bytes());
                 bytes.extend_from_slice(&producer.result_position.to_be_bytes());
             } else {
-                let position = boundary_local.get(operand).ok_or(RegionError::Structure {
-                    rule: "content-local-boundary",
-                })?;
+                let position = local_position(&boundary_order, *operand, "content-local-boundary")?;
                 bytes.push(2);
                 bytes.extend_from_slice(&position.to_be_bytes());
             }
@@ -1377,13 +1431,7 @@ fn encode_content(
         .retained_outputs
         .iter()
         .map(|output| {
-            let position =
-                local
-                    .get(&output.producer.0)
-                    .copied()
-                    .ok_or(RegionError::Structure {
-                        rule: "content-local-output",
-                    })?;
+            let position = local_position(&canonical, output.producer.0, "content-local-output")?;
             Ok((
                 position,
                 output.result_position,
@@ -1401,7 +1449,7 @@ fn encode_content(
         bytes.push(u8::from(external_consumers));
     }
     Ok(RegionContentIdentity {
-        canonical: bytes.into_boxed_slice(),
+        canonical: bytes.into(),
     })
 }
 
@@ -1415,22 +1463,17 @@ fn encode_content(
 /// interchangeable occurrences different content identities. Splitting shareable
 /// content costs a reuse opportunity; conflating distinct content would be a
 /// correctness defect, so the incompleteness is deliberately on the safe side.
-fn canonical_member_order(
-    graph: &RegionGraph,
-    members: &BTreeSet<u32>,
-) -> Result<Vec<u32>, RegionError> {
-    let ordinals: Vec<u32> = members.iter().copied().collect();
-    let positions: BTreeMap<u32, usize> = ordinals
-        .iter()
-        .enumerate()
-        .map(|(position, member)| (*member, position))
-        .collect();
+fn canonical_member_order(graph: &RegionGraph, members: &[u32]) -> Result<Vec<u32>, RegionError> {
+    // `members` is already the ascending member set, which is what lets the
+    // producer lookup below be a binary search over it instead of the side
+    // `BTreeMap` this used to build once per canonicalization — and lets the
+    // function read the caller's slice instead of copying it into one.
     // One buffer with a span per member, rather than a `Vec<u8>` per member.
     // The per-member spelling allocated once per member per canonicalization,
     // and this is called for every region candidate.
     let mut base = Vec::new();
-    let mut spans = Vec::with_capacity(ordinals.len());
-    for member in &ordinals {
+    let mut spans = Vec::with_capacity(members.len());
+    for member in members {
         let operation = graph.operation(*member)?;
         let start = base.len();
         encode_operation_facts(&mut base, operation)?;
@@ -1449,26 +1492,30 @@ fn canonical_member_order(
     // sampling profile put this function at 10.6% of the compile path's active
     // self time, above every other function in the crate, with the allocator and
     // `memmove` traffic it generated on top of that.
-    let base_digests: Vec<u64> = (0..ordinals.len()).map(|p| digest(base_of(p))).collect();
+    let base_digests: Vec<u64> = (0..members.len()).map(|p| digest(base_of(p))).collect();
     let mut labels: Vec<u64> = base_digests.clone();
+    // Two label buffers swapped per round, rather than a fresh `Vec` per round.
+    // Refinement runs up to once per member, so allocating the refined labels
+    // inside the loop cost an allocation per member per canonicalization for a
+    // buffer whose length never changes.
+    let mut refined: Vec<u64> = Vec::with_capacity(members.len());
     let mut round = Vec::new();
-    for _ in 0..ordinals.len() {
-        let mut refined = Vec::with_capacity(ordinals.len());
-        for (position, member) in ordinals.iter().enumerate() {
+    for _ in 0..members.len() {
+        refined.clear();
+        for (position, member) in members.iter().enumerate() {
             round.clear();
             round.extend_from_slice(&labels[position].to_be_bytes());
             let operation = graph.operation(*member)?;
             push_len(&mut round, operation.operands.len());
             for operand in &operation.operands {
                 if let Some(producer) = internal_producer(graph, members, *operand)? {
-                    let source =
-                        positions
-                            .get(&producer.operation)
-                            .ok_or(RegionError::Structure {
-                                rule: "canonical-order-member",
-                            })?;
+                    let source = members.binary_search(&producer.operation).map_err(|_| {
+                        RegionError::Structure {
+                            rule: "canonical-order-member",
+                        }
+                    })?;
                     round.push(1);
-                    round.extend_from_slice(&labels[*source].to_be_bytes());
+                    round.extend_from_slice(&labels[source].to_be_bytes());
                     round.extend_from_slice(&producer.result_position.to_be_bytes());
                 } else {
                     round.push(2);
@@ -1480,20 +1527,61 @@ fn canonical_member_order(
         if refined == labels {
             break;
         }
-        labels = refined;
+        std::mem::swap(&mut labels, &mut refined);
     }
-    let mut order: Vec<usize> = (0..ordinals.len()).collect();
+    let mut order: Vec<usize> = (0..members.len()).collect();
     order.sort_by(|left, right| {
-        (labels[*left], base_of(*left), ordinals[*left]).cmp(&(
+        (labels[*left], base_of(*left), members[*left]).cmp(&(
             labels[*right],
             base_of(*right),
-            ordinals[*right],
+            members[*right],
         ))
     });
     Ok(order
         .into_iter()
-        .map(|position| ordinals[position])
+        .map(|position| members[position])
         .collect())
+}
+
+/// Returns whether one operation ordinal belongs to an ascending member set.
+///
+/// Member sets are carried as ascending slices rather than `BTreeSet`s. Every
+/// structural rule below tests membership once per operand and once per consumer
+/// edge, and a set is classified for every candidate the search reaches, so the
+/// test is the innermost operation of region formation. A slice of ordinals
+/// bounded by the member budget stays in cache and costs no allocation, where the
+/// set cost one node allocation per candidate and a pointer chase per test.
+fn is_member(members: &[u32], member: u32) -> bool {
+    members.binary_search(&member).is_ok()
+}
+
+/// Marks one graph ordinal visited, reporting whether it was newly marked.
+///
+/// An ordinal outside the graph is invalid compiler state, so it fails closed
+/// rather than being treated as already visited.
+fn mark(visited: &mut [bool], ordinal: u32) -> Result<bool, RegionError> {
+    let slot = visited
+        .get_mut(usize::try_from(ordinal).unwrap_or(usize::MAX))
+        .ok_or(RegionError::Structure {
+            rule: "member-ordinal",
+        })?;
+    Ok(!std::mem::replace(slot, true))
+}
+
+/// Returns the region-local position of one ordinal in a canonical order.
+///
+/// The orders searched here are the canonical member order and the canonical
+/// boundary order, both bounded by the declared member and boundary budgets and
+/// both built immediately before the lookup. A scan beats the `BTreeMap` that
+/// used to index them: the map cost an allocation and a tree walk per region
+/// encoding for a table small enough to sit in a cache line, and the encoding
+/// runs once per candidate.
+fn local_position(order: &[u32], needle: u32, rule: &'static str) -> Result<u32, RegionError> {
+    order
+        .iter()
+        .position(|value| *value == needle)
+        .ok_or(RegionError::Structure { rule })
+        .and_then(index)
 }
 
 fn encode_operation_facts(
@@ -1508,18 +1596,18 @@ fn encode_operation_facts(
 
 fn internal_producer(
     graph: &RegionGraph,
-    members: &BTreeSet<u32>,
+    members: &[u32],
     value: u32,
 ) -> Result<Option<ValueProducer>, RegionError> {
     Ok(graph
         .value(value)?
         .producer
-        .filter(|producer| members.contains(&producer.operation)))
+        .filter(|producer| is_member(members, producer.operation)))
 }
 
 fn boundary_is_internal(
     graph: &RegionGraph,
-    members: &BTreeSet<u32>,
+    members: &[u32],
     value: u32,
 ) -> Result<bool, RegionError> {
     Ok(internal_producer(graph, members, value)?.is_some())
@@ -1533,7 +1621,7 @@ fn boundary_is_internal(
 fn encode_occurrence(
     graph: &RegionGraph,
     content: &RegionContentIdentity,
-    members: &BTreeSet<u32>,
+    members: &[u32],
     shape: &RegionShape,
 ) -> Result<RegionOccurrenceIdentity, RegionError> {
     let mut bytes = Vec::new();
@@ -1543,29 +1631,48 @@ fn encode_occurrence(
     for position in canonical_positions(graph, members.iter().copied())? {
         bytes.extend_from_slice(&position.to_be_bytes());
     }
-    for values in [
-        &shape.boundary_inputs,
-        &shape
-            .retained_outputs
-            .iter()
-            .map(|output| output.value.0)
-            .collect::<Vec<_>>(),
-    ] {
-        push_len(&mut bytes, values.len());
-        let mut sites = values
-            .iter()
-            .map(|value| graph.canonical_value(*value))
-            .collect::<Result<Vec<_>, _>>()?;
-        sites.sort_unstable();
-        for (tag, first, second) in sites {
-            bytes.push(tag);
-            bytes.extend_from_slice(&first.to_be_bytes());
-            bytes.extend_from_slice(&second.to_be_bytes());
-        }
-    }
+    // Boundary inputs then retained output values, each group length-prefixed
+    // and sorted into canonical site order. One reused site buffer, because the
+    // array-of-groups spelling had to materialize the retained output ordinals
+    // into a vector of their own just to give both groups one type.
+    let mut sites = Vec::new();
+    push_len(&mut bytes, shape.boundary_inputs.len());
+    encode_canonical_sites(
+        &mut bytes,
+        graph,
+        &mut sites,
+        shape.boundary_inputs.iter().copied(),
+    )?;
+    push_len(&mut bytes, shape.retained_outputs.len());
+    encode_canonical_sites(
+        &mut bytes,
+        graph,
+        &mut sites,
+        shape.retained_outputs.iter().map(|output| output.value.0),
+    )?;
     Ok(RegionOccurrenceIdentity {
-        canonical: bytes.into_boxed_slice(),
+        canonical: bytes.into(),
     })
+}
+
+/// Appends one group of values as sorted canonical site coordinates.
+fn encode_canonical_sites(
+    bytes: &mut Vec<u8>,
+    graph: &RegionGraph,
+    sites: &mut Vec<(u8, u32, u32)>,
+    values: impl Iterator<Item = u32>,
+) -> Result<(), RegionError> {
+    sites.clear();
+    for value in values {
+        sites.push(graph.canonical_value(value)?);
+    }
+    sites.sort_unstable();
+    for (tag, first, second) in sites.iter() {
+        bytes.push(*tag);
+        bytes.extend_from_slice(&first.to_be_bytes());
+        bytes.extend_from_slice(&second.to_be_bytes());
+    }
+    Ok(())
 }
 
 /// Returns the ascending canonical positions of one member set.
@@ -1713,6 +1820,23 @@ fn value_mut(values: &mut [GraphValue], value: u32) -> Result<&mut GraphValue, R
 
 fn digest(bytes: &[u8]) -> u64 {
     digest_from(0xcbf2_9ce4_8422_2325, bytes)
+}
+
+/// Renders one digest as a prefixed, zero-padded, lowercase hex label.
+///
+/// Byte-for-byte what `format!("{prefix}{digest:016x}")` produced. It is spelled
+/// out because region formation labels every candidate it forms — the retained
+/// ones and the re-verified ones alike — and a `core::fmt` dispatch carrying
+/// zero-padding logic costs far more per call than writing sixteen digits.
+pub(crate) fn hex_label(prefix: &str, digest: u64) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdef";
+    let mut label = String::with_capacity(prefix.len().saturating_add(16));
+    label.push_str(prefix);
+    for nibble in (0..16).rev() {
+        let index = usize::try_from((digest >> (nibble * 4)) & 0xf).unwrap_or(0);
+        label.push(char::from(DIGITS.get(index).copied().unwrap_or(b'0')));
+    }
+    label
 }
 
 /// Continues an FNV-1a fold over further bytes.
@@ -2066,9 +2190,9 @@ mod tests {
         assert!(outcome.rejections.non_convex > 0);
 
         let graph = outcome.graph();
-        assert!(!graph.is_convex(&BTreeSet::from([1, 2, 4])).unwrap());
-        assert!(graph.is_convex(&BTreeSet::from([1, 2, 3, 4])).unwrap());
-        assert!(!graph.is_connected(&BTreeSet::from([0, 4])).unwrap());
+        assert!(!graph.is_convex(&[1, 2, 4]).unwrap());
+        assert!(graph.is_convex(&[1, 2, 3, 4]).unwrap());
+        assert!(!graph.is_connected(&[0, 4]).unwrap());
     }
 
     #[test]
@@ -2388,7 +2512,7 @@ mod tests {
         assert_eq!(whole.members().len(), program.operation_count());
 
         let mut forged = whole.clone();
-        forged.label.push_str("-forged");
+        forged.label = Arc::from(format!("{}-forged", forged.label));
         assert!(matches!(
             verify_candidate(outcome.graph(), budgets, contract, &forged),
             Err(RegionError::Invalid {
