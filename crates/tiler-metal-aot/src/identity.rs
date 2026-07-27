@@ -362,14 +362,18 @@ fn push_tool_version(bytes: &mut Vec<u8>, tool: &ResolvedTool) {
 /// sole one it is permitted. `tiler_ir::identity` owns that framing everywhere
 /// else, but ADR 0077 item 2 pins this crate's dependency closure empty — it
 /// declares no workspace dependency at all — so the framing cannot be imported
-/// here and has to be restated. `scripts/check_workspace.py` admits exactly this
-/// definition and [`push_str`] beside it, so a second copy in this crate fails
-/// the gate rather than growing quietly.
+/// here and has to be restated. A gate once admitted exactly this definition
+/// and [`push_str`] beside it, so a second copy in this crate failed rather
+/// than growing quietly; `e197176` deleted that gate along with the rest of the
+/// Python tooling and gave it no successor. **A third copy appearing here is
+/// now caught only by review of the diff that adds it.**
 ///
 /// `u64` matches the workspace's canonical form and is wide enough for every
 /// run a 64-bit host can address, so there is no bound here that could reject
-/// or truncate a real subject. `scripts/check_rust.py` admits only 64-bit
-/// profiles, which is what makes the conversion total.
+/// or truncate a real subject. What makes the conversion total is the
+/// supported-platform policy — `AGENTS.md` states Tiler develops on macOS only,
+/// and every admitted target is 64-bit — rather than a check: the gate that
+/// once asserted it is gone.
 pub(crate) fn push_len(bytes: &mut Vec<u8>, len: usize) {
     let len = u64::try_from(len).expect("the admitted profiles have a 64-bit address space");
     bytes.extend_from_slice(&len.to_be_bytes());

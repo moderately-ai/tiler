@@ -243,14 +243,17 @@ impl ComposedSubject {
 /// field — but ADR 0082 item 2 decides this crate's closure is exactly
 /// `tiler-artifact` and says in terms that `tiler-ir` is "an edge this record
 /// decides the crate does not have", so the framing cannot be imported here and
-/// has to be restated. `scripts/check_workspace.py` admits exactly this
-/// definition and [`push_run`] beside it, so a second copy in this crate fails
-/// the gate rather than growing quietly.
+/// has to be restated. A gate once admitted exactly this definition and
+/// [`push_run`] beside it, so a second copy in this crate failed rather than
+/// growing quietly; `e197176` deleted that gate along with the rest of the
+/// Python tooling and gave it no successor. **A third copy appearing here is
+/// now caught only by review of the diff that adds it.**
 ///
 /// `u64` is wide enough for every sequence a 64-bit host can address, so no
-/// real subject can be rejected or truncated here.
-/// `scripts/check_rust.py` admits only 64-bit profiles, which is what makes the
-/// conversion total.
+/// real subject can be rejected or truncated here. What makes the conversion
+/// total is the supported-platform policy — `AGENTS.md` states Tiler develops
+/// on macOS only, and every admitted target is 64-bit — rather than a check:
+/// the gate that once asserted it is gone.
 fn push_count(bytes: &mut Vec<u8>, count: usize) {
     let count = u64::try_from(count).expect("the admitted profiles have a 64-bit address space");
     bytes.extend_from_slice(&count.to_be_bytes());
