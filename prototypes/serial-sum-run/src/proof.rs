@@ -541,14 +541,72 @@ fn submit(
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    let status = command_buffer.status();
-    if status != MTLCommandBufferStatus::Completed {
-        return Err(ProofError::Dispatch(format!("{status:?}")));
+    // The only decision left after the commit, and the only path to a readback.
+    match submission_outcome(command_buffer.status()) {
+        SubmissionOutcome::Completed => Ok(crate::buffer::read_f32(output, count)
+            .iter()
+            .map(|value| value.to_bits())
+            .collect()),
+        SubmissionOutcome::ExecutionError => Err(ProofError::Dispatch {
+            status: "Error",
+            detail: "the device reported an execution error for this command buffer",
+        }),
+        SubmissionOutcome::NotTerminal(status) => Err(ProofError::Dispatch {
+            status,
+            detail: "the wait returned with the command buffer in a non-terminal state",
+        }),
     }
-    Ok(crate::buffer::read_f32(output, count)
-        .iter()
-        .map(|value| value.to_bits())
-        .collect())
+}
+
+/// What a command buffer's status permits after the wait.
+///
+/// **Three outcomes, and deliberately no fourth.** There is no retry and no
+/// fallback variant, because the runtime execution contract's transition table
+/// says "never" for every post-commit transition — in-flight to
+/// validation-observed included. Stating that in the type is what keeps it from
+/// being a rule a later edit can forget: there is nothing here to return that
+/// would mean "try another route".
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SubmissionOutcome {
+    /// The one status that permits a readback.
+    Completed,
+    /// The device reported a terminal execution error.
+    ExecutionError,
+    /// The wait returned and the buffer had not reached a terminal state.
+    ///
+    /// Carries the status name because which non-terminal state it stopped in
+    /// is the whole diagnostic value: `NotEnqueued` means nothing was ever
+    /// submitted, and `Scheduled` means the work was accepted and had not
+    /// finished.
+    NotTerminal(&'static str),
+}
+
+/// Classifies one command-buffer status into what it permits.
+///
+/// **Apple defines exactly two terminal states, `Completed` and `Error`**, and
+/// the runtime execution contract records the consequence: `waitUntilCompleted`
+/// returns no success value, so "a pre-wait non-error status is not evidence of
+/// successful completion". A check written as `status != Completed` is correct
+/// today and collapses that distinction — it reports a buffer that never left
+/// the queue in the same breath as one the GPU rejected, which are different
+/// things for a caller to do next.
+///
+/// Matched exhaustively and wildcard-free, so a status added to the binding is a
+/// build error here rather than falling into whichever arm a catch-all named.
+/// That is the same posture every other vocabulary match in this workspace
+/// takes, and this is the one place a wrong answer would be read as arithmetic:
+/// a readback taken from a buffer whose dispatch failed returns whatever the
+/// output held before, which compares against the reference as a numerical
+/// disagreement.
+const fn submission_outcome(status: MTLCommandBufferStatus) -> SubmissionOutcome {
+    match status {
+        MTLCommandBufferStatus::Completed => SubmissionOutcome::Completed,
+        MTLCommandBufferStatus::Error => SubmissionOutcome::ExecutionError,
+        MTLCommandBufferStatus::NotEnqueued => SubmissionOutcome::NotTerminal("NotEnqueued"),
+        MTLCommandBufferStatus::Enqueued => SubmissionOutcome::NotTerminal("Enqueued"),
+        MTLCommandBufferStatus::Committed => SubmissionOutcome::NotTerminal("Committed"),
+        MTLCommandBufferStatus::Scheduled => SubmissionOutcome::NotTerminal("Scheduled"),
+    }
 }
 
 /// Dispatches the object this process compiled, with no envelope involved.
@@ -1422,6 +1480,38 @@ fn report_refusal(probe: &str, refusal: &PreflightRefusal) {
     println!("  {probe}: {refusal}");
 }
 
+/// Observes the terminal-status check refusing a real, live command buffer that
+/// has not reached a terminal state.
+///
+/// **This is the contract's own warning case, injected rather than argued.**
+/// `waitUntilCompleted` returns no success value, so the runtime execution
+/// contract records that "a pre-wait non-error status is not evidence of
+/// successful completion". A command buffer that has just been created and never
+/// committed is exactly that: alive, valid, and carrying a status that must not
+/// admit a readback. Nothing is committed and nothing is encoded, so the probe
+/// costs one allocation and reaches no GPU work.
+///
+/// **The terminal `Error` state is deliberately not injected**, and the boundary
+/// is stated rather than left as apparent coverage: forcing a command buffer to
+/// fail means provoking a GPU fault, which risks a device reset and would not
+/// reproduce. `one_status_permits_a_readback_and_none_permits_a_retry` covers
+/// that arm over the complete status vocabulary without hardware.
+fn probe_submission_status(device: &Device) -> Result<(), ProofError> {
+    let queue = device.new_command_queue();
+    let uncommitted = queue.new_command_buffer();
+    match submission_outcome(uncommitted.status()) {
+        SubmissionOutcome::NotTerminal(reported) => {
+            println!(
+                "  a live command buffer that was never committed: {reported}, no readback taken"
+            );
+            Ok(())
+        }
+        SubmissionOutcome::Completed | SubmissionOutcome::ExecutionError => Err(
+            ProofError::ProbeAccepted("an uncommitted command buffer as a terminal state"),
+        ),
+    }
+}
+
 /// Dispatches a route this device already proved it can carry out.
 ///
 /// Every device object was created before the commit, so this function looks
@@ -1610,6 +1700,8 @@ fn run() -> Result<(), ProofError> {
     );
     println!("device-preflight refusals against this exact route:");
     probe_device_preflight(device, &preflight, &plan, &envelope_bits, rows)?;
+    println!("post-commit refusals, which no fallback follows:");
+    probe_submission_status(device)?;
 
     let routed = preflight.commit();
     println!(
@@ -1714,16 +1806,28 @@ enum ProofError {
     /// than a rendered string, so a caller decides whether to re-route,
     /// re-fetch, or stop without parsing this.
     DevicePreflight(Box<PreflightRefusal>),
-    /// An injected device-preflight perturbation was *accepted*.
+    /// An injected perturbation was *accepted* rather than refused.
     ///
-    /// A probe that cannot fail measures nothing, so a perturbation the device
-    /// admits is reported as loudly as a refusal that arrives in the wrong
-    /// stage.
+    /// A probe that cannot fail measures nothing, so a perturbation something
+    /// admits is reported as loudly as a refusal arriving in the wrong stage.
+    /// Raised by both the device-preflight probes and the post-commit
+    /// submission probe.
     ProbeAccepted(&'static str),
     LibraryLoad(String),
     FunctionLookup(String),
     Pipeline(String),
-    Dispatch(String),
+    /// The command buffer did not reach `Completed`, so nothing was read back.
+    ///
+    /// Carries the status it stopped in and what that status means, and makes no
+    /// claim about *why* the device rejected the work: `metal` 0.33.0 exposes no
+    /// accessor for the buffer's `NSError`, and reading it would be a new unsafe
+    /// site whose only product is a better message. ADR 0079 does not admit a
+    /// site for that — convenience is not a qualifying reason — so the boundary
+    /// is recorded rather than crossed.
+    Dispatch {
+        status: &'static str,
+        detail: &'static str,
+    },
     Mismatch {
         path: &'static str,
         device: Vec<u32>,
@@ -1807,12 +1911,15 @@ impl fmt::Display for ProofError {
             ),
             Self::ProbeAccepted(probe) => write!(
                 formatter,
-                "the device preflight accepted {probe}, so that probe proves nothing",
+                "a probe was accepted rather than refused: {probe}, so that probe proves nothing",
             ),
             Self::LibraryLoad(cause) => write!(formatter, "the metallib did not load: {cause}"),
             Self::FunctionLookup(cause) => write!(formatter, "the entry point is absent: {cause}"),
             Self::Pipeline(cause) => write!(formatter, "no compute pipeline state: {cause}"),
-            Self::Dispatch(cause) => write!(formatter, "the command buffer failed: {cause}"),
+            Self::Dispatch { status, detail } => write!(
+                formatter,
+                "the command buffer ended in {status}: {detail}, so nothing was read back",
+            ),
             Self::Mismatch {
                 path,
                 device,
@@ -2309,6 +2416,64 @@ mod tests {
                 "a malformed record must not be reported as arithmetic: {refusal}",
             );
         }
+    }
+
+    /// Exactly one command-buffer status permits a readback, and no status
+    /// permits a retry.
+    ///
+    /// All six variants the binding declares, which is the complete population
+    /// rather than a sample — so this establishes the classification for every
+    /// input that exists, not for the ones someone thought to list.
+    ///
+    /// The second assertion is the one the runtime execution contract cares
+    /// about. Its transition table says "never" for every post-commit
+    /// transition, and the way that is kept is structural: `SubmissionOutcome`
+    /// has no retry variant, so no status can map to one. The test states the
+    /// property the type already enforces, because a later edit that added such
+    /// a variant would compile.
+    #[test]
+    fn one_status_permits_a_readback_and_none_permits_a_retry() {
+        use metal::MTLCommandBufferStatus as Status;
+
+        let population = [
+            (Status::NotEnqueued, "NotEnqueued"),
+            (Status::Enqueued, "Enqueued"),
+            (Status::Committed, "Committed"),
+            (Status::Scheduled, "Scheduled"),
+            (Status::Completed, "Completed"),
+            (Status::Error, "Error"),
+        ];
+        assert_eq!(
+            population.len(),
+            6,
+            "the binding declares six statuses; a widened vocabulary belongs here too",
+        );
+
+        let mut readable = 0;
+        for (status, name) in population {
+            match super::submission_outcome(status) {
+                super::SubmissionOutcome::Completed => {
+                    readable += 1;
+                    assert_eq!(name, "Completed", "{name} must not permit a readback");
+                }
+                super::SubmissionOutcome::ExecutionError => {
+                    assert_eq!(name, "Error", "{name} is not the terminal error state");
+                }
+                // The status name is carried through rather than re-derived, so
+                // a caller is told which non-terminal state the wait stopped in.
+                super::SubmissionOutcome::NotTerminal(reported) => {
+                    assert_eq!(
+                        reported, name,
+                        "the reported status is not the one observed"
+                    );
+                    assert!(
+                        !matches!(name, "Completed" | "Error"),
+                        "{name} is terminal and must not be reported as non-terminal",
+                    );
+                }
+            }
+        }
+        assert_eq!(readable, 1, "exactly one status may be read back from");
     }
 
     /// Every device-preflight refusal lands in the phase and class it claims.
