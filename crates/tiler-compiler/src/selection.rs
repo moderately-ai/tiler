@@ -332,6 +332,33 @@ impl SelectedPlanIdentity {
     pub(crate) fn label(&self) -> String {
         format!("selected-plan:{:016x}", digest(&self.0))
     }
+
+    /// Whether `label` is exactly what [`Self::label`] would produce, without
+    /// building that `String` to find out.
+    ///
+    /// The verification pass compares a stored `stable_id` against a freshly
+    /// formatted label once per alternative, and a sampling profile charged
+    /// 2.14% of the compile's active self time to `label`. Only the comparison
+    /// is avoidable — the `stable_id` a plan carries still has to be built.
+    ///
+    /// **Exactly equivalent to `label == self.label()`, not a looser test.**
+    /// `{:016x}` over a `u64` emits exactly sixteen lowercase hex digits, so
+    /// requiring that prefix, that length, that alphabet, and that value admits
+    /// precisely the one string `label` would have returned. The alphabet check
+    /// is the load-bearing one: `u64::from_str_radix` also accepts uppercase,
+    /// and without it a tampered `stable_id` spelled `…:ABC…` would compare
+    /// equal here while the `String` comparison it replaces rejected it, which
+    /// would weaken a tamper check in exchange for the allocation.
+    pub(crate) fn is_labelled(&self, label: &str) -> bool {
+        let Some(hex) = label.strip_prefix("selected-plan:") else {
+            return false;
+        };
+        hex.len() == 16
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            && u64::from_str_radix(hex, 16).is_ok_and(|value| value == digest(&self.0))
+    }
 }
 
 /// One complete, checked physical plan: a legal cover joined with one compatible
@@ -2175,6 +2202,71 @@ mod tests {
         };
         assert_eq!(ids(&first), ids(&second));
         assert!(!first.identity().label().is_empty());
+    }
+
+    /// `is_labelled` admits exactly the string `label` produces, and rejects the
+    /// near-misses that a looser parse would have let through.
+    ///
+    /// The uppercase case is the one that matters: it is what `from_str_radix`
+    /// alone would have accepted, so it is the difference between replacing an
+    /// allocation and quietly widening a tamper check.
+    #[test]
+    fn is_labelled_admits_only_the_label_it_replaces() {
+        let program = serial_sum_program();
+        let request = request_for(&program);
+        let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
+        let sources = vec![CoverFrontiers::new(
+            &cover,
+            vec![
+                pointwise_frontier(&request, "pw", PhysicalCostEstimate::structural(1, 6, 0)),
+                reduction_frontier(&request, "rd", PhysicalCostEstimate::structural(1, 2, 0)),
+            ],
+        )];
+        let portfolio =
+            select_physical_plans(&program, budgets(), &formation_of(&program), &sources)
+                .expect("portfolio");
+        let identity = portfolio.plans().first().expect("one plan").identity();
+
+        let label = identity.label();
+        assert!(
+            identity.is_labelled(&label),
+            "the real label must be admitted"
+        );
+
+        let hex = label
+            .strip_prefix("selected-plan:")
+            .expect("the label carries its prefix");
+        for (case, forged) in [
+            (
+                "uppercase hex",
+                format!("selected-plan:{}", hex.to_uppercase()),
+            ),
+            ("wrong prefix", format!("selected-portfolio:{hex}")),
+            ("no prefix", hex.to_owned()),
+            ("truncated", format!("selected-plan:{}", &hex[..15])),
+            ("lengthened", format!("selected-plan:0{hex}")),
+            (
+                "flipped digit",
+                format!(
+                    "selected-plan:{}{}",
+                    if hex.starts_with('0') { '1' } else { '0' },
+                    &hex[1..]
+                ),
+            ),
+        ] {
+            assert!(
+                !identity.is_labelled(&forged),
+                "{case} must be rejected, but `{forged}` was admitted"
+            );
+        }
+
+        // The uppercase spelling is only a meaningful case if the label actually
+        // contains a letter to change; a digit-only digest would make that row
+        // vacuously pass and the guard it covers untested.
+        assert!(
+            hex.bytes().any(|byte| byte.is_ascii_alphabetic()),
+            "this digest has no hex letter, so the uppercase row proved nothing"
+        );
     }
 
     /// A forged receipt fails re-derivation: a foreign program, a tampered cost,

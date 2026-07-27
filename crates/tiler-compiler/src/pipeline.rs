@@ -2534,7 +2534,10 @@ fn verify_alternative(
     alternative: &ProgramAlternative,
     cause: Option<TerminalCause>,
 ) -> Result<(), TargetFailure> {
-    if alternative.stable_id != alternative.plan.identity().label()
+    if !alternative
+        .plan
+        .identity()
+        .is_labelled(&alternative.stable_id)
         || alternative.structural_cost != alternative.plan.cost()
         || alternative.kind
             != ProgramAlternativeKind::of(
