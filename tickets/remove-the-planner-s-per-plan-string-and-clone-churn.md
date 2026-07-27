@@ -1,7 +1,7 @@
 ---
 id: remove-the-planner-s-per-plan-string-and-clone-churn
 title: Remove the planner's per-plan string and clone churn
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [remove-the-remaining-duplicate-work-in-the-planner]
@@ -9,8 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, compiler]
-assignee: planner-allocs-editor
-lease_expires_at: 1785183522
 ---
 Dispatched from a fresh profile of the compile loop. Compile is 882 us for a 5-operation program; the remaining self time is diffuse memmove/memcmp/allocation rather than one hot function.
 
