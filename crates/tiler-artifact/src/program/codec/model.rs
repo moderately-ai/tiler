@@ -170,10 +170,28 @@ pub(crate) struct SemanticSubjects {
 
 /// The declared numerical realization of one entry's bound kernel.
 ///
-/// This mirrors [`NumericalRealization`] with an owned profile key. The
-/// shared-IR record spells its key `&'static str`, so it names a compile-time
-/// constant of the producing build and cannot represent a key read from bytes;
-/// `own-the-numerical-realization-profile-key` records the durable fix.
+/// This mirrors [`NumericalRealization`] with an owned profile key, and the
+/// split is **decided rather than pending**.
+///
+/// The two records sit on opposite sides of a serialization boundary and own
+/// different things. A [`NumericalRealization`] is compiler IR: the only thing
+/// that mints one is a compiling build, whose contract keys are its own
+/// compile-time constants, so `&'static str` is what that key *is* rather than
+/// a limitation. This record is a decoded dispatch record, and its key arrived
+/// as bytes — which is not a narrowing of the other but the definition of the
+/// boundary.
+///
+/// Building takes the shared-IR record directly; only decoding produces this
+/// one. That asymmetry is the accepted policy that decoding yields a dispatch
+/// record rather than reconstructed compiler IR, and a decoder's inability to
+/// rebuild the IR record is therefore not a defect to repair.
+///
+/// **What would change it.** If something ever needed to turn a decoded
+/// artifact back into schedulable IR, one owned record would have to cross both
+/// boundaries — costing `NumericalRealization` its `Copy` and `const fn new`
+/// across roughly two dozen value-semantic call sites. Nothing needs that
+/// today, and paying for it in advance would make an IR type more expensive to
+/// serve a use the accepted policy excludes.
 ///
 /// The two enum vocabularies are reused rather than restated. Both are matched
 /// totally by this codec, which makes them ADR 0074 convention 5b types:

@@ -86,6 +86,24 @@ pub enum NumericalPermission {
 /// The fields are read-transparent value data: a producer may read or assemble
 /// one, but only the checked schedule builder can bind it into a
 /// [`super::VerifiedScheduledRegion`].
+///
+/// # Why `profile_key` is `&'static str`
+///
+/// **Decided, not provisional.** This is compiler IR, and the only thing that
+/// mints one is a compiling build whose contract keys are its own compile-time
+/// constants. The spelling is what the key *is* on this side of the
+/// serialization boundary, and it is what keeps this record `Copy` and
+/// `const fn`-constructible across the schedule layer's value-semantic call
+/// sites.
+///
+/// A decoded artifact carries the same four dimensions with an *owned* key,
+/// because a key read from bytes is not a compile-time constant. That is
+/// `tiler-artifact`'s dispatch record, and the two are not duplicates: decoding
+/// produces a dispatch record rather than reconstructed compiler IR, so nothing
+/// converts one into the other. `own-the-numerical-realization-profile-key`
+/// settled this and records what would reopen it — something needing to turn a
+/// decoded artifact back into schedulable IR, which would cost this type its
+/// `Copy` and `const fn` to serve a use the accepted policy excludes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct NumericalRealization {
     /// Stable key of the governing numerical contract.
