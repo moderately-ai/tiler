@@ -43,6 +43,8 @@
 
 use std::fmt;
 
+use sha2::Digest as _;
+
 /// Byte width of one governed artifact digest.
 pub const DIGEST_BYTES: usize = 32;
 
@@ -107,11 +109,11 @@ impl DigestAlgorithm {
     pub(crate) fn digest_parts(self, parts: &[&[u8]]) -> Digest {
         match self {
             Self::Sha256 => {
-                let mut state = Sha256::new();
+                let mut state = sha2::Sha256::new();
                 for part in parts {
                     state.update(part);
                 }
-                Digest(state.finish())
+                Digest(state.finalize().into())
             }
         }
     }
@@ -173,264 +175,21 @@ impl fmt::Debug for Digest {
     }
 }
 
-const ROUND_CONSTANTS: [u32; 64] = [
-    0x428a_2f98,
-    0x7137_4491,
-    0xb5c0_fbcf,
-    0xe9b5_dba5,
-    0x3956_c25b,
-    0x59f1_11f1,
-    0x923f_82a4,
-    0xab1c_5ed5,
-    0xd807_aa98,
-    0x1283_5b01,
-    0x2431_85be,
-    0x550c_7dc3,
-    0x72be_5d74,
-    0x80de_b1fe,
-    0x9bdc_06a7,
-    0xc19b_f174,
-    0xe49b_69c1,
-    0xefbe_4786,
-    0x0fc1_9dc6,
-    0x240c_a1cc,
-    0x2de9_2c6f,
-    0x4a74_84aa,
-    0x5cb0_a9dc,
-    0x76f9_88da,
-    0x983e_5152,
-    0xa831_c66d,
-    0xb003_27c8,
-    0xbf59_7fc7,
-    0xc6e0_0bf3,
-    0xd5a7_9147,
-    0x06ca_6351,
-    0x1429_2967,
-    0x27b7_0a85,
-    0x2e1b_2138,
-    0x4d2c_6dfc,
-    0x5338_0d13,
-    0x650a_7354,
-    0x766a_0abb,
-    0x81c2_c92e,
-    0x9272_2c85,
-    0xa2bf_e8a1,
-    0xa81a_664b,
-    0xc24b_8b70,
-    0xc76c_51a3,
-    0xd192_e819,
-    0xd699_0624,
-    0xf40e_3585,
-    0x106a_a070,
-    0x19a4_c116,
-    0x1e37_6c08,
-    0x2748_774c,
-    0x34b0_bcb5,
-    0x391c_0cb3,
-    0x4ed8_aa4a,
-    0x5b9c_ca4f,
-    0x682e_6ff3,
-    0x748f_82ee,
-    0x78a5_636f,
-    0x84c8_7814,
-    0x8cc7_0208,
-    0x90be_fffa,
-    0xa450_6ceb,
-    0xbef9_a3f7,
-    0xc671_78f2,
-];
-
-const INITIAL_STATE: [u32; 8] = [
-    0x6a09_e667,
-    0xbb67_ae85,
-    0x3c6e_f372,
-    0xa54f_f53a,
-    0x510e_527f,
-    0x9b05_688c,
-    0x1f83_d9ab,
-    0x5be0_cd19,
-];
-
+/// SHA-256's block size, which the framing this module writes is stated against.
 const BLOCK_BYTES: usize = 64;
-
-/// Longest padding [`Sha256::finish`] can append: the `0x80` byte, up to 63
-/// zeros, and the eight-byte length. Reached when a block holds 63 bytes.
-const MAX_PADDING_BYTES: usize = BLOCK_BYTES + 8;
-
-/// Streaming FIPS 180-4 SHA-256 state.
-struct Sha256 {
-    state: [u32; 8],
-    buffer: [u8; BLOCK_BYTES],
-    buffered: usize,
-    message_bytes: u64,
-}
-
-impl Sha256 {
-    const fn new() -> Self {
-        Self {
-            state: INITIAL_STATE,
-            buffer: [0; BLOCK_BYTES],
-            buffered: 0,
-            message_bytes: 0,
-        }
-    }
-
-    fn update(&mut self, mut bytes: &[u8]) {
-        self.message_bytes = self
-            .message_bytes
-            .checked_add(u64::try_from(bytes.len()).expect("supported usize fits u64"))
-            .expect("a digested message stays within the 64-bit length field");
-        if self.buffered > 0 {
-            let wanted = BLOCK_BYTES - self.buffered;
-            let taken = wanted.min(bytes.len());
-            self.buffer[self.buffered..self.buffered + taken].copy_from_slice(&bytes[..taken]);
-            self.buffered += taken;
-            bytes = &bytes[taken..];
-            if self.buffered == BLOCK_BYTES {
-                let block = self.buffer;
-                self.compress(&block);
-                self.buffered = 0;
-            }
-            // The partial block was not completed, so there is nothing left to
-            // absorb. Falling through would rebuffer an empty remainder over
-            // the count just accumulated and silently discard it.
-            if bytes.is_empty() {
-                return;
-            }
-        }
-        debug_assert_eq!(
-            self.buffered, 0,
-            "a partial block is either completed and flushed or consumes the whole input",
-        );
-        let (blocks, rest) = bytes.as_chunks::<BLOCK_BYTES>();
-        for block in blocks {
-            self.compress(block);
-        }
-        self.buffer[..rest.len()].copy_from_slice(rest);
-        self.buffered = rest.len();
-    }
-
-    fn finish(mut self) -> [u8; DIGEST_BYTES] {
-        let bit_length = self
-            .message_bytes
-            .checked_mul(8)
-            .expect("a digested message stays within the 64-bit bit-length field");
-        // FIPS 180-4 section 5.1.1 padding, assembled once and absorbed in one
-        // call. Appending it a byte at a time re-entered `update` up to 64
-        // times per digest, and each entry saved and restored the message
-        // length, ran a `checked_add` and a `u64::try_from`, and split a
-        // one-byte slice into chunks. That is amortised to nothing over an
-        // 18 KB manifest, but `tiler-cache` digests nothing larger than 256
-        // bytes — 966 of its 1,546 measured calls are under 64 bytes, a single
-        // block — so there the padding was a per-digest fixed cost comparable
-        // to the one compression it brackets.
-        //
-        // The zero count is the fewest that leaves the eight-byte length ending
-        // exactly on a block boundary: `buffered + 1 + zeros ≡ 56 (mod 64)`,
-        // so `zeros ≡ 55 - buffered`, taken modulo 64 to stay non-negative for
-        // every `buffered` in `0..64`.
-        let zeros = (2 * BLOCK_BYTES - 9 - self.buffered) % BLOCK_BYTES;
-        let mut padding = [0_u8; MAX_PADDING_BYTES];
-        padding[0] = 0x80;
-        let length_at = 1 + zeros;
-        padding[length_at..length_at + 8].copy_from_slice(&bit_length.to_be_bytes());
-        self.update_without_length(&padding[..length_at + 8]);
-        debug_assert_eq!(self.buffered, 0, "padding completes the final block");
-        let mut digest = [0_u8; DIGEST_BYTES];
-        let (words, _) = digest.as_chunks_mut::<4>();
-        for (word, chunk) in self.state.iter().zip(words) {
-            *chunk = word.to_be_bytes();
-        }
-        digest
-    }
-
-    /// Absorbs padding bytes, which are outside the declared message length.
-    fn update_without_length(&mut self, bytes: &[u8]) {
-        let recorded = self.message_bytes;
-        self.update(bytes);
-        self.message_bytes = recorded;
-    }
-
-    #[allow(
-        clippy::many_single_char_names,
-        reason = "a through h are the names FIPS 180-4 section 6.2.2 gives these eight working \
-                  variables; renaming them would make each round stop matching the \
-                  specification line it transcribes"
-    )]
-    fn compress(&mut self, block: &[u8; BLOCK_BYTES]) {
-        let mut schedule = [0_u32; 64];
-        let (words, _) = block.as_chunks::<4>();
-        for (slot, word) in schedule.iter_mut().zip(words) {
-            *slot = u32::from_be_bytes(*word);
-        }
-        for index in 16..64 {
-            let previous = schedule[index - 15];
-            let ahead = schedule[index - 2];
-            let s0 = previous.rotate_right(7) ^ previous.rotate_right(18) ^ (previous >> 3);
-            let s1 = ahead.rotate_right(17) ^ ahead.rotate_right(19) ^ (ahead >> 10);
-            schedule[index] = schedule[index - 16]
-                .wrapping_add(s0)
-                .wrapping_add(schedule[index - 7])
-                .wrapping_add(s1);
-        }
-        // The eight working variables of FIPS 180-4 section 6.2.2, held as
-        // separate bindings rather than an array.
-        //
-        // **This is not a style choice, and the array form it replaces was a
-        // measured 69% of digest time.** Writing the round's shift as
-        // `working.rotate_right(1)` on a `[u32; 8]` reads as a rotation, but an
-        // array has no inherent `rotate_right`: the call derefs to the *slice*
-        // method, which is the generic gcd-juggling `ptr::copy` routine. The
-        // compiler never const-folded the length or the midpoint, so a release
-        // build emitted it out of line with a 320-byte stack frame and three
-        // calls to `_platform_memmove` — invoked 64 times per 64-byte block, on
-        // the innermost loop of every hash in the workspace. A profile of an
-        // 18 KB digest attributed 57.7% of active samples to `_platform_memmove`
-        // and 11.0% to `<[u32]>::rotate_right`; throughput was 53 MiB/s.
-        //
-        // The trap is that the two spellings look identical three lines apart.
-        // `e.rotate_right(6)` below is `u32::rotate_right`, a single `ror`
-        // instruction, and is exactly what this code wants. `working
-        // .rotate_right(1)` on the array was a libc memmove. Same method name,
-        // same file, entirely different cost — so the receiver type is what has
-        // to be read, and eight bindings remove the ambiguity by construction.
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.state;
-        for (word, constant) in schedule.iter().zip(ROUND_CONSTANTS) {
-            let sigma1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let choose = (e & f) ^ (!e & g);
-            let temp1 = h
-                .wrapping_add(sigma1)
-                .wrapping_add(choose)
-                .wrapping_add(constant)
-                .wrapping_add(*word);
-            let sigma0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let majority = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = sigma0.wrapping_add(majority);
-            // Each variable shifts one place forward; only the two the round
-            // redefines take a new value. These are register renames.
-            h = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-        for (held, added) in self.state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
-            *held = held.wrapping_add(added);
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
-    use super::{DigestAlgorithm, Sha256};
+    use super::DigestAlgorithm;
 
+    /// Digests one byte run through the crate's own entry point.
+    ///
+    /// Deliberately `digest_parts` and not the internals of whatever
+    /// implements SHA-256: these cases pin the bytes this module *publishes*,
+    /// which is the contract artifact identity rests on, and they must keep
+    /// meaning the same thing when the implementation behind it is replaced.
     fn hex(bytes: &[u8]) -> String {
-        let mut state = Sha256::new();
-        state.update(bytes);
-        super::Digest(state.finish()).label()
+        DigestAlgorithm::GOVERNED.digest_parts(&[bytes]).label()
     }
 
     /// The FIPS 180-4 published vectors, including the one-million-character case.
@@ -459,11 +218,10 @@ mod tests {
     fn every_padding_branch_agrees_with_a_single_shot_digest() {
         for length in [54_usize, 55, 56, 63, 64, 65, 119, 120, 127, 128] {
             let message = vec![0x5a_u8; length];
-            let mut split = Sha256::new();
-            split.update(&message[..length / 2]);
-            split.update(&message[length / 2..]);
+            let split = DigestAlgorithm::GOVERNED
+                .digest_parts(&[&message[..length / 2], &message[length / 2..]]);
             assert_eq!(
-                super::Digest(split.finish()).label(),
+                split.label(),
                 hex(&message),
                 "chunked and single-shot digests disagree at length {length}",
             );
@@ -491,13 +249,13 @@ mod tests {
     #[test]
     fn every_padding_residue_matches_an_independent_implementation() {
         let algorithm = DigestAlgorithm::GOVERNED;
-        let mut outer = Sha256::new();
+        let mut accumulated = Vec::new();
         for length in 0..=192_usize {
             let message = vec![0x5a_u8; length];
-            outer.update(algorithm.digest(b"m\0", &message).as_bytes());
+            accumulated.extend_from_slice(algorithm.digest(b"m\0", &message).as_bytes());
         }
         assert_eq!(
-            super::Digest(outer.finish()).label(),
+            algorithm.digest_parts(&[&accumulated]).label(),
             "2f4c4d8de88a0f18ec22cfbdd365ce45ec57c0ecf63936a8cf98a18ca24c156a",
             "a digest over every message length 0..=192 disagrees with the value \
              Python's hashlib produces for the same sequence",

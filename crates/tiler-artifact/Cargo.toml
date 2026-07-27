@@ -13,6 +13,7 @@ doctest = true
 doc = true
 
 [dependencies]
+sha2.workspace = true
 tiler-ir.workspace = true
 
 [lints]
