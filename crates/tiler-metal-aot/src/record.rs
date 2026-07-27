@@ -80,6 +80,7 @@ impl ResolvedToolchain {
 /// toolchain identity, so an artifact's identity is legible without re-running
 /// the compiler.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ArtifactProvenance {
     /// The artifact platform family.
     pub platform: ApplePlatform,
@@ -108,7 +109,22 @@ pub struct ArtifactProvenance {
 }
 
 /// A compiled `metallib` and its complete provenance.
+/// # Growth
+///
+/// `#[non_exhaustive]`, because this is a value the driver produces and a
+/// consumer reads: `tiler-metal` and the serial-sum producer both read its
+/// fields and neither builds one, so a further recorded fact is additive for
+/// them and remains a compile error for every construction site *inside* this
+/// crate.
+///
+/// An out-of-crate literal is refused:
+///
+/// ```compile_fail,E0639
+/// use tiler_metal_aot::record::CompiledArtifact;
+/// let artifact = CompiledArtifact { };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CompiledArtifact {
     /// The compiled Metal library bytes.
     pub metallib: Vec<u8>,

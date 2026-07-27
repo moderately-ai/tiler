@@ -52,7 +52,36 @@ use core::fmt;
 /// Mac Catalyst (`ios` + `macabi`) is a deferred fourth family and is not yet
 /// representable here; the Apple artifact-compatibility research keeps it
 /// explicitly deferred rather than relabelling a macOS or iOS artifact.
+/// # Growth
+///
+/// `#[non_exhaustive]`, because every out-of-crate use of this type names a
+/// variant to pass in — `tiler-metal`'s golden compilation and both serial-sum
+/// prototypes — and none classifies one by an exhaustive match. Admitting an SDK
+/// is therefore additive for a consumer and a compile error for every total map
+/// *inside* this crate, which is the asymmetry ADR 0074 asks for.
+///
+/// An out-of-crate match must carry a wildcard:
+///
+/// ```compile_fail,E0004
+/// use tiler_metal_aot::input::AppleSdk;
+/// fn selector(sdk: AppleSdk) -> &'static str {
+///     match sdk {
+///         AppleSdk::MacOs => "macosx",
+///         AppleSdk::IPhoneOs => "iphoneos",
+///         AppleSdk::IPhoneSimulator => "iphonesimulator",
+///     }
+/// }
+/// ```
+///
+/// while naming a variant to construct one still compiles:
+///
+/// ```
+/// use tiler_metal_aot::input::AppleSdk;
+/// let sdk = AppleSdk::MacOs;
+/// assert_eq!(sdk, AppleSdk::MacOs);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AppleSdk {
     /// The `macosx` SDK: the macOS artifact family.
     MacOs,
@@ -207,6 +236,7 @@ impl MslVersion {
 /// Optimization is output-affecting and therefore an explicit input. `-O2` is
 /// the level the Apple artifact-compatibility probe measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum OptimizationLevel {
     /// `-O0`: no optimization.
     None,
