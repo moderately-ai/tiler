@@ -1,7 +1,7 @@
 ---
 id: admit-a-caller-declared-target-profile
 title: Admit a caller-declared target profile
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [express-metal-honourability-in-the-shared-form, prototype-public-compiler-api]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler-api, feasibility, identity]
+claimed_from: todo
+assignee: integrator
+lease_expires_at: 1785173630
 ---
 The compiler admits exactly one target profile and offers no way to author another. `express-metal-honourability-in-the-shared-form` needs one and is currently unreachable without it.
 
