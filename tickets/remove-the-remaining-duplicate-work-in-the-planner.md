@@ -5,7 +5,7 @@ status: done
 priority: p2
 dependencies: [measure-compiler-and-artifact-hot-paths]
 related: []
-scopes: [implementation/compiler]
+scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [performance, compiler]
