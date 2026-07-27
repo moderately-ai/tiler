@@ -98,10 +98,23 @@ use tiler_ir::index::FrozenScalarRegistry;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum CompileFailureClass {
-    /// The request or the program is outside the admitted profile.
+    /// The request itself is malformed and no build would admit it.
     ///
-    /// The program is not wrong; this build does not compile it.
-    Unsupported {
+    /// An empty target set, a duplicated profile, an unstated numerical
+    /// contract. The action is to fix the request, and no amount of installed
+    /// capability changes that.
+    InvalidRequest {
+        /// Stable diagnostic key of the refusing check.
+        rule: &'static str,
+    },
+    /// The program is valid and no installed capability compiles it.
+    ///
+    /// The program is not wrong and the request is not wrong; *this build* does
+    /// not cover it. The action is to install a provider or wait for coverage,
+    /// which is a different action from fixing a request — and one a caller
+    /// acquired something to do about when out-of-crate capability installation
+    /// landed.
+    UnsupportedCapability {
         /// Stable diagnostic key of the refusing check.
         rule: &'static str,
     },
@@ -583,15 +596,21 @@ fn class_of(error: CompileError) -> CompileFailureClass {
         // innermost cause instead of leaving a wildcard to absorb it. The
         // caller above keeps the outer trace, which is the more complete one.
         CompileError::Explained { source, .. } => class_of(*source),
-        // Both are statements about the request rather than about Tiler, and
-        // both carry the refusing check's own key, so they classify the same
-        // way; the internal distinction between a malformed request and an
-        // unsupported capability is preserved in the explain trace.
-        CompileError::InvalidRequest(cause) | CompileError::UnsupportedCapability(cause) => {
-            CompileFailureClass::Unsupported {
-                rule: rule_of(&cause),
-            }
-        }
+        // These two were one class, on the argument that both are statements
+        // about the request rather than about Tiler, both carry the refusing
+        // check's own key, and the internal distinction survives in the explain
+        // trace. **That argument is preserved because it is true about
+        // information and wrong about class.** Nothing was lost by merging
+        // them; what was lost is the caller's ability to branch. Telling the two
+        // apart meant matching `rule` against strings, which is the thing this
+        // enum's own documentation says it exists to avoid, and the two imply
+        // different actions — fix the request, versus install a provider.
+        CompileError::InvalidRequest(cause) => CompileFailureClass::InvalidRequest {
+            rule: rule_of(&cause),
+        },
+        CompileError::UnsupportedCapability(cause) => CompileFailureClass::UnsupportedCapability {
+            rule: rule_of(&cause),
+        },
         CompileError::BudgetExhausted(_) => CompileFailureClass::BudgetExhausted,
         CompileError::NoFeasiblePlan(_) => CompileFailureClass::NoFeasiblePlan,
         CompileError::InvalidCompilerOutput(_) => CompileFailureClass::InvalidCompilerOutput,
@@ -896,17 +915,85 @@ mod tests {
         );
     }
 
+    /// Which of ADR 0069's five classes the public surface can actually produce.
+    ///
+    /// **Reachability is a property worth pinning, not an assumption.** Two of
+    /// the five are reached here from `compile_governed`; the other three are
+    /// recorded below with the reason, because a class nothing can produce is a
+    /// different claim from one that is merely untested.
+    ///
+    /// - `UnsupportedCapability` — reached by
+    ///   `an_identity_program_is_refused_as_unsupported`.
+    /// - `NoFeasiblePlan` — reached by the target-failure test above.
+    /// - `BudgetExhausted` — reached only by a program that exceeds a
+    ///   deterministic budget. `RequestError::BudgetExceeded` is its sole
+    ///   source and the governed budgets admit every program this profile
+    ///   compiles, so producing one means building a program specifically to
+    ///   exceed them.
+    /// - `InvalidCompilerOutput` — **unreachable by construction from a valid
+    ///   call, deliberately.** It reports that Tiler's own verifier refused
+    ///   Tiler's own output, so reaching it from the public surface would mean
+    ///   shipping the defect it exists to report.
+    /// - `InvalidRequest` — **unreachable from today's public surface**, and
+    ///   this is the interesting one. Its five sources are all structural facts
+    ///   about the request — an unsupported schema version, an empty or
+    ///   duplicated target set, an unverified target selection, an unstated
+    ///   contract — and `compile` builds that structure itself through
+    ///   `CompilationRequest::governed_under`. A caller supplies a program, a
+    ///   contract, and capabilities, none of which can produce any of them.
+    ///   The class is still correct and still distinct: it becomes reachable
+    ///   the moment a caller can declare its own target profiles, which is
+    ///   `admit-a-caller-declared-target-profile`.
+    #[test]
+    fn the_reachable_failure_classes_are_reached_from_the_public_surface() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([4, 3]))
+            .unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), input)
+            .unwrap();
+        let program = builder.build().unwrap();
+
+        let failure = compile_governed(&program, NumericalContract::StrictF32)
+            .expect_err("the bounded profile does not admit an identity program");
+        assert!(
+            matches!(
+                failure.class(),
+                CompileFailureClass::UnsupportedCapability { .. }
+            ),
+            "a valid program no installed capability covers is an unsupported \
+             capability, not a malformed request: {:?}",
+            failure.class(),
+        );
+    }
+
     /// The failure vocabulary keeps a Tiler defect distinct from a refused
     /// program, so a caller never reports one as the other.
     #[test]
     fn the_failure_classes_are_distinct() {
-        assert_ne!(
+        // ADR 0069's five, pairwise. Listing them here rather than asserting two
+        // pairs is what makes a future collapse visible: a class merged back
+        // into another fails this, where two spot checks would not notice.
+        let classes = [
+            CompileFailureClass::InvalidRequest { rule: "any" },
+            CompileFailureClass::UnsupportedCapability { rule: "any" },
             CompileFailureClass::NoFeasiblePlan,
-            CompileFailureClass::InvalidCompilerOutput,
-        );
-        assert_ne!(
             CompileFailureClass::BudgetExhausted,
-            CompileFailureClass::Unsupported { rule: "any" },
+            CompileFailureClass::InvalidCompilerOutput,
+        ];
+        for (index, left) in classes.iter().enumerate() {
+            for right in &classes[index + 1..] {
+                assert_ne!(left, right, "two failure classes compare equal");
+            }
+        }
+
+        // The two that were one class carry the same rule key and are still
+        // distinct, which is the whole point of splitting them: a caller must
+        // not have to read the key to learn which action applies.
+        assert_ne!(
+            CompileFailureClass::InvalidRequest { rule: "same" },
+            CompileFailureClass::UnsupportedCapability { rule: "same" },
         );
     }
 
@@ -975,7 +1062,10 @@ mod tests {
         let failure = compile_governed(&program, NumericalContract::StrictF32)
             .expect_err("the bounded profile does not admit an identity program");
         assert!(
-            matches!(failure.class(), CompileFailureClass::Unsupported { .. }),
+            matches!(
+                failure.class(),
+                CompileFailureClass::UnsupportedCapability { .. }
+            ),
             "unexpected class: {:?}",
             failure.class(),
         );
