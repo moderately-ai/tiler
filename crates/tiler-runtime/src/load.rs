@@ -72,15 +72,17 @@
 //!
 //! # What is still refused, and why each reason survives
 //!
-//! - **A variant whose entry count is not one.** This loader's limit, not the
-//!   envelope's, and the distinction is recent: an envelope now carries the
-//!   execution order and the typed dependency edges that order discharges, so a
-//!   multi-entry variant *can* be sequenced from an artifact alone. What is
-//!   missing is here — this loader routes one entry and has no per-entry
-//!   preflight or dispatch. The refusal is reachable rather than shadowed by a
-//!   decoder that rejected such an envelope one layer earlier, which is the
-//!   point: a loader correct only by another layer's refusal is not correct.
-//!   `preflight-every-entry-of-a-multi-stage-route` owns lifting it.
+//! - **A variant whose shared storage cannot be paired.** Multi-entry routing is
+//!   supported: every entry is preflighted and returned in the variant's own
+//!   execution order. What a route still needs beyond that order is the *storage*
+//!   the order exists to sequence — a `Data` edge means the successor reads what
+//!   the predecessor wrote, and an `Internal` binding carries no name to match on.
+//!   The pairing is therefore derived, by finding each end's sole internal
+//!   binding of the required access, and a route whose ends are not determined is
+//!   refused here rather than guessed. This is the one place in the stack that
+//!   would otherwise fail *open*: a loader allocating per binding hands the
+//!   successor a fresh buffer and it reads uninitialised device memory, which is
+//!   plausible garbage rather than an error.
 //! - **A variant with deferred feasibility predicates.** Answering one means
 //!   querying the provider it names, and this crate holds no provider registry.
 //!   Ignoring them would route past a feasibility condition the producer
@@ -95,13 +97,16 @@ mod host;
 mod route;
 
 pub use host::{ExecutionEnvironment, TargetCompatibility};
-pub use route::{Preflight, RoutedBinding, RoutedDispatch, RoutedLaunch};
+pub use route::{
+    EntrySlot, Preflight, RoutedBinding, RoutedDispatch, RoutedEntry, RoutedLaunch,
+    SharedAllocation,
+};
 
 use tiler_artifact::program::{
     AbiEvaluationError, AbiFacts, AbiValue, ArtifactCodecFailure, ArtifactExecutionPolicy,
-    BackendPayloadDescriptor, CanonicalArtifactProgramIdentity, DecodedArtifact, DecodedEntry,
-    DecodedExpr, DecodedInput, DecodedOutput, DecodedVariant, RoutingPolicy, SectionView,
-    decode_artifact,
+    BackendPayloadDescriptor, BindingTarget, BufferAccess, CanonicalArtifactProgramIdentity,
+    DecodedArtifact, DecodedEntry, DecodedExpr, DecodedInput, DecodedOutput, DecodedVariant,
+    RoutingPolicy, SectionView, StageDependencyReason, decode_artifact,
 };
 
 use std::error::Error;
@@ -311,12 +316,49 @@ impl DecodedProgram {
             });
         }
 
-        let entry = accept_entry(variant)?;
-        let position = entry.payload();
+        // Every entry, in the order the variant says they run — not the entry
+        // table's canonical stage-key order, which is identity's and carries no
+        // execution meaning.
+        let ordered = accept_entries(variant)?;
+
+        let mut entries = Vec::with_capacity(ordered.len());
+        for (position, entry) in ordered.iter().copied().enumerate() {
+            entries.push(self.route_entry(position, entry, environment, facts)?);
+        }
+
+        // Derived after every entry is routed, because it names slots of routed
+        // entries and a refusal here must still arrive before the commit.
+        let shared = shared_allocations(variant, &ordered)?;
+
+        Ok(Preflight {
+            identity,
+            kernel_program: variant.kernel_program_identity(),
+            entries,
+            shared,
+        })
+    }
+
+    /// Discharges every obligation of one entry of a route.
+    ///
+    /// **Per entry rather than once per route, and the difference is not
+    /// cosmetic.** Nothing requires two entries of one variant to be realized by
+    /// the same payload: `BackendPayloadDescriptor::compatibility` exists
+    /// precisely because the association is many-to-one. Checking the backend,
+    /// the representation, the payload's own compatibility contract, and the
+    /// execution policy once and then executing a different entry's object would
+    /// be routing on a fact that was never checked.
+    fn route_entry<'a>(
+        &'a self,
+        position: usize,
+        entry: DecodedEntry<'a>,
+        environment: &ExecutionEnvironment,
+        facts: &AbiFacts,
+    ) -> Result<RoutedEntry<'a>, LoadRejection> {
+        let descriptor = entry.payload();
         let payload = self
             .decoded
             .payloads()
-            .get(position)
+            .get(descriptor)
             .expect("a decode proved every entry names a payload the artifact declares");
         if payload.backend != environment.backend
             || payload.representation != environment.representation
@@ -357,25 +399,20 @@ impl DecodedProgram {
         // object, publishes no entry symbol, and publishes no transport mapping.
         // All three are answered from the descriptor position the entry named.
         let (Some(object), Some(symbol), Some(transports)) = (
-            self.decoded.payload_object(position),
+            self.decoded.payload_object(descriptor),
             entry.backend_symbol(),
             entry.transport_slots(),
         ) else {
             return Err(LoadRejection::ObjectNotCarried);
         };
 
-        let launch = evaluate_launch(entry, facts)?;
-        let bindings = place_bindings(entry, transports, facts)?;
-
-        Ok(Preflight {
-            identity,
-            kernel_program: variant.kernel_program_identity(),
+        Ok(RoutedEntry {
             payload,
             object,
             entry,
             symbol,
-            launch,
-            bindings,
+            launch: evaluate_launch(position, entry, facts)?,
+            bindings: place_bindings(position, entry, transports, facts)?,
         })
     }
 
@@ -417,16 +454,15 @@ impl DecodedProgram {
     }
 }
 
-/// Returns the one entry a selected variant dispatches, or why it has none.
+/// Returns a selected variant's entries in the order it says they run.
 ///
 /// Separate from [`DecodedProgram::select_variant`] because the two answer
 /// different questions. Selection asks which variant *applies*; this asks
 /// whether the applicable one is something a device-free loader can carry out,
-/// and its two refusals are properties of the selected variant rather than
-/// reasons to try the next one. Falling through to a lower-priority variant here
-/// would silently substitute a plan the producer ranked below the one whose
-/// guard held.
-fn accept_entry(variant: DecodedVariant<'_>) -> Result<DecodedEntry<'_>, LoadRejection> {
+/// and its refusal is a property of the selected variant rather than a reason to
+/// try the next one. Falling through to a lower-priority variant here would
+/// silently substitute a plan the producer ranked below the one whose guard held.
+fn accept_entries(variant: DecodedVariant<'_>) -> Result<Vec<DecodedEntry<'_>>, LoadRejection> {
     let rank = variant.routing_rank();
     let deferred = variant.deferred_predicates().len();
     if deferred > 0 {
@@ -436,44 +472,158 @@ fn accept_entry(variant: DecodedVariant<'_>) -> Result<DecodedEntry<'_>, LoadRej
         });
     }
 
-    // The envelope now carries an execution order and the edges it discharges,
-    // so the reason this refuses has moved: it is no longer that a sequence
-    // cannot be recovered — `carry-the-stage-execution-order-in-the-envelope`
-    // closed that — but that this loader dispatches exactly one entry. The
-    // refusal is reachable rather than shadowed by a decoder that rejected such
-    // an envelope one layer earlier, which is the point: a loader correct only
-    // by another layer's refusal is not correct.
-    //
-    // `preflight-every-entry-of-a-multi-stage-route` owns lifting it.
-    let mut entries = variant.entries();
-    let declared = entries.len();
-    if declared != 1 {
-        return Err(LoadRejection::UnroutableEntries {
-            variant: rank,
-            entries: declared,
+    // The variant's own execution order, which the decoder proved is a
+    // permutation of its entries and consistent with every dependency edge. The
+    // entry *table* is in canonical stage-key order — identity's order — so
+    // dispatching in that order would be treating a sort key as a schedule,
+    // which is exactly the silent behaviour the envelope's refusal used to
+    // prevent before it carried the order.
+    Ok(variant.execution_order().collect())
+}
+
+/// Pairs the slots that must be backed by one allocation, or refuses the route.
+///
+/// # What a loader cannot see, and why that is dangerous rather than merely
+/// inconvenient
+///
+/// A binding addressing entry-internal storage carries no name: the artifact
+/// layer has no durable name for a program value, so two `Internal` slots are
+/// indistinguishable by design. A loader allocating per binding therefore gives
+/// the consuming stage a *fresh* buffer, the producing stage's result never
+/// reaches it, and the dispatch reads uninitialised device memory. No digest
+/// fails and no preflight refuses; the values that come back are plausible
+/// garbage. Every other refusal in this stack fails closed, and this is the one
+/// that would not.
+///
+/// # The pairing is read from the program, not guessed
+///
+/// Each `Data` dependency edge names a producing entry and a consuming one, and
+/// the obligation it discharges is that the consumer reads what the producer
+/// wrote. The two slots are located by searching each entry for its internal
+/// write and its internal read.
+///
+/// **Searched rather than assumed at a fixed index.** Every verified kernel in
+/// today's profile has exactly one read buffer and one write buffer, which makes
+/// the producer's slot always 1 and the consumer's always 0 — so a fixed index
+/// would work now and silently mis-bind the day that profile widens. Requiring
+/// exactly one candidate on each side turns that widening into a refusal here
+/// rather than a wrong answer downstream.
+fn shared_allocations(
+    variant: DecodedVariant<'_>,
+    ordered: &[DecodedEntry<'_>],
+) -> Result<Vec<SharedAllocation>, LoadRejection> {
+    let rank = variant.routing_rank();
+    let position = |entry: &DecodedEntry<'_>| {
+        ordered
+            .iter()
+            .position(|candidate| candidate.stage_key() == entry.stage_key())
+    };
+
+    let mut shared = Vec::new();
+    for edge in variant.stage_dependencies() {
+        // Exhaustive rather than a wildcard: a reason added to the artifact
+        // layer must be classified here deliberately instead of being treated as
+        // a data flow it is not.
+        match edge.reason() {
+            StageDependencyReason::Data => {}
+            // Storage handoff names an allocation the successor may reuse after
+            // the predecessor released it. A loader that allocates the two
+            // separately is wasteful and correct, so nothing is paired.
+            StageDependencyReason::StorageHandoff => continue,
+        }
+
+        let predecessor = edge.predecessor();
+        let successor = edge.successor();
+        let (Some(producer_entry), Some(consumer_entry)) =
+            (position(&predecessor), position(&successor))
+        else {
+            return Err(LoadRejection::UnpairableSharedAllocation {
+                variant: rank,
+                detail: "a dependency edge names an entry the execution order does not",
+            });
+        };
+
+        let producer = sole_internal_slot(predecessor, BufferAccess::Write).ok_or(
+            LoadRejection::UnpairableSharedAllocation {
+                variant: rank,
+                detail: "the producing entry does not have exactly one internal write binding",
+            },
+        )?;
+        let consumer = sole_internal_slot(successor, BufferAccess::Read).ok_or(
+            LoadRejection::UnpairableSharedAllocation {
+                variant: rank,
+                detail: "the consuming entry does not have exactly one internal read binding",
+            },
+        )?;
+
+        shared.push(SharedAllocation {
+            producer: EntrySlot {
+                entry: producer_entry,
+                slot: producer,
+            },
+            consumer: EntrySlot {
+                entry: consumer_entry,
+                slot: consumer,
+            },
         });
     }
-    Ok(entries
-        .next()
-        .expect("an iterator reporting one item yields one item"))
+    Ok(shared)
+}
+
+/// Returns the one internal binding of an entry with the given access, if it is
+/// the only one.
+///
+/// `None` covers both "no such binding" and "more than one", because both mean
+/// the same thing to a caller: the pairing this route needs is not determined,
+/// and guessing which slot was meant is how a wrong buffer gets bound.
+///
+/// Only the "no such binding" half is covered by a test. Every kernel this
+/// profile verifies destructures to `[read_buffer, write_buffer]`, so an entry
+/// with two internal writes is not constructible through the builder and the
+/// uniqueness rejection cannot be reached from a fixture — neutering it to take
+/// the first match leaves the suite green. It is retained as the check that
+/// makes widening the kernel profile a refusal rather than a silent mis-bind,
+/// which is a claim about the code, not a measured one.
+fn sole_internal_slot(entry: DecodedEntry<'_>, access: BufferAccess) -> Option<usize> {
+    let mut found = None;
+    for binding in entry.bindings() {
+        if matches!(binding.target(), BindingTarget::Internal) && binding.access() == access {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(binding.slot());
+        }
+    }
+    found
 }
 
 /// Evaluates one entry's launch geometry and proves its preconditions hold.
 fn evaluate_launch(
+    position: usize,
     entry: DecodedEntry<'_>,
     facts: &AbiFacts,
 ) -> Result<RoutedLaunch, LoadRejection> {
     for (index, precondition) in entry.launch_preconditions().enumerate() {
-        let subject = AbiSubject::LaunchPrecondition { index };
+        let subject = AbiSubject::LaunchPrecondition {
+            entry: position,
+            index,
+        };
         if !boolean(precondition, subject, facts)? {
-            return Err(LoadRejection::LaunchPrecondition { index });
+            return Err(LoadRejection::LaunchPrecondition {
+                entry: position,
+                index,
+            });
         }
     }
     Ok(RoutedLaunch {
-        grid_threads: unsigned(entry.launch_threads(), AbiSubject::LaunchThreads, facts)?,
+        grid_threads: unsigned(
+            entry.launch_threads(),
+            AbiSubject::LaunchThreads { entry: position },
+            facts,
+        )?,
         threads_per_workgroup: unsigned(
             entry.threads_per_workgroup(),
-            AbiSubject::ThreadsPerWorkgroup,
+            AbiSubject::ThreadsPerWorkgroup { entry: position },
             facts,
         )?,
         zero_work_skips_dispatch: entry.zero_work_skips_dispatch(),
@@ -485,6 +635,7 @@ fn evaluate_launch(
 /// `transports[slot]` is the mapping the carried payload declares, and a decode
 /// proved it covers every slot, so the pairing is read rather than assumed.
 fn place_bindings<'a>(
+    position: usize,
     entry: DecodedEntry<'a>,
     transports: &[u32],
     facts: &AbiFacts,
@@ -499,7 +650,10 @@ fn place_bindings<'a>(
                 .expect("a decode proved one transport slot per ABI binding"),
             accessible_bytes: unsigned(
                 binding.accessible_bytes(),
-                AbiSubject::AccessibleBytes { slot },
+                AbiSubject::AccessibleBytes {
+                    entry: position,
+                    slot,
+                },
                 facts,
             )?,
         });
@@ -558,17 +712,27 @@ pub enum AbiSubject {
         /// Zero-based routing rank of the variant whose guard was evaluated.
         variant: usize,
     },
-    /// The routed entry's total launch thread count.
-    LaunchThreads,
-    /// The routed entry's per-workgroup thread count.
-    ThreadsPerWorkgroup,
+    /// One routed entry's total launch thread count.
+    LaunchThreads {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+    },
+    /// One routed entry's per-workgroup thread count.
+    ThreadsPerWorkgroup {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+    },
     /// One launch-instance precondition, by declaration position.
     LaunchPrecondition {
-        /// Zero-based position among the entry's preconditions.
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// Zero-based position among that entry's preconditions.
         index: usize,
     },
     /// One binding's minimum accessible byte range, by ABI slot.
     AccessibleBytes {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
         /// Zero-based ABI slot of the binding whose range was evaluated.
         slot: usize,
     },
@@ -580,12 +744,19 @@ impl fmt::Display for AbiSubject {
             Self::ApplicabilityGuard { variant } => {
                 write!(formatter, "variant {variant}'s applicability guard")
             }
-            Self::LaunchThreads => formatter.write_str("the launch thread count"),
-            Self::ThreadsPerWorkgroup => formatter.write_str("the per-workgroup thread count"),
-            Self::LaunchPrecondition { index } => write!(formatter, "launch precondition {index}"),
-            Self::AccessibleBytes { slot } => {
-                write!(formatter, "the accessible byte range of ABI slot {slot}")
+            Self::LaunchThreads { entry } => {
+                write!(formatter, "entry {entry}'s launch thread count")
             }
+            Self::ThreadsPerWorkgroup { entry } => {
+                write!(formatter, "entry {entry}'s per-workgroup thread count")
+            }
+            Self::LaunchPrecondition { entry, index } => {
+                write!(formatter, "entry {entry}'s launch precondition {index}")
+            }
+            Self::AccessibleBytes { entry, slot } => write!(
+                formatter,
+                "the accessible byte range of entry {entry}'s ABI slot {slot}"
+            ),
         }
     }
 }
@@ -673,20 +844,6 @@ pub enum LoadRejection {
         /// How many predicates it defers.
         deferred: usize,
     },
-    /// The selected variant does not dispatch as exactly one entry.
-    ///
-    /// **This loader's limit, not the envelope's.** An envelope now carries the
-    /// execution order and the typed dependency edges that order discharges, so
-    /// a multi-entry variant *can* be sequenced from an artifact alone —
-    /// `DecodedVariant::execution_order` is that sequence. What is missing is
-    /// here: this loader routes one entry and has no per-entry preflight or
-    /// dispatch. `preflight-every-entry-of-a-multi-stage-route` owns closing it.
-    UnroutableEntries {
-        /// Zero-based routing rank of the selected variant.
-        variant: usize,
-        /// How many executable entries it declares.
-        entries: usize,
-    },
     /// The routed entry's payload is not one this host stated it can execute.
     UnexecutablePayload {
         /// Governed backend family key the packaged payload declares.
@@ -739,8 +896,24 @@ pub enum LoadRejection {
     /// caller that bound too little, and a false one is a launch the artifact
     /// itself declares invalid.
     LaunchPrecondition {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
         /// Zero-based position of the precondition that did not hold.
         index: usize,
+    },
+    /// A data dependency's shared storage could not be paired to two slots.
+    ///
+    /// An internal binding carries no name, so a loader that allocated per
+    /// binding would give the consuming stage a fresh buffer and it would read
+    /// uninitialised device memory — a wrong answer rather than a refusal. The
+    /// pairing is derived from the variant's own typed dependency edges, and
+    /// when it is not determined this refuses instead of guessing which slot was
+    /// meant.
+    UnpairableSharedAllocation {
+        /// Zero-based routing rank of the selected variant.
+        variant: usize,
+        /// Which part of the pairing was not determined.
+        detail: &'static str,
     },
 }
 
@@ -764,11 +937,6 @@ impl fmt::Display for LoadRejection {
                 formatter,
                 "runtime.deferred-predicates: variant {variant} defers {deferred} feasibility \
                  predicate(s), and a device-free loader queries no provider",
-            ),
-            Self::UnroutableEntries { variant, entries } => write!(
-                formatter,
-                "runtime.unroutable-entries: variant {variant} declares {entries} entries, and \
-                 this loader dispatches one",
             ),
             Self::UnexecutablePayload {
                 declared_backend,
@@ -800,10 +968,15 @@ impl fmt::Display for LoadRejection {
                 formatter,
                 "runtime.abi-evaluation: {subject} could not be evaluated: {error}",
             ),
-            Self::LaunchPrecondition { index } => write!(
+            Self::LaunchPrecondition { entry, index } => write!(
                 formatter,
-                "runtime.launch-precondition: precondition {index} does not hold for the bound \
-                 facts",
+                "runtime.launch-precondition: entry {entry}'s precondition {index} does not hold \
+                 for the bound facts",
+            ),
+            Self::UnpairableSharedAllocation { variant, detail } => write!(
+                formatter,
+                "runtime.unpairable-shared-allocation: variant {variant} declares a data \
+                 dependency whose shared storage is not determined: {detail}",
             ),
         }
     }
@@ -817,12 +990,12 @@ impl Error for LoadRejection {
             Self::ProgramMismatch { .. }
             | Self::NoApplicableVariant { .. }
             | Self::UnansweredDeferredPredicates { .. }
-            | Self::UnroutableEntries { .. }
             | Self::UnexecutablePayload { .. }
             | Self::IncompatibleTarget { .. }
             | Self::UndeliverableExecutionPolicy { .. }
             | Self::ObjectNotCarried
-            | Self::LaunchPrecondition { .. } => None,
+            | Self::LaunchPrecondition { .. }
+            | Self::UnpairableSharedAllocation { .. } => None,
         }
     }
 }
@@ -895,10 +1068,14 @@ mod tests {
     fn every_abi_subject_names_a_distinct_expression() {
         let rendered: Vec<String> = [
             AbiSubject::ApplicabilityGuard { variant: 0 },
-            AbiSubject::LaunchThreads,
-            AbiSubject::ThreadsPerWorkgroup,
-            AbiSubject::LaunchPrecondition { index: 0 },
-            AbiSubject::AccessibleBytes { slot: 0 },
+            AbiSubject::LaunchThreads { entry: 0 },
+            AbiSubject::ThreadsPerWorkgroup { entry: 0 },
+            AbiSubject::LaunchPrecondition { entry: 0, index: 0 },
+            AbiSubject::AccessibleBytes { entry: 0, slot: 0 },
+            // A second entry must render distinguishably from the first, or a
+            // multi-stage route's refusal would not say which stage it is about.
+            AbiSubject::LaunchThreads { entry: 1 },
+            AbiSubject::AccessibleBytes { entry: 1, slot: 0 },
         ]
         .iter()
         .map(ToString::to_string)

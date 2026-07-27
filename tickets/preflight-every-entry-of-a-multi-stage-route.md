@@ -1,11 +1,11 @@
 ---
 id: preflight-every-entry-of-a-multi-stage-route
 title: Make an entire multi-stage route ready before routing commit
-status: todo
+status: done
 priority: p2
 dependencies: [carry-the-stage-execution-order-in-the-envelope, make-runtime-routing-commit-authority-one-shot]
 related: [prototype-metal-runtime-preflight, carry-the-stage-execution-order-in-the-envelope]
-scopes: [implementation/runtime]
+scopes: [implementation/runtime, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, metal, correctness]
@@ -42,3 +42,23 @@ Every entry of a routed variant has its pipeline, launch geometry, bindings,
 and dependency obligations discharged before one route-level commit; a refusal
 names the entry; fallback authority cannot be recovered after commit; and
 `make full` passes.
+
+## Outcome
+
+Done. The loader routes every entry of a multi-stage variant and derives the storage those entries share, both before the routing commit.
+
+**What changed.** `accept_entry` became `accept_entries`, returning the variant's entries in `DecodedVariant::execution_order` rather than in the entry table's canonical stage-key order — dispatching in table order would have been treating a sort key as a schedule. `Preflight` and `RoutedDispatch` now hold a `Vec<RoutedEntry>` plus a `Vec<SharedAllocation>` instead of singular `object`/`entry`/`symbol`/`launch`/`bindings` fields. The four per-entry obligations that previously ran once — backend/representation, payload compatibility, execution policy, object-carried — moved inside the per-entry loop, joining `evaluate_launch` and `place_bindings`. Validating one entry's payload and executing another's was the specific defect that shape allowed. Every `PreflightRefusal` and every relevant `AbiSubject` now carries the entry it came from.
+
+**The pairing, which is the part that would have failed open.** For each `Data` edge, `shared_allocations` pairs the predecessor's sole internal *write* binding with the successor's sole internal *read* binding, found by search and asserted unique — not hard-coded to slots 1 and 0, which is what today's two-buffer kernel profile happens to make them. A route whose ends are not determined is refused with `LoadRejection::UnpairableSharedAllocation` before the commit, where fallback is still permitted. Without it a loader allocates per binding, the successor reads uninitialised device memory, and the result is plausible garbage rather than an error — the one place in this stack that would not fail closed.
+
+**Evidence.** `a_multi_stage_route_preflights_every_entry_and_pairs_its_shared_storage` builds from the materialized alternative (2 stages, 1 `Data` edge), asserts both entries route in execution order, and asserts the single derived pairing has an internal *write* at the producing end and an internal *read* at the consuming one — not merely that two entries appeared, which would pass with the data flow silently broken.
+
+**Measurement boundary, stated rather than implied.** Neutering the pairing to never resolve makes that test fail with `UnpairableSharedAllocation`, so the refusal is reachable. Neutering only its *uniqueness* — take the first internal write instead of requiring one — leaves the suite green, because every kernel this profile verifies destructures to `[read_buffer, write_buffer]` and an entry with two internal writes is not constructible through the builder. The uniqueness half is therefore an argued guard, not a tested one; that is recorded at `sole_internal_slot` so it is not mistaken for coverage.
+
+**Also in this change.** `LoadRejection::UnroutableEntries` was removed rather than kept: it lost its only construction site when the cardinality limit was lifted, and a never-constructed variant advertises a refusal the loader does not make. Two module docs that still described the one-entry limit were corrected — one of them the load-bearing "cannot be sequenced from an artifact alone" claim.
+
+**Deliberately not here.** The hardware run still dispatches one entry, because `serial-sum-compile` packages `compilation.selected()` — the fused plan. Executing the materialized plan on device is `prototype-metal-runtime-proof`'s own stated requirement ("execute the retained materialized program in one explicit proof run, then execute the normally selected fused program in a separate proof run"), it needs a producer change plus a runner that does not assume which alternative was packaged, and that ticket depends on this one. Closing here is what releases it.
+
+`carry-the-data-flow-of-a-stage-dependency` was closed as obsolete in the same change, with the derivation that made it unnecessary; its one dependent was unlinked first so the close does not strand it.
+
+Gate: `make full` green (962 nextest + 11 doc-tests, rustdoc, release numerical tests, `tkt lint`, shellcheck).

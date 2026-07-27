@@ -145,6 +145,116 @@ impl<'a> RoutedBinding<'a> {
     }
 }
 
+/// One entry of a routed variant, with everything its dispatch needs.
+///
+/// A route carries one of these per stage, in execution order. Every fact here
+/// is per *entry* rather than per route, and that is not uniformity for its own
+/// sake: nothing requires two entries of one variant to be realized by the same
+/// payload, so the object, the symbol, and the descriptor are resolved and
+/// checked for each. A loader that validated one entry's payload and executed
+/// another's would be routing on a fact it never checked.
+#[derive(Clone, Debug)]
+pub struct RoutedEntry<'a> {
+    pub(super) payload: &'a BackendPayloadDescriptor,
+    pub(super) object: &'a [u8],
+    pub(super) entry: DecodedEntry<'a>,
+    pub(super) symbol: &'a str,
+    pub(super) launch: RoutedLaunch,
+    pub(super) bindings: Vec<RoutedBinding<'a>>,
+}
+
+impl<'a> RoutedEntry<'a> {
+    /// Returns the descriptor of the payload realizing this entry.
+    #[must_use]
+    pub const fn payload(&self) -> &'a BackendPayloadDescriptor {
+        self.payload
+    }
+
+    /// Returns the exact emitted object bytes this entry executes from.
+    #[must_use]
+    pub const fn object(&self) -> &'a [u8] {
+        self.object
+    }
+
+    /// Returns the backend's own entry-point symbol to look up in that object.
+    #[must_use]
+    pub const fn entry_symbol(&self) -> &'a str {
+        self.symbol
+    }
+
+    /// Returns the evaluated launch geometry this entry encodes.
+    #[must_use]
+    pub const fn launch(&self) -> RoutedLaunch {
+        self.launch
+    }
+
+    /// Returns this entry's routed ABI bindings in the kernel signature's order.
+    #[must_use]
+    pub fn bindings(&self) -> &[RoutedBinding<'a>] {
+        &self.bindings
+    }
+
+    /// Returns the decoded entry this was routed from.
+    #[must_use]
+    pub const fn entry(&self) -> DecodedEntry<'a> {
+        self.entry
+    }
+}
+
+/// Two ABI slots of two entries that must be backed by **one** allocation.
+///
+/// # Why a loader cannot work this out for itself
+///
+/// A binding addressing entry-internal storage carries no name — two `Internal`
+/// slots are indistinguishable by design, because the artifact layer has no
+/// durable name for a program value. So a loader allocating per binding gives
+/// the consumer a *fresh* buffer, the producer's result never reaches it, and
+/// the dispatch reads uninitialised device memory. That is a wrong answer rather
+/// than a refusal, and it is the one place in this stack that would fail open.
+///
+/// The pairing is derived from the variant's own typed data dependencies, so it
+/// states what the packaged program proved rather than what a loader guessed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SharedAllocation {
+    pub(super) producer: EntrySlot,
+    pub(super) consumer: EntrySlot,
+}
+
+impl SharedAllocation {
+    /// Returns the entry and slot that writes the shared storage.
+    #[must_use]
+    pub const fn producer(self) -> EntrySlot {
+        self.producer
+    }
+
+    /// Returns the entry and slot that reads it.
+    #[must_use]
+    pub const fn consumer(self) -> EntrySlot {
+        self.consumer
+    }
+}
+
+/// One ABI slot of one entry, both indices into the route's own execution order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EntrySlot {
+    pub(super) entry: usize,
+    pub(super) slot: usize,
+}
+
+impl EntrySlot {
+    /// Returns the position of the entry in the route's execution order.
+    #[must_use]
+    pub const fn entry(self) -> usize {
+        self.entry
+    }
+
+    /// Returns the zero-based ABI slot within that entry.
+    #[must_use]
+    pub const fn slot(self) -> usize {
+        self.slot
+    }
+}
+
 /// One artifact that passed every obligation this loader can decide.
 ///
 /// Deliberately neither [`Clone`] nor [`Copy`]. A route that could be duplicated
@@ -155,12 +265,8 @@ impl<'a> RoutedBinding<'a> {
 pub struct Preflight<'a> {
     pub(super) identity: CanonicalArtifactProgramIdentity,
     pub(super) kernel_program: &'a [u8],
-    pub(super) payload: &'a BackendPayloadDescriptor,
-    pub(super) object: &'a [u8],
-    pub(super) entry: DecodedEntry<'a>,
-    pub(super) symbol: &'a str,
-    pub(super) launch: RoutedLaunch,
-    pub(super) bindings: Vec<RoutedBinding<'a>>,
+    pub(super) entries: Vec<RoutedEntry<'a>>,
+    pub(super) shared: Vec<SharedAllocation>,
 }
 
 impl<'a> Preflight<'a> {
@@ -183,48 +289,22 @@ impl<'a> Preflight<'a> {
         self.kernel_program
     }
 
-    /// Returns the descriptor of the payload this route selected.
-    #[must_use]
-    pub const fn payload(&self) -> &'a BackendPayloadDescriptor {
-        self.payload
-    }
-
-    /// Returns the evaluated launch geometry this route would encode.
-    #[must_use]
-    pub const fn launch(&self) -> RoutedLaunch {
-        self.launch
-    }
-
-    /// Returns the routed ABI bindings in the kernel signature's own order.
-    #[must_use]
-    pub fn bindings(&self) -> &[RoutedBinding<'a>] {
-        &self.bindings
-    }
-
-    /// Returns the exact emitted object bytes the artifact carries.
+    /// Returns this route's entries **in the order they must be dispatched**.
     ///
-    /// The same bytes [`RoutedDispatch::object`] returns, published here because
-    /// a host with a device must be able to build its executable state *before*
-    /// the commit. Loading a library, resolving the entry symbol, and creating a
-    /// pipeline are all decidable while a fallback is still permitted, and ADR
-    /// 0051 says a check that could have run before the commit must not run
-    /// after it. Reaching these bytes only through [`Self::commit`] would force
-    /// exactly that.
+    /// The variant's own execution order, not the entry table's canonical
+    /// stage-key order. A caller dispatches this sequence front to back.
     #[must_use]
-    pub const fn object(&self) -> &'a [u8] {
-        self.object
+    pub fn entries(&self) -> &[RoutedEntry<'a>] {
+        &self.entries
     }
 
-    /// Returns the backend's own entry-point symbol to look up in that object.
+    /// Returns the slot pairs that must be backed by one allocation each.
     ///
-    /// Read from the carried payload's compilation subject, never supplied by
-    /// the host, for the reason [`RoutedDispatch::entry_symbol`] gives. Exposed
-    /// before the commit for the reason [`Self::object`] gives: a symbol the
-    /// object does not publish is a fact about these bytes that a host can
-    /// establish while it may still decline.
+    /// Empty for a single-entry route. See [`SharedAllocation`] for why a loader
+    /// cannot derive these from the bindings alone.
     #[must_use]
-    pub const fn entry_symbol(&self) -> &'a str {
-        self.symbol
+    pub fn shared_allocations(&self) -> &[SharedAllocation] {
+        &self.shared
     }
 
     /// Commits to executing this route. One way, and infallible.
@@ -333,27 +413,19 @@ impl<'a> Preflight<'a> {
         let Self {
             identity,
             kernel_program,
-            payload,
-            object,
-            entry,
-            symbol,
-            launch,
-            bindings,
+            entries,
+            shared,
         } = self;
         RoutedDispatch {
             identity,
             kernel_program,
-            payload,
-            object,
-            entry,
-            symbol,
-            launch,
-            bindings,
+            entries,
+            shared,
         }
     }
 }
 
-/// A committed route: one entry, its object, and everything needed to encode it.
+/// A committed route: every entry, in dispatch order, and what each one needs.
 ///
 /// Reaching this type is the boundary ADR 0051 draws. Everything before it may
 /// be abandoned for a fallback; everything after it is program work, and a
@@ -366,12 +438,8 @@ impl<'a> Preflight<'a> {
 pub struct RoutedDispatch<'a> {
     identity: CanonicalArtifactProgramIdentity,
     kernel_program: &'a [u8],
-    payload: &'a BackendPayloadDescriptor,
-    object: &'a [u8],
-    entry: DecodedEntry<'a>,
-    symbol: &'a str,
-    launch: RoutedLaunch,
-    bindings: Vec<RoutedBinding<'a>>,
+    entries: Vec<RoutedEntry<'a>>,
+    shared: Vec<SharedAllocation>,
 }
 
 impl<'a> RoutedDispatch<'a> {
@@ -391,64 +459,39 @@ impl<'a> RoutedDispatch<'a> {
         self.kernel_program
     }
 
-    /// Returns the descriptor of the payload this route committed to.
+    /// Returns the committed entries **in the order they must be dispatched**.
+    ///
+    /// The same sequence [`Preflight::entries`] published, carried across the
+    /// commit unchanged. A host encodes them front to back, and each carries its
+    /// own object, symbol, launch geometry, and bindings.
     #[must_use]
-    pub const fn payload(&self) -> &'a BackendPayloadDescriptor {
-        self.payload
+    pub fn entries(&self) -> &[RoutedEntry<'a>] {
+        &self.entries
     }
 
-    /// Returns how the committed object reaches an executable state.
+    /// Returns the slot pairs that must be backed by one allocation each.
+    ///
+    /// Empty for a single-entry route. See [`SharedAllocation`] for why a loader
+    /// that ignored these would read uninitialised storage rather than refuse.
+    #[must_use]
+    pub fn shared_allocations(&self) -> &[SharedAllocation] {
+        &self.shared
+    }
+
+    /// Returns how each committed object reaches an executable state.
     ///
     /// Always [`ArtifactExecutionPolicy::NativeImage`] in this build — preflight
-    /// refuses anything else — and returned rather than assumed, so a host does
-    /// not hard-code the assumption at its own load site.
-    #[must_use]
-    pub const fn execution_policy(&self) -> ArtifactExecutionPolicy {
-        self.payload.execution_policy
-    }
-
-    /// Returns the exact emitted object bytes the artifact carries.
+    /// refuses anything else, for *every* entry — and returned rather than
+    /// assumed, so a host does not hard-code the assumption at its own load site.
     ///
-    /// These are the bytes the producer handed to `push_carried_payload`,
-    /// byte for byte: the envelope's framing is stripped by the decoder and the
-    /// section body is the object itself. A host loads *these* and nothing it
-    /// held before, which is what makes the envelope load-bearing rather than
-    /// descriptive.
+    /// Per entry rather than per route, because nothing requires two entries to
+    /// name one payload and a single answer would be a claim about one of them.
     #[must_use]
-    pub const fn object(&self) -> &'a [u8] {
-        self.object
-    }
-
-    /// Returns the backend's own entry-point symbol to look up in that object.
-    ///
-    /// Read from the carried payload's compilation subject, never supplied by
-    /// the host. A host naming the symbol itself would be asserting which
-    /// function the object contains, and that is a claim only the producer which
-    /// compiled it can make.
-    #[must_use]
-    pub const fn entry_symbol(&self) -> &'a str {
-        self.symbol
-    }
-
-    /// Returns the evaluated launch geometry to encode.
-    #[must_use]
-    pub const fn launch(&self) -> RoutedLaunch {
-        self.launch
-    }
-
-    /// Returns the routed ABI bindings in the kernel signature's own order.
-    #[must_use]
-    pub fn bindings(&self) -> &[RoutedBinding<'a>] {
-        &self.bindings
-    }
-
-    /// Returns the decoded entry this route committed to.
-    ///
-    /// The declared resource requirements and numerical realization hang off it,
-    /// so a host reporting what it is about to run — or refusing a kernel whose
-    /// declared numerics are not the ones it asked for — reads them here.
-    #[must_use]
-    pub const fn entry(&self) -> DecodedEntry<'a> {
-        self.entry
+    pub fn execution_policies(
+        &self,
+    ) -> impl ExactSizeIterator<Item = ArtifactExecutionPolicy> + '_ {
+        self.entries
+            .iter()
+            .map(|entry| entry.payload.execution_policy)
     }
 }

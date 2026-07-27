@@ -103,7 +103,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use metal::{
-    Buffer, ComputeCommandEncoderRef, ComputePipelineDescriptor, ComputePipelineState, Device,
+    Buffer, CommandBufferRef, ComputePipelineDescriptor, ComputePipelineState, Device,
     MTLCommandBufferStatus, MTLGPUFamily, MTLResourceOptions, MTLSize,
 };
 use tiler_artifact::program::{
@@ -531,13 +531,11 @@ fn submit(
     device: &Device,
     output: &Buffer,
     count: usize,
-    encode: impl FnOnce(&ComputeCommandEncoderRef),
+    encode: impl FnOnce(&CommandBufferRef),
 ) -> Result<Vec<u32>, ProofError> {
     let queue = device.new_command_queue();
     let command_buffer = queue.new_command_buffer();
-    let encoder = command_buffer.new_compute_command_encoder();
-    encode(encoder);
-    encoder.end_encoding();
+    encode(command_buffer);
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
@@ -625,11 +623,13 @@ fn dispatch_direct(
     let pipeline = pipeline_for(device, object, symbol)?;
     let (input, output, count) = host_storage(device, bits, ROWS);
     let width = pipeline.thread_execution_width().min(ROWS);
-    submit(device, &output, count, |encoder| {
+    submit(device, &output, count, |command_buffer| {
+        let encoder = command_buffer.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(&pipeline);
         encoder.set_buffer(0, Some(&input), 0);
         encoder.set_buffer(1, Some(&output), 0);
         encoder.dispatch_threads(MTLSize::new(ROWS, 1, 1), MTLSize::new(width, 1, 1));
+        encoder.end_encoding();
     })
 }
 
@@ -673,10 +673,17 @@ fn probe_accepted_baseline(subject: &ProbeSubject<'_>) -> Result<String, ProofEr
     let preflight = decoded
         .preflight(subject.environment, subject.expected, subject.abi)
         .map_err(ProofError::ProbeBaseline)?;
+    let entries = preflight.entries();
+    let threads: u64 = entries
+        .iter()
+        .map(|entry| entry.launch().grid_threads())
+        .sum();
+    let bindings: usize = entries.iter().map(|entry| entry.bindings().len()).sum();
     Ok(format!(
-        "the unperturbed subject routes: {} thread(s) over {} binding(s)",
-        preflight.launch().grid_threads(),
-        preflight.bindings().len(),
+        "the unperturbed subject routes: {} entr(y/ies), {threads} thread(s) over {bindings} \
+         binding(s), {} shared allocation(s)",
+        entries.len(),
+        preflight.shared_allocations().len(),
     ))
 }
 
@@ -950,40 +957,46 @@ struct PlacedSlot {
 /// not device-*free*, but they are decidable, and [`device_preflight`] takes
 /// them before the same commit. Nothing that a device can answer is left for
 /// after it.
-fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<PlacedSlot>, ProofError> {
-    let launch = preflight.launch();
-    if launch.grid_threads() == 0 {
-        // The artifact states whether an empty launch is skipped or encoded, so
-        // the answer is read rather than assumed. Either way this proof has no
-        // output to compare and says so instead of reporting agreement on
-        // whatever the output buffer happened to hold.
-        return Err(ProofError::EmptyLaunch {
-            skipped: launch.zero_work_skips_dispatch(),
-        });
-    }
+fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<Vec<PlacedSlot>>, ProofError> {
+    let mut plan = Vec::with_capacity(preflight.entries().len());
+    for (position, routed) in preflight.entries().iter().enumerate() {
+        let launch = routed.launch();
+        if launch.grid_threads() == 0 {
+            // The artifact states whether an empty launch is skipped or encoded,
+            // so the answer is read rather than assumed. Either way this proof
+            // has no output to compare and says so instead of reporting
+            // agreement on whatever the output buffer happened to hold.
+            return Err(ProofError::EmptyLaunch {
+                entry: position,
+                skipped: launch.zero_work_skips_dispatch(),
+            });
+        }
 
-    let mut plan = Vec::with_capacity(preflight.bindings().len());
-    for binding in preflight.bindings() {
-        let placement = match binding.binding().target() {
-            BindingTarget::ProgramInput(key) if key.as_str() == INPUT_KEY => Placement::Input,
-            BindingTarget::ProgramOutput(keys)
-                if keys.len() == 1 && keys[0].as_str() == OUTPUT_KEY =>
-            {
-                Placement::Output
-            }
-            BindingTarget::Internal => Placement::Internal,
-            other => {
-                return Err(ProofError::UnboundBinding {
-                    slot: binding.slot(),
-                    target: format!("{other:?}"),
-                });
-            }
-        };
-        plan.push(PlacedSlot {
-            transport: binding.transport_slot(),
-            needed: binding.accessible_bytes(),
-            placement,
-        });
+        let mut slots = Vec::with_capacity(routed.bindings().len());
+        for binding in routed.bindings() {
+            let placement = match binding.binding().target() {
+                BindingTarget::ProgramInput(key) if key.as_str() == INPUT_KEY => Placement::Input,
+                BindingTarget::ProgramOutput(keys)
+                    if keys.len() == 1 && keys[0].as_str() == OUTPUT_KEY =>
+                {
+                    Placement::Output
+                }
+                BindingTarget::Internal => Placement::Internal,
+                other => {
+                    return Err(ProofError::UnboundBinding {
+                        entry: position,
+                        slot: binding.slot(),
+                        target: format!("{other:?}"),
+                    });
+                }
+            };
+            slots.push(PlacedSlot {
+                transport: binding.transport_slot(),
+                needed: binding.accessible_bytes(),
+                placement,
+            });
+        }
+        plan.push(slots);
     }
     Ok(plan)
 }
@@ -1065,25 +1078,46 @@ impl PreflightClass {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PreflightRefusal {
     /// The payload's object bytes did not produce a library.
-    LibraryRejected { detail: String },
+    LibraryRejected { entry: usize, detail: String },
     /// The library loaded and publishes no function by the entry symbol.
-    FunctionAbsent { symbol: String, detail: String },
+    FunctionAbsent {
+        entry: usize,
+        symbol: String,
+        detail: String,
+    },
     /// The device refused pipeline state for a function it did publish.
-    PipelineRejected { symbol: String, detail: String },
+    PipelineRejected {
+        entry: usize,
+        symbol: String,
+        detail: String,
+    },
     /// The declared workgroup is larger than this pipeline admits.
     WorkgroupTooLarge {
+        entry: usize,
         symbol: String,
         declared: u64,
         capacity: u64,
     },
     /// A binding must reach more bytes than one buffer can hold here.
     BindingExceedsBufferLimit {
+        entry: usize,
         slot: usize,
         needed: u64,
         limit: u64,
     },
     /// An allocation came back shorter than the route requires.
-    UndersizedAllocation { slot: usize, needed: u64, held: u64 },
+    UndersizedAllocation {
+        entry: usize,
+        slot: usize,
+        needed: u64,
+        held: u64,
+    },
+    /// No entry of the route binds the program output this proof compares.
+    ///
+    /// Systemic rather than a route miss: `plan_route` already refused every
+    /// binding target this proof does not place, so a route that reaches here
+    /// declares an interface the proof cannot observe at all.
+    NoOutputBinding,
 }
 
 impl PreflightRefusal {
@@ -1098,9 +1132,9 @@ impl PreflightRefusal {
             Self::FunctionAbsent { .. } => PreflightPhase::Function,
             Self::PipelineRejected { .. } => PreflightPhase::Pipeline,
             Self::WorkgroupTooLarge { .. } => PreflightPhase::LaunchGeometry,
-            Self::BindingExceedsBufferLimit { .. } | Self::UndersizedAllocation { .. } => {
-                PreflightPhase::Resources
-            }
+            Self::BindingExceedsBufferLimit { .. }
+            | Self::UndersizedAllocation { .. }
+            | Self::NoOutputBinding => PreflightPhase::Resources,
         }
     }
 
@@ -1128,7 +1162,7 @@ impl PreflightRefusal {
             Self::PipelineRejected { .. }
             | Self::WorkgroupTooLarge { .. }
             | Self::BindingExceedsBufferLimit { .. } => PreflightClass::RouteMiss,
-            Self::UndersizedAllocation { .. } => PreflightClass::Systemic,
+            Self::UndersizedAllocation { .. } | Self::NoOutputBinding => PreflightClass::Systemic,
         }
     }
 }
@@ -1142,35 +1176,56 @@ impl fmt::Display for PreflightRefusal {
             self.class().as_str(),
         )?;
         match self {
-            Self::LibraryRejected { detail } => {
-                write!(formatter, "the carried object did not load: {detail}")
-            }
-            Self::FunctionAbsent { symbol, detail } => {
-                write!(formatter, "the library publishes no {symbol:?}: {detail}")
-            }
-            Self::PipelineRejected { symbol, detail } => {
-                write!(formatter, "no pipeline state for {symbol:?}: {detail}")
-            }
+            Self::LibraryRejected { entry, detail } => write!(
+                formatter,
+                "entry {entry}'s carried object did not load: {detail}"
+            ),
+            Self::FunctionAbsent {
+                entry,
+                symbol,
+                detail,
+            } => write!(
+                formatter,
+                "entry {entry}'s library publishes no {symbol:?}: {detail}"
+            ),
+            Self::PipelineRejected {
+                entry,
+                symbol,
+                detail,
+            } => write!(
+                formatter,
+                "no pipeline state for entry {entry}'s {symbol:?}: {detail}"
+            ),
             Self::WorkgroupTooLarge {
+                entry,
                 symbol,
                 declared,
                 capacity,
             } => write!(
                 formatter,
-                "{symbol:?} admits {capacity} thread(s) per threadgroup and the artifact declares {declared}"
+                "entry {entry}'s {symbol:?} admits {capacity} thread(s) per threadgroup and the artifact declares {declared}"
             ),
             Self::BindingExceedsBufferLimit {
+                entry,
                 slot,
                 needed,
                 limit,
             } => write!(
                 formatter,
-                "slot {slot} must reach {needed} byte(s) and one buffer holds at most {limit}"
+                "entry {entry} slot {slot} must reach {needed} byte(s) and one buffer holds at most {limit}"
             ),
-            Self::UndersizedAllocation { slot, needed, held } => write!(
+            Self::UndersizedAllocation {
+                entry,
+                slot,
+                needed,
+                held,
+            } => write!(
                 formatter,
-                "slot {slot} needs {needed} byte(s) and the allocation returned {held}"
+                "entry {entry} slot {slot} needs {needed} byte(s) and the allocation returned {held}"
             ),
+            Self::NoOutputBinding => {
+                formatter.write_str("no entry of this route binds the program output")
+            }
         }
     }
 }
@@ -1196,22 +1251,29 @@ struct DeviceFacts {
     highest_apple_family: Option<&'static str>,
 }
 
+/// One entry of a route, with the device objects its dispatch needs.
+struct PreparedEntry {
+    pipeline: ComputePipelineState,
+    /// Buffers in this entry's own binding order, paired with the argument-table
+    /// index each occupies.
+    placements: Vec<(u32, Buffer)>,
+    grid_threads: u64,
+    threads_per_workgroup: u64,
+}
+
 /// One route this device has proved it can carry out, with everything it needs.
 ///
 /// Held across the commit: every device object the encode touches is created
 /// here, so the post-commit path allocates nothing, looks nothing up, and has no
 /// failure to report. That is the property the stage exists for.
+///
+/// Every buffer stays owned by this value until the command buffer completes.
+/// Entry-internal storage is the loader's to allocate, and a shared intermediate
+/// is referenced by two entries at once, so dropping either view would leave the
+/// encoder holding a binding to a freed allocation. This value outlives the
+/// `submit` call, which waits for the terminal state.
 struct PreparedRoute {
-    pipeline: ComputePipelineState,
-    /// Buffers in the route's own binding order, paired with the argument-table
-    /// index each occupies.
-    ///
-    /// Retained here until the command buffer completes: entry-internal storage
-    /// is the loader's to allocate, and dropping it would leave the encoder
-    /// holding a binding to a freed allocation. This value outlives the `submit`
-    /// call, which waits for the command buffer's terminal state, so every
-    /// buffer is alive through its final device use.
-    placements: Vec<(u32, Buffer)>,
+    entries: Vec<PreparedEntry>,
     /// The buffer the program's output lands in, for read-back.
     output: Buffer,
     /// How many `f32` elements to read back out of it.
@@ -1221,102 +1283,145 @@ struct PreparedRoute {
 
 /// Proves this device can carry out a route, while declining is still permitted.
 ///
-/// **This is the stage the ticket exists to add, and the ordering is its whole
-/// substance.** `Preflight::commit` is infallible and documents why: every
-/// decidable obligation is supposed to have been discharged before it. Three
-/// were not. The library, the pipeline, and the comparison of the declared
-/// workgroup against the capacity that pipeline reports all ran inside the
-/// dispatch, after the commit. The last of those is what makes it a correctness
-/// bug rather than an ordering preference: a workgroup this pipeline cannot run
-/// is a fact about *this route on this device*, so another variant might satisfy
-/// it, and ADR 0051 permits that fallback only while the commit has not been
-/// taken. Reporting it afterwards converts a fallback the host was still owed
-/// into a failure it merely reports.
+/// **Every entry, not the first one.** `prototype-metal-runtime-preflight` moved
+/// every device-decidable obligation before the commit and bought the property
+/// that `Preflight::commit` is infallible in fact rather than only in signature.
+/// That property was stated over one entry: a two-entry route whose *second*
+/// pipeline fails to build would reintroduce exactly the defect that ticket
+/// removed. So the library, the function, the pipeline, and the launch capacity
+/// are discharged per entry, and every refusal names the entry it came from —
+/// "some pipeline in this route failed" is not actionable.
 ///
 /// Nothing here is observable if the route is then abandoned: it allocates and
 /// fills host-visible storage and creates pipeline state, and encodes nothing.
 fn device_preflight(
     device: &Device,
     preflight: &Preflight<'_>,
-    plan: &[PlacedSlot],
+    plan: &[Vec<PlacedSlot>],
     operands: &[u32],
     rows: u64,
 ) -> Result<PreparedRoute, PreflightRefusal> {
     let facts = device_facts(device);
+    let routed = preflight.entries();
 
-    // The library and the entry symbol come from the artifact, never from this
-    // process. The identical call in `dispatch_direct` cannot fail this way for
-    // the same reason: there the object is one this build just emitted, so a
-    // rejection is a defect in Tiler, and here it is a statement about published
-    // bytes. Same device call, different meaning, because the provenance of the
-    // bytes differs — which is why the two paths do not share a refusal type.
-    let library = device
-        .new_library_with_data(preflight.object())
-        .map_err(|detail| PreflightRefusal::LibraryRejected { detail })?;
-    let symbol = preflight.entry_symbol();
-    let function =
-        library
-            .get_function(symbol, None)
-            .map_err(|detail| PreflightRefusal::FunctionAbsent {
+    // Allocated before any entry is prepared, because a shared buffer belongs to
+    // two entries and neither owns it. `None` marks a slot still to be filled by
+    // the per-entry pass below.
+    let mut storage: Vec<Vec<Option<Buffer>>> =
+        plan.iter().map(|slots| vec![None; slots.len()]).collect();
+
+    // The pairing the loader derived from the variant's own data dependencies.
+    // One allocation is made and *both* slots reference it; a loader that
+    // allocated per binding would hand the consumer a fresh buffer and it would
+    // read uninitialised device memory — a wrong answer rather than a refusal.
+    for shared in preflight.shared_allocations() {
+        let (producer, consumer) = (shared.producer(), shared.consumer());
+        let needed = plan[producer.entry()][producer.slot()]
+            .needed
+            .max(plan[consumer.entry()][consumer.slot()].needed);
+        binding_fits(
+            producer.entry(),
+            producer.slot(),
+            needed,
+            facts.max_buffer_length,
+        )?;
+        let buffer = device.new_buffer(needed.max(1), MTLResourceOptions::StorageModePrivate);
+        allocation_fits(producer.entry(), producer.slot(), needed, buffer.length())?;
+        storage[producer.entry()][producer.slot()] = Some(buffer.clone());
+        storage[consumer.entry()][consumer.slot()] = Some(buffer);
+    }
+
+    let mut output = None;
+    let mut entries = Vec::with_capacity(routed.len());
+    for (position, entry) in routed.iter().enumerate() {
+        // The library and the entry symbol come from the artifact, never from
+        // this process. The identical call in `dispatch_direct` cannot fail this
+        // way for the same reason: there the object is one this build just
+        // emitted, so a rejection is a defect in Tiler, and here it is a
+        // statement about published bytes.
+        let library = device
+            .new_library_with_data(entry.object())
+            .map_err(|detail| PreflightRefusal::LibraryRejected {
+                entry: position,
+                detail,
+            })?;
+        let symbol = entry.entry_symbol();
+        let function = library.get_function(symbol, None).map_err(|detail| {
+            PreflightRefusal::FunctionAbsent {
+                entry: position,
+                symbol: symbol.to_owned(),
+                detail,
+            }
+        })?;
+        let descriptor = ComputePipelineDescriptor::new();
+        descriptor.set_compute_function(Some(&function));
+        let pipeline = device
+            .new_compute_pipeline_state(&descriptor)
+            .map_err(|detail| PreflightRefusal::PipelineRejected {
+                entry: position,
                 symbol: symbol.to_owned(),
                 detail,
             })?;
 
-    // One function, because the loader routes one entry: `accept_entry` selects
-    // exactly one, and this reader refuses a multi-stage variant outright.
-    // Looping over a collection that cannot hold two would claim coverage that
-    // does not exist. `preflight-every-entry-of-a-multi-stage-route` owns the
-    // runtime half when a route can carry more than one.
-    let descriptor = ComputePipelineDescriptor::new();
-    descriptor.set_compute_function(Some(&function));
-    let pipeline = device
-        .new_compute_pipeline_state(&descriptor)
-        .map_err(|detail| PreflightRefusal::PipelineRejected {
-            symbol: symbol.to_owned(),
-            detail,
-        })?;
+        let launch = entry.launch();
+        workgroup_fits(
+            position,
+            symbol,
+            launch.threads_per_workgroup(),
+            pipeline.max_total_threads_per_threadgroup(),
+        )?;
 
-    let launch = preflight.launch();
-    workgroup_fits(
-        symbol,
-        launch.threads_per_workgroup(),
-        pipeline.max_total_threads_per_threadgroup(),
-    )?;
-
-    // Sized from the route rather than from the operand slice: the artifact
-    // states how many bytes each binding must reach, and deriving a length from
-    // the host's own data would re-answer a question the artifact answered.
-    let mut placements = Vec::with_capacity(plan.len());
-    let mut output = None;
-    for (slot, placed) in plan.iter().enumerate() {
-        binding_fits(slot, placed.needed, facts.max_buffer_length)?;
-        let options = match placed.placement {
-            Placement::Input | Placement::Output => MTLResourceOptions::StorageModeShared,
-            Placement::Internal => MTLResourceOptions::StorageModePrivate,
-        };
-        let storage = device.new_buffer(placed.needed.max(1), options);
-        allocation_fits(slot, placed.needed, storage.length())?;
-        match placed.placement {
-            Placement::Input => {
-                // The assertion inside `write_f32` is the backstop for a length
-                // disagreement, and it is unreachable here: the operand count
-                // was checked against the shape the artifact declares, and this
-                // buffer's length is that same shape's accessible byte range.
-                let values: Vec<f32> = operands.iter().map(|bits| f32::from_bits(*bits)).collect();
-                crate::buffer::write_f32(&storage, &values);
+        // Sized from the route rather than from the operand slice: the artifact
+        // states how many bytes each binding must reach, and deriving a length
+        // from the host's own data would re-answer a question it answered.
+        let mut placements = Vec::with_capacity(plan[position].len());
+        for (slot, placed) in plan[position].iter().enumerate() {
+            binding_fits(position, slot, placed.needed, facts.max_buffer_length)?;
+            // An occupied slot was already allocated as one half of a shared
+            // pair, and taking it is what makes the two entries address one
+            // buffer rather than two that merely have the same length.
+            let buffer = if let Some(shared) = storage[position][slot].clone() {
+                shared
+            } else {
+                let options = match placed.placement {
+                    Placement::Input | Placement::Output => MTLResourceOptions::StorageModeShared,
+                    Placement::Internal => MTLResourceOptions::StorageModePrivate,
+                };
+                let buffer = device.new_buffer(placed.needed.max(1), options);
+                allocation_fits(position, slot, placed.needed, buffer.length())?;
+                storage[position][slot] = Some(buffer.clone());
+                buffer
+            };
+            match placed.placement {
+                Placement::Input => {
+                    // The assertion inside `write_f32` is the backstop for a
+                    // length disagreement, and it is unreachable here: the
+                    // operand count was checked against the shape the artifact
+                    // declares, and this buffer's length is that same shape's
+                    // accessible byte range.
+                    let values: Vec<f32> =
+                        operands.iter().map(|bits| f32::from_bits(*bits)).collect();
+                    crate::buffer::write_f32(&buffer, &values);
+                }
+                Placement::Output => output = Some(buffer.clone()),
+                Placement::Internal => {}
             }
-            Placement::Output => output = Some(storage.clone()),
-            Placement::Internal => {}
+            placements.push((placed.transport, buffer));
         }
-        placements.push((placed.transport, storage));
+
+        entries.push(PreparedEntry {
+            pipeline,
+            placements,
+            grid_threads: launch.grid_threads(),
+            threads_per_workgroup: launch.threads_per_workgroup(),
+        });
     }
 
     Ok(PreparedRoute {
-        pipeline,
-        placements,
+        entries,
         // `plan_route` refuses every binding target this proof does not place,
-        // and this program declares one output, so the placement pass bound it.
-        output: output.expect("the placement pass bound this program's one output"),
+        // and this program declares one output, so some entry bound it.
+        output: output.ok_or(PreflightRefusal::NoOutputBinding)?,
         readback: usize::try_from(rows).expect("the proof's row count fits a usize"),
         facts,
     })
@@ -1326,9 +1431,15 @@ fn device_preflight(
 ///
 /// Split from the device call so the decision is testable without hardware: the
 /// device contributes two numbers and this contributes the comparison.
-fn workgroup_fits(symbol: &str, declared: u64, capacity: u64) -> Result<(), PreflightRefusal> {
+fn workgroup_fits(
+    entry: usize,
+    symbol: &str,
+    declared: u64,
+    capacity: u64,
+) -> Result<(), PreflightRefusal> {
     if declared > capacity {
         return Err(PreflightRefusal::WorkgroupTooLarge {
+            entry,
             symbol: symbol.to_owned(),
             declared,
             capacity,
@@ -1338,9 +1449,15 @@ fn workgroup_fits(symbol: &str, declared: u64, capacity: u64) -> Result<(), Pref
 }
 
 /// Whether one binding's accessible range fits in a single buffer here.
-fn binding_fits(slot: usize, needed: u64, limit: u64) -> Result<(), PreflightRefusal> {
+fn binding_fits(
+    entry: usize,
+    slot: usize,
+    needed: u64,
+    limit: u64,
+) -> Result<(), PreflightRefusal> {
     if needed > limit {
         return Err(PreflightRefusal::BindingExceedsBufferLimit {
+            entry,
             slot,
             needed,
             limit,
@@ -1350,9 +1467,19 @@ fn binding_fits(slot: usize, needed: u64, limit: u64) -> Result<(), PreflightRef
 }
 
 /// Whether an allocation the device returned reaches the length it was asked for.
-fn allocation_fits(slot: usize, needed: u64, held: u64) -> Result<(), PreflightRefusal> {
+fn allocation_fits(
+    entry: usize,
+    slot: usize,
+    needed: u64,
+    held: u64,
+) -> Result<(), PreflightRefusal> {
     if held < needed {
-        return Err(PreflightRefusal::UndersizedAllocation { slot, needed, held });
+        return Err(PreflightRefusal::UndersizedAllocation {
+            entry,
+            slot,
+            needed,
+            held,
+        });
     }
     Ok(())
 }
@@ -1398,10 +1525,18 @@ fn device_facts(device: &Device) -> DeviceFacts {
 fn probe_device_preflight(
     device: &Device,
     preflight: &Preflight<'_>,
-    plan: &[PlacedSlot],
+    plan: &[Vec<PlacedSlot>],
     operands: &[u32],
     rows: u64,
 ) -> Result<(), ProofError> {
+    // Every perturbation below targets the route's first entry. One entry is
+    // enough to establish that the device produces each refusal, and the
+    // per-entry loop that applies them to the rest is device-free code the unit
+    // cases cover.
+    let first = preflight
+        .entries()
+        .first()
+        .ok_or(ProofError::ProbeAccepted("a route with no entries"))?;
     // A library built from bytes that are not a metallib. The digest over these
     // bytes matched, so this is content that will not execute rather than an
     // integrity failure — the distinction `PreflightClass::CorruptArtifact`
@@ -1409,7 +1544,7 @@ fn probe_device_preflight(
     let refusal = device
         .new_library_with_data(b"tiler probe object; not an executable image")
         .err()
-        .map(|detail| PreflightRefusal::LibraryRejected { detail })
+        .map(|detail| PreflightRefusal::LibraryRejected { entry: 0, detail })
         .ok_or(ProofError::ProbeAccepted(
             "a library from non-metallib bytes",
         ))?;
@@ -1417,14 +1552,18 @@ fn probe_device_preflight(
 
     // A symbol the real library does not publish.
     let library = device
-        .new_library_with_data(preflight.object())
+        .new_library_with_data(first.object())
         .map_err(|detail| {
-            ProofError::DevicePreflight(Box::new(PreflightRefusal::LibraryRejected { detail }))
+            ProofError::DevicePreflight(Box::new(PreflightRefusal::LibraryRejected {
+                entry: 0,
+                detail,
+            }))
         })?;
     let refusal = library
         .get_function("tiler_kernel_this_object_does_not_publish", None)
         .err()
         .map(|detail| PreflightRefusal::FunctionAbsent {
+            entry: 0,
             symbol: "tiler_kernel_this_object_does_not_publish".to_owned(),
             detail,
         })
@@ -1435,10 +1574,11 @@ fn probe_device_preflight(
     // this device actually reported rather than an invented number. This is the
     // refusal that used to arrive after the commit.
     let function = library
-        .get_function(preflight.entry_symbol(), None)
+        .get_function(first.entry_symbol(), None)
         .map_err(|detail| {
             ProofError::DevicePreflight(Box::new(PreflightRefusal::FunctionAbsent {
-                symbol: preflight.entry_symbol().to_owned(),
+                entry: 0,
+                symbol: first.entry_symbol().to_owned(),
                 detail,
             }))
         })?;
@@ -1448,12 +1588,13 @@ fn probe_device_preflight(
         .new_compute_pipeline_state(&descriptor)
         .map_err(|detail| {
             ProofError::DevicePreflight(Box::new(PreflightRefusal::PipelineRejected {
-                symbol: preflight.entry_symbol().to_owned(),
+                entry: 0,
+                symbol: first.entry_symbol().to_owned(),
                 detail,
             }))
         })?;
     let capacity = pipeline.max_total_threads_per_threadgroup();
-    let refusal = workgroup_fits(preflight.entry_symbol(), capacity + 1, capacity)
+    let refusal = workgroup_fits(0, first.entry_symbol(), capacity + 1, capacity)
         .err()
         .ok_or(ProofError::ProbeAccepted(
             "a workgroup larger than the pipeline admits",
@@ -1462,7 +1603,7 @@ fn probe_device_preflight(
 
     // A binding needing one byte more than this device holds in one buffer.
     let limit = device_facts(device).max_buffer_length;
-    let refusal = binding_fits(0, limit + 1, limit)
+    let refusal = binding_fits(0, 0, limit + 1, limit)
         .err()
         .ok_or(ProofError::ProbeAccepted("a binding past the buffer limit"))?;
     report_refusal("a binding one byte past the buffer limit", &refusal);
@@ -1524,17 +1665,37 @@ fn dispatch_prepared(
     routed: &RoutedDispatch<'_>,
     prepared: &PreparedRoute,
 ) -> Result<Vec<u32>, ProofError> {
-    let launch = routed.launch();
-    submit(device, &prepared.output, prepared.readback, |encoder| {
-        encoder.set_compute_pipeline_state(&prepared.pipeline);
-        for (transport, storage) in &prepared.placements {
-            encoder.set_buffer(u64::from(*transport), Some(storage), 0);
-        }
-        encoder.dispatch_threads(
-            MTLSize::new(launch.grid_threads(), 1, 1),
-            MTLSize::new(launch.threads_per_workgroup(), 1, 1),
-        );
-    })
+    debug_assert_eq!(
+        routed.entries().len(),
+        prepared.entries.len(),
+        "the prepared route was built from these committed entries",
+    );
+    submit(
+        device,
+        &prepared.output,
+        prepared.readback,
+        |command_buffer| {
+            // **One encoder per entry, and that is the ordering guarantee.**
+            // Commands within a single compute encoder are not ordered against
+            // each other unless the encoder's dispatch type says so, and a
+            // second stage reading what the first wrote must not overlap it.
+            // Metal orders *encoders* within a command buffer unconditionally,
+            // with an implicit barrier between them, so a separate encoder per
+            // entry needs no assumption about dispatch type at all.
+            for entry in &prepared.entries {
+                let encoder = command_buffer.new_compute_command_encoder();
+                encoder.set_compute_pipeline_state(&entry.pipeline);
+                for (transport, storage) in &entry.placements {
+                    encoder.set_buffer(u64::from(*transport), Some(storage), 0);
+                }
+                encoder.dispatch_threads(
+                    MTLSize::new(entry.grid_threads, 1, 1),
+                    MTLSize::new(entry.threads_per_workgroup, 1, 1),
+                );
+                encoder.end_encoding();
+            }
+        },
+    )
 }
 
 pub(crate) fn main() -> ExitCode {
@@ -1705,19 +1866,35 @@ fn run() -> Result<(), ProofError> {
 
     let routed = preflight.commit();
     println!(
-        "routed: symbol {:?}, {} object byte(s), {} thread(s) in groups of {}",
-        routed.entry_symbol(),
-        routed.object().len(),
-        routed.launch().grid_threads(),
-        routed.launch().threads_per_workgroup(),
+        "routed: {} entr(y/ies) in execution order, {} shared allocation(s)",
+        routed.entries().len(),
+        routed.shared_allocations().len(),
     );
-    for binding in routed.bindings() {
+    for (position, entry) in routed.entries().iter().enumerate() {
         println!(
-            "  abi slot {} -> transport {}, {} byte(s), {:?}",
-            binding.slot(),
-            binding.transport_slot(),
-            binding.accessible_bytes(),
-            binding.binding().target(),
+            "  entry {position}: symbol {:?}, {} object byte(s), {} thread(s) in groups of {}",
+            entry.entry_symbol(),
+            entry.object().len(),
+            entry.launch().grid_threads(),
+            entry.launch().threads_per_workgroup(),
+        );
+        for binding in entry.bindings() {
+            println!(
+                "    abi slot {} -> transport {}, {} byte(s), {:?}",
+                binding.slot(),
+                binding.transport_slot(),
+                binding.accessible_bytes(),
+                binding.binding().target(),
+            );
+        }
+    }
+    for shared in routed.shared_allocations() {
+        println!(
+            "  shared: entry {} slot {} writes what entry {} slot {} reads",
+            shared.producer().entry(),
+            shared.producer().slot(),
+            shared.consumer().entry(),
+            shared.consumer().slot(),
         );
     }
     let envelope = dispatch_prepared(device, &routed, &prepared)?;
@@ -1793,10 +1970,12 @@ enum ProofError {
         compiled: usize,
     },
     UnboundBinding {
+        entry: usize,
         slot: usize,
         target: String,
     },
     EmptyLaunch {
+        entry: usize,
         skipped: bool,
     },
     /// The device refused the route, before any commit.
@@ -1896,14 +2075,19 @@ impl fmt::Display for ProofError {
                 "the artifact packages a kernel program of {packaged} identity bytes and this \
                  process compiled one of {compiled}; the two prototypes have drifted",
             ),
-            Self::UnboundBinding { slot, target } => write!(
+            Self::UnboundBinding {
+                entry,
+                slot,
+                target,
+            } => write!(
                 formatter,
-                "ABI slot {slot} addresses {target}, which this proof binds no storage for",
+                "entry {entry}'s ABI slot {slot} addresses {target}, which this proof binds no \
+                 storage for",
             ),
-            Self::EmptyLaunch { skipped } => write!(
+            Self::EmptyLaunch { entry, skipped } => write!(
                 formatter,
-                "the routed launch covers no threads (skipped: {skipped}), so there is no result \
-                 to compare",
+                "entry {entry}'s routed launch covers no threads (skipped: {skipped}), so there \
+                 is no result to compare",
             ),
             Self::DevicePreflight(refusal) => write!(
                 formatter,
@@ -2030,10 +2214,10 @@ mod tests {
     };
     use tiler_artifact::program::{
         AbiExprId, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
-        BackendEntryRef, BackendKey, BindingKind, BindingSpec, CapabilityKey,
-        CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
-        LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance,
-        PayloadSdkIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
+        BackendEntryRef, BackendKey, BindingKind, BindingSpec, BindingTarget, BufferAccess,
+        CapabilityKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
+        FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata,
+        PayloadProvenance, PayloadSdkIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
         TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
         VariantSpec, VerifiedArtifactProgram,
     };
@@ -2488,6 +2672,7 @@ mod tests {
         let cases = [
             (
                 super::PreflightRefusal::LibraryRejected {
+                    entry: 0,
                     detail: "not a metallib".to_owned(),
                 },
                 super::PreflightPhase::Library,
@@ -2495,6 +2680,7 @@ mod tests {
             ),
             (
                 super::PreflightRefusal::FunctionAbsent {
+                    entry: 0,
                     symbol: "absent".to_owned(),
                     detail: "no such function".to_owned(),
                 },
@@ -2503,6 +2689,7 @@ mod tests {
             ),
             (
                 super::PreflightRefusal::PipelineRejected {
+                    entry: 1,
                     symbol: "k".to_owned(),
                     detail: "too many registers".to_owned(),
                 },
@@ -2511,6 +2698,7 @@ mod tests {
             ),
             (
                 super::PreflightRefusal::WorkgroupTooLarge {
+                    entry: 1,
                     symbol: "k".to_owned(),
                     declared: 2,
                     capacity: 1,
@@ -2520,6 +2708,7 @@ mod tests {
             ),
             (
                 super::PreflightRefusal::BindingExceedsBufferLimit {
+                    entry: 1,
                     slot: 0,
                     needed: 2,
                     limit: 1,
@@ -2529,6 +2718,7 @@ mod tests {
             ),
             (
                 super::PreflightRefusal::UndersizedAllocation {
+                    entry: 0,
                     slot: 0,
                     needed: 2,
                     held: 1,
@@ -2536,8 +2726,13 @@ mod tests {
                 super::PreflightPhase::Resources,
                 super::PreflightClass::Systemic,
             ),
+            (
+                super::PreflightRefusal::NoOutputBinding,
+                super::PreflightPhase::Resources,
+                super::PreflightClass::Systemic,
+            ),
         ];
-        assert_eq!(cases.len(), 6, "a refusal was added without a case here");
+        assert_eq!(cases.len(), 7, "a refusal was added without a case here");
         for (refusal, phase, class) in cases {
             assert_eq!(refusal.phase(), phase, "wrong phase for {refusal}");
             assert_eq!(refusal.class(), class, "wrong class for {refusal}");
@@ -2559,31 +2754,35 @@ mod tests {
     /// whole stage exists to move before the commit.
     #[test]
     fn the_device_comparisons_refuse_exactly_at_their_boundary() {
-        super::workgroup_fits("k", 1024, 1024).expect("a workgroup at capacity fits");
+        super::workgroup_fits(1, "k", 1024, 1024).expect("a workgroup at capacity fits");
         assert!(matches!(
-            super::workgroup_fits("k", 1025, 1024),
+            super::workgroup_fits(1, "k", 1025, 1024),
             Err(super::PreflightRefusal::WorkgroupTooLarge {
+                entry: 1,
                 declared: 1025,
                 capacity: 1024,
                 ..
             })
         ));
 
-        super::binding_fits(0, 4096, 4096).expect("a binding at the limit fits");
+        super::binding_fits(1, 0, 4096, 4096).expect("a binding at the limit fits");
         assert!(matches!(
-            super::binding_fits(0, 4097, 4096),
+            super::binding_fits(1, 0, 4097, 4096),
             Err(super::PreflightRefusal::BindingExceedsBufferLimit {
+                entry: 1,
                 slot: 0,
                 needed: 4097,
                 limit: 4096,
             })
         ));
 
-        super::allocation_fits(0, 48, 48).expect("an allocation of exactly the needed length fits");
-        super::allocation_fits(0, 48, 64).expect("a longer allocation fits");
+        super::allocation_fits(1, 0, 48, 48)
+            .expect("an allocation of exactly the needed length fits");
+        super::allocation_fits(1, 0, 48, 64).expect("a longer allocation fits");
         assert!(matches!(
-            super::allocation_fits(0, 48, 47),
+            super::allocation_fits(1, 0, 48, 47),
             Err(super::PreflightRefusal::UndersizedAllocation {
+                entry: 1,
                 slot: 0,
                 needed: 48,
                 held: 47,
@@ -2610,6 +2809,97 @@ mod tests {
         assert!(
             outcome.contains(&format!("{ROWS} thread(s)")),
             "the reduction launches one thread per row: {outcome}",
+        );
+    }
+
+    /// A multi-stage route preflights every entry and pairs its shared storage.
+    ///
+    /// This is the ticket's whole claim, and the single-stage fixture cannot
+    /// make it: with one entry there is no execution order to get wrong and no
+    /// intermediate to share. The materialized alternative dispatches two
+    /// stages, so it is the shape that would have failed open.
+    ///
+    /// **The pairing is the assertion that matters.** An internal binding
+    /// carries no name, so a loader allocating per binding hands the second
+    /// stage a fresh buffer and it reads uninitialised device memory — plausible
+    /// garbage rather than a refusal. Asserting only that two entries routed
+    /// would pass with the data flow silently broken.
+    #[test]
+    fn a_multi_stage_route_preflights_every_entry_and_pairs_its_shared_storage() {
+        let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
+        let compilations = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed program compiles");
+        let compilation = compilations.first().expect("one governed target profile");
+        let materialized = compilation
+            .alternatives()
+            .find(|plan| !plan.is_fused())
+            .expect("the materialized reference alternative is retained");
+        assert!(
+            materialized.kernels().len() > 1,
+            "the materialized plan dispatches more than one stage",
+        );
+
+        let artifact = assemble(&semantic, compilation, materialized);
+        let bytes = artifact.encode().expect("the envelope encodes");
+        let expected = artifact.canonical_identity().as_bytes().to_vec();
+        let environment = host_environment(compilation).expect("the host environment composes");
+        let mut decoded = DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes");
+        let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
+
+        let preflight = decoded
+            .preflight(&environment, &expected, &abi)
+            .expect("every entry of the multi-stage route preflights");
+
+        assert_eq!(
+            preflight.entries().len(),
+            materialized.kernels().len(),
+            "every stage is routed, not just the first",
+        );
+
+        // Exactly one intermediate flows between the two stages, so exactly one
+        // pairing must be derived. Zero would mean the data flow was missed.
+        let shared: Vec<_> = preflight.shared_allocations().to_vec();
+        assert_eq!(
+            shared.len(),
+            1,
+            "the one data dependency between these stages must pair one allocation",
+        );
+        let pair = shared[0];
+        assert!(
+            pair.producer().entry() < pair.consumer().entry(),
+            "the producing entry precedes the consuming one in the execution order",
+        );
+
+        // Both ends address internal storage, and in opposite directions. That
+        // is what makes the pair a data path rather than two unrelated slots.
+        let producer = &preflight.entries()[pair.producer().entry()];
+        let consumer = &preflight.entries()[pair.consumer().entry()];
+        let slot_of = |entry: &tiler_runtime::load::RoutedEntry<'_>, slot: usize| {
+            let binding = entry
+                .bindings()
+                .iter()
+                .find(|binding| binding.slot() == slot)
+                .expect("the pairing names a slot the entry declares");
+            (
+                matches!(binding.binding().target(), BindingTarget::Internal),
+                binding.binding().access(),
+            )
+        };
+        let (producer_internal, producer_access) = slot_of(producer, pair.producer().slot());
+        let (consumer_internal, consumer_access) = slot_of(consumer, pair.consumer().slot());
+        assert!(
+            producer_internal && consumer_internal,
+            "both ends of a shared allocation address entry-internal storage",
+        );
+        assert_eq!(
+            producer_access,
+            BufferAccess::Write,
+            "the producing end writes the intermediate",
+        );
+        assert_eq!(
+            consumer_access,
+            BufferAccess::Read,
+            "the consuming end reads it",
         );
     }
 

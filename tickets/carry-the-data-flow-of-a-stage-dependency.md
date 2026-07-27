@@ -1,7 +1,7 @@
 ---
 id: carry-the-data-flow-of-a-stage-dependency
 title: Carry which slots a stage dependency's data flows through
-status: todo
+status: closed
 priority: p1
 dependencies: []
 related: [carry-the-stage-execution-order-in-the-envelope, preflight-every-entry-of-a-multi-stage-route]
@@ -9,6 +9,8 @@ scopes: [contracts/artifacts, implementation/artifact, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, serialization, runtime, correctness]
+closed_reason: obsolete
+closed_note: The pairing is derivable from the envelope as it already stands; the runtime derives it and fails closed when it cannot.
 ---
 Exposed by planning `preflight-every-entry-of-a-multi-stage-route`. `carry-the-stage-execution-order-in-the-envelope` made a multi-stage variant **sequenceable**; it did not make it **executable**, and the difference is where the data goes.
 

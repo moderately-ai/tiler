@@ -354,6 +354,14 @@ pub use builder::{
     ArtifactProgramBuilder, BindingSpec, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
     LaunchSpec, VariantSpec,
 };
+// Re-exported because this module's own public accessors return it.
+// `DecodedBinding::access` hands back a `BufferAccess`, and until now a consumer
+// could only name that type by taking its own `tiler-ir` dependency — which
+// `tiler-runtime` deliberately does not have, its closure being a decided
+// property under ADR 0081. A public method whose return type its callers cannot
+// spell is unusable, so the type travels with the accessor that produces it.
+pub use tiler_ir::kernel::BufferAccess;
+
 pub use codec::{
     ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedDeferredPredicate, DecodedEntry,
     DecodedExpr, DecodedInput, DecodedNumerical, DecodedOutput, DecodedStageDependency,
