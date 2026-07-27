@@ -2,7 +2,7 @@
 schema: "tiler-doc/v1"
 id: "tiler.research.apple-targets.numerical-behaviour"
 kind: "research"
-title: "Apple GPU f32 numerical behaviour"
+title: "Apple GPU numerical behaviour"
 topics: ["apple-targets", "metal", "numerics", "subnormals", "math-modes", "contraction", "runtime-compilation", "dtypes"]
 catalog_group: "numerical-operations"
 research_status: "complete"
@@ -14,11 +14,9 @@ adopted_by: ["ADR-0076"]
 ticket: "check-in-apple-numerical-behaviour-probe"
 ---
 
-# Apple GPU f32 numerical behaviour
+# Apple GPU numerical behaviour
 
 **Status:** bounded measurement on one host, one Mac GPU, one booted iOS Simulator, the offline `xcrun metal` toolchain, and the two runtime compilers those two execution environments load. Every value below is reproduced by a checked-in harness; every one except the exhaustive-only rows named in finding 19 is reproduced by the repository gate on every run. None of it is a portable guarantee about Metal, and the one thing this record establishes across families it establishes as a bounded one-host measurement rather than as a property of the families.
-
-**Fact — this record's title is stale and the rename is a separate ticket.** The frontmatter title and heading still say `f32`; since finding 21 the record measures `f32` and `f16`, and since finding 24 it measures `bf16` as well. The title string is reproduced in four generated catalog blocks under `contracts/navigation` and in three prose citations under `contracts/decisions` and `contracts/artifacts`, none of which [widen-the-apple-numerical-probe-to-a-second-dtype](../../../tickets/widen-the-apple-numerical-probe-to-a-second-dtype.md) or [measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes](../../../tickets/measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes.md) holds a scope for, so renaming it here would have been a scope escape rather than a coherent edit. [rename-the-apple-numerical-record-past-one-dtype](../../../tickets/rename-the-apple-numerical-record-past-one-dtype.md) carries it with the scopes it needs. Read the title as naming the record's origin, not its extent.
 
 **Probe date:** 2026-07-25 for findings 15 to 27, the widened matrix, and the second and third dtypes; 2026-07-24 for findings 1 to 14, on the same host row.
 
