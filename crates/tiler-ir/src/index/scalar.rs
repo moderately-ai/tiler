@@ -2103,14 +2103,14 @@ mod governed_fact_tests {
         }
     }
 
-    /// The published scalar fact-field vocabulary reads the records it names.
+    /// The published fact-field vocabulary reads the records it names.
     ///
     /// **Without this the constants are an assertion about the records rather
     /// than a fact about them.** An out-of-crate reference capability reads
     /// facts through exactly these identifiers, so a constant naming the wrong
     /// field would compile, publish, and mislead every consumer that trusted it.
     #[test]
-    fn the_published_scalar_fact_fields_read_the_governed_records() {
+    fn the_published_fact_fields_read_the_governed_records_at_both_layers() {
         let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
         for key in [multiply_f32_scalar_op(), add_f32_scalar_op()] {
             let definition = registry
@@ -2142,6 +2142,44 @@ mod governed_fact_tests {
         assert!(
             field(constant.facts(), super::SCALAR_FACT_CONTRACTION_PERMITTED).is_none(),
             "a constant is not a contraction participant and must omit the field",
+        );
+
+        // The semantic half, now that `FrozenSemanticRegistry` offers a read
+        // path. Both layers are exercised in one test because the published
+        // vocabularies are only meaningful together: a constant proven at its
+        // construction site and never at a read site is an assertion about the
+        // record rather than a fact about it.
+        let semantic = registry.semantic_authority();
+        let multiply = semantic
+            .operation_facts(&crate::semantic::multiply_f32_op())
+            .expect("the governed multiply is registered");
+        assert_eq!(
+            field(
+                multiply.value(),
+                crate::semantic::ARITHMETIC_F32_FACT_ROUNDING
+            )
+            .map(utf8)
+            .as_deref(),
+            Some("binary32-round-to-nearest-ties-even"),
+        );
+        assert!(
+            matches!(
+                field(
+                    multiply.value(),
+                    crate::semantic::ARITHMETIC_F32_FACT_CONTRACTION_PERMITTED
+                ),
+                Some(CanonicalValueView::Bool(false))
+            ),
+            "the governed multiply is separate, so contraction is stated false",
+        );
+        let sum = semantic
+            .operation_facts(&crate::semantic::strict_serial_sum_f32_op())
+            .expect("the governed reduction is registered");
+        assert_eq!(
+            field(sum.value(), crate::semantic::SERIAL_SUM_F32_FACT_FOLD_ORDER)
+                .map(utf8)
+                .as_deref(),
+            Some("strict-left-fold"),
         );
 
         // Record-local numbering, and this is the pair that proves it: the

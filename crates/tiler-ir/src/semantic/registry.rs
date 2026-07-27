@@ -1260,6 +1260,46 @@ impl FrozenSemanticRegistry {
             })
     }
 
+    /// Returns one registered operation's canonical semantic facts.
+    ///
+    /// **Facts alone, deliberately.** A registered definition also carries its
+    /// provider's `Arc<dyn OperationInferencer>` and its normative reference,
+    /// and handing those to any holder of the registry would promote a
+    /// behaviour surface rather than a readable one. What a conforming
+    /// out-of-crate capability needs is the record the published fact-field
+    /// vocabulary interprets — `ARITHMETIC_F32_FACT_ROUNDING` and its
+    /// siblings — which is data and nothing else.
+    ///
+    /// Before this existed the vocabulary named fields of a record no consumer
+    /// could obtain: `expose-the-governed-fact-field-vocabulary` published the
+    /// identifiers and found that the semantic layer offered no read path at
+    /// all, while the scalar layer's `FrozenScalarRegistry::definition` did.
+    /// `project_operation_authority` does not close that gap — it returns three
+    /// opaque identities, which are comparable and not readable.
+    ///
+    /// `None` when this snapshot does not register the operation.
+    #[must_use]
+    pub fn operation_facts(&self, operation: &OpKey) -> Option<&OperationDefinitionFacts> {
+        self.0
+            .operations
+            .get(operation)
+            .map(|registered| registered.definition.canonical_facts())
+    }
+
+    /// Returns one registered value type's canonical semantic facts.
+    ///
+    /// The type-record counterpart of [`Self::operation_facts`], and facts
+    /// alone for the same reason.
+    ///
+    /// `None` when this snapshot does not register the value type.
+    #[must_use]
+    pub fn value_type_facts(&self, key: &ValueTypeDefinitionKey) -> Option<&TypeDefinitionFacts> {
+        self.0
+            .definitions
+            .get(key)
+            .map(|registered| registered.definition.canonical_facts())
+    }
+
     /// Validates one complete resolved type against registered family authority.
     ///
     /// # Errors

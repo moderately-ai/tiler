@@ -1,7 +1,7 @@
 ---
 id: decide-whether-governed-semantic-definitions-are-readable-out-of-crate
 title: Decide whether governed semantic definitions are readable out of crate
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -30,3 +30,15 @@ Either establish that a consumer can reach a governed semantic definition, and n
 ## Closes when
 
 Either a consumer can obtain a governed semantic definition's facts through a named public path, or the contract states that it cannot and names what it reads instead; the fact-field vocabulary's documentation agrees with whichever holds; and `make full` passes.
+
+## Outcome — facts are readable; definitions are not (2026-07-27)
+
+**Fact: `project_operation_authority` does not discharge the need**, which the ticket asked to check first. It returns a `SemanticCapabilityAuthority` carrying three identities — reached definitions, admission provenance, registry snapshot — and every one is an opaque byte string. Those are *comparable* and not *readable*: they tell a consumer whether two authorities agree, never what either says.
+
+**Decision: publish facts, not definitions.** `FrozenSemanticRegistry::operation_facts(&OpKey)` and `value_type_facts(&ValueTypeDefinitionKey)` return the canonical fact records; both are `None` for an unregistered subject.
+
+The narrower shape is the point. A registered definition also carries its provider's `Arc<dyn OperationInferencer>` and its normative reference, and handing those to any holder of the registry promotes a *behaviour* surface. What a conforming out-of-crate capability needs is the record the published fact-field vocabulary interprets — data and nothing else. Note the scalar layer's `FrozenScalarRegistry::definition` already returns the whole definition including its inferencer; that is a precedent this deliberately does **not** follow, because a wider surface existing elsewhere is not a reason to widen this one.
+
+**The gap this closes was real.** `expose-the-governed-fact-field-vocabulary` published field identifiers for records the semantic layer offered no way to obtain, so its test could exercise the scalar constants and not the semantic ones. That test now reads both layers, and the semantic constants are proven at a *read* site rather than only at their construction sites — which is the difference between a fact about the records and an assertion about them.
+
+**Not done, and not needed:** no accessor returns a `ValueTypeDefinition` or an `OperationDefinition`. If a consumer is ever found that needs the normative reference or the inferencer, that is a separate promotion with its own argument; nothing today does.
