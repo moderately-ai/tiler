@@ -105,6 +105,15 @@ const COMPILATION_DOMAIN: &[u8] = b"tiler.metal-aot.compilation-identity.v1\0";
 /// subject (ADR 0074 convention 3's exclusion of transient identifiers) rather
 /// than added to it.
 ///
+/// **What a reported version now describes, which changed.** The version folded
+/// here is read by running the binary that was located, and that same binary is
+/// the one the compilation executes. It was previously a second, independent
+/// `xcrun <tool> --version` selection, so the folded version could describe a
+/// binary other than the one producing the bytes — on one host, at one instant,
+/// with nothing comparing them. The evidence class is unchanged and still does
+/// not license cross-host reuse; what changed is that on the host that compiled,
+/// the version is a fact about the compiler that ran.
+///
 /// **What is implemented.** Only [`Self::ReportedVersions`], which is what
 /// [`ResolvedToolchain`] can supply. A content-digest class is a *reserved*
 /// extension point, not implemented support and not a tested guarantee: adding

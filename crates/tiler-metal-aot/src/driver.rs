@@ -10,7 +10,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -69,8 +69,13 @@ impl Toolchain {
     pub fn resolve(&self, sdk: AppleSdk) -> Result<ResolvedToolchain, DriverError> {
         let metal_path = self.find_tool(sdk, "metal")?;
         let metallib_path = self.find_tool(sdk, "metallib")?;
-        let metal_version = self.tool_version(sdk, "metal")?;
-        let metallib_version = self.tool_version(sdk, "metallib")?;
+        // Each version is read from the binary just located, not from a second
+        // `xcrun <tool> --version` that selects again. Two selections could
+        // disagree, and the disagreement would be invisible: the recorded
+        // version would describe a binary other than the one at the recorded
+        // path, and artifact identity folds the version alone.
+        let metal_version = Self::tool_version(&metal_path, "metal")?;
+        let metallib_version = Self::tool_version(&metallib_path, "metallib")?;
         let sdk_path = self.sdk_field(sdk, "--show-sdk-path")?;
         let sdk_version = self.sdk_field(sdk, "--show-sdk-version")?;
         let sdk_build = self.sdk_field(sdk, "--show-sdk-build-version")?;
@@ -125,13 +130,13 @@ impl Toolchain {
         metal_args.push(source_path.clone().into_os_string());
         metal_args.push(OsString::from("-o"));
         metal_args.push(air_path.clone().into_os_string());
-        self.run_stage(request.target.sdk, CompileStage::Metal, &metal_args)?;
+        Self::run_stage(&resolved.metal, CompileStage::Metal, &metal_args)?;
 
         let mut link_args: Vec<OsString> = link_flags.iter().map(OsString::from).collect();
         link_args.push(air_path.clone().into_os_string());
         link_args.push(OsString::from("-o"));
         link_args.push(metallib_path.clone().into_os_string());
-        self.run_stage(request.target.sdk, CompileStage::Metallib, &link_args)?;
+        Self::run_stage(&resolved.metallib, CompileStage::Metallib, &link_args)?;
 
         let metallib = fs::read(&metallib_path).map_err(|error| DriverError::Host {
             detail: format!("could not read metallib output: {error}"),
@@ -190,13 +195,13 @@ impl Toolchain {
     /// that differs across two hosts running the very same toolchain. Folding
     /// any of them would give those hosts two artifact identities for one
     /// compilation and defeat cross-host reuse.
-    fn tool_version(&self, sdk: AppleSdk, tool: &str) -> Result<String, DriverError> {
-        let reported = self
-            .capture(sdk, &[OsStr::new(tool), OsStr::new("--version")])
-            .map_err(|detail| DriverError::ToolchainUnavailable {
+    fn tool_version(path: &Path, tool: &str) -> Result<String, DriverError> {
+        let reported = Self::capture_tool(path, &[OsStr::new("--version")]).map_err(|detail| {
+            DriverError::ToolchainUnavailable {
                 tool: tool.to_owned(),
                 detail,
-            })?;
+            }
+        })?;
         let banner = reported.lines().next().unwrap_or_default().trim();
         if banner.is_empty() {
             return Err(DriverError::ToolchainUnavailable {
@@ -205,6 +210,32 @@ impl Toolchain {
             });
         }
         Ok(banner.to_owned())
+    }
+
+    /// Runs one already-resolved tool and returns trimmed, non-empty stdout.
+    ///
+    /// The binary is invoked directly rather than through the launcher, because
+    /// the launcher is what selects, and selecting a second time is the thing
+    /// this path exists to avoid.
+    fn capture_tool(path: &Path, args: &[&OsStr]) -> Result<String, String> {
+        let output = Command::new(path)
+            .args(args)
+            .env("ZERO_AR_DATE", "1")
+            .output()
+            .map_err(|error| format!("could not run {}: {error}", path.display()))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{} exited {}: {}",
+                path.display(),
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if text.is_empty() {
+            return Err(format!("{} produced empty output", path.display()));
+        }
+        Ok(text)
     }
 
     /// Reads one SDK identity field via `xcrun --sdk <sdk> <flag>`.
@@ -240,23 +271,26 @@ impl Toolchain {
         Ok(text)
     }
 
-    /// Runs one `xcrun --sdk <sdk> <tool> <args>` compile or link stage.
+    /// Runs one compile or link stage, executing the tool that was resolved.
+    ///
+    /// **`tool` is the binary provenance names.** It used to re-select by bare
+    /// name through the launcher, so the recorded path and the executed one were
+    /// two independent observations that nothing compared: a selection change
+    /// between them produced real bytes attributed to a toolchain that never ran
+    /// them. Taking the resolved tool makes the two the same object, and there
+    /// is no longer a second selection to disagree with the first.
     fn run_stage(
-        &self,
-        sdk: AppleSdk,
+        tool: &ResolvedTool,
         stage: CompileStage,
         args: &[OsString],
     ) -> Result<(), DriverError> {
-        let output = Command::new(&self.launcher)
-            .arg("--sdk")
-            .arg(sdk.selector())
-            .arg(stage.tool())
+        let output = Command::new(&tool.path)
             .args(args)
             .env("ZERO_AR_DATE", "1")
             .output()
             .map_err(|error| DriverError::ToolchainUnavailable {
                 tool: stage.tool().to_owned(),
-                detail: format!("could not run {}: {error}", self.launcher.display()),
+                detail: format!("could not run {}: {error}", tool.path.display()),
             })?;
         if !output.status.success() {
             return Err(DriverError::ToolFailure {
@@ -310,6 +344,7 @@ mod tests {
         AppleSdk, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract, MathMode,
         MetalTarget, MslVersion, NumericalRealization, OptimizationLevel,
     };
+    use std::path::PathBuf;
 
     const TRIVIAL_MSL: &str = "#include <metal_stdlib>\n\
 using namespace metal;\n\
@@ -474,5 +509,86 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
             ),
             "expected a metal-stage ToolFailure, got {error:?}"
         );
+    }
+
+    /// A launcher whose `--find` answer differs from what its tool branch runs.
+    ///
+    /// This is the selection change the defect turned into a misattribution,
+    /// made deterministic: `--find` reports `/bin/echo` while the tool branch
+    /// forwards to the real `xcrun`. A driver that records what `--find` said
+    /// and executes what the tool branch does will produce genuine `metallib`
+    /// bytes and stamp them with a toolchain that never ran them.
+    fn diverging_launcher(directory: &std::path::Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        let script = directory.join("diverging-xcrun");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\n\
+             sdk=$2\n\
+             shift 2\n\
+             case \"$1\" in\n\
+             --find) echo /bin/echo ;;\n\
+             --show-sdk-path) echo /nonexistent/sdk ;;\n\
+             --show-sdk-version) echo 0.0 ;;\n\
+             --show-sdk-build-version) echo ZZZZ ;;\n\
+             *) exec /usr/bin/xcrun --sdk \"$sdk\" \"$@\" ;;\n\
+             esac\n",
+        )
+        .expect("the shim launcher is writable");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("the shim launcher is executable");
+        script
+    }
+
+    /// A toolchain selection that changes between observation and execution
+    /// fails closed instead of misattributing the artifact.
+    ///
+    /// **The property this ticket exists for.** `resolve` recorded absolute
+    /// `metal` and `metallib` paths, and `compile` then asked the launcher to
+    /// select those tools again by bare name — four independent selections per
+    /// compilation, with nothing comparing them. Whatever ran second produced
+    /// the bytes, and whatever was found first was written into provenance and
+    /// folded into artifact identity through its reported version.
+    ///
+    /// Under the diverging launcher the old driver compiles successfully and
+    /// attributes the result to `/bin/echo`. The driver now executes the tool it
+    /// recorded, so `/bin/echo` is what runs, no AIR is produced, and the
+    /// compilation refuses rather than returning bytes under a stale name.
+    #[test]
+    fn a_changed_tool_selection_fails_closed_rather_than_misattributing() {
+        let scratch = std::env::temp_dir().join(format!(
+            "tiler-metal-aot-diverge-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&scratch).expect("the scratch directory is creatable");
+        let launcher = diverging_launcher(&scratch);
+        let toolchain = Toolchain::with_launcher(&launcher);
+
+        // The shim really is in force: this is the path that would have been
+        // recorded as provenance while a different binary produced the bytes.
+        let resolved = toolchain
+            .resolve(AppleSdk::MacOs)
+            .expect("the shim answers every resolution query");
+        assert_eq!(resolved.metal.path, PathBuf::from("/bin/echo"));
+        assert_eq!(resolved.metallib.path, PathBuf::from("/bin/echo"));
+
+        let outcome = toolchain.compile(&macos_request(TRIVIAL_MSL));
+        let Err(error) = outcome else {
+            panic!(
+                "the driver produced an artifact while the tool it recorded was /bin/echo, so \
+                 the recorded provenance does not describe what ran",
+            );
+        };
+        // Refused because the recorded tool emitted nothing, which is the
+        // honest outcome: nothing here silently fell back to the real compiler.
+        assert!(
+            matches!(
+                error,
+                DriverError::Host { .. } | DriverError::ToolFailure { .. }
+            ),
+            "expected a refusal from executing the recorded tool, got {error:?}",
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }
