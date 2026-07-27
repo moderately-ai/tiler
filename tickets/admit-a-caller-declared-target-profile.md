@@ -1,7 +1,7 @@
 ---
 id: admit-a-caller-declared-target-profile
 title: Admit a caller-declared target profile
-status: in-progress
+status: todo
 priority: p1
 dependencies: []
 related: [express-metal-honourability-in-the-shared-form, prototype-public-compiler-api]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler-api, feasibility, identity]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785190012
 ---
 The compiler admits exactly one target profile and offers no way to author another. `express-metal-honourability-in-the-shared-form` needs one and is currently unreachable without it.
 
@@ -40,3 +37,25 @@ Not visibility. A caller-authored profile must be *validated*, and deciding what
 ## Closes when
 
 An out-of-crate caller can author and compile against a target profile it declared; a malformed or under-declared profile is refused with a typed diagnostic naming what was wrong; an omitted numerical dimension resolves `Unknown` rather than satisfied; the identity consequence of a caller-supplied profile key is recorded; and `make full` passes.
+
+## Survey correction — the key type is the real blocker, and it is bigger than recorded (2026-07-27)
+
+The byte pin the previous survey asked for **landed** (`6e7121f`): `the_governed_descriptor_bytes_do_not_move` in `physical.rs` asserts the governed profile's 249 canonical descriptor bytes exactly, with the regeneration procedure recorded beside it. Verified by mutating `max_threads_per_workgroup` — the pin fails, so it can say no. Every later step of this refactor now fails there, immediately and with a diff, instead of downstream in a compile-and-package cycle.
+
+**Then the owned-type step was attempted and reverted, and the reason is new evidence.** Changing `PrototypeTargetProfile`'s fields to `Cow<'static, _>` — which keeps `governed()` `const` and allocation-free, and is the right shape — produces **57 compiler errors**, not the ~30 mentions the survey estimated. The extra ones are not in `request.rs` or `physical.rs`.
+
+**Fact: `key: &'static str` is load-bearing across the target-applicability vocabulary, which the previous survey did not reach.** `frontier.rs:202` declares `target_profile_keys: Vec<&'static str>`; `TargetApplicability::for_targets` (`frontier.rs:214`) takes `impl IntoIterator<Item = &'static str>`; `ImplementationFrontier::target_profile_key` returns `&'static str`; and `physical.rs` threads the same type into its schedule verifier. `grep -rn "target_profile_key" crates/tiler-compiler/src` reports **56 sites**, and 11 of them bind it as `&'static str` in `frontier.rs`, `physical.rs`, or `selection.rs`.
+
+**Inference: a caller-declared profile cannot have a `&'static str` key**, so this vocabulary has to move before the profile type can. That is a distinct, self-contained change with its own review surface, and doing it inside this ticket would mean landing a 57-error refactor in one commit across four files — the shape that is most likely to need unwinding.
+
+## Revised order
+
+1. ~~Byte pin~~ — **done**, `6e7121f`.
+2. **Introduce a validated `TargetProfileKey` and move the applicability vocabulary onto it**, keeping every current caller passing the governed `&'static` key. No behaviour changes and the pin must not move. Split as `introduce-a-validated-target-profile-key`.
+3. Owned `PrototypeTargetProfile` via `Cow`, and the `Copy` ripple.
+4. The three rejection sites (`verify_request`, `for_target`, `physical.rs:507`) into one validation.
+5. The public builder, its typed diagnostics, and the `Unknown`-on-omitted-dimension rule.
+
+Step 2 is what makes step 3 tractable; attempted together they are one 57-error commit.
+
+Note for step 4: `distinguish-the-five-compile-failure-classes` landed on 2026-07-27 and split `CompileFailureClass::Unsupported` into `InvalidRequest` and `UnsupportedCapability`. `InvalidRequest` is currently **unreachable from the public surface** precisely because `compile` builds the request structure itself — an empty target set and a duplicate profile are two of its five sources. This ticket is what makes it reachable, so step 4 adds construction paths rather than also having to widen the failure vocabulary.
