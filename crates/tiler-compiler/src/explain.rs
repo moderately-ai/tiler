@@ -130,12 +130,25 @@ pub(crate) struct ProviderRef {
     revision: u32,
 }
 
+/// The compiler's own authority, named once so the constructor and the
+/// recognizer below cannot drift apart.
+const BUILTIN_PROVIDER_KEY: &str = "tiler.compiler";
+const BUILTIN_PROVIDER_REVISION: u32 = 1;
+
 impl ProviderRef {
     pub(crate) fn builtin() -> Self {
         Self {
-            key: ProviderKey::new("tiler.compiler").expect("builtin provider key is valid"),
-            revision: 1,
+            key: ProviderKey::new(BUILTIN_PROVIDER_KEY).expect("builtin provider key is valid"),
+            revision: BUILTIN_PROVIDER_REVISION,
         }
+    }
+
+    /// Whether this reference names the compiler's own authority.
+    ///
+    /// Equivalent to comparing against [`Self::builtin`], which every retained
+    /// record asked for and which allocates a key to answer.
+    fn is_builtin(&self) -> bool {
+        self.revision == BUILTIN_PROVIDER_REVISION && self.key.as_str() == BUILTIN_PROVIDER_KEY
     }
 
     /// References the provider that lowered one occurrence.
@@ -200,15 +213,39 @@ impl RuleRef {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// The canonical bytes naming the compilation every subject reference belongs
+/// to.
+///
+/// Shared rather than owned per reference. The blob is the request's full
+/// canonical encoding — twenty kilobytes for the governed five-operation
+/// program — and a writer hands one subject reference to nearly every record it
+/// retains, so copying it per reference dominated the writer's cost.
+#[derive(Clone, Debug, Eq)]
 pub(crate) struct CompilationSubject {
-    canonical: Box<[u8]>,
+    canonical: std::sync::Arc<[u8]>,
+}
+
+impl PartialEq for CompilationSubject {
+    /// Byte equality, decided by pointer identity when the two references share
+    /// one allocation.
+    ///
+    /// The byte comparison remains the definition, so a subject built
+    /// independently from an identical request still compares equal and the
+    /// cross-compilation guard rejects exactly the subjects it rejected before.
+    /// What changes is that the guard's normal case — a subject the writer
+    /// itself handed out, checked back against the writer's own — no longer
+    /// reads twenty kilobytes to reach a conclusion the shared pointer already
+    /// determines.
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.canonical, &other.canonical)
+            || self.canonical == other.canonical
+    }
 }
 
 impl CompilationSubject {
     pub(crate) fn from_request(request: &VerifiedTargetRequest) -> Self {
         let request = request.subject();
-        let canonical = request.canonical_explain_subject_bytes().into_boxed_slice();
+        let canonical = std::sync::Arc::from(request.canonical_explain_subject_bytes());
         Self { canonical }
     }
 }
@@ -814,6 +851,16 @@ pub(crate) struct ExplainWriter {
     request_qualifier: u64,
     allowed_providers: Vec<ProviderRef>,
     records: Vec<ExplainRecord>,
+    /// The trace preamble, encoded once and reused as the head of the sealed
+    /// identity. It carries the twenty-kilobyte compilation subject, so
+    /// re-deriving it per seal would copy the blob a second time.
+    identity_prefix: Vec<u8>,
+    /// Every retained record's canonical encoding, concatenated in record
+    /// order. This is the same byte run [`encode_trace`] would produce, built
+    /// as records arrive: a record is encoded once, and its length — which the
+    /// byte budget needs before the record is admitted — is the growth this
+    /// buffer records rather than a second encoding measured and thrown away.
+    encoded_records: Vec<u8>,
     retained_bytes: usize,
     retained_detail_records: usize,
     retained_detail_bytes: usize,
@@ -931,7 +978,15 @@ impl ExplainWriter {
         for provider in request.capabilities().lowering().providers() {
             allowed_providers.push(ProviderRef::registered(&provider)?);
         }
-        let retained_bytes = encode_trace(EXPLAIN_SCHEMA_VERSION, &subject, &[]).len();
+        let mut identity_prefix = Vec::new();
+        push_trace_preamble(&mut identity_prefix, EXPLAIN_SCHEMA_VERSION, &subject);
+        // An empty trace is the preamble plus one record count. Measure that
+        // count through `push_len` and drop it again rather than restating its
+        // width here, so the framing has one author.
+        let preamble_bytes = identity_prefix.len();
+        push_len(&mut identity_prefix, 0);
+        let retained_bytes = identity_prefix.len();
+        identity_prefix.truncate(preamble_bytes);
         if retained_bytes > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX) {
             return Err(ExplainError::TerminalCapacity);
         }
@@ -941,6 +996,8 @@ impl ExplainWriter {
             subject,
             allowed_providers,
             records: Vec::new(),
+            identity_prefix,
+            encoded_records: Vec::new(),
             retained_bytes,
             retained_detail_records: 0,
             retained_detail_bytes: 0,
@@ -1015,9 +1072,7 @@ impl ExplainWriter {
     ) -> Result<ExplainRecordId, ExplainError> {
         canonicalize_record_parts(&mut subjects, &mut event, &mut causes)?;
         event.validate()?;
-        if rule.provider != ProviderRef::builtin()
-            && !self.allowed_providers.contains(&rule.provider)
-        {
+        if !rule.provider.is_builtin() && !self.allowed_providers.contains(&rule.provider) {
             return Err(ExplainError::ProviderAuthorityMismatch);
         }
         if subjects.is_empty() {
@@ -1077,8 +1132,16 @@ impl ExplainWriter {
             event,
             causes,
         };
-        let bytes = encode_record(&record).len();
+        // Encoded straight into the retained buffer: the byte budget needs this
+        // record's canonical length, and the length of an encoding is what the
+        // encoder writing it reports. A record the bounds below refuse is
+        // truncated away again, so the buffer holds exactly the retained
+        // records and nothing else.
+        let committed = self.encoded_records.len();
+        push_record(&mut self.encoded_records, &record);
+        let bytes = self.encoded_records.len() - committed;
         if terminal && bytes > usize::try_from(MAX_TERMINAL_RECORD_BYTES).unwrap_or(usize::MAX) {
+            self.encoded_records.truncate(committed);
             return Err(ExplainError::TerminalCapacity);
         }
         // A trace is complete or it is refused. Exceeding a bound is a typed
@@ -1099,6 +1162,7 @@ impl ExplainWriter {
                     > usize::try_from(MAX_CANONICAL_BYTES).unwrap_or(usize::MAX)
         };
         if exceeds {
+            self.encoded_records.truncate(committed);
             return Err(if terminal {
                 ExplainError::TerminalCapacity
             } else {
@@ -1288,11 +1352,16 @@ impl ExplainWriter {
         Ok(cause.record)
     }
 
-    fn seal(self) -> Result<VerifiedExplainTrace, ExplainError> {
+    fn seal(mut self) -> Result<VerifiedExplainTrace, ExplainError> {
         if self.records.is_empty() {
             return Err(ExplainError::EmptyTrace);
         }
-        let identity = encode_trace(EXPLAIN_SCHEMA_VERSION, &self.subject, &self.records);
+        // The same three parts [`encode_trace`] writes, with the first two
+        // already in hand: the preamble was encoded when the writer opened, and
+        // the records as each was admitted.
+        let mut identity = std::mem::take(&mut self.identity_prefix);
+        push_len(&mut identity, self.records.len());
+        identity.extend_from_slice(&self.encoded_records);
         Ok(VerifiedExplainTrace {
             schema_version: EXPLAIN_SCHEMA_VERSION,
             compilation_subject: self.subject,
@@ -1793,13 +1862,28 @@ impl fmt::Display for ExplainError {
 
 impl Error for ExplainError {}
 
+/// Whether a key contains a character the vocabulary forbids.
+///
+/// Below `0x80`, `char::is_control` (category `Cc`) is exactly the C0 range plus
+/// `DEL`, and `char::is_whitespace` (the `White_Space` property) adds only the
+/// space and the C0 characters `is_ascii_control` already covers — so an
+/// all-ASCII key reaches the same verdict from its bytes, without decoding or
+/// the Unicode property tables. Every key this compiler mints is ASCII; the
+/// character scan stays as the definition for any that is not.
+fn has_forbidden_character(value: &str) -> bool {
+    if value.is_ascii() {
+        return value
+            .as_bytes()
+            .iter()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace());
+    }
+    value
+        .chars()
+        .any(|character| character.is_control() || character.is_whitespace())
+}
+
 fn validate_key(kind: KeyKind, value: &str) -> Result<(), ExplainError> {
-    if value.is_empty()
-        || value.len() > MAX_KEY_BYTES
-        || value
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
-    {
+    if value.is_empty() || value.len() > MAX_KEY_BYTES || has_forbidden_character(value) {
         return Err(ExplainError::InvalidKey {
             kind,
             bytes: value.len(),
@@ -1836,36 +1920,43 @@ fn check_terminal_ledger_bound(
     Ok(())
 }
 
-fn encode_trace(schema: u32, subject: &CompilationSubject, records: &[ExplainRecord]) -> Vec<u8> {
-    let mut bytes = Vec::new();
+/// Appends the fixed head of a canonical trace: the format tag, the schema
+/// version, and the framed compilation subject.
+///
+/// Split out so [`encode_trace`] and the writer's incrementally built identity
+/// share one preamble rather than agreeing by inspection.
+fn push_trace_preamble(bytes: &mut Vec<u8>, schema: u32, subject: &CompilationSubject) {
     bytes.extend_from_slice(b"tiler.explain.trace.v1\0");
     bytes.extend_from_slice(&schema.to_be_bytes());
-    push_slice(&mut bytes, &subject.canonical);
+    push_slice(bytes, &subject.canonical);
+}
+
+fn encode_trace(schema: u32, subject: &CompilationSubject, records: &[ExplainRecord]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_trace_preamble(&mut bytes, schema, subject);
     push_len(&mut bytes, records.len());
     for record in records {
-        bytes.extend_from_slice(&encode_record(record));
+        push_record(&mut bytes, record);
     }
     bytes
 }
 
-fn encode_record(record: &ExplainRecord) -> Vec<u8> {
-    let mut bytes = Vec::new();
+fn push_record(bytes: &mut Vec<u8>, record: &ExplainRecord) {
     bytes.extend_from_slice(&record.id.local.to_be_bytes());
-    push_slice(&mut bytes, record.rule.key.as_str().as_bytes());
+    push_slice(bytes, record.rule.key.as_str().as_bytes());
     bytes.extend_from_slice(&record.rule.revision.to_be_bytes());
-    push_slice(&mut bytes, record.rule.provider.key.as_str().as_bytes());
+    push_slice(bytes, record.rule.provider.key.as_str().as_bytes());
     bytes.extend_from_slice(&record.rule.provider.revision.to_be_bytes());
-    push_len(&mut bytes, record.subjects.len());
+    push_len(bytes, record.subjects.len());
     for subject in &record.subjects {
         bytes.push(subject_kind_tag(subject.kind));
-        push_slice(&mut bytes, subject.key.as_str().as_bytes());
+        push_slice(bytes, subject.key.as_str().as_bytes());
     }
-    encode_event(&mut bytes, &record.event);
-    push_len(&mut bytes, record.causes.len());
+    encode_event(bytes, &record.event);
+    push_len(bytes, record.causes.len());
     for cause in &record.causes {
         bytes.extend_from_slice(&cause.local.to_be_bytes());
     }
-    bytes
 }
 
 fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
@@ -2809,6 +2900,12 @@ mod tests {
                 ..
             }
         )));
+        // The refused record left nothing behind. The writer encodes each record
+        // into the retained buffer to learn its canonical length, so one the
+        // bound then refuses has already been written and must be withdrawn;
+        // `verify` re-encodes the sealed trace from its records and would find
+        // the surplus run.
+        assert!(trace.verify().is_ok());
 
         let mut bounded = ExplainWriter::new(&request).unwrap();
         for index in 0..MAX_TERMINAL_LEDGER_RECORDS {
