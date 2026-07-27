@@ -1,7 +1,7 @@
 ---
 id: admit-semi-affine-index-expression-class
 title: Admit ADR 0046's semi-affine index expression class
-status: todo
+status: done
 priority: p1
 dependencies: [harden-public-enums-non-exhaustive]
 related: [bind-shapeenv-sources-into-tensor-boundaries-and-coefficients, harden-public-enums-non-exhaustive, implement-index-domain-predicates]
@@ -35,3 +35,31 @@ The consequence is mechanical and load-bearing: the positivity query must read t
 ## Closes when
 
 `IndexExprClass` admits `SemiAffine` without a breaking public change, a symbolic coefficient and a symbolic divisor are expressible and refused explicitly when their positivity is not proved from semantic constraints alone, a pass that cannot analyze the class declines rather than approximating it, the `docs/ir.md` pointer is current, and `make full` passes.
+
+## Outcome — the positivity query landed; the IR representation is split (2026-07-27)
+
+### The dependency resolved differently than this ticket assumed
+
+This ticket expected `harden-public-enums-non-exhaustive` to mark `IndexExprClass` `#[non_exhaustive]`, so that admitting a third class would be additive. **It deliberately did not**, and the reason changes this ticket's premise rather than blocking it: `IndexExprClass` has **no out-of-crate consumer at all**. It is exported through `index/mod.rs` and matched at six sites, every one inside `tiler-ir`.
+
+So the stated blocker — "admitting the third is a *breaking* change for every out-of-crate matcher" — has no referent. There are no out-of-crate matchers. Adding `SemiAffine` breaks exactly the six internal classification sites, at compile time, which is the wanted behaviour: every authority that must classify an expression is forced to say what it does with the new class.
+
+**Inference: the attribute is not what this ticket needs.** What it needs is the IR to be able to *represent* a semi-affine expression, because a class nothing can produce is a type-system reservation rather than an implemented seam — a distinction `AGENTS.md` draws explicitly. Adding the variant without the representation would have landed the reservation and closed the ticket on it.
+
+### What landed: `ShapeEnv::proves_positive`
+
+The query a proven-positive symbolic divisor needs, with the semantics this ticket already decided:
+
+- It reads **semantic input constraints only, never variant guards**, matching `extent_interval` and `proves_equal`. Positivity is a condition of the expression being *defined* — `x floordiv 0` has no meaning under any plan — which is the semantic-constraint side of the discriminator `env/constraint.rs` draws.
+- An undeclared symbol answers `false` rather than erroring: nobody told us it is positive.
+- Its doc records that proving positivity is **not sufficient to make the expression analyzable**. A symbolic divisor is nonlinear for the Presburger lane, and ADR 0046 permits a pass to decline. Positivity establishes definedness, nothing more.
+
+**The test is two-sided and its failure path is verified.** The same relation — an extent of at least one — proves positivity when required and does not when merely guarded. Mutating `proves_positive` to fold guards into its relation list makes exactly the guard assertion fail, so the test can say no rather than passing for a reason unrelated to the property.
+
+### Also landed
+
+`docs/ir.md` repointed: `implement-shapeenv-index-bindings` landed its half, so the semi-affine item now names this ticket and the predicate item names its own.
+
+## Split out
+
+`represent-semi-affine-index-expressions` carries the remainder: `IndexNode`/`IndexExprView` gaining symbolic coefficients and a symbolic divisor, `IndexExprClass::SemiAffine` returned by the classifier, explicit refusal when positivity is not proved, and a pass declining rather than approximating. It is a public-boundary change to `IndexExprView` (whose `FloorDiv`/`Modulo` expose `divisor: u64` by value) and needs `proves_positive` — which now exists — as its input.

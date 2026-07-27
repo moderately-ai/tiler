@@ -931,6 +931,50 @@ impl ShapeEnv {
             .interval(slot)
     }
 
+    /// Returns whether this environment proves a symbol is at least one.
+    ///
+    /// **Why this reads semantic constraints and never variant guards.** A
+    /// symbolic divisor's positivity is a condition of the expression being
+    /// *defined*: `x floordiv 0` has no meaning under any plan, and the shape
+    /// contract classes a zero divisor as a typed evaluation or construction
+    /// error rather than a missed optimization. `env/constraint.rs` draws the
+    /// discriminator — a semantic input constraint is required for the
+    /// expression to be defined and its failure is an invalid-input diagnostic,
+    /// while a variant guard is required only for one optimization and its
+    /// failure selects another plan. Positivity is on the first side of that
+    /// line, so folding guards in here would admit an expression whose
+    /// definedness rests on a predicate whose failure merely picks a different
+    /// plan. [`Self::extent_interval`] and [`Self::proves_equal`] read the same
+    /// set for the same reason.
+    ///
+    /// **Proving this is not sufficient to make the expression analyzable.** A
+    /// symbolic divisor crosses the affine boundary: the constraint-prover
+    /// boundary classes it as nonlinear for the Presburger lane, and ADR 0046
+    /// permits a pass to "conservatively decline semi-affine maps they cannot
+    /// analyze". What positivity establishes is that the expression is well
+    /// defined, not that interval propagation can say anything about it.
+    ///
+    /// Unknown symbols are not proved, so the answer is `false` rather than an
+    /// error: a caller asking about a symbol this environment never declared
+    /// has not been told the divisor is positive.
+    pub(crate) fn proves_positive(&self, symbol: &ShapeSymbol) -> bool {
+        let Some(slot) = self.entries.iter().position(|(held, _)| held == symbol) else {
+            return false;
+        };
+        let relations: Vec<&ExtentRelation> = self
+            .constraints
+            .iter()
+            .map(SemanticInputConstraint::relation)
+            .collect();
+        // As in `extent_interval`: `build` already decided this exact set, and a
+        // failure is propagated as "not proved" rather than unwrapped, so a
+        // future refactor's mistake becomes a refusal instead of a crash.
+        constraint::solve(&self.entries, &relations)
+            .ok()
+            .and_then(|mut solution| solution.interval(slot))
+            .is_some_and(|interval| interval.lower >= 1)
+    }
+
     /// Returns whether this environment forces two symbols to be equal.
     ///
     /// The question [`Self::extent_interval`] cannot answer. An interval is a
@@ -1006,6 +1050,53 @@ mod tests {
 
     fn symbol(scope: &str, name: &str) -> ShapeSymbol {
         ShapeSymbol::new(SymbolScope::new(scope).unwrap(), name).unwrap()
+    }
+
+    /// A symbolic divisor's positivity comes from semantic constraints alone.
+    ///
+    /// **This is the discriminator the whole query exists to hold, so it is
+    /// tested from both sides.** The same relation — an extent of at least one
+    /// — proves positivity when it is required and does not when it is merely
+    /// guarded. A `proves_positive` that folded guards in would pass the first
+    /// half of this test and fail the second, which is exactly the defect: it
+    /// would admit an expression whose definedness rests on a predicate whose
+    /// failure only selects another plan.
+    #[test]
+    fn positivity_is_proved_by_a_constraint_and_not_by_a_guard() {
+        let d = symbol("region/0", "d");
+        let at_least_one = ExtentRelation::interval(term("d"), 1, 64).unwrap();
+
+        let mut required_env = ShapeEnvBuilder::new();
+        required_env.declare(d.clone()).unwrap();
+        required_env.bind(&d, dynamic_binding("d")).unwrap();
+        required_env
+            .require(required(at_least_one.clone()))
+            .unwrap();
+        let required_env = required_env
+            .build()
+            .expect("a positive extent is satisfiable");
+        assert!(
+            required_env.proves_positive(&d),
+            "a required extent of at least one proves the divisor positive",
+        );
+
+        let mut guarded = ShapeEnvBuilder::new();
+        guarded.declare(d.clone()).unwrap();
+        guarded.bind(&d, dynamic_binding("d")).unwrap();
+        guarded
+            .guard(VariantGuard::new(at_least_one, GuardApplicability::Storage))
+            .unwrap();
+        let guarded = guarded.build().expect("a guard is not invalid input");
+        assert!(
+            !guarded.proves_positive(&d),
+            "a variant guard must not establish that an expression is defined; its \
+             failure selects another plan rather than rejecting the program",
+        );
+
+        // A symbol this environment never declared is not proved either. The
+        // answer is `false` rather than an error: nobody told us it is positive.
+        let undeclared = symbol("region/0", "elsewhere");
+        assert!(!required_env.proves_positive(&undeclared));
     }
 
     fn static_binding(value: u64) -> RootBinding {

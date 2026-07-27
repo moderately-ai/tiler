@@ -1100,11 +1100,12 @@ strict `f32`; other resolved dtypes reject through missing checked capability,
 not through a closed scalar representation.
 
 Completing this bounded static-extent profile will not complete the symbolic
-contract above. `ShapeEnv`-backed root bindings,
-semi-affine symbolic coefficients/divisors, typed index-domain predicates, and
-durable solver evidence are tracked by
-[`implement-shapeenv-index-bindings`](../tickets/implement-shapeenv-index-bindings.md)
-and
+contract above. `ShapeEnv`-backed root bindings landed with
+[`implement-shapeenv-index-bindings`](../tickets/implement-shapeenv-index-bindings.md),
+which split the rest. Semi-affine symbolic coefficients and divisors are tracked
+by
+[`admit-semi-affine-index-expression-class`](../tickets/admit-semi-affine-index-expression-class.md);
+typed index-domain predicates and durable solver evidence by
 [`implement-index-domain-predicates`](../tickets/implement-index-domain-predicates.md).
 Unsupported dynamic cases must reject rather than entering an index-local
 symbol or untyped predicate escape hatch.
