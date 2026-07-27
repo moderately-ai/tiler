@@ -1,7 +1,7 @@
 ---
 id: admit-a-dtype-dispatchability-capability-axis
 title: Admit a dtype-dispatchability capability axis
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: []
@@ -30,3 +30,31 @@ Split from `decide-per-dtype-dispatchability-as-a-target-capability`, which sett
 ## Closes when
 
 A program using a dtype its selected target family cannot dispatch is rejected before an artifact is produced, with a diagnostic naming the dtype and the target; an unmeasured pair rejects rather than defaults; the descriptor rebaseline is recorded with its regeneration command; and `make full` passes.
+
+## Blocked — the parent's premise does not hold, and the remainder is Tom's (2026-07-27)
+
+The parent decided the axis should "carry the dtype" and leave "the dtype vocabulary where it already lives". Attempting the implementation found that **there is no dtype vocabulary the compiler can reach that names `bf16` at all**, so there is nowhere for it to already live.
+
+**Fact.** `grep -rn "Bf16\|bfloat" crates/tiler-ir/src` returns nothing. `tiler_ir::kernel::KernelType` is `Bool | Index | F32`. The only vocabulary in the workspace naming `bf16` is `tiler_metal::target::MetalFloatArithmeticType`, and `crates/tiler-compiler/Cargo.toml` depends on `tiler-ir` and not on `tiler-metal`.
+
+**Fact.** `CapabilityFact` is `{ axis: CapabilityAxis, bound: u64, phase, authority, validity, provenance }`. The axis is a bare `Copy` enum carrying no parameter, and the quantitative space is documented as "every axis has a `u64` bound, a `Quantity` unit, and a comparison `Relation`". Encoding a dtype into the `u64` bound is not an option: that is the same conflation `name-the-capability-api-version-authority-or-retire-the-requirement` recorded — a real value in the wrong slot.
+
+**Fact.** `TypeKey` derives `Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd` and **not** `Copy`, so parameterizing the axis by it makes `CapabilityAxis` non-`Copy`.
+
+## The question
+
+**Which vocabulary names a dtype for target-capability purposes?** Three candidates, each with a different blast radius, and the choice places a dtype vocabulary in a layer for the long term.
+
+1. **Widen `tiler_ir::kernel::KernelType` with `Bf16`.** *Enables:* the axis stays `Copy` and the vocabulary is already shared and already in artifact identity. *Prevents:* nothing — but it asserts the structured kernel IR admits `bf16` values, which no lowering, emitter, or reference oracle implements. It is a total map into artifact identity, so the tag table and every encoder change, and the claim "the IR supports this type" becomes true by declaration rather than by support. `AGENTS.md` separates a type-system reservation from implemented support precisely here.
+
+2. **Parameterize the axis by `TypeKey`,** the extensible semantic vocabulary. *Enables:* `bf16` is a registered semantic type like any other, extension-friendly, and no shared IR claims support it does not have. *Prevents:* `CapabilityAxis` stops being `Copy`, which ripples through the feasibility surface, and a capability fact starts carrying a heap value into a descriptor that is durable identity.
+
+3. **A separate dispatchability vocabulary owned by the target-profile layer,** distinct from both. *Enables:* the axis space stays quantitative and untouched, and dispatchability is modelled as its own fact family rather than squeezed into a bound comparison. *Prevents:* a second dtype vocabulary exists, which is the duplication `AGENTS.md` warns about — two lists that must agree and that nothing checks.
+
+**Recommendation: 2.** It is the only one that neither asserts unimplemented IR support nor creates a second dtype vocabulary, and the extensible semantic registry is already the layer that decides what types exist. **Counterpoint:** it is also the only one that changes a `Copy` type into a non-`Copy` one on a hot feasibility path, and today's `admit-a-caller-declared-target-profile` work shows exactly how far that kind of ripple reaches — a similar `Copy` removal produced 57 compiler errors across four files.
+
+This is reserved rather than decided because it is a durable placement of a vocabulary, not an implementation detail: whichever layer owns it will own every dtype admitted afterwards.
+
+### What is ready to proceed the moment it is answered
+
+The elimination in the parent stands and is not affected by the answer: profile-owned, keyed by target family, rejecting on unmeasured, with device preflight as a defect report rather than a route. The descriptor rebaseline procedure is recorded above.
