@@ -1,17 +1,14 @@
 ---
 id: carry-the-stage-execution-order-in-the-envelope
 title: Carry a multi-stage variant's execution order in the envelope
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [carry-reconstructable-kernel-programs-in-the-neutral-envelope, expose-the-dispatch-record-on-a-decoded-artifact, route-the-runtime-loader-through-the-dispatch-record, carry-the-byte-offset-of-a-partial-binding-view]
-scopes: [contracts/artifacts, implementation/artifact]
+scopes: [contracts/artifacts, implementation/artifact, implementation/runtime, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, serialization, runtime]
-claimed_from: todo
-assignee: integrator
-lease_expires_at: 1785161721
 ---
 A variant that dispatches more than one stage encodes, and this build's reader refuses it. That refusal is correct and it is not the end state: it is the last gap between the dispatch record Tom decided on [`carry-reconstructable-kernel-programs-in-the-neutral-envelope`](carry-reconstructable-kernel-programs-in-the-neutral-envelope.md) and what the envelope actually carries.
 
@@ -70,3 +67,48 @@ Backward compatibility is not a consideration: Tiler has no external consumers a
 ### Consequence to expect, and why it is correct
 
 After this lands, an envelope decodes that `tiler-runtime` still cannot execute — it dispatches one entry. The refusal moves from the decoder to the loader and names a narrower thing, which is the point: `route-the-runtime-loader-through-the-dispatch-record` recorded that a loader correct only by another layer's refusal is not correct. `preflight-every-entry-of-a-multi-stage-route` owns the runtime half, and `prototype-metal-runtime-proof` needs both.
+
+## Outcome
+
+A consumer holding only encoded bytes can sequence a multi-stage variant and name the dependency each edge rests on, at `eb56c55`.
+
+### What is carried, and why it is this and not a name for each intermediate
+
+`VariantRow` gained an execution order — a permutation of the variant's entries — and the typed dependency edges that order discharges. Both are derived in `ArtifactEnvelope::project` from the packaged `VerifiedKernelProgram`'s own `execution_order()` and `dependencies()`, never stated by a producer, which is the `binding_target` posture: a producer cannot assert a correspondence its own plan contradicts.
+
+The design the ticket warned against — ordering entries at the encoder and calling declaration order authoritative — is not what this does. The design that *looks* right and is not is giving `BindingTarget::Internal` an identity so a reader can see that stage B's input is stage A's output. `BindingTarget`'s own doc says why it fails: the shared IR's canonical value key is crate-private with no read view publishing it, so naming intermediates would force a new public surface onto `tiler-ir` to encode a fact the program already spells better.
+
+### Carried *and* checked, which is the whole difference
+
+An order alone cannot be checked. It says *an* order and not *why*, so a consumer could not distinguish a required sequence from an incidental one, and a decoder could not refuse an order that contradicts the program. With the edges present the decoder proves the order is a permutation of the entries and that every edge's predecessor precedes its successor in it.
+
+Three refusals, each its own diagnostic rather than one collapsed "bad order": `StageOrderNotAPermutation`, `StageDependencyOutOfOrder`, and `StageDependencyOnItself`. All classify as `ArtifactCodecFailure::Invalid`.
+
+### Correction — why `ARTIFACT_DOMAIN` steps
+
+To `v4`, for the reason its own doc gives for `v2` and `v3`: the rows landed *inside* a per-variant record, so a `v3` and a `v4` encoding of two different artifacts could produce equal bytes.
+
+**Not** because two stage orders would otherwise share an identity. They already differ under `v3` — `push_variant` folds the variant's program-section bytes, and that section is the kernel program's canonical identity, which the shared IR derives over its own dependency graph. An earlier draft of this ticket's design asserted the opposite; it was wrong, and writing it at the constant would have left a false justification where the next reader trusts it. The new rows make the order *readable*, not newly distinguishable.
+
+`MANIFEST_DOMAIN` is unchanged: the manifest's own framing is untouched, and the rows sit inside the variant record the artifact domain already covers.
+
+### Evidence
+
+- `a_multi_stage_variant_encodes_and_this_reader_refuses_it` inverted into `a_multi_stage_variant_round_trips_with_a_recoverable_sequence`, against the real materialized serial-sum plan. It asserts the recovered *sequence* and that each edge is a `Data` dependency whose predecessor precedes its successor — not merely that it decoded, which is what a test checking only for `Ok` would have missed and is exactly the silent behaviour the old refusal existed to prevent.
+- `an_execution_order_that_is_not_a_permutation_is_rejected` covers both directions of "not a permutation", because an omitted entry and a repeated one fail for different reasons. `a_stage_dependency_on_itself_is_rejected` covers the malformed edge.
+- **Both new checks were confirmed able to fail** — neutered in `decode.rs`, observed failing, reverted.
+- 961 workspace tests pass; `make full` green; the hardware run still ends in bit-for-bit agreement on both paths, with the envelope 40 bytes larger for the new rows.
+
+### Measurement boundary
+
+`StageDependencyOutOfOrder` is **not** reached from the codec's own tests, and the reason is structural rather than an omission: it needs two entries whose stated order contradicts an edge between them, and every codec fixture packages a single-stage program, where an edge with distinct endpoints cannot be built. The producer's multi-stage case exercises the satisfied direction against a real two-stage plan. A two-stage codec fixture is owed, and the refusal is currently proven only by the code path rather than by a case that reaches it.
+
+### The surface this adds
+
+`DecodedVariant::execution_order`, `DecodedVariant::stage_dependencies`, the `DecodedStageDependency` view, and the `StageDependencyReason` vocabulary are all new `pub` items under `tiler_artifact::program`, which is a reviewed **draft** boundary (ADR 0074 §7). Flagged for Tom rather than assumed accepted.
+
+### The consequence to expect, which is correct
+
+An envelope now decodes that `tiler-runtime` still cannot execute. `LoadRejection::UnroutableEntries` is reachable rather than shadowed by a decoder that refused one layer earlier — `route-the-runtime-loader-through-the-dispatch-record` recorded that a loader correct only by another layer's refusal is not correct — and its reason is restated: the limit is that this loader dispatches one entry, not that a sequence cannot be recovered. `preflight-every-entry-of-a-multi-stage-route` owns lifting it.
+
+Both are now recorded dependencies of `prototype-metal-runtime-proof`, whose materialized-plan requirement was unreachable while the graph showed it ready.
