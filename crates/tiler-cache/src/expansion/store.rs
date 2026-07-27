@@ -1,6 +1,7 @@
 //! The protocol: lock-free validated read, locked recheck, atomic publication.
 
 use core::fmt;
+use core::ops::Range;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -71,8 +72,7 @@ pub enum Durability {
 #[derive(Debug)]
 pub struct CachedEntry {
     key: CacheKey,
-    subject: Vec<u8>,
-    envelope: Vec<u8>,
+    bytes: EntryBytes,
     artifact: DecodedArtifact,
 }
 
@@ -96,13 +96,13 @@ impl CachedEntry {
     /// these bytes without parsing them.
     #[must_use]
     pub fn subject(&self) -> &[u8] {
-        &self.subject
+        self.bytes.subject()
     }
 
     /// Returns the exact artifact envelope bytes, for embedding.
     #[must_use]
     pub fn envelope_bytes(&self) -> &[u8] {
-        &self.envelope
+        self.bytes.envelope()
     }
 
     /// Returns the decoded artifact.
@@ -281,8 +281,7 @@ impl ExpansionCache {
         match self.read_entry(&key, &artifact_validator) {
             Ok(entry) => Lookup::Hit(Box::new(CachedEntry {
                 key: entry.key,
-                subject: entry.subject,
-                envelope: entry.envelope,
+                bytes: entry.bytes,
                 artifact: entry.payload,
             })),
             Err(reason) => Lookup::Miss(reason),
@@ -313,8 +312,7 @@ impl ExpansionCache {
                 } => {
                     let entry = CachedEntry {
                         key: entry.key,
-                        subject: entry.subject,
-                        envelope: entry.envelope,
+                        bytes: entry.bytes,
                         artifact: entry.payload,
                     };
                     if published {
@@ -324,7 +322,7 @@ impl ExpansionCache {
                     }
                 }
                 ProtocolOutcome::Uncached { entry, report } => Resolution::Uncached {
-                    envelope: entry.envelope,
+                    envelope: entry.bytes.into_envelope(),
                     artifact: entry.payload,
                     report,
                 },
@@ -504,8 +502,10 @@ impl ExpansionCache {
         let payload = validate(&envelope).map_err(PublishFailure::Artifact)?;
         let entry = ValidatedEntry {
             key,
-            subject: subject.to_vec(),
-            envelope,
+            bytes: EntryBytes::Built {
+                subject: subject.to_vec(),
+                envelope,
+            },
             payload,
         };
 
@@ -516,7 +516,7 @@ impl ExpansionCache {
         match self.publish(
             &entry.key,
             subject,
-            &entry.envelope,
+            entry.envelope(),
             validate,
             replacing_rejected_entry,
         ) {
@@ -594,12 +594,20 @@ impl ExpansionCache {
         }
         let view = bundle::decode(&bytes, key, &self.limits)
             .map_err(|rejection| MissReason::Rejected(EntryRejection::Bundle(rejection)))?;
-        let payload = validate(view.envelope)
+        let payload = validate(&bytes[view.envelope.clone()])
             .map_err(|failure| MissReason::Rejected(EntryRejection::Payload(failure)))?;
+        // The frame lays the two sections out contiguously inside the buffer this
+        // read already allocated, so the entry keeps that buffer and the spans
+        // rather than copying both sections back out of it. Nothing is validated
+        // any less: every check above ran against these exact bytes, and these
+        // are the bytes retained.
         Ok(ValidatedEntry {
             key: view.key,
-            subject: view.subject.to_vec(),
-            envelope: view.envelope.to_vec(),
+            bytes: EntryBytes::Stored {
+                bundle: bytes,
+                subject: view.subject,
+                envelope: view.envelope,
+            },
             payload,
         })
     }
@@ -607,7 +615,30 @@ impl ExpansionCache {
     /// Reads a file, refusing rather than allocating past the configured bound.
     fn read_bounded(&self, path: &Path, file: File) -> Result<Vec<u8>, MissReason> {
         let limit = self.limits.max_bundle_bytes;
-        let mut bytes = Vec::new();
+        // Sized from the file's own reported length, clamped to the bound this
+        // read already refuses past. Growing from empty reallocated the buffer
+        // repeatedly and copied every byte read so far on each one.
+        //
+        // The capacity is the reported length *exactly*, with no slack, and the
+        // exactness is what makes it work. `read_to_end` treats a buffer whose
+        // length has reached its starting capacity as a possible exact fit and
+        // probes for end-of-file into a small stack buffer; leftover capacity
+        // instead sends it down the growing path, where one spare byte is
+        // enough to trigger a reserve that reallocates and copies the whole
+        // buffer. Adding one here measured no better than passing no hint.
+        //
+        // The length is a *hint* and is not trusted: `take` below still bounds
+        // the read and the length check after it still decides. A concurrent
+        // writer that changed the file between this `fstat` and the read can
+        // only make the guess wrong — the read then grows exactly as it did
+        // before — and can never make an over-long file acceptable.
+        let hint = file
+            .metadata()
+            .ok()
+            .map(|metadata| metadata.len().min(limit))
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .unwrap_or_default();
+        let mut bytes = Vec::with_capacity(hint);
         // One byte past the bound, so a file exactly at the bound is accepted
         // and the first byte over it is observed rather than inferred from a
         // separately-read length that a concurrent writer could have changed.
@@ -774,7 +805,7 @@ impl ExpansionCache {
         let view = bundle::decode(&bytes, key, &self.limits).map_err(|rejection| {
             PublicationRefusal::TemporaryRejected(EntryRejection::Bundle(rejection))
         })?;
-        validate(view.envelope).map_err(|failure| {
+        validate(&bytes[view.envelope]).map_err(|failure| {
             PublicationRefusal::TemporaryRejected(EntryRejection::Payload(failure))
         })?;
         Ok(())
@@ -929,13 +960,89 @@ pub(crate) struct Published {
     pub(crate) durability: Option<CacheUnavailable>,
 }
 
+/// The subject and envelope of one entry, however this process came to own them.
+///
+/// Two variants because the two paths that produce an entry own their bytes
+/// differently, and collapsing them would mean copying on one path to match the
+/// shape of the other. A stored bundle already holds both sections contiguously
+/// in the buffer the read allocated, so the read keeps that buffer and remembers
+/// the two spans. A freshly built entry never had a bundle: its envelope comes
+/// from the caller's build step and its subject from the caller's argument.
+///
+/// The distinction is invisible above [`ValidatedEntry`], which exposes both
+/// sections as `&[u8]` either way.
+#[derive(Debug)]
+pub(crate) enum EntryBytes {
+    /// Read from a stored bundle: one buffer, with each section's span in it.
+    Stored {
+        bundle: Vec<u8>,
+        subject: Range<usize>,
+        envelope: Range<usize>,
+    },
+    /// Built by this process, before any bundle framed it.
+    Built { subject: Vec<u8>, envelope: Vec<u8> },
+}
+
+impl EntryBytes {
+    /// Returns the composed subject bytes.
+    pub(crate) fn subject(&self) -> &[u8] {
+        match self {
+            Self::Stored {
+                bundle, subject, ..
+            } => &bundle[subject.clone()],
+            Self::Built { subject, .. } => subject,
+        }
+    }
+
+    /// Returns the artifact envelope bytes.
+    pub(crate) fn envelope(&self) -> &[u8] {
+        match self {
+            Self::Stored {
+                bundle, envelope, ..
+            } => &bundle[envelope.clone()],
+            Self::Built { envelope, .. } => envelope,
+        }
+    }
+
+    /// Consumes these bytes and yields the envelope alone.
+    ///
+    /// The [`Self::Built`] arm is a move and the [`Self::Stored`] arm copies,
+    /// because a stored envelope is a run inside a larger buffer and cannot be
+    /// handed out as its own allocation without one. Only
+    /// [`ProtocolOutcome::Uncached`] calls this, and an uncached outcome is
+    /// reachable only after a build step ran — so the copying arm is not on any
+    /// path a cache hit takes. It is written out rather than made unreachable
+    /// because a total match is what keeps a future third caller correct instead
+    /// of panicking.
+    pub(crate) fn into_envelope(self) -> Vec<u8> {
+        match self {
+            Self::Stored {
+                bundle, envelope, ..
+            } => bundle[envelope].to_vec(),
+            Self::Built { envelope, .. } => envelope,
+        }
+    }
+}
+
 /// A validated entry, generic over what its payload validator produced.
 #[derive(Debug)]
 pub(crate) struct ValidatedEntry<T> {
     pub(crate) key: CacheKey,
-    pub(crate) subject: Vec<u8>,
-    pub(crate) envelope: Vec<u8>,
+    pub(crate) bytes: EntryBytes,
     pub(crate) payload: T,
+}
+
+impl<T> ValidatedEntry<T> {
+    /// Returns the exact artifact envelope bytes.
+    ///
+    /// There is deliberately no `subject` accessor beside this one. Nothing
+    /// between the protocol and the public [`CachedEntry`] reads the subject —
+    /// the bundle decoder already re-derived the key from it, which is the only
+    /// use this layer has — and an accessor no call site reaches would be a
+    /// claim about the type that the code does not support.
+    pub(crate) fn envelope(&self) -> &[u8] {
+        self.bytes.envelope()
+    }
 }
 
 /// What the crate-private protocol resolved to.

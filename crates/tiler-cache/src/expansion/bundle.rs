@@ -39,6 +39,7 @@
 //! rejected and here is what it claimed to be".
 
 use core::fmt;
+use core::ops::Range;
 
 use tiler_artifact::program::{DIGEST_BYTES, Digest, DigestAlgorithm};
 
@@ -118,13 +119,25 @@ impl fmt::Display for BundleSection {
     }
 }
 
-/// The validated contents of one bundle, borrowed from the bytes they were read
-/// from.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct BundleView<'bytes> {
+/// Where each validated section sits inside the bytes it was decoded from.
+///
+/// Spans rather than slices, so a caller that owns the buffer can keep owning it
+/// and still name the two sections. The frame already lays them out contiguously
+/// inside one run, so the bytes a reader wants are the bytes it read — and
+/// returning borrows instead would force any caller wanting to *keep* them to
+/// copy the whole bundle a second time, which is what these ranges exist to
+/// avoid.
+///
+/// Every range is produced only by [`decode`], and only after that function has
+/// proven the span lies inside the buffer and matches its declared digest. So
+/// indexing a buffer with one of these cannot panic *for the buffer it was
+/// decoded from*; pairing a range with a different buffer is a caller error the
+/// type does not prevent, and no call site does it.
+#[derive(Clone, Debug)]
+pub(crate) struct BundleView {
     pub(crate) key: CacheKey,
-    pub(crate) subject: &'bytes [u8],
-    pub(crate) envelope: &'bytes [u8],
+    pub(crate) subject: Range<usize>,
+    pub(crate) envelope: Range<usize>,
 }
 
 /// Encodes one bundle.
@@ -205,11 +218,11 @@ pub(crate) fn encode(
 /// checks run in the order below because each one bounds what the next may
 /// read: nothing is indexed before the length that frames it has been proven
 /// against the bytes actually present.
-pub(crate) fn decode<'bytes>(
-    bytes: &'bytes [u8],
+pub(crate) fn decode(
+    bytes: &[u8],
     requested: &CacheKey,
     limits: &Limits,
-) -> Result<BundleView<'bytes>, BundleRejection> {
+) -> Result<BundleView, BundleRejection> {
     let header = decode_header(bytes, requested, limits)?;
     let (subject, envelope) = decode_sections(bytes, &header, limits)?;
 
@@ -217,7 +230,7 @@ pub(crate) fn decode<'bytes>(
     // does not produce the key it is filed under is refused even though every
     // digest in it verified. A forger recomputes digests; it cannot recompute
     // this without changing the path the entry lives at.
-    let derived = CacheKey::derive_bytes(subject);
+    let derived = CacheKey::derive_bytes(&bytes[subject.clone()]);
     if derived != header.key {
         return Err(BundleRejection::KeyNotDerivedFromSubject {
             embedded: header.key.label(),
@@ -331,13 +344,13 @@ fn decode_header(
 }
 
 /// Validates every section descriptor and the bytes it frames.
-fn decode_sections<'bytes>(
-    bytes: &'bytes [u8],
+fn decode_sections(
+    bytes: &[u8],
     header: &Header,
     limits: &Limits,
-) -> Result<(&'bytes [u8], &'bytes [u8]), BundleRejection> {
-    let mut subject: Option<&[u8]> = None;
-    let mut envelope: Option<&[u8]> = None;
+) -> Result<(Range<usize>, Range<usize>), BundleRejection> {
+    let mut subject: Option<Range<usize>> = None;
+    let mut envelope: Option<Range<usize>> = None;
     let mut expected_offset = header.table_end as u64;
     for index in 0..header.sections {
         let at = HEADER_BYTES + DESCRIPTOR_BYTES * index;
@@ -407,7 +420,7 @@ fn decode_sections<'bytes>(
         if slot.is_some() {
             return Err(BundleRejection::DuplicateSection { purpose });
         }
-        *slot = Some(content);
+        *slot = Some(start..stop);
     }
     if expected_offset != header.total {
         return Err(BundleRejection::TrailingBytes {
