@@ -322,9 +322,15 @@ pub enum ArtifactBuildError {
     /// `(Internal, Output)` and rejects the other three pairs with
     /// `KernelProgramBuildError::ValueRoleOrigin`. This exists because that
     /// correspondence is enforced by another crate's builder rather than by a
-    /// type this one can match on: it is the same position the artifact layer is
-    /// in for [`ArtifactDiagnostic::UnrecognizedForeignVariant`], and refusing is
-    /// the only fail-closed behaviour left if the guarantee ever moves.
+    /// type this one can match on, so refusing is the only fail-closed
+    /// behaviour left if the guarantee ever moves.
+    ///
+    /// The artifact layer was once in this same position for `KernelType`,
+    /// `AddressSpace`, and `BufferAccess`, and it no longer is: those enums
+    /// dropped `#[non_exhaustive]`, so widening one is a build error at this
+    /// crate's encoder rather than a run-time refusal. That remedy is
+    /// unavailable here, because the constraint is a *builder rule* in another
+    /// crate rather than a variant set this one could match exhaustively.
     UnnameableBindingTarget {
         /// Ordered entry position.
         entry: usize,
@@ -481,31 +487,6 @@ impl Error for ArtifactBuildError {
     }
 }
 
-/// A shared-IR enum this crate must encode but cannot match exhaustively.
-///
-/// `tiler_ir::kernel::KernelType`, `tiler_ir::kernel::AddressSpace`, and
-/// `tiler_ir::kernel::BufferAccess` are `#[non_exhaustive]`, so a widened
-/// variant cannot break this crate's encoder at compile time the way ADR 0074
-/// §3 intends. Rejecting the artifact is the only remaining fail-closed
-/// behaviour: an unrecognized variant must never share identity bytes with a
-/// recognized one.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
-pub enum ForeignEnumSubject {
-    /// A structured-kernel element type.
-    KernelType,
-    /// A structured-kernel governed address space.
-    AddressSpace,
-    /// A structured-kernel buffer access mode.
-    BufferAccess,
-}
-
-impl fmt::Display for ForeignEnumSubject {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{self:?}")
-    }
-}
-
 /// One deterministic whole-artifact verification failure.
 ///
 /// Each variant names an obligation proven by
@@ -529,17 +510,6 @@ pub enum ArtifactDiagnostic {
         /// Category of the colliding entities.
         entity: ArtifactEntityKind,
     },
-    /// A shared-IR enum presented a variant this encoder does not recognize.
-    ///
-    /// Unreachable while `tiler-ir`'s element-type, address-space, and
-    /// buffer-access vocabularies are exactly the ones enumerated here, and it
-    /// is therefore not covered by a test. It exists because those enums are
-    /// `#[non_exhaustive]`: widening one cannot break this cross-crate encoder
-    /// at compile time, so the only fail-closed behaviour left is to reject.
-    UnrecognizedForeignVariant {
-        /// Shared-IR enum whose variant was not recognized.
-        subject: ForeignEnumSubject,
-    },
     /// The fully encoded canonical identity exceeded its bound.
     IdentityLimit {
         /// Encoded byte count.
@@ -560,7 +530,6 @@ impl ArtifactDiagnostic {
             Self::UnusedPayload => "unused-payload",
             Self::DuplicateBackendEntry => "duplicate-backend-entry",
             Self::AmbiguousCanonicalKey { .. } => "ambiguous-canonical-key",
-            Self::UnrecognizedForeignVariant { .. } => "unrecognized-foreign-variant",
             Self::IdentityLimit { .. } => "identity-limit",
         }
     }

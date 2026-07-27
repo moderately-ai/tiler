@@ -395,7 +395,7 @@ pub(crate) use codec::envelope_digest;
 pub(crate) use codec::{ENVELOPE_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN};
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
-    ArtifactLimitKind, ArtifactVerificationError, ForeignEnumSubject,
+    ArtifactLimitKind, ArtifactVerificationError,
 };
 pub use expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,

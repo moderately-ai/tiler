@@ -498,7 +498,7 @@ fn emit_entry_point(
 /// Returns the MSL declaration of one buffer parameter.
 fn parameter_declaration(binding: &MetalBufferBinding) -> Result<String, MetalEmitError> {
     let parameter = binding.parameter();
-    let element = msl_type(parameter.element_type)?;
+    let element = msl_type(parameter.element_type);
     let space = address_space_declaration(parameter.address_space, parameter.access)?;
     let index = binding.index();
     Ok(format!("{space} {element} *b{index} [[buffer({index})]]"))
@@ -518,18 +518,21 @@ pub(crate) fn address_space_declaration(
         AddressSpace::Device => match access {
             BufferAccess::Read => Ok("device const"),
             BufferAccess::Write => Ok("device"),
-            _ => Err(MetalEmitError::UnsupportedBufferAccess { space, access }),
         },
         AddressSpace::Constant => match access {
             BufferAccess::Read => Ok("constant"),
             // The constant space is read-only, so a writable parameter is
             // rejected instead of being silently promoted to a device binding.
-            _ => Err(MetalEmitError::UnsupportedBufferAccess { space, access }),
+            BufferAccess::Write => Err(MetalEmitError::UnsupportedBufferAccess { space, access }),
         },
         // Workgroup storage is a `[[threadgroup(N)]]` binding a buffer
-        // parameter cannot name, invocation-private storage is not a parameter
-        // space, and an unrecognized space has no known realization.
-        _ => Err(MetalEmitError::UnsupportedAddressSpace { space }),
+        // parameter cannot name, and invocation-private storage is not a
+        // parameter space. Matched by name rather than by wildcard so a widened
+        // `AddressSpace` stops the build at this backend, which is the one that
+        // has to decide whether the new space has a realization.
+        AddressSpace::Workgroup | AddressSpace::InvocationPrivate => {
+            Err(MetalEmitError::UnsupportedAddressSpace { space })
+        }
     }
 }
 
@@ -557,12 +560,16 @@ fn builtin_parameter(builtin: Builtin) -> Result<&'static str, MetalEmitError> {
 }
 
 /// Returns the MSL spelling of one governed structured type.
-pub(crate) fn msl_type(value_type: KernelType) -> Result<&'static str, MetalEmitError> {
+///
+/// Infallible, and exhaustive by name. `KernelType` is no longer
+/// `#[non_exhaustive]`, so widening it stops the build here — at the backend
+/// that has to decide the new type's MSL spelling — rather than compiling into
+/// a run-time rejection of a type the vocabulary now admits.
+pub(crate) const fn msl_type(value_type: KernelType) -> &'static str {
     match value_type {
-        KernelType::Bool => Ok("bool"),
-        KernelType::Index => Ok("ulong"),
-        KernelType::F32 => Ok("float"),
-        _ => Err(MetalEmitError::UnsupportedType { value_type }),
+        KernelType::Bool => "bool",
+        KernelType::Index => "ulong",
+        KernelType::F32 => "float",
     }
 }
 
@@ -730,7 +737,7 @@ impl KernelEmitter<'_> {
 
     /// Returns the MSL spelling of one structured value's resolved type.
     fn value_type(&self, value: VerifiedValueId) -> Result<&'static str, MetalEmitError> {
-        msl_type(self.kernel.value_type(value)?)
+        Ok(msl_type(self.kernel.value_type(value)?))
     }
 
     /// Returns the argument-table index of one verified buffer handle.

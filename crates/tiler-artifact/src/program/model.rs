@@ -34,7 +34,7 @@ use super::codec::{
     ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow, expression_keys,
     position as node_at,
 };
-use super::error::{ArtifactDiagnostic, ArtifactEntityKind, ForeignEnumSubject};
+use super::error::{ArtifactDiagnostic, ArtifactEntityKind};
 use super::expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,
     AvailabilityPhase, ExprNode, evaluate,
@@ -1296,18 +1296,20 @@ pub(super) fn stage_key(stage: StageRef<'_>) -> Vec<u8> {
 // would let an envelope decode into a plausible-but-wrong program, so the pair
 // is kept in one place and pinned by an exhaustive round-trip test.
 
-pub(super) fn element_type_tag(element_type: KernelType) -> Result<u8, ArtifactDiagnostic> {
-    // `KernelType` is `#[non_exhaustive]`, so a widened variant cannot break
-    // this cross-crate encoder at compile time the way ADR 0074 §3 intends.
-    // Rejecting is the only remaining fail-closed behaviour: an unrecognized
-    // element type must never share identity bytes with a recognized one.
+/// Encodes one shared-IR element type.
+///
+/// Infallible, and that is the point of the vocabulary not being
+/// `#[non_exhaustive]`. This is a cross-crate total map into artifact identity,
+/// so widening `KernelType` must stop the build *here*, at the encoder that has
+/// to decide what the new variant's tag is. It previously rejected an
+/// unrecognized variant at run time, which was sound and strictly weaker: a
+/// widened enum would have silently made previously packageable artifacts
+/// unpackageable instead of failing the build at the site that must decide.
+pub(super) const fn element_type_tag(element_type: KernelType) -> u8 {
     match element_type {
-        KernelType::Bool => Ok(0x01),
-        KernelType::Index => Ok(0x02),
-        KernelType::F32 => Ok(0x03),
-        _ => Err(ArtifactDiagnostic::UnrecognizedForeignVariant {
-            subject: ForeignEnumSubject::KernelType,
-        }),
+        KernelType::Bool => 0x01,
+        KernelType::Index => 0x02,
+        KernelType::F32 => 0x03,
     }
 }
 
@@ -1320,15 +1322,12 @@ pub(super) const fn element_type_from_tag(tag: u8) -> Option<KernelType> {
     }
 }
 
-pub(super) fn address_space_tag(address_space: AddressSpace) -> Result<u8, ArtifactDiagnostic> {
+pub(super) const fn address_space_tag(address_space: AddressSpace) -> u8 {
     match address_space {
-        AddressSpace::Device => Ok(0x01),
-        AddressSpace::Workgroup => Ok(0x02),
-        AddressSpace::InvocationPrivate => Ok(0x03),
-        AddressSpace::Constant => Ok(0x04),
-        _ => Err(ArtifactDiagnostic::UnrecognizedForeignVariant {
-            subject: ForeignEnumSubject::AddressSpace,
-        }),
+        AddressSpace::Device => 0x01,
+        AddressSpace::Workgroup => 0x02,
+        AddressSpace::InvocationPrivate => 0x03,
+        AddressSpace::Constant => 0x04,
     }
 }
 
@@ -1342,13 +1341,10 @@ pub(super) const fn address_space_from_tag(tag: u8) -> Option<AddressSpace> {
     }
 }
 
-pub(super) fn buffer_access_tag(access: BufferAccess) -> Result<u8, ArtifactDiagnostic> {
+pub(super) const fn buffer_access_tag(access: BufferAccess) -> u8 {
     match access {
-        BufferAccess::Read => Ok(0x01),
-        BufferAccess::Write => Ok(0x02),
-        _ => Err(ArtifactDiagnostic::UnrecognizedForeignVariant {
-            subject: ForeignEnumSubject::BufferAccess,
-        }),
+        BufferAccess::Read => 0x01,
+        BufferAccess::Write => 0x02,
     }
 }
 
@@ -1540,9 +1536,13 @@ pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
 ///
 /// Returns [`ArtifactDiagnostic::AmbiguousCanonicalKey`] when two payloads,
 /// providers, deferred predicates, or launch preconditions produce equal keys,
-/// [`ArtifactDiagnostic::UnrecognizedForeignVariant`] for a shared-IR variant
-/// this encoder does not recognize, or
-/// [`ArtifactDiagnostic::IdentityLimit`] when the encoding exceeds its bound.
+/// or [`ArtifactDiagnostic::IdentityLimit`] when the encoding exceeds its
+/// bound.
+///
+/// It no longer refuses an unrecognized shared-IR variant, because there can no
+/// longer be one: `KernelType`, `AddressSpace`, and `BufferAccess` are not
+/// `#[non_exhaustive]`, so widening any of them stops the build at the tag
+/// tables below rather than compiling into a run-time rejection.
 pub(super) fn encode_identity(
     envelope: &ArtifactEnvelope,
 ) -> Result<CanonicalArtifactProgramIdentity, ArtifactDiagnostic> {
@@ -1560,7 +1560,7 @@ pub(super) fn encode_identity(
         &mut bytes,
         envelope.semantic().admission_provenance.as_bytes(),
     );
-    push_interface(&mut bytes, envelope)?;
+    push_interface(&mut bytes, envelope);
     push_sorted_keys(
         &mut bytes,
         envelope
@@ -1592,23 +1592,19 @@ pub(super) fn encode_identity(
     Ok(CanonicalArtifactProgramIdentity(bytes))
 }
 
-fn push_interface(
-    bytes: &mut Vec<u8>,
-    envelope: &ArtifactEnvelope,
-) -> Result<(), ArtifactDiagnostic> {
+fn push_interface(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
     push_len(bytes, envelope.inputs().len());
     for input in envelope.inputs() {
         push_slice(bytes, input.key.as_str().as_bytes());
         push_shape(bytes, &input.shape);
-        bytes.push(element_type_tag(input.element_type)?);
+        bytes.push(element_type_tag(input.element_type));
     }
     push_len(bytes, envelope.outputs().len());
     for output in envelope.outputs() {
         push_slice(bytes, output.key.as_str().as_bytes());
         push_shape(bytes, &output.shape);
-        bytes.push(element_type_tag(output.element_type)?);
+        bytes.push(element_type_tag(output.element_type));
     }
-    Ok(())
 }
 
 /// Writes a set-meaning collection in canonical key order, proving distinctness.
@@ -1714,9 +1710,9 @@ fn push_entry(
     push_len(bytes, entry.bindings.len());
     for binding in &entry.bindings {
         bytes.push(binding.kind.tag());
-        bytes.push(element_type_tag(binding.element_type)?);
-        bytes.push(address_space_tag(binding.address_space)?);
-        bytes.push(buffer_access_tag(binding.access)?);
+        bytes.push(element_type_tag(binding.element_type));
+        bytes.push(address_space_tag(binding.address_space));
+        bytes.push(buffer_access_tag(binding.access));
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());
         push_binding_target(bytes, &binding.target);
         push_slice(bytes, &keys[node_at(binding.accessible_bytes)]);

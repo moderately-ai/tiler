@@ -396,10 +396,7 @@ fn every_governed_tag_table_round_trips() {
     use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
 
     for value in [KernelType::Bool, KernelType::Index, KernelType::F32] {
-        assert_eq!(
-            element_type_from_tag(element_type_tag(value).unwrap()),
-            Some(value),
-        );
+        assert_eq!(element_type_from_tag(element_type_tag(value)), Some(value),);
     }
     for value in [
         AddressSpace::Device,
@@ -408,13 +405,13 @@ fn every_governed_tag_table_round_trips() {
         AddressSpace::Constant,
     ] {
         assert_eq!(
-            address_space_from_tag(address_space_tag(value).unwrap()),
+            address_space_from_tag(address_space_tag(value)),
             Some(value),
         );
     }
     for value in [BufferAccess::Read, BufferAccess::Write] {
         assert_eq!(
-            buffer_access_from_tag(buffer_access_tag(value).unwrap()),
+            buffer_access_from_tag(buffer_access_tag(value)),
             Some(value),
         );
     }

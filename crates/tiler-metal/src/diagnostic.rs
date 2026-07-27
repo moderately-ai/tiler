@@ -16,7 +16,7 @@ use core::fmt;
 use std::error::Error;
 
 use tiler_ir::kernel::{
-    AddressSpace, BarrierOrdering, BufferAccess, ExecutionScope, KernelType, MemoryScope,
+    AddressSpace, BarrierOrdering, BufferAccess, ExecutionScope, MemoryScope,
     VerifiedKernelHandleError,
 };
 
@@ -128,11 +128,6 @@ impl fmt::Display for BarrierRejection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum MetalEmitError {
-    /// A governed structured value type has no Metal realization.
-    UnsupportedType {
-        /// The rejected value type.
-        value_type: KernelType,
-    },
     /// A governed address space cannot be a Metal kernel-parameter space.
     ///
     /// Metal exposes `device` and `constant` buffer parameters through the
@@ -242,7 +237,6 @@ impl MetalEmitError {
     #[must_use]
     pub const fn rule(&self) -> &'static str {
         match self {
-            Self::UnsupportedType { .. } => "unsupported-type",
             Self::UnsupportedAddressSpace { .. } => "unsupported-address-space",
             Self::UnsupportedBufferAccess { .. } => "unsupported-buffer-access",
             Self::UnsupportedOperation { .. } => "unsupported-operation",
@@ -265,9 +259,6 @@ impl MetalEmitError {
 impl fmt::Display for MetalEmitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedType { value_type } => {
-                write!(f, "{}: {value_type:?}", self.rule())
-            }
             Self::UnsupportedAddressSpace { space } => {
                 write!(f, "{}: {space:?}", self.rule())
             }

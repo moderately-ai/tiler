@@ -1118,9 +1118,9 @@ fn emission_never_names_a_semantic_or_schedule_shape() {
 
 #[test]
 fn governed_types_map_to_their_metal_spellings() {
-    assert_eq!(msl_type(KernelType::Bool).unwrap(), "bool");
-    assert_eq!(msl_type(KernelType::Index).unwrap(), "ulong");
-    assert_eq!(msl_type(KernelType::F32).unwrap(), "float");
+    assert_eq!(msl_type(KernelType::Bool), "bool");
+    assert_eq!(msl_type(KernelType::Index), "ulong");
+    assert_eq!(msl_type(KernelType::F32), "float");
 }
 
 #[test]

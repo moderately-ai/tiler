@@ -38,8 +38,18 @@ use super::handles::{VerifiedBufferId, VerifiedKernelOwner, VerifiedValueId};
 /// require: a control predicate, an unsigned 64-bit index role used for element
 /// offsets and induction variables, and the `f32` element type. Widening this
 /// vocabulary is a versioned extension, not an open type universe.
+///
+/// **Deliberately not `#[non_exhaustive]`, and this one is mandatory rather
+/// than a judgement.** `tiler-artifact` encodes this vocabulary into
+/// `CanonicalArtifactProgramIdentity` — a cross-crate *total map*, where every
+/// variant must yield its own distinct encoding. ADR 0074 convention 5b makes
+/// that exhaustive, because the two failure modes differ in kind: an
+/// incomplete recognizer silently fails to reach a backend, while an
+/// incomplete total map silently gives two structurally different subjects the
+/// same identity bytes. The attribute would make the second unreachable at
+/// compile time, so widening this enum must be a build error at every encoder
+/// that has to decide what the new variant means.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum KernelType {
     /// A one-bit control predicate.
     Bool,
@@ -64,8 +74,10 @@ impl KernelType {
 /// These describe visibility and lifetime in target-neutral terms. A target
 /// profile maps a supported governed space onto its own realization or rejects
 /// it; caches and registers are lowering facts, not address spaces.
+///
+/// Not `#[non_exhaustive]`, for the reason [`KernelType`] states: this
+/// vocabulary is a cross-crate total map into artifact identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum AddressSpace {
     /// Device-visible memory that outlives one dispatch.
     Device,
@@ -89,8 +101,10 @@ impl AddressSpace {
 }
 
 /// The access mode one kernel buffer parameter admits.
+///
+/// Not `#[non_exhaustive]`, for the reason [`KernelType`] states: this
+/// vocabulary is a cross-crate total map into artifact identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum BufferAccess {
     /// The kernel may only load from the buffer.
     Read,

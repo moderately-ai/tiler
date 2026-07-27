@@ -222,18 +222,18 @@ fn encode_manifest(
     for input in envelope.inputs() {
         push_slice(&mut bytes, input.key.as_str().as_bytes());
         push_shape(&mut bytes, &input.shape);
-        bytes.push(element_type_tag(input.element_type).map_err(identity_cause)?);
+        bytes.push(element_type_tag(input.element_type));
     }
     push_len(&mut bytes, envelope.outputs().len());
     for output in envelope.outputs() {
         push_slice(&mut bytes, output.key.as_str().as_bytes());
         push_shape(&mut bytes, &output.shape);
-        bytes.push(element_type_tag(output.element_type).map_err(identity_cause)?);
+        bytes.push(element_type_tag(output.element_type));
     }
 
     encode_provenance_tables(&mut bytes, envelope);
     encode_expressions(&mut bytes, envelope);
-    encode_variants(&mut bytes, envelope).map_err(identity_cause)?;
+    encode_variants(&mut bytes, envelope);
     encode_section_descriptors(&mut bytes, envelope, section_digests)?;
 
     push_slice(&mut bytes, identity.as_bytes());
@@ -308,10 +308,7 @@ fn encode_expressions(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
 }
 
 /// Encodes the plan variants in routing priority order.
-fn encode_variants(
-    bytes: &mut Vec<u8>,
-    envelope: &ArtifactEnvelope,
-) -> Result<(), ArtifactDiagnostic> {
+fn encode_variants(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
     push_len(bytes, envelope.variants().len());
     for variant in envelope.variants() {
         bytes.extend_from_slice(&variant.program_section.to_be_bytes());
@@ -330,7 +327,7 @@ fn encode_variants(
         }
         push_len(bytes, variant.entries.len());
         for entry in &variant.entries {
-            encode_entry(bytes, entry)?;
+            encode_entry(bytes, entry);
         }
         push_len(bytes, variant.execution_order.len());
         for entry in &variant.execution_order {
@@ -343,20 +340,19 @@ fn encode_variants(
             bytes.push(edge.reason.tag());
         }
     }
-    Ok(())
 }
 
 /// Encodes one executable entry.
-fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) -> Result<(), ArtifactDiagnostic> {
+fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
     push_slice(bytes, entry.stage.as_bytes());
     push_resources(bytes, entry.resources);
     push_numerical(bytes, &entry.numerical);
     push_len(bytes, entry.bindings.len());
     for binding in &entry.bindings {
         bytes.push(binding.kind.tag());
-        bytes.push(element_type_tag(binding.element_type)?);
-        bytes.push(address_space_tag(binding.address_space)?);
-        bytes.push(buffer_access_tag(binding.access)?);
+        bytes.push(element_type_tag(binding.element_type));
+        bytes.push(address_space_tag(binding.address_space));
+        bytes.push(buffer_access_tag(binding.access));
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());
         push_binding_target(bytes, &binding.target);
         bytes.extend_from_slice(&binding.accessible_bytes.to_be_bytes());
@@ -370,7 +366,6 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) -> Result<(), ArtifactDia
     }
     bytes.extend_from_slice(&entry.payload.to_be_bytes());
     push_slice(bytes, entry.entry_key.as_bytes());
-    Ok(())
 }
 
 /// Encodes one section descriptor per framed section.
