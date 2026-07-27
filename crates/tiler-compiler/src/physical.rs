@@ -887,6 +887,52 @@ fn intrinsic<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+    /// The governed profile's canonical descriptor, pinned byte for byte.
+    ///
+    /// **This is a refactor guard, not a golden for its own sake.** The
+    /// descriptor is encoded into `VerifiedRequestSubject`'s canonical explain
+    /// subject and carried out through `Compilation::target_profile_descriptor`
+    /// into the artifact's `TargetProfileDescriptorDigest`, so one changed byte
+    /// moves every artifact identity and invalidates every cache entry. The
+    /// producer's two-process determinism test and the serial-sum artifact
+    /// identity would both catch it, but only after a whole compile-and-package
+    /// cycle and without saying which field moved.
+    ///
+    /// `admit-a-caller-declared-target-profile` has to turn this type from a
+    /// `Copy` struct of `&'static` fields into an owned one, touching roughly
+    /// thirty sites. This exists so that refactor fails here, immediately and
+    /// with a diff, rather than downstream.
+    ///
+    /// Regenerate only when the encoding is *deliberately* changed: print
+    /// `target_profile_descriptor(&PrototypeTargetProfile::governed())` as hex
+    /// and step whatever domain tag the change requires in the same commit.
+    #[test]
+    fn the_governed_descriptor_bytes_do_not_move() {
+        const GOVERNED: &str = concat!(
+            "000000000000002374696c65722e7461726765742d70726f66696c652e646573",
+            "63726970746f722e763300000000000000002a74696c65722e70726f746f7479",
+            "70652d7461726765742d6e65757472616c2d626173656c696e652e7631000000",
+            "000000000701000000000000ffff010101020000000000000001010101030000",
+            "0000000000020101010400000000000000400101010500000000000000010101",
+            "0107000000000000000001010108000000000000000001010100000000000000",
+            "0801010101010101010102010101010201010101010102010201010101030201",
+            "01010101030202010101010402010101010104020201010101"
+        );
+
+        let descriptor =
+            target_profile_descriptor(&crate::request::PrototypeTargetProfile::governed())
+                .expect("the governed profile describes");
+        let mut actual = String::with_capacity(descriptor.len() * 2);
+        for byte in &descriptor {
+            write!(actual, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        assert_eq!(
+            actual, GOVERNED,
+            "the governed target profile's canonical descriptor moved; every artifact \
+             identity and cache entry derived from it moves with it",
+        );
+    }
     use super::*;
     use crate::request::{CompilationRequest, verify_request};
     use tiler_ir::kernel::{KernelConstant, OperationRef, OperationView};
