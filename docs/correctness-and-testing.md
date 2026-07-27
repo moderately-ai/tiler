@@ -54,12 +54,27 @@ The evaluator is independently tested with hand-authored conformance vectors,
 small exhaustive cases, and higher-precision arithmetic where appropriate so a
 shared evaluator/lowering bug is not mistaken for agreement.
 
-The current reference evaluator covers the admitted semantic profile. A generic
-slow evaluator for checked `IndexRegion` values and N-state reductions remains
-owned by
-[`prototype-index-region-reference-oracle`](../tickets/prototype-index-region-reference-oracle.md).
-Until that ticket passes, the compiler's graph-specific proof is not evidence
-that arbitrary registered lowering agrees with semantic meaning.
+The current reference evaluator covers the admitted semantic profile. The
+generic slow evaluator for checked `IndexRegion` values and N-state reductions
+**is implemented**: `tiler_reference::oracle` evaluates a `VerifiedIndexRegion`
+through its registered scalar capabilities and returns the ordered outputs
+beside the scalar-authority evidence it evaluated under, which
+[`prototype-index-region-reference-oracle`](../tickets/prototype-index-region-reference-oracle.md)
+delivered. The compiler's graph-specific proof is therefore no longer the only
+evidence that registered lowering agrees with semantic meaning.
+
+**Its independence from the structural verifier is the property that makes it
+evidence.** The verifier decides whether a region is well formed; the oracle
+computes what the region *means*, through the same registered capabilities a
+backend would resolve. They do not share an arithmetic implementation, and
+sharing one would make agreement between them vacuous — the failure mode this
+section already names for a shared evaluator/lowering bug, one layer down.
+
+An evaluation names **one** authority. A scalar registry is frozen against a
+semantic registry and carries it, so `IndexRegionAuthority` takes the scalar
+authority alone and derives the semantic one from it. Accepting both would let a
+caller name a semantic authority the scalar authority was never registered
+under — two authorities governing one evaluation with nothing comparing them.
 
 Bounded transcendental evaluation computes the named immutable reference with
 enough precision or certified intervals to decide the exact rational predicate;

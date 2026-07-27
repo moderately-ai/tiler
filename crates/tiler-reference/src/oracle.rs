@@ -785,20 +785,26 @@ fn compute_scalar_reference_identity(
 }
 
 /// The exact frozen authority one verified region is evaluated under.
+///
+/// **One argument, because the second could disagree with it.** A scalar
+/// registry is frozen *against* a semantic registry and carries it, so a caller
+/// that supplied both could name a semantic authority the scalar authority was
+/// never registered under — an evaluation governed by two authorities that
+/// nothing compared. The semantic half is derived rather than accepted, which
+/// removes the disagreement rather than checking for it.
 #[derive(Clone, Copy, Debug)]
 pub struct IndexRegionAuthority<'a> {
     scalar: &'a FrozenScalarRegistry,
-    semantic: &'a FrozenSemanticRegistry,
 }
 
 impl<'a> IndexRegionAuthority<'a> {
-    /// Names the scalar and semantic authority governing one region.
+    /// Names the scalar authority governing one region.
+    ///
+    /// The semantic type authority is [`FrozenScalarRegistry::semantic_authority`],
+    /// the one this scalar registry was frozen against.
     #[must_use]
-    pub const fn new(
-        scalar: &'a FrozenScalarRegistry,
-        semantic: &'a FrozenSemanticRegistry,
-    ) -> Self {
-        Self { scalar, semantic }
+    pub const fn new(scalar: &'a FrozenScalarRegistry) -> Self {
+        Self { scalar }
     }
 
     /// Returns the scalar authority.
@@ -807,10 +813,11 @@ impl<'a> IndexRegionAuthority<'a> {
         self.scalar
     }
 
-    /// Returns the semantic type authority.
+    /// Returns the semantic type authority the scalar authority was frozen
+    /// against.
     #[must_use]
-    pub const fn semantic(self) -> &'a FrozenSemanticRegistry {
-        self.semantic
+    pub fn semantic(self) -> &'a FrozenSemanticRegistry {
+        self.scalar.semantic_authority()
     }
 }
 

@@ -736,7 +736,7 @@ mod tests {
         IndexRefinement, NumericalContractIdentity, OccurrenceOperand, OccurrenceResult,
         OccurrenceValueId, SemanticOccurrence, SemanticOccurrenceIdentity, refine_index_region,
     };
-    use tiler_ir::semantic::{CANONICAL_F32_ARITHMETIC_NAN_BITS, FrozenSemanticRegistry};
+    use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
     use tiler_ir::semantic::{
         CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, OpKey,
         OperationAttributes, OperationEffect, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, TypeKey,
@@ -957,7 +957,6 @@ mod tests {
     /// than a silently skipped check.
     fn evaluate_refined(refinement: &IndexRefinement, inputs: &[(usize, &Tensor)]) -> Vec<u32> {
         let scalars = governed_scalars().expect("the governed scalar authority composes");
-        let semantic = FrozenSemanticRegistry::standard().expect("the governed semantics compose");
         let evaluator = IndexRegionEvaluator::new(
             FrozenReferenceRegistry::standard().expect("the governed value profile composes"),
             FrozenScalarReferenceRegistry::standard().expect("the governed scalar oracle composes"),
@@ -974,7 +973,7 @@ mod tests {
         let evaluation = evaluator
             .evaluate(
                 refinement.region(),
-                IndexRegionAuthority::new(&scalars, &semantic),
+                IndexRegionAuthority::new(&scalars),
                 &bound,
             )
             .expect("the governed region executes on the oracle");

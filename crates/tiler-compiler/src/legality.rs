@@ -1508,7 +1508,7 @@ mod tests {
         let evaluation = evaluator
             .evaluate(
                 refinement.region(),
-                IndexRegionAuthority::new(&scalars, &semantic()),
+                IndexRegionAuthority::new(&scalars),
                 &[IndexRegionInput::new(input_tensor, &input)],
             )
             .unwrap();

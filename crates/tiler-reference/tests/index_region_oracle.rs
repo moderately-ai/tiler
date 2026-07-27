@@ -377,15 +377,10 @@ fn input_ids(region: &VerifiedIndexRegion) -> Vec<VerifiedTensorId> {
         .collect()
 }
 
-fn semantic_authority() -> FrozenSemanticRegistry {
-    FrozenSemanticRegistry::standard().unwrap()
-}
-
 #[test]
 fn matvec_region_evaluates_through_registered_scalar_capabilities() {
     let scalars = scalar_registry(1);
     let region = matvec_region(&scalars, 3, 4).unwrap();
-    let semantic = semantic_authority();
     let left = f32_tensor(
         Shape::from_dims([3, 4]),
         [
@@ -400,11 +395,7 @@ fn matvec_region_evaluates_through_registered_scalar_capabilities() {
     ];
 
     let evaluation = evaluator(&scalars)
-        .evaluate(
-            &region,
-            IndexRegionAuthority::new(&scalars, &semantic),
-            &bindings,
-        )
+        .evaluate(&region, IndexRegionAuthority::new(&scalars), &bindings)
         .unwrap();
 
     assert_eq!(evaluation.outputs().len(), 1);
@@ -423,7 +414,6 @@ fn matvec_region_evaluates_through_registered_scalar_capabilities() {
 #[test]
 fn empty_reduction_and_parallel_domains_keep_their_documented_results() {
     let scalars = scalar_registry(1);
-    let semantic = semantic_authority();
     let evaluator = evaluator(&scalars);
 
     let region = matvec_region(&scalars, 3, 0).unwrap();
@@ -433,7 +423,7 @@ fn empty_reduction_and_parallel_domains_keep_their_documented_results() {
     let outputs = evaluator
         .evaluate(
             &region,
-            IndexRegionAuthority::new(&scalars, &semantic),
+            IndexRegionAuthority::new(&scalars),
             &[
                 IndexRegionInput::new(ids[0], &left),
                 IndexRegionInput::new(ids[1], &right),
@@ -457,7 +447,7 @@ fn empty_reduction_and_parallel_domains_keep_their_documented_results() {
     let outputs = evaluator
         .evaluate(
             &region,
-            IndexRegionAuthority::new(&scalars, &semantic),
+            IndexRegionAuthority::new(&scalars),
             &[
                 IndexRegionInput::new(ids[0], &left),
                 IndexRegionInput::new(ids[1], &right),
@@ -497,13 +487,12 @@ fn gather(
     scalars: &FrozenScalarRegistry,
     source: &Tensor,
 ) -> Vec<f32> {
-    let semantic = semantic_authority();
     let ids = input_ids(region);
     f32_values(
         &evaluator(scalars)
             .evaluate(
                 region,
-                IndexRegionAuthority::new(scalars, &semantic),
+                IndexRegionAuthority::new(scalars),
                 &[IndexRegionInput::new(ids[0], source)],
             )
             .unwrap()
@@ -589,7 +578,6 @@ fn reads_and_writes_preserve_exact_element_bits() {
 fn missing_authority_and_missing_capabilities_fail_closed() {
     let scalars = scalar_registry(1);
     let region = matvec_region(&scalars, 2, 2).unwrap();
-    let semantic = semantic_authority();
     let left = f32_tensor(Shape::from_dims([2, 2]), [1.0, 2.0, 3.0, 4.0]);
     let right = f32_tensor(Shape::from_dims([2]), [1.0, 1.0]);
     let ids = input_ids(&region);
@@ -609,7 +597,7 @@ fn missing_authority_and_missing_capabilities_fail_closed() {
     assert!(matches!(
         incomplete.evaluate(
             &region,
-            IndexRegionAuthority::new(&scalars, &semantic),
+            IndexRegionAuthority::new(&scalars),
             &bindings
         ),
         Err(IndexRegionEvaluationError::MissingScalarCapability { operation, .. })
@@ -618,11 +606,7 @@ fn missing_authority_and_missing_capabilities_fail_closed() {
 
     let evaluator = evaluator(&scalars);
     assert!(matches!(
-        evaluator.evaluate(
-            &region,
-            IndexRegionAuthority::new(&scalars, &semantic),
-            &bindings[..1]
-        ),
+        evaluator.evaluate(&region, IndexRegionAuthority::new(&scalars), &bindings[..1]),
         Err(IndexRegionEvaluationError::InputCount {
             expected: 2,
             actual: 1
@@ -633,18 +617,14 @@ fn missing_authority_and_missing_capabilities_fail_closed() {
         IndexRegionInput::new(ids[0], &left),
     ];
     assert!(matches!(
-        evaluator.evaluate(
-            &region,
-            IndexRegionAuthority::new(&scalars, &semantic),
-            &swapped
-        ),
+        evaluator.evaluate(&region, IndexRegionAuthority::new(&scalars), &swapped),
         Err(IndexRegionEvaluationError::InputBoundary { input_index: 0 })
     ));
     let wrong = f32_tensor(Shape::from_dims([2, 3]), [0.0; 6]);
     assert!(matches!(
         evaluator.evaluate(
             &region,
-            IndexRegionAuthority::new(&scalars, &semantic),
+            IndexRegionAuthority::new(&scalars),
             &[
                 IndexRegionInput::new(ids[0], &wrong),
                 IndexRegionInput::new(ids[1], &right),
@@ -657,7 +637,7 @@ fn missing_authority_and_missing_capabilities_fail_closed() {
     assert!(matches!(
         evaluator.evaluate(
             &region,
-            IndexRegionAuthority::new(&foreign, &semantic),
+            IndexRegionAuthority::new(&foreign),
             &bindings
         ),
         Err(IndexRegionEvaluationError::ScalarCapabilityAuthorityMismatch { capability })
@@ -669,7 +649,6 @@ fn missing_authority_and_missing_capabilities_fail_closed() {
 fn callback_failures_retain_exact_capability_attribution() {
     let scalars = scalar_registry(1);
     let region = matvec_region(&scalars, 1, 1).unwrap();
-    let semantic = semantic_authority();
     let left = f32_tensor(Shape::from_dims([1, 1]), [2.0]);
     let right = f32_tensor(Shape::from_dims([1]), [3.0]);
     let ids = input_ids(&region);
@@ -688,11 +667,7 @@ fn callback_failures_retain_exact_capability_attribution() {
             capabilities(&scalars, Arc::new(MalformedReference(malformed)), true),
         );
         let error = evaluator
-            .evaluate(
-                &region,
-                IndexRegionAuthority::new(&scalars, &semantic),
-                &bindings,
-            )
+            .evaluate(&region, IndexRegionAuthority::new(&scalars), &bindings)
             .unwrap_err();
         match malformed {
             Malformed::Failure => assert!(matches!(
@@ -796,7 +771,7 @@ mod governed {
         ScalarReferenceRegistryBuilder, ScalarReferenceRequest, Tensor, TensorPayloadView,
     };
 
-    use super::{f32_type, input_ids, semantic_authority};
+    use super::{f32_type, input_ids};
 
     /// A quiet NaN whose payload is *not* the governed canonical arithmetic one.
     const NONCANONICAL_QUIET_NAN: u32 = 0x7fc0_1234;
@@ -862,13 +837,8 @@ mod governed {
             .map(|(id, tensor)| IndexRegionInput::new(*id, tensor))
             .collect();
         let scalars = governed_scalars();
-        let semantic = semantic_authority();
         let evaluation = governed_evaluator()
-            .evaluate(
-                region,
-                IndexRegionAuthority::new(&scalars, &semantic),
-                &bindings,
-            )
+            .evaluate(region, IndexRegionAuthority::new(&scalars), &bindings)
             .expect("the governed region evaluates");
         assert_eq!(evaluation.outputs().len(), 1, "one output root");
         tensor_bits(&evaluation.outputs()[0])
