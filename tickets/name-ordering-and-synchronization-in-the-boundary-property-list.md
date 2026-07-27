@@ -1,7 +1,7 @@
 ---
 id: name-ordering-and-synchronization-in-the-boundary-property-list
 title: Name ordering and synchronization in the optimizer boundary-property list
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [implement-boundary-property-model, implement-boundary-property-enforcers]
@@ -30,3 +30,24 @@ identity, maturity, and value-preserving enforcer boundary are stated.
 
 The initial list names ordering and synchronization, states its admission rule,
 does not overstate the maturity of reserved values, and `make full` passes.
+
+## Outcome (2026-07-27)
+
+`docs/compiler/optimizer.md`'s initial boundary-contract list now names availability and visibility, with the admission rule for a further dimension and a maturity table for the two added.
+
+**The maturity distinction was the substantive part, and it is not uniform within a dimension.** The ticket warned against promoting a reservation into a contract sentence; reading `crates/tiler-compiler/src/boundary.rs` shows the split runs *inside* each new dimension rather than between them:
+
+| value | maturity |
+| --- | --- |
+| availability *after producing dispatch* | implemented and satisfiable |
+| availability *after observed host completion* | type-system reservation — ADR 0033 makes host observation a separate boundary and no guarantee in this vocabulary discharges it |
+| visibility *readable on the requiring affinity* | implemented and satisfiable |
+| visibility *requires an explicit coherence action* | reserved and **deliberately not satisfiable** |
+
+The last is the one worth stating plainly: `VisibilityGuarantee::RequiresExplicitCoherenceAction` exists precisely so that it fails `satisfies`. ADR 0047 makes an affinity-to-domain edge declare its own coherence requirements, so a domain owing a flush or invalidate is guaranteed by its producer and *not* readable by a consumer until an enforcer supplies the action. Modelling it as satisfied at a higher cost is the substitution ADR 0043 forbids. Listing the dimension without that would have read as "coherence is handled".
+
+The contract now says a reserved value is not a weaker form of support — it rejects, and the rejection is the guarantee, because the alternative is a plan silently reading a value nobody made visible.
+
+**The list was incomplete rather than wrong**, as the ticket established: it said "include", so nothing in it was contradicted by the implementation carrying eight dimensions. The two added are the pair `AGENTS.md` names as physical contracts rather than node annotations, which is why their absence mattered more than the count did.
+
+**Admission rule recorded:** requirement space, guarantee space, satisfaction or subsumption rule, child derivation, dominance, identity encoding, maturity class, and the enforcer boundary at which a value-preserving enforcer may discharge the requirement rather than the plan being refused. A dimension without a satisfaction rule is a label; one without an identity encoding is invisible to any consumer comparing two plans.

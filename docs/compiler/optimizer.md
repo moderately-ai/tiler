@@ -366,7 +366,24 @@ contracts include:
 - storage encoding;
 - alignment and vectorizable width;
 - materialized buffer, alias/view, or opaque runtime value;
-- device and address space.
+- device and address space;
+- **availability** — the dependency after which a produced value may be consumed;
+- **visibility** — whether a consumer's reads see the produced value without a further coherence action.
+
+The last two complete the list rather than extending it. `AGENTS.md` names ordering and synchronization as explicit physical contracts rather than implicit node annotations, and a boundary contract that could not express them would leave a plan's ordering and coherence obligations unstated at exactly the boundary they are owed across.
+
+**What each dimension currently establishes, distinguished by maturity.** A dimension appearing here says the optimizer models that property, not that every value in its vocabulary is served. Reading the two new dimensions honestly:
+
+| value | maturity |
+| --- | --- |
+| availability *after producing dispatch* | **implemented and satisfiable** — a producer guaranteeing availability after its own dispatch discharges it |
+| availability *after observed host completion* | **type-system reservation** — ADR 0033 makes host observation a separate boundary (terminal completion, a post-completion status check, error-record visibility, then interpretation) and no guarantee in this vocabulary discharges it, so a requirement naming it rejects explicitly |
+| visibility *readable on the requiring affinity* | **implemented and satisfiable** — discharged by a producer coherent on its own affinity |
+| visibility *requires an explicit coherence action* | **reserved, and deliberately not satisfiable** — ADR 0047 makes an affinity-to-domain edge declare its own coherence requirements, so a domain owing a flush or invalidate is guaranteed by its producer and unreadable by a consumer until an enforcer supplies the action; treating it as satisfied at a higher cost is the substitution ADR 0043 forbids |
+
+A reserved value is not a weaker form of support. It rejects, and the rejection is the guarantee: the alternative is a plan that silently reads a value no one made visible.
+
+**Admission rule for a new dimension.** The list is extensible, and a dimension is admitted only when all of these are stated: its requirement space, its guarantee space, the satisfaction or subsumption rule between them, how a child boundary derives it, its dominance behaviour, its identity encoding, its maturity by the classes above, and the boundary at which a value-preserving enforcer may discharge it rather than the plan being refused. A dimension without a satisfaction rule is a label, and one without an identity encoding is invisible to every consumer that compares two plans.
 
 **Storage encoding is a distinct property, not part of layout class.** Layout
 class answers which logical coordinate maps to which position; encoding answers
