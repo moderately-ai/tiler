@@ -1920,3 +1920,162 @@ fn the_abi_arena_is_deduplicated_by_content() {
     let mut wired = two_stage(&semantic, TwoStageShape::Canonical);
     assert_eq!(literal(&mut wired.builder, 24), wired.abi.input_bytes);
 }
+
+/// How an arena-growth fixture wires each level to the one below it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AbiGrowth {
+    /// Each level names the level below it once, and a shared `false` leaf.
+    ///
+    /// A key that embeds its operands' keys restates the whole level below at
+    /// every level, so the array of all keys is quadratic in arena size.
+    Chain,
+    /// Each level names the level below it *twice*.
+    ///
+    /// The same nesting then restates it twice per level, so one key alone
+    /// doubles per level — the case where the identity bound, rather than the
+    /// program's size, was the only thing containing the encoding.
+    SharedDag,
+}
+
+/// Builds an always-true guard whose subtree spans `levels` composed nodes.
+///
+/// Every level evaluates to `true`, so the fixture grows the arena and changes
+/// nothing else about the program.
+fn grown_guard(builder: &mut KernelProgramBuilder, growth: AbiGrowth, levels: usize) -> AbiExprId {
+    let mut node = builder
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("guard root");
+    for _ in 0..levels {
+        node = match growth {
+            AbiGrowth::Chain => {
+                // Minted inside the loop so a zero-level fixture retains no
+                // node that no use site reaches, which verification rejects.
+                let filler = builder
+                    .push_abi_root(AbiRoot::BooleanLiteral(false))
+                    .expect("filler root");
+                builder.push_abi_binary(AbiBinaryOp::Or, node, filler)
+            }
+            AbiGrowth::SharedDag => builder.push_abi_binary(AbiBinaryOp::And, node, node),
+        }
+        .expect("guard level");
+    }
+    node
+}
+
+/// The canonical two-stage program, with its guard grown to `levels`.
+fn program_with_grown_abi(
+    semantic: &SemanticProgram,
+    growth: AbiGrowth,
+    levels: usize,
+) -> VerifiedKernelProgram {
+    let mut builder = wire_two_stage_structure(two_stage(semantic, TwoStageShape::Canonical));
+    let guard = grown_guard(&mut builder, growth, levels);
+    builder
+        .applicability_guard(guard)
+        .expect("applicability guard");
+    declare_routing_commit(&mut builder);
+    builder.build().expect("verified kernel program")
+}
+
+/// Reports identity size against arena size, and proves the curve is a line.
+///
+/// **The growth rate is the finding, not the absolute number.** Identity size
+/// is deterministic — the same program yields the same byte count on every host
+/// — so this needs neither repetition nor statistics, unlike a timing
+/// measurement.
+///
+/// A constant increment per level is exactly the property the `v3` encoding
+/// buys, and asserting it is what makes this a guard rather than a print: under
+/// `v2`, which named each use site by a key that embedded its operands' keys,
+/// the increment grew with the level under `Chain` and doubled under
+/// `SharedDag`. See the ticket outcome for the two measured curves.
+///
+/// Reproduce with:
+///
+/// ```text
+/// cargo nextest run -p tiler-ir -E 'test(abi_identity_size)' --no-capture
+/// ```
+#[test]
+fn abi_identity_size_grows_linearly_with_the_arena() {
+    /// Enough levels that a quadratic or an exponential curve is unmistakable,
+    /// and few enough that a `SharedDag` fixture still fits in memory for
+    /// anyone re-running this against the `v2` encoding.
+    const LEVELS: std::ops::Range<usize> = 0..17;
+
+    let semantic = serial_sum_program(SCALE_BITS);
+    for growth in [AbiGrowth::Chain, AbiGrowth::SharedDag] {
+        let mut sizes = Vec::new();
+        for levels in LEVELS {
+            let program = program_with_grown_abi(&semantic, growth, levels);
+            let nodes = program.abi_expressions().len();
+            let bytes = program.canonical_identity().as_bytes().len();
+            println!("MEASURE {growth:?} {levels:>2} levels: {nodes:>2} nodes, {bytes} bytes");
+            sizes.push((nodes, bytes));
+        }
+
+        // The first level is the one that mints the shared `false` leaf under
+        // `Chain`, so the constant-increment claim starts after it.
+        let increments: Vec<usize> = sizes
+            .windows(2)
+            .skip(1)
+            .map(|pair| pair[1].1 - pair[0].1)
+            .collect();
+        assert!(
+            increments.windows(2).all(|pair| pair[0] == pair[1]),
+            "{growth:?} identity size must grow by a constant per level, measured {increments:?}"
+        );
+        let added_nodes: Vec<usize> = sizes
+            .windows(2)
+            .skip(1)
+            .map(|pair| pair[1].0 - pair[0].0)
+            .collect();
+        assert!(
+            added_nodes.iter().all(|added| *added == 1),
+            "each level must add exactly one arena node, measured {added_nodes:?}"
+        );
+    }
+}
+
+/// Two guards over the same node kinds, wired differently, must differ.
+///
+/// Encoding the arena once and naming nodes by canonical position moves the
+/// whole burden of distinguishing two expressions onto those position
+/// references. This is the case that a reference encoding losing operand order,
+/// or losing which node an operand names, would pass anyway: both programs hold
+/// one `true`, one `false`, and two `Or`s, and differ only in what those `Or`s
+/// name.
+#[test]
+fn identity_distinguishes_two_arenas_that_differ_only_in_their_wiring() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let build = |nest_left: bool| {
+        let mut builder = wire_two_stage_structure(two_stage(&semantic, TwoStageShape::Canonical));
+        let yes = builder
+            .push_abi_root(AbiRoot::BooleanLiteral(true))
+            .expect("true root");
+        let no = builder
+            .push_abi_root(AbiRoot::BooleanLiteral(false))
+            .expect("false root");
+        let inner = builder
+            .push_abi_binary(AbiBinaryOp::Or, yes, no)
+            .expect("inner disjunction");
+        let guard = if nest_left {
+            builder.push_abi_binary(AbiBinaryOp::Or, inner, no)
+        } else {
+            builder.push_abi_binary(AbiBinaryOp::Or, yes, inner)
+        }
+        .expect("outer disjunction");
+        builder
+            .applicability_guard(guard)
+            .expect("applicability guard");
+        declare_routing_commit(&mut builder);
+        builder.build().expect("verified kernel program")
+    };
+
+    let left = build(true);
+    let right = build(false);
+    assert_eq!(left.abi_expressions().len(), right.abi_expressions().len());
+    assert_ne!(
+        left.canonical_identity().as_bytes(),
+        right.canonical_identity().as_bytes()
+    );
+}

@@ -15,6 +15,8 @@
 //! than declared by the producer. Complete coverage and named-output coverage
 //! are therefore obligations against an unforgeable subject.
 
+use std::collections::HashMap;
+
 use crate::kernel::{BufferAccess, VerifiedKernel};
 use crate::schedule::element_count;
 use crate::semantic::{InputKey, OutputKey, SemanticGraphIdentity, SemanticProgram};
@@ -22,7 +24,7 @@ use crate::shape::{Axis, Shape};
 
 use super::abi::{
     AbiBinaryOp, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue, AvailabilityPhase, ExprNode,
-    binary_operand_type, evaluate, expr_key, node_is_interface_only, node_phase, node_type,
+    binary_operand_type, evaluate, node_is_interface_only, node_phase, node_type,
     unary_operand_type,
 };
 use super::error::{
@@ -70,7 +72,11 @@ pub struct KernelProgramBuilder {
     covered: Vec<SemanticOccurrence>,
     claimed_inputs: Vec<InputKey>,
     expressions: Vec<ExprNode>,
-    expression_keys: Vec<Vec<u8>>,
+    /// Arena position of every node already interned, keyed on the node itself.
+    ///
+    /// See [`KernelProgramBuilder::push_abi_node`] for why a shallow key decides
+    /// deep structural equality here.
+    interned_expressions: HashMap<ExprNode, u32>,
     expression_types: Vec<AbiType>,
     expression_phases: Vec<AvailabilityPhase>,
     expression_interface_only: Vec<bool>,
@@ -116,7 +122,7 @@ impl KernelProgramBuilder {
             covered: Vec::new(),
             claimed_inputs: Vec::new(),
             expressions: Vec::new(),
-            expression_keys: Vec::new(),
+            interned_expressions: HashMap::new(),
             expression_types: Vec::new(),
             expression_phases: Vec::new(),
             expression_interface_only: Vec::new(),
@@ -609,9 +615,10 @@ impl KernelProgramBuilder {
     /// diagnostic and the recoverable builder when verification fails.
     pub fn build(self) -> Result<VerifiedKernelProgram, KernelProgramVerificationError> {
         let data = self.assemble();
-        match super::verify::verify_program(&data, &self.subject)
-            .and_then(|(derived, keys)| Ok((derived, encode_identity(&data, &keys)?)))
-        {
+        match super::verify::verify_program(&data, &self.subject).and_then(|(derived, keys)| {
+            let identity = encode_identity(&data, &keys, &derived.definitions)?;
+            Ok((derived, identity))
+        }) {
             Ok((derived, identity)) => Ok(VerifiedKernelProgram {
                 data,
                 derived,
@@ -640,9 +647,32 @@ impl KernelProgramBuilder {
     }
 
     /// Interns one ABI arena node, returning the handle of an equal earlier one.
+    ///
+    /// # Why matching the node itself is enough
+    ///
+    /// The arena is deduplicated by *content*: no two positions may hold nodes
+    /// denoting the same expression tree. This matches only the node's own
+    /// constructor, operation, and operand *positions* — a shallow comparison —
+    /// yet it decides that deep property exactly, and the argument is an
+    /// induction over arena position.
+    ///
+    /// Suppose positions `i < j` denoted the same tree. Denoting the same tree
+    /// forces the same constructor and operation, and forces each of `j`'s
+    /// operands to denote the same tree as the corresponding operand of `i`.
+    /// Operands sit at strictly smaller positions, so by the induction
+    /// hypothesis two operands denoting the same tree *are* the same position.
+    /// Then `i` and `j` agree in constructor, operation, and every operand
+    /// position — they are equal as [`ExprNode`]s — so this lookup would have
+    /// returned `i` instead of inserting `j`. No such `j` exists.
+    ///
+    /// The induction rests on operands being positions in *this* arena, which
+    /// handle ownership proves before a node is assembled. It is the same
+    /// property the previous whole-subtree key had, obtained without paying for
+    /// the subtree: a key that embeds its operands' keys is quadratic in arena
+    /// size along a chain and doubles per level wherever a node is shared.
     fn push_abi_node(&mut self, node: ExprNode) -> Result<AbiExprId, KernelProgramBuildError> {
-        let key = expr_key(&node, &self.expression_keys);
-        if let Some(existing) = self.expression_keys.iter().position(|held| *held == key) {
+        if let Some(existing) = self.interned_expressions.get(&node) {
+            let existing = as_position(*existing);
             return AbiExprId::from_len(self.owner, existing).ok_or(
                 KernelProgramBuildError::StructuralLimit {
                     resource: ProgramLimitKind::AbiExpressions,
@@ -663,6 +693,7 @@ impl KernelProgramBuilder {
                 limit: MAX_PROGRAM_ABI_EXPRESSIONS,
             },
         )?;
+        let index = u32::try_from(self.expressions.len()).expect("a bounded arena fits u32");
         self.expression_types
             .push(node_type(&node, &self.expression_types));
         self.expression_phases
@@ -671,7 +702,7 @@ impl KernelProgramBuilder {
             &node,
             &self.expression_interface_only,
         ));
-        self.expression_keys.push(key);
+        self.interned_expressions.insert(node.clone(), index);
         self.expressions.push(node);
         Ok(id)
     }
