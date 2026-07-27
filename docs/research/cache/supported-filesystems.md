@@ -79,9 +79,11 @@ That changes what this gate can honestly deliver. A supported set is a statement
 | --- | --- | --- | --- |
 | macOS | APFS (local volume) | supported | measured, Section 6 |
 | macOS | exFAT (local volume) | supported for correctness; P6 is coarse | measured, Section 6 |
-| Debian-family Linux | ext4, btrfs, xfs (local) | supported by primary-source derivation, **unmeasured** | Section 1's POSIX and Linux man-page facts |
+| Debian-family Linux | ext4, btrfs, xfs (local) | **inactive** — not a supported row; derivation retained as research | Section 1's POSIX and Linux man-page facts, **unmeasured** |
 | any | NFS, SMB, and other network filesystems | **not supported** | Section 4 |
 | any | a root whose `tmp/` and `entries/` differ in `st_dev` | **not supported**, and refused loudly | P1 |
+
+**Why the Linux row is inactive rather than merely unmeasured (2026-07-27).** `AGENTS.md` states that Tiler develops on macOS only and that other platforms are unsupported rather than maintained as untested branches. A row calling a Linux filesystem supported would therefore name a platform the product does not support, on evidence that was never gathered — two separate overstatements in one cell. The derivation below is sound and is kept as evidence; it is not a support claim. **The exact trigger for reopening it is the admission of Linux as a supported development or product platform**, and measurement is required before the row becomes active even then. `docs/artifact-abi.md` states the supported set as macOS APFS and exFAT alone.
 
 **Measurement boundary — the exact unmeasured case.** No Linux host was available to this ticket. The probe of Section 6 has never executed on ext4, btrfs, or xfs, and the Linux rows above rest on POSIX and the Linux man-pages alone. The check that would close it is one command on a Debian-family host: `rustc --edition 2021 spikes/cache/filesystem_probe.rs -o /tmp/tiler-fs-probe && /tmp/tiler-fs-probe ~/.cache`. Running it is `probe-the-expansion-cache-filesystem-properties-on-linux`.
 

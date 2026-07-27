@@ -67,8 +67,9 @@ exit codes, and output in
 an ignored local trace. Its default five-minute deadline covers the complete
 selected suite; timeout and malformed-output behavior have a separate
 `--self-test`. Process-tree termination requires Python 3.11 or newer and
-POSIX process groups on the supported macOS and Debian-family development
-hosts.
+POSIX process groups on the supported development host, which `AGENTS.md` now
+states is macOS alone; this record named Debian-family Linux beside it when it
+was written, and the supported set has narrowed rather than widened since.
 
 Measured results:
 

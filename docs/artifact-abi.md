@@ -830,11 +830,20 @@ every contender; and a modification time is reported. A root is supported when
 all six hold. `spikes/cache/filesystem_probe.rs` measures them against a
 candidate directory and exits non-zero when one is refuted.
 
-Local APFS and local exFAT on macOS are measured. Local ext4, btrfs, and xfs on
-Debian-family Linux are derived from POSIX and the Linux manual pages and remain
-unmeasured. **Network filesystems are not supported**, because both platforms
-document a mount mode under which an advisory lock excludes only processes on
-the same client while still reporting success.
+**The supported set is local APFS and local exFAT on macOS, both measured**, and
+nothing else. `AGENTS.md` states that Tiler develops on macOS only and that
+other platforms are unsupported rather than maintained as untested branches, so
+a Linux row here would name a platform this product does not support on evidence
+that was never gathered. A derivation of ext4, btrfs, and xfs from POSIX and the
+Linux manual pages is retained as **inactive research** in
+[`docs/research/cache/supported-filesystems.md`](research/cache/supported-filesystems.md);
+it becomes a candidate row if and only if Linux is admitted as a supported
+platform, and it must be measured before it becomes one.
+
+**Network filesystems are not supported**, because the documented mount modes
+put an advisory lock's exclusion outside the local kernel while still reporting
+success. That exclusion is a property of the protocol rather than of the host
+platform, so it holds whatever the supported set becomes.
 
 Only the lock property can fail invisibly, and it costs duplicate compiler work
 rather than correctness: complete identity, immutable final entries, validation

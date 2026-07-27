@@ -230,9 +230,14 @@ contended key is better selection as well as bounded latency.
 Windows cannot inherit the open-unlinked-reader conclusion. Its sharing flags,
 replacement API, and deletion semantics need their own spike before the cache
 core claims Windows support. That condition is unmet and no such spike is owed:
-`AGENTS.md` supports macOS and Debian-family Linux only, and the Rust sub-gate
-accepts only the macOS arm64 and GNU Linux x86-64 profiles. The sentence stands
-as the obligation that would revive if the support decision ever changed.
+`AGENTS.md` states that Tiler develops on macOS only and that other platforms
+are unsupported rather than maintained as untested branches — narrower than when
+this was written, which named Debian-family Linux too. The Rust sub-gate this
+paragraph once cited was deleted by `e197176` with the rest of the Python
+tooling, so no check enforces a host profile at all; the policy is the authority
+and it is held by review. The sentence stands as the obligation that would
+revive if the support decision ever changed, and Windows is further from that
+than it was.
 
 ## Rust version consequence
 
@@ -324,11 +329,12 @@ of scope for this ticket.
    by [the supported-filesystem note](supported-filesystems.md), with one part
    dissolved rather than answered. It states the six properties the protocol
    rests on, measures them with `spikes/cache/filesystem_probe.rs` on local APFS
-   and local exFAT, derives the Debian-family Linux members from POSIX and the
-   Linux manual pages without measuring them, and excludes network filesystems —
-   both platforms document a mount mode under which an advisory lock reports
-   success while excluding only the local client, and no single host can detect
-   it. That failure costs compile-once suppression and not correctness, which is
+   and local exFAT — the supported set — and derives ext4, btrfs, and xfs from
+   POSIX and the Linux manual pages without measuring them, retained as inactive
+   research rather than as a supported row. It excludes network filesystems
+   because macOS and Linux alike document a mount mode under which an advisory
+   lock reports success while excluding only the local client, and no single
+   host can detect it. That failure costs compile-once suppression and not correctness, which is
    why the note refuses an unrecognized filesystem nowhere and reports every
    locally decidable failure instead. The **Windows** half is dissolved: this
    note's Windows sentence below is conditional on the cache core claiming

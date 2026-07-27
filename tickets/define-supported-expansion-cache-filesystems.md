@@ -33,9 +33,9 @@ The research note's fifth follow-up gate: define supported local filesystems and
 
 **`atime` answered no**, closing the deferral in the collection note. Measured on macOS 27.0/APFS with no `noatime`: access time follows a `relatime`-like predicate, and a published entry's modification time never changes, so its access time advances at most once ever — at its first read after publication. It is a boolean "read since published", not a recency. A macOS exFAT volume mounts `noatime` and measures `none`; Linux defaults to `relatime` by documentation.
 
-**Windows dissolved rather than deferred.** The crash/race note's Windows sentence is conditional on the cache core claiming Windows support; `AGENTS.md` supports macOS and Debian-family Linux only and the Rust sub-gate accepts only those two profiles, so no spike is owed.
+**Windows dissolved rather than deferred.** The crash/race note's Windows sentence is conditional on the cache core claiming Windows support. `AGENTS.md` now states that Tiler develops on **macOS only** — narrower than when this was written, which named Debian-family Linux too — and the Rust sub-gate this once cited was deleted by `e197176` with the rest of the Python tooling. No spike is owed, and Windows is further from support than it was.
 
 ## Split out
 
-- `probe-the-expansion-cache-filesystem-properties-on-linux` — the ext4/btrfs/xfs rows are derived from POSIX and the Linux manual pages and unmeasured; no Linux host was available.
+- ~~`probe-the-expansion-cache-filesystem-properties-on-linux`~~ — **closed without completion (2026-07-27)**, by `reconcile-cache-filesystem-claims-with-macos-support-policy`. Measuring ext4, btrfs, and xfs would qualify rows on a platform the support policy does not admit; the derivation is retained as inactive research and the trigger for reviving the probe is the admission of Linux as a supported platform.
 - `add-an-expansion-cache-root-preflight` — an explicit, non-refusing `ExpansionCache::preflight` over the locally decidable subset, in `implementation/cache` scope.
