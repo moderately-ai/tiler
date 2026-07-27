@@ -36,9 +36,12 @@
 //! digest in name only:
 //! `tiler_compiler::feasibility` records that its bytes *are* the descriptor
 //! identity rather than a hash of it, and it is under
-//! [`MAX_OPAQUE_IDENTITY_BYTES`] because no authority downstream of this crate
-//! publishes a bound for it yet, not because a digest bound fits it —
-//! `bound-the-target-profile-descriptor-by-its-declaring-authority` owns that.
+//! [`MAX_OPAQUE_IDENTITY_BYTES`], which for that subject is a **codec resource
+//! ceiling rather than a claim about profiles**: `tiler_compiler` publishes
+//! `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` and refuses where a descriptor is
+//! minted, so a governed producer cannot reach this bound and a value that does
+//! reach it was not minted by one. This crate still refuses it, because it
+//! validates what it is handed rather than trusting where it came from.
 
 use std::fmt;
 
@@ -50,15 +53,20 @@ use super::error::{ArtifactBuildError, ArtifactKeyKind};
 pub const MAX_GOVERNED_KEY_BYTES: usize = 256;
 /// Maximum byte length of one digest-shaped opaque identity.
 ///
-/// This bounds the two identities no upstream authority publishes a bound for:
-/// [`PayloadDigest`], which is fixed-width under the governed digest algorithm
-/// and cannot approach it, and [`TargetProfileDescriptorDigest`], whose bytes
-/// are a canonical descriptor encoding and can. **Measurement** on this
-/// checkout: the standard profile's descriptor is 249 bytes and does not grow
-/// with the program, so nothing is refused today; it grows with the profile's
-/// capability and honourability facts, and
-/// `bound-the-target-profile-descriptor-by-its-declaring-authority` owns
-/// closing that.
+/// This bounds [`PayloadDigest`], which is fixed-width under the governed digest
+/// algorithm and cannot approach it, and [`TargetProfileDescriptorDigest`], whose
+/// bytes
+/// are a canonical descriptor encoding and can. For that subject this is a
+/// **resource ceiling, not the governing bound**: `tiler_compiler` publishes
+/// `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` and refuses at the mint site, because
+/// the authority that can name the profile is the one that can explain the
+/// refusal. The two numbers are equal today and **nothing checks that they stay
+/// equal** — neither crate depends on the other, and no library crate depends on
+/// both — so raising either requires reading the other.
+///
+/// **Measurement** on this checkout: the standard profile's descriptor is 249
+/// bytes and does not grow with the program, only with the profile's capability
+/// and honourability facts.
 ///
 /// It does **not** bound a [`BackendEntryKey`]. That is a canonical kernel
 /// identity and takes `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES`, the exact
@@ -237,8 +245,13 @@ opaque_identity!(
     "",
     "Named a digest, and not one: `tiler-compiler` emits the canonical descriptor",
     "bytes themselves rather than a hash of them, deliberately, so that no second",
-    "identity has to be kept in agreement with what it summarizes. The bound it",
-    "is under is therefore provisional; see [`MAX_OPAQUE_IDENTITY_BYTES`].",
+    "identity has to be kept in agreement with what it summarizes.",
+    "",
+    "The governing bound is `tiler_compiler`'s `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`,",
+    "enforced where a descriptor is minted, because the authority that can name the",
+    "profile is the one that can explain the refusal. [`MAX_OPAQUE_IDENTITY_BYTES`]",
+    "is what this crate will hold, and it still refuses past it, because it",
+    "validates what it is handed rather than trusting where it came from.",
 );
 
 /// The declared target profile a plan variant was assessed against.

@@ -1320,10 +1320,40 @@ impl FeasibleSet {
 ///
 /// Distinct from every feasibility outcome: a malformed input is a contract
 /// violation, not a statement about whether a candidate is feasible.
+/// Maximum byte length of one target profile's canonical descriptor.
+///
+/// **This crate is the declaring authority, so this crate publishes the bound
+/// and refuses where a descriptor is minted.** The descriptor's bytes *are* the
+/// profile's identity rather than a hash of them, so it grows with every
+/// capability and honourability fact a profile declares — the axis, bound,
+/// phase, authority, and validity scope of each. A profile declaring too many
+/// must be refused by whoever can name the profile, not by a downstream reader
+/// that can only report a length.
+///
+/// **Measurement** on this checkout: the standard
+/// `tiler.prototype-target-neutral-baseline.v1` descriptor is 249 bytes, and it
+/// does not vary with the program because it is a property of the profile.
+///
+/// **Why this number.** It is the largest value `tiler-artifact` will hold: that
+/// crate's `MAX_OPAQUE_IDENTITY_BYTES` is a codec resource ceiling, and a
+/// producer minting past it would publish a descriptor no reader could carry.
+/// Nothing checks the two against each other and nothing can — neither crate
+/// depends on the other, and no library crate depends on both — so the
+/// relationship is held by this comment and by review. **Raising this bound
+/// requires checking the artifact ceiling in the same change.**
+pub(crate) const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES: usize = 1_024;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FeasibilityError {
     /// A target profile was declared inconsistently.
     MalformedProfile { rule: &'static str },
+    /// A profile declares more facts than its canonical descriptor may carry.
+    DescriptorTooLong {
+        /// The profile whose descriptor exceeded the bound.
+        key: &'static str,
+        /// The length it reached.
+        actual: usize,
+    },
     /// A candidate proposal was declared inconsistently.
     MalformedProposal { rule: &'static str },
 }

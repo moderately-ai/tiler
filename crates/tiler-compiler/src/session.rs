@@ -999,9 +999,13 @@ mod tests {
         assert!(!compilation.target_profile_key().is_empty());
         let descriptor = compilation.target_profile_descriptor();
         assert!(!descriptor.is_empty(), "a descriptor identity is carried");
+        // Against the constant this crate publishes, not a literal restating it.
+        // The bound is now enforced where a descriptor is minted, so this is a
+        // regression guard on the governed profile's size rather than the only
+        // thing standing between an oversized profile and a packaging failure.
         assert!(
-            descriptor.len() <= 1_024,
-            "the descriptor fits the artifact boundary's opaque-identity bound: {} bytes",
+            descriptor.len() <= crate::feasibility::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
+            "the governed descriptor fits the bound this crate publishes: {} bytes",
             descriptor.len(),
         );
 

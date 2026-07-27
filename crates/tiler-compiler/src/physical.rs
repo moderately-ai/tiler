@@ -717,7 +717,18 @@ pub(crate) fn assess_contract(
 pub(crate) fn target_profile_descriptor(
     target: &PrototypeTargetProfile,
 ) -> Result<Vec<u8>, FeasibilityError> {
-    checked_target_profile(target).map(|profile| profile.canonical_descriptor())
+    let descriptor = checked_target_profile(target)?.canonical_descriptor();
+    // Refused here rather than at packaging. `tiler-artifact` bounds what it
+    // will hold, but it can only report a length; this crate can name the
+    // profile that declared too much, which is the difference between a
+    // diagnostic someone can act on and one they have to trace back.
+    if descriptor.len() > crate::feasibility::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
+        return Err(FeasibilityError::DescriptorTooLong {
+            key: target.key,
+            actual: descriptor.len(),
+        });
+    }
+    Ok(descriptor)
 }
 
 /// Builds the immutable checked profile for the prototype baseline target.
@@ -837,6 +848,11 @@ const fn feasibility_intrinsic(error: FeasibilityError, region: RegionId) -> Phy
     let rule = match error {
         FeasibilityError::MalformedProfile { .. } => "target-profile-malformed",
         FeasibilityError::MalformedProposal { .. } => "target-proposal-malformed",
+        // A profile too large to describe is a declaration defect in the same
+        // class as a malformed one: it is a fact about the profile, decided
+        // before any candidate is considered, and no other plan makes it
+        // describable.
+        FeasibilityError::DescriptorTooLong { .. } => "target-profile-descriptor-too-long",
     };
     PhysicalError::Intrinsic { rule, region }
 }
