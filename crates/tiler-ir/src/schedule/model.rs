@@ -24,6 +24,20 @@ pub enum TensorRole {
 }
 
 /// Whether an access reads or writes its tensor.
+///
+/// **Do not add `#[non_exhaustive]`.** This is an ADR 0074 convention 5b type:
+/// `access_mode_tag` in `tiler-compiler`'s `selection.rs` and `frontier.rs` map
+/// it *totally* onto identity tags from outside this crate, with no wildcard
+/// arm. Marking it would make those matches a cross-crate `E0004` and force the
+/// wildcard back in, and a wildcard there would have to invent an identity tag
+/// that the variant alone determines — so a variant added later would encode
+/// under some other variant's bytes instead of failing the build. The exhaustive
+/// match is the mechanism that makes adding a variant a compile error at every
+/// encoder, which is exactly what the attribute would remove.
+///
+/// Adding a variant here is therefore expected to break both encoders, and that
+/// break is the design. Give the new variant its own tag at each site rather
+/// than widening an existing one.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AccessMode {
     /// The access reads its tensor.
