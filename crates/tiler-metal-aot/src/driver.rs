@@ -108,8 +108,15 @@ impl Toolchain {
     ///
     /// Fails closed with a typed [`DriverError`] and produces no artifact when
     /// the toolchain or SDK is unavailable, when the scratch filesystem work
-    /// fails, when either tool reports a nonzero status, or when the linker
-    /// yields no usable Metal library.
+    /// fails, when either tool reports a nonzero status, or when the linker's
+    /// output does not begin with the `MTLB` magic.
+    ///
+    /// **A success here is offline evidence only.** It says the selected
+    /// toolchain linked a `metallib`-shaped file for the requested compilation
+    /// target. It is not evidence that any particular device or deployment
+    /// target can load or execute that library: nothing in this crate consults
+    /// a live device, and the declared family and profile checks that would
+    /// bear on runtime compatibility belong to the runtime contract.
     pub fn compile(&self, request: &CompileRequest) -> Result<CompiledArtifact, DriverError> {
         let resolved = self.resolve(request.target.sdk)?;
 

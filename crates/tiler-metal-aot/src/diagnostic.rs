@@ -227,7 +227,12 @@ pub enum DriverError {
         /// A human-readable explanation.
         detail: String,
     },
-    /// A tool succeeded but produced no usable Metal library.
+    /// A tool reported success but its output does not begin with the `MTLB`
+    /// magic, so no `metallib`-shaped file was produced.
+    ///
+    /// The condition is a shape check on the linker's output, not a
+    /// compatibility verdict: this crate never loads the library, so it cannot
+    /// and does not report whether a device could.
     EmptyArtifact {
         /// A human-readable explanation.
         detail: String,
@@ -266,7 +271,7 @@ impl fmt::Display for DriverError {
             Self::EmptyArtifact { detail } => {
                 write!(
                     f,
-                    "offline compilation produced no usable metallib: {detail}"
+                    "offline compilation produced no metallib-shaped output: {detail}"
                 )
             }
         }
