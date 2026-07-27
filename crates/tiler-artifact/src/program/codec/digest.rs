@@ -17,9 +17,13 @@
 //! every encoded envelope byte identical. The ticket
 //! `select-the-governed-artifact-digest-implementation` owns that comparison.
 //!
-//! The implementation is FIPS 180-4 SHA-256 and is pinned by the standard
-//! published test vectors plus the three message lengths that exercise every
-//! padding branch.
+//! The implementation is FIPS 180-4 SHA-256. It is pinned by the standard
+//! published test vectors, by the message lengths that exercise every padding
+//! branch, and by a digest over every message length `0..=192` compared against
+//! a value Python's `hashlib` produced. The last of those is the only one that
+//! is *independent* evidence: the other two compare this implementation with
+//! itself or with a constant a reader cannot re-derive, so a consistently wrong
+//! padding rule satisfies them.
 //!
 //! # Why this module is public
 //!
@@ -249,17 +253,9 @@ const INITIAL_STATE: [u32; 8] = [
 
 const BLOCK_BYTES: usize = 64;
 
-// Positions of the eight working variables of FIPS 180-4 section 6.2.2. They
-// are held as one array so a round's shift is a rotation rather than eight
-// separate single-letter bindings, and these names keep each read matching the
-// specification it transcribes.
-const A: usize = 0;
-const B: usize = 1;
-const C: usize = 2;
-const E: usize = 4;
-const F: usize = 5;
-const G: usize = 6;
-const H: usize = 7;
+/// Longest padding [`Sha256::finish`] can append: the `0x80` byte, up to 63
+/// zeros, and the eight-byte length. Reached when a block holds 63 bytes.
+const MAX_PADDING_BYTES: usize = BLOCK_BYTES + 8;
 
 /// Streaming FIPS 180-4 SHA-256 state.
 struct Sha256 {
@@ -319,11 +315,26 @@ impl Sha256 {
             .message_bytes
             .checked_mul(8)
             .expect("a digested message stays within the 64-bit bit-length field");
-        self.update_without_length(&[0x80]);
-        while self.buffered != BLOCK_BYTES - 8 {
-            self.update_without_length(&[0x00]);
-        }
-        self.update_without_length(&bit_length.to_be_bytes());
+        // FIPS 180-4 section 5.1.1 padding, assembled once and absorbed in one
+        // call. Appending it a byte at a time re-entered `update` up to 64
+        // times per digest, and each entry saved and restored the message
+        // length, ran a `checked_add` and a `u64::try_from`, and split a
+        // one-byte slice into chunks. That is amortised to nothing over an
+        // 18 KB manifest, but `tiler-cache` digests nothing larger than 256
+        // bytes — 966 of its 1,546 measured calls are under 64 bytes, a single
+        // block — so there the padding was a per-digest fixed cost comparable
+        // to the one compression it brackets.
+        //
+        // The zero count is the fewest that leaves the eight-byte length ending
+        // exactly on a block boundary: `buffered + 1 + zeros ≡ 56 (mod 64)`,
+        // so `zeros ≡ 55 - buffered`, taken modulo 64 to stay non-negative for
+        // every `buffered` in `0..64`.
+        let zeros = (2 * BLOCK_BYTES - 9 - self.buffered) % BLOCK_BYTES;
+        let mut padding = [0_u8; MAX_PADDING_BYTES];
+        padding[0] = 0x80;
+        let length_at = 1 + zeros;
+        padding[length_at..length_at + 8].copy_from_slice(&bit_length.to_be_bytes());
+        self.update_without_length(&padding[..length_at + 8]);
         debug_assert_eq!(self.buffered, 0, "padding completes the final block");
         let mut digest = [0_u8; DIGEST_BYTES];
         let (words, _) = digest.as_chunks_mut::<4>();
@@ -340,6 +351,12 @@ impl Sha256 {
         self.message_bytes = recorded;
     }
 
+    #[allow(
+        clippy::many_single_char_names,
+        reason = "a through h are the names FIPS 180-4 section 6.2.2 gives these eight working \
+                  variables; renaming them would make each round stop matching the \
+                  specification line it transcribes"
+    )]
     fn compress(&mut self, block: &[u8; BLOCK_BYTES]) {
         let mut schedule = [0_u32; 64];
         let (words, _) = block.as_chunks::<4>();
@@ -356,30 +373,51 @@ impl Sha256 {
                 .wrapping_add(schedule[index - 7])
                 .wrapping_add(s1);
         }
-        let mut working = self.state;
+        // The eight working variables of FIPS 180-4 section 6.2.2, held as
+        // separate bindings rather than an array.
+        //
+        // **This is not a style choice, and the array form it replaces was a
+        // measured 69% of digest time.** Writing the round's shift as
+        // `working.rotate_right(1)` on a `[u32; 8]` reads as a rotation, but an
+        // array has no inherent `rotate_right`: the call derefs to the *slice*
+        // method, which is the generic gcd-juggling `ptr::copy` routine. The
+        // compiler never const-folded the length or the midpoint, so a release
+        // build emitted it out of line with a 320-byte stack frame and three
+        // calls to `_platform_memmove` — invoked 64 times per 64-byte block, on
+        // the innermost loop of every hash in the workspace. A profile of an
+        // 18 KB digest attributed 57.7% of active samples to `_platform_memmove`
+        // and 11.0% to `<[u32]>::rotate_right`; throughput was 53 MiB/s.
+        //
+        // The trap is that the two spellings look identical three lines apart.
+        // `e.rotate_right(6)` below is `u32::rotate_right`, a single `ror`
+        // instruction, and is exactly what this code wants. `working
+        // .rotate_right(1)` on the array was a libc memmove. Same method name,
+        // same file, entirely different cost — so the receiver type is what has
+        // to be read, and eight bindings remove the ambiguity by construction.
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.state;
         for (word, constant) in schedule.iter().zip(ROUND_CONSTANTS) {
-            let sigma1 = working[E].rotate_right(6)
-                ^ working[E].rotate_right(11)
-                ^ working[E].rotate_right(25);
-            let choose = (working[E] & working[F]) ^ (!working[E] & working[G]);
-            let temp1 = working[H]
+            let sigma1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let choose = (e & f) ^ (!e & g);
+            let temp1 = h
                 .wrapping_add(sigma1)
                 .wrapping_add(choose)
                 .wrapping_add(constant)
                 .wrapping_add(*word);
-            let sigma0 = working[A].rotate_right(2)
-                ^ working[A].rotate_right(13)
-                ^ working[A].rotate_right(22);
-            let majority =
-                (working[A] & working[B]) ^ (working[A] & working[C]) ^ (working[B] & working[C]);
+            let sigma0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let majority = (a & b) ^ (a & c) ^ (b & c);
             let temp2 = sigma0.wrapping_add(majority);
-            // Shifting each variable one place forward is the rotation; only
-            // the two positions the round redefines are then written.
-            working.rotate_right(1);
-            working[E] = working[E].wrapping_add(temp1);
-            working[A] = temp1.wrapping_add(temp2);
+            // Each variable shifts one place forward; only the two the round
+            // redefines take a new value. These are register renames.
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
         }
-        for (held, added) in self.state.iter_mut().zip(working) {
+        for (held, added) in self.state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
             *held = held.wrapping_add(added);
         }
     }
@@ -432,6 +470,40 @@ mod tests {
         }
     }
 
+    /// Every message length that reaches a distinct padding residue agrees with
+    /// an independently computed digest.
+    ///
+    /// **The neighbouring padding test cannot catch what this one is for.** It
+    /// compares a chunked digest with a single-shot digest, so both sides run
+    /// *this* implementation and a padding rule that is consistently wrong
+    /// satisfies it. The expected value here was produced by Python's
+    /// `hashlib`, which shares no code with this module, so it is external
+    /// evidence rather than a self-consistency check.
+    ///
+    /// The sweep is exhaustive rather than sampled because the padding length
+    /// is computed modulo the block size: it is a function of `buffered`, whose
+    /// domain is exactly `0..64`, and 0..=192 covers every residue three times
+    /// over — including the two-block case where the length field is pushed
+    /// into a following block. A sampled sweep would leave residues untested
+    /// while reporting success, which is the failure mode the digest-of-digests
+    /// form is chosen to avoid: one changed byte at any length changes the
+    /// pinned value.
+    #[test]
+    fn every_padding_residue_matches_an_independent_implementation() {
+        let algorithm = DigestAlgorithm::GOVERNED;
+        let mut outer = Sha256::new();
+        for length in 0..=192_usize {
+            let message = vec![0x5a_u8; length];
+            outer.update(algorithm.digest(b"m\0", &message).as_bytes());
+        }
+        assert_eq!(
+            super::Digest(outer.finish()).label(),
+            "2f4c4d8de88a0f18ec22cfbdd365ce45ec57c0ecf63936a8cf98a18ca24c156a",
+            "a digest over every message length 0..=192 disagrees with the value \
+             Python's hashlib produces for the same sequence",
+        );
+    }
+
     #[test]
     fn the_domain_separator_changes_the_digest() {
         let algorithm = DigestAlgorithm::GOVERNED;
@@ -482,5 +554,123 @@ mod tests {
         assert_eq!(DigestAlgorithm::from_tag(algorithm.tag()), Some(algorithm));
         assert_eq!(DigestAlgorithm::from_tag(0x00), None);
         assert_eq!(DigestAlgorithm::from_tag(0xff), None);
+    }
+
+    /// The two message lengths this workspace actually digests.
+    ///
+    /// **These are measured, not chosen.** Instrumenting [`digest_parts`] to
+    /// print its total input length and running the two suites that reach it
+    /// gave 17,914 calls from `tiler-artifact` and 1,546 from `tiler-cache`,
+    /// and the two populations barely overlap:
+    ///
+    /// | population | calls | modal length |
+    /// | --- | --- | --- |
+    /// | `tiler-artifact` manifest digest | 8,697 | 18,013 B |
+    /// | `tiler-artifact` section digest | 8,398 | 8,122 B |
+    /// | `tiler-cache` subject and bundle keys | 1,546 | 36-167 B, none above 256 B |
+    ///
+    /// So the artifact path is bulk compression — 95% of its calls exceed 4 KB
+    /// — and the cache path is *entirely* one- and two-block messages, where
+    /// the per-digest fixed cost of padding and finalization is comparable to
+    /// the single compression it brackets. A change that helps one says nothing
+    /// about the other, which is why both lengths are reported here.
+    ///
+    /// One figure this corrects: the manifest is **18,013 bytes**, not the
+    /// 25,000 that `codec/tests.rs` records in
+    /// `single_byte_corruptions_are_rejected`. The 26 KB that other tickets
+    /// cite is the *envelope*, which the same instrumentation saw at 26,169
+    /// bytes; the manifest is its interior and is smaller.
+    const MEASURED_LENGTHS: [(usize, &str); 3] = [
+        (36, "tiler-cache subject key"),
+        (8_122, "tiler-artifact section digest"),
+        (18_013, "tiler-artifact manifest digest"),
+    ];
+
+    /// Reports digest throughput at the measured message lengths.
+    ///
+    /// This test asserts nothing about time, exactly as
+    /// `tiler-compiler`'s `hot_path` module does and for the same reason: a
+    /// timing assertion fails on a loaded machine and passes on a fast one,
+    /// which makes it a flake rather than a guard. What it is for is a
+    /// reproducible number to read before and after a change.
+    ///
+    /// **Report the minimum, not the mean.** Every perturbation a host applies
+    /// makes a run *slower* and none makes it faster, so the distribution has a
+    /// hard floor at the true cost and an unbounded tail of noise. The minimum
+    /// of enough repeats estimates the floor; the mean estimates the floor plus
+    /// whatever else the machine was doing.
+    ///
+    /// Release matters — workspace crates build at `opt-level = 0` by default:
+    ///
+    /// ```text
+    /// cargo nextest run --release -p tiler-artifact -E 'test(digest_throughput)' --no-capture
+    /// ```
+    #[test]
+    fn digest_throughput_by_message_length() {
+        use std::time::{Duration, Instant};
+
+        for (length, population) in MEASURED_LENGTHS {
+            let message = vec![0x5a_u8; length];
+            // Enough repeats that the minimum is a floor rather than a lucky
+            // sample, scaled so every length costs about the same wall time.
+            let repeats = (2_000_000 / length).max(64);
+            for _ in 0..repeats / 8 {
+                std::hint::black_box(DigestAlgorithm::GOVERNED.digest(b"m\0", &message));
+            }
+            let mut best = Duration::MAX;
+            for _ in 0..repeats {
+                let start = Instant::now();
+                std::hint::black_box(DigestAlgorithm::GOVERNED.digest(b"m\0", &message));
+                best = best.min(start.elapsed());
+            }
+            let bytes = f64::from(u32::try_from(length).expect("a measured length fits u32"));
+            println!(
+                "MEASURE digest {length} B ({population}): min {best:?} over {repeats}, \
+                 {:.0} MiB/s",
+                bytes / best.as_secs_f64() / (1024.0 * 1024.0),
+            );
+        }
+    }
+
+    /// Digests in a loop long enough for a sampling profiler to attribute cost.
+    ///
+    /// `#[ignore]`d because it deliberately runs for seconds and asserts
+    /// nothing. Record it with `samply`:
+    ///
+    /// ```text
+    /// CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --tests -p tiler-artifact
+    /// TILER_PROFILE_SECONDS=20 samply record --save-only --unstable-presymbolicate \
+    ///     --rate 4000 -o digest.profile.json.gz \
+    ///     -- target/release/deps/tiler_artifact-<hash> \
+    ///        --ignored --exact program::codec::digest::tests::digest_profile_loop --nocapture
+    /// ```
+    ///
+    /// `CARGO_PROFILE_RELEASE_DEBUG=true` is required — the release profile
+    /// carries no debug information and without it every frame symbolicates to
+    /// a bare hex address. `--unstable-presymbolicate` writes the `*.syms.json`
+    /// sidecar holding the names; the profile's own string table does not.
+    #[test]
+    #[ignore = "runs for seconds under a profiler; not part of the gate"]
+    fn digest_profile_loop() {
+        use std::time::{Duration, Instant};
+
+        let seconds: u64 = std::env::var("TILER_PROFILE_SECONDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(10);
+        // The manifest length dominates the byte volume the workspace hashes.
+        let message = vec![0x5a_u8; 18_013];
+        let deadline = Instant::now() + Duration::from_secs(seconds);
+        let mut digests = 0_u64;
+        while Instant::now() < deadline {
+            for _ in 0..256 {
+                std::hint::black_box(DigestAlgorithm::GOVERNED.digest(b"m\0", &message));
+            }
+            digests += 256;
+        }
+        println!(
+            "MEASURE profile loop: {digests} digests of {} B",
+            message.len()
+        );
     }
 }

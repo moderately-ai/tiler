@@ -87,6 +87,21 @@ const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v2\0";
 const DEFERRED_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.deferred.v1\0";
 
+/// Width of the canonical length prefix [`push_len`] writes.
+///
+/// Named so the exact-capacity expressions below read as the encoding they
+/// mirror. This is **not** a second definition of the framing rule — `push_len`
+/// remains its sole writer. What holds this constant to that writer is the
+/// `debug_assert_eq!` each presized encoder ends with, which fails the moment a
+/// capacity expression and the bytes actually written disagree, rather than the
+/// two agreeing only by inspection.
+pub(super) const LENGTH_BYTES: usize = 8;
+
+/// Byte length one [`push_slice`] call appends for a run of `len` bytes.
+pub(super) const fn framed(len: usize) -> usize {
+    LENGTH_BYTES + len
+}
+
 fn position(index: u32) -> usize {
     usize::try_from(index).expect("u32 fits every supported host usize")
 }
@@ -339,13 +354,20 @@ impl SelectedProvider {
             capability,
             capability_revision,
         } = self;
-        let mut bytes = Vec::new();
+        let exact = PROVIDER_KEY_DOMAIN.len()
+            + framed(provider.namespace().len())
+            + framed(provider.name().len())
+            + size_of::<u32>()
+            + framed(capability.as_str().len())
+            + size_of::<u32>();
+        let mut bytes = Vec::with_capacity(exact);
         bytes.extend_from_slice(PROVIDER_KEY_DOMAIN);
         push_slice(&mut bytes, provider.namespace().as_bytes());
         push_slice(&mut bytes, provider.name().as_bytes());
         bytes.extend_from_slice(&provider.revision().to_be_bytes());
         push_slice(&mut bytes, capability.as_str().as_bytes());
         bytes.extend_from_slice(&capability_revision.to_be_bytes());
+        debug_assert_eq!(bytes.len(), exact, "provider key capacity is exact");
         bytes
     }
 }
@@ -403,7 +425,17 @@ impl BackendPayloadDescriptor {
             key: compatibility_key,
             descriptor: compatibility_descriptor,
         } = compatibility;
-        let mut bytes = Vec::new();
+        // A `SchemaVersion` encodes as two `u16`s; the trailing byte is the
+        // execution-policy tag.
+        let exact = PAYLOAD_KEY_DOMAIN.len()
+            + framed(backend.as_str().len())
+            + framed(representation.as_str().len())
+            + 2 * size_of::<u16>()
+            + framed(digest.as_bytes().len())
+            + framed(compatibility_key.as_str().len())
+            + framed(compatibility_descriptor.as_bytes().len())
+            + 1;
+        let mut bytes = Vec::with_capacity(exact);
         bytes.extend_from_slice(PAYLOAD_KEY_DOMAIN);
         push_slice(&mut bytes, backend.as_str().as_bytes());
         push_slice(&mut bytes, representation.as_str().as_bytes());
@@ -412,6 +444,7 @@ impl BackendPayloadDescriptor {
         push_slice(&mut bytes, compatibility_key.as_str().as_bytes());
         push_slice(&mut bytes, compatibility_descriptor.as_bytes());
         bytes.push(execution_policy.tag());
+        debug_assert_eq!(bytes.len(), exact, "payload key capacity is exact");
         bytes
     }
 }
@@ -1242,13 +1275,19 @@ pub enum AbiExprView<'a> {
 /// the semantic occurrences it covers — so an artifact entry cross-references a
 /// stage by content rather than by the program's declaration position.
 pub(super) fn stage_key(stage: StageRef<'_>) -> Vec<u8> {
-    let mut bytes = Vec::new();
+    // Each coverage entry is one `SemanticOccurrence`, a `u32` ordinal.
+    let exact = STAGE_KEY_DOMAIN.len()
+        + framed(stage.kernel().canonical_identity().as_bytes().len())
+        + LENGTH_BYTES
+        + stage.coverage().len() * size_of::<u32>();
+    let mut bytes = Vec::with_capacity(exact);
     bytes.extend_from_slice(STAGE_KEY_DOMAIN);
     push_slice(&mut bytes, stage.kernel().canonical_identity().as_bytes());
     push_len(&mut bytes, stage.coverage().len());
     for occurrence in stage.coverage() {
         bytes.extend_from_slice(&occurrence.get().to_be_bytes());
     }
+    debug_assert_eq!(bytes.len(), exact, "stage key capacity is exact");
     bytes
 }
 
@@ -1647,13 +1686,20 @@ fn push_variant(
 
 /// Derives the canonical content key of one deferred feasibility predicate.
 pub(super) fn deferred_key(keys: &[Vec<u8>], predicate: &DeferredPredicateData) -> Vec<u8> {
-    let mut bytes = Vec::new();
+    let exact = DEFERRED_KEY_DOMAIN.len()
+        + framed(keys[node_at(predicate.predicate)].len())
+        + 1
+        + framed(predicate.authority.namespace().len())
+        + framed(predicate.authority.name().len())
+        + size_of::<u32>();
+    let mut bytes = Vec::with_capacity(exact);
     bytes.extend_from_slice(DEFERRED_KEY_DOMAIN);
     push_slice(&mut bytes, &keys[node_at(predicate.predicate)]);
     bytes.push(predicate.phase.tag());
     push_slice(&mut bytes, predicate.authority.namespace().as_bytes());
     push_slice(&mut bytes, predicate.authority.name().as_bytes());
     bytes.extend_from_slice(&predicate.authority.revision().to_be_bytes());
+    debug_assert_eq!(bytes.len(), exact, "deferred key capacity is exact");
     bytes
 }
 

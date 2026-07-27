@@ -103,6 +103,7 @@ use tiler_ir::identity::push_slice;
 
 use super::expr::AvailabilityPhase;
 use super::keys::TargetProfileRef;
+use super::model::framed;
 
 /// Versioned domain separator of one delivered-realization record's canonical
 /// bytes.
@@ -351,7 +352,18 @@ impl DeliveredNumericalRealization {
     /// does not depend on declaration order even though it is produced in it.
     #[must_use]
     pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
+        // `CANONICAL_DIMENSIONS` is a fixed list, so sizing reads facts this
+        // record already holds rather than traversing variable-length input.
+        // Each dimension contributes its tag, one framed `means` run, and the
+        // availability tag.
+        let exact = DELIVERED_REALIZATION_DOMAIN.len()
+            + framed(self.profile.key.as_str().len())
+            + framed(self.profile.descriptor.as_bytes().len())
+            + CANONICAL_DIMENSIONS
+                .into_iter()
+                .map(|dimension| 1 + framed(self.honoured(dimension).means.as_bytes().len()) + 1)
+                .sum::<usize>();
+        let mut bytes = Vec::with_capacity(exact);
         bytes.extend_from_slice(DELIVERED_REALIZATION_DOMAIN);
         push_slice(&mut bytes, self.profile.key.as_str().as_bytes());
         push_slice(&mut bytes, self.profile.descriptor.as_bytes());
@@ -361,6 +373,7 @@ impl DeliveredNumericalRealization {
             push_slice(&mut bytes, fact.means.as_bytes());
             bytes.push(fact.available_at.tag());
         }
+        debug_assert_eq!(bytes.len(), exact, "realization capacity is exact");
         bytes
     }
 }
