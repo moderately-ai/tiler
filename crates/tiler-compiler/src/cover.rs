@@ -44,6 +44,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::semantic::{SemanticProgram, ValueId};
@@ -226,7 +227,9 @@ pub(crate) struct CoverRegion {
     members: Vec<SemanticMemberId>,
     content: RegionContentIdentity,
     occurrence: RegionOccurrenceIdentity,
-    label: String,
+    /// Shared with the candidate it was placed from: a program's covers place
+    /// the same regions repeatedly, and the label is immutable once formed.
+    label: Arc<str>,
 }
 
 #[allow(
@@ -261,8 +264,14 @@ impl CoverRegion {
 /// per-region content and coverage), the deliberate duplication, and the proposed
 /// materialization edges, over content-derived canonical coordinates. Transient
 /// graph-local ordinals and enumeration order are deliberately absent.
+///
+/// The bytes are shared behind an [`Arc`]: a cover identity embeds every placed
+/// region's occurrence encoding, so it is the largest single value the
+/// enumeration copies, and it is copied once per retained cover to key the
+/// retention map. Sharing changes nothing observable — [`Self::as_bytes`] yields
+/// the same bytes and the derived `Ord` still compares content.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct RegionCoverIdentity(Vec<u8>);
+pub(crate) struct RegionCoverIdentity(Arc<[u8]>);
 
 impl RegionCoverIdentity {
     /// Returns the canonical identity bytes.
@@ -275,7 +284,7 @@ impl RegionCoverIdentity {
     /// The label is a digest of the canonical bytes and is presentation only.
     /// Equality decisions always use [`Self::as_bytes`].
     pub(crate) fn label(&self) -> String {
-        format!("region-cover:{:016x}", digest(&self.0))
+        crate::region::hex_label("region-cover:", digest(&self.0))
     }
 }
 
@@ -568,8 +577,9 @@ pub(crate) fn enumerate_covers(
         retained,
         stops: BTreeMap::new(),
         expansions: 0,
+        covered: vec![false; usize::try_from(operation_count).unwrap_or(usize::MAX)],
     };
-    partitioner.run(operation_count)?;
+    partitioner.run()?;
 
     let mut covers: Vec<RegionCover> = partitioner.retained.into_values().collect();
     covers.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
@@ -608,9 +618,14 @@ pub(crate) fn verify_cover(
     let graph = outcome.graph();
     let operation_count = graph.operation_count();
 
-    let mut authoritative: BTreeMap<RegionOccurrenceIdentity, &RegionCandidate> = BTreeMap::new();
+    // Keyed by reference. The map is a lookup table over candidates the outcome
+    // already owns and outlives this call, so owning the keys copied every
+    // candidate's occurrence encoding — the largest identity in the stage — once
+    // per placed region per verification, and this runs once per cover and once
+    // per retained plan.
+    let mut authoritative: BTreeMap<&RegionOccurrenceIdentity, &RegionCandidate> = BTreeMap::new();
     for candidate in outcome.candidates() {
-        authoritative.insert(candidate.occurrence().clone(), candidate);
+        authoritative.insert(candidate.occurrence(), candidate);
     }
 
     // 1. Occurrence-identity preservation: each placed region is an authoritative
@@ -622,12 +637,12 @@ pub(crate) fn verify_cover(
                 .get(&region.occurrence)
                 .copied()
                 .ok_or(CoverError::Region(RegionError::Invalid {
-                    region: region.label.clone(),
+                    region: region.label.to_string(),
                     rule: "unknown-region-occurrence",
                 }))?;
         if region.members.as_slice() != candidate.members()
             || &region.content != candidate.content()
-            || region.label != candidate.label()
+            || &*region.label != candidate.label()
         {
             return Err(CoverError::Structure {
                 rule: "region-occurrence-mismatch",
@@ -688,9 +703,17 @@ pub(crate) fn verify_cover(
     }
 
     // 6. Canonical region order and cover identity recompute exactly.
-    let mut regions = cover.regions.clone();
-    regions.sort_by(|left, right| left.occurrence.as_bytes().cmp(right.occurrence.as_bytes()));
-    if regions != cover.regions {
+    //
+    // Sorting a copy and comparing it decides exactly this predicate: the sort
+    // is stable and keyed on the occurrence bytes, so it returns the vector
+    // unchanged precisely when those keys are already non-decreasing. Checking
+    // the keys directly avoids copying every placed region — members, both
+    // identities, and the label — once per verification.
+    if cover
+        .regions
+        .windows(2)
+        .any(|pair| pair[0].occurrence.as_bytes() > pair[1].occurrence.as_bytes())
+    {
         return Err(CoverError::Structure {
             rule: "region-order",
         });
@@ -698,7 +721,7 @@ pub(crate) fn verify_cover(
     let graph_identity = program.semantic_identity().graph().as_bytes();
     let identity = encode_cover_identity(
         graph_identity,
-        &regions,
+        &cover.regions,
         &cover.duplication,
         &materializations,
     );
@@ -721,6 +744,13 @@ struct Partitioner<'a> {
     retained: BTreeMap<RegionCoverIdentity, RegionCover>,
     stops: BTreeMap<CoverBudgetResource, CoverBudgetStop>,
     expansions: u64,
+    /// Which operations the regions chosen on the current branch already cover.
+    ///
+    /// One mask mutated in place and undone on backtrack, rather than a set
+    /// copied per branch. The search visits a node per expansion under the
+    /// `region_cover_expansions` budget, so the per-branch copy was multiplied
+    /// by the whole search space.
+    covered: Vec<bool>,
 }
 
 /// Whether a search branch should continue or the whole search must stop.
@@ -731,31 +761,30 @@ enum Flow {
 }
 
 impl Partitioner<'_> {
-    fn run(&mut self, operation_count: u32) -> Result<(), CoverError> {
-        let uncovered: BTreeSet<u32> = (0..operation_count).collect();
+    fn run(&mut self) -> Result<(), CoverError> {
         let mut chosen: Vec<usize> = Vec::new();
-        self.visit(&uncovered, &mut chosen)?;
+        self.visit(&mut chosen)?;
         Ok(())
     }
 
     /// Extends `chosen` with every region anchored on the minimum uncovered
     /// operation, so each exact partition is generated exactly once.
-    fn visit(
-        &mut self,
-        uncovered: &BTreeSet<u32>,
-        chosen: &mut Vec<usize>,
-    ) -> Result<Flow, CoverError> {
-        let Some(&anchor) = uncovered.iter().next() else {
+    fn visit(&mut self, chosen: &mut Vec<usize>) -> Result<Flow, CoverError> {
+        let Some(anchor) = self.covered.iter().position(|covered| !*covered) else {
             return self.emit(chosen);
         };
+        // Both are shared borrows of data that outlives the search, so reading
+        // them out here keeps the anchored index list and the candidate usable
+        // across the recursive `&mut self` call without copying either.
+        let candidates = self.candidates;
         let anchored = self
             .containing
-            .get(usize::try_from(anchor).unwrap_or(usize::MAX))
+            .get(anchor)
             .ok_or(CoverError::Structure {
                 rule: "anchor-ordinal",
             })?
-            .clone();
-        for index in anchored {
+            .as_slice();
+        for &index in anchored {
             self.expansions = self.expansions.saturating_add(1);
             if self.expansions > self.max_expansions {
                 self.record_stop(
@@ -765,22 +794,32 @@ impl Partitioner<'_> {
                 );
                 return Ok(Flow::Stop);
             }
-            let members: Vec<u32> = match self.candidates.get(index) {
-                Some(candidate) => candidate.members().iter().map(|member| member.0).collect(),
-                None => {
-                    return Err(CoverError::Structure {
-                        rule: "candidate-index",
-                    });
-                }
-            };
-            if members.iter().all(|member| uncovered.contains(member)) {
-                let mut next = uncovered.clone();
-                for member in &members {
-                    next.remove(member);
+            let candidate = candidates.get(index).ok_or(CoverError::Structure {
+                rule: "candidate-index",
+            })?;
+            // A member outside the mask reads as covered, so the branch is
+            // skipped exactly as the set membership test skipped it. Neither can
+            // happen: `enumerate_covers` already rejected an out-of-range member
+            // while building `containing`.
+            let disjoint = candidate.members().iter().all(|member| {
+                self.covered
+                    .get(member_index(*member))
+                    .is_some_and(|covered| !*covered)
+            });
+            if disjoint {
+                for member in candidate.members() {
+                    if let Some(slot) = self.covered.get_mut(member_index(*member)) {
+                        *slot = true;
+                    }
                 }
                 chosen.push(index);
-                let flow = self.visit(&next, chosen)?;
+                let flow = self.visit(chosen)?;
                 chosen.pop();
+                for member in candidate.members() {
+                    if let Some(slot) = self.covered.get_mut(member_index(*member)) {
+                        *slot = false;
+                    }
+                }
                 if flow == Flow::Stop {
                     return Ok(Flow::Stop);
                 }
@@ -835,7 +874,7 @@ fn assemble_cover(
             members: candidate.members().to_vec(),
             content: candidate.content().clone(),
             occurrence: candidate.occurrence().clone(),
-            label: candidate.label().to_owned(),
+            label: candidate.label_handle(),
         })
         .collect();
     regions.sort_by(|left, right| left.occurrence.as_bytes().cmp(right.occurrence.as_bytes()));
@@ -858,64 +897,100 @@ fn derive_materializations(
     graph: &RegionGraph,
     regions: &[&RegionCandidate],
 ) -> Result<Vec<MaterializationEdge>, CoverError> {
-    let mut producers: BTreeMap<u32, (usize, SemanticMemberId, u32)> = BTreeMap::new();
+    // Sorted vectors rather than maps, ordered by value ordinal exactly as the
+    // maps were. A partition carries a handful of retained outputs and boundary
+    // inputs, and this runs once per assembled cover and once per verification,
+    // so the maps' node allocations — one per map plus one per consumed value
+    // for the inner set — cost more than the lookups they served.
+    let mut producers: Vec<(u32, usize, SemanticMemberId, u32)> = Vec::new();
     for (region_index, region) in regions.iter().enumerate() {
         for output in region.retained_outputs() {
-            if producers
-                .insert(
-                    output.value.0,
-                    (region_index, output.producer, output.result_position),
-                )
-                .is_some()
-            {
-                return Err(CoverError::Structure {
-                    rule: "double-produced-value",
-                });
-            }
+            producers.push((
+                output.value.0,
+                region_index,
+                output.producer,
+                output.result_position,
+            ));
         }
     }
+    producers.sort_unstable_by_key(|entry| entry.0);
+    if producers.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(CoverError::Structure {
+            rule: "double-produced-value",
+        });
+    }
 
-    let mut consumers: BTreeMap<u32, BTreeSet<usize>> = BTreeMap::new();
+    let mut consumers: Vec<(u32, usize)> = Vec::new();
     for (region_index, region) in regions.iter().enumerate() {
         for input in region.boundary_inputs() {
-            if let Some(&(producer_region, _, _)) = producers.get(&input.0) {
-                if producer_region == region_index {
-                    return Err(CoverError::Structure {
-                        rule: "internal-boundary-input",
-                    });
-                }
-                consumers.entry(input.0).or_default().insert(region_index);
+            let Ok(position) = producers.binary_search_by_key(&input.0, |entry| entry.0) else {
+                continue;
+            };
+            if producers[position].1 == region_index {
+                return Err(CoverError::Structure {
+                    rule: "internal-boundary-input",
+                });
             }
+            consumers.push((input.0, region_index));
         }
     }
+    consumers.sort_unstable();
+    consumers.dedup();
 
     let mut edges: Vec<MaterializationEdge> = Vec::new();
-    for (value, (producer_region, producer_member, result_position)) in &producers {
-        let Some(consumer_regions) = consumers.get(value) else {
+    for &(value, producer_region, producer_member, result_position) in &producers {
+        let start = consumers.partition_point(|entry| entry.0 < value);
+        let consuming = &consumers[start..];
+        let end = consuming.partition_point(|entry| entry.0 == value);
+        if end == 0 {
             continue;
-        };
-        let producer_position = graph.member_canonical_position(*producer_member)?;
-        let mut consumer_occurrences: Vec<RegionOccurrenceIdentity> = consumer_regions
+        }
+        let producer_position = graph.member_canonical_position(producer_member)?;
+        let mut consumer_occurrences: Vec<RegionOccurrenceIdentity> = consuming[..end]
             .iter()
-            .map(|&region_index| regions[region_index].occurrence().clone())
+            .map(|&(_, region_index)| regions[region_index].occurrence().clone())
             .collect();
         consumer_occurrences.sort();
         edges.push(MaterializationEdge {
-            value: SemanticValueId(*value),
+            value: SemanticValueId(value),
             producer_position,
-            result_position: *result_position,
-            producer: regions[*producer_region].occurrence().clone(),
+            result_position,
+            producer: regions[producer_region].occurrence().clone(),
             consumers: consumer_occurrences,
         });
     }
-    edges.sort_by(|left, right| {
-        let mut left_key = Vec::new();
-        encode_materialization(&mut left_key, left);
-        let mut right_key = Vec::new();
-        encode_materialization(&mut right_key, right);
-        left_key.cmp(&right_key)
-    });
-    Ok(edges)
+    // Ordered by the canonical encoding, built once into one buffer with a span
+    // per edge, rather than inside the comparator. The comparator spelling
+    // encoded *both* operands into two fresh buffers on every comparison, so an
+    // n-edge sort paid O(n log n) encodings and allocations to order n values —
+    // and an edge key embeds whole occurrence identities, so each of those was a
+    // large copy. Most partitions here carry one or two edges, which is why the
+    // trivial case returns before encoding anything at all. The resulting order
+    // is identical: the key is the same byte string either way.
+    if edges.len() < 2 {
+        return Ok(edges);
+    }
+    let mut keys = Vec::new();
+    let mut spans = Vec::with_capacity(edges.len());
+    for edge in &edges {
+        let start = keys.len();
+        encode_materialization(&mut keys, edge);
+        spans.push(start..keys.len());
+    }
+    let mut order: Vec<usize> = (0..edges.len()).collect();
+    order.sort_by(|left, right| keys[spans[*left].clone()].cmp(&keys[spans[*right].clone()]));
+    let mut sorted: Vec<Option<MaterializationEdge>> = edges.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .map(|position| {
+            sorted
+                .get_mut(position)
+                .and_then(Option::take)
+                .ok_or(CoverError::Structure {
+                    rule: "materialization-order",
+                })
+        })
+        .collect()
 }
 
 /// Collects the singleton candidate covering each operation exactly once.
@@ -998,7 +1073,7 @@ fn encode_cover_identity(
     for edge in materializations {
         encode_materialization(&mut bytes, edge);
     }
-    RegionCoverIdentity(bytes)
+    RegionCoverIdentity(bytes.into())
 }
 
 fn encode_materialization(output: &mut Vec<u8>, edge: &MaterializationEdge) {
@@ -1350,7 +1425,8 @@ mod tests {
 
         // Tampering a region's recorded occurrence label breaks occurrence identity.
         let mut forged = enumeration.fully_materialized_cover().unwrap().clone();
-        forged.regions[0].label.push_str("-forged");
+        forged.regions[0].label =
+            std::sync::Arc::from(format!("{}-forged", forged.regions[0].label));
         let error = verify_cover(&program, &formation_of(&program), &forged).unwrap_err();
         assert_eq!(error.class(), "structure");
         assert_eq!(error.reason(), "region-occurrence-mismatch");
