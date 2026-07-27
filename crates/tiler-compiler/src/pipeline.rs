@@ -1,7 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::cover::{CoverEnumeration, CoverError, RegionCover, enumerate_covers};
+use crate::cover::{
+    CoverEnumeration, CoverError, RegionCover, RegionCoverIdentity, enumerate_covers,
+};
 use crate::explain::{
     CostDisposition, CostModelKey, CostTerm, EvidenceBasis, ExplainError, ExplainEvent,
     ExplainFact, ExplainRecordId, ExplainStage, ExplainWriter, FactValue, FailureDescriptor,
@@ -11,8 +13,8 @@ use crate::explain::{
 };
 use crate::feasibility::FeasibilityRuleSetIdentity;
 use crate::frontier::{
-    FrontierError, FrontierRegionSubject, GovernedPhysicalProvider, PhysicalImplementationProvider,
-    enumerate_frontier,
+    FrontierError, FrontierRegionSubject, GovernedPhysicalProvider, ImplementationFrontier,
+    PhysicalImplementationProvider, enumerate_frontier,
 };
 use crate::fusion::{
     FusionError, FusionNumericalProof, prove_fused_numerics, verify_fused_numerics,
@@ -828,8 +830,8 @@ fn compile_target_with_explain(
             record_cause(region_root),
         ));
     }
-    let selected_alternative_id =
-        select_non_dominated(&plans.portfolio, &alternatives).map_err(|source| {
+    let selected_alternative_id = select_non_dominated(&plans.portfolio, &alternatives)
+        .map_err(|source| {
             target_failure(
                 source,
                 ExplainStage::Selection,
@@ -838,7 +840,8 @@ fn compile_target_with_explain(
                 "portfolio",
                 record_cause(region_root),
             )
-        })?;
+        })?
+        .to_owned();
     verify_portfolio(
         semantic,
         verified,
@@ -1023,7 +1026,30 @@ fn enumerate_complete_plans(
     // which the target refused. A reader expects those ruled out by feasibility
     // rather than by a missing capability, so each is noted in the terminal
     // ledger as an infeasible alternative.
-    let mut refused_covers: Vec<(String, TerminalCause)> = Vec::new();
+    //
+    // The identity is carried rather than its explain label because the label is
+    // only wanted for the subset that survives the retention check below, while
+    // the check itself wants exact bytes.
+    let mut refused_covers: Vec<(&RegionCoverIdentity, TerminalCause)> = Vec::new();
+    // One enumeration per distinct region subject, reused by every cover that
+    // places that region.
+    //
+    // `enumerate_frontier` is a pure function of the request, the subject, and
+    // the providers, and only the subject varies here — so a repeat is a
+    // re-derivation of a value already in hand. It repeats a lot: the governed
+    // five-operation program enumerates 48 times over 17 distinct subjects, and
+    // the reduction region alone is enumerated 8 times because eight covers
+    // place it.
+    //
+    // The key is the whole subject, not its role. Fourteen of those seventeen
+    // subjects share the role `unrecognized` while covering different
+    // occurrences, so a role-keyed memo would serve one region's frontier for
+    // another's — the members are what the request-subject binding checks each
+    // proposal against.
+    //
+    // A linear scan beats a map at this size and asks only for `PartialEq`,
+    // which the subject already has.
+    let mut frontiers_by_subject: Vec<(FrontierRegionSubject, ImplementationFrontier)> = Vec::new();
     for cover in enumeration.covers() {
         if cover
             .regions()
@@ -1038,14 +1064,23 @@ fn enumerate_complete_plans(
         for region in cover.regions() {
             let role = region_role(verified, region.members());
             let subject = FrontierRegionSubject::new(role, region.members().to_vec());
-            let frontier =
-                enumerate_frontier(verified, &subject, &providers).map_err(|source| {
-                    failure_at_source(
-                        source.into(),
-                        ExplainStage::IntrinsicScheduling,
-                        record_cause(numerical_cause),
-                    )
-                })?;
+            let frontier = if let Some((_, enumerated)) = frontiers_by_subject
+                .iter()
+                .find(|(seen, _)| *seen == subject)
+            {
+                enumerated.clone()
+            } else {
+                let enumerated =
+                    enumerate_frontier(verified, &subject, &providers).map_err(|source| {
+                        failure_at_source(
+                            source.into(),
+                            ExplainStage::IntrinsicScheduling,
+                            record_cause(numerical_cause),
+                        )
+                    })?;
+                frontiers_by_subject.push((subject.clone(), enumerated.clone()));
+                enumerated
+            };
             if frontier.admitted().is_empty() && frontier.rejections().is_empty() {
                 proposed_everywhere = false;
             }
@@ -1094,9 +1129,9 @@ fn enumerate_complete_plans(
             region_frontiers.push(RegionFrontier::new(subject, frontier));
         }
         if proposed_everywhere && let Some(cause) = refusal {
-            refused_covers.push((cover.identity().label(), cause));
+            refused_covers.push((cover.identity(), cause));
         }
-        sources.push(CoverFrontiers::new(cover.clone(), region_frontiers));
+        sources.push(CoverFrontiers::new(cover, region_frontiers));
     }
 
     let portfolio =
@@ -1107,13 +1142,13 @@ fn enumerate_complete_plans(
                 record_cause(frontier_cause),
             )
         })?;
-    for (label, cause) in refused_covers {
+    for (identity, cause) in refused_covers {
         if portfolio
             .plans()
             .iter()
-            .all(|plan| plan.cover().identity().label() != label)
+            .all(|plan| plan.cover().identity() != identity)
         {
-            note_infeasible_cover(explain, &label, Some(cause))?;
+            note_infeasible_cover(explain, &identity.label(), Some(cause))?;
         }
     }
     let selection_record = record_plan_selection(explain, &portfolio, frontier_cause)?;
@@ -1306,20 +1341,30 @@ fn build_alternative(
     })
 }
 
-/// Returns a plan's verified scheduled regions in ascending planning order.
+/// Returns a plan's verified scheduled regions in ascending planning order,
+/// borrowed from the plan rather than copied out of it.
 ///
 /// A plan's selections are in canonical occurrence order, which is content
 /// derived rather than execution ordered. Downstream program assembly consumes
 /// producers before consumers, so the regions are ordered by the planning ordinal
 /// the request-subject binding already pinned for each recognized region.
-fn plan_regions(plan: &SelectedPlan) -> Vec<VerifiedScheduledRegion> {
-    let mut regions: Vec<VerifiedScheduledRegion> = plan
+///
+/// Ordering is the whole of what this derives, so it sorts references. A caller
+/// that must *own* the result asks for it through [`plan_regions`]; a caller
+/// that only compares against regions it already holds does not pay for a copy.
+fn plan_region_order(plan: &SelectedPlan) -> Vec<&VerifiedScheduledRegion> {
+    let mut regions: Vec<&VerifiedScheduledRegion> = plan
         .selections()
         .iter()
-        .map(|selection| selection.implementation().verified().clone())
+        .map(|selection| selection.implementation().verified())
         .collect();
     regions.sort_by_key(|region| region.region().index.id.get());
     regions
+}
+
+/// Returns an owned copy of a plan's scheduled regions in planning order.
+fn plan_regions(plan: &SelectedPlan) -> Vec<VerifiedScheduledRegion> {
+    plan_region_order(plan).into_iter().cloned().collect()
 }
 
 /// Assembles the verified kernel program for one plan shape.
@@ -1354,24 +1399,31 @@ fn build_plan_program(
 /// several plans are mutually non-dominated the canonical identity order breaks
 /// the tie deterministically, so the choice is reproducible without inventing a
 /// preference between incomparable trade-offs.
-fn select_non_dominated(
+///
+/// The match is on the plan identities themselves rather than on their explain
+/// labels. A label is a 64-bit digest of those bytes, so matching on it asked a
+/// weaker question than the one intended — two distinct plans that collided
+/// would have compared equal — and it had to allocate a `String` per retained
+/// plan to ask it. Comparing the identities directly is both the stronger check
+/// and the one that allocates nothing; the borrowed `stable_id` returned here is
+/// the label the matched alternative already computed once at construction.
+fn select_non_dominated<'alternatives>(
     portfolio: &SelectedPortfolio,
-    alternatives: &[ProgramAlternative],
-) -> Result<String, CompileError> {
+    alternatives: &'alternatives [ProgramAlternative],
+) -> Result<&'alternatives str, CompileError> {
     let retained = portfolio.non_dominated();
-    let selected = retained
-        .iter()
-        .map(|plan| plan.identity().label())
-        .find(|label| {
-            alternatives
-                .iter()
-                .any(|alternative| &alternative.stable_id == label)
-        });
-    selected.ok_or(CompileError::InvalidCompilerOutput(
-        CompilerOutputError::Program(ProgramError::Structure {
-            rule: "portfolio-empty",
-        }),
-    ))
+    let selected = retained.iter().find_map(|plan| {
+        alternatives
+            .iter()
+            .find(|alternative| alternative.plan.identity() == plan.identity())
+    });
+    selected
+        .map(|alternative| alternative.stable_id.as_str())
+        .ok_or(CompileError::InvalidCompilerOutput(
+            CompilerOutputError::Program(ProgramError::Structure {
+                rule: "portfolio-empty",
+            }),
+        ))
 }
 
 #[allow(
@@ -2493,8 +2545,18 @@ fn verify_alternative(
             cause,
         ));
     }
-    let scheduled = plan_regions(&alternative.plan);
-    if alternative.scheduled_regions != scheduled {
+    // The schedule is re-derived and compared exactly as before; only the copy
+    // is gone. Once the stored regions are proven equal to the re-derivation,
+    // they *are* the re-derivation, so the layers below verify against the
+    // borrowed slice instead of against a duplicate of it.
+    let ordered = plan_region_order(&alternative.plan);
+    if alternative.scheduled_regions.len() != ordered.len()
+        || alternative
+            .scheduled_regions
+            .iter()
+            .zip(&ordered)
+            .any(|(stored, derived)| stored != *derived)
+    {
         return Err(failure_at_source(
             ProgramError::Structure {
                 rule: "portfolio-schedule-binding",
@@ -2504,6 +2566,7 @@ fn verify_alternative(
             cause,
         ));
     }
+    let scheduled = alternative.scheduled_regions.as_slice();
     let kernels = scheduled
         .iter()
         .map(lower_structured_kernel)
@@ -2522,7 +2585,7 @@ fn verify_alternative(
             cause,
         ));
     }
-    let program = build_plan_program(semantic, request, alternative.kind, &scheduled)
+    let program = build_plan_program(semantic, request, alternative.kind, scheduled)
         .map_err(|error| failure_at_source(error, ExplainStage::ProgramVerification, cause))?;
     if alternative.program != program {
         return Err(failure_at_source(
@@ -2551,7 +2614,7 @@ fn verify_alternative(
         &alternative.artifact_plan,
         semantic,
         request,
-        &scheduled,
+        scheduled,
         &kernels,
         &program,
         providers,

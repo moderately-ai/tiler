@@ -30,7 +30,9 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 
 use crate::session::{NumericalContract, compile_governed};
-use crate::workcount::{REGION_FORMATIONS, REGION_GRAPH_BUILDS, REQUEST_SUBJECT_REBUILDS};
+use crate::workcount::{
+    FRONTIER_ENUMERATIONS, REGION_FORMATIONS, REGION_GRAPH_BUILDS, REQUEST_SUBJECT_REBUILDS,
+};
 
 /// The governed scale-then-reduce program at one shape.
 fn program(rows: u64, columns: u64) -> SemanticProgram {
@@ -211,6 +213,41 @@ fn one_compile_builds_the_region_graph_once() {
         "one compile built the whole-program region graph {builds} times; \
          `RegionFormationOutcome` owns one and every planner entry point is handed it, so \
          anything above one is a call site deriving a value it already has",
+    );
+}
+
+/// One compilation enumerates each distinct region subject's frontier once.
+///
+/// **The bound is the number of distinct subjects, which is the point.** The
+/// enumeration is a pure function of the request, the subject, and the
+/// providers, and only the subject varies within a target compile — so the
+/// count used to be the number of (cover, region) pairs, 48 of them, over 17
+/// distinct subjects. The reduction region alone was enumerated 8 times because
+/// eight covers place it.
+///
+/// An equality rather than a bound, because both directions are interesting: a
+/// rise means a call site stopped consulting the memo, and a *fall* means the
+/// cover enumeration changed shape and the two numbers below no longer describe
+/// this program.
+#[test]
+fn one_compile_enumerates_each_distinct_region_subject_once() {
+    /// The distinct region subjects the governed five-operation program covers.
+    const DISTINCT_SUBJECTS: usize = 17;
+
+    let program = program(4, 3);
+    let (compiled, enumerations) = FRONTIER_ENUMERATIONS
+        .observe(|| compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32));
+    compiled.expect("the governed program compiles");
+    println!(
+        "MEASURE {}s per compile: {enumerations}",
+        FRONTIER_ENUMERATIONS.name()
+    );
+    assert_eq!(
+        enumerations, DISTINCT_SUBJECTS,
+        "one compile enumerated {enumerations} implementation frontiers for {DISTINCT_SUBJECTS} \
+         distinct region subjects; every cover that places a region asks for that region's \
+         frontier, so anything above the distinct count is a re-derivation the memo should \
+         have served",
     );
 }
 
