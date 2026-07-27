@@ -18,8 +18,14 @@ fmt:
 build:
 	cargo check --workspace --all-targets --locked
 
+# Prototypes are excluded deliberately. They are non-published, experimental,
+# and deleted or rewritten as the slice they prove moves; holding them to the
+# same style bar as the crates costs edits that teach nobody anything. They are
+# still built and still tested by the targets above — only the style pass skips
+# them, so a prototype that stops compiling or stops passing still fails.
 lint:
-	cargo clippy --workspace --all-targets --locked -- -D warnings
+	cargo clippy --workspace --all-targets --locked \
+		--exclude tiler-prototype-run --exclude tiler-prototype-compile -- -D warnings
 
 # Two commands because nextest does not run doc-tests, at all. Dropping the
 # second would silently stop running the compile-fail doc-tests on

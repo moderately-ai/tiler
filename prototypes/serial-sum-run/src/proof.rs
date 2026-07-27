@@ -2216,18 +2216,8 @@ enum ProofError {
 }
 
 impl fmt::Display for ProofError {
-    // One arm per variant, and the match stays exhaustive on purpose. Splitting
-    // it to satisfy the line count would need a wildcard arm in at least one
-    // half, and that wildcard is exactly what stops a newly added variant from
-    // failing to compile here -- it would render as whatever the catch-all says
-    // instead. The length is a consequence of the enum being deliberately wide,
-    // which is the same decision that keeps a route miss distinguishable from a
-    // damaged artifact.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "an exhaustive match over a wide error enum; splitting it costs the \
-                  exhaustiveness that makes a new variant a build error"
-    )]
+    // One arm per variant, and the match stays exhaustive on purpose: a wildcard
+    // is what would stop a newly added variant from failing to compile here.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Usage => formatter.write_str(

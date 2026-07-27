@@ -58,3 +58,9 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# A length limit is a proxy for complexity and a bad one here: the functions it
+# flags are exhaustive `match`es over deliberately wide enums, where the only way
+# to get under the limit is a wildcard arm -- which is exactly what stops a newly
+# added variant from being a build error. Trading that for a line count is a net
+# loss, so the lint is off rather than allowed site by site.
+too_many_lines = "allow"

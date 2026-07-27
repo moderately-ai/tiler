@@ -43,3 +43,5 @@ unsafe_code = "deny"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# Mirrors the workspace, which this crate cannot inherit; see the note there.
+too_many_lines = "allow"
