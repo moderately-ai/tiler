@@ -793,36 +793,40 @@ fn parse_execution_order(
 /// an obligation the packaged program proved; an order that runs a successor
 /// before its predecessor contradicts the artifact's own dependency graph, and
 /// is refused instead of being executed as a different valid schedule.
-fn parse_dependencies(
+pub(super) fn parse_dependencies(
     cursor: &mut Cursor<'_>,
     variant: u64,
     entries: usize,
     order: &[u32],
 ) -> Result<Vec<StageDependencyData>, ArtifactCodecError> {
-    let edges = cursor.vec(MAX_STAGE_DEPENDENCIES, CodecLimitKind::Entries, |cursor| {
-        let predecessor = cursor.u32()?;
-        let successor = cursor.u32()?;
-        let reason = cursor.stage_dependency_reason()?;
-        for endpoint in [predecessor, successor] {
-            if position(endpoint) >= entries {
-                return Err(ArtifactCodecError::MissingReference {
-                    subject: ReferenceSubject::Entry,
-                    index: u64::from(endpoint),
+    let edges = cursor.vec(
+        MAX_STAGE_DEPENDENCIES,
+        CodecLimitKind::StageDependencies,
+        |cursor| {
+            let predecessor = cursor.u32()?;
+            let successor = cursor.u32()?;
+            let reason = cursor.stage_dependency_reason()?;
+            for endpoint in [predecessor, successor] {
+                if position(endpoint) >= entries {
+                    return Err(ArtifactCodecError::MissingReference {
+                        subject: ReferenceSubject::Entry,
+                        index: u64::from(endpoint),
+                    });
+                }
+            }
+            if predecessor == successor {
+                return Err(ArtifactCodecError::StageDependencyOnItself {
+                    variant,
+                    entry: u64::from(predecessor),
                 });
             }
-        }
-        if predecessor == successor {
-            return Err(ArtifactCodecError::StageDependencyOnItself {
-                variant,
-                entry: u64::from(predecessor),
-            });
-        }
-        Ok(StageDependencyData {
-            predecessor,
-            successor,
-            reason,
-        })
-    })?;
+            Ok(StageDependencyData {
+                predecessor,
+                successor,
+                reason,
+            })
+        },
+    )?;
     require_sorted_and_distinct(&edges, OrderedSubject::StageDependency)?;
 
     // Position within the stated order, so an edge is checked against the

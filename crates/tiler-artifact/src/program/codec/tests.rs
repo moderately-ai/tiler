@@ -45,14 +45,18 @@ use super::super::tests::{
     fused_program, lowering_provider, payload, profile, selection, semantic_program,
     spare_provider, variant,
 };
-use super::super::{ArtifactProgramBuilder, CompilationEnvironment, VerifiedArtifactProgram};
-use super::decode::{decode, parse_expression_arena};
+use super::super::{
+    ArtifactProgramBuilder, CompilationEnvironment, MAX_VARIANT_ENTRIES, VerifiedArtifactProgram,
+};
+use super::decode::{Cursor, decode, parse_dependencies, parse_expression_arena};
 use super::digest::DigestAlgorithm;
 use super::encode::{
     ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA,
     encode, envelope_digest, section_digest,
 };
-use super::error::{ArtifactCodecError, OrderedSubject, ReferenceSubject, TagSubject};
+use super::error::{
+    ArtifactCodecError, CodecLimitKind, OrderedSubject, ReferenceSubject, TagSubject,
+};
 use super::model::{
     ArtifactEnvelope, FEATURE_MULTI_VARIANT_ROUTING, Section, SectionDisposition, SectionKind,
     position,
@@ -1356,6 +1360,55 @@ fn an_arena_count_beyond_its_budget_is_rejected_before_allocation() {
             ..
         },
     ));
+}
+
+/// A stage-dependency overflow names the dependency resource, and the entry
+/// resource beside it stays distinct.
+///
+/// The two are separately bounded — `MAX_VARIANT_ENTRIES` against
+/// `MAX_STAGE_DEPENDENCIES` — so classifying an edge overflow as an entry
+/// overflow reported a limit the bytes had not exceeded and sent a reader to
+/// the wrong number. The second assertion is the negative neighbour: it drives
+/// the entry budget over the identical bytes, so a change that collapsed the
+/// two kinds back together would fail here rather than pass silently.
+#[test]
+fn a_stage_dependency_overflow_names_the_dependency_resource() {
+    // The count prefix alone; no edge body is reached, because the budget is
+    // checked before anything is allocated for it.
+    let absurd = u64::MAX.to_be_bytes();
+
+    let error = parse_dependencies(&mut Cursor::new(&absurd), 0, 1, &[0])
+        .expect_err("an absurd edge count is refused");
+    assert!(
+        matches!(
+            error,
+            ArtifactCodecError::Limit {
+                resource: CodecLimitKind::StageDependencies,
+                ..
+            },
+        ),
+        "expected a StageDependencies limit, got {error:?}",
+    );
+
+    let neighbour = Cursor::new(&absurd)
+        .vec(
+            MAX_VARIANT_ENTRIES,
+            CodecLimitKind::Entries,
+            |_| -> Result<(), ArtifactCodecError> {
+                unreachable!("the budget rejects before any entry is parsed")
+            },
+        )
+        .expect_err("an absurd entry count is refused");
+    assert!(
+        matches!(
+            neighbour,
+            ArtifactCodecError::Limit {
+                resource: CodecLimitKind::Entries,
+                ..
+            },
+        ),
+        "expected an Entries limit, got {neighbour:?}",
+    );
 }
 
 #[test]

@@ -174,6 +174,13 @@ pub(crate) enum CodecLimitKind {
     Variants,
     /// Executable-entry count of one plan variant.
     Entries,
+    /// Stage-dependency edge count of one plan variant.
+    ///
+    /// Distinct from [`Self::Entries`] because the two are separately bounded —
+    /// `MAX_VARIANT_ENTRIES` against `MAX_STAGE_DEPENDENCIES` — so reporting an
+    /// edge overflow as an entry overflow names a limit the bytes did not
+    /// exceed and sends a reader to the wrong number.
+    StageDependencies,
     /// ABI binding count of one executable entry.
     EntryBindings,
     /// Named-output count of one ABI binding's target.
