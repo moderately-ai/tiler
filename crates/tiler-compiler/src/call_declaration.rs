@@ -218,7 +218,22 @@ mod tests {
         }
     }
 
-    use crate::boundary::{AdmittedMemoryDomains, ExecutionAffinity, MemoryDomainClass};
+    use crate::boundary::{
+        AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
+        MemoryDomainClass, StorageEncoding,
+    };
+    use crate::call_abi::ParameterSpec;
+    /// A spec carrying the bounded profile's storage answers.
+    fn spec(name: &'static str, role: ParameterRole) -> ParameterSpec {
+        ParameterSpec {
+            name,
+            role,
+            layout: LayoutGuarantee::DenseRowMajor,
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::F32_NATURAL,
+        }
+    }
+
     use crate::effects::Motion;
 
     fn placement() -> CallPlacement {
@@ -231,7 +246,8 @@ mod tests {
     }
 
     fn abi(parameters: impl IntoIterator<Item = (&'static str, ParameterRole)>) -> CallAbi {
-        CallAbi::declare(parameters).expect("a well-formed abi")
+        CallAbi::declare(parameters.into_iter().map(|(name, role)| spec(name, role)))
+            .expect("a well-formed abi")
     }
 
     /// Consistent declarations are admitted.

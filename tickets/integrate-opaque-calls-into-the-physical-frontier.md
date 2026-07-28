@@ -204,7 +204,12 @@ Its own doc states the invariant to preserve: *"The provider supplies only the a
 - `ExecutionAffinity`, `MemoryDomain` — the placement, directly.
 - `Availability`, `Visibility` — the effects' `Motion`. An `Ordered` call's result is available after its own dispatch; a `Free` one's ordering is unconstrained.
 
-**So one gap remains and it is small:** the ABI declares roles but not layout, encoding, or alignment, and a boundary contract must state all three. Either the ABI gains them per parameter — the honest place, since they are properties of *that binding* — or the declaration gains a fifth part. Prefer the ABI: a call with two parameters may want different layouts for each, and a single declaration-level answer could not say so.
+**Gap closed 2026-07-28.** `CallAbi::declare` takes `ParameterSpec { name, role, layout, encoding, alignment }`, so every binding states all three. They are per-parameter rather than per-declaration because a two-parameter call may want a dense row-major input and a differently-laid-out output, and a declaration-level answer could not say so.
+
+**None of the three has a default**, for the same reason `CallEffects` has no `Default`: a boundary contract must state all three, and a guess would be a claim the provider never made. Tests supply them through a local `spec()` helper carrying the bounded profile's answers, which keeps the tests about names and roles without pretending the fields are optional.
+
+Note that `is_compatible_with` now compares whole specs rather than name and role — two calls agreeing on names and roles but disagreeing on layout are not interchangeable, and before this change the type could not tell.
+
+**The boundary derivation is now writable end to end:** every property in `CANONICAL_PROPERTIES` has an authority in the declaration.
 
 *The check, reproducible in one line:* read `admit_verified` and `derive_boundary_contract` in `frontier.rs`, and `CANONICAL_PROPERTIES` in `boundary.rs`, against `OpaqueCallDeclaration`'s four parts.
-

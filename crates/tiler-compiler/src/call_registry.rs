@@ -219,15 +219,33 @@ mod tests {
         }
     }
 
-    use crate::boundary::{AdmittedMemoryDomains, ExecutionAffinity, MemoryDomainClass};
+    use crate::boundary::{
+        AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
+        MemoryDomainClass, StorageEncoding,
+    };
+    use crate::call_abi::ParameterSpec;
+    /// A spec carrying the bounded profile's storage answers.
+    fn spec(name: &'static str, role: ParameterRole) -> ParameterSpec {
+        ParameterSpec {
+            name,
+            role,
+            layout: LayoutGuarantee::DenseRowMajor,
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::F32_NATURAL,
+        }
+    }
+
     use crate::call_abi::{CallAbi, ParameterRole};
     use crate::call_placement::CallPlacement;
     use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
 
     fn declaration() -> OpaqueCallDeclaration {
         OpaqueCallDeclaration::check(
-            CallAbi::declare([("input", ParameterRole::In), ("output", ParameterRole::Out)])
-                .expect("well formed"),
+            CallAbi::declare(
+                [("input", ParameterRole::In), ("output", ParameterRole::Out)]
+                    .map(|(name, role)| spec(name, role)),
+            )
+            .expect("well formed"),
             CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
             CallPlacement::declare(
                 ExecutionAffinity::PRIMARY,

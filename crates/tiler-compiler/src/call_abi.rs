@@ -20,6 +20,7 @@
 //! declaration rather than being the declaration. Nothing here matches two
 //! parameters by comparing slots.
 
+use crate::boundary::{ByteAlignment, LayoutGuarantee, StorageEncoding};
 use core::fmt;
 
 /// What a parameter is for.
@@ -82,6 +83,34 @@ impl fmt::Display for ParameterRole {
     }
 }
 
+/// What a provider states about one parameter.
+///
+/// Layout, encoding, and alignment are here rather than on the declaration as a
+/// whole because they are properties of *that binding*: a two-parameter call may
+/// want a dense row-major input and a differently-laid-out output, and a
+/// declaration-level answer could not say so.
+///
+/// None of the three has a default. A boundary contract must state all three,
+/// and a guess would be a claim the provider never made — the same reasoning
+/// that keeps `CallEffects` from having a `Default`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the parameter spec; lands with the ABI it declares, ahead of the admission that reads it"
+)]
+pub(crate) struct ParameterSpec {
+    /// The parameter's name, unique within its ABI.
+    pub(crate) name: &'static str,
+    /// What the parameter is for.
+    pub(crate) role: ParameterRole,
+    /// The storage layout the call guarantees or requires of this binding.
+    pub(crate) layout: LayoutGuarantee,
+    /// How one element is represented at the position layout assigns it.
+    pub(crate) encoding: StorageEncoding,
+    /// Byte alignment of this binding's first element.
+    pub(crate) alignment: ByteAlignment,
+}
+
 /// One declared parameter of an opaque call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
@@ -89,8 +118,7 @@ impl fmt::Display for ParameterRole {
     reason = "see the module header: the parameter type lands with the ABI it belongs to"
 )]
 pub(crate) struct CallParameter {
-    name: &'static str,
-    role: ParameterRole,
+    spec: ParameterSpec,
     slot: u32,
 }
 
@@ -101,12 +129,17 @@ pub(crate) struct CallParameter {
 impl CallParameter {
     /// The parameter's declared name, unique within its ABI.
     pub(crate) const fn name(&self) -> &'static str {
-        self.name
+        self.spec.name
     }
 
     /// What the parameter is for.
     pub(crate) const fn role(&self) -> ParameterRole {
-        self.role
+        self.spec.role
+    }
+
+    /// Everything the provider stated about this binding.
+    pub(crate) const fn spec(&self) -> &ParameterSpec {
+        &self.spec
     }
 
     /// The binding-table position this parameter occupies.
@@ -122,7 +155,11 @@ impl CallParameter {
 
 impl fmt::Display for CallParameter {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:{}@{}", self.name, self.role, self.slot)
+        write!(
+            formatter,
+            "{}:{}@{}",
+            self.spec.name, self.spec.role, self.slot
+        )
     }
 }
 
@@ -185,20 +222,26 @@ impl CallAbi {
     /// Slots are assigned from the iteration order rather than taken from the
     /// caller; see [`CallParameter::slot`].
     pub(crate) fn declare(
-        parameters: impl IntoIterator<Item = (&'static str, ParameterRole)>,
+        parameters: impl IntoIterator<Item = ParameterSpec>,
     ) -> Result<Self, AbiError> {
         let mut declared: Vec<CallParameter> = Vec::new();
-        for (slot, (name, role)) in parameters.into_iter().enumerate() {
+        for (slot, spec) in parameters.into_iter().enumerate() {
             let slot = u32::try_from(slot).unwrap_or(u32::MAX);
-            if name.is_empty() {
+            if spec.name.is_empty() {
                 return Err(AbiError::UnnamedParameter(slot));
             }
-            if declared.iter().any(|existing| existing.name == name) {
-                return Err(AbiError::DuplicateName(name));
+            if declared
+                .iter()
+                .any(|existing| existing.spec.name == spec.name)
+            {
+                return Err(AbiError::DuplicateName(spec.name));
             }
-            declared.push(CallParameter { name, role, slot });
+            declared.push(CallParameter { spec, slot });
         }
-        if !declared.iter().any(|parameter| parameter.role.writes()) {
+        if !declared
+            .iter()
+            .any(|parameter| parameter.spec.role.writes())
+        {
             return Err(AbiError::NoWrittenParameter);
         }
         Ok(Self {
@@ -220,7 +263,7 @@ impl CallAbi {
     pub(crate) fn parameter(&self, name: &str) -> Option<&CallParameter> {
         self.parameters
             .iter()
-            .find(|parameter| parameter.name == name)
+            .find(|parameter| parameter.spec.name == name)
     }
 
     /// Whether this ABI can be bound where `other` is expected.
@@ -233,8 +276,8 @@ impl CallAbi {
         self.parameters.len() == other.parameters.len()
             && self.parameters.iter().all(|mine| {
                 other
-                    .parameter(mine.name)
-                    .is_some_and(|theirs| theirs.role == mine.role)
+                    .parameter(mine.spec.name)
+                    .is_some_and(|theirs| theirs.spec == mine.spec)
             })
     }
 }
@@ -243,27 +286,50 @@ impl CallAbi {
 mod tests {
     use super::*;
 
+    /// A spec with the bounded profile's storage answers, so tests that care
+    /// about names and roles do not have to restate the other three.
+    fn spec(name: &'static str, role: ParameterRole) -> ParameterSpec {
+        ParameterSpec {
+            name,
+            role,
+            layout: LayoutGuarantee::DenseRowMajor,
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::F32_NATURAL,
+        }
+    }
+
     fn abi(parameters: impl IntoIterator<Item = (&'static str, ParameterRole)>) -> CallAbi {
-        CallAbi::declare(parameters).expect("a well-formed abi")
+        CallAbi::declare(parameters.into_iter().map(|(name, role)| spec(name, role)))
+            .expect("a well-formed abi")
     }
 
     /// A duplicate or unnamed parameter is refused; a well-formed one is not.
     #[test]
     fn a_malformed_declaration_is_refused() {
         assert!(
-            CallAbi::declare([("x", ParameterRole::In), ("y", ParameterRole::Out)]).is_ok(),
+            CallAbi::declare(
+                [("x", ParameterRole::In), ("y", ParameterRole::Out)]
+                    .map(|(name, role)| spec(name, role))
+            )
+            .is_ok(),
             "a well-formed abi was refused"
         );
         assert_eq!(
-            CallAbi::declare([("x", ParameterRole::In), ("x", ParameterRole::Out)]),
+            CallAbi::declare(
+                [("x", ParameterRole::In), ("x", ParameterRole::Out)]
+                    .map(|(name, role)| spec(name, role))
+            ),
             Err(AbiError::DuplicateName("x")),
         );
         assert_eq!(
-            CallAbi::declare([("x", ParameterRole::Out), ("", ParameterRole::In)]),
+            CallAbi::declare(
+                [("x", ParameterRole::Out), ("", ParameterRole::In)]
+                    .map(|(name, role)| spec(name, role))
+            ),
             Err(AbiError::UnnamedParameter(1)),
         );
         assert_eq!(
-            CallAbi::declare([("x", ParameterRole::In)]),
+            CallAbi::declare([("x", ParameterRole::In)].map(|(name, role)| spec(name, role))),
             Err(AbiError::NoWrittenParameter),
         );
     }
