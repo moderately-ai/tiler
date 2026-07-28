@@ -586,10 +586,10 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             // (allocation, dispatch, synchronization, indexing, redundant work
             // — five, of which redundant work is exactly zero), memory traffic
             // as a `Bounded` pair contributing *two* records rather than one,
-            // and its count of unmodelled ones. The three `Unknown` components
-            // are deliberately not emitted as zeros, so this number grows as components become
+            // threadgroup memory, and its count of unmodelled ones. The three
+            // `Unknown` components are deliberately not emitted as zeros, so this number grows as components become
             // modelled rather than staying at nine from the start.
-            ("tiler.cost.analytical.v1", 16),
+            ("tiler.cost.analytical.v1", 18),
             ("tiler.cost.structural.v1", 2),
             ("tiler.selection.structural-pareto.v1", 2),
         ])

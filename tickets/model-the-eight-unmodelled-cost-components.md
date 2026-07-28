@@ -85,7 +85,11 @@ What is genuinely absent is narrower than claimed: **registers per thread**, and
 
 **So the real question is a vocabulary one.** Either this component stays `Unknown` until registers and an occupancy model exist, or the governed vocabulary gains a distinct component for threadgroup memory in bytes — which is exact today. The second is a change to "exactly the nine the accepted ticket names", so it should be visible rather than slipped in.
 
-*Recommendation: leave it `Unknown` and split threadgroup memory into its own component in a follow-up, because it is exact and immediately useful. Do not repair this by widening the unit — that trades a stated boundary for a wrong number.*
+**Done 2026-07-27 — the split was implemented rather than deferred.** `ResourcePressure` stays `Unknown` until registers and an occupancy model exist. A tenth governed component, `ThreadgroupMemory`, carries `local_memory_bytes` in bytes, aggregated as the **peak** across the plan's dispatches rather than a sum: threadgroup memory is held for one dispatch and released, so sequential regions never hold theirs at once, and a sum would report a plan as needing memory no point in its execution ever needs. The peak is also what a device limit is checked against, which is why `target.local-memory-bytes` is assessed per region rather than against a total.
+
+**The vocabulary is now ten, not the accepted nine.** That is a deliberate, visible change: folding bytes into a component whose unit is `Registers` would have been a unit lie, and units here are contract rather than documentation.
+
+**Measured: `Exact(0)` on every input**, since the bounded profile stages no local memory — verified by asserting zero across the suite and watching it never fire. **The peak-versus-sum choice is therefore correct but untested**: with every region at zero, `max` and a sum are indistinguishable and a fault would still report zero with a green suite. The first region that stages threadgroup memory exercises it.
 
 **`ArtifactSize` — an ordering problem, not a data problem.** Encoded bytes exist only after encoding, and this cost is computed during planning, which precedes it. Nothing in the plan can be summed to get it.
 

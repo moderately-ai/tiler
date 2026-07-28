@@ -23,16 +23,17 @@
 //! its own model key, it is reported, and the retained plan set is bit-for-bit
 //! what it was before this module existed.
 //!
-//! # Why three of the nine components are `Unknown`
+//! # Why three of the ten components are `Unknown`
 //!
 //! The accepted contract keeps `SoundProof`, exhaustive finite evidence,
 //! empirical evidence, and `Unknown` as different classes, and this module
 //! honours that rather than filling gaps with plausible arithmetic.
 //!
-//! Six components are derived from values a plan already carries — allocation,
-//! dispatch, the ordering constraints between dispatches, per-element address
-//! arithmetic, the work a fused cover repeats, and memory traffic — and each is
-//! computed at its match arm rather than estimated. Memory traffic is the one
+//! Seven components are derived from values a plan already carries —
+//! allocation, dispatch, the ordering constraints between dispatches,
+//! per-element address arithmetic, the work a fused cover repeats, memory
+//! traffic, and peak threadgroup memory — and each is computed at its match arm
+//! rather than estimated. Memory traffic is the one
 //! `Bounded` component, because the plan does not model cache reuse and a point
 //! estimate would claim a precision nothing here has.
 //!
@@ -44,9 +45,14 @@
 //! honest `Unknown` is a measurement boundary; a fabricated number is a defect
 //! that reads as evidence.
 //!
-//! Five came off the unreachable list after the source was re-read rather than
+//! Six came off the unreachable list after the source was re-read rather than
 //! the note re-trusted, and each time the data was closer to hand than the note
 //! claimed. Treat the remaining three the same way.
+//!
+//! The vocabulary is ten rather than the accepted nine: threadgroup memory was
+//! split out of `ResourcePressure`, which keeps `Unknown` until registers and an
+//! occupancy model exist. Folding bytes into a component whose unit is
+//! `Registers` would have been a unit lie, and units here are contract.
 
 use crate::region::SemanticMemberId;
 use crate::selection::SelectedPlan;
@@ -81,6 +87,14 @@ pub(crate) enum CostComponent {
     Synchronization,
     /// Register and threadgroup-memory pressure, and the occupancy it implies.
     ResourcePressure,
+    /// Peak threadgroup memory any one of the plan's dispatches requires.
+    ///
+    /// Split out from [`Self::ResourcePressure`] because it is exact today while
+    /// registers and occupancy are not, and because it is measured in bytes
+    /// rather than registers. Folding it into that component would have meant
+    /// reporting bytes under a `Registers` unit, and a number in the wrong unit
+    /// is what a calibration pass silently trusts.
+    ThreadgroupMemory,
     /// Compiler time the plan costs to produce.
     CompileTime,
     /// Encoded artifact bytes the plan yields.
@@ -90,7 +104,7 @@ pub(crate) enum CostComponent {
 /// The canonical component order: the single source of truth for evaluation,
 /// encoding, and reporting order, matching the derived [`CostComponent`]
 /// ordering.
-pub(crate) const CANONICAL_COMPONENTS: [CostComponent; 9] = [
+pub(crate) const CANONICAL_COMPONENTS: [CostComponent; 10] = [
     CostComponent::MemoryTraffic,
     CostComponent::Allocation,
     CostComponent::Dispatch,
@@ -98,6 +112,7 @@ pub(crate) const CANONICAL_COMPONENTS: [CostComponent; 9] = [
     CostComponent::Indexing,
     CostComponent::Synchronization,
     CostComponent::ResourcePressure,
+    CostComponent::ThreadgroupMemory,
     CostComponent::CompileTime,
     CostComponent::ArtifactSize,
 ];
@@ -113,6 +128,7 @@ impl CostComponent {
             Self::Indexing => "cost.indexing",
             Self::Synchronization => "cost.synchronization",
             Self::ResourcePressure => "cost.resource-pressure",
+            Self::ThreadgroupMemory => "cost.threadgroup-memory",
             Self::CompileTime => "cost.compile-time",
             Self::ArtifactSize => "cost.artifact-size",
         }
@@ -125,7 +141,10 @@ impl CostComponent {
     /// is a build error here rather than a value with no stated unit.
     pub(crate) const fn unit(self) -> CostUnit {
         match self {
-            Self::MemoryTraffic | Self::Allocation | Self::ArtifactSize => CostUnit::Bytes,
+            Self::MemoryTraffic
+            | Self::Allocation
+            | Self::ArtifactSize
+            | Self::ThreadgroupMemory => CostUnit::Bytes,
             Self::Dispatch | Self::Synchronization => CostUnit::Count,
             Self::RedundantWork | Self::Indexing => CostUnit::Operations,
             Self::ResourcePressure => CostUnit::Registers,
@@ -519,6 +538,30 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                         high,
                     })
                 }
+                // The **peak** any single dispatch requires, not a sum.
+                // Threadgroup memory is held for the duration of one dispatch
+                // and released, so regions dispatched in sequence do not hold
+                // theirs simultaneously; summing would report a plan as needing
+                // memory no point in its execution ever needs at once. The peak
+                // is what a device limit is actually checked against, which is
+                // why `target.local-memory-bytes` is assessed per region rather
+                // than against a total.
+                //
+                // **Measured: `Exact(0)` on every input in the suite** — the
+                // bounded profile stages no local memory. Verified by asserting
+                // the value is zero across the suite and watching that assertion
+                // never fire. So the peak-versus-sum choice above is *correct but
+                // untested*: with every region at zero, `max` and a sum are
+                // indistinguishable, and a fault here would still report zero
+                // with a green suite. The first region that stages threadgroup
+                // memory is what exercises it.
+                CostComponent::ThreadgroupMemory => CostValue::Exact(
+                    plan.selections()
+                        .iter()
+                        .map(|selection| selection.implementation().resources().local_memory_bytes)
+                        .max()
+                        .unwrap_or(0),
+                ),
                 CostComponent::ResourcePressure
                 | CostComponent::CompileTime
                 | CostComponent::ArtifactSize => CostValue::Unknown,
@@ -554,8 +597,9 @@ mod tests {
         );
         assert_eq!(
             CANONICAL_COMPONENTS.len(),
-            9,
-            "the accepted ticket names nine components"
+            10,
+            "nine from the accepted ticket, plus threadgroup memory split out of \
+             resource pressure because it is exact today and measured in bytes"
         );
     }
 
