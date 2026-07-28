@@ -66,6 +66,8 @@ impl ScalarOperationInferencer for FirstOperand {
 fn reducer_test_registry(calls: Arc<AtomicUsize>) -> FrozenScalarRegistry {
     let mut semantic = SemanticRegistryBuilder::new();
     semantic.register_provider(&ReducerTestTypes).unwrap();
+    // Ad-hoc: registers reducer-body scalars sized for the resource-ordering budget
+    // under test. The governed profile registers no reducer body at all.
     let mut scalar = ScalarRegistryBuilder::new(semantic.freeze().unwrap());
     let key = ScalarOpKey::new("test", "step", 1).unwrap();
     scalar

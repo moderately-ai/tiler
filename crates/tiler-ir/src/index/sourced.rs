@@ -603,6 +603,8 @@ mod tests {
     fn registry() -> FrozenScalarRegistry {
         let mut semantic = SemanticRegistryBuilder::new();
         semantic.register_provider(&Types).unwrap();
+        // Ad-hoc: `example::scalars` over a sourced-extent fixture. The subject is the
+        // sourced-shape plumbing rather than the governed vocabulary.
         let mut scalar = ScalarRegistryBuilder::new(semantic.freeze().unwrap());
         let provider = ProviderIdentity::new("example", "scalars", 1).unwrap();
         scalar

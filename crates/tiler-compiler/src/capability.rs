@@ -1776,6 +1776,10 @@ mod tests {
     }
 
     fn scalar_registry() -> tiler_ir::index::FrozenScalarRegistry {
+        // Ad-hoc: an `example` scalar namespace on purpose. The subject is capability
+        // resolution and provider identity, not the governed vocabulary, and binding
+        // these fixtures to `tiler.scalar::*` would make a change to the governed
+        // profile's arity or attributes break tests that are not about it.
         let mut builder = ScalarRegistryBuilder::new(FrozenSemanticRegistry::standard().unwrap());
         let scalars = provider("f32-scalars", 1);
         let constant_schema = ScalarAttributeSchema::new([ScalarAttributeField::required(

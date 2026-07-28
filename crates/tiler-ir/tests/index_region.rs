@@ -182,6 +182,9 @@ fn registries_with_extras(
             .unwrap();
     }
     let semantic = semantic.freeze().unwrap();
+    // Ad-hoc: `scalar_revision` is a parameter and the vocabulary is externally
+    // registered (`state_step` over a test type). The standard profile has one
+    // fixed revision and cannot express either.
     let mut scalar = ScalarRegistryBuilder::new(semantic.clone());
     let provider = ProviderIdentity::new("example", "scalar", scalar_revision).unwrap();
     scalar
@@ -354,6 +357,8 @@ fn scalar_schema_defaults_normalize_before_structural_identity() {
         let (semantic, _) = registries();
         let field = AttributeFieldId::new(11);
         let default = CanonicalValue::unsigned_u32(4);
+        // Ad-hoc: registers `example::defaulted-scalar`, whose subject is a defaulted
+        // attribute schema the governed profile does not carry.
         let mut scalar = ScalarRegistryBuilder::new(semantic);
         scalar
             .register(
@@ -906,6 +911,9 @@ fn reduction_depth_failure_precedes_user_closure_invocation() {
 #[test]
 fn multi_result_structural_key_storage_is_preflighted_transactionally() {
     let (semantic, _) = registries();
+    // Ad-hoc: needs a multi-result scalar to preflight structural-key storage.
+    // Every governed scalar has arity 1, so the standard profile cannot reach
+    // the transaction under test.
     let mut scalar = ScalarRegistryBuilder::new(semantic);
     let provider = ProviderIdentity::new("example", "wide", 1).unwrap();
     scalar
@@ -1113,6 +1121,9 @@ fn scalar_registration_failures_are_atomic_and_validate_nested_types() {
     let (semantic, _) = registries();
     let first_provider = ProviderIdentity::new("example", "first", 1).unwrap();
     let second_provider = ProviderIdentity::new("example", "second", 1).unwrap();
+    // Ad-hoc: the subject is two *different* providers registering one definition,
+    // which is what `DuplicateDefinition` rejects. A frozen profile has one
+    // provider per definition by construction and cannot stage the collision.
     let mut scalar = ScalarRegistryBuilder::new(semantic);
     let definition = scalar_definition("constant", 0, 1, Arc::new(Fixed(vec![test_type()])));
     scalar
@@ -1180,6 +1191,8 @@ fn scalar_registration_failures_are_atomic_and_validate_nested_types() {
 #[test]
 fn reached_definition_projection_has_a_checked_byte_limit() {
     let (semantic, _) = registries();
+    // Ad-hoc: registers a projection whose reached-definition bytes are sized to sit
+    // against the byte limit under test. The governed definitions are far below it.
     let mut scalar = ScalarRegistryBuilder::new(semantic);
     let provider = ProviderIdentity::new("example", "projection", 1).unwrap();
     let mut keys = Vec::new();
@@ -1214,6 +1227,8 @@ fn reached_definition_projection_has_a_checked_byte_limit() {
 #[test]
 fn aggregate_registry_bytes_are_preflighted_transactionally() {
     let (semantic, _) = registries();
+    // Ad-hoc: sized to exceed the aggregate registry byte budget. The standard
+    // profile is deliberately well inside it, so it cannot reach the preflight.
     let mut scalar = ScalarRegistryBuilder::new(semantic);
     let provider = ProviderIdentity::new("example", "registry-budget", 1).unwrap();
     let mut rejected = None;
@@ -1891,6 +1906,8 @@ fn ignored_provider_writer_failure_is_sticky_and_preserves_error_sources() {
     }
 
     let (semantic, _) = registries();
+    // Ad-hoc: registers an inferencer that overflows on purpose. No governed
+    // definition may do that, so the standard profile cannot exercise the path.
     let mut registry = ScalarRegistryBuilder::new(semantic);
     registry
         .register(
@@ -1965,6 +1982,9 @@ fn scalar_authority_closes_type_and_float_bits_dependencies_in_definition_values
         .unwrap(),
     )
     .unwrap();
+    // Ad-hoc: the subject is the scalar authority closing type and float-bits
+    // dependencies in definition *values*, which needs a definition carrying an
+    // unclosed dependency -- something a governed definition never does.
     let mut scalar = ScalarRegistryBuilder::new(semantic.clone());
     scalar
         .register(

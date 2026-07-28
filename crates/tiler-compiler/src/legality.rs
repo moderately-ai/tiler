@@ -1277,6 +1277,10 @@ mod tests {
     }
 
     fn scalar_registry() -> FrozenScalarRegistry {
+        // Ad-hoc: pairs the scalars with a lowering provider whose extent is a
+        // registration-time constant, so a fixture can register a provider that
+        // deliberately disagrees with the occurrence it is resolved for. A governed
+        // provider reads its extents from the occurrence facts and cannot disagree.
         let mut builder = ScalarRegistryBuilder::new(semantic());
         let scalars = provider("f32-scalars");
         for name in ["multiply", "add"] {
