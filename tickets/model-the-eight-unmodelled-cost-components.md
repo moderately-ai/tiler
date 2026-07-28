@@ -1,7 +1,7 @@
 ---
 id: model-the-eight-unmodelled-cost-components
 title: Model the eight unmodelled analytical cost components
-status: todo
+status: done
 priority: p2
 dependencies: [implement-analytical-component-cost-model]
 related: []
@@ -116,3 +116,17 @@ So the blocker is not a missing input. It is a definitional question I could not
 **Modelled 2026-07-27.** Weighting stated at the match arm: a member's first region in canonical selection order is the original and contributes nothing; every later region containing it contributes that region's own iteration points. The alternative — unweighted occurrence counting — is equally exact, gives a different number, and would not be comparable with `Indexing`, so the choice is recorded rather than derived.
 
 **Measured, and the measurement matters more than the code:** this is `Exact(0)` on every input in the suite, because the bounded profile's covers partition their members rather than overlapping. That is the correct answer, not a missing one — `Exact(0)` claims a plan repeats no work, which `Unknown` would not. But it means **the non-zero path is unexercised**, and a fault in the `seen` set or the weighting would still produce zero with a green suite. Verified by asserting the value is zero across the whole suite and watching that assertion never fire. Whoever introduces the first overlapping cover should check this value moves.
+
+## Closed at its floor (2026-07-27)
+
+Seven of nine components modelled: `Allocation`, `Dispatch`, `Synchronization`, `Indexing`, `RedundantWork`, `MemoryTraffic`, `ThreadgroupMemory`. Every one is computed from values a plan already carries, at its own match arm, with the derivation stated beside it. None enters dominance.
+
+The vocabulary moved twice, both deliberately and both recorded at the site: `ThreadgroupMemory` was **added**, split out of `ResourcePressure` because it is exact today and measured in bytes rather than registers; `ArtifactSize` was **removed**, because only the selected plan is ever encoded and a component unstateable for every candidate but the winner cannot inform a choice between candidates.
+
+The two remaining are not work this ticket can do:
+
+- **`CompileTime`** is a measurement rather than an analysis, and `calibrate-device-cost-models` owns measurement and activation by the parent ticket's own words.
+- **`ResourcePressure`** needs a register-per-thread and occupancy model that does not exist anywhere in the compiler. Split into `model-resource-pressure-from-a-register-and-occupancy-model`, deferred, with the exact greps that establish the absence and a trigger naming `implement-opaque-physical-call-providers` as the likely source of the estimate class it needs.
+
+**What this ticket is worth reading for beyond the code:** six of its own nine original "unreachable" notes were wrong, each overturned by a single read of the source, and each correction is recorded in place rather than silently fixed. The notes were written in one sitting describing what the data model was expected to look like; it was simpler and closer to hand every time. The one surviving blocker was re-checked twice before being carried into the split.
+
