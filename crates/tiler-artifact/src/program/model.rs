@@ -91,7 +91,17 @@ use super::keys::{
 /// written in and an order derived from the numbering would be circular. That
 /// changes their canonical order as well as their spelling, which is the second
 /// reason this is a domain step and not a re-encoding.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v5\0";
+///
+/// # Why this is a `v6` step
+///
+/// A variant no longer carries its own applicability guard, launch geometry, or
+/// per-binding accessible ranges: they are derived from the bound program. The
+/// identity folds the program's expressions where it used to fold a caller's
+/// restatement, so two artifacts that differed only because one producer wrote
+/// `UnsignedLiteral(24)` where another wrote `rows * columns * 4` over the same
+/// program are now one artifact — a change in what the identity means, not only
+/// in how it is spelled.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v6\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.

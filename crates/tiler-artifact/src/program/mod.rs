@@ -281,19 +281,10 @@
 //! // The ABI's accessible ranges are formulas over the bound interface, not
 //! // constants: `rows * columns * 4` input bytes and `rows * 4` output bytes.
 //! let key = InputKey::new("input")?;
-//! let rows = artifact.push_root(AbiRoot::InputExtent { key: key.clone(), axis: Axis::new(0) })?;
-//! let columns = artifact.push_root(AbiRoot::InputExtent { key, axis: Axis::new(1) })?;
-//! let width = artifact.push_root(AbiRoot::UnsignedLiteral(4))?;
-//! let elements = artifact.push_binary(AbiBinaryOp::CheckedMultiply, rows, columns)?;
-//! let input_bytes = artifact.push_binary(AbiBinaryOp::CheckedMultiply, elements, width)?;
-//! let output_bytes = artifact.push_binary(AbiBinaryOp::CheckedMultiply, rows, width)?;
-//! let one = artifact.push_root(AbiRoot::UnsignedLiteral(1))?;
-//! let always = artifact.push_root(AbiRoot::BooleanLiteral(true))?;
 //!
 //! artifact.push_variant(
 //!     &program,
 //!     VariantSpec {
-//!         applicability_guard: always,
 //!         target_profile: TargetProfileRef {
 //!             key: TargetProfileKey::new("tiler.prototype-target-neutral-baseline.v1")?,
 //!             descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02])?,
@@ -305,12 +296,10 @@
 //!         deferred_predicates: Vec::new(),
 //!         entries: vec![EntrySpec {
 //!             bindings: vec![
-//!                 BindingSpec { kind: BindingKind::Buffer, accessible_bytes: input_bytes },
-//!                 BindingSpec { kind: BindingKind::Buffer, accessible_bytes: output_bytes },
+//!                 BindingSpec { kind: BindingKind::Buffer },
+//!                 BindingSpec { kind: BindingKind::Buffer },
 //!             ],
 //!             launch: LaunchSpec {
-//!                 grid_threads: rows,
-//!                 threads_per_workgroup: one,
 //!                 zero_work_skips_dispatch: true,
 //!                 preconditions: Vec::new(),
 //!             },

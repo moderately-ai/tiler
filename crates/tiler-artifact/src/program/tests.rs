@@ -38,14 +38,14 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 
 use super::{
-    AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiExprUse, AbiFactBinder, AbiRoot, AbiType,
-    AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
-    ArtifactExecutionPolicy, ArtifactKeyKind, ArtifactProgramBuilder, AvailabilityPhase,
-    BackendEntryKey, BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind,
-    BindingSpec, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
-    FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, PayloadId,
-    RepresentationKey, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef, TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
+    AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiFactBinder, AbiRoot, AbiType, AbiUnaryOp,
+    AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactExecutionPolicy,
+    ArtifactKeyKind, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef,
+    BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
+    CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
+    FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, PayloadId, RepresentationKey, SchemaVersion,
+    SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
 };
 
 // The seven items this suite shares with `crate::proof::tests` are `pub(crate)`
@@ -474,65 +474,34 @@ pub(super) fn rules() -> FeasibilityRuleSetRef {
 
 /// The expression handles every fixture variant is assembled from.
 pub(super) struct Formulas {
-    pub(super) rows: AbiExprId,
-    pub(super) input_bytes: AbiExprId,
-    pub(super) output_bytes: AbiExprId,
+    /// The literal `1`, used by launch-precondition fixtures.
     pub(super) one: AbiExprId,
+    /// The literal `true`, used by deferred-predicate fixtures.
     pub(super) always: AbiExprId,
 }
 
 pub(super) fn formulas(draft: &mut ArtifactProgramBuilder) -> Formulas {
-    let key = InputKey::new("input").unwrap();
-    let rows = draft
-        .push_root(AbiRoot::InputExtent {
-            key: key.clone(),
-            axis: Axis::new(0),
-        })
-        .unwrap();
-    let columns = draft
-        .push_root(AbiRoot::InputExtent {
-            key,
-            axis: Axis::new(1),
-        })
-        .unwrap();
-    let width = draft
-        .push_root(AbiRoot::UnsignedLiteral(ELEMENT_BYTES))
-        .unwrap();
-    let elements = draft
-        .push_binary(AbiBinaryOp::CheckedMultiply, rows, columns)
-        .unwrap();
-    let input_bytes = draft
-        .push_binary(AbiBinaryOp::CheckedMultiply, elements, width)
-        .unwrap();
-    let output_bytes = draft
-        .push_binary(AbiBinaryOp::CheckedMultiply, rows, width)
-        .unwrap();
+    // Only what a caller still *supplies*. The applicability guard, launch
+    // geometry, and accessible ranges are derived from the bound program now, so
+    // minting the extent and byte-count formulas would leave them unreachable
+    // from any use site -- the `UnusedExpression` the artifact refuses, and what
+    // made two earlier attempts at this change look like an obligation conflict.
     let one = draft.push_root(AbiRoot::UnsignedLiteral(1)).unwrap();
     let always = draft.push_root(AbiRoot::BooleanLiteral(true)).unwrap();
-    Formulas {
-        rows,
-        input_bytes,
-        output_bytes,
-        one,
-        always,
-    }
+    Formulas { one, always }
 }
 
-pub(super) fn entry(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> EntrySpec {
+pub(super) fn entry(_formulas: &Formulas, payload: PayloadId, key: &[u8]) -> EntrySpec {
     EntrySpec {
         bindings: vec![
             BindingSpec {
                 kind: BindingKind::Buffer,
-                accessible_bytes: formulas.input_bytes,
             },
             BindingSpec {
                 kind: BindingKind::Buffer,
-                accessible_bytes: formulas.output_bytes,
             },
         ],
         launch: LaunchSpec {
-            grid_threads: formulas.rows,
-            threads_per_workgroup: formulas.one,
             zero_work_skips_dispatch: true,
             preconditions: Vec::new(),
         },
@@ -545,7 +514,6 @@ pub(super) fn entry(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> Entr
 
 pub(super) fn variant(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> VariantSpec {
     VariantSpec {
-        applicability_guard: formulas.always,
         target_profile: profile(),
         feasibility_rules: rules(),
         deferred_predicates: Vec::new(),
@@ -775,42 +743,15 @@ fn identity_ignores_expression_assembly_order() {
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment.clone()).unwrap();
         draft.select_provider(selection(provider.clone())).unwrap();
         let descriptor = draft.push_payload(payload(0xa1)).unwrap();
-        let key = InputKey::new("input").unwrap();
         // Assemble the identical formulas through two different node orders.
         let formulas = if reversed {
-            let always = draft.push_root(AbiRoot::BooleanLiteral(true)).unwrap();
+            // The same two expressions in the opposite declaration order; the
+            // variant's ABI is the program's now, so what remains under test is
+            // that a caller-supplied expression's declaration order does not
+            // reach identity.
             let one = draft.push_root(AbiRoot::UnsignedLiteral(1)).unwrap();
-            let width = draft
-                .push_root(AbiRoot::UnsignedLiteral(ELEMENT_BYTES))
-                .unwrap();
-            let columns = draft
-                .push_root(AbiRoot::InputExtent {
-                    key: key.clone(),
-                    axis: Axis::new(1),
-                })
-                .unwrap();
-            let rows = draft
-                .push_root(AbiRoot::InputExtent {
-                    key,
-                    axis: Axis::new(0),
-                })
-                .unwrap();
-            let output_bytes = draft
-                .push_binary(AbiBinaryOp::CheckedMultiply, rows, width)
-                .unwrap();
-            let elements = draft
-                .push_binary(AbiBinaryOp::CheckedMultiply, rows, columns)
-                .unwrap();
-            let input_bytes = draft
-                .push_binary(AbiBinaryOp::CheckedMultiply, elements, width)
-                .unwrap();
-            Formulas {
-                rows,
-                input_bytes,
-                output_bytes,
-                one,
-                always,
-            }
+            let always = draft.push_root(AbiRoot::BooleanLiteral(true)).unwrap();
+            Formulas { one, always }
         } else {
             formulas(&mut draft)
         };
@@ -1039,7 +980,13 @@ fn rejects_an_expression_handle_from_another_builder() {
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     let mut spec = variant(&formulas, descriptor, b"fused");
-    spec.applicability_guard = donor_formulas.always;
+    // Injected through a launch precondition, which is still caller-supplied.
+    // The guard and launch geometry are derived from the program now, so they
+    // are no longer a way to hand the builder a foreign handle at all.
+    spec.entries[0]
+        .launch
+        .preconditions
+        .push(donor_formulas.always);
     assert_eq!(
         draft.push_variant(&program, spec),
         Err(ArtifactBuildError::ForeignHandle {
@@ -1081,106 +1028,6 @@ fn rejects_a_provider_the_environment_never_offered() {
         draft.select_provider(selection(lowering_provider(9))),
         Err(ArtifactBuildError::ProviderNotAvailable {
             provider: Box::new(lowering_provider(9)),
-        }),
-    );
-}
-
-#[test]
-fn rejects_an_accessible_range_that_contradicts_the_program() {
-    let outcome = with_default_draft(|draft, formulas, descriptor, program| {
-        let mut spec = variant(formulas, descriptor, b"fused");
-        spec.entries[0].bindings[0].accessible_bytes = formulas.output_bytes;
-        draft.push_variant(program, spec)
-    });
-    assert_eq!(
-        outcome,
-        Err(ArtifactBuildError::AccessibleBytesDisagreement {
-            entry: 0,
-            binding: 0,
-            expected: 24,
-            actual: 8,
-        }),
-    );
-}
-
-#[test]
-fn rejects_a_launch_that_contradicts_the_kernel_requirements() {
-    let outcome = with_default_draft(|draft, formulas, descriptor, program| {
-        let mut spec = variant(formulas, descriptor, b"fused");
-        spec.entries[0].launch.threads_per_workgroup = formulas.rows;
-        draft.push_variant(program, spec)
-    });
-    assert_eq!(
-        outcome,
-        Err(ArtifactBuildError::LaunchDisagreement {
-            entry: 0,
-            expected: 1,
-            actual: 2,
-        }),
-    );
-}
-
-#[test]
-fn rejects_a_guard_that_is_not_a_predicate() {
-    let outcome = with_default_draft(|draft, formulas, descriptor, program| {
-        let mut spec = variant(formulas, descriptor, b"fused");
-        spec.applicability_guard = formulas.rows;
-        draft.push_variant(program, spec)
-    });
-    assert_eq!(
-        outcome,
-        Err(ArtifactBuildError::ExpressionType {
-            use_site: AbiExprUse::ApplicabilityGuard,
-            expected: AbiType::Boolean,
-            actual: AbiType::Unsigned,
-        }),
-    );
-}
-
-#[test]
-fn rejects_a_size_expression_naming_a_device_property() {
-    let outcome = with_default_draft(|draft, formulas, descriptor, program| {
-        let property = draft
-            .push_root(AbiRoot::TargetProperty {
-                key: TargetPropertyKey::new("tiler.target.max-threads").unwrap(),
-                phase: AvailabilityPhase::LiveDevicePreflight,
-            })
-            .unwrap();
-        let mut spec = variant(formulas, descriptor, b"fused");
-        spec.entries[0].bindings[0].accessible_bytes = property;
-        draft.push_variant(program, spec)
-    });
-    assert_eq!(
-        outcome,
-        Err(ArtifactBuildError::NonInterfaceRoot {
-            use_site: AbiExprUse::AccessibleBytes,
-        }),
-    );
-}
-
-#[test]
-fn rejects_a_guard_naming_a_fact_from_a_later_phase() {
-    let outcome = with_default_draft(|draft, formulas, descriptor, program| {
-        let property = draft
-            .push_root(AbiRoot::TargetProperty {
-                key: TargetPropertyKey::new("tiler.target.pipeline-registers").unwrap(),
-                phase: AvailabilityPhase::PreparedKernelPreflight,
-            })
-            .unwrap();
-        let bound = draft.push_root(AbiRoot::UnsignedLiteral(64)).unwrap();
-        let guard = draft
-            .push_binary(AbiBinaryOp::LessOrEqual, property, bound)
-            .unwrap();
-        let mut spec = variant(formulas, descriptor, b"fused");
-        spec.applicability_guard = guard;
-        draft.push_variant(program, spec)
-    });
-    assert_eq!(
-        outcome,
-        Err(ArtifactBuildError::RootPhaseEscape {
-            use_site: AbiExprUse::ApplicabilityGuard,
-            available_at: AvailabilityPhase::PreparedKernelPreflight,
-            admitted_through: AvailabilityPhase::LiveDevicePreflight,
         }),
     );
 }
@@ -1548,7 +1395,33 @@ fn the_fact_binder_refuses_a_fact_from_a_later_phase() {
 
 #[test]
 fn evaluation_reports_an_unbound_root_rather_than_guessing() {
-    let artifact = default_artifact();
+    // Exercised through a launch precondition rather than the launch geometry.
+    // The geometry is derived from the program now and that program's is a
+    // constant, so it evaluates without consulting any fact -- which would make
+    // this test pass for the wrong reason. A precondition is still
+    // caller-supplied and can name a fact that is deliberately left unbound.
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let rows = draft
+        .push_root(AbiRoot::InputExtent {
+            key: InputKey::new("input").unwrap(),
+            axis: Axis::new(0),
+        })
+        .unwrap();
+    let predicate = draft
+        .push_binary(AbiBinaryOp::LessOrEqual, formulas.one, rows)
+        .unwrap();
+    let mut spec = variant(&formulas, descriptor, b"fused");
+    spec.entries[0].launch.preconditions = vec![predicate];
+    draft.push_variant(&program, spec).unwrap();
+    let artifact = draft.build().unwrap();
+
     let facts = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight).build();
     let entry = artifact
         .variants()
@@ -1557,8 +1430,12 @@ fn evaluation_reports_an_unbound_root_rather_than_guessing() {
         .entries()
         .next()
         .expect("one entry");
+    let precondition = entry
+        .launch_preconditions()
+        .next()
+        .expect("one launch precondition");
     assert_eq!(
-        entry.launch_threads().evaluate(&facts),
+        precondition.evaluate(&facts),
         Err(AbiEvaluationError::UnboundInputExtent {
             key: InputKey::new("input").unwrap(),
             axis: Axis::new(0),
@@ -1931,17 +1808,23 @@ fn artifact_identity_size_grows_linearly_with_the_abi_arena() {
 
             // Grow the guard, which is a use site, so every added node is
             // reached and verification admits the artifact.
-            let mut guard = formulas.always;
+            // Grown through a **launch precondition**, not the applicability
+            // guard: the guard is derived from the program now, so it is no
+            // longer a caller-supplied place to add arena depth. A precondition
+            // is still artifact-owned and still reaches identity, so this
+            // measures what it always measured -- identity size against arena
+            // size -- through the seam that survives the binding.
+            let mut grown = formulas.always;
             for _ in 0..levels {
-                guard = if shared {
-                    draft.push_binary(AbiBinaryOp::And, guard, guard).unwrap()
+                grown = if shared {
+                    draft.push_binary(AbiBinaryOp::And, grown, grown).unwrap()
                 } else {
                     let filler = draft.push_root(AbiRoot::BooleanLiteral(false)).unwrap();
-                    draft.push_binary(AbiBinaryOp::Or, guard, filler).unwrap()
+                    draft.push_binary(AbiBinaryOp::Or, grown, filler).unwrap()
                 };
             }
             let mut spec = variant(&formulas, descriptor, b"fused");
-            spec.applicability_guard = guard;
+            spec.entries[0].launch.preconditions = vec![grown];
             draft.push_variant(&program, spec).unwrap();
             let artifact = draft.build().unwrap();
 

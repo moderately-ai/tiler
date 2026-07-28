@@ -2656,26 +2656,30 @@ mod tests {
             )
             .expect("the synthetic payload is carried");
 
+        // Still replayed, and still only for the pruning property it exercises:
+        // the builder derives the variant's ABI from the program now, so nothing
+        // below resolves a position. The builder deduplicates by content, so
+        // this adds no node it does not already adopt.
         let minted = replay(&mut builder, abi.expressions(), &variant_roots(plan));
-        let resolve = |position: u32| {
-            minted[usize::try_from(position).expect("a bounded arena position fits a usize")]
-                .expect("every use site names a position the variant's own roots reach")
-        };
+        debug_assert!(
+            minted.iter().any(Option::is_some),
+            "a non-empty root set must replay at least one node"
+        );
 
         let entries: Vec<EntrySpec> = abi
             .entries()
             .zip(program.stages())
             .map(|(entry, stage)| EntrySpec {
+                // The accessible range, launch geometry, and applicability guard
+                // are derived by `ArtifactProgramBuilder` from the program it is
+                // given, so this consumer no longer restates them.
                 bindings: entry
                     .accessible_bytes()
-                    .map(|position| BindingSpec {
+                    .map(|_| BindingSpec {
                         kind: BindingKind::Buffer,
-                        accessible_bytes: resolve(position),
                     })
                     .collect(),
                 launch: LaunchSpec {
-                    grid_threads: resolve(entry.grid_threads()),
-                    threads_per_workgroup: resolve(entry.threads_per_workgroup()),
                     // Not a choice: `tiler_ir::schedule`'s intrinsic verifier
                     // refuses a scheduled region whose launch plan does not skip a
                     // zero-thread dispatch, so every verified region carries it.
@@ -2696,7 +2700,6 @@ mod tests {
             .push_variant(
                 program,
                 VariantSpec {
-                    applicability_guard: resolve(abi.applicability_guard()),
                     target_profile: profile,
                     feasibility_rules: rules,
                     deferred_predicates: Vec::new(),

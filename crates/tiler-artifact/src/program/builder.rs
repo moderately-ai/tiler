@@ -139,17 +139,11 @@ pub struct DeferredPredicateSpec {
 pub struct BindingSpec {
     /// Transport category of the binding.
     pub kind: BindingKind,
-    /// Minimum accessible byte range the entry requires.
-    pub accessible_bytes: AbiExprId,
 }
 
 /// The launch contract a producer declares for an executable entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LaunchSpec {
-    /// Total launch thread count.
-    pub grid_threads: AbiExprId,
-    /// Threads per workgroup.
-    pub threads_per_workgroup: AbiExprId,
     /// Whether a zero-thread launch skips the dispatch entirely.
     pub zero_work_skips_dispatch: bool,
     /// Launch-instance preconditions evaluated before routing commits.
@@ -170,8 +164,6 @@ pub struct EntrySpec {
 /// One complete plan variant a producer declares.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VariantSpec {
-    /// Guard deciding whether this variant may be routed to.
-    pub applicability_guard: AbiExprId,
     /// Declared target profile the variant was assessed against.
     pub target_profile: TargetProfileRef,
     /// Feasibility rule set the variant was assessed under.
@@ -631,8 +623,15 @@ impl ArtifactProgramBuilder {
             });
         }
         limit(stages, MAX_VARIANT_ENTRIES, ArtifactLimitKind::Entries)?;
+        // The program's own ABI, replayed onto this builder's arena. Every
+        // expression below is taken from it rather than restated by a caller,
+        // which is what makes a variant's runtime ABI *be* its program's rather
+        // than merely agree with it at one value.
+        let program_roots = program_abi_use_sites(program);
+        let adopted = self.adopt_abi(program.abi_expressions(), &program_roots)?;
+        let derived_guard = Self::resolve(&adopted, program.applicability_guard())?;
         let guard = self.check_use(
-            spec.applicability_guard,
+            derived_guard,
             AbiExprUse::ApplicabilityGuard,
             AbiType::Boolean,
             AvailabilityPhase::LiveDevicePreflight,
@@ -640,7 +639,7 @@ impl ArtifactProgramBuilder {
         )?;
         let deferred = self.check_deferred(&spec.deferred_predicates)?;
         let facts = static_facts(program);
-        let entries = self.check_entries(program, &spec.entries, &facts)?;
+        let entries = self.check_entries(program, &spec.entries, &facts, &adopted)?;
         let subject = self.check_subject(program, &spec)?;
         let id = VariantId::from_len(self.owner, self.variants.len()).ok_or(
             ArtifactBuildError::StructuralLimit {
@@ -862,11 +861,12 @@ impl ArtifactProgramBuilder {
         program: &VerifiedKernelProgram,
         specs: &[EntrySpec],
         facts: &AbiFacts,
+        adopted: &[Option<AbiExprId>],
     ) -> Result<Vec<EntryData>, ArtifactBuildError> {
         let mut resolved = Vec::with_capacity(specs.len());
         for (index, (spec, stage)) in specs.iter().zip(program.stages()).enumerate() {
-            let bindings = self.check_bindings(program, index, spec, stage, facts)?;
-            let launch = self.check_launch(index, &spec.launch, stage, facts)?;
+            let bindings = self.check_bindings(program, index, spec, stage, facts, adopted)?;
+            let launch = self.check_launch(index, &spec.launch, stage, facts, adopted)?;
             let payload = self.resolve_payload(spec.implementation.payload)?;
             resolved.push(EntryData {
                 bindings,
@@ -887,6 +887,7 @@ impl ArtifactProgramBuilder {
         spec: &EntrySpec,
         stage: StageRef<'_>,
         facts: &AbiFacts,
+        adopted: &[Option<AbiExprId>],
     ) -> Result<Vec<BindingData>, ArtifactBuildError> {
         let buffers: Vec<_> = stage.kernel().buffers().collect();
         if buffers.len() != spec.bindings.len() {
@@ -914,7 +915,7 @@ impl ArtifactProgramBuilder {
             .enumerate()
         {
             let node = self.check_use(
-                binding.accessible_bytes,
+                Self::resolve(adopted, access.accessible_bytes())?,
                 AbiExprUse::AccessibleBytes,
                 AbiType::Unsigned,
                 AvailabilityPhase::LiveDevicePreflight,
@@ -963,16 +964,18 @@ impl ArtifactProgramBuilder {
         spec: &LaunchSpec,
         stage: StageRef<'_>,
         facts: &AbiFacts,
+        adopted: &[Option<AbiExprId>],
     ) -> Result<LaunchData, ArtifactBuildError> {
+        let stage_launch = stage.launch();
         let grid_threads = self.check_use(
-            spec.grid_threads,
+            Self::resolve(adopted, stage_launch.grid_threads)?,
             AbiExprUse::LaunchThreads,
             AbiType::Unsigned,
             AvailabilityPhase::LiveDevicePreflight,
             true,
         )?;
         let threads_per_workgroup = self.check_use(
-            spec.threads_per_workgroup,
+            Self::resolve(adopted, stage_launch.threads_per_workgroup)?,
             AbiExprUse::ThreadsPerWorkgroup,
             AbiType::Unsigned,
             AvailabilityPhase::LiveDevicePreflight,
@@ -1278,6 +1281,26 @@ fn binding_target(
         | (MaterializedOrigin::ProgramInput { .. }, role @ ValueRole::Output)
         | (MaterializedOrigin::Internal, role @ ValueRole::Input) => Err(unnameable(role)),
     }
+}
+
+/// Every arena position the program's own ABI names.
+///
+/// The replay's roots, so the whole program ABI is adopted rather than the part
+/// one variant happens to reference: a second variant over the same program
+/// must resolve to the same handles.
+#[allow(
+    clippy::redundant_closure_for_method_calls,
+    reason = "the receiver type is a private view of tiler-ir and naming it here would import a type this module otherwise never mentions"
+)]
+fn program_abi_use_sites(program: &VerifiedKernelProgram) -> Vec<u32> {
+    let mut sites = vec![program.applicability_guard()];
+    for stage in program.stages() {
+        let launch = stage.launch();
+        sites.push(launch.grid_threads);
+        sites.push(launch.threads_per_workgroup);
+        sites.extend(stage.accesses().map(|access| access.accessible_bytes()));
+    }
+    sites
 }
 
 /// Builds the declared-shape fact environment one program's ABI is checked in.

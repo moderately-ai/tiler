@@ -285,39 +285,14 @@ fn expression_assembly_order_does_not_change_the_bytes() {
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment.clone()).unwrap();
         draft.select_provider(selection(provider.clone())).unwrap();
         let descriptor = draft.push_payload(payload(0xa1)).unwrap();
-        let key = InputKey::new("input").unwrap();
         let formulas = if reversed {
-            let always = draft.push_root(AbiRoot::BooleanLiteral(true)).unwrap();
+            // The same two expressions in the opposite declaration order; the
+            // variant's ABI is the program's now, so what remains under test is
+            // that a caller-supplied expression's declaration order does not
+            // reach identity.
             let one = draft.push_root(AbiRoot::UnsignedLiteral(1)).unwrap();
-            let width = draft.push_root(AbiRoot::UnsignedLiteral(4)).unwrap();
-            let columns = draft
-                .push_root(AbiRoot::InputExtent {
-                    key: key.clone(),
-                    axis: Axis::new(1),
-                })
-                .unwrap();
-            let rows = draft
-                .push_root(AbiRoot::InputExtent {
-                    key,
-                    axis: Axis::new(0),
-                })
-                .unwrap();
-            let output_bytes = draft
-                .push_binary(AbiBinaryOp::CheckedMultiply, rows, width)
-                .unwrap();
-            let elements = draft
-                .push_binary(AbiBinaryOp::CheckedMultiply, rows, columns)
-                .unwrap();
-            let input_bytes = draft
-                .push_binary(AbiBinaryOp::CheckedMultiply, elements, width)
-                .unwrap();
-            Formulas {
-                rows,
-                input_bytes,
-                output_bytes,
-                one,
-                always,
-            }
+            let always = draft.push_root(AbiRoot::BooleanLiteral(true)).unwrap();
+            Formulas { one, always }
         } else {
             formulas(&mut draft)
         };
