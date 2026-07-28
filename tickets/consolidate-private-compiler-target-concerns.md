@@ -18,7 +18,7 @@ assessment are currently spread across several top-level compiler modules. The
 shared honourability ownership decision must land first so this refactor does
 not assume where the target-neutral vocabulary belongs.
 
-## Outcome
+## User-visible outcome
 
 Create one shallow private target cluster whose files own profile description,
 hard feasibility, numerical honourability, and assessment. Preserve the

@@ -26,7 +26,7 @@ shape, toolchain/profile, peak live bytes, total allocated bytes, and allocation
 sites for decode, validation, and view construction. Include malformed inputs
 that reach the deepest bounded validation paths.
 
-## Outcome
+## User-visible outcome
 
 Where amplification is material, validate through bounded borrowed views and
 take ownership only at the boundary that requires it. Preserve every size
