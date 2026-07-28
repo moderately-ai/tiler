@@ -3,7 +3,7 @@ id: bind-the-artifact-variant-abi-to-the-program-abi
 title: Bind the artifact variant ABI to the program ABI
 status: todo
 priority: p1
-dependencies: [complete-program-identity-with-abi-guards-and-routing]
+dependencies: [complete-program-identity-with-abi-guards-and-routing, reconcile-the-artifact-and-program-abi-expression-obligations]
 related: [prototype-artifact-program-model]
 scopes: [implementation/artifact, implementation/metal-aot]
 shared_scopes: [project/tickets]
@@ -87,3 +87,9 @@ The check itself is reverted; `adopt_abi` and its tests remain, because they are
 **What that changes for whoever takes this next.** The remaining work is not "delete three fields and thread a map". It is: establish why a program-owned expression fails the artifact's use-site obligations, decide whether the artifact's requirements are too strict or the program's expressions are under-constrained, and only then bind. That is a design question about the two layers' contracts, and it should probably be its own ticket ahead of this one.
 
 **Retained from the attempts:** `adopt_abi` and its two tests, already on `main` — the replay primitive either route needs, and the only part of this that was ever mechanical.
+
+### Split 2026-07-27 — this now depends on reconciling the two layers' obligations
+
+The 266-test verification wall above is not this ticket's work. It is a question about what a verified program promises about its ABI, and it is filed as [`reconcile-the-artifact-and-program-abi-expression-obligations`](reconcile-the-artifact-and-program-abi-expression-obligations.md) with the reproduction, the failure classes, and the three candidate answers carried in — so none of it is re-derived.
+
+Once that lands, what remains here is what the original estimate described: remove the three restated fields, resolve each use site through `adopt_abi`'s map, step `ARTIFACT_DOMAIN` and the `guard_and_routing` schema. The compile-side churn is 13 sites and every one is a deletion, which was measured rather than guessed.
