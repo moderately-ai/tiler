@@ -1,7 +1,7 @@
 ---
 id: bind-the-artifact-variant-abi-to-the-program-abi
 title: Bind the artifact variant ABI to the program ABI
-status: todo
+status: in-progress
 priority: p1
 dependencies: [complete-program-identity-with-abi-guards-and-routing]
 related: [prototype-artifact-program-model]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi, identity]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785209046
 ---
 **Fact — two ABIs now describe one program, and nothing binds them.** `complete-program-identity-with-abi-guards-and-routing` gave `tiler_ir::program::VerifiedKernelProgram` its own ABI expression arena, applicability guard, per-stage launch geometry, and per-access accessible byte range, and folded all four into `tiler.kernel-program.v2` identity. `tiler_artifact::program`'s `VariantSpec` still declares its own guard, its own `LaunchSpec`, and its own per-binding `accessible_bytes`, on its own arena, under the separately versioned `guard_and_routing` schema.
 
@@ -110,3 +113,27 @@ The 266-test wall was `UnusedExpression`, unanimously: adopting the program's AB
 2. Adopt once in `push_variant` via `adopt_abi`; resolve each use site from the map.
 3. **Stop the fixtures minting what they no longer supply.** `formulas()` mints `rows`, `input_bytes`, `output_bytes`, `one`, and `always`; once the variant derives them, only what deferred predicates and launch preconditions still reference should be minted. This is the step the earlier attempts missed and it is deletion in one helper.
 4. Step `ARTIFACT_DOMAIN` (`v5` → `v6`) and the `guard_and_routing` schema, with the reason at the site.
+
+### Progress 2026-07-27 — the change works; six tests need a coverage judgement
+
+**Built end to end and reverted at 6 failures from 132.** The derive route is correct and the earlier walls are gone. Sequence that got there, all four steps of the plan above:
+
+1. Removed the three restated fields — 13 sites, all deletions, as measured.
+2. Adopted once in `push_variant`; `check_launch` and `check_bindings` resolve each use site from the map.
+3. **Trimmed `formulas()` to what a caller still supplies.** This is the step both earlier attempts missed. It minted `rows`, `input_bytes`, `output_bytes`, `one`, `always`; only the last two are still referenced, and minting the other three left them unreachable from any use site. That alone was **125 of the 132 failures** — `UnusedExpression`, exactly as diagnosed.
+4. Stepped `ARTIFACT_DOMAIN` to `v6` with its reason at the site.
+
+**The six that remain, and each one's disposition.** They are not defects; every one is a test whose subject the change makes unrepresentable, except the last:
+
+| test | why it fails | disposition |
+| --- | --- | --- |
+| `rejects_a_guard_that_is_not_a_predicate` | the guard is derived; a caller cannot supply a non-predicate | delete — subject unconstructible |
+| `rejects_a_guard_naming_a_fact_from_a_later_phase` | same | delete |
+| `rejects_a_size_expression_naming_a_device_property` | accessible ranges are derived | delete |
+| `rejects_an_expression_handle_from_another_builder` | reached the builder through a removed field | rewrite against a field that still exists — a launch precondition |
+| `evaluation_reports_an_unbound_root_rather_than_guessing` | same shape | rewrite the same way |
+| `artifact_identity_size_grows_linearly_with_the_abi_arena` | **real coverage.** It grew the *artifact's* guard to drive arena size; the guard is now the program's, so growth has to move to the program's ABI fixture | adapt — do not delete |
+
+**Reverted rather than landed** because the last row is the one that matters: deleting three tests whose subject no longer exists is correct and already precedented in this change, but the linearity instrument is the evidence that artifact identity is linear in arena size, and adapting it means growing `fused_program`'s ABI instead. Getting that wrong silently removes the guarantee `flatten-artifact-expression-identity` established. That judgement wants a fresh session, not the end of one.
+
+**Everything needed is on `main`:** `adopt_abi`, its tests, and the replay probe. The remaining work is the four steps above plus the six dispositions in that table.
