@@ -55,6 +55,10 @@ use crate::explain::{
     SubjectKey, SubjectKind,
 };
 use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
+use crate::rewrite::{
+    COMMON_SUBEXPRESSION_RULE, ProviderDefect, RewriteProposal, RewriteRuleIdentity,
+    RewriteRuleProvider,
+};
 
 /// Stable identity of the normalization stage rule.
 pub(crate) const NORMALIZE_STAGE_RULE: &str = "normalize.semantics.v1";
@@ -324,6 +328,56 @@ struct Congruence {
     operation_results: Vec<Vec<usize>>,
     /// Committed merges in traversal order.
     merges: Vec<SharedValueMerge>,
+}
+
+/// The common-subexpression rule, exposed as an external rewrite provider.
+///
+/// This is the bridge `generalize-the-normalize-transaction-to-alternatives`
+/// is built against. It reuses this stage's own detection and rebuild rather
+/// than reimplementing them, so the engine driving it must produce what
+/// [`normalize_semantics`] produces — which is exactly the pin that ticket
+/// states.
+///
+/// It performs **no** part of the transaction: no budget, no revalidation, no
+/// adoption. Those stay in `normalize_semantics`, and a proposal returned here
+/// is a candidate nothing has yet accepted.
+pub(crate) struct CommonSubexpressionRule;
+
+impl RewriteRuleProvider<SemanticProgram> for CommonSubexpressionRule {
+    fn identity(&self) -> RewriteRuleIdentity {
+        COMMON_SUBEXPRESSION_RULE.expect("the common-subexpression rule identity is named")
+    }
+
+    /// Detects shared values and, if any, rebuilds the program without them.
+    ///
+    /// The three outcomes are kept distinct, which is the whole reason this
+    /// signature is fallible:
+    ///
+    /// - **no merges** — `Ok(vec![])`, the ordinary "nothing to do" case;
+    /// - **detection or rebuild failed** — `Err`, a compiler fault carrying the
+    ///   `NormalizeError`'s own stable reason;
+    /// - **merges found and rebuilt** — one candidate program.
+    ///
+    /// The empty case is checked before rebuilding rather than after: rebuilding
+    /// a program with no merges yields a copy that is semantically identical to
+    /// its input, and proposing it would make the engine revalidate and compare
+    /// a program that cannot differ. That is not merely wasteful — a proposal
+    /// that is always available would make "this rule applies" meaningless.
+    fn propose(
+        &self,
+        program: &SemanticProgram,
+    ) -> Result<Vec<RewriteProposal<SemanticProgram>>, ProviderDefect> {
+        let failed = |error: NormalizeError| ProviderDefect::Failed {
+            rule: self.identity(),
+            reason: error.reason(),
+        };
+        let congruence = detect_shared_values(program).map_err(failed)?;
+        if congruence.merges.is_empty() {
+            return Ok(Vec::new());
+        }
+        let candidate = rebuild(program, &congruence).map_err(failed)?;
+        Ok(vec![RewriteProposal::new(self.identity(), candidate)])
+    }
 }
 
 fn detect_shared_values(program: &SemanticProgram) -> Result<Congruence, NormalizeError> {
@@ -831,6 +885,72 @@ mod tests {
                 outcome.normalized_program().unwrap(),
                 &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
             )
+        );
+    }
+
+    /// **The pin for `generalize-the-normalize-transaction-to-alternatives`.**
+    ///
+    /// The provider must produce exactly what this stage produces, compared on
+    /// the canonical bytes of the program's `SemanticIdentity` rather than on a
+    /// summary such as the merge count — two different programs can share a
+    /// merge count, and a pin that could not tell them apart would not be a
+    /// pin. The bytes rather than a digest of them, so a collision cannot make
+    /// two different programs compare equal.
+    ///
+    /// When the engine drives this rule and nothing else, its result must equal
+    /// this. If that ever diverges, the engine changed the rewrite rather than
+    /// merely rehosting it.
+    #[test]
+    fn the_provider_proposes_exactly_what_this_stage_produces() {
+        let duplicated = program(2.0, 2.0, false);
+        let expected = normalize(&duplicated);
+        let expected_program = expected
+            .normalized_program()
+            .expect("the duplicated program normalizes");
+
+        let proposals = CommonSubexpressionRule
+            .propose(&duplicated)
+            .expect("detection and rebuild succeed");
+        assert_eq!(
+            proposals.len(),
+            1,
+            "the rule proposed {} candidates",
+            proposals.len()
+        );
+        assert_eq!(
+            proposals[0].rule(),
+            CommonSubexpressionRule.identity(),
+            "the proposal is not attributed to the rule that made it"
+        );
+        assert_eq!(
+            proposals[0]
+                .candidate()
+                .semantic_identity()
+                .graph()
+                .as_bytes(),
+            expected_program.semantic_identity().graph().as_bytes(),
+            "the provider's candidate differs from this stage's normalized program"
+        );
+    }
+
+    /// A program with nothing to merge yields no proposal, not an empty rewrite.
+    ///
+    /// Without this the pin above would pass against a rule that proposed a
+    /// candidate unconditionally, since a program with no merges rebuilds to a
+    /// copy of itself and would compare equal.
+    #[test]
+    fn a_program_with_no_shared_values_proposes_nothing() {
+        let distinct = program(2.0, 3.0, false);
+        assert!(
+            normalize(&distinct).normalized_program().is_none(),
+            "the fixture has a merge, so this test proves nothing"
+        );
+        assert!(
+            CommonSubexpressionRule
+                .propose(&distinct)
+                .expect("detection succeeds")
+                .is_empty(),
+            "a rule with nothing to do proposed a candidate"
         );
     }
 

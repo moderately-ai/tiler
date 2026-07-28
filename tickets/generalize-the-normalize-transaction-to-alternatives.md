@@ -67,3 +67,20 @@ That is the same class of bug as `Unknown` reported as zero, and it is worse her
 `collect_proposals` absorbed it with one `?` and keeps its all-or-nothing behaviour, so a rule that cannot run discards the batch exactly as a misattributed proposal does. The test registers the failing provider *second* in canonical order, so it also confirms the first provider's proposals are discarded rather than returned as a partial result, and it asserts the same registry *without* the broken provider succeeds — otherwise the failure assertion would pass for the wrong reason.
 
 The four test providers in `rewrite.rs` were updated with it. This ticket's first slice is now unobstructed: write the CSE provider over `detect_shared_values` and `rebuild`, returning `Err(ProviderDefect::Failed { .. })` on a `NormalizeError` rather than an empty vector.
+
+## The CSE provider landed, and the pin is live (2026-07-28)
+
+`normalize::CommonSubexpressionRule` implements `RewriteRuleProvider<SemanticProgram>` over this stage's own `detect_shared_values` and `rebuild`. It performs **no** part of the transaction — no budget, no revalidation, no adoption — so a proposal it returns is a candidate nothing has yet accepted.
+
+Three outcomes kept distinct, which is what the fallible signature bought:
+
+- no merges → `Ok(vec![])`, the ordinary case;
+- detection or rebuild failed → `Err(ProviderDefect::Failed)` carrying the `NormalizeError`'s own stable reason;
+- merges found → one candidate.
+
+**The empty case is checked before rebuilding, not after.** Rebuilding a program with no merges yields a copy semantically identical to its input, so proposing it would have the engine revalidate and compare a program that cannot differ — and worse, a rule that always has a proposal available makes "this rule applies" meaningless. A second test pins that a program with nothing to merge proposes nothing, and asserts the fixture genuinely has no merge first, so it cannot pass against a broken fixture.
+
+**The pin is live and verified to fail.** `the_provider_proposes_exactly_what_this_stage_produces` compares the **canonical bytes** of the candidate's `SemanticIdentity` against `normalize_semantics`'s normalized program — the bytes rather than a digest, so a collision cannot make two different programs compare equal, and the identity rather than a merge count, since two different programs can share one. Replacing the rebuild with a clone of the input makes it fail with "the provider's candidate differs from this stage's normalized program", so it is a check that can say no.
+
+**What remains is the transaction itself.** The engine must drive `collect_proposals`, revalidate each candidate through `SemanticProgramBuilder`, respect the budget with the existing all-or-nothing contract, and yield alternatives rather than one canonical program — and with only this rule registered, its result must still satisfy the pin above.
+
