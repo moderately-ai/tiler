@@ -98,3 +98,20 @@ The move is currently invisible — the fields are derived from `verified` at co
 - `component_cost.rs:433` and `:513` — **the judgement**. `Indexing` and `RedundantWork` read `.region().index` for an iteration shape and an access list an opaque call does not have. They must report `CostValue::Unknown`, **not zero**: a plan whose indexing cost silently became zero would be ranked as free. `MemoryTraffic` is already safe — it falls to its wildcard on an unrecognized profile key — which it does by accident of its dtype guard rather than by design.
 
 **A caution from doing this slice.** Two edits in a row landed in the wrong place — one inserted a definition between an existing `#[derive]` and its struct, silently reassigning the derive; the other omitted a test import. Both were caught immediately by the compiler, but the first is the shape worth watching in this file: `frontier.rs` is 2000+ lines of adjacent doc-commented items, and anchoring an insertion on a `struct` line rather than on its attributes puts the new item inside the previous one's annotations. Anchor on the doc comment, or check the diff.
+
+## The swap has an eighth site, and it is the one that matters (2026-07-28)
+
+Attempting the field swap: the compiler finds **seven** consumers, not six. The one my earlier survey missed is `AdmittedImplementation::resources()` (`frontier.rs:932`), which reads `self.verified.requirements()` — and it is the hardest of them.
+
+`resources()` returns `ResourceRequirements` unconditionally, and hard feasibility consults it. An opaque call has resource requirements too, but **`RegisteredCall` carries none**: the declaration holds ABI, effects, and placement, and the ticket's own three evidence classes put *exact or proven-upper-bound* requirements in `ResourceRequirements` and *uncertain* pressure in `crate::estimate` — a registered call currently has neither.
+
+Three ways out, and two are the failure this ticket exists to prevent:
+
+- **Default the opaque arm.** `ResourceRequirements::default()` compiles and silently tells feasibility an opaque call needs nothing. That is a wrong answer to a hard-feasibility question, which is the exact substitution `AGENTS.md` forbids when it says feasibility must reject explicitly rather than hide behind a cost.
+- **Return the estimate instead.** `crate::estimate` deliberately has *no* conversion into `ResourceRequirements`, and that absence is the enforcement — see its module header. Routing around it here would defeat the type-level guarantee built for exactly this moment.
+- **Make `resources()` return `Option`, and give `RegisteredCall` a declared `ResourceRequirements`.** A provider that wants its call admitted must state requirements it can *prove*; that is what the first evidence class is for, and an opaque call with none is one feasibility cannot admit. This is the surviving option.
+
+**So the swap is blocked on `RegisteredCall` gaining a proven `ResourceRequirements`** — a fourth thing the declaration must carry, alongside the ABI, effects, and placement, and validated by the same coherence check. The field swap was reverted rather than landed with a defaulted arm; the tree is unchanged.
+
+*The check, reproducible in one line:* apply the swap and run `cargo check -p tiler-compiler --all-targets`; the seven sites are listed, and `frontier.rs:932` is the one with no mechanical answer.
+
