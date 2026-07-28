@@ -39,3 +39,22 @@ Everything in the parent was additive or self-contained — a new module, a prov
 - The explain census is updated and every rewrite emits a typed record naming its rule identity.
 - The serial-sum artifact identity and the producer's two-process determinism test either do not move, or move exactly once with the change stated at the site — a rewrite stage that changes what is compiled changes artifact identity, and that must be a decision rather than a surprise.
 - A test drives a plan built from an alternative the engine produced, not only from the unrewritten program.
+
+## Readmission is the hard part, not plan enumeration (2026-07-28)
+
+Reading the call site (`pipeline.rs:420`) changes what this ticket is mostly about.
+
+**Every committed rewrite already re-enters the request boundary.** After normalization the pipeline calls `verify_request` on the rewritten program, and the comment there states why in terms that matter more with alternatives than with one: *"A committed rewrite is a new program, so it must independently re-enter the request boundary rather than inheriting the input's verification... The caller's stated preference is what re-enters, not the contract this run resolved: readmission must repeat the resolution rather than inherit its answer, so a rewrite that changed what the program requires cannot keep a resolution it invalidated."*
+
+Three consequences follow, and none is about plan enumeration:
+
+**An alternative is a (program, verified request) pair, not a program.** Each must be readmitted independently, and readmission *re-resolves* the numerical contract from the caller's stated preference. Two alternatives can therefore resolve to **different** contracts, which means they are not comparable on cost alone — a cheaper alternative under a weaker contract is not better, and the existing rule that estimates from different cost models are incomparable is the precedent for how to treat that.
+
+**Readmission failure changes meaning.** Today it is `NormalizeError::InvalidRewrite { rule: "request-readmission" }` — a compiler fault, correctly, because there is exactly one rewrite and losing it means the compiler produced something invalid. With alternatives, **one failing readmission is ordinary** (that alternative drops out) while **all failing is still a fault** when the unrewritten program would have been admitted. Collapsing those two would either hide a real compiler defect or reject compilations that should succeed. This is the single most likely thing to get wrong here.
+
+**The unrewritten program must stay in the candidate set.** It is already verified — it entered as the caller's own program — so it needs no readmission and cannot fail one. If every alternative drops out, it is what remains, and that is the path that makes "all failed" recoverable rather than fatal.
+
+*The check, reproducible in one line:* `grep -rn 'normalize_semantics(' crates/tiler-compiler/src/pipeline*` returns exactly one call site; read the 25 lines after it.
+
+**Revised sizing.** The engine call itself is a few lines. The work is readmission-per-alternative, the contract-divergence consequence for comparison, and the ordinary-versus-fault distinction on readmission failure. Budget accordingly, and do the failure distinction first — it is the one with a wrong answer that still compiles.
+
