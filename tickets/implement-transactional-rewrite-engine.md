@@ -103,6 +103,14 @@ It is generic over the program type so this module does not depend on the semant
 
 **The engine must reject the whole batch, not filter it.** A provider that misattributes one proposal has demonstrated it does not know what it is, and its remaining proposals are not thereby trustworthy — the same reasoning that makes a cache key/subject mismatch a protocol defect rather than an ordinary miss. Tested against a clean batch and a tainted one, so a checker that always returned empty fails rather than passes.
 
-**Still not included:** a registry, and the engine itself. Identity, proposal, and the provider seam are settled; what remains is generalizing the normalize transaction to drive providers and yield alternatives, pinned by CSE alone reproducing `normalize.rs`'s `SemanticIdentity`. That is the large piece and it is now unblocked.
+**Registry landed 2026-07-27.** `RuleRegistry<Program>` holds the providers one engine run may draw on, with two invariants that are both load-bearing rather than tidiness.
+
+*No two providers may claim one rule identity.* Registration refuses a duplicate rather than replacing or shadowing it. Sharing an identity would make a proposal untraceable to the code that produced it, and excluding the rule would exclude both — the same attribution failure `misattributed` prevents, arriving through the registry instead.
+
+*Iteration is in canonical identity order, not registration order.* The alternative set must be reproducible across runs, and registration order is exactly the incidental ordering that differs between a host registering from a static list and one discovering providers. Sorting by identity makes the order a property of *which* rules are present rather than how they arrived — the same reason `enumerate_frontier`'s identity is independent of provider order. Tested by registering the same rules in two different orders and requiring identical iteration.
+
+*An empty registry is legitimate*, not a misconfiguration: a run with no rules proposes and adopts nothing, which is correct behaviour rather than an error.
+
+**Still not included: the engine itself.** Identity, proposal, the provider seam, and the registry are all settled and tested. What remains is the one large piece — generalizing the normalize transaction to drive registered providers and yield alternatives, pinned by CSE alone reproducing `normalize.rs`'s `SemanticIdentity` exactly. Every input that piece needs now exists.
 
 **Next step, unchanged:** generalize the normalize transaction to take rules from a provider and to yield alternatives, with the pin already stated above — CSE alone must reproduce `normalize.rs`'s `SemanticIdentity` exactly.

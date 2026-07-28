@@ -274,6 +274,105 @@ pub(crate) fn misattributed<Program>(
         .collect()
 }
 
+/// Why a provider could not be registered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "registration outcome for the seam the engine will build on"
+)]
+pub(crate) enum RegistrationError {
+    /// Another provider already claims this rule identity.
+    DuplicateRule(RewriteRuleIdentity),
+}
+
+impl fmt::Display for RegistrationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateRule(rule) => {
+                write!(
+                    formatter,
+                    "rewrite.duplicate-rule: {rule} is already registered"
+                )
+            }
+        }
+    }
+}
+
+/// The set of rule providers an engine run may draw on.
+///
+/// # Two invariants, both load-bearing
+///
+/// **No two providers may claim one rule identity.** Registration refuses a
+/// duplicate rather than replacing or shadowing. If two providers shared an
+/// identity, a proposal could not be traced to the code that made it, and
+/// excluding the rule would exclude both — which is the attribution failure
+/// [`misattributed`] exists to prevent, arriving through the registry instead.
+///
+/// **Iteration is in canonical identity order, not registration order.** The
+/// engine's alternative set must be reproducible across runs, and registration
+/// order is exactly the kind of incidental ordering that varies between a host
+/// that registers providers from a static list and one that discovers them.
+/// Sorting by identity makes the order a property of *which* rules are present
+/// rather than of how they arrived. This is the same reason
+/// `enumerate_frontier`'s identity is independent of provider order.
+#[allow(
+    dead_code,
+    reason = "the registry the engine will drive; landed with its invariants before the engine exists"
+)]
+pub(crate) struct RuleRegistry<Program> {
+    providers: Vec<Box<dyn RewriteRuleProvider<Program>>>,
+}
+
+#[allow(
+    dead_code,
+    reason = "see the type's own allow: reviewed draft registry whose consumer is the not-yet-written engine"
+)]
+impl<Program> RuleRegistry<Program> {
+    /// An empty registry.
+    ///
+    /// Empty is a legitimate state, not a misconfiguration: an engine run with
+    /// no registered rules proposes nothing and adopts nothing, which is the
+    /// correct behaviour rather than an error to report.
+    pub(crate) const fn new() -> Self {
+        Self {
+            providers: Vec::new(),
+        }
+    }
+
+    /// Registers a provider, refusing a rule another provider already claims.
+    pub(crate) fn register(
+        &mut self,
+        provider: Box<dyn RewriteRuleProvider<Program>>,
+    ) -> Result<(), RegistrationError> {
+        let identity = provider.identity();
+        if self
+            .providers
+            .iter()
+            .any(|existing| existing.identity() == identity)
+        {
+            return Err(RegistrationError::DuplicateRule(identity));
+        }
+        let position = self
+            .providers
+            .partition_point(|existing| existing.identity() < identity);
+        self.providers.insert(position, provider);
+        Ok(())
+    }
+
+    /// The registered providers, in canonical identity order.
+    pub(crate) fn providers(&self) -> &[Box<dyn RewriteRuleProvider<Program>>] {
+        &self.providers
+    }
+
+    /// The registered rules, in canonical order.
+    pub(crate) fn rules(&self) -> Vec<RewriteRuleIdentity> {
+        self.providers
+            .iter()
+            .map(|provider| provider.identity())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,5 +531,74 @@ mod tests {
             misattributed(provider.identity(), &proposals).is_empty(),
             "a provider proposing under its own identity was rejected"
         );
+    }
+
+    struct Named(RewriteRuleIdentity);
+    impl RewriteRuleProvider<&'static str> for Named {
+        fn identity(&self) -> RewriteRuleIdentity {
+            self.0
+        }
+        fn propose(&self, _program: &&'static str) -> Vec<RewriteProposal<&'static str>> {
+            Vec::new()
+        }
+    }
+
+    fn named(rule: &'static str) -> Box<dyn RewriteRuleProvider<&'static str>> {
+        Box::new(Named(
+            RewriteRuleIdentity::new("p", rule, 1).expect("named"),
+        ))
+    }
+
+    /// Two providers cannot claim one rule identity.
+    ///
+    /// Driven against a distinct second registration as well, so a `register`
+    /// that rejected everything would fail here rather than pass.
+    #[test]
+    fn a_duplicate_rule_is_refused() {
+        let mut registry = RuleRegistry::new();
+        assert!(registry.register(named("a")).is_ok());
+        assert!(
+            registry.register(named("b")).is_ok(),
+            "a distinct rule was refused"
+        );
+        let duplicate = registry.register(named("a"));
+        assert!(
+            matches!(duplicate, Err(RegistrationError::DuplicateRule(_))),
+            "a second provider claimed a registered rule: {duplicate:?}"
+        );
+        assert_eq!(registry.rules().len(), 2);
+    }
+
+    /// Iteration order is canonical, not the order providers arrived in.
+    ///
+    /// Registering the same rules in opposite orders must yield the same
+    /// sequence, or the engine's alternative set depends on how a host happened
+    /// to register its providers.
+    #[test]
+    fn registration_order_does_not_reach_iteration_order() {
+        let mut forward = RuleRegistry::new();
+        for rule in ["c", "a", "b"] {
+            forward.register(named(rule)).expect("distinct");
+        }
+        let mut reverse = RuleRegistry::new();
+        for rule in ["b", "a", "c"] {
+            reverse.register(named(rule)).expect("distinct");
+        }
+        assert_eq!(
+            forward.rules(),
+            reverse.rules(),
+            "two registration orders produced different iteration orders"
+        );
+        let mut sorted = forward.rules();
+        sorted.sort_unstable();
+        assert_eq!(forward.rules(), sorted, "iteration order is not canonical");
+    }
+
+    /// An empty registry is a legitimate state.
+    #[test]
+    fn an_empty_registry_has_no_rules() {
+        let registry: RuleRegistry<&'static str> = RuleRegistry::new();
+        assert!(registry.rules().is_empty());
+        assert!(registry.providers().is_empty());
     }
 }
