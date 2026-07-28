@@ -70,6 +70,23 @@ So a rule's natural signature is whole-program in, proposals out — `propose(&S
 
 Per-traversal alternatives are eliminated independently: the alternative set would be exponential in the number of applicable sites, and the ticket's budget contract counts *rewrites*, so a rewrite-count budget could not bound it. A budget that cannot bound the thing it governs is not a termination contract.
 
-**Still not included:** the trait itself, a registry, and the engine. The shape above is a reading of one function, not a tested design, and the next worker should confirm `Congruence` can carry a proposal set from an external provider before the trait is written around it.
+### Correction, same day: half of the above is refuted
+
+I said the next worker should confirm `Congruence` can carry a proposal set from an external provider. I checked, and **it cannot**, which refutes the most load-bearing sentence above before anyone acted on it.
+
+`Congruence` (`normalize.rs:318`) holds `representative` (each value's canonical value ordinal), `retained` (whether each operation survives), `operation_results`, and `merges`. That is not a proposal — it is **the fully-resolved result of applying CSE to the whole program**, in CSE's own vocabulary. A rule that eliminates no values, or one that rewrites an operation into a different operation rather than merging two, has nothing to say in those fields.
+
+What survives from the paragraph above:
+
+- **Detection is whole-program.** `detect_shared_values` takes the entire `SemanticProgram`. That still holds and still argues for a whole-program rule signature.
+- **Per-traversal alternatives are still eliminated** by the budget argument: exponential in applicable sites, and a rewrite-count budget cannot bound them.
+
+What is refuted:
+
+- **"The generalization is a widening rather than a restructuring."** It is a restructuring. A rule-agnostic proposal type has to be designed, and CSE then has to *produce* one instead of its current internal state. `Congruence` becomes CSE's private working type behind that proposal, not the proposal itself.
+
+This changes the size of the next slice materially, which is why it is recorded here rather than left for someone to discover mid-implementation. The CSE pin is unaffected — the engine with CSE alone must still reproduce `normalize.rs`'s `SemanticIdentity` — but reaching it now requires designing the proposal type first.
+
+**Still not included:** the proposal type, the trait, a registry, and the engine.
 
 **Next step, unchanged:** generalize the normalize transaction to take rules from a provider and to yield alternatives, with the pin already stated above — CSE alone must reproduce `normalize.rs`'s `SemanticIdentity` exactly.
