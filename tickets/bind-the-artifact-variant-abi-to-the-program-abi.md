@@ -1,7 +1,7 @@
 ---
 id: bind-the-artifact-variant-abi-to-the-program-abi
 title: Bind the artifact variant ABI to the program ABI
-status: in-progress
+status: todo
 priority: p1
 dependencies: [complete-program-identity-with-abi-guards-and-routing]
 related: [prototype-artifact-program-model]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi, identity]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785209046
 ---
 **Fact — two ABIs now describe one program, and nothing binds them.** `complete-program-identity-with-abi-guards-and-routing` gave `tiler_ir::program::VerifiedKernelProgram` its own ABI expression arena, applicability guard, per-stage launch geometry, and per-access accessible byte range, and folded all four into `tiler.kernel-program.v2` identity. `tiler_artifact::program`'s `VariantSpec` still declares its own guard, its own `LaunchSpec`, and its own per-binding `accessible_bytes`, on its own arena, under the separately versioned `guard_and_routing` schema.
 
