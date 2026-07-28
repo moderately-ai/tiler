@@ -1,7 +1,7 @@
 ---
 id: reduce-transient-allocation-in-the-compile-path
 title: Reduce transient allocation in the compile path
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [remove-the-remaining-duplicate-work-in-the-planner]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: []
 paths: []
 tags: [performance, compiler]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785206953
 ---
 Split from `remove-the-remaining-duplicate-work-in-the-planner`, which closed because its own premise was spent: after the region-graph fix, every named item of duplicated computation measured under 2.5%, and the largest single cost turned out to be a correctness check that must stay. What is left is a different problem and needs its own title, or the same profile gets re-derived under a heading that no longer describes it.
 
@@ -44,3 +47,27 @@ That is also why this is filed rather than actioned: the cheap systemic fix is d
 Either a bounded design reduces transient allocation in the shared encoders with the compile time measured before and after on the M3 and artifact identity byte-identical; or the measurement shows the remaining traffic is irreducible copying and that is recorded here with the evidence, so the 51% figure stops reading as an available win.
 
 Do not open this without re-profiling first. The parent ticket had to be re-profiled twice because its item list was written from code reading, and both times the profile disagreed with the ordering.
+
+## Re-profile 2026-07-27 — the composition held, and one new target found
+
+**This ticket's own instruction is "do not open this without re-profiling first." Done.** Apple M4 Max, `samply --rate 4000 --unstable-presymbolicate` over `hot_path_profile_loop`, 20 s, 26,880 compiles, 80,032 active samples, charged to the nearest enclosing non-generic frame of ours.
+
+| where the active leaf lands | share |
+| --- | --- |
+| our own code | 48.2% |
+| allocator | 31.9% |
+| `_platform_memmove` / `_platform_memcmp` | 18.6% |
+
+**The diffuse picture is unchanged**, which is itself the useful result: `identity::push_slice` 9.06%, `region::assemble` 5.48%, `region::canonical_member_order` 5.32%, `KernelBuilder::emit` 4.40%. Still a long tail, still no hotspot. The `push_slice` exact-`reserve` that measured −0.40% did not move its share, consistent with what that measurement already said — most of that 9% is the byte copy itself, not the reallocation. **Do not expect the remaining 50% to be recoverable**; a large part of it is copying that has to happen somewhere.
+
+### One target that is not diffuse, and is not an allocation
+
+`SelectedPlanIdentity::label` at 2.11% and `SelectedPlanIdentity::is_labelled` at 2.18% — **4.3% combined, and they digest the same bytes twice per alternative.**
+
+**Fact.** `pipeline/planning.rs:482` builds `stable_id: plan.identity().label()`, and `pipeline/verify.rs:90` checks `plan.identity().is_labelled(&alternative.stable_id)`. Both compute `digest(&self.0)` over the *same* `SelectedPlanIdentity` bytes held in the same `ProgramAlternative`.
+
+**Inference — caching the digest on the identity would not weaken the check, and this is worth stating because it looks like it would.** The check's power is that `stable_id` is a `String` that could have been tampered with; it is compared against a value derived from `self.0`, which the check does not read from `stable_id`. A digest cached at construction is still derived from `self.0`, so the comparison still refuses a forged `stable_id`. This is *not* the vacuity trap that `verify_portfolio` must avoid — that one re-derives a plan and must not be handed the plan, whereas this one re-hashes bytes it already holds and gains nothing from hashing them twice.
+
+**Why it was not done here.** `SelectedPlanIdentity` derives `Eq`, `Ord`, `PartialEq`, and `PartialOrd`, and it is used as a map key and a sort key. A cache field must be excluded from every one of those or two identities with equal bytes could compare unequal — an identity defect far worse than 4% of a compile. That exclusion is mechanical but it is exactly the kind of change that should not be made with the profile still warm and the reasoning unwritten, so it is recorded rather than attempted.
+
+**Next step is therefore specific:** cache the digest on `SelectedPlanIdentity` with the cache excluded from `Eq`/`Ord`/`Hash`, add a test that two identities built from equal bytes compare equal and hash equal, and measure on the M3. Expected ceiling is ~4%, which is larger than anything else this ticket has found and is a single contained change rather than a sweep.
