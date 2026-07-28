@@ -389,3 +389,24 @@ The `RegionId` is separable from that choice: `assess_region`'s first argument i
 **`Intermediate` returns `None`, and that is a decision rather than a gap left open.** The normalized request states element counts for the program's input and output. An intermediate exists because a particular *cover* chose to materialize between two regions, so its element count is a property of that cover — which the frontier does not hold when enumerating for a subject. Deriving one from the input's would be right for the pointwise case and wrong for any cover materializing something smaller. An unbound name declines for the same reason.
 
 **Remaining for admission:** `assess_region`'s `RegionId` argument, which an opaque call has none of and which is used only to attribute errors. That argument should take a subject identifier both callers can supply. Then: resolve work, assess, construct with `ImplementationBody::Opaque`. After that, lowering rejection, numerical guarantees, and explain records for the rejections.
+
+## The split I said was unnecessary is necessary, for a different reason (2026-07-28)
+
+I corrected myself earlier that `assess_region` is already the resource-only feasibility check and nothing needed splitting. That was right about the *computation* and wrong about the *error attribution*, and the second is what forces a split.
+
+`region: RegionId` is not one argument threaded through — it appears in **five** error constructions inside `assess_region`, and every `PhysicalError` variant it builds carries a `region: RegionId` field. So an opaque call cannot call it without either inventing a region to blame or widening `PhysicalError` to hold a subject that may not be a region.
+
+**Both of those are worse than a split.** An invented region attributes a real feasibility rejection to something that does not exist, and a reader chasing it finds nothing. Widening `PhysicalError` changes a type used across the physical path to serve one new caller, which is the same trade rejected when the contract parts were left without public constructors.
+
+**The split that works:** a core that assesses and returns the *cause* without attributing it —
+
+```text
+fn assess_resources(requirements, work_items, target)
+    -> Result<ProvenEvidence, RejectionCause>
+```
+
+— with today's `assess_region` becoming a thin wrapper that maps that cause onto `PhysicalError` with its `RegionId`, and the opaque path mapping the same cause onto a `FrontierRejection` naming the call. One feasibility decision, two attributions, which is what ADR 0043's single decision actually requires: the *verdict* is shared, and only the blame differs.
+
+The cause is already a type — `RejectionCause` with `Numerical` and `Capability` variants, matched on in the body today — so the core's error type exists and does not need inventing. `checked_target_profile` and `region_proposal` also fail, and their errors currently go through `feasibility_intrinsic`; the core should return those unattributed too.
+
+*The check, reproducible in one line:* `grep -n 'region' crates/tiler-compiler/src/physical.rs | sed -n '/fn assess_region/,/^$/p'` — or read `physical.rs:655` through its closing brace and count the uses: five, all attribution.
