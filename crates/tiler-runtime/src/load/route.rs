@@ -89,26 +89,20 @@ impl RoutedLaunch {
     }
 }
 
-/// One ABI binding of a routed entry: where it goes, and how large it must be.
+/// One ABI binding of a routed entry: where it goes, and what byte range it reaches.
 ///
 /// The two facts the loader *derived* — the backend transport slot and the
-/// evaluated byte range — are published beside the decoded binding they came
-/// from rather than instead of it. A host needing the element type, address
-/// space, or access mode reads them through [`Self::binding`]. Naming those
-/// types here would give this crate a direct `tiler-ir` edge, and its dependency
-/// closure is a decided property under ADR 0081 rather than an accident of
-/// ordering.
-///
-/// The published range always starts at byte zero, and by refusal rather than
-/// by silence: an artifact binding may start elsewhere, and `place_bindings`
-/// rejects one that does as `UnpublishedBindingOffset`, because a host that
-/// never learns an offset existed cannot tell that it defaulted.
-/// `carry-the-binding-offset-through-the-runtime-route` owns publishing and
-/// honouring it instead.
+/// evaluated range start and extent — are published beside the decoded binding
+/// they came from rather than instead of it. A host needing the element type,
+/// address space, or access mode reads them through [`Self::binding`]. Naming
+/// those types here would give this crate a direct `tiler-ir` edge, and its
+/// dependency closure is a decided property under ADR 0081 rather than an
+/// accident of ordering.
 #[derive(Clone, Copy, Debug)]
 pub struct RoutedBinding<'a> {
     pub(super) binding: DecodedBinding<'a>,
     pub(super) transport: u32,
+    pub(super) accessible_offset: u64,
     pub(super) accessible_bytes: u64,
 }
 
@@ -131,11 +125,23 @@ impl<'a> RoutedBinding<'a> {
         self.transport
     }
 
+    /// Returns the first addressed byte of the bound value.
+    ///
+    /// A host binds the storage at this byte rather than assuming that every
+    /// slot addresses its value whole. Together with [`Self::accessible_bytes`]
+    /// this is the exact range the entry may reach.
+    #[must_use]
+    pub const fn accessible_offset(self) -> u64 {
+        self.accessible_offset
+    }
+
     /// Returns the minimum number of bytes reachable through this binding.
     ///
-    /// Evaluated from the artifact's own accessible-range expression against the
-    /// facts the host bound, so a host compares it against the storage it holds
-    /// rather than re-deriving an extent the artifact already derived.
+    /// Counted from [`Self::accessible_offset`], not from the start of the
+    /// addressed value. Evaluated from the artifact's own accessible-range
+    /// expression against the facts the host bound, so a host compares it
+    /// against the storage it holds rather than re-deriving an extent the
+    /// artifact already derived.
     #[must_use]
     pub const fn accessible_bytes(self) -> u64 {
         self.accessible_bytes

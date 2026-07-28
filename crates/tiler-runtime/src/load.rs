@@ -651,12 +651,12 @@ fn place_bindings<'a>(
             },
             facts,
         )?;
-        require_zero_offset(position, slot, offset)?;
         placed.push(RoutedBinding {
             binding,
             transport: *transports
                 .get(slot)
                 .expect("a decode proved one transport slot per ABI binding"),
+            accessible_offset: offset,
             accessible_bytes: unsigned(
                 binding.accessible_bytes(),
                 AbiSubject::AccessibleBytes {
@@ -668,26 +668,6 @@ fn place_bindings<'a>(
         });
     }
     Ok(placed)
-}
-
-/// Refuses a binding whose accessible range starts past byte zero.
-///
-/// [`RoutedBinding`] publishes no offset, so a host binds every slot at byte
-/// zero; for a range starting elsewhere that is a silently wrong dispatch, and
-/// the artifact layer no longer refuses such plans on this loader's behalf. A
-/// separate function so the refusal path is provable without an artifact that
-/// carries a nonzero offset — the smallest one is a two-stage plan, and this
-/// crate holds no fixture that can assemble one.
-fn require_zero_offset(entry: usize, slot: usize, offset: u64) -> Result<(), LoadRejection> {
-    if offset == 0 {
-        Ok(())
-    } else {
-        Err(LoadRejection::UnpublishedBindingOffset {
-            entry,
-            slot,
-            offset,
-        })
-    }
 }
 
 /// Evaluates one expression a decode proved unsigned.
@@ -955,25 +935,6 @@ pub enum LoadRejection {
         /// Which part of the pairing was not determined.
         detail: &'static str,
     },
-    /// A routed binding's accessible range starts at a nonzero byte, which
-    /// this loader does not yet publish.
-    ///
-    /// [`RoutedBinding`] carries an evaluated extent and no offset, so a host
-    /// given one binds storage at byte zero. For an artifact whose binding
-    /// starts elsewhere that is the right buffer at the wrong place — a
-    /// silently wrong dispatch rather than a refusal — and the artifact layer
-    /// stopped refusing such plans when the binding row gained its offset.
-    /// Refusing here is the fail-closed interim;
-    /// `carry-the-binding-offset-through-the-runtime-route` owns publishing
-    /// the offset and honouring it at the binding call.
-    UnpublishedBindingOffset {
-        /// Position of the entry in the route's execution order.
-        entry: usize,
-        /// Zero-based ABI slot of the binding whose range starts elsewhere.
-        slot: usize,
-        /// Evaluated first byte of the binding's accessible range.
-        offset: u64,
-    },
 }
 
 impl fmt::Display for LoadRejection {
@@ -1037,16 +998,6 @@ impl fmt::Display for LoadRejection {
                 "runtime.unpairable-shared-allocation: variant {variant} declares a data \
                  dependency whose shared storage is not determined: {detail}",
             ),
-            Self::UnpublishedBindingOffset {
-                entry,
-                slot,
-                offset,
-            } => write!(
-                formatter,
-                "runtime.unpublished-binding-offset: entry {entry}'s ABI slot {slot} starts at \
-                 byte {offset} and this loader publishes no offset, so a host would bind it at \
-                 byte zero",
-            ),
         }
     }
 }
@@ -1064,8 +1015,7 @@ impl Error for LoadRejection {
             | Self::UndeliverableExecutionPolicy { .. }
             | Self::ObjectNotCarried
             | Self::LaunchPrecondition { .. }
-            | Self::UnpairableSharedAllocation { .. }
-            | Self::UnpublishedBindingOffset { .. } => None,
+            | Self::UnpairableSharedAllocation { .. } => None,
         }
     }
 }
@@ -1157,27 +1107,6 @@ mod tests {
                 "{text:?} is not distinguishable from an earlier subject",
             );
         }
-    }
-
-    /// A nonzero binding offset is refused by name, and zero is placed.
-    ///
-    /// The refusal is checked at its own boundary because no in-crate fixture
-    /// can present it through a decoded artifact: the smallest plan carrying a
-    /// nonzero offset is two stages, and assembling one needs the `tiler-ir`
-    /// builders this crate deliberately does not depend on. The zero case
-    /// beside it is what proves the guard is a gate rather than a wall — a
-    /// check that refused everything would also pass a refusal-only test.
-    #[test]
-    fn a_nonzero_binding_offset_is_refused_rather_than_bound_at_zero() {
-        assert_eq!(super::require_zero_offset(0, 1, 0), Ok(()));
-        assert_eq!(
-            super::require_zero_offset(1, 0, 24),
-            Err(LoadRejection::UnpublishedBindingOffset {
-                entry: 1,
-                slot: 0,
-                offset: 24,
-            }),
-        );
     }
 
     /// The two target declarations are distinguishable in a refusal.

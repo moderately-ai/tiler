@@ -977,6 +977,7 @@ enum Placement {
 #[derive(Clone, Copy, Debug)]
 struct PlacedSlot {
     transport: u32,
+    offset: u64,
     needed: u64,
     placement: Placement,
 }
@@ -1035,9 +1036,19 @@ fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<Vec<PlacedSlot>>, ProofEr
                     });
                 }
             };
+            let offset = binding.accessible_offset();
+            let needed = offset.checked_add(binding.accessible_bytes()).ok_or(
+                ProofError::BindingRangeOverflow {
+                    entry: position,
+                    slot: binding.slot(),
+                    offset,
+                    extent: binding.accessible_bytes(),
+                },
+            )?;
             slots.push(PlacedSlot {
                 transport: binding.transport_slot(),
-                needed: binding.accessible_bytes(),
+                offset,
+                needed,
                 placement,
             });
         }
@@ -1300,8 +1311,8 @@ struct DeviceFacts {
 struct PreparedEntry {
     pipeline: ComputePipelineState,
     /// Buffers in this entry's own binding order, paired with the argument-table
-    /// index each occupies.
-    placements: Vec<(u32, Buffer)>,
+    /// index and byte offset each occupies.
+    placements: Vec<(u32, Buffer, u64)>,
     grid_threads: u64,
     threads_per_workgroup: u64,
     /// This entry covers no threads and the artifact says to skip its dispatch.
@@ -1457,7 +1468,7 @@ fn device_preflight(
                 Placement::Output => output = Some(buffer.clone()),
                 Placement::Internal => {}
             }
-            placements.push((placed.transport, buffer));
+            placements.push((placed.transport, buffer, placed.offset));
         }
 
         entries.push(PreparedEntry {
@@ -1748,8 +1759,8 @@ fn dispatch_prepared(
                 }
                 let encoder = command_buffer.new_compute_command_encoder();
                 encoder.set_compute_pipeline_state(&entry.pipeline);
-                for (transport, storage) in &entry.placements {
-                    encoder.set_buffer(u64::from(*transport), Some(storage), 0);
+                for (transport, storage, offset) in &entry.placements {
+                    encoder.set_buffer(u64::from(*transport), Some(storage), *offset);
                 }
                 encoder.dispatch_threads(
                     MTLSize::new(entry.grid_threads, 1, 1),
@@ -2067,9 +2078,10 @@ fn run() -> Result<(), ProofError> {
         );
         for binding in entry.bindings() {
             println!(
-                "    abi slot {} -> transport {}, {} byte(s), {:?}",
+                "    abi slot {} -> transport {} at byte {}, {} byte(s), {:?}",
                 binding.slot(),
                 binding.transport_slot(),
+                binding.accessible_offset(),
                 binding.accessible_bytes(),
                 binding.binding().target(),
             );
@@ -2199,6 +2211,12 @@ enum ProofError {
         slot: usize,
         target: String,
     },
+    BindingRangeOverflow {
+        entry: usize,
+        slot: usize,
+        offset: u64,
+        extent: u64,
+    },
     EmptyLaunch {
         entry: usize,
         skipped: bool,
@@ -2321,6 +2339,16 @@ impl fmt::Display for ProofError {
                 formatter,
                 "entry {entry}'s ABI slot {slot} addresses {target}, which this proof binds no \
                  storage for",
+            ),
+            Self::BindingRangeOverflow {
+                entry,
+                slot,
+                offset,
+                extent,
+            } => write!(
+                formatter,
+                "entry {entry}'s ABI slot {slot} starts at byte {offset} and reaches {extent} \
+                 byte(s), which does not fit in a u64 allocation length",
             ),
             Self::EmptyLaunch { entry, skipped } => write!(
                 formatter,
@@ -2464,7 +2492,13 @@ mod tests {
         Compilation, NumericalContract, PlanAlternative, compile_governed,
     };
     use tiler_ir::program::abi::ExprNode;
+    use tiler_ir::program::{
+        AbiExprId as ProgramAbiExprId, AllocationSpec, ByteWindow, DependencyReasonView,
+        KernelProgramBuilder, MaterializedValueSpec, StageAccess, StageLaunch,
+        VerifiedKernelProgram,
+    };
     use tiler_ir::semantic::SemanticProgram;
+    use tiler_ir::shape::Shape;
     use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment};
 
     /// Columns of the fixture's input; the reduced axis.
@@ -2479,6 +2513,9 @@ mod tests {
     /// around it. `bound-the-backend-entry-key-by-the-identity-it-carries` owns
     /// closing the gap; when it does, this becomes [`super::COLUMNS`].
     const FIXTURE_COLUMNS: u64 = 1;
+
+    /// First addressed byte of the partial-window fixture's scratch value.
+    const PARTIAL_WINDOW_OFFSET: u64 = ROWS * FIXTURE_COLUMNS * super::F32_BYTES;
 
     /// The object bytes the fixture's payload carries.
     ///
@@ -2558,6 +2595,26 @@ mod tests {
         compilation: &Compilation,
         plan: PlanAlternative<'_>,
     ) -> VerifiedArtifactProgram {
+        assemble_program(semantic, compilation, plan, plan.abi().kernel_program())
+    }
+
+    /// Packages one explicit program under a compiled alternative's provenance.
+    ///
+    /// The ordinary fixture passes the alternative's own program. The
+    /// partial-window fixture passes a checked reconstruction using the same
+    /// kernels and ABI formulas but a larger scratch value viewed from a
+    /// nonzero byte, because the compiler's bounded portfolio does not invent
+    /// offset views merely to test the runtime that consumes them.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one artifact is assembled top to bottom in the order the builder requires, and that order is the readable part"
+    )]
+    fn assemble_program(
+        semantic: &SemanticProgram,
+        compilation: &Compilation,
+        plan: PlanAlternative<'_>,
+        program: &VerifiedKernelProgram,
+    ) -> VerifiedArtifactProgram {
         let profile = TargetProfileRef {
             key: TargetProfileKey::new(compilation.target_profile_key())
                 .expect("the compiler mints a governed profile key"),
@@ -2590,24 +2647,20 @@ mod tests {
                 .expect("a selected provider was offered");
         }
 
-        let abi = plan.abi();
-        let program = abi.kernel_program();
-
         // One mapping per stage, keyed on the same canonical kernel identity the
         // artifact's executable entry names, because the decoder proves the two
         // tables correlate and a mapping keyed on anything else is refused as an
         // unmapped backend entry.
-        let mut mappings: Vec<PayloadEntryMapping> = abi
-            .entries()
-            .zip(program.stages())
+        let mut mappings: Vec<PayloadEntryMapping> = program
+            .stages()
             .enumerate()
-            .map(|(position, (entry, stage))| PayloadEntryMapping {
+            .map(|(position, stage)| PayloadEntryMapping {
                 entry_key: BackendEntryKey::from_bytes(
                     stage.kernel().canonical_identity().as_bytes(),
                 )
                 .expect("the packaged kernel identity fits a backend entry key"),
                 symbol: format!("tiler_probe_entry_{position}"),
-                transports: (0..u32::try_from(entry.accessible_bytes().len())
+                transports: (0..u32::try_from(stage.accesses().len())
                     .expect("a bounded binding count fits a u32"))
                     .collect(),
             })
@@ -2660,21 +2713,24 @@ mod tests {
         // the builder derives the variant's ABI from the program now, so nothing
         // below resolves a position. The builder deduplicates by content, so
         // this adds no node it does not already adopt.
-        let minted = replay(&mut builder, abi.expressions(), &variant_roots(plan));
+        let minted = replay(
+            &mut builder,
+            program.abi_expressions(),
+            &variant_roots(program),
+        );
         debug_assert!(
             minted.iter().any(Option::is_some),
             "a non-empty root set must replay at least one node"
         );
 
-        let entries: Vec<EntrySpec> = abi
-            .entries()
-            .zip(program.stages())
-            .map(|(entry, stage)| EntrySpec {
+        let entries: Vec<EntrySpec> = program
+            .stages()
+            .map(|stage| EntrySpec {
                 // The accessible range, launch geometry, and applicability guard
                 // are derived by `ArtifactProgramBuilder` from the program it is
                 // given, so this consumer no longer restates them.
-                bindings: entry
-                    .accessible_bytes()
+                bindings: stage
+                    .accesses()
                     .map(|_| BindingSpec {
                         kind: BindingKind::Buffer,
                     })
@@ -2711,15 +2767,232 @@ mod tests {
     }
 
     /// Returns the arena positions one variant names directly.
-    fn variant_roots(plan: PlanAlternative<'_>) -> Vec<u32> {
-        let abi = plan.abi();
-        let mut roots = vec![abi.applicability_guard()];
-        for entry in abi.entries() {
-            roots.extend(entry.accessible_bytes());
-            roots.push(entry.grid_threads());
-            roots.push(entry.threads_per_workgroup());
+    fn variant_roots(program: &VerifiedKernelProgram) -> Vec<u32> {
+        let mut roots = vec![program.applicability_guard()];
+        for stage in program.stages() {
+            roots.extend(stage.accesses().map(|access| access.accessible_bytes()));
+            roots.push(stage.launch().grid_threads);
+            roots.push(stage.launch().threads_per_workgroup);
         }
         roots
+    }
+
+    /// Rebuilds a checked materialized program with its scratch view shifted.
+    ///
+    /// Every semantic, kernel, ABI-expression, dependency, and lifecycle fact
+    /// is copied from the compiler's verified materialized alternative. The one
+    /// changed fact is storage: the temporary value and allocation are doubled,
+    /// and every view of that value addresses the original working set in the
+    /// upper half. `KernelProgramBuilder::build` re-verifies the result, so the
+    /// fixture cannot manufacture an offset the bound kernels or program reject.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the checked program is copied in dependency order so every owner-bound handle is visibly translated once"
+    )]
+    fn partial_window_program(
+        semantic: &SemanticProgram,
+        original: &VerifiedKernelProgram,
+    ) -> VerifiedKernelProgram {
+        let allocations: Vec<_> = original.allocations().collect();
+        let values: Vec<_> = original.values().collect();
+        let views: Vec<_> = original.views().collect();
+        let stages: Vec<_> = original.stages().collect();
+        let temporary = values
+            .iter()
+            .position(|value| value.role() == tiler_ir::program::ValueRole::Temporary)
+            .expect("the materialized alternative carries one temporary");
+
+        let mut builder =
+            KernelProgramBuilder::new(semantic).expect("a program builder identity remains");
+        let mut expressions: Vec<ProgramAbiExprId> =
+            Vec::with_capacity(original.abi_expressions().len());
+        let expression = |position: u32, minted: &[ProgramAbiExprId]| {
+            minted[usize::try_from(position).expect("a bounded arena position fits a usize")]
+        };
+        for node in original.abi_expressions() {
+            let minted = match node {
+                ExprNode::Root(root) => builder.push_abi_root(root.clone()),
+                ExprNode::Unary { op, operand } => {
+                    builder.push_abi_unary(*op, expression(*operand, &expressions))
+                }
+                ExprNode::Binary { op, left, right } => builder.push_abi_binary(
+                    *op,
+                    expression(*left, &expressions),
+                    expression(*right, &expressions),
+                ),
+                ExprNode::Select {
+                    condition,
+                    if_true,
+                    if_false,
+                } => builder.push_abi_select(
+                    expression(*condition, &expressions),
+                    expression(*if_true, &expressions),
+                    expression(*if_false, &expressions),
+                ),
+            }
+            .expect("a verified ABI arena replays");
+            expressions.push(minted);
+        }
+        builder
+            .applicability_guard(expression(original.applicability_guard(), &expressions))
+            .expect("the verified guard replays");
+        for transition in original.routing_commit_contract() {
+            builder
+                .push_routing_commit_transition(*transition)
+                .expect("the verified routing lifecycle replays");
+        }
+
+        let allocation_ids: Vec<_> = allocations
+            .iter()
+            .map(|allocation| {
+                let holds_temporary = allocation.values().any(|value| value == values[temporary]);
+                builder
+                    .push_allocation(AllocationSpec {
+                        capacity_bytes: allocation.capacity_bytes()
+                            + u64::from(holds_temporary) * PARTIAL_WINDOW_OFFSET,
+                        alignment: allocation.alignment(),
+                        memory_space: allocation.memory_space(),
+                        ownership: allocation.ownership(),
+                    })
+                    .expect("the verified allocation replays")
+            })
+            .collect();
+
+        let value_ids: Vec<_> = values
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                let allocation = allocations
+                    .iter()
+                    .position(|candidate| *candidate == value.allocation())
+                    .expect("a value names a declared allocation");
+                let shape = if position == temporary {
+                    Shape::from_dims([ROWS * 2, FIXTURE_COLUMNS])
+                } else {
+                    value.shape().clone()
+                };
+                builder
+                    .push_value(
+                        MaterializedValueSpec {
+                            origin: value.origin().clone(),
+                            role: value.role(),
+                            shape,
+                            element_type: value.element_type(),
+                            alignment: value.alignment(),
+                            memory_space: value.memory_space(),
+                        },
+                        allocation_ids[allocation],
+                    )
+                    .expect("the verified value replays")
+            })
+            .collect();
+
+        let view_ids: Vec<_> = views
+            .iter()
+            .map(|view| {
+                let value = values
+                    .iter()
+                    .position(|candidate| *candidate == view.value())
+                    .expect("a view names a declared value");
+                let window = if value == temporary {
+                    ByteWindow {
+                        offset: PARTIAL_WINDOW_OFFSET,
+                        length: view.window().length,
+                    }
+                } else {
+                    view.window()
+                };
+                builder
+                    .push_view(value_ids[value], window)
+                    .expect("the shifted view remains inside its enlarged value")
+            })
+            .collect();
+
+        let view_position = |view: tiler_ir::program::ViewRef<'_>| {
+            views
+                .iter()
+                .position(|candidate| {
+                    candidate.value() == view.value() && candidate.window() == view.window()
+                })
+                .expect("an access names a declared view")
+        };
+        let stage_ids: Vec<_> = stages
+            .iter()
+            .map(|stage| {
+                let accesses: Vec<_> = stage
+                    .accesses()
+                    .map(|access| StageAccess {
+                        view: view_ids[view_position(access.view())],
+                        mode: access.mode(),
+                        accessible_bytes: expression(access.accessible_bytes(), &expressions),
+                    })
+                    .collect();
+                let launch = stage.launch();
+                builder
+                    .push_stage(
+                        stage.kernel(),
+                        stage.coverage(),
+                        &accesses,
+                        StageLaunch {
+                            grid_threads: expression(launch.grid_threads, &expressions),
+                            threads_per_workgroup: expression(
+                                launch.threads_per_workgroup,
+                                &expressions,
+                            ),
+                        },
+                    )
+                    .expect("the shifted stage ABI still realizes the verified kernel")
+            })
+            .collect();
+
+        for dependency in original.dependencies() {
+            let predecessor = stages
+                .iter()
+                .position(|stage| *stage == dependency.predecessor())
+                .expect("a dependency names a declared predecessor");
+            let successor = stages
+                .iter()
+                .position(|stage| *stage == dependency.successor())
+                .expect("a dependency names a declared successor");
+            match dependency.reason() {
+                DependencyReasonView::Data(value) => {
+                    let value = values
+                        .iter()
+                        .position(|candidate| *candidate == value)
+                        .expect("a dependency names a declared value");
+                    builder
+                        .push_data_dependency(
+                            stage_ids[predecessor],
+                            stage_ids[successor],
+                            value_ids[value],
+                        )
+                        .expect("the data dependency replays");
+                }
+                DependencyReasonView::StorageHandoff(allocation) => {
+                    let allocation = allocations
+                        .iter()
+                        .position(|candidate| *candidate == allocation)
+                        .expect("a dependency names a declared allocation");
+                    builder
+                        .push_storage_handoff(
+                            stage_ids[predecessor],
+                            stage_ids[successor],
+                            allocation_ids[allocation],
+                        )
+                        .expect("the storage handoff replays");
+                }
+            }
+        }
+        for output in original.outputs() {
+            let value = values
+                .iter()
+                .position(|candidate| *candidate == output.value())
+                .expect("an output names a declared value");
+            builder
+                .push_output(output.key().clone(), value_ids[value])
+                .expect("the verified output replays");
+        }
+        builder.build().expect("the shifted program verifies")
     }
 
     /// Transliterates the reachable sub-DAG of one arena onto the builder's own.
@@ -3192,6 +3465,71 @@ mod tests {
             BufferAccess::Read,
             "the consuming end reads it",
         );
+    }
+
+    /// A partial scratch window keeps its start byte through the runtime route.
+    ///
+    /// The fixture is necessarily two stages: the first writes the shared
+    /// scratch value and the second reads it. Both bind the original working set
+    /// in the upper half of an enlarged value, so publishing zero for either
+    /// end would route successfully and silently connect the stages to the
+    /// wrong bytes. The host plan additionally proves it sizes the allocation
+    /// through the end of the window rather than allocating only its extent.
+    #[test]
+    fn a_partial_window_route_publishes_and_plans_the_artifact_offset() {
+        let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
+        let compilations = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed program compiles");
+        let compilation = compilations.first().expect("one governed target profile");
+        let materialized = compilation
+            .alternatives()
+            .find(|plan| !plan.is_fused())
+            .expect("the materialized reference alternative is retained");
+        let program = partial_window_program(&semantic, materialized.abi().kernel_program());
+        let artifact = assemble_program(&semantic, compilation, materialized, &program);
+        let bytes = artifact
+            .encode()
+            .expect("the partial-window envelope encodes");
+        let expected = artifact.canonical_identity().as_bytes().to_vec();
+        let environment = host_environment(compilation).expect("the host environment composes");
+        let mut decoded =
+            DecodedProgram::decode(&bytes).expect("the partial-window envelope decodes");
+        let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
+        let preflight = decoded
+            .preflight(&environment, &expected, &abi)
+            .expect("the partial-window route preflights");
+
+        let [shared] = preflight.shared_allocations() else {
+            panic!("the two stages share exactly one scratch allocation");
+        };
+        for end in [shared.producer(), shared.consumer()] {
+            let binding = preflight.entries()[end.entry()]
+                .bindings()
+                .iter()
+                .find(|binding| binding.slot() == end.slot())
+                .expect("the shared allocation names a routed binding");
+            assert_eq!(
+                binding.accessible_offset(),
+                PARTIAL_WINDOW_OFFSET,
+                "the runtime publishes the artifact's nonzero window start",
+            );
+            assert_eq!(
+                binding.accessible_bytes(),
+                PARTIAL_WINDOW_OFFSET,
+                "the fixture addresses one original working set",
+            );
+        }
+
+        let plan = super::plan_route(&preflight).expect("the host places every routed slot");
+        for end in [shared.producer(), shared.consumer()] {
+            let placed = plan[end.entry()][end.slot()];
+            assert_eq!(placed.offset, PARTIAL_WINDOW_OFFSET);
+            assert_eq!(
+                placed.needed,
+                PARTIAL_WINDOW_OFFSET * 2,
+                "the allocation reaches through offset plus extent",
+            );
+        }
     }
 
     /// A damaged section is an integrity failure, not a route miss.

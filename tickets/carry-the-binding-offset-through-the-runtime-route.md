@@ -1,11 +1,11 @@
 ---
 id: carry-the-binding-offset-through-the-runtime-route
 title: Carry a binding's accessible offset through the runtime route
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [carry-the-byte-offset-of-a-partial-binding-view, route-the-runtime-loader-through-the-dispatch-record, carry-the-stage-execution-order-in-the-envelope]
-scopes: [implementation/runtime]
+scopes: [implementation/runtime, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, artifact, abi]
@@ -32,6 +32,14 @@ Publishing the value and letting a host ignore it is not an option, because a ho
 
 - When this lands, correct `RoutedBinding`'s doc in `route.rs` (it names the interim refusal) and the "fails closed on both counts" sentence in `docs/artifact-abi.md`'s dispatch-record future-work item, which cites this ticket as owning the honouring.
 - If `preflight-every-entry-of-a-multi-stage-route` lands first, coordinate: its multi-entry dispatch work touches the same `place_bindings` path, and whichever lands second should re-run the other's probes rather than assuming composition.
+
+## Outcome
+
+**Decision — ratified by Tom on 2026-07-28 and implemented.** `RoutedBinding` publishes the evaluated range start through the additive `accessible_offset()` accessor beside `accessible_bytes()`, `place_bindings` carries both values, and the interim `require_zero_offset` gate and `LoadRejection::UnpublishedBindingOffset` class are gone. A replacement `RoutedByteRange` public type was considered and rejected: replacing `accessible_bytes()` would break the established boundary merely to regroup two values, while retaining it beside a range accessor would publish the extent twice and create two paths that must remain consistent. Re-evaluation downstream was eliminated because it would retain `AbiFacts`, duplicate the artifact evaluator, and permit a new refusal after routing commit. The serial-sum Metal host carries the offset through preflight, sizes every allocation through `offset + extent` with checked arithmetic, and passes that same byte to `set_buffer`.
+
+**Measurement — pinned nightly on the `fa8fabd` checkout, 2026-07-28.** `cargo nextest run -p tiler-runtime -p tiler-prototype-run` passed 24 tests; `cargo test -p tiler-runtime --doc` passed one positive and four compile-fail doc-tests; and `cargo clippy -p tiler-runtime --all-targets -- -D warnings` passed. The new two-stage fixture rebuilds the compiler's verified materialized program with both scratch bindings addressing the upper half of an enlarged value, encodes and decodes it, then proves the routed producer and consumer each publish the artifact's nonzero offset and that host placement reaches through the end of the window. Perturbing its expected offset from 16 to 17 made the targeted nextest case fail at that assertion, proving the check can say no; the correct assertion was restored and passed. The final `make full` passed 1,136 dev-profile tests, all workspace doc-tests and rustdoc with warnings denied, 405 release-profile numerical tests, ticket lint, and shellcheck.
+
+**Graph maintenance applied.** `RoutedBinding`'s interim-refusal documentation now describes the published start and extent, and `docs/artifact-abi.md` records both the multi-entry route and binding-offset follow-ons as closed.
 
 ## Closes when
 
