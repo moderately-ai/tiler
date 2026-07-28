@@ -1,7 +1,7 @@
 ---
 id: implement-opaque-physical-call-providers
 title: Implement opaque physical-call providers
-status: todo
+status: done
 priority: p1
 dependencies: [implement-analytical-component-cost-model]
 related: [prototype-physical-implementation-frontier]
@@ -135,4 +135,14 @@ The tests are built around the distinction the positional form cannot make: the 
 
 **A revision change registers alongside its predecessor rather than being refused as a duplicate.** Two revisions must coexist: a program pinned to the old behaviour and one built against the new both have to resolve. This is where the opaque-call identity's revision behaves differently from a rewrite rule's, and it is tested, because the obvious duplicate check gets it wrong.
 
-**Still not included:** the additive coexistence with scheduled kernels — the frontier integration that lets an opaque call and a scheduled kernel be alternatives for the same region. That is the remaining piece, and it is the first that must change existing frontier code rather than add beside it.
+## Split, and closing on registration and verification (2026-07-28)
+
+The ticket named "reviewed opaque physical-call **registration and verification**", then listed ten things to cover. Seven are delivered as checked, tested modules: uncertain pressure estimates, effects and aliasing, failure stages, the typed ABI, placement, cross-declaration coherence, and identity and registration. Applicability needed nothing — `frontier::TargetApplicability` already answers it.
+
+The remaining three — additive coexistence with scheduled kernels, numerical guarantees, and explain records for rejections — are `integrate-opaque-calls-into-the-physical-frontier`, now live.
+
+**The split is at a real boundary.** Every piece landed here was *additive*: new modules beside the frontier, with nothing existing modified. The remainder must change `frontier.rs` and the physical-planning path — starting by admitting `ProposalBody::OpaqueCall`, a variant the bounded frontier currently rejects explicitly. Different risk, different review surface, and a commit worth having on either side of.
+
+**One consequence carried into the child rather than left to be discovered:** admitting `OpaqueCall` makes `MaterializationForm::OpaqueRuntimeValue` reachable, and that is one of eight `Reserved` values currently holding `implement-boundary-property-enforcers` closed. The trigger test `the_bounded_profile_admits_no_undischarged_boundary` is *expected* to fire during that work, and must not be repaired by widening the bounded property sets back into agreement — its firing is the signal that the enforcers ticket has become startable.
+
+Nothing in the child re-litigates what was decided here. The derivations for named-not-positional parameters, conservative-by-default effects, the absent estimate-to-requirement conversion, the fallback boundary, and why the call registry is a separate type from the rule registry are all recorded above and referenced rather than restated.
