@@ -158,3 +158,19 @@ The payload is `Option<Arc<dyn RuleExplain>>`. `Arc` because `RewriteProposal` d
 **The extraction is byte-identical, and the existing census proves it.** `pipeline/tests.rs::every_wired_authority_emits_its_typed_explain_records` counts records per rule and is unchanged; a moved emission that altered a count, a key, or a fact would have failed it. That is a stronger check than any test written for the extraction would have been, because it was written by someone who did not know the extraction was coming.
 
 **Remaining, and now only the pipeline edit:** call the engine at `pipeline.rs:420`, readmit through `readmit_alternatives`, group through `group_by_resolved_contract`, emit through `record_adopted_alternatives`, and have `NormalizationOutcome` shed the per-merge call once the engine owns it. The census moves in that change — and only then, since everything up to here left it untouched.
+
+## The last structural step: `NormalizationOutcome` must shed `merges` (2026-07-28)
+
+Attempting the pipeline edit surfaces the final entanglement, and it is worth having stated because it determines the shape of the edit rather than being a detail inside it.
+
+`compile_verified` takes `&NormalizationOutcome`, so routing must still produce one. But the outcome currently *holds* `Vec<SharedValueMerge>` — rule-specific data the engine deliberately does not have, since the merges now travel opaquely in the proposal's `RuleExplain` payload. An engine-produced outcome cannot fill that field.
+
+**So the outcome must stop holding merges.** Two consequences:
+
+- Its `record` no longer constructs a `SharedValueExplain`; the per-merge records come from the adopted proposal's payload via `record_adopted_alternatives`. The outcome keeps only stage-level facts — budget stop, operations before and after, contract key, canonical digest.
+- Its `rewrite-count` fact, currently `merges.len()`, becomes the count of adopted alternatives. That is the same number today, with one rule producing one proposal, which is why the census will not move on this field alone — but it is a different quantity, and the difference becomes visible the first time a second rule is registered.
+
+`NormalizationOutcome::merges()` is `#[cfg(test)]`-only, so the test surface shrinks with it.
+
+**Order for the edit, so the census moves exactly once:** shed `merges` from the outcome and route the per-merge records through the payload in the same change as the `pipeline.rs:420` swap. Doing the shed first leaves a build where nothing emits per-merge records; doing the swap first leaves a build where two things do.
+
