@@ -5,7 +5,7 @@ status: done
 priority: p2
 dependencies: [bind-the-cache-subject-to-the-carried-payload-provenance]
 related: [implement-the-expansion-cache-protocol, restore-replayable-apple-compatibility-evidence]
-scopes: [implementation/artifact, implementation/metal-aot, implementation/workspace, implementation/build, research/apple-targets, implementation/metal, contracts/artifacts, contracts/decisions, contracts/navigation]
+scopes: [implementation/artifact, implementation/metal-aot, implementation/workspace, implementation/build, research/apple-targets, implementation/metal, contracts/artifacts, contracts/decisions, contracts/navigation, implementation/cargo-lock, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [build, artifact, correctness]
