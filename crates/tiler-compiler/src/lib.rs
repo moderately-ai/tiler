@@ -7,6 +7,7 @@ mod boundary;
 pub mod capability;
 mod component_cost;
 mod cover;
+mod estimate;
 mod explain;
 mod feasibility;
 mod frontier;

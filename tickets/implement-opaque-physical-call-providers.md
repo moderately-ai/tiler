@@ -43,3 +43,25 @@ Unblocked by `implement-analytical-component-cost-model` closing. Two notes so t
 
 **What this ticket unblocks structurally.** `MaterializationForm::OpaqueRuntimeValue` is marked `Reserved` in `crate::boundary` and names this ticket as the owner of its typed ABI, effect, aliasing, and placement contracts. It is also one of the eight reserved values that currently make `implement-boundary-property-enforcers` unstartable — see that ticket's deferral note and the trigger test `frontier::tests::the_bounded_profile_admits_no_undischarged_boundary`. Admitting `OpaqueCall` proposals will change what the bounded profile can guarantee, so expect that trigger to be part of this work rather than a surprise from it.
 
+## Started — the second evidence class landed (2026-07-27)
+
+`crates/tiler-compiler/src/estimate.rs`. The ticket requires three evidence classes to stay separate; two now exist and this slice built the missing one.
+
+| Class | Where it lives |
+| --- | --- |
+| exact / proven-upper-bound `ResourceRequirements`, used for hard feasibility | `tiler_ir::schedule`, already existed |
+| **uncertain pressure estimates with provenance and an explicit `Unknown`, including registers, occupancy, and source size** | `crate::estimate`, this slice |
+| analytical cost estimate with model provenance and its own `Unknown` | `crate::component_cost`, landed earlier this session |
+
+**The invariant is a missing type, not a documented rule.** The ticket says an unknown resource estimate cannot establish hard feasibility. So there is deliberately **no conversion** from `ResourceEstimate` into `ResourceRequirements` or any feasibility input — not fallible, not documented-unsafe. A `TryFrom` would move the decision to each call site, and the failure mode is a caller who has an estimate, needs a requirement, and reaches for the conversion that exists. The absence is the enforcement. An estimate ranks and reports; a requirement decides.
+
+**Provenance distinguishes otherwise identical estimates.** `ProviderAsserted` and `CompilerDerived` at the same number are different claims, and a calibration pass has to know which it is comparing a measurement against. Tested: two estimates with equal values and different provenance must not compare equal. `Measured` is reserved — no measurement path reaches here, and `calibrate-device-cost-models` owns that.
+
+**Malformed values are refused at construction rather than reported as extreme estimates.** An occupancy above 100% is a provider fault; admitting it would rank a broken call above a working one. Registers and source bytes are unbounded counts and deliberately do not inherit occupancy's bound — tested, so a checker applying one rule to all three fails.
+
+**`Unknown` is not zero**, and it keeps its provenance: "the provider was asked and does not know" and "nothing has asked yet" are different claims, and only the first says anything about the provider.
+
+**Note for whoever takes `model-resource-pressure-from-a-register-and-occupancy-model`:** that ticket is deferred waiting for exactly this vocabulary. `PressureDimension::Registers` and `Occupancy` now exist. What is still missing there is a *target profile* declaring the axes — an estimate carrying a register count does not tell the cost model what the device's limit is. Check before assuming it is unblocked.
+
+**Still not included:** the typed ABI, effect, aliasing, and placement contracts; provider registration and applicability; failure stages; and the additive coexistence with scheduled kernels. Those are the bulk of the ticket.
+
