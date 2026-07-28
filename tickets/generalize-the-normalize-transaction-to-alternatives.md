@@ -43,3 +43,24 @@ The work is to make those six serve *registered* rules and *multiple* outcomes, 
 - The alternative set is reproducible across runs.
 - A `ProviderDefect` is reported as a typed, explainable failure distinct from an ordinary rewrite rejection, asserted by a test that watches it fire.
 - **The pin: with only the common-subexpression rule registered, the result has the same `SemanticIdentity` as today's `normalize.rs` output.** Compared on the identity, not a summary. Do not start the engine on a new rule — a new rule and a new transaction failing together are indistinguishable.
+
+## The provider trait needs a fallible `propose` — found 2026-07-28
+
+Sketching the CSE provider against the real functions surfaced a defect in the seam that landed with `implement-transactional-rewrite-engine`. Recording it here because this ticket is where it gets fixed, and because the fix changes a signature its tests depend on.
+
+**The shape is clean.** `normalize.rs` separates cleanly at exactly the right line:
+
+- `detect_shared_values(program) -> Result<Congruence, NormalizeError>` (line 329)
+- `rebuild(program, &congruence) -> Result<SemanticProgram, NormalizeError>` (line 421)
+- `normalize_semantics` (line 253) is the transaction: budget, verify, adopt.
+
+A CSE provider is `detect_shared_values` then `rebuild`, returning the candidate. The transaction stays where it is. That is the whole of the first slice, and it is smaller than the ticket implied.
+
+**The defect.** `RewriteRuleProvider::propose` returns `Vec<RewriteProposal<Program>>` with no error channel. Both functions above return `Result`, and their errors are *compiler faults* — `NormalizeError::Rebuild { rule: "builder-create" }` is a builder that would not construct, not a program with nothing to optimize. With the current signature the provider must swallow those into an empty vector, making **"detection failed" indistinguishable from "nothing to propose"**.
+
+That is the same class of bug as `Unknown` reported as zero, and it is worse here: an empty proposal set is the *normal* result for most rules on most programs, so the failure is invisible by construction and no counter would show it.
+
+**The fix, and its blast radius.** `propose` should return `Result<Vec<RewriteProposal<Program>>, ProviderDefect>` — reusing the existing defect type, since a rule that cannot run is a contract violation of the same kind as one that misattributes. `collect_proposals` already returns `Result<_, ProviderDefect>` and already fails the whole batch, so its body absorbs this with one `?`; what changes is the trait signature and the four test providers in `rewrite.rs` that implement it.
+
+Do this before writing the CSE provider, not after. Writing the provider first means writing the swallow, and a swallowed compiler fault is exactly the thing that does not resurface later.
+
