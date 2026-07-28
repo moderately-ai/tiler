@@ -1,7 +1,7 @@
 ---
 id: accept-the-tiler-cache-public-boundary
 title: Accept the tiler-cache public boundary
-status: todo
+status: awaiting-decision
 priority: p1
 dependencies: [report-cache-publication-state-after-the-rename-boundary]
 related: [implement-the-expansion-cache-protocol]
@@ -45,3 +45,9 @@ Landed `pub(crate)` by `add-an-expansion-cache-root-preflight` under ADR 0074 co
 - `PreflightVerdict` — `Holds`, `Refuted`, `NotRun`.
 
 **Two shapes to review rather than skim.** `PreflightVerdict::NotRun` is deliberately not a refutation: a refuted property says the root is unsuitable, while an unrunnable probe says nothing was learned, and reporting the first for the second sends a caller to replace a filesystem when the answer is a permission. And `cross_host_exclusion_caveat` is an associated function returning *text*, not a `bool`, because it is a property of the probe rather than of any report — a caller rendering the report prints the caveat instead of having to know it.
+
+## Parked 2026-07-27 — awaiting Tom
+
+**The question:** accept `tiler_cache::expansion`'s public surface as reviewed, or change its shape first?
+
+The module documents itself as a reviewed *draft* boundary under ADR 0074 §7 and ADR 0075, on the same footing as `tiler_artifact::program` and `tiler_runtime::load`. The preflight surface added by `prototype-expansion-content-cache` is staged the same way and is listed on this ticket. Accepting is an owner action; nothing in the code blocks it.
