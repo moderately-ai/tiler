@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, artifact, abi, identity]
 claimed_from: todo
 assignee: coordinator
-lease_expires_at: 1785207846
+lease_expires_at: 1785208081
 ---
 **Fact — two ABIs now describe one program, and nothing binds them.** `complete-program-identity-with-abi-guards-and-routing` gave `tiler_ir::program::VerifiedKernelProgram` its own ABI expression arena, applicability guard, per-stage launch geometry, and per-access accessible byte range, and folded all four into `tiler.kernel-program.v2` identity. `tiler_artifact::program`'s `VariantSpec` still declares its own guard, its own `LaunchSpec`, and its own per-binding `accessible_bytes`, on its own arena, under the separately versioned `guard_and_routing` schema.
 
@@ -75,3 +75,18 @@ bumped with its reason recorded at the site; and `make full` passes.
 **What that implies for the route.** Deriving is now *cheaper* than checking, not more expensive: if the builder takes the expressions from the program, the fixtures simply stop supplying them and the churn is deletion. If it checks, every fixture has to be rewritten to supply the right thing. That inverts the ordering I recorded above, and it is worth stating plainly — the public API removal is the smaller change, not the larger one.
 
 The check itself is reverted; `adopt_abi` and its tests remain, because they are the primitive either route needs.
+
+### Measurement 2026-07-27, second attempt — the derive route, and where it actually stops
+
+**Attempted and abandoned:** removing `VariantSpec::applicability_guard`, `LaunchSpec`'s `grid_threads` and `threads_per_workgroup`, and `BindingSpec::accessible_bytes`, and deriving all four from the bound program through `adopt_abi`. `ARTIFACT_DOMAIN` stepped to `v6` with its reason. `main` is untouched; the branch was deleted.
+
+**What it established, in order:**
+
+1. **The compile-side churn is 13 sites and every one is a deletion**, confirming the route inversion recorded above. The fixtures stop supplying the fields; nothing has to be rewritten to supply something different. That part of the estimate was right.
+2. **But it then fails 266 tests at *verification*, not at compilation** — 126 distinct `ArtifactVerificationError`s, plus `ExpressionType` and `NonInterfaceRoot`. The build succeeds and the artifact is then refused.
+
+**That second point is the real finding and it is not mechanical.** If the two ABIs were the same formulas differently spelled, substituting the program's would verify. They are not: the program's launch and accessible-range expressions **do not satisfy the obligations the artifact builder checks** — the phase and interface-root requirements `check_use` imposes, and the static-evaluation contract behind `ExpressionType`. So the divergence this ticket describes is deeper than restatement. The two layers require different *shapes* of expression for the same quantity, and binding them means reconciling those requirements, not just choosing which side supplies the bytes.
+
+**What that changes for whoever takes this next.** The remaining work is not "delete three fields and thread a map". It is: establish why a program-owned expression fails the artifact's use-site obligations, decide whether the artifact's requirements are too strict or the program's expressions are under-constrained, and only then bind. That is a design question about the two layers' contracts, and it should probably be its own ticket ahead of this one.
+
+**Retained from the attempts:** `adopt_abi` and its two tests, already on `main` — the replay primitive either route needs, and the only part of this that was ever mechanical.
