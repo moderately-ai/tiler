@@ -1,7 +1,7 @@
 ---
 id: re-record-the-stale-const-eval-trybuild-golden
 title: Re-record the stale const-eval trybuild golden in tiler-ir
-status: todo
+status: closed
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,8 @@ scopes: [implementation/ir]
 shared_scopes: []
 paths: []
 tags: [implementation, toolchain]
+closed_reason: obsolete
+closed_note: Commit 7850758 already re-recorded the exact pinned-rustc rendering requested here; cargo nextest run -p tiler-ir -E test(shape_evidence_contract) passes on main with rustc commit eff8269f797067c30555e77f160ec84c0ed15cd9.
 ---
 `crates/tiler-ir/tests/shape-evidence/fail/shape_array_rank_limit.stderr` no longer matches what the pinned compiler emits, and the mismatch fails the Rust sub-gate's `cargo test --workspace` phase for every branch.
 
