@@ -330,22 +330,39 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
         .into_iter()
         .map(|component| {
             let value = match component {
-                // The one component the plan already carries exactly: every
-                // region's implementation states the temporary bytes it needs,
-                // and the plan's allocation is their sum. Saturating rather than
-                // checked because this is a report, not a feasibility input — a
-                // saturated total is visibly wrong at u64::MAX, whereas a
-                // rejected compile would let a reporting path fail a build.
+                // Two components the plan already carries exactly. Every region's
+                // implementation states the temporary bytes it needs and the
+                // dispatches it issues, and the plan's totals are their sums.
+                //
+                // Saturating rather than checked because this is a report, not a
+                // feasibility input — a saturated total is visibly wrong at
+                // `u64::MAX`, whereas a rejected compile would let a reporting
+                // path fail a build.
                 CostComponent::Allocation => {
                     CostValue::Exact(plan.selections().iter().fold(0_u64, |total, selection| {
                         total.saturating_add(selection.implementation().cost().temporary_bytes())
+                    }))
+                }
+                // Dispatch duplicates a count the structural model already
+                // reports, and that is the point rather than an oversight. A
+                // calibration pass compares a device measurement against this
+                // model component by component, so a component missing here
+                // cannot be correlated with anything measured — and dispatch
+                // overhead is one of the first things a device measurement sees.
+                // The structural count exists to be *pruned* on; this one exists
+                // to be *calibrated* against, and the two uses do not share a
+                // consumer.
+                CostComponent::Dispatch => {
+                    CostValue::Exact(plan.selections().iter().fold(0_u64, |total, selection| {
+                        total.saturating_add(u64::from(
+                            selection.implementation().cost().dispatch_count(),
+                        ))
                     }))
                 }
                 // Not modelled. See this module's header: the inputs do not
                 // exist yet, and inventing them would produce numbers that
                 // cannot be refuted.
                 CostComponent::MemoryTraffic
-                | CostComponent::Dispatch
                 | CostComponent::RedundantWork
                 | CostComponent::Indexing
                 | CostComponent::Synchronization

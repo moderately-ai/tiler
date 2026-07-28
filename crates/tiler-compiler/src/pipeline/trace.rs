@@ -422,6 +422,19 @@ fn record_analytical_costs(
 ) -> Result<ExplainRecordId, TargetFailure> {
     for plan in portfolio.plans() {
         let analytical = analytical_plan_cost(plan);
+        // Dispatch is reported under both models, so the two must agree. A
+        // duplicated number that drifted would be worse than no number at all:
+        // a calibration pass comparing a device measurement against the
+        // analytical dispatch count would attribute the difference to the
+        // device. Debug-only because this is an invariant of two summations
+        // over the same selections, not a condition any input can produce.
+        debug_assert_eq!(
+            analytical
+                .get(CostComponent::Dispatch)
+                .map(super::ComponentCost::value),
+            Some(CostValue::Exact(plan.cost().dispatch_count())),
+            "the analytical dispatch count disagrees with the structural one"
+        );
         let subject_key = plan.identity().label();
         for component in analytical.components() {
             match component.value() {

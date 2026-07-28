@@ -19,7 +19,7 @@ Each needs an input the compiler does not have. `Allocation` was computable beca
 | Component | What it needs that does not exist |
 | --- | --- |
 | `MemoryTraffic` | per-region element traffic; `launched_threads` is a proxy for elements, not bytes moved, and reading it as bytes would be wrong by the element width and by every reuse |
-| `Dispatch` | nothing — this one is *nearly* free, since the structural estimate already counts dispatches; it was left out only because reporting it under a second key duplicates a number already reported under the first, and whether that is useful or confusing is worth deciding rather than assuming |
+| ~~`Dispatch`~~ | **Modelled 2026-07-27.** The duplication question resolved in favour of reporting it: calibration compares a device measurement against this model component by component, so a component absent here cannot be correlated with anything measured, and dispatch overhead is among the first things a device measurement sees. The structural count exists to be *pruned* on and this one to be *calibrated* against; the two uses share no consumer. A `debug_assert_eq!` in `record_analytical_costs` pins the two counts to agree, since a duplicated number that drifted would be worse than none — a calibration pass would attribute the difference to the device. Its failure path was verified by perturbing the analytical sum by one and watching it fire. |
 | `RedundantWork` | a model of what fusion recomputes, which needs the access relations rather than the cover shape |
 | `Indexing` | per-element address arithmetic, derivable from the index region but not currently summarized anywhere |
 | `Synchronization` | the barrier structure, which lives in the kernel program rather than the plan |
@@ -34,6 +34,10 @@ Each needs an input the compiler does not have. `Allocation` was computable beca
 - Nothing here may enter dominance. A `ComponentCost` is not a `PhysicalCostEstimate`, and `frontier::tests::an_analytical_cost_key_is_refused_by_the_frontier` guards the remaining route. Admitting a second model key into Pareto comparison makes plans mutually incomparable and turns pruning off silently.
 - Units are fixed per component by `CostComponent::unit`, so a value and a unit cannot disagree. A new component's unit is an exhaustive-match arm, not a field.
 - `CostValue::Bounded` exists and is asserted well formed but is not yet constructed. It is the shape the first genuinely modelled component should carry; a point estimate for something that is not exact should be a refuted-if-wrong range, not a number.
+
+## Progress
+
+- `Dispatch` modelled (see the struck row above). Seven remain `Unknown`.
 
 ## Closes when
 
