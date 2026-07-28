@@ -379,3 +379,13 @@ The `RegionId` is separable from that choice: `assess_region`'s first argument i
 *The check, reproducible in one line:* `grep -n 'ProvenEvidence' crates/tiler-compiler/src/frontier.rs` — it is a field and an accessor here, produced only by that one call.
 
 **Then:** admit, lowering rejection, numerical guarantees, and explain records for the three rejections.
+
+## Work resolution landed (2026-07-28)
+
+`frontier::resolve_work_items(work, bindings, request)`. `Fixed` resolves directly; `PerElementOf` resolves through the tensor role its parameter is bound to, reading `input_elements` or `output_elements` from `request.serial_sum()`. No new parameter was needed — the frontier already held the request.
+
+**The test requires the two roles to give *different* counts** and asserts the fixture actually does, so a resolution that ignored the binding and returned one count for everything fails. That is the same property the contract-assembly test checks one level up, and it is worth checking twice because "follows the binding" is the thing every shortcut here would break.
+
+**`Intermediate` returns `None`, and that is a decision rather than a gap left open.** The normalized request states element counts for the program's input and output. An intermediate exists because a particular *cover* chose to materialize between two regions, so its element count is a property of that cover — which the frontier does not hold when enumerating for a subject. Deriving one from the input's would be right for the pointwise case and wrong for any cover materializing something smaller. An unbound name declines for the same reason.
+
+**Remaining for admission:** `assess_region`'s `RegionId` argument, which an opaque call has none of and which is used only to attribute errors. That argument should take a subject identifier both callers can supply. Then: resolve work, assess, construct with `ImplementationBody::Opaque`. After that, lowering rejection, numerical guarantees, and explain records for the rejections.

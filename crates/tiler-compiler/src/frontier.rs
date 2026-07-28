@@ -63,7 +63,7 @@ use crate::boundary::{
     LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
     RequiredProperty, StorageEncoding, VisibilityGuarantee, VisibilityRequirement,
 };
-use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration};
+use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration, WorkScaling};
 use crate::call_registry::{
     OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall,
 };
@@ -1576,6 +1576,50 @@ fn encode_call_subject(proposed: &OpaqueCallProposal) -> Vec<u8> {
     bytes
 }
 
+/// Evaluates an opaque call's declared work scaling against the request.
+///
+/// `assess_region` needs a work-item count, and a scheduled region reads one
+/// from its schedule. An opaque call declares how its work scales
+/// ([`WorkScaling`]) and this resolves that against the bound tensors.
+///
+/// `Fixed` resolves directly. `PerElementOf` resolves through the tensor role
+/// the parameter is bound to: the bounded profile's normalized request states
+/// `input_elements` and `output_elements`, which is exactly the count a call
+/// over that tensor performs work proportional to.
+///
+/// # Why `Intermediate` returns `None`
+///
+/// The normalized request states element counts for the program's input and
+/// output. An intermediate is a cover-level artefact — it exists because a
+/// particular cover chose to materialize between two regions — and its element
+/// count is a property of that cover, which the frontier does not hold when it
+/// enumerates for a subject. Returning a count derived from the input's would be
+/// right for the pointwise case and wrong for any cover that materializes
+/// something smaller, so it declines instead. A shape-dependent call bound to an
+/// intermediate is refused rather than mis-sized.
+#[allow(
+    dead_code,
+    reason = "the work-count resolution; lands with its tests ahead of the admission that consumes it"
+)]
+fn resolve_work_items(
+    work: WorkScaling,
+    bindings: &[(&'static str, TensorRole)],
+    request: &VerifiedTargetRequest,
+) -> Option<u64> {
+    match work {
+        WorkScaling::Fixed(count) => Some(count),
+        WorkScaling::PerElementOf(name) => {
+            let (_, role) = bindings.iter().find(|(bound, _)| *bound == name)?;
+            let normalized = request.serial_sum();
+            match role {
+                TensorRole::Input => Some(normalized.input_elements),
+                TensorRole::Output => Some(normalized.output_elements),
+                TensorRole::Intermediate => None,
+            }
+        }
+    }
+}
+
 /// Turns one region that passed checked verification into an admitted
 /// implementation, deriving its boundary contract and its canonical identity.
 ///
@@ -2423,6 +2467,61 @@ mod tests {
         .expect("still one domain");
         assert_eq!(swapped.requirements[0].tensor(), TensorRole::Output);
         assert_eq!(swapped.guarantees[0].tensor(), TensorRole::Input);
+    }
+
+    /// A declared scaling resolves through the role its parameter is bound to.
+    ///
+    /// The two roles must give *different* counts, or the test would pass
+    /// against a resolution that ignored the binding entirely — the shapes are
+    /// chosen so `input_elements` and `output_elements` differ.
+    #[test]
+    fn work_scaling_resolves_through_the_bound_role() {
+        use super::{WorkScaling, resolve_work_items};
+
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let normalized = request.serial_sum();
+        assert_ne!(
+            normalized.input_elements, normalized.output_elements,
+            "the fixture cannot distinguish the two roles"
+        );
+
+        let bindings = [("x", TensorRole::Input), ("y", TensorRole::Output)];
+        assert_eq!(
+            resolve_work_items(WorkScaling::PerElementOf("x"), &bindings, &request),
+            Some(normalized.input_elements)
+        );
+        assert_eq!(
+            resolve_work_items(WorkScaling::PerElementOf("y"), &bindings, &request),
+            Some(normalized.output_elements)
+        );
+        assert_eq!(
+            resolve_work_items(WorkScaling::Fixed(7), &bindings, &request),
+            Some(7),
+            "a fixed scaling was not taken directly"
+        );
+    }
+
+    /// An unbound name and an intermediate binding both decline.
+    ///
+    /// Declining is the point: a work count nothing supports would produce a
+    /// feasibility verdict that is confidently wrong in either direction.
+    #[test]
+    fn an_unresolvable_scaling_declines_rather_than_guessing() {
+        use super::{WorkScaling, resolve_work_items};
+
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let bindings = [("x", TensorRole::Input), ("z", TensorRole::Intermediate)];
+
+        assert_eq!(
+            resolve_work_items(WorkScaling::PerElementOf("absent"), &bindings, &request),
+            None,
+            "a scaling naming an unbound parameter produced a count"
+        );
+        assert_eq!(
+            resolve_work_items(WorkScaling::PerElementOf("z"), &bindings, &request),
+            None,
+            "an intermediate binding produced a count the request cannot state"
+        );
     }
 
     #[test]
