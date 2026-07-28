@@ -343,9 +343,9 @@ only one `simctl spawn` per family. On a host with no Apple toolchain the whole
 thing skips in well under a second.
 
 The retained 2026-07-25 runs are
-[`results/2026-07-25-numerics-covering-xcode26.6-metal32023.883/record.tsv`](results/2026-07-25-numerics-covering-xcode26.6-metal32023.883/record.tsv)
+[`results/2026-07-27-numerics-covering-xcode26.6-metal32023.883/record.tsv`](results/2026-07-27-numerics-covering-xcode26.6-metal32023.883/record.tsv)
 and
-[`results/2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv`](results/2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv),
+[`results/2026-07-27-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv`](results/2026-07-27-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv),
 schema `tiler.apple-numerical-behaviour/v6`. Both were rewritten in place when the
 third dtype landed, on the identical host, toolchain, and date row they already
 named, and every `case.*`, `comparison.*`, and `hazard.*` row they carried before

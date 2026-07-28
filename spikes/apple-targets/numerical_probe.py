@@ -1368,6 +1368,65 @@ KERNELS: tuple[Kernel, ...] = (
         subnormal_probes=(DIVIDED_RESULT_FLUSH_F16,),
         dtype=F16,
     ),
+    # Contraction, a source-level `fma`, and reassociation at `f16`. Finding 21
+    # measured the two dtypes' arithmetic differing while their emitted modules
+    # did not, which removed the assumption that an `f32` measurement of what a
+    # licence does carries to `f16` -- so findings 6, 16, and 17 needed their own
+    # `f16` rows rather than a reading across.
+    #
+    # The scale is `0x3E02` (1.501953125) and not `1.5h`, and the reason is the
+    # whole point of these three kernels. At ten mantissa bits, `x * 1.5 + 1.0`
+    # rounds identically whether it is fused or separately rounded for **every**
+    # operand in the `f16` vector -- checked exhaustively, and 1,876 of the
+    # 32,768 finite non-negative `f16` patterns would discriminate, none of them
+    # in the vector. A kernel spelled `1.5h` therefore returns identical bytes
+    # under every contraction setting while proving nothing, which is finding
+    # 7's no-witness trap wearing a contraction costume. `0x3E02` is one ulp off
+    # `1.5h` -- the smallest perturbation that makes the property observable at
+    # the vector's ordinary normal `0x3555`, where separate rounding gives
+    # `0x3E00` and single rounding gives `0x3E01`. The witness operand `1.0h`
+    # gives `0x4101` under both, so the witness stays contraction-independent
+    # exactly as the `f32` pair's does.
+    Kernel(
+        name="contraction_pair_f16",
+        purpose="a multiply and an add as two statements, with no canonicalization between them",
+        steps=scale_then_bias(0x3E02, 0x3C00),
+        canonicalized=False,
+        witness=Witness(operand=0x3C00, executed=0x4101, deleted=0x3C00),
+        dtype=F16,
+    ),
+    Kernel(
+        name="contraction_pair_canonicalized_f16",
+        purpose="the same pair with the emitter's canonicalization interposed",
+        steps=scale_then_bias(0x3E02, 0x3C00),
+        canonicalized=True,
+        witness=Witness(operand=0x3C00, executed=0x4101, deleted=0x3C00),
+        dtype=F16,
+    ),
+    Kernel(
+        name="fused_pair_f16",
+        purpose="the same two constants as a source-level fma, which contraction cannot unfuse",
+        steps=scale_then_bias(0x3E02, 0x3C00),
+        canonicalized=False,
+        witness=Witness(operand=0x3C00, executed=0x4101, deleted=0x3C00),
+        fused=True,
+        dtype=F16,
+    ),
+    # `f16`'s ulp at 1.0 is 2**-10, so half an ulp is 2**-11 = `0x1000` -- the
+    # same shape as the `f32` chain's 2**-24, and the reason no new machinery is
+    # needed. The discriminator is the operand `1.0h`: added sequentially each
+    # half-ulp ties to even and the result stays `0x3C00`, while reassociating
+    # the two addends gives `1.0h + 2**-10` = `0x3C01`. The witness operand is
+    # the smallest normal `0x0400`, whose chain evaluates left to right to
+    # `0x1440`; every value here was computed at `float16` rather than by hand.
+    Kernel(
+        name="reassociation_chain_f16",
+        purpose="two adds of half an ulp, whose value says where the parentheses went",
+        steps=(Step(0x1000, "+"), Step(0x1000, "+")),
+        canonicalized=False,
+        witness=Witness(operand=0x0400, executed=0x1440, deleted=0x0400),
+        dtype=F16,
+    ),
     # The third dtype, and the one the second could not stand in for. Each kernel
     # below is its `f32` twin with the constants respelled at `bfloat16`'s
     # boundaries and nothing else changed. The operation vocabulary matches the
@@ -1448,6 +1507,57 @@ KERNELS: tuple[Kernel, ...] = (
         canonicalized=True,
         witness=Witness(operand=0x3F80, executed=0x3EAB, deleted=0x3F80),
         subnormal_probes=(DIVIDED_RESULT_FLUSH_BF16,),
+        dtype=BF16,
+    ),
+    # The `bf16` twins of the four kernels above, required rather than optional:
+    # `test_every_kernel_names_its_dtype_exactly_when_it_is_not_the_default`
+    # holds the two narrow dtypes to identical kernel sets, so that a difference
+    # between them is a difference in the format and never in what was asked.
+    #
+    # `bfloat16` has the same degeneracy `f16` does and it was derived the same
+    # way rather than assumed: for scale `1.5bf` and bias `1.0bf`, single and
+    # double rounding agree at every operand in this vector too, so that spelling
+    # would measure nothing here either. `0x3FBE` (1.484375) is the nearest scale
+    # to 1.5 that discriminates at the vector's ordinary normal `0x3EAB`, where
+    # separate rounding gives `0x3FC0` and single rounding `0x3FBF`. The witness
+    # operand `1.0bf` gives `0x401F` under both.
+    Kernel(
+        name="contraction_pair_bf16",
+        purpose="a multiply and an add as two statements, with no canonicalization between them",
+        steps=scale_then_bias(0x3FBE, 0x3F80),
+        canonicalized=False,
+        witness=Witness(operand=0x3F80, executed=0x401F, deleted=0x3F80),
+        dtype=BF16,
+    ),
+    Kernel(
+        name="contraction_pair_canonicalized_bf16",
+        purpose="the same pair with the emitter's canonicalization interposed",
+        steps=scale_then_bias(0x3FBE, 0x3F80),
+        canonicalized=True,
+        witness=Witness(operand=0x3F80, executed=0x401F, deleted=0x3F80),
+        dtype=BF16,
+    ),
+    # **There is no `fused_pair_bf16`, and its absence is a measurement.** MSL
+    # provides no `bfloat` overload of `fma`: the call promotes to `float` and
+    # `metal` rejects `bfloat v6 = fma(v3, v4, v5)` with "cannot initialize a
+    # variable of type 'bfloat' with an rvalue of type 'float'". Writing
+    # `bfloat(fma(...))` would compile and would measure something else -- a
+    # fusion at `f32` precision narrowed afterwards, which is a double rounding
+    # this format never performs -- so finding 16's question is not expressible
+    # at this width rather than answered negatively at it. The parity assertion
+    # in `test_every_kernel_names_its_dtype_exactly_when_it_is_not_the_default`
+    # names this one exclusion explicitly, so a *second* divergence still fails.
+
+    # `bfloat16`'s ulp at 1.0 is 2**-7, so half an ulp is 2**-8 = `0x3B80`.
+    # Sequentially each addend ties to even and `1.0bf` stays `0x3F80`;
+    # reassociated it becomes `0x3F81`. The witness operand is the smallest
+    # normal `0x0080`, whose chain evaluates left to right to `0x3C00`.
+    Kernel(
+        name="reassociation_chain_bf16",
+        purpose="two adds of half an ulp, whose value says where the parentheses went",
+        steps=(Step(0x3B80, "+"), Step(0x3B80, "+")),
+        canonicalized=False,
+        witness=Witness(operand=0x0080, executed=0x3C00, deleted=0x0080),
         dtype=BF16,
     ),
 )
@@ -1696,11 +1806,40 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     for contract in FP_CONTRACTS:
         add("contraction_pair", "safe", "2", contract)
         add("contraction_pair_canonicalized", "safe", "2", contract)
+    # The same pair under the relaxed modes. Contraction was measured only under
+    # `safe` until 2026-07-27, so the offline set carried no `relaxed` or `fast`
+    # candidate for it and the runtime comparison had nothing to ask. That was a
+    # gap in the question rather than an answer: the narrow dtypes are swept in
+    # every mode by `NARROW_KERNELS`, so their runtime rows *were* compared, and
+    # the divergence that surfaced there is only interpretable against these.
+    for mode in ("relaxed", "fast"):
+        for contract in FP_CONTRACTS:
+            add("contraction_pair", mode, "2", contract)
     # A source-level `fma` over the identical constants, against the same three
     # contraction settings, so what `-ffp-contract` can and cannot unfuse is a
     # difference in one thing.
     for contract in FP_CONTRACTS:
         add("fused_pair", "safe", "2", contract)
+    # The same three questions at `f16`. Finding 21 measured the two dtypes'
+    # arithmetic differing while their emitted modules did not, so an `f32`
+    # measurement of what a contraction licence does is not evidence about
+    # `f16`, and these rows are what make findings 6 and 16 per-dtype rather
+    # than stated once and read across. The contraction axis is carried here
+    # rather than left to the exhaustive selection because these findings cite
+    # it directly.
+    for contract in FP_CONTRACTS:
+        for suffix in ("f16", "bf16"):
+            # Every mode, not `safe` alone. `NARROW_KERNELS` sweeps the narrow
+            # dtypes in all three modes, so their runtime rows are compared; a
+            # contraction axis confined to `safe` would leave `relaxed` and
+            # `fast` with only a `contract-off` candidate to be compared against,
+            # and the runtime path's own contraction would read as a divergence
+            # rather than as the measurement it is.
+            for mode in MATH_MODES:
+                add(f"contraction_pair_{suffix}", mode, "2", contract)
+                add(f"contraction_pair_canonicalized_{suffix}", mode, "2", contract)
+        # No `fused_pair_bf16`: MSL has no `bfloat` `fma`. See the kernel list.
+        add("fused_pair_f16", "safe", "2", contract)
     # Division, which the operation vocabulary did not previously reach. The two
     # power-of-two divisors are compiled under `safe` alone, because what they
     # establish is a compile-side fact about the driver rather than a second
@@ -1720,6 +1859,8 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     # on is a device-side question every math mode has to answer.
     for mode in MATH_MODES:
         add("reassociation_chain", mode, "2", "off")
+        add("reassociation_chain_f16", mode, "2", "off")
+        add("reassociation_chain_bf16", mode, "2", "off")
     # `-fmetal-math-fp32-functions=fast`, against the two findings that would
     # move if it were not confined to the transcendental functions: the flush
     # and the signed-zero divergence.
