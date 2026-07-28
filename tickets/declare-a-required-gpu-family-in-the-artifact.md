@@ -1,7 +1,7 @@
 ---
 id: declare-a-required-gpu-family-in-the-artifact
 title: Decide which live-device requirements an artifact route must declare
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [prototype-metal-runtime-preflight, carry-the-stage-execution-order-in-the-envelope]
@@ -38,3 +38,28 @@ Do not settle this by picking the cheapest. The measurement that would decide it
 ## Closes when
 
 Either the artifact declares what a route requires of a device and the runtime preflight checks it with a typed refusal in the class `prototype-metal-runtime-preflight` defines, or the question is closed with a recorded decision that it stays undeclared and why, with the provenance left as the durable answer. `make full` passes.
+
+## Parked 2026-07-27 — awaiting Tom, with the blocking measurement bounded
+
+**Measurement — the deciding experiment is not producible on available hardware.** This ticket says the question would be decided by "a kernel that builds a pipeline successfully on one family and not on another". Both devices reachable from this workspace report the **same family**:
+
+| host | device | highest Apple family | max threads/threadgroup | max buffer |
+| --- | --- | --- | --- | --- |
+| M4 Max (local) | Apple M4 Max | **Apple9** | 1024 | 22,613,000,192 |
+| M3 Pro (Tailscale) | Apple M3 Pro | **Apple9** | 1024 | 10,726,686,720 |
+
+Produced by `prototypes/serial-sum-run`'s own `device_facts` on each host at `main`. The two differ only in buffer and working-set size, which track installed memory rather than family, and their threadgroup limits are identical. **So no kernel can be written here that builds on one and not the other on family grounds** — the experiment needs a device of a different Apple generation, which this workspace does not have.
+
+That is new and it changes the shape of the question rather than answering it: the ticket recorded that nothing had produced the measurement, and this records *why*, so nobody re-attempts it on these two machines.
+
+**The three candidates, with what survives:**
+
+- **A governed family key on the target profile.** Readable and comparable against `supportsFamily`, and it turns the host's check into a real one. It also puts Apple vocabulary into a consumer-agnostic artifact layer, which `AGENTS.md` guards against — so it needs a neutral spelling or an explicit backend-scoped extension point, and that spelling is itself an ADR 0075 public-boundary decision. **Survives, with a cost.**
+- **Numeric floors instead of a family.** Backend-neutral and directly checkable. It under-describes a family — two devices with equal limits can differ in features a kernel used — and the measurement above shows exactly that risk is live rather than theoretical: the two devices here have *identical* threadgroup limits, so floors would distinguish nothing between them. **Survives, but is measurably weaker than it looks.**
+- **Leave it undeclared, keep the provenance.** A kernel needing an absent feature fails at pipeline creation, which the preflight now classifies as a route miss — late and imprecisely explained, but not silently wrong. **Survives, and is the status quo.**
+
+All three survive, which is why this is Tom's. The elimination that *would* have decided it needs hardware this workspace lacks.
+
+**No recommendation is offered, deliberately.** The ticket says not to settle it by picking the cheapest, and with the deciding measurement unavailable, any recommendation from here would be exactly that — a cost argument wearing an evidence argument's clothes. What can be said is that option 2's neutrality is worth less than it appears, because the only two devices available to test it are indistinguishable by the floors it would declare.
+
+**Trigger to reopen:** access to an Apple device of a different GPU generation, or a kernel whose pipeline creation is observed to fail for a feature reason on any reachable device.
