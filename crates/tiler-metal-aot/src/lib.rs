@@ -19,6 +19,10 @@
 //!   language standard, optimization level, and the numerical realization flags
 //!   (`math-mode`, `fp32-functions`, `ffp-contract`) — is an explicit input.
 //!   [`input::NumericalRealization`] has no `Default`; the caller must state it.
+//! - **One prepared compilation.** [`driver::Toolchain::prepare`] binds the
+//!   canonical [`identity::CompilationIdentity`] to the request and exact
+//!   resolved paths that [`driver::PreparedCompilation::compile`] consumes, so a
+//!   cache lookup and its miss path cannot observe different selections.
 //!
 //! The driver fails closed. When the toolchain or SDK cannot be resolved, when a
 //! tool reports failure, or when the linker's output does not begin with the
@@ -83,12 +87,9 @@ pub mod driver;
 // is reviewed; its module documentation names what it reserves, and states which
 // half of ADR 0053 belongs to the frontend proc-macro crate instead.
 mod family;
-// The complete content identity of one compilation: the driver's half of the
-// complete compilation key ADR 0050 requires the expansion cache to store one
-// immutable bundle per. Crate-private under ADR 0074 convention 7 until its
-// facade is reviewed; its module documentation states why the subject is bytes
-// rather than a digest, and why the cache protocol is deliberately not here.
-mod identity;
+// Documented by the module's own `//!` header so its intra-doc links resolve in
+// the identity module's scope rather than this crate-root scope.
+pub mod identity;
 /// Explicit, strongly typed compilation inputs.
 pub mod input;
 /// Provenance, fingerprint, and compiled-artifact records.

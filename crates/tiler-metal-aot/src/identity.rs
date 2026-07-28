@@ -33,8 +33,9 @@
 //! be a second identity authority over the same subject. The subject is
 //! therefore emitted as canonical bytes and the caller that already owns the
 //! governed algorithm digests them, exactly as
-//! [`ArtifactFamilySelection::canonical_bytes`](crate::family::ArtifactFamilySelection::canonical_bytes)
-//! does (ADR 0074 convention 2).
+//! `ArtifactFamilySelection::canonical_bytes` does (ADR 0074 convention 2).
+//! That sibling is named rather than linked because `family` stays crate-private
+//! under convention 7, and a link a reader cannot follow is worse than a name.
 //!
 //! # What this module is *not*: the cache protocol
 //!
@@ -56,11 +57,59 @@
 //! establish today is sound for reuse on the host that observed the toolchain
 //! and is not sound across hosts. That refusal is typed
 //! ([`IdentityError::CrossHostReuseUnsupported`]) rather than approximated.
-
-#![allow(
-    dead_code,
-    reason = "the compilation key subject is landed ahead of its consumer (ADR 0074 convention 7). It reserves the compilation facet of ADR 0050's complete key, and the component that consumes it now exists: `tiler-cache` composes that facet with the artifact program's into one canonical byte run. What does not exist is the caller holding both crates, because this crate is reached from the frontend proc-macro layer, whose axis `record-that-the-frontend-axis-is-review-gated` records as gated on Tom's review of a public boundary."
-)]
+//!
+//! # Public boundary and construction authority
+//!
+//! What is public is the derived subject and the reuse bound it licenses; the
+//! encoding is not. [`CompilationIdentity`] has no public constructor. A caller
+//! obtains it only from
+//! [`PreparedCompilation::identity`](crate::driver::PreparedCompilation::identity)
+//! after [`Toolchain::prepare`](crate::driver::Toolchain::prepare) resolves the
+//! absolute paths that the same prepared token will execute. This is ADR 0074
+//! convention 2 made structural: no caller can mint identity from an invented
+//! [`ResolvedToolchain`], and cache lookup cannot be keyed by one resolution
+//! before a miss silently compiles through another.
+//!
+//! `CompilationIdentity::encode`, the domain tag, and the framing helpers
+//! remain private or crate-private, so no out-of-crate caller can frame a run
+//! under this crate's convention or present bytes this module did not derive.
+//! The identity type remains public because bytes alone do not carry the reuse
+//! scope: two hosts whose tools report equal versions derive identical bytes,
+//! while [`ToolchainEvidence::ReportedVersions`] licenses same-host reuse only.
+//!
+//! ```no_run
+//! use tiler_metal_aot::driver::Toolchain;
+//! use tiler_metal_aot::identity::{IdentityReuseScope, ToolchainEvidence};
+//! use tiler_metal_aot::input::{
+//!     AppleSdk, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
+//!     NumericalRealization, OptimizationLevel,
+//! };
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let request = CompileRequest::new(
+//!     "kernel void main0() {}",
+//!     MetalTarget::new(
+//!         AppleSdk::MacOs,
+//!         DeploymentMinimum::new(13, 0),
+//!         MslVersion::Metal3_1,
+//!     ),
+//!     OptimizationLevel::Default,
+//!     NumericalRealization::strict_baseline(),
+//! );
+//! let prepared = Toolchain::system().prepare(&request)?;
+//! assert!(!prepared.identity().as_bytes().is_empty());
+//! assert_eq!(
+//!     prepared.identity().evidence(),
+//!     ToolchainEvidence::ReportedVersions,
+//! );
+//! assert_eq!(
+//!     prepared.identity().reuse_scope(),
+//!     IdentityReuseScope::SameHost,
+//! );
+//! let _artifact = prepared.compile()?;
+//! # Ok(())
+//! # }
+//! ```
 
 use core::fmt;
 
@@ -117,7 +166,7 @@ const COMPILATION_DOMAIN: &[u8] = b"tiler.metal-aot.compilation-identity.v1\0";
 /// **What is implemented.** Only [`Self::ReportedVersions`], which is what
 /// [`ResolvedToolchain`] can supply. A content-digest class is a *reserved*
 /// extension point, not implemented support and not a tested guarantee: adding
-/// it is a compile error at [`CompilationIdentity::encode`] because the
+/// it is a compile error at `CompilationIdentity::encode` because the
 /// encoder matches this enum exhaustively, and the tag it writes moves the
 /// bytes, so no entry published under the weaker class can be mistaken for one
 /// published under the stronger.
@@ -126,7 +175,7 @@ const COMPILATION_DOMAIN: &[u8] = b"tiler.metal-aot.compilation-identity.v1\0";
 /// type: the encoder maps it totally onto an identity tag, and a wildcard arm
 /// there could only invent a tag the variant alone determines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum ToolchainEvidence {
+pub enum ToolchainEvidence {
     /// The `metal` and `metallib` reported version strings, plus the SDK's
     /// canonical name, version, and build identifier.
     ///
@@ -140,7 +189,8 @@ impl ToolchainEvidence {
     ///
     /// A total map: each class determines its own scope, so a wildcard arm
     /// could only widen or narrow a claim the class alone decides.
-    pub(crate) const fn reuse_scope(self) -> IdentityReuseScope {
+    #[must_use]
+    pub const fn reuse_scope(self) -> IdentityReuseScope {
         match self {
             Self::ReportedVersions => IdentityReuseScope::SameHost,
         }
@@ -157,7 +207,8 @@ impl ToolchainEvidence {
     }
 
     /// Returns this class's stable lowercase identifier, for diagnostics.
-    pub(crate) const fn as_str(self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReportedVersions => "reported-versions",
         }
@@ -176,7 +227,7 @@ impl fmt::Display for ToolchainEvidence {
 /// choose a narrower policy than the key permits; it must never choose a wider
 /// one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum IdentityReuseScope {
+pub enum IdentityReuseScope {
     /// Sound only on the host whose toolchain observation produced the key.
     ///
     /// A cache root under this scope must be host-local. Placing one on a shared
@@ -196,7 +247,8 @@ pub(crate) enum IdentityReuseScope {
 
 impl IdentityReuseScope {
     /// Returns this scope's stable lowercase identifier, for diagnostics.
-    pub(crate) const fn as_str(self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::SameHost => "same-host",
             Self::CrossHost => "cross-host",
@@ -216,8 +268,13 @@ impl fmt::Display for IdentityReuseScope {
 /// wrapping constructor, so no caller can assemble one naming a compilation
 /// nobody encoded. Its storage is private and [`Self::as_bytes`] is its only
 /// reader; equality, ordering, and cache keying use those bytes.
+///
+/// ```compile_fail,E0624
+/// use tiler_metal_aot::identity::CompilationIdentity;
+/// let _forbidden_constructor = CompilationIdentity::new;
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct CompilationIdentity {
+pub struct CompilationIdentity {
     bytes: Vec<u8>,
     evidence: ToolchainEvidence,
 }
@@ -242,17 +299,20 @@ impl CompilationIdentity {
     ///
     /// The caller that owns `tiler.digest.sha-256.v1` digests these to obtain
     /// the fixed-width cache key; this crate deliberately does not.
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
 
     /// Returns the evidence class the toolchain was identified by.
-    pub(crate) const fn evidence(&self) -> ToolchainEvidence {
+    #[must_use]
+    pub const fn evidence(&self) -> ToolchainEvidence {
         self.evidence
     }
 
     /// Returns where an entry under this identity may soundly be reused.
-    pub(crate) const fn reuse_scope(&self) -> IdentityReuseScope {
+    #[must_use]
+    pub const fn reuse_scope(&self) -> IdentityReuseScope {
         self.evidence.reuse_scope()
     }
 
@@ -266,7 +326,7 @@ impl CompilationIdentity {
     /// alternative — returning a key that *looks* complete and is not — is the
     /// silent wrong-artifact failure ADR 0050's complete-identity requirement
     /// exists to exclude.
-    pub(crate) const fn require_cross_host_reuse(&self) -> Result<(), IdentityError> {
+    pub const fn require_cross_host_reuse(&self) -> Result<(), IdentityError> {
         match self.reuse_scope() {
             IdentityReuseScope::CrossHost => Ok(()),
             IdentityReuseScope::SameHost => Err(IdentityError::CrossHostReuseUnsupported {
@@ -403,7 +463,7 @@ fn push_strs(bytes: &mut Vec<u8>, values: &[String]) {
 /// caller forwards or partially classifies, which no crate maps totally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub(crate) enum IdentityError {
+pub enum IdentityError {
     /// The toolchain evidence class bounds reuse to the host that derived it.
     CrossHostReuseUnsupported {
         /// The class that was established.

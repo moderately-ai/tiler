@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::diagnostic::{CompileStage, DriverError, ToolOutput, ToolStatus, ToolchainPhase};
+use crate::identity::CompilationIdentity;
 use crate::input::{AppleSdk, CompileRequest};
 use crate::record::{
     ArtifactProvenance, CompiledArtifact, ResolvedTool, ResolvedToolchain, SdkIdentity,
@@ -26,6 +27,21 @@ const METALLIB_MAGIC: [u8; 4] = *b"MTLB";
 
 /// Disambiguates scratch directories created within one process.
 static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// One compilation bound to a request and one resolved toolchain observation.
+///
+/// [`Toolchain::prepare`] is the only constructor. The token immutably borrows
+/// the request, privately owns the resolved toolchain and derived identity, and
+/// is consumed by [`Self::compile`]. A caller may therefore use
+/// [`Self::identity`] for cache lookup before deciding whether to compile, but
+/// cannot change the request or substitute a second toolchain between the key
+/// and the bytes produced on a miss.
+#[derive(Debug)]
+pub struct PreparedCompilation<'request> {
+    request: &'request CompileRequest,
+    resolved: ResolvedToolchain,
+    identity: CompilationIdentity,
+}
 
 /// A handle to the Apple offline Metal toolchain, invoked through `xcrun`.
 ///
@@ -98,6 +114,30 @@ impl Toolchain {
         })
     }
 
+    /// Resolves and binds one request and toolchain observation for a cacheable compilation.
+    ///
+    /// Preparation performs every fallible toolchain observation before a
+    /// caller derives a cache key. The returned token keeps an immutable borrow
+    /// of `request` and privately owns the resolved absolute tool paths, so its
+    /// identity and its eventual compilation cannot drift apart.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same typed toolchain or SDK resolution error as
+    /// [`Self::resolve`].
+    pub fn prepare<'request>(
+        &self,
+        request: &'request CompileRequest,
+    ) -> Result<PreparedCompilation<'request>, DriverError> {
+        let resolved = self.resolve(request.target.sdk)?;
+        let identity = CompilationIdentity::new(request, &resolved);
+        Ok(PreparedCompilation {
+            request,
+            resolved,
+            identity,
+        })
+    }
+
     /// Compiles MSL source into a `metallib` with full provenance.
     ///
     /// The single selected SDK from `request.target` is used for both the
@@ -118,67 +158,7 @@ impl Toolchain {
     /// a live device, and the declared family and profile checks that would
     /// bear on runtime compatibility belong to the runtime contract.
     pub fn compile(&self, request: &CompileRequest) -> Result<CompiledArtifact, DriverError> {
-        let resolved = self.resolve(request.target.sdk)?;
-
-        let scratch = Scratch::create()?;
-        let source_path = scratch.path.join("kernel.metal");
-        let air_path = scratch.path.join("kernel.air");
-        let metallib_path = scratch.path.join("kernel.metallib");
-
-        fs::write(&source_path, request.source.as_bytes()).map_err(|error| DriverError::Host {
-            detail: format!("could not write MSL source: {error}"),
-        })?;
-
-        let compile_flags = request.compile_flags();
-        let link_flags = request.link_flags();
-
-        let mut metal_args: Vec<OsString> = compile_flags.iter().map(OsString::from).collect();
-        metal_args.push(OsString::from("-c"));
-        metal_args.push(source_path.clone().into_os_string());
-        metal_args.push(OsString::from("-o"));
-        metal_args.push(air_path.clone().into_os_string());
-        Self::run_stage(&resolved.metal, CompileStage::Metal, &metal_args)?;
-
-        let mut link_args: Vec<OsString> = link_flags.iter().map(OsString::from).collect();
-        link_args.push(air_path.clone().into_os_string());
-        link_args.push(OsString::from("-o"));
-        link_args.push(metallib_path.clone().into_os_string());
-        Self::run_stage(&resolved.metallib, CompileStage::Metallib, &link_args)?;
-
-        let metallib = fs::read(&metallib_path).map_err(|error| DriverError::Host {
-            detail: format!("could not read metallib output: {error}"),
-        })?;
-        if metallib.len() < METALLIB_MAGIC.len()
-            || metallib[..METALLIB_MAGIC.len()] != METALLIB_MAGIC
-        {
-            return Err(DriverError::EmptyArtifact {
-                detail: format!(
-                    "linker output was not a Metal library ({} bytes)",
-                    metallib.len()
-                ),
-            });
-        }
-
-        let fingerprint = resolved.fingerprint();
-        let provenance = ArtifactProvenance {
-            platform: request.target.platform(),
-            target_triple: request.target.triple(),
-            deployment_minimum: request.target.deployment_minimum,
-            msl_version: request.target.msl_version,
-            optimization: request.optimization,
-            numerical: request.numerical,
-            sdk: resolved.sdk,
-            metal: resolved.metal,
-            metallib: resolved.metallib,
-            fingerprint,
-            compile_flags,
-            link_flags,
-        };
-
-        Ok(CompiledArtifact {
-            metallib,
-            provenance,
-        })
+        self.prepare(request)?.compile()
     }
 
     /// Locates one offline tool via `xcrun --sdk <sdk> --find <tool>`.
@@ -315,6 +295,96 @@ impl Toolchain {
             });
         }
         Ok(())
+    }
+}
+
+impl PreparedCompilation<'_> {
+    /// Returns the canonical identity of the compilation this token will execute.
+    ///
+    /// The returned value is the backend-compilation facet supplied to the
+    /// expansion cache. Its type retains the reuse scope that canonical bytes
+    /// alone cannot express.
+    #[must_use]
+    pub const fn identity(&self) -> &CompilationIdentity {
+        &self.identity
+    }
+
+    /// Compiles through the resolved paths whose reported versions reach [`Self::identity`].
+    ///
+    /// Consuming the token makes the identity-to-execution binding one-shot.
+    /// Retrying after any failure requires a new preparation and therefore a
+    /// fresh identity and cache lookup.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed with a typed [`DriverError`] when scratch filesystem work
+    /// fails, either resolved tool reports failure, or the linker's output does
+    /// not begin with the `MTLB` magic.
+    pub fn compile(self) -> Result<CompiledArtifact, DriverError> {
+        let Self {
+            request,
+            resolved,
+            identity: _,
+        } = self;
+        let scratch = Scratch::create()?;
+        let source_path = scratch.path.join("kernel.metal");
+        let air_path = scratch.path.join("kernel.air");
+        let metallib_path = scratch.path.join("kernel.metallib");
+
+        fs::write(&source_path, request.source.as_bytes()).map_err(|error| DriverError::Host {
+            detail: format!("could not write MSL source: {error}"),
+        })?;
+
+        let compile_flags = request.compile_flags();
+        let link_flags = request.link_flags();
+
+        let mut metal_args: Vec<OsString> = compile_flags.iter().map(OsString::from).collect();
+        metal_args.push(OsString::from("-c"));
+        metal_args.push(source_path.clone().into_os_string());
+        metal_args.push(OsString::from("-o"));
+        metal_args.push(air_path.clone().into_os_string());
+        Toolchain::run_stage(&resolved.metal, CompileStage::Metal, &metal_args)?;
+
+        let mut link_args: Vec<OsString> = link_flags.iter().map(OsString::from).collect();
+        link_args.push(air_path.clone().into_os_string());
+        link_args.push(OsString::from("-o"));
+        link_args.push(metallib_path.clone().into_os_string());
+        Toolchain::run_stage(&resolved.metallib, CompileStage::Metallib, &link_args)?;
+
+        let metallib = fs::read(&metallib_path).map_err(|error| DriverError::Host {
+            detail: format!("could not read metallib output: {error}"),
+        })?;
+        if metallib.len() < METALLIB_MAGIC.len()
+            || metallib[..METALLIB_MAGIC.len()] != METALLIB_MAGIC
+        {
+            return Err(DriverError::EmptyArtifact {
+                detail: format!(
+                    "linker output was not a Metal library ({} bytes)",
+                    metallib.len()
+                ),
+            });
+        }
+
+        let fingerprint = resolved.fingerprint();
+        let provenance = ArtifactProvenance {
+            platform: request.target.platform(),
+            target_triple: request.target.triple(),
+            deployment_minimum: request.target.deployment_minimum,
+            msl_version: request.target.msl_version,
+            optimization: request.optimization,
+            numerical: request.numerical,
+            sdk: resolved.sdk,
+            metal: resolved.metal,
+            metallib: resolved.metallib,
+            fingerprint,
+            compile_flags,
+            link_flags,
+        };
+
+        Ok(CompiledArtifact {
+            metallib,
+            provenance,
+        })
     }
 }
 
@@ -570,6 +640,89 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
             .expect("the shim launcher is executable");
         script
+    }
+
+    fn write_executable(path: &std::path::Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::write(path, body).expect("the fake tool is writable");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .expect("the fake tool is executable");
+    }
+
+    /// A prepared compilation keeps the exact tools that produced its identity.
+    ///
+    /// The launcher is deleted after preparation. Compilation can succeed only
+    /// if the prepared token executes the already-resolved absolute tools; a
+    /// second resolution would fail before producing an artifact.
+    #[test]
+    fn prepared_identity_and_execution_share_one_toolchain_resolution() {
+        let scratch = std::env::temp_dir().join(format!(
+            "tiler-metal-aot-prepared-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&scratch).expect("the scratch directory is creatable");
+        let metal = scratch.join("metal");
+        let metallib = scratch.join("metallib");
+        let launcher = scratch.join("xcrun");
+        write_executable(
+            &metal,
+            "#!/bin/sh\n\
+             if [ \"$1\" = \"--version\" ]; then echo 'Metal prepared-v1'; exit 0; fi\n\
+             while [ \"$#\" -gt 0 ]; do\n\
+               if [ \"$1\" = \"-o\" ]; then shift; printf AIR > \"$1\"; exit 0; fi\n\
+               shift\n\
+             done\n\
+             exit 1\n",
+        );
+        write_executable(
+            &metallib,
+            "#!/bin/sh\n\
+             if [ \"$1\" = \"--version\" ]; then echo 'metallib prepared-v1'; exit 0; fi\n\
+             while [ \"$#\" -gt 0 ]; do\n\
+               if [ \"$1\" = \"-o\" ]; then shift; printf MTLBprepared > \"$1\"; exit 0; fi\n\
+               shift\n\
+             done\n\
+             exit 1\n",
+        );
+        write_executable(
+            &launcher,
+            &format!(
+                "#!/bin/sh\n\
+                 shift 2\n\
+                 case \"$1\" in\n\
+                   --find) if [ \"$2\" = \"metal\" ]; then echo '{}'; else echo '{}'; fi ;;\n\
+                   --show-sdk-path) echo /SDKs/MacOSX.sdk ;;\n\
+                   --show-sdk-version) echo 26.5 ;;\n\
+                   --show-sdk-build-version) echo 25F70 ;;\n\
+                   *) exit 1 ;;\n\
+                 esac\n",
+                metal.display(),
+                metallib.display(),
+            ),
+        );
+
+        let request = macos_request(TRIVIAL_MSL);
+        let prepared = Toolchain::with_launcher(&launcher)
+            .prepare(&request)
+            .expect("the fake toolchain resolves");
+        let identity = prepared.identity().clone();
+        assert!(!identity.as_bytes().is_empty());
+        std::fs::remove_file(&launcher).expect("the launcher is removable after preparation");
+
+        let artifact = prepared
+            .compile()
+            .expect("prepared compilation uses the resolved tools without selecting again");
+        assert_eq!(artifact.metallib, b"MTLBprepared");
+        assert_eq!(
+            artifact.provenance.fingerprint.metal_version,
+            "Metal prepared-v1"
+        );
+        assert_eq!(
+            artifact.provenance.fingerprint.metallib_version,
+            "metallib prepared-v1"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     /// A toolchain selection that changes between observation and execution

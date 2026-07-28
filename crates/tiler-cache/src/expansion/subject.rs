@@ -53,10 +53,8 @@
 //! a shorter key nobody notices. Completeness *within* a facet is the supplying
 //! authority's obligation, discharged by that authority's own mechanism.
 //!
-//! **[`SubjectFacet::ArtifactProgram`] has a producer; [`SubjectFacet::BackendCompilations`]
-//! does not.** This paragraph previously said the opposite, on the reasoning that
-//! `CanonicalArtifactProgramIdentity` needs the payload digest and therefore the
-//! compiled bytes. That reasoning was false. The payload digest is
+//! **Both facets now have producers, but no orchestrator holds both.**
+//! `CanonicalArtifactProgramIdentity` does not need compiled object bytes. The payload digest is
 //! `payload_identity` of the payload-*metadata* bytes, which carry the source,
 //! the target, the flags, and the toolchain provenance and no object byte at all
 //! — `tiler_artifact::program::codec::payload` states it, `check_payload_identity`
@@ -68,13 +66,14 @@
 //! `PayloadMetadata::identity` with `ArtifactProgramBuilder::push_pending_payload`
 //! is that way.
 //!
-//! The remaining blocker is the other facet. `tiler-metal-aot` declares
-//! `mod identity;` privately and `CompilationIdentity::as_bytes` is
-//! `pub(crate)`, so nothing outside that crate can obtain the backend
-//! compilation bytes; promoting it is ADR 0075's always-ask category and is
-//! `promote-the-metal-aot-compilation-identity`. So a caller still cannot key an
-//! entry end to end, and the loud stop below still applies — but it is now one
-//! unexported accessor away, not an underived subject away.
+//! `tiler-metal-aot` produces the backend-compilation facet through
+//! `Toolchain::prepare`: its opaque prepared token exposes
+//! `CompilationIdentity::as_bytes` for lookup and consumes the same request and
+//! resolved tools on a cache miss. The identity has no public constructor, so a
+//! caller cannot mint the facet from invented toolchain facts or resolve once
+//! for the key and again for execution. The remaining integration boundary is
+//! orchestration: no crate yet holds the artifact-program identity, every
+//! prepared backend compilation, and the expansion cache together.
 
 use core::fmt;
 

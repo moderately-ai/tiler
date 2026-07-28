@@ -41,6 +41,14 @@ Each item can be rejected on its own; accepting the ticket without naming an exc
 
 Both were argued to a conclusion here and need ratification rather than deliberation, which is why they sit in this list and not in the split block below.
 
+## The Metal AOT compilation facet is ratified (2026-07-28)
+
+Tom selected the correctness-preserving prepared-compilation boundary for `promote-the-metal-aot-compilation-identity`. `tiler_metal_aot::identity` is public, as are `CompilationIdentity`, `ToolchainEvidence`, `IdentityReuseScope`, and `IdentityError`, but the derived identity has no public constructor. `Toolchain::prepare(&CompileRequest)` returns an opaque `PreparedCompilation` that exposes `identity()` for cache lookup and consumes itself through `compile()` using the same borrowed request and privately held resolved paths.
+
+The staged `4f8ce90` constructor was rejected rather than merged: `CompilationIdentity::new(&CompileRequest, &ResolvedToolchain)` would have let a caller mint a derived identity from caller-constructed toolchain facts and would have allowed cache lookup and compilation to perform separate resolutions. The accepted token conforms to ADR 0074 convention 2, avoids a second resolution on the miss path, and makes request/toolchain agreement structural.
+
+This makes both `SubjectFacets` fields producible. It does not create the orchestrator that holds both producers and the cache, so the cache remains unused end to end; the frontend orchestration decision still owns that integration.
+
 ## Split performed (2026-07-28)
 
 The three shape questions were split into their own `awaiting-decision` tickets, each carrying its options and stated costs so one signature can be reshaped without rejecting this whole surface: `decide-the-composed-subject-backend-compilations-shape`, `decide-where-an-unfillable-subject-facet-is-refused`, `decide-the-lookup-argument-type`. This ticket keeps the ratification checklist and the derivations; a decision on any split applies here.

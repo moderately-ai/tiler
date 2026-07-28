@@ -1,11 +1,11 @@
 ---
 id: promote-the-metal-aot-compilation-identity
 title: Promote the tiler-metal-aot compilation identity
-status: todo
+status: done
 priority: p1
 dependencies: [bind-recorded-metal-toolchain-to-the-tools-that-execute]
 related: [derive-the-pre-compilation-artifact-program-subject, accept-the-tiler-cache-public-boundary, prototype-expansion-content-cache]
-scopes: [implementation/metal-aot]
+scopes: [implementation/metal-aot, project/tickets, implementation/cache]
 shared_scopes: []
 paths: []
 tags: [api, review, cache, identity]
@@ -30,11 +30,13 @@ The expansion cache frames a subject over two facets. One now has a producer and
 
 **A constraint that is not negotiable.** `tiler-metal-aot`'s dependency closure is empty by decision (ADR 0077 item 2). It was pinned as `"tiler-metal-aot": []` in `scripts/check_workspace.py` until `e197176` replaced the Python gate with the `Makefile`; the decision is unchanged and the check that enforced it is gone, so an added edge is now caught by reading the diff rather than by a failing gate. Whatever is promoted must not acquire a dependency, and in particular must not reach for the governed digest in `tiler-artifact`: this crate emits canonical bytes and the caller that owns the algorithm digests them, exactly as `family.rs` already does. A promotion that quietly adds an edge is a different decision than the one being asked for.
 
-## Work in flight — recorded 2026-07-28
+## Decision applied — 2026-07-28
 
-- **The branch holds one commit and it is not on `main`.** `tkt/promote-the-metal-aot-compilation-identity` is at `4f8ce90` ("Stage the metal-aot compilation identity promotion -- DO NOT MERGE UNAPPROVED", 2026-07-25). `git merge-base --is-ancestor 4f8ce90 main` exits non-zero, so nothing of it has landed. **No worktree is registered** for it — `git worktree list` does not name one — so the branch exists without a checkout to continue in.
-- **The staging half of the route was done; the reporting half did not reach a reader.** `4f8ce90` does append the surface to `tickets/accept-the-tiler-cache-public-boundary.md` (`git show --stat 4f8ce90` shows 19 added lines there), which is the route this ticket named. But the append lives only on the unmerged branch: `grep -n 'metal-aot\|CompilationIdentity' tickets/accept-the-tiler-cache-public-boundary.md` on `main` returns nothing. So a reader of the acceptance ticket has never seen this surface, and Tom has nothing to accept from the place he would look.
-- **Status note.** The ticket is `status: in-progress` against a branch with one unmerged commit and no worktree. Whether that should return to `todo` — releasing the claim — or stay `in-progress` pending a decision on `4f8ce90` is a frontmatter change this pass did not make, and it is recorded here instead.
+Tom selected the opaque prepared-compilation boundary. `Toolchain::prepare(&CompileRequest)` returns `PreparedCompilation<'_>`, which immutably borrows the request, privately owns the resolved toolchain and derived `CompilationIdentity`, exposes `identity()` for cache lookup, and consumes itself through `compile()` using those resolved paths. `Toolchain::compile` delegates through the same path, so the ordinary entry point does not maintain a second compilation implementation.
+
+The older `4f8ce90` draft is deliberately not merged. Its public `CompilationIdentity::new(&CompileRequest, &ResolvedToolchain)` failed ADR 0074 convention 2 because the derived identity had a public constructor over caller-constructible toolchain facts. It also left cache lookup and compilation as separate resolutions, so a miss could execute a different toolchain from the one its key named. The accepted form removes that constructor, removes the second resolution, and turns request/toolchain agreement into a borrow and private token invariant rather than a caller obligation.
+
+The promoted public surface is `tiler_metal_aot::identity::{CompilationIdentity, ToolchainEvidence, IdentityReuseScope, IdentityError}` plus `tiler_metal_aot::driver::PreparedCompilation` and `Toolchain::prepare`. Encoding helpers, the domain tag, and `CompilationIdentity::new` remain below `pub`. A cross-crate compile-fail doctest pins the constructor boundary, and a deterministic fake-toolchain test deletes the launcher after preparation and still compiles through the already-resolved tools.
 
 ## Closes when
 
@@ -42,6 +44,6 @@ A caller outside `tiler-metal-aot` can obtain the compilation identity bytes, th
 
 ## Graph maintenance
 
-- **This is an ADR 0075 owner-reserved promotion**: stage the surface privately, append it to the acceptance ticket for Tom's ratification, and do not publish `pub` ahead of his record — `pair-verified-buffer-handles-with-signature-ordinals` documents exactly what it looks like when a promotion ships un-ratified, and it is now an awkward ratify-after-the-fact item on his queue. Do not create a second one.
-- **Work in flight exists on an unmerged branch** (`4f8ce90` — see the body): read it before re-deriving; it appended the surface to the acceptance ticket on the branch only, so `main` has none of it.
-- **When the facet becomes producible**: update `accept-the-tiler-cache-public-boundary`'s ratification checklist (the composed-subject item assumes both facets can be filled) and tell `prototype-inline-aot-integration-proof`, whose cache-sharing criterion needs this facet.
+- **The ADR 0075 owner-reserved promotion is ratified.** Tom accepted the prepared-compilation form above, not the public constructor staged by `4f8ce90`.
+- **The cache acceptance record is updated.** `accept-the-tiler-cache-public-boundary` now records the exact ratified Metal AOT surface and why the older draft was rejected.
+- **The downstream integration owner must consume the new producer.** Tell `prototype-inline-aot-integration-proof` that both cache subject facets are now producible and its remaining cache-sharing work is orchestration rather than identity reachability.
