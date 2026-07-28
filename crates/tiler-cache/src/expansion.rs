@@ -87,6 +87,8 @@ mod collect;
 #[cfg(test)]
 mod fault;
 #[cfg(test)]
+mod fuzz;
+#[cfg(test)]
 mod harness;
 #[cfg(test)]
 mod hot_path;
