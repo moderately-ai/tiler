@@ -97,4 +97,17 @@ The tests are built around the distinction the positional form cannot make: the 
 
 `NoWrittenParameter` is refused at declaration: a call writing nothing produces nothing observable, and if that is genuinely intended it belongs in the effect declaration rather than in the absence of every output.
 
-**Still not included:** the placement contract; provider registration and applicability resolution; and the additive coexistence with scheduled kernels.
+## Placement contract landed (2026-07-28)
+
+`crates/tiler-compiler/src/call_placement.rs`. A call declares the affinity it runs on and the memory-domain classes it may address, and an undeclared placement is **refused rather than defaulted** — the same reasoning as the effect declaration: the compiler cannot see the call's body, so a placement it did not state is a placement nobody knows.
+
+**It adds no new vocabulary.** `ExecutionAffinity` and `MemoryDomainClass` already exist in `crate::boundary`, built for the same ADR 0047 contract. A second set here would be two authorities over one concept, which is the failure `AGENTS.md` names directly — two types with the same shape are not the same concept, and matching one against the other produces a confident wrong conclusion.
+
+`declare` takes the supported classes as an argument rather than reading a constant, so a widened profile needs no edit here and a test can drive the rejection path without a profile that permits it.
+
+**Two things in the first draft overstated, and both were corrected before commit rather than shipped:**
+
+- A `NoAdmittedDomain` error variant could never fire — `AdmittedMemoryDomains` already refuses an empty set at construction. An unreachable error variant reads as a check while being none, which is worse than its absence, so it was removed and the reason recorded where it was.
+- A test doc-comment claimed both halves of `reaches` were covered. Only the domain half is: the bounded profile has one symbolic affinity, so no test can supply a second to fail the affinity half against, and a `reaches` ignoring its affinity argument entirely would still pass. Both the method and the test now say so, so a green run is not read as verifying the conjunction.
+
+**Still not included:** provider registration and applicability resolution, and the additive coexistence with scheduled kernels.
