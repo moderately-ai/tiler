@@ -9,9 +9,6 @@ scopes: [research/program-planning, contracts/integrations, contracts/navigation
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, planning, language-model, workload, metal, inference]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785204994
 ---
 Select and bound the first language-model inference workload that will drive
 Tiler's capability growth. Do not use an unspecified "transformer" or
