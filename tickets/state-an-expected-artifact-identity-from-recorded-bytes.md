@@ -1,7 +1,7 @@
 ---
 id: state-an-expected-artifact-identity-from-recorded-bytes
 title: State an expected artifact identity from recorded bytes
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record]
@@ -44,3 +44,19 @@ derivation, so prefer a distinct type if typed call-site intent is wanted. The
 artifact and runtime APIs must agree on the selected evidence distinction.
 
 `needs-tom`: it is a public constructor on a type whose absence of one is a stated decision.
+
+## Parked 2026-07-27 — awaiting Tom
+
+**The question, atomic:** should a consumer be able to *state* an expected artifact identity in the type system, and if so as what?
+
+Three options, with the elimination already run:
+
+1. **Keep `expected: &[u8]`.** Costs nothing and names nothing; a caller can pass any slice and the compiler will not object. This is the status quo.
+2. **A distinct `RecordedArtifactProgramIdentity`.** Names the concept at the call site while keeping the evidence classes apart — a derived identity came from validated content, a recorded one is a byte string somebody wrote down.
+3. **Broaden `CanonicalArtifactProgramIdentity` with a checked byte constructor.** Rejected on the evidence: a byte constructor cannot prove derivation, so the type would stop meaning "encoder-derived" while still being spelled that way. That is the second-authority shape ADR 0082 names, and it is why `keys.rs` states the absence of a constructor as a decision rather than an omission.
+
+So the live choice is between 1 and 2, and option 2 is the recommendation — it is the only one that lets `DecodedProgram::preflight` express the second half of its own documented contract ("or recorded when it cached these bytes").
+
+**Why it cannot proceed without the decision.** Adding a public constructor to a type whose *absence* of one is a stated decision is ADR 0075's always-ask category twice over. The artifact and runtime APIs must also agree on the same evidence distinction, so this is one decision spanning two public boundaries rather than two independent edits.
+
+Nothing is blocked in the meantime: `preflight` works today via `expected: &[u8]`, no comparison is weakened, and the asymmetry in `LoadRejection::ProgramMismatch` is already documented as deliberate.
