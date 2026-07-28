@@ -1977,6 +1977,79 @@ fn program_with_grown_abi(
     builder.build().expect("verified kernel program")
 }
 
+/// The structural comparator is a strict total order over an arena.
+///
+/// This is what the two sorted expression sets in artifact identity rest on, so
+/// a comparator that were merely *consistent* would not do: an intransitive one
+/// makes `sort_by` produce an order that depends on the input permutation,
+/// which is precisely the canonicity the sort exists to provide.
+///
+/// Checked exhaustively over every ordered pair and triple of a small arena
+/// that carries all four constructors, sharing included.
+#[test]
+fn the_structural_comparator_is_a_total_order() {
+    use crate::program::abi::{AbiBinaryOp, AbiRoot, AbiUnaryOp, ExprNode, compare_expr_nodes};
+    use core::cmp::Ordering;
+
+    // 0,1 are distinct leaves; 2 shares leaf 0; 3 and 4 differ only in operand
+    // order, which is what a comparator that ignored operand position would miss.
+    let nodes = vec![
+        ExprNode::Root(AbiRoot::UnsignedLiteral(7)),
+        ExprNode::Root(AbiRoot::UnsignedLiteral(9)),
+        ExprNode::Unary {
+            op: AbiUnaryOp::Not,
+            operand: 0,
+        },
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedAdd,
+            left: 0,
+            right: 1,
+        },
+        ExprNode::Binary {
+            op: AbiBinaryOp::CheckedAdd,
+            left: 1,
+            right: 0,
+        },
+        ExprNode::Select {
+            condition: 2,
+            if_true: 3,
+            if_false: 4,
+        },
+    ];
+    let all: Vec<u32> = (0..u32::try_from(nodes.len()).unwrap()).collect();
+    let cmp = |a: u32, b: u32| compare_expr_nodes(&nodes, a, b);
+
+    for &a in &all {
+        assert_eq!(cmp(a, a), Ordering::Equal, "not reflexive at {a}");
+        for &b in &all {
+            assert_eq!(
+                cmp(a, b),
+                cmp(b, a).reverse(),
+                "not antisymmetric at ({a}, {b})"
+            );
+            // Distinct arena positions holding structurally distinct nodes must
+            // not compare equal, or two different expressions would tie and the
+            // sorted order would depend on input order.
+            if a != b {
+                assert_ne!(cmp(a, b), Ordering::Equal, "{a} and {b} tied");
+            }
+            for &c in &all {
+                if cmp(a, b) == Ordering::Less && cmp(b, c) == Ordering::Less {
+                    assert_eq!(
+                        cmp(a, c),
+                        Ordering::Less,
+                        "not transitive at ({a}, {b}, {c})"
+                    );
+                }
+            }
+        }
+    }
+
+    // Operand order is part of the structure: nodes 3 and 4 are `a + b` and
+    // `b + a` over the same leaves and must not tie.
+    assert_ne!(cmp(3, 4), Ordering::Equal, "operand order was ignored");
+}
+
 /// Reports identity size against arena size, and proves the curve is a line.
 ///
 /// **The growth rate is the finding, not the absolute number.** Identity size

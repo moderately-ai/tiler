@@ -81,3 +81,25 @@ Why it is better on every axis that matters here:
 **So the shape is:** sort the deferred predicates and launch preconditions by structural comparison; take the root list in the order `encode_identity` writes them, which is now well-defined because the sorted order no longer depends on the numbering; number once with `canonical_arena_traversal`; encode the arena once; replace every `keys[node_at(x)]` with the fixed-width canonical ID. `canonical_expression_order`'s sort then goes, because the numbering *is* the order — which is what the ticket asked to decide explicitly.
 
 **The builder's dedup still needs its own answer** and is unaffected by this correction: it keys `node -> position` at build time, where no canonical numbering exists yet. Structural equality is what it actually wants, and it is available at build time — but confirming that is work this ticket has not done.
+
+## Progress 2026-07-27 — step one landed: the shared primitives exist
+
+**Landed** (`tiler-ir`, no behaviour change, 274 tests pass):
+
+- `AbiArenaTraversal`, `canonical_arena_traversal`, and its four methods are now `pub`, which this ticket names as the first step. `tiler-artifact` can reuse them instead of growing the second implementation that would recreate the two-encoders-must-agree defect.
+- **`compare_expr_nodes` is new**, and it is what makes the reuse possible at all — see the correction above for why the `tiler-ir` call shape does not transfer without it.
+- `the_structural_comparator_is_a_total_order` checks reflexivity, antisymmetry, transitivity, and that no two structurally distinct nodes tie, exhaustively over every ordered pair and triple of an arena carrying all four constructors with sharing. A merely *consistent* comparator would not do: an intransitive one makes `sort_by` produce an order that depends on the input permutation, which is exactly the canonicity the sort exists to provide.
+- Verified to bite: ignoring operands in the `Binary` arm makes `a + b` and `b + a` tie, and the test fails naming those two nodes.
+
+**Not started, and it is the atomic part.** The four derivation sites still use `expr_key`. They move together or not at all, so nothing above touches them.
+
+### What the next session does, in order
+
+1. In `encode_identity`, sort `variant.deferred` and each entry's `launch.preconditions` with `compare_expr_nodes`. Neither is canonicalized at build time — verified: `check_deferred` and the launch-precondition loop preserve caller order and only reject duplicates — so this sort is where their order becomes content-derived.
+2. Build the root list in the order `encode_identity` writes it, which is now well-defined: variant program section, guard, deferred (sorted), then per entry the bindings' `accessible_bytes`, `launch.grid_threads`, `launch.threads_per_workgroup`, preconditions (sorted).
+3. `canonical_arena_traversal` over that list; `arena.encode` once; replace every `push_slice(&keys[node_at(x)])` with the fixed-width `arena.canonical_id(x).to_be_bytes()`.
+4. The same numbering in `codec/model.rs`, `codec/validate.rs`, and `codec/decode.rs`; delete `canonical_expression_order`, because the numbering *is* the order.
+5. Step `ARTIFACT_DOMAIN` `v4` → `v5` with the reason at the site, and rebaseline the artifact identity and serial-sum proof goldens, recording old value, new value, and regeneration command for each.
+6. Add the linearity instrument, mirroring `abi_identity_size_grows_linearly_with_the_arena` in `tiler-ir`'s `program/tests.rs`, over chain and shared-DAG growth.
+
+**The builder's `expr_key` dedup is still unanswered** and blocks step 6's "delete `expr_key`". It keys `node -> position` at build time where no canonical numbering exists. Structural equality is what it wants and `compare_expr_nodes` now supplies it, but converting the dedup is its own change and was not attempted.
