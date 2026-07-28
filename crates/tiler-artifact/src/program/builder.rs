@@ -395,6 +395,122 @@ impl ArtifactProgramBuilder {
         Ok(id)
     }
 
+    /// Replays a verified program's ABI arena onto this builder's arena.
+    ///
+    /// Returns one slot per source position, `Some` exactly for the positions
+    /// reached from `roots`. The builder deduplicates by content, so two source
+    /// positions holding the same expression resolve to one handle — which is
+    /// why this is a position map rather than a compacted list.
+    ///
+    /// # Why this belongs to the artifact layer
+    ///
+    /// A variant's runtime ABI must be the ABI of the program it carries. Until
+    /// now the only consumer that achieved that did it by hand, in
+    /// `prototypes/serial-sum-compile`, which made it a producer convention
+    /// rather than a checked one: an assembler could package a variant whose
+    /// accessible range is `UnsignedLiteral(24)` over a program whose own range
+    /// is `rows * columns * 4`, and both would verify, because each is checked
+    /// against the same third value and neither against the other. Under static
+    /// shapes those coincide; under dynamic shapes they need not, and the
+    /// artifact's expression is the one a runtime evaluates while the program's
+    /// is the one identity folds.
+    ///
+    /// Moving the replay here is the first half of closing that. It does not
+    /// yet *require* a variant to use the result —
+    /// `bind-the-artifact-variant-abi-to-the-program-abi` owns removing the
+    /// caller-supplied guard, launch, and accessible-range fields, which is a
+    /// public API removal and ADR 0075 reserves the interface.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactBuildError::ExpressionOutOfRange`] when a root or an
+    /// operand names a position outside `arena`, and any structural-limit error
+    /// the underlying pushes return.
+    pub fn adopt_abi(
+        &mut self,
+        arena: &[ExprNode],
+        roots: &[u32],
+    ) -> Result<Vec<Option<AbiExprId>>, ArtifactBuildError> {
+        let reachable = Self::reachable_from(arena, roots)?;
+        let mut minted: Vec<Option<AbiExprId>> = vec![None; arena.len()];
+        // Source order, so an operand is always minted before the node naming
+        // it: a verified arena stores operands ahead of their users.
+        for (at, node) in arena.iter().enumerate() {
+            if !reachable[at] {
+                continue;
+            }
+            let id = match node {
+                ExprNode::Root(root) => self.push_root(root.clone())?,
+                ExprNode::Unary { op, operand } => {
+                    self.push_unary(*op, Self::resolve(&minted, *operand)?)?
+                }
+                ExprNode::Binary { op, left, right } => self.push_binary(
+                    *op,
+                    Self::resolve(&minted, *left)?,
+                    Self::resolve(&minted, *right)?,
+                )?,
+                ExprNode::Select {
+                    condition,
+                    if_true,
+                    if_false,
+                } => self.push_select(
+                    Self::resolve(&minted, *condition)?,
+                    Self::resolve(&minted, *if_true)?,
+                    Self::resolve(&minted, *if_false)?,
+                )?,
+            };
+            minted[at] = Some(id);
+        }
+        Ok(minted)
+    }
+
+    /// Marks every arena position reachable from a set of use sites.
+    fn reachable_from(arena: &[ExprNode], roots: &[u32]) -> Result<Vec<bool>, ArtifactBuildError> {
+        let mut reached = vec![false; arena.len()];
+        let mut work: Vec<u32> = roots.to_vec();
+        while let Some(node) = work.pop() {
+            let at = usize::try_from(node).expect("u32 fits every supported host usize");
+            if at >= arena.len() {
+                return Err(ArtifactBuildError::ExpressionOutOfRange { position: node });
+            }
+            if reached[at] {
+                continue;
+            }
+            reached[at] = true;
+            match &arena[at] {
+                ExprNode::Root(_) => {}
+                ExprNode::Unary { operand, .. } => work.push(*operand),
+                ExprNode::Binary { left, right, .. } => {
+                    work.push(*left);
+                    work.push(*right);
+                }
+                ExprNode::Select {
+                    condition,
+                    if_true,
+                    if_false,
+                } => {
+                    work.push(*condition);
+                    work.push(*if_true);
+                    work.push(*if_false);
+                }
+            }
+        }
+        Ok(reached)
+    }
+
+    /// Resolves a source position to the handle it was replayed as.
+    fn resolve(
+        minted: &[Option<AbiExprId>],
+        position: u32,
+    ) -> Result<AbiExprId, ArtifactBuildError> {
+        let at = usize::try_from(position).expect("u32 fits every supported host usize");
+        minted
+            .get(at)
+            .copied()
+            .flatten()
+            .ok_or(ArtifactBuildError::ExpressionOutOfRange { position })
+    }
+
     /// Declares one typed root fact of the shared ABI expression arena.
     ///
     /// The arena is canonically deduplicated: an identical expression returns

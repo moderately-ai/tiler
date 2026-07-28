@@ -164,6 +164,15 @@ pub enum ArtifactBuildError {
         /// Category of rejected handle.
         entity: ArtifactEntityKind,
     },
+    /// A replayed arena named a position outside the arena it came from.
+    ///
+    /// Raised by `ArtifactProgramBuilder::adopt_abi`. A verified program's arena
+    /// cannot contain one, so this reports a caller replaying an arena and a
+    /// root list that do not belong together rather than a malformed program.
+    ExpressionOutOfRange {
+        /// The out-of-range source position.
+        position: u32,
+    },
     /// A governed construction resource exceeded its limit.
     StructuralLimit {
         /// Governed resource.
@@ -455,6 +464,7 @@ impl Error for ArtifactBuildError {
             Self::BuilderIdentityExhausted
             | Self::ForeignHandle { .. }
             | Self::InvalidHandle { .. }
+            | Self::ExpressionOutOfRange { .. }
             | Self::StructuralLimit { .. }
             | Self::EmptyKey { .. }
             | Self::KeyTooLong { .. }
