@@ -871,6 +871,20 @@ impl ImplementationBody {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AdmittedImplementation {
     provenance: ImplementationProvenance,
+    /// The semantic members this admission implements.
+    ///
+    /// Held here rather than read through the body because it is a property of
+    /// the **admission** — *what* was implemented — and not of how. An opaque
+    /// call has members as much as a scheduled region does, while
+    /// `RegisteredCall` cannot hold them: a call is registered once and admitted
+    /// per region and per target, so one registration would need different
+    /// members per admission.
+    semantic_members: Vec<SemanticMemberId>,
+    /// The target profile this admission is for.
+    ///
+    /// Here for the same reason as the members: *for where*, which both bodies
+    /// have and neither owns.
+    target_profile_key: &'static str,
     verified: VerifiedScheduledRegion,
     feasibility: ProvenEvidence,
     boundary: BoundaryContract,
@@ -889,6 +903,16 @@ impl AdmittedImplementation {
     }
 
     /// Returns the verified scheduled region backing this implementation.
+    /// The semantic members this admission implements.
+    pub(crate) fn semantic_members(&self) -> &[SemanticMemberId] {
+        &self.semantic_members
+    }
+
+    /// The target profile this admission is for.
+    pub(crate) const fn target_profile_key(&self) -> &'static str {
+        self.target_profile_key
+    }
+
     pub(crate) const fn verified(&self) -> &VerifiedScheduledRegion {
         &self.verified
     }
@@ -1363,6 +1387,8 @@ fn admit_verified(
             provider: provider.clone(),
             kind,
         },
+        semantic_members: verified.semantic_members().to_vec(),
+        target_profile_key: verified.target_profile_key(),
         verified,
         feasibility,
         boundary,

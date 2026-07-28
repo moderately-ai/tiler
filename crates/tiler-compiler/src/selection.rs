@@ -1098,13 +1098,12 @@ fn bind_region_frontiers<'a>(
         )?;
         // Every admitted implementation must cover exactly this region and target.
         for admitted in entry.frontier.admitted() {
-            if member_key(admitted.verified().semantic_members()) != member_key(region.members()) {
+            if member_key(admitted.semantic_members()) != member_key(region.members()) {
                 return Err(SelectionError::FrontierBinding {
                     rule: "frontier-region-members",
                 });
             }
-            if target_profile_key.is_some_and(|key| key != admitted.verified().target_profile_key())
-            {
+            if target_profile_key.is_some_and(|key| key != admitted.target_profile_key()) {
                 return Err(SelectionError::FrontierBinding {
                     rule: "frontier-region-target",
                 });
@@ -1257,9 +1256,7 @@ fn assemble_plan(
         let selection = by_occurrence
             .get(region.occurrence().as_bytes())
             .ok_or(PlanFault::Binding("region-unselected"))?;
-        if member_key(selection.implementation.verified().semantic_members())
-            != member_key(region.members())
-        {
+        if member_key(selection.implementation.semantic_members()) != member_key(region.members()) {
             return Err(PlanFault::Binding("member-mismatch"));
         }
         boundaries.insert(
