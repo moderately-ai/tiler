@@ -93,3 +93,9 @@ The check itself is reverted; `adopt_abi` and its tests remain, because they are
 The 266-test verification wall above is not this ticket's work. It is a question about what a verified program promises about its ABI, and it is filed as [`reconcile-the-artifact-and-program-abi-expression-obligations`](reconcile-the-artifact-and-program-abi-expression-obligations.md) with the reproduction, the failure classes, and the three candidate answers carried in — so none of it is re-derived.
 
 Once that lands, what remains here is what the original estimate described: remove the three restated fields, resolve each use site through `adopt_abi`'s map, step `ARTIFACT_DOMAIN` and the `guard_and_routing` schema. The compile-side churn is 13 sites and every one is a deletion, which was measured rather than guessed.
+
+### Correction 2026-07-27 — the split's premise is open
+
+The 266-test wall was read as "the two layers require differently shaped expressions". That is not established: the captured failures include `ForeignHandle`, which is a handle resolved against the wrong builder — a wiring fault in the attempt, not a layer disagreement — and the 126 `ArtifactVerificationError`s could not be classified because their `Debug` dumps the builder and the cause is past the truncation.
+
+The dependency on [`reconcile-the-artifact-and-program-abi-expression-obligations`](reconcile-the-artifact-and-program-abi-expression-obligations.md) stands, because that ticket's first job is now to separate the attempt's own bugs from genuine obligation failures. If there are none of the latter, it closes and this ticket reverts to the mechanical change its original estimate described.
