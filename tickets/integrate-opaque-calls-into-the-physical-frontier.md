@@ -286,3 +286,12 @@ Every other property transfers directly: layout and encoding and alignment from 
 
 *The check, reproducible in one line:* `grep -n 'struct AdmittedMemoryDomains' -B 8 crates/tiler-compiler/src/boundary.rs` — the doc there states the set-versus-one asymmetry and why it is deliberate.
 
+## The requirement half of the derivation landed (2026-07-28)
+
+`call_declaration::required_properties_for(parameter, placement)` builds the `RequiredProperties` for the tensor bound to one read parameter. Every governed property comes from its stated authority — layout, encoding, and alignment from the parameter's own spec; affinity and admitted domains from the placement; availability and visibility fixed for a read, since needing the value after the producing dispatch and readable without further coherence is what reading it *means*.
+
+**Materialization is `MaterializedBuffer` and deliberately does not come from the effects.** `Aliasing` says whether a *result* may share storage with an input; it says nothing about the form an input arrives in. Reading it as though it did would let a call that returns views also declare it accepts them — two different claims from one field.
+
+**A write-only parameter returns `None`**: its layout is a guarantee, so there is nothing to require, and manufacturing one would put a made-up layout into a contract. Tested, alongside a count assertion against `CANONICAL_PROPERTIES` — that one catches a derivation that silently omits a dimension, which matters because a requirement no guarantee speaks to fails *closed*, so an omission would make the boundary compose only by accident.
+
+**Remaining for the derivation:** the guarantee half — same shape, taking the layout's `Guaranteed` side, `AfterOwnDispatch` and `CoherentOnProducingAffinity`, and the single memory-domain class subject to the rule recorded above. Then assemble both into a `BoundaryContract` keyed by tensor role, encode the identity from the `OpaqueCallIdentity`, and admit.

@@ -32,7 +32,11 @@
 //! deduplicated ordering. An opaque-call provider uses that rather than a
 //! second predicate over the same question.
 
-use crate::call_abi::{CallAbi, ParameterRole};
+use crate::boundary::{
+    AvailabilityRequirement, MaterializationForm, RequiredProperties, RequiredProperty,
+    VisibilityRequirement,
+};
+use crate::call_abi::{CallAbi, CallParameter, ParameterLayout, ParameterRole};
 use crate::call_placement::CallPlacement;
 use crate::effects::{Aliasing, CallEffects, Elimination};
 use core::fmt;
@@ -198,6 +202,59 @@ impl OpaqueCallDeclaration {
     }
 }
 
+/// The typed properties a call requires of the tensor bound to one parameter.
+///
+/// The first half of the boundary derivation. Each property has exactly one
+/// authority in the declaration, which is why the declaration has the parts it
+/// does:
+///
+/// - layout, encoding, alignment — the parameter's own spec, which states them
+///   in the direction its role has;
+/// - execution affinity and admitted memory domains — the placement;
+/// - availability and visibility — fixed for a *read*: the call needs the value
+///   after the producing dispatch and readable without a further coherence
+///   action, which is what reading it at all means.
+///
+/// Materialization is `MaterializedBuffer` and does not come from the effects.
+/// The effects' `Aliasing` says whether a *result* may share storage with an
+/// input; it says nothing about the form an input arrives in, and reading it as
+/// though it did would let a call that returns views also declare it accepts
+/// them.
+///
+/// # Errors
+///
+/// Returns `None` when the parameter's layout does not state a requirement,
+/// which `CallAbi::declare` already refuses for a read role — so this is
+/// unreachable through a checked ABI and is `Option` rather than a panic
+/// because that reachability is an invariant of another type, not of this one.
+#[allow(
+    dead_code,
+    reason = "the requirement half of the boundary derivation; lands with its tests ahead of the admission"
+)]
+pub(crate) fn required_properties_for(
+    parameter: &CallParameter,
+    placement: &CallPlacement,
+) -> Option<RequiredProperties> {
+    let layout = match parameter.spec().layout {
+        ParameterLayout::Required(layout)
+        | ParameterLayout::Both {
+            requires: layout, ..
+        } => layout,
+        ParameterLayout::Guaranteed(_) => return None,
+    };
+    RequiredProperties::new([
+        RequiredProperty::StorageLayout(layout),
+        RequiredProperty::StorageEncoding(parameter.spec().encoding),
+        RequiredProperty::Alignment(parameter.spec().alignment),
+        RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
+        RequiredProperty::ExecutionAffinity(placement.affinity()),
+        RequiredProperty::MemoryDomain(placement.domains().clone()),
+        RequiredProperty::Availability(AvailabilityRequirement::AfterProducingDispatch),
+        RequiredProperty::Visibility(VisibilityRequirement::ReadableOnRequiringAffinity),
+    ])
+    .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +406,63 @@ mod tests {
             2,
             "only {} of two contradictions was reported: {faults:?}",
             faults.len()
+        );
+    }
+
+    /// Every governed property is stated, and each from its own authority.
+    ///
+    /// The count assertion is what catches a derivation that silently omits a
+    /// dimension: a requirement no guarantee speaks to fails closed, so an
+    /// omitted property would make the boundary compose only by accident.
+    #[test]
+    fn a_parameter_requirement_states_every_governed_property() {
+        let abi = abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]);
+        let parameter = abi.parameter("input").expect("declared");
+        let properties = required_properties_for(parameter, &placement())
+            .expect("a read parameter states a requirement");
+
+        assert_eq!(
+            properties.properties().len(),
+            crate::boundary::CANONICAL_PROPERTIES.len(),
+            "the derivation omitted a governed property"
+        );
+        for property in crate::boundary::CANONICAL_PROPERTIES {
+            assert!(
+                properties.get(property).is_some(),
+                "{property} was not derived"
+            );
+        }
+    }
+
+    /// The affinity and domains come from the placement, not from a default.
+    #[test]
+    fn placement_supplies_the_affinity_and_domains() {
+        let abi = abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]);
+        let parameter = abi.parameter("input").expect("declared");
+        let placement = placement();
+        let properties = required_properties_for(parameter, &placement).expect("a read parameter");
+
+        assert_eq!(
+            properties.get(crate::boundary::BoundaryProperty::ExecutionAffinity),
+            Some(&RequiredProperty::ExecutionAffinity(placement.affinity()))
+        );
+        assert_eq!(
+            properties.get(crate::boundary::BoundaryProperty::MemoryDomain),
+            Some(&RequiredProperty::MemoryDomain(placement.domains().clone()))
+        );
+    }
+
+    /// A write-only parameter states no requirement.
+    ///
+    /// Its layout is a guarantee, so there is nothing to require — and returning
+    /// a requirement anyway would put a made-up layout into a contract.
+    #[test]
+    fn a_write_only_parameter_states_no_requirement() {
+        let abi = abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]);
+        let parameter = abi.parameter("output").expect("declared");
+        assert!(
+            required_properties_for(parameter, &placement()).is_none(),
+            "an output parameter produced a requirement"
         );
     }
 }
