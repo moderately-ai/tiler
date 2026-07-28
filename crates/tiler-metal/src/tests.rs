@@ -28,9 +28,9 @@ use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
     ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan,
     LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
-    SubnormalMode, TailPolicy, TensorRole, ValueDomainProvenance, VerifiedScheduledRegion,
-    element_count,
+    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
+    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    ValueDomainProvenance, VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -49,6 +49,20 @@ use crate::target::{
 const NAN_BITS: u32 = 0x7fc0_0000;
 const SCALE_BITS: u32 = 0x4000_0000;
 const BIAS_BITS: u32 = 0x3f80_0000;
+
+fn scale_then_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression.input().expect("pointwise input");
+    let scale = expression.constant(scale_bits).expect("scale constant");
+    let product = expression
+        .multiply(input, scale)
+        .expect("scale multiplication");
+    let bias = expression.constant(bias_bits).expect("bias constant");
+    let root = expression.add(product, bias).expect("bias addition");
+    expression
+        .build(root)
+        .expect("verified pointwise expression")
+}
 
 /// The measured Apple profile: `f32` arithmetic flushes subnormals to the
 /// sign-preserving zero and `f16` arithmetic preserves them.
@@ -140,14 +154,13 @@ fn linear_schedule(work_items: u64) -> KernelSchedule {
 
 /// A pointwise scale-then-bias region over `shape` under the strict realization.
 fn pointwise_region(id: RegionId, shape: &Shape, nan_bits: u32) -> VerifiedScheduledRegion {
-    pointwise_region_under(id, shape, nan_bits, numerical(nan_bits))
+    pointwise_region_under(id, shape, numerical(nan_bits))
 }
 
 /// A pointwise scale-then-bias region carrying one stated declared realization.
 fn pointwise_region_under(
     id: RegionId,
     shape: &Shape,
-    nan_bits: u32,
     realization: NumericalRealization,
 ) -> VerifiedScheduledRegion {
     let elements = element_count(shape).expect("bounded fixture shape");
@@ -192,12 +205,9 @@ fn pointwise_region_under(
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::MultiplyThenAdd {
-            scale_bits: SCALE_BITS,
-            bias_bits: BIAS_BITS,
-            canonical_nan_bits: nan_bits,
-            contraction: false,
-        })
+        .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
+            SCALE_BITS, BIAS_BITS,
+        )))
         .unwrap();
     builder.numerical(realization).unwrap();
     builder.schedule(linear_schedule(elements)).unwrap();
@@ -380,12 +390,7 @@ fn emit_pointwise_under(
     realization: NumericalRealization,
     subnormal_arithmetic: MetalSubnormalArithmetic,
 ) -> MetalTranslationUnit {
-    let region = pointwise_region_under(
-        RegionId::new(0),
-        &Shape::from_dims([4]),
-        NAN_BITS,
-        realization,
-    );
+    let region = pointwise_region_under(RegionId::new(0), &Shape::from_dims([4]), realization);
     let kernel = lower_scheduled_region(&region).expect("bounded pointwise fixture lowers");
     let mut facts = target();
     facts.subnormal_arithmetic = subnormal_facts(subnormal_arithmetic);

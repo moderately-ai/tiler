@@ -14,7 +14,8 @@ pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
     ExecutionBinding, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization,
-    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, ReductionTopology, RegionId,
+    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
+    PointwiseF32ExpressionBuilder, PointwiseF32Node, ReductionTopology, RegionId,
     ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
 };
 use tiler_ir::schedule::{
@@ -31,8 +32,10 @@ use crate::honourability::{
 };
 use crate::region::SemanticMemberId;
 use crate::request::{
-    NumericalPermission, PrototypeTargetProfile, StrictF32NumericalContract,
-    VerifiedRequestSubject, VerifiedTargetRequest,
+    NormalizedPointwise, NormalizedPointwiseAssociation, NormalizedPointwiseLeaf,
+    NormalizedPointwiseOperation, NormalizedProgramSubject, NumericalPermission,
+    PrototypeTargetProfile, StrictF32NumericalContract, VerifiedRequestSubject,
+    VerifiedTargetRequest,
 };
 
 /// Stable candidate identity used when assessing one scheduled region.
@@ -206,20 +209,41 @@ pub(crate) fn build_fused_scheduled_region(
     verify_schedule(fused, members, request)
 }
 
-/// Builds the canonical materialized pointwise scheduled region for one request.
+/// Builds the canonical pointwise scheduled region for one request.
 ///
 /// This constructs the raw, not-yet-verified region and its recognized pointwise
-/// members; it applies no intrinsic, subject-binding, or feasibility gate. The
-/// implementation frontier and its providers use it to obtain a canonical region
-/// they then re-submit through the ordinary checked verification path, including
-/// for a domain the governed profile cannot dispatch.
+/// members, either as a serial-sum prologue that writes an intermediate or as a
+/// standalone whole-program region that writes the output. It applies no
+/// intrinsic, subject-binding, or feasibility gate. The implementation frontier
+/// and its providers use it to obtain a canonical region they then re-submit
+/// through the ordinary checked verification path, including for a domain the
+/// governed profile cannot dispatch.
 pub(crate) fn pointwise_region(
     request: &VerifiedTargetRequest,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+    let (shape, elements, write_tensor, expression, members) =
+        if let Some(pointwise) = request.pointwise() {
+            (
+                pointwise.shape.clone(),
+                pointwise.elements,
+                TensorRole::Output,
+                normalized_pointwise_expression(pointwise),
+                pointwise.members.clone(),
+            )
+        } else {
+            let serial = request.serial_sum();
+            (
+                serial.input_shape.clone(),
+                serial.input_elements,
+                TensorRole::Intermediate,
+                scale_bias_expression(serial.scale_bits, serial.bias_bits),
+                serial.members.pointwise().to_vec(),
+            )
+        };
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(0),
-            iteration_shape: request.serial_sum().input_shape.clone(),
+            iteration_shape: shape,
             accesses: vec![
                 Access {
                     tensor: TensorRole::Input,
@@ -229,7 +253,7 @@ pub(crate) fn pointwise_region(
                     ownership: None,
                 },
                 Access {
-                    tensor: TensorRole::Intermediate,
+                    tensor: write_tensor,
                     mode: AccessMode::Write,
                     map: LogicalAccess::LinearIdentity,
                     bounds: BoundsWitnessId::new(1),
@@ -241,39 +265,30 @@ pub(crate) fn pointwise_region(
                     id: BoundsWitnessId::new(0),
                     tensor: TensorRole::Input,
                     kind: BoundsProofKind::LinearRange {
-                        element_count: request.serial_sum().input_elements,
+                        element_count: elements,
                     },
                 },
                 BoundsProof {
                     id: BoundsWitnessId::new(1),
-                    tensor: TensorRole::Intermediate,
+                    tensor: write_tensor,
                     kind: BoundsProofKind::LinearRange {
-                        element_count: request.serial_sum().input_elements,
+                        element_count: elements,
                     },
                 },
             ],
             ownership_proof: OwnershipProof {
                 id: OwnershipWitnessId::new(0),
-                tensor: TensorRole::Intermediate,
+                tensor: write_tensor,
                 kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
-                    output_count: request.serial_sum().input_elements,
+                    output_count: elements,
                 },
             },
-            scalar_program: ScalarProgram::MultiplyThenAdd {
-                scale_bits: request.serial_sum().scale_bits,
-                bias_bits: request.serial_sum().bias_bits,
-                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
-                contraction: request.numerical_contract().contraction
-                    != NumericalPermission::Forbidden,
-            },
+            scalar_program: ScalarProgram::PointwiseF32(expression),
             numerical: request.numerical_contract().realization(),
         },
-        schedule: linear_schedule(
-            request.serial_sum().input_elements,
-            OwnershipWitnessId::new(0),
-        ),
+        schedule: linear_schedule(elements, OwnershipWitnessId::new(0)),
     };
-    (region, request.serial_sum().members.pointwise().to_vec())
+    (region, members)
 }
 
 /// Builds the canonical materialized reduction scheduled region for one request.
@@ -475,6 +490,104 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
     }
 }
 
+/// Builds the canonical five-node scale-then-bias pointwise expression.
+///
+/// Every insertion is statically within the governed limit and uses handles
+/// minted earlier by this builder. Keeping the construction here gives region
+/// planning one spelling and lets request binding validate that exact spelling
+/// without accepting an algebraically similar but unproved expression.
+fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression
+        .input()
+        .expect("the fixed expression has exactly one input");
+    let scale = expression
+        .constant(scale_bits)
+        .expect("the fixed expression is within the node limit");
+    let product = expression
+        .multiply(input, scale)
+        .expect("both operands belong to this builder");
+    let bias = expression
+        .constant(bias_bits)
+        .expect("the fixed expression is within the node limit");
+    let root = expression
+        .add(product, bias)
+        .expect("both operands belong to this builder");
+    expression
+        .build(root)
+        .expect("every fixed-expression node reaches its root")
+}
+
+fn normalized_pointwise_expression(normalized: &NormalizedPointwise) -> PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let mut lower_leaf = |leaf| match leaf {
+        NormalizedPointwiseLeaf::Input => expression
+            .input()
+            .expect("the normalized expression has exactly one input"),
+        NormalizedPointwiseLeaf::Constant(bits) => expression
+            .constant(bits)
+            .expect("the normalized expression is within the node limit"),
+    };
+    let [first, second, third] = normalized.leaves.map(&mut lower_leaf);
+    let combine = |builder: &mut PointwiseF32ExpressionBuilder, lhs, rhs| {
+        match normalized.operation {
+            NormalizedPointwiseOperation::Add => builder.add(lhs, rhs),
+            NormalizedPointwiseOperation::Multiply => builder.multiply(lhs, rhs),
+        }
+        .expect("normalized operands belong to this builder")
+    };
+    let root = match normalized.association {
+        NormalizedPointwiseAssociation::Left => {
+            let inner = combine(&mut expression, first, second);
+            combine(&mut expression, inner, third)
+        }
+        NormalizedPointwiseAssociation::Right => {
+            let inner = combine(&mut expression, second, third);
+            combine(&mut expression, first, inner)
+        }
+    };
+    expression
+        .build(root)
+        .expect("every normalized-expression node reaches its root")
+}
+
+/// Checks the exact canonical scale-then-bias expression recognized by the
+/// governed serial-sum request.
+///
+/// This deliberately checks node topology, ordered operands, constant bits,
+/// and the explicit root. Matching only the two constants would let a provider
+/// bind an unproved reassociation or a different arithmetic operation to the
+/// request's semantic occurrences.
+fn scale_bias_expression_matches(
+    expression: &PointwiseF32Expression,
+    scale_bits: u32,
+    bias_bits: u32,
+) -> bool {
+    let [
+        PointwiseF32Node::Input,
+        PointwiseF32Node::Constant { bits: actual_scale },
+        PointwiseF32Node::Multiply {
+            lhs: multiply_lhs,
+            rhs: multiply_rhs,
+        },
+        PointwiseF32Node::Constant { bits: actual_bias },
+        PointwiseF32Node::Add {
+            lhs: add_lhs,
+            rhs: add_rhs,
+        },
+    ] = expression.nodes()
+    else {
+        return false;
+    };
+    *actual_scale == scale_bits
+        && *actual_bias == bias_bits
+        && multiply_lhs.index() == 0
+        && multiply_rhs.index() == 1
+        && add_lhs.index() == 2
+        && add_rhs.index() == 3
+        && expression.root().index() == 4
+}
+
 /// Verifies one scheduled region and binds it to a compilation request.
 ///
 /// Intrinsic schedule verification runs first, in `tiler_ir::schedule`, and
@@ -577,63 +690,75 @@ fn verify_region_subject_binding(
     semantic_members: &[SemanticMemberId],
     subject: &VerifiedRequestSubject,
 ) -> Result<(), PhysicalError> {
-    let normalized = subject.normalized();
-    if !tiler_ir::schedule::axes_are_canonical(
-        normalized.reduction_axes(),
-        normalized.input_shape().rank(),
-    ) || element_count(normalized.input_shape(), region.index.id)? != normalized.input_elements()
-        || element_count(normalized.output_shape(), region.index.id)?
-            != normalized.output_elements()
-        || normalized
-            .input_shape()
-            .without_axes(normalized.reduction_axes())
-            != *normalized.output_shape()
-    {
-        return intrinsic("request-subject-shape", region.index.id);
-    }
-    let expected = match &region.index.scalar_program {
-        ScalarProgram::MultiplyThenAdd {
-            scale_bits,
-            bias_bits,
-            canonical_nan_bits,
-            contraction,
-        } => {
-            semantic_members == normalized.members().pointwise()
+    let expected = match (subject.normalized(), &region.index.scalar_program) {
+        (
+            NormalizedProgramSubject::Pointwise(normalized),
+            ScalarProgram::PointwiseF32(expression),
+        ) => {
+            element_count(&normalized.shape, region.index.id)? == normalized.elements
+                && semantic_members == normalized.members
                 && region.index.id == RegionId::new(0)
-                && region.index.iteration_shape == *normalized.input_shape()
-                && *scale_bits == normalized.scale_bits()
-                && *bias_bits == normalized.bias_bits()
-                && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
-                && *contraction
-                    == (subject.numerical_contract().contraction != NumericalPermission::Forbidden)
+                && region.index.iteration_shape == normalized.shape
+                && expression == &normalized_pointwise_expression(normalized)
         }
-        ScalarProgram::StrictSerialSum {
-            axes,
-            canonical_nan_bits,
-            ..
-        } => {
-            semantic_members == normalized.members().reduction()
-                && region.index.id == RegionId::new(1)
-                && region.index.iteration_shape == *normalized.output_shape()
-                && axes == normalized.reduction_axes()
-                && reduction_access_matches(&region.index.accesses[0], normalized)
-                && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
-        }
-        ScalarProgram::FusedMultiplyAddSerialSum {
-            scale_bits,
-            bias_bits,
-            axes,
-            canonical_nan_bits,
-            ..
-        } => {
-            semantic_members == normalized.members().all()
-                && region.index.id == RegionId::new(0)
-                && region.index.iteration_shape == *normalized.output_shape()
-                && *scale_bits == normalized.scale_bits()
-                && *bias_bits == normalized.bias_bits()
-                && axes == normalized.reduction_axes()
-                && reduction_access_matches(&region.index.accesses[0], normalized)
-                && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
+        (NormalizedProgramSubject::Pointwise(_), _) => false,
+        (NormalizedProgramSubject::SerialSum(normalized), scalar) => {
+            if !tiler_ir::schedule::axes_are_canonical(
+                normalized.reduction_axes(),
+                normalized.input_shape().rank(),
+            ) || element_count(normalized.input_shape(), region.index.id)?
+                != normalized.input_elements()
+                || element_count(normalized.output_shape(), region.index.id)?
+                    != normalized.output_elements()
+                || normalized
+                    .input_shape()
+                    .without_axes(normalized.reduction_axes())
+                    != *normalized.output_shape()
+            {
+                return intrinsic("request-subject-shape", region.index.id);
+            }
+            match scalar {
+                ScalarProgram::PointwiseF32(expression) => {
+                    semantic_members == normalized.members().pointwise()
+                        && region.index.id == RegionId::new(0)
+                        && region.index.iteration_shape == *normalized.input_shape()
+                        && scale_bias_expression_matches(
+                            expression,
+                            normalized.scale_bits(),
+                            normalized.bias_bits(),
+                        )
+                }
+                ScalarProgram::StrictSerialSum {
+                    axes,
+                    canonical_nan_bits,
+                    ..
+                } => {
+                    semantic_members == normalized.members().reduction()
+                        && region.index.id == RegionId::new(1)
+                        && region.index.iteration_shape == *normalized.output_shape()
+                        && axes == normalized.reduction_axes()
+                        && reduction_access_matches(&region.index.accesses[0], normalized)
+                        && *canonical_nan_bits
+                            == subject.numerical_contract().canonical_arithmetic_nan_bits
+                }
+                ScalarProgram::FusedMultiplyAddSerialSum {
+                    scale_bits,
+                    bias_bits,
+                    axes,
+                    canonical_nan_bits,
+                    ..
+                } => {
+                    semantic_members == normalized.members().all()
+                        && region.index.id == RegionId::new(0)
+                        && region.index.iteration_shape == *normalized.output_shape()
+                        && *scale_bits == normalized.scale_bits()
+                        && *bias_bits == normalized.bias_bits()
+                        && axes == normalized.reduction_axes()
+                        && reduction_access_matches(&region.index.accesses[0], normalized)
+                        && *canonical_nan_bits
+                            == subject.numerical_contract().canonical_arithmetic_nan_bits
+                }
+            }
         }
     };
     if !expected {
@@ -1020,7 +1145,7 @@ mod tests {
         );
     }
     use super::*;
-    use crate::request::{CompilationRequest, verify_request};
+    use crate::request::{CompilationRequest, StrictF32NumericalContract, verify_request};
     use tiler_ir::kernel::{KernelConstant, OperationRef, OperationView};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
@@ -1070,6 +1195,27 @@ mod tests {
             .unwrap();
         let program = builder.build().unwrap();
         let request = verify_request(CompilationRequest::governed(&program)).unwrap();
+        request.for_target(request.target_profiles()[0]).unwrap()
+    }
+
+    fn pointwise_request() -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let first = F32Constant::apply(&mut builder, 1.0e20_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, (-1.0e20_f32).to_bits()).unwrap();
+        let left = F32Add::apply(&mut builder, input, first).unwrap();
+        let root = F32Add::apply(&mut builder, left, second).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request = verify_request(CompilationRequest::governed_under(
+            &program,
+            StrictF32NumericalContract::governed_relaxed(),
+        ))
+        .unwrap();
         request.for_target(request.target_profiles()[0]).unwrap()
     }
 
@@ -1196,6 +1342,74 @@ mod tests {
                 region: RegionId::new(0),
             })
         );
+
+        let mut wrong_expression = regions[0].region().clone();
+        wrong_expression.index.scalar_program = ScalarProgram::PointwiseF32(scale_bias_expression(
+            request.serial_sum().bias_bits,
+            request.serial_sum().scale_bits,
+        ));
+        assert_eq!(
+            verify_schedule(
+                wrong_expression,
+                regions[0].semantic_members().to_vec(),
+                &request,
+            ),
+            Err(PhysicalError::Intrinsic {
+                rule: "request-binding",
+                region: RegionId::new(0),
+            })
+        );
+    }
+
+    #[test]
+    fn pointwise_schedule_requires_exact_expression_and_complete_ordered_coverage() {
+        let request = pointwise_request();
+        let (raw, members) = pointwise_region(&request);
+        let region = verify_schedule(raw, members, &request).unwrap();
+        let expected = [
+            SemanticMemberId(0),
+            SemanticMemberId(1),
+            SemanticMemberId(2),
+            SemanticMemberId(3),
+        ];
+        assert_eq!(region.semantic_members(), expected);
+
+        let mut wrong_expression = region.region().clone();
+        wrong_expression.index.scalar_program = ScalarProgram::PointwiseF32(scale_bias_expression(
+            2.0_f32.to_bits(),
+            1.0_f32.to_bits(),
+        ));
+        assert!(matches!(
+            verify_schedule(
+                wrong_expression,
+                region.semantic_members().to_vec(),
+                &request,
+            ),
+            Err(PhysicalError::Intrinsic {
+                rule: "request-binding",
+                ..
+            })
+        ));
+
+        for forged in [
+            expected[..3].to_vec(),
+            vec![expected[1], expected[0], expected[2], expected[3]],
+            vec![
+                expected[0],
+                expected[1],
+                expected[2],
+                expected[3],
+                SemanticMemberId(4),
+            ],
+        ] {
+            assert!(matches!(
+                verify_schedule(region.region().clone(), forged, &request),
+                Err(PhysicalError::Intrinsic {
+                    rule: "request-binding",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

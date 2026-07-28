@@ -949,22 +949,28 @@ fn derive_obligations(
         )
     });
 
-    // Contraction: the initial arithmetic contract keeps separate roundings and
-    // no member role requires a fused multiply-add. A policy that permitted
-    // contraction is not realizable in this profile and is left unknown.
-    obligations.push(
-        if matches!(contract.contraction, NumericalPermission::Forbidden) {
-            DerivedObligation::discharged(
-                FusionObligation::ArithmeticContraction,
-                FusionEvidenceClass::NormativeGuarantee,
-            )
-        } else {
-            DerivedObligation::unknown(
-                FusionObligation::ArithmeticContraction,
-                "unrealized-contraction",
-            )
-        },
-    );
+    // The SoundProof is deliberately closed over the exact governed
+    // vocabulary. Merely failing to find both built-in keys would be unsound:
+    // a future capability could classify another contraction-capable operation
+    // as arithmetic. Only constant-f32 sources plus an add-only or
+    // multiply-only family, with no reduction or other member, prove there is
+    // no multiply-plus-add contraction opportunity.
+    obligations.push(if is_exact_governed_same_family_pointwise(members) {
+        DerivedObligation::discharged(
+            FusionObligation::ArithmeticContraction,
+            FusionEvidenceClass::SoundProof,
+        )
+    } else if matches!(contract.contraction, NumericalPermission::Forbidden) {
+        DerivedObligation::discharged(
+            FusionObligation::ArithmeticContraction,
+            FusionEvidenceClass::NormativeGuarantee,
+        )
+    } else {
+        DerivedObligation::unknown(
+            FusionObligation::ArithmeticContraction,
+            "unrealized-contraction",
+        )
+    });
 
     // Exceptional values: NaN canonicalization, signed zero, and subnormal
     // handling must survive fusion.
@@ -985,8 +991,9 @@ fn derive_obligations(
     // contract does not state.
     //
     // The canonical NaN pattern *is* constrained, and stays. It is a per-result
-    // rewrite the fused body must still apply at every arithmetic boundary,
-    // which `emit_reduction` and `emit_scale_bias` are what realize.
+    // rewrite the fused body must still apply at every arithmetic boundary.
+    // `emit_reduction` and the serial prologue's `emit_scale_bias` realize that
+    // for serial sums; standalone exact pointwise trees use `emit_pointwise`.
     //
     // A boundary that genuinely carries semantics is guarded separately:
     // `ConversionBoundaryPreservation` above discharges only when every member
@@ -1009,6 +1016,30 @@ fn derive_obligations(
 
     push_reduction_obligations(&mut obligations, members, contract);
     obligations
+}
+
+fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool {
+    let constant = constant_f32_op();
+    let add = add_f32_op();
+    let multiply = multiply_f32_op();
+    let mut arithmetic_count = 0_usize;
+    let mut all_add = true;
+    let mut all_multiply = true;
+
+    for member in members {
+        match member.role {
+            FusionOperationRole::ValueSource if member.reached.operation == constant => {}
+            FusionOperationRole::ElementwiseArithmetic => {
+                arithmetic_count = arithmetic_count.saturating_add(1);
+                all_add &= member.reached.operation == add;
+                all_multiply &= member.reached.operation == multiply;
+            }
+            FusionOperationRole::ValueSource | FusionOperationRole::OrderedReduction => {
+                return false;
+            }
+        }
+    }
+    arithmetic_count != 0 && (all_add || all_multiply)
 }
 
 /// Pushes the four reduction obligations, kept independent per ADR 0014.
@@ -1037,8 +1068,11 @@ fn push_reduction_obligations(
     ));
 
     // Reassociation is a policy permission over the ordered-reduction role.
+    // A pointwise region has no reduction order to preserve here: its exact
+    // arithmetic tree is already part of the semantic candidate and the
+    // scheduled expression, so this reduction obligation is vacuous.
     obligations.push(
-        if matches!(contract.reassociation, NumericalPermission::Forbidden) {
+        if !has_reduction || matches!(contract.reassociation, NumericalPermission::Forbidden) {
             DerivedObligation::discharged(
                 FusionObligation::ReductionReassociation,
                 FusionEvidenceClass::SoundProof,
@@ -1286,14 +1320,15 @@ fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
 mod tests {
     use super::{
         DerivedObligation, FusionEvidenceClass, FusionLegality, FusionLegalityError,
-        FusionNumericalCapabilities, FusionObligation, ObligationAssessment,
-        derive_fusion_legality, verify_fusion_legality,
+        FusionNumericalCapabilities, FusionObligation, FusionOperationRole, MemberDerivation,
+        ObligationAssessment, ReachedDefinition, derive_fusion_legality, derive_obligations,
+        verify_fusion_legality,
     };
     use crate::region::{RegionCandidate, RegionFormationOutcome, form_region_candidates};
     use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
-        SemanticProgramBuilder, StrictSerialF32Sum, add_f32_op,
+        F32, F32Add, F32Constant, F32Multiply, InputKey, OpKey, OutputKey, SemanticProgram,
+        SemanticProgramBuilder, StrictSerialF32Sum, add_f32_op, constant_f32_op,
     };
     use tiler_ir::shape::{Axis, Shape};
 
@@ -1494,6 +1529,98 @@ mod tests {
             .find(|derived| derived.obligation() == FusionObligation::ReductionContributorOrder)
             .unwrap();
         assert_eq!(order.evidence(), FusionEvidenceClass::SoundProof);
+    }
+
+    #[test]
+    fn a_relaxed_pointwise_region_preserves_its_exact_tree() {
+        let program = square_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed_relaxed();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region");
+        let capabilities = FusionNumericalCapabilities::governed();
+
+        let FusionLegality::Legal(proof) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            candidate,
+        )
+        .unwrap() else {
+            panic!("permission to transform does not require the transform");
+        };
+        assert!(
+            proof.content().obligations().iter().all(|derived| {
+                matches!(derived.assessment(), ObligationAssessment::Discharged)
+            })
+        );
+    }
+
+    #[test]
+    fn a_relaxed_mixed_arithmetic_region_still_needs_contraction_evidence() {
+        let program = serial_sum_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed_relaxed();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region");
+        let capabilities = FusionNumericalCapabilities::governed();
+
+        let FusionLegality::Unknown(unknown) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            candidate,
+        )
+        .unwrap() else {
+            panic!("mixed multiply/add remains outside the relaxed capability");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::ArithmeticContraction
+        );
+        assert_eq!(unknown.reason(), "unrealized-contraction");
+    }
+
+    #[test]
+    fn a_future_arithmetic_family_cannot_inherit_same_family_contraction_evidence() {
+        let member = |role, operation| MemberDerivation {
+            role,
+            reached: ReachedDefinition {
+                operation,
+                normative_definition: "test".to_owned(),
+                effect_tag: 1,
+            },
+            pure: true,
+            homogeneous: true,
+        };
+        let members = [
+            member(FusionOperationRole::ValueSource, constant_f32_op()),
+            member(
+                FusionOperationRole::ElementwiseArithmetic,
+                OpKey::new("test", "fma-like-f32", 1).unwrap(),
+            ),
+        ];
+
+        let obligations =
+            derive_obligations(&members, StrictF32NumericalContract::governed_relaxed());
+        let contraction = obligations
+            .iter()
+            .find(|derived| derived.obligation() == FusionObligation::ArithmeticContraction)
+            .unwrap();
+        assert_eq!(
+            contraction.assessment(),
+            ObligationAssessment::Unknown {
+                reason: "unrealized-contraction"
+            },
+        );
     }
 
     #[test]

@@ -99,8 +99,8 @@
 //!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
 //!     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
 //!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-//!     OwnershipWitnessId, RegionId, ReductionTopology, ScalarProgram, ScheduledRegionBuilder,
-//!     SubnormalMode, TailPolicy, TensorRole,
+//!     OwnershipWitnessId, PointwiseF32ExpressionBuilder, RegionId, ReductionTopology,
+//!     ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
 //! };
 //! use tiler_ir::shape::Shape;
 //! use tiler_metal::emit::emit_translation_unit;
@@ -143,12 +143,13 @@
 //!     tensor: TensorRole::Intermediate,
 //!     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 4 },
 //! })?;
-//! builder.scalar_program(ScalarProgram::MultiplyThenAdd {
-//!     scale_bits: 2.0_f32.to_bits(),
-//!     bias_bits: 1.0_f32.to_bits(),
-//!     canonical_nan_bits: 0x7fc0_0000,
-//!     contraction: false,
-//! })?;
+//! let mut expression = PointwiseF32ExpressionBuilder::new();
+//! let input = expression.input()?;
+//! let scale = expression.constant(2.0_f32.to_bits())?;
+//! let product = expression.multiply(input, scale)?;
+//! let bias = expression.constant(1.0_f32.to_bits())?;
+//! let root = expression.add(product, bias)?;
+//! builder.scalar_program(ScalarProgram::PointwiseF32(expression.build(root)?))?;
 //! builder.numerical(NumericalRealization::new(
 //!     "tiler.doc.strict-f32",
 //!     0x7fc0_0000,

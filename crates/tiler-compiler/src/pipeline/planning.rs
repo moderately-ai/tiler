@@ -145,7 +145,8 @@ pub(super) fn enumerate_complete_plans(
     // strict-`f32` numerical equivalence proof the trace cites as a sound proof.
     let mut numerical = None;
     let mut numerical_cause = legality_cause;
-    if let Some(candidate) = formation.whole_program_candidate()
+    if verified.try_serial_sum().is_some()
+        && let Some(candidate) = formation.whole_program_candidate()
         && !illegal.contains(candidate.occurrence())
     {
         let proof =

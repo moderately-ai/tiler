@@ -413,7 +413,8 @@ mod tests {
         Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
         ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
         NumericalPermission, NumericalRealization as DeclaredNumericalRealization, OwnershipProof,
-        OwnershipProofKind, OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram,
+        OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
+        PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
         ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     };
     use tiler_ir::semantic::{F32, InputKey, OutputKey, ProviderIdentity, SemanticProgramBuilder};
@@ -493,12 +494,10 @@ mod tests {
             })
             .expect("the ownership proof binds");
         builder
-            .scalar_program(ScalarProgram::MultiplyThenAdd {
-                scale_bits: 1.0_f32.to_bits(),
-                bias_bits: 0.0_f32.to_bits(),
-                canonical_nan_bits: 0x7fc0_0000,
-                contraction: false,
-            })
+            .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
+                1.0_f32.to_bits(),
+                0.0_f32.to_bits(),
+            )))
             .expect("the scalar program binds");
         builder
             .numerical(DeclaredNumericalRealization::new(
@@ -535,6 +534,20 @@ mod tests {
         facts.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured()
             .stating(MetalFloatArithmeticType::F32, subnormal_arithmetic);
         emit_translation_unit(&[&kernel], &facts).expect("the arithmetic unit emits")
+    }
+
+    fn scale_then_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
+        let mut expression = PointwiseF32ExpressionBuilder::new();
+        let input = expression.input().expect("pointwise input");
+        let scale = expression.constant(scale_bits).expect("scale constant");
+        let product = expression
+            .multiply(input, scale)
+            .expect("scale multiplication");
+        let bias = expression.constant(bias_bits).expect("bias constant");
+        let root = expression.add(product, bias).expect("bias addition");
+        expression
+            .build(root)
+            .expect("verified pointwise expression")
     }
 
     fn write_executable(path: &Path, body: &str) {

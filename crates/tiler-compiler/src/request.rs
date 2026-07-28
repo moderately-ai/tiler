@@ -867,15 +867,90 @@ pub(crate) struct NormalizedSerialSum {
     pub(crate) output_elements: u64,
 }
 
+/// One ordered leaf of the bounded standalone pointwise expression.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NormalizedPointwiseLeaf {
+    /// The program's single tensor input.
+    Input,
+    /// One exact binary32 scalar constant.
+    Constant(u32),
+}
+
+/// The one operation family used by a bounded standalone pointwise chain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NormalizedPointwiseOperation {
+    Add,
+    Multiply,
+}
+
+/// The exact ordered association of a three-leaf pointwise chain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NormalizedPointwiseAssociation {
+    Left,
+    Right,
+}
+
+/// A verified one-input, one-output, three-leaf pointwise `f32` program.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedPointwise {
+    pub(crate) input_key: InputKey,
+    pub(crate) output_key: OutputKey,
+    pub(crate) shape: Shape,
+    pub(crate) operation: NormalizedPointwiseOperation,
+    pub(crate) association: NormalizedPointwiseAssociation,
+    pub(crate) leaves: [NormalizedPointwiseLeaf; 3],
+    pub(crate) members: Vec<SemanticMemberId>,
+    pub(crate) input: ValueId,
+    pub(crate) output: ValueId,
+    pub(crate) elements: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NormalizedProgram {
     SerialSum(NormalizedSerialSum),
+    Pointwise(NormalizedPointwise),
 }
 
 impl NormalizedProgram {
     pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
+            Self::Pointwise(_) => panic!("request is not a serial-sum program"),
+        }
+    }
+
+    pub(crate) const fn try_serial_sum(&self) -> Option<&NormalizedSerialSum> {
+        match self {
+            Self::SerialSum(normalized) => Some(normalized),
+            Self::Pointwise(_) => None,
+        }
+    }
+
+    pub(crate) const fn pointwise(&self) -> Option<&NormalizedPointwise> {
+        match self {
+            Self::SerialSum(_) => None,
+            Self::Pointwise(normalized) => Some(normalized),
+        }
+    }
+
+    pub(crate) const fn input_elements(&self) -> u64 {
+        match self {
+            Self::SerialSum(normalized) => normalized.input_elements,
+            Self::Pointwise(normalized) => normalized.elements,
+        }
+    }
+
+    pub(crate) const fn output_elements(&self) -> u64 {
+        match self {
+            Self::SerialSum(normalized) => normalized.output_elements,
+            Self::Pointwise(normalized) => normalized.elements,
+        }
+    }
+
+    pub(crate) fn all_members(&self) -> Vec<SemanticMemberId> {
+        match self {
+            Self::SerialSum(normalized) => normalized.members.all(),
+            Self::Pointwise(normalized) => normalized.members.clone(),
         }
     }
 
@@ -883,6 +958,7 @@ impl NormalizedProgram {
     fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
+            Self::Pointwise(_) => panic!("the fixture is a serial sum"),
         }
     }
 }
@@ -921,7 +997,7 @@ pub(crate) struct VerifiedTargetRequest {
 /// the identity already binds every authority the registry was frozen over.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedRequestSubject {
-    normalized: NormalizedSerialSumSubject,
+    normalized: NormalizedProgramSubject,
     semantic_identity: SemanticIdentity,
     /// The caller's stated preference, retained beside the resolved contract.
     ///
@@ -951,9 +1027,27 @@ pub(crate) struct NormalizedSerialSumSubject {
     output_elements: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum NormalizedProgramSubject {
+    SerialSum(NormalizedSerialSumSubject),
+    Pointwise(NormalizedPointwise),
+}
+
 impl VerifiedTargetRequest {
+    pub(crate) const fn normalized(&self) -> &NormalizedProgram {
+        &self.normalized
+    }
+
     pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
         self.normalized.serial_sum()
+    }
+
+    pub(crate) const fn try_serial_sum(&self) -> Option<&NormalizedSerialSum> {
+        self.normalized.try_serial_sum()
+    }
+
+    pub(crate) const fn pointwise(&self) -> Option<&NormalizedPointwise> {
+        self.normalized.pointwise()
     }
 
     /// The request subject this target compiles under.
@@ -1023,7 +1117,7 @@ impl VerifiedTargetRequest {
 }
 
 impl VerifiedRequestSubject {
-    pub(crate) const fn normalized(&self) -> &NormalizedSerialSumSubject {
+    pub(crate) const fn normalized(&self) -> &NormalizedProgramSubject {
         &self.normalized
     }
 
@@ -1047,27 +1141,59 @@ impl VerifiedRequestSubject {
             &mut bytes,
             self.semantic_identity.registry_snapshot().as_bytes(),
         );
-        push_slice(&mut bytes, self.normalized.input_key.as_str().as_bytes());
-        push_slice(&mut bytes, self.normalized.output_key.as_str().as_bytes());
-        encode_explain_shape(&mut bytes, &self.normalized.input_shape);
-        encode_explain_shape(&mut bytes, &self.normalized.output_shape);
-        push_len(&mut bytes, self.normalized.reduction_axes.len());
-        for axis in &self.normalized.reduction_axes {
-            bytes.extend_from_slice(&axis.get().to_be_bytes());
-        }
-        bytes.extend_from_slice(&self.normalized.scale_bits.to_be_bytes());
-        bytes.extend_from_slice(&self.normalized.bias_bits.to_be_bytes());
-        for members in [
-            self.normalized.members.pointwise(),
-            self.normalized.members.reduction(),
-        ] {
-            push_len(&mut bytes, members.len());
-            for member in members {
-                bytes.extend_from_slice(&member.0.to_be_bytes());
+        match &self.normalized {
+            NormalizedProgramSubject::SerialSum(normalized) => {
+                push_slice(&mut bytes, normalized.input_key.as_str().as_bytes());
+                push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
+                encode_explain_shape(&mut bytes, &normalized.input_shape);
+                encode_explain_shape(&mut bytes, &normalized.output_shape);
+                push_len(&mut bytes, normalized.reduction_axes.len());
+                for axis in &normalized.reduction_axes {
+                    bytes.extend_from_slice(&axis.get().to_be_bytes());
+                }
+                bytes.extend_from_slice(&normalized.scale_bits.to_be_bytes());
+                bytes.extend_from_slice(&normalized.bias_bits.to_be_bytes());
+                for members in [
+                    normalized.members.pointwise(),
+                    normalized.members.reduction(),
+                ] {
+                    push_len(&mut bytes, members.len());
+                    for member in members {
+                        bytes.extend_from_slice(&member.0.to_be_bytes());
+                    }
+                }
+                bytes.extend_from_slice(&normalized.input_elements.to_be_bytes());
+                bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+            }
+            NormalizedProgramSubject::Pointwise(normalized) => {
+                push_slice(&mut bytes, b"pointwise-f32.v1");
+                push_slice(&mut bytes, normalized.input_key.as_str().as_bytes());
+                push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
+                encode_explain_shape(&mut bytes, &normalized.shape);
+                bytes.push(match normalized.operation {
+                    NormalizedPointwiseOperation::Add => 0x01,
+                    NormalizedPointwiseOperation::Multiply => 0x02,
+                });
+                bytes.push(match normalized.association {
+                    NormalizedPointwiseAssociation::Left => 0x01,
+                    NormalizedPointwiseAssociation::Right => 0x02,
+                });
+                for leaf in normalized.leaves {
+                    match leaf {
+                        NormalizedPointwiseLeaf::Input => bytes.push(0x01),
+                        NormalizedPointwiseLeaf::Constant(bits) => {
+                            bytes.push(0x02);
+                            bytes.extend_from_slice(&bits.to_be_bytes());
+                        }
+                    }
+                }
+                push_len(&mut bytes, normalized.members.len());
+                for member in &normalized.members {
+                    bytes.extend_from_slice(&member.0.to_be_bytes());
+                }
+                bytes.extend_from_slice(&normalized.elements.to_be_bytes());
             }
         }
-        bytes.extend_from_slice(&self.normalized.input_elements.to_be_bytes());
-        bytes.extend_from_slice(&self.normalized.output_elements.to_be_bytes());
         encode_contract(&mut bytes, self.numerical_contract);
         // The stated preference follows the resolved contract, length-framed and
         // in the caller's order, so a reordered list is a different subject.
@@ -1296,20 +1422,27 @@ fn request_subject(
 ) -> VerifiedRequestSubject {
     #[cfg(test)]
     crate::workcount::REQUEST_SUBJECT_REBUILDS.record();
-    let normalized = normalized.serial_sum();
+    let normalized = match normalized {
+        NormalizedProgram::SerialSum(normalized) => {
+            NormalizedProgramSubject::SerialSum(NormalizedSerialSumSubject {
+                input_key: normalized.input_key.clone(),
+                output_key: normalized.output_key.clone(),
+                input_shape: normalized.input_shape.clone(),
+                output_shape: normalized.output_shape.clone(),
+                reduction_axes: normalized.reduction_axes.clone(),
+                scale_bits: normalized.scale_bits,
+                bias_bits: normalized.bias_bits,
+                members: normalized.members.clone(),
+                input_elements: normalized.input_elements,
+                output_elements: normalized.output_elements,
+            })
+        }
+        NormalizedProgram::Pointwise(normalized) => {
+            NormalizedProgramSubject::Pointwise(normalized.clone())
+        }
+    };
     VerifiedRequestSubject {
-        normalized: NormalizedSerialSumSubject {
-            input_key: normalized.input_key.clone(),
-            output_key: normalized.output_key.clone(),
-            input_shape: normalized.input_shape.clone(),
-            output_shape: normalized.output_shape.clone(),
-            reduction_axes: normalized.reduction_axes.clone(),
-            scale_bits: normalized.scale_bits,
-            bias_bits: normalized.bias_bits,
-            members: normalized.members.clone(),
-            input_elements: normalized.input_elements,
-            output_elements: normalized.output_elements,
-        },
+        normalized,
         semantic_identity: semantic_identity.clone(),
         numerical_contracts: numerical_contracts.clone(),
         numerical_contract,
@@ -1716,7 +1849,144 @@ fn resolve_numerical_contract(
 }
 
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
-    normalize_serial_sum(program).map(NormalizedProgram::SerialSum)
+    match normalize_serial_sum(program) {
+        Ok(normalized) => Ok(NormalizedProgram::SerialSum(normalized)),
+        Err(serial_error) => match normalize_pointwise(program) {
+            Ok(normalized) => Ok(NormalizedProgram::Pointwise(normalized)),
+            Err(pointwise_error) => {
+                if program
+                    .operations()
+                    .any(|operation| operation.key() == &strict_serial_sum_f32_op())
+                {
+                    Err(serial_error)
+                } else {
+                    Err(pointwise_error)
+                }
+            }
+        },
+    }
+}
+
+fn normalize_pointwise(program: &SemanticProgram) -> Result<NormalizedPointwise, RequestError> {
+    if program.input_count() != 1
+        || program.output_count() != 1
+        || program.operation_count() != 4
+        || program
+            .values()
+            .any(|value| value.resolved_type() != &F32::resolved_type())
+    {
+        return mismatch("signature");
+    }
+    let input = program
+        .inputs()
+        .next()
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "missing-input",
+        })?;
+    let output = program
+        .outputs()
+        .next()
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "missing-output",
+        })?;
+    let (root_ordinal, root) = producer_for_value(program, output.value())?;
+    let operation = if root.key() == &add_f32_op() {
+        NormalizedPointwiseOperation::Add
+    } else if root.key() == &multiply_f32_op() {
+        NormalizedPointwiseOperation::Multiply
+    } else {
+        return mismatch("operation-family");
+    };
+    let mut root_operands = root.operands();
+    let (Some(root_left), Some(root_right), None) = (
+        root_operands.next(),
+        root_operands.next(),
+        root_operands.next(),
+    ) else {
+        return mismatch("pointwise-arity");
+    };
+    let (association, child_ordinal, child, leaf_values) =
+        if let Ok((ordinal, child)) = producer(program, root_left, root.key()) {
+            (
+                NormalizedPointwiseAssociation::Left,
+                ordinal,
+                child,
+                [
+                    child.operands().next(),
+                    child.operands().nth(1),
+                    Some(root_right),
+                ],
+            )
+        } else if let Ok((ordinal, child)) = producer(program, root_right, root.key()) {
+            (
+                NormalizedPointwiseAssociation::Right,
+                ordinal,
+                child,
+                [
+                    Some(root_left),
+                    child.operands().next(),
+                    child.operands().nth(1),
+                ],
+            )
+        } else {
+            return mismatch("pointwise-association");
+        };
+    if child.attributes() != root.attributes() || child.results().len() != 1 {
+        return mismatch("pointwise-operation");
+    }
+    let [Some(first), Some(second), Some(third)] = leaf_values else {
+        return mismatch("pointwise-arity");
+    };
+    let mut members = vec![
+        SemanticMemberId(root_ordinal),
+        SemanticMemberId(child_ordinal),
+    ];
+    let mut input_count = 0_usize;
+    let mut normalize_leaf = |value| {
+        if value == input.value() {
+            input_count += 1;
+            Ok(NormalizedPointwiseLeaf::Input)
+        } else {
+            let (bits, ordinal) = constant_bits(program, value)?;
+            members.push(SemanticMemberId(ordinal));
+            Ok(NormalizedPointwiseLeaf::Constant(bits))
+        }
+    };
+    let leaves = [
+        normalize_leaf(first)?,
+        normalize_leaf(second)?,
+        normalize_leaf(third)?,
+    ];
+    members.sort_unstable();
+    members.dedup();
+    if input_count != 1 || members.len() != program.operation_count() {
+        return mismatch("pointwise-leaves");
+    }
+    let shape = program
+        .shape(input.value())
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "input-handle",
+        })?
+        .clone();
+    if shape.rank() == 0 || program.shape(output.value()).ok() != Some(&shape) {
+        return mismatch("pointwise-shape");
+    }
+    let elements = element_count_u64(&shape, "input")?;
+    Ok(NormalizedPointwise {
+        input_key: input.key().clone(),
+        output_key: output.key().clone(),
+        shape,
+        operation,
+        association,
+        leaves,
+        members,
+        input: input.value(),
+        output: output.value(),
+        elements,
+    })
 }
 
 fn check_budget(resource: &'static str, limit: u32, actual: usize) -> Result<(), RequestError> {
@@ -1873,6 +2143,17 @@ fn producer<'a>(
     value: ValueId,
     expected: &OpKey,
 ) -> Result<(u32, tiler_ir::semantic::OperationRef<'a>), RequestError> {
+    let (ordinal, operation) = producer_for_value(program, value)?;
+    if operation.key() != expected {
+        return mismatch("operation-family");
+    }
+    Ok((ordinal, operation))
+}
+
+fn producer_for_value(
+    program: &SemanticProgram,
+    value: ValueId,
+) -> Result<(u32, tiler_ir::semantic::OperationRef<'_>), RequestError> {
     let (ordinal, operation) = program
         .operations()
         .enumerate()
@@ -1881,9 +2162,6 @@ fn producer<'a>(
             phase: "strategy",
             rule: "missing-producer",
         })?;
-    if operation.key() != expected {
-        return mismatch("operation-family");
-    }
     let ordinal = u32::try_from(ordinal).map_err(|_| RequestError::UnsupportedCapability {
         phase: "strategy",
         rule: "operation-ordinal",
@@ -2024,12 +2302,13 @@ mod tests {
     use super::*;
     use tiler_ir::semantic::{
         CanonicalValue, CanonicalValueKind, F32Add, F32Constant, F32Multiply,
-        NormativeDefinitionRef, OperationArity, OperationAttributeSchema, OperationConformance,
-        OperationDefinition, OperationDefinitionFacts, OperationEffect, OperationInferenceError,
-        OperationInferencer, OperationSchema, ProviderDiagnosticCode, ProviderIdentity,
-        RegistryError, SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
-        SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, ValueFact,
-        ValueTypeDefinition, ValueTypeDefinitionKey,
+        NormativeDefinitionRef, OperationArity, OperationAttributeSchema, OperationAttributes,
+        OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
+        OperationInferenceError, OperationInferencer, OperationSchema, ProviderDiagnosticCode,
+        ProviderIdentity, RegistryError, ResolvedValueType, SemanticProgramBuilder,
+        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
+        StrictSerialF32Sum, TypeDefinitionFacts, ValueFact, ValueTypeDefinition,
+        ValueTypeDefinitionKey,
     };
 
     fn diagnostic_code(value: &str) -> ProviderDiagnosticCode {
@@ -2053,6 +2332,85 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         builder.build().unwrap()
+    }
+
+    fn apply_pointwise_family(
+        builder: &mut SemanticProgramBuilder,
+        family: NormalizedPointwiseOperation,
+        left: tiler_ir::semantic::Value<F32>,
+        right: tiler_ir::semantic::Value<F32>,
+    ) -> tiler_ir::semantic::Value<F32> {
+        match family {
+            NormalizedPointwiseOperation::Add => F32Add::apply(builder, left, right),
+            NormalizedPointwiseOperation::Multiply => F32Multiply::apply(builder, left, right),
+        }
+        .unwrap()
+    }
+
+    fn pointwise_program(
+        family: NormalizedPointwiseOperation,
+        association: NormalizedPointwiseAssociation,
+        input_position: usize,
+    ) -> (SemanticProgram, [NormalizedPointwiseLeaf; 3]) {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let first_bits = 2.0_f32.to_bits();
+        let second_bits = 1.0_f32.to_bits();
+        let first = F32Constant::apply(&mut builder, first_bits).unwrap();
+        let second = F32Constant::apply(&mut builder, second_bits).unwrap();
+        let (values, leaves) = match input_position {
+            0 => (
+                [input, first, second],
+                [
+                    NormalizedPointwiseLeaf::Input,
+                    NormalizedPointwiseLeaf::Constant(first_bits),
+                    NormalizedPointwiseLeaf::Constant(second_bits),
+                ],
+            ),
+            1 => (
+                [first, input, second],
+                [
+                    NormalizedPointwiseLeaf::Constant(first_bits),
+                    NormalizedPointwiseLeaf::Input,
+                    NormalizedPointwiseLeaf::Constant(second_bits),
+                ],
+            ),
+            2 => (
+                [first, second, input],
+                [
+                    NormalizedPointwiseLeaf::Constant(first_bits),
+                    NormalizedPointwiseLeaf::Constant(second_bits),
+                    NormalizedPointwiseLeaf::Input,
+                ],
+            ),
+            _ => panic!("the three-leaf fixture has positions 0, 1, and 2"),
+        };
+        let root = match association {
+            NormalizedPointwiseAssociation::Left => {
+                let child = apply_pointwise_family(&mut builder, family, values[0], values[1]);
+                apply_pointwise_family(&mut builder, family, child, values[2])
+            }
+            NormalizedPointwiseAssociation::Right => {
+                let child = apply_pointwise_family(&mut builder, family, values[1], values[2]);
+                apply_pointwise_family(&mut builder, family, values[0], child)
+            }
+        };
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        (builder.build().unwrap(), leaves)
+    }
+
+    fn assert_pointwise_rejection(program: &SemanticProgram, rule: &'static str) {
+        assert_eq!(
+            normalize_pointwise(program),
+            Err(RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule,
+            }),
+        );
     }
 
     #[derive(Clone, Copy)]
@@ -2255,6 +2613,224 @@ mod tests {
         assert_eq!(
             verified.target_profiles,
             [PrototypeTargetProfile::governed()]
+        );
+    }
+
+    #[test]
+    fn pointwise_recognition_covers_every_family_association_and_input_position() {
+        for family in [
+            NormalizedPointwiseOperation::Add,
+            NormalizedPointwiseOperation::Multiply,
+        ] {
+            for association in [
+                NormalizedPointwiseAssociation::Left,
+                NormalizedPointwiseAssociation::Right,
+            ] {
+                for input_position in 0..3 {
+                    let (program, leaves) = pointwise_program(family, association, input_position);
+                    let normalized = normalize_pointwise(&program).unwrap();
+                    assert_eq!(normalized.operation, family);
+                    assert_eq!(normalized.association, association);
+                    assert_eq!(normalized.leaves, leaves);
+                    assert_eq!(
+                        normalized.members,
+                        [
+                            SemanticMemberId(0),
+                            SemanticMemberId(1),
+                            SemanticMemberId(2),
+                            SemanticMemberId(3),
+                        ],
+                    );
+                    assert_eq!(normalized.shape, Shape::from_dims([2, 3]));
+                    assert_eq!(normalized.elements, 6);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pointwise_recognition_rejects_adversarial_graph_shapes() {
+        // Mixed arithmetic family.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let child = F32Add::apply(&mut builder, input, first).unwrap();
+        let root = F32Multiply::apply(&mut builder, child, second).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        assert_pointwise_rejection(&builder.build().unwrap(), "pointwise-association");
+
+        // An all-constant graph has no output-reachable input: the frozen
+        // program drops the unused declaration, so this is also the exact
+        // constructible no-input case and fails at the signature boundary.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let _input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let child = F32Add::apply(&mut builder, first, second).unwrap();
+        let root = F32Add::apply(&mut builder, child, first).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let all_constant = builder.build().unwrap();
+        assert_eq!(all_constant.input_count(), 0);
+        assert_pointwise_rejection(&all_constant, "signature");
+
+        // Repeated input plus an authored but unreachable constant. The frozen
+        // program excludes dead operations, so the exact admission-boundary
+        // observation is three output-reachable operations and a signature
+        // refusal rather than an invisible fifth member.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let _dead = F32Constant::apply(&mut builder, 7.0_f32.to_bits()).unwrap();
+        let child = F32Add::apply(&mut builder, input, input).unwrap();
+        let root = F32Add::apply(&mut builder, child, constant).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let repeated = builder.build().unwrap();
+        assert_eq!(repeated.operation_count(), 3);
+        assert_pointwise_rejection(&repeated, "signature");
+
+        // One constant occurrence shared by two leaves likewise has only three
+        // output-reachable operations and cannot masquerade as two constants.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let child = F32Add::apply(&mut builder, input, constant).unwrap();
+        let root = F32Add::apply(&mut builder, child, constant).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let shared = builder.build().unwrap();
+        assert_eq!(shared.operation_count(), 3);
+        assert_pointwise_rejection(&shared, "signature");
+
+        // A second output-reachable input is observable even though the
+        // arithmetic shape otherwise has exactly two operations and one
+        // constant. Strategy admission therefore refuses the input cardinality
+        // before leaf classification can mistake either input for a constant.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let first_input = builder
+            .input::<F32>(
+                InputKey::new("first-input").unwrap(),
+                Shape::from_dims([2, 3]),
+            )
+            .unwrap();
+        let second_input = builder
+            .input::<F32>(
+                InputKey::new("second-input").unwrap(),
+                Shape::from_dims([2, 3]),
+            )
+            .unwrap();
+        let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let child = F32Add::apply(&mut builder, first_input, second_input).unwrap();
+        let root = F32Add::apply(&mut builder, child, constant).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let multiple_inputs = builder.build().unwrap();
+        assert_eq!(multiple_inputs.input_count(), 2);
+        assert_eq!(multiple_inputs.operation_count(), 3);
+        assert_pointwise_rejection(&multiple_inputs, "signature");
+
+        // An extra output-reachable operation cannot be hidden behind either
+        // association, including the shape with two same-family child roots.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let left = F32Add::apply(&mut builder, input, first).unwrap();
+        let right = F32Add::apply(&mut builder, input, second).unwrap();
+        let root = F32Add::apply(&mut builder, left, right).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let two_children = builder.build().unwrap();
+        assert_eq!(two_children.operation_count(), 5);
+        assert_pointwise_rejection(&two_children, "signature");
+
+        // Naming a non-root output makes the later operation unreachable in
+        // the frozen program, so it is refused at the exact operation-count
+        // boundary rather than trusted from the mutable draft.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let child = F32Add::apply(&mut builder, input, first).unwrap();
+        let _unreachable_root = F32Add::apply(&mut builder, child, second).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), child)
+            .unwrap();
+        let wrong_output = builder.build().unwrap();
+        assert_eq!(wrong_output.operation_count(), 2);
+        assert_pointwise_rejection(&wrong_output, "signature");
+    }
+
+    #[test]
+    fn invalid_pointwise_arity_shape_and_dtype_fail_at_semantic_admission() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let tensor = builder
+            .input::<F32>(InputKey::new("tensor").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        assert!(
+            builder
+                .apply(
+                    add_f32_op(),
+                    OperationAttributes::empty(),
+                    &[tensor.erase()],
+                )
+                .is_err(),
+            "the semantic schema refuses invalid builtin arity before normalization",
+        );
+
+        let other_shape = builder
+            .input::<F32>(InputKey::new("other").unwrap(), Shape::from_dims([3, 2]))
+            .unwrap();
+        assert!(
+            F32Add::apply(&mut builder, tensor, other_shape).is_err(),
+            "the semantic inferencer refuses incompatible shapes before normalization",
+        );
+
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry
+            .register_provider(&UnusedSemantics { revision: 1 })
+            .unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let foreign = builder
+            .input_resolved(
+                InputKey::new("foreign").unwrap(),
+                Shape::from_dims([2, 3]),
+                ResolvedValueType::nominal(TypeKey::new("tiler-test", "unused", 1).unwrap()),
+            )
+            .unwrap();
+        let scalar = F32Constant::apply(&mut builder, 1.0_f32.to_bits())
+            .unwrap()
+            .erase();
+        assert!(
+            builder
+                .apply(
+                    add_f32_op(),
+                    OperationAttributes::empty(),
+                    &[foreign, scalar],
+                )
+                .is_err(),
+            "the semantic authority refuses a non-f32 builtin operand before normalization",
         );
     }
 

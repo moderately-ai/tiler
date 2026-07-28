@@ -282,7 +282,10 @@ pub(crate) fn build_kernel_program(
     Ok(program)
 }
 
-/// Builds the single-stage fused serial-sum program for one request.
+/// Builds a single-stage whole-program kernel for one request.
+///
+/// The scheduled region may be either a fused serial sum or a standalone
+/// governed pointwise program.
 pub(crate) fn build_fused_kernel_program(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
@@ -368,43 +371,62 @@ fn build_fused_core(
     request: &VerifiedTargetRequest,
     scheduled: &VerifiedScheduledRegion,
 ) -> Result<VerifiedKernelProgram, ProgramError> {
-    let subject = request.serial_sum();
-    let input_bytes = byte_count(subject.input_elements)?;
-    let output_bytes = byte_count(subject.output_elements)?;
+    let (
+        input_key,
+        output_key,
+        input_shape,
+        output_shape,
+        input_elements,
+        output_elements,
+        members,
+    ) = if let Some(pointwise) = request.pointwise() {
+        (
+            pointwise.input_key.clone(),
+            pointwise.output_key.clone(),
+            pointwise.shape.clone(),
+            pointwise.shape.clone(),
+            pointwise.elements,
+            pointwise.elements,
+            pointwise.members.clone(),
+        )
+    } else {
+        let subject = request.serial_sum();
+        (
+            subject.input_key.clone(),
+            subject.output_key.clone(),
+            subject.input_shape.clone(),
+            subject.output_shape.clone(),
+            subject.input_elements,
+            subject.output_elements,
+            subject.members.all(),
+        )
+    };
+    let input_bytes = byte_count(input_elements)?;
+    let output_bytes = byte_count(output_elements)?;
     let mut builder = open_core_builder(semantic, request)?;
-    let abi = declare_host_abi(
-        &mut builder,
-        subject.input_elements,
-        subject.output_elements,
-    )?;
+    let abi = declare_host_abi(&mut builder, input_elements, output_elements)?;
     let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
     let output_storage =
         builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
-    let input = builder.push_value(
-        program_input(subject.input_key.clone(), subject.input_shape.clone()),
-        external,
-    )?;
-    let output = builder.push_value(
-        internal(ValueRole::Output, subject.output_shape.clone()),
-        output_storage,
-    )?;
+    let input = builder.push_value(program_input(input_key, input_shape), external)?;
+    let output = builder.push_value(internal(ValueRole::Output, output_shape), output_storage)?;
     let input_view = builder.push_whole_view(input)?;
     let output_view = builder.push_whole_view(output)?;
     builder.push_stage(
         &lower(scheduled)?,
-        &covered(&subject.members.all()),
+        &covered(&members),
         &[
             read(input_view, abi.input_bytes),
             write(output_view, abi.output_bytes),
         ],
         abi.launch(abi.output_elements),
     )?;
-    builder.push_output(subject.output_key.clone(), output)?;
+    builder.push_output(output_key, output)?;
     declare_routing_commit(&mut builder)?;
     finish_core(builder)
 }
 
-/// The ABI quantities the bounded serial-sum profile's programs name.
+/// The ABI quantities named by programs in the bounded governed profile.
 ///
 /// Every extent is an `UnsignedLiteral` because the bounded profile's shapes
 /// are static, so each is already known at `CompileProfile`. The domain also
@@ -424,9 +446,9 @@ struct HostAbi {
 impl HostAbi {
     /// Returns the launch of a stage whose work items are `grid_threads`.
     ///
-    /// Every region of this profile is a serial subject, so the workgroup width
-    /// is shared; the width the *kernel* requires is what the program builder
-    /// proves the declared expression against.
+    /// Every current region uses the profile's fixed workgroup width; the width
+    /// the *kernel* requires is what the program builder proves the declared
+    /// expression against.
     const fn launch(self, grid_threads: AbiExprId) -> StageLaunch {
         StageLaunch {
             grid_threads,

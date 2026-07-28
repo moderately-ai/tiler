@@ -280,6 +280,16 @@ pub(super) fn verify_equivalence(
         alternative.equivalence.numerical.as_deref(),
     ) {
         (ProgramAlternativeKind::Materialized, None) => Ok(()),
+        (ProgramAlternativeKind::Fused, None) if request.pointwise().is_some() => {
+            let candidate = formation.whole_program_candidate().ok_or({
+                CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                    ProgramError::Structure {
+                        rule: "portfolio-fused-region",
+                    },
+                ))
+            })?;
+            verify_whole_program_schedule_coverage(alternative, candidate)
+        }
         (ProgramAlternativeKind::Fused, Some(proof)) => {
             let candidate = formation.whole_program_candidate().ok_or({
                 CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
@@ -289,19 +299,26 @@ pub(super) fn verify_equivalence(
                 ))
             })?;
             verify_fused_numerics(formation.graph(), request, candidate, proof)?;
-            if alternative.scheduled_regions.len() != 1
-                || alternative.scheduled_regions[0].semantic_members() != candidate.members()
-            {
-                return Err(ProgramError::Structure {
-                    rule: "portfolio-candidate-schedule-binding",
-                }
-                .into());
-            }
-            Ok(())
+            verify_whole_program_schedule_coverage(alternative, candidate)
         }
         _ => Err(ProgramError::Structure {
             rule: "portfolio-equivalence",
         }
         .into()),
     }
+}
+
+fn verify_whole_program_schedule_coverage(
+    alternative: &ProgramAlternative,
+    candidate: &crate::region::RegionCandidate,
+) -> Result<(), CompileError> {
+    if alternative.scheduled_regions.len() != 1
+        || alternative.scheduled_regions[0].semantic_members() != candidate.members()
+    {
+        return Err(ProgramError::Structure {
+            rule: "portfolio-candidate-schedule-binding",
+        }
+        .into());
+    }
+    Ok(())
 }

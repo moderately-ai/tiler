@@ -318,12 +318,12 @@ fn verify_access_and_semantics(
         &read.map,
     ) {
         (
-            ScalarProgram::MultiplyThenAdd { contraction, .. },
+            ScalarProgram::PointwiseF32(expression),
             ReductionTopology::None,
             LogicalAccess::LinearIdentity,
-        ) if *contraction == numerical.permits_contraction()
+        ) if expression.is_valid()
             && read.tensor == TensorRole::Input
-            && write.tensor == TensorRole::Intermediate => {}
+            && matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output) => {}
         (
             ScalarProgram::StrictSerialSum {
                 axes,
@@ -460,6 +460,7 @@ mod tests {
     use super::*;
     use std::fmt::Write as _;
 
+    use crate::schedule::PointwiseF32ExpressionBuilder;
     use crate::schedule::handles::{BoundsWitnessId, OwnershipWitnessId};
     use crate::schedule::model::{ContributorOrder, LaunchPlan};
     use crate::schedule::numerics::{
@@ -470,35 +471,24 @@ mod tests {
 
     /// Recorded canonical identity of the strict-`f32` pointwise test region.
     ///
-    /// 206 bytes, after widening the realization to every consumable
-    /// numerical dimension. The four added strict tags carry permutation,
-    /// signed-zero elimination, NaN assumptions, and infinity assumptions.
-    ///
-    /// The preceding 202-byte baseline followed two tag-form
-    /// deviations closed together, each adding bytes at a known place, so the
-    /// shift is attributable rather than opaque:
-    ///
-    /// - the domain tag gained its NUL terminator, `74696c65722e7363686564756c652e7631` →
-    ///   `…7631` + `00`, one byte, making this encoder use the same versioned
-    ///   domain separator as every other in the workspace; and
-    /// - `profile_key` moved from NUL-terminated to length-prefixed, so the
-    ///   21-byte `tiler.test.strict-f32` costs an eight-byte prefix instead of
-    ///   a one-byte terminator, seven bytes.
-    ///
-    /// 194 + 1 + 7 = 202. The 194-byte encoding this replaced ended
-    /// `…7fc000000074696c65722e746573742e7374726963742d663332007fc00000…`,
-    /// with the key run terminated rather than framed.
-    ///
-    /// The first re-baseline took it from 192 bytes, which carried neither
-    /// subnormal dimension and both permissions as derived booleans.
+    /// The pointwise program is encoded as a typed, framed topological graph,
+    /// so its exact operand order, constants, root, and physical `f32` family are all pinned.
+    /// This pin was intentionally rebaselined when the old
+    /// `ScalarProgram::MultiplyThenAdd` tag (`0x21`) became the exact
+    /// `ScalarProgram::PointwiseF32` expression encoding (`0x24`).
     const STRICT_F32_REGION_IDENTITY_HEX: &str = concat!(
         "74696c65722e7363686564756c652e7631000000000000000002000000000000",
         "0002000000000000000300000000000000020101010000000000020201000000",
         "0101000000000000000000000002000000000111000000000000000600000001",
-        "021100000000000000060000000002000000000000000621400000003f800000",
-        "7fc0000000000000000000001574696c65722e746573742e7374726963742d66",
-        "33327fc000000101010101010101010000000000000006000000010100000000",
-        "3100000000000000060000000101",
+        "02110000000000000006000000000200000000000000062400000000000000",
+        "0500000000000000090000000000000001010000000000000015000000000000",
+        "0001020000000000000004400000000000000000000021000000000000000104",
+        "0000000000000004000000000000000000000004000000010000000000000015",
+        "00000000000000010200000000000000043f8000000000000000000021000000",
+        "0000000001030000000000000004000000020000000000000004000000030000",
+        "00000000000400000004000000000000001574696c65722e746573742e737472",
+        "6963742d6633327fc00000010101010101010101000000000000000600000001",
+        "01000000003100000000000000060000000101",
     );
 
     fn strict_numerical() -> NumericalRealization {
@@ -514,6 +504,19 @@ mod tests {
             ExceptionalValueAssumption::MakeNoAssumption,
             ExceptionalValueAssumption::MakeNoAssumption,
         )
+    }
+
+    fn scale_bias_expression(
+        scale_bits: u32,
+        bias_bits: u32,
+    ) -> super::super::PointwiseF32Expression {
+        let mut expression = PointwiseF32ExpressionBuilder::new();
+        let input = expression.input().unwrap();
+        let scale = expression.constant(scale_bits).unwrap();
+        let product = expression.multiply(input, scale).unwrap();
+        let bias = expression.constant(bias_bits).unwrap();
+        let root = expression.add(product, bias).unwrap();
+        expression.build(root).unwrap()
     }
 
     fn pointwise_builder(id: RegionId, shape: Shape, elements: u64) -> ScheduledRegionBuilder {
@@ -565,12 +568,10 @@ mod tests {
             })
             .unwrap();
         builder
-            .scalar_program(ScalarProgram::MultiplyThenAdd {
-                scale_bits: 2.0_f32.to_bits(),
-                bias_bits: 1.0_f32.to_bits(),
-                canonical_nan_bits: 0x7fc0_0000,
-                contraction: false,
-            })
+            .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression(
+                2.0_f32.to_bits(),
+                1.0_f32.to_bits(),
+            )))
             .unwrap();
         builder.numerical(strict_numerical()).unwrap();
         builder
@@ -629,12 +630,6 @@ mod tests {
     #[test]
     fn a_relaxed_transform_contract_still_carries_its_subnormal_obligation() {
         let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
-        builder.scalar_program = Some(ScalarProgram::MultiplyThenAdd {
-            scale_bits: 2.0_f32.to_bits(),
-            bias_bits: 1.0_f32.to_bits(),
-            canonical_nan_bits: 0x7fc0_0000,
-            contraction: true,
-        });
         builder.numerical = Some(NumericalRealization::new(
             "tiler.test.relaxed-transforms-preserved-subnormals",
             0x7fc0_0000,
@@ -652,6 +647,123 @@ mod tests {
         assert_eq!(carried.reassociation, NumericalPermission::Permitted);
         assert_eq!(carried.input_subnormals, SubnormalMode::Preserve);
         assert_eq!(carried.result_subnormals, SubnormalMode::Preserve);
+    }
+
+    #[test]
+    fn pointwise_f32_admits_output_and_rejects_other_destination_roles() {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        builder.accesses[1].tensor = TensorRole::Output;
+        builder.bounds_proofs[1].tensor = TensorRole::Output;
+        builder.ownership_proof.as_mut().unwrap().tensor = TensorRole::Output;
+        assert!(builder.build().is_ok());
+
+        let mut rejected = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        rejected.accesses[1].tensor = TensorRole::Input;
+        rejected.bounds_proofs[1].tensor = TensorRole::Input;
+        rejected.ownership_proof.as_mut().unwrap().tensor = TensorRole::Input;
+        assert_eq!(
+            rejected.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+    }
+
+    fn identity_with_pointwise_expression(
+        expression: super::super::PointwiseF32Expression,
+    ) -> Vec<u8> {
+        let mut builder = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
+        builder.scalar_program = Some(ScalarProgram::PointwiseF32(expression));
+        builder
+            .build()
+            .unwrap()
+            .canonical_identity()
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn pointwise_identity_canonicalizes_ready_order_and_separates_semantics() {
+        fn ready_order(reverse: bool) -> super::super::PointwiseF32Expression {
+            let mut builder = PointwiseF32ExpressionBuilder::new();
+            let input = builder.input().unwrap();
+            let (two, three) = if reverse {
+                let three = builder.constant(3.0_f32.to_bits()).unwrap();
+                let two = builder.constant(2.0_f32.to_bits()).unwrap();
+                (two, three)
+            } else {
+                let two = builder.constant(2.0_f32.to_bits()).unwrap();
+                let three = builder.constant(3.0_f32.to_bits()).unwrap();
+                (two, three)
+            };
+            let (add, product) = if reverse {
+                let product = builder.multiply(input.clone(), three).unwrap();
+                let add = builder.add(input, two).unwrap();
+                (add, product)
+            } else {
+                let add = builder.add(input.clone(), two).unwrap();
+                let product = builder.multiply(input, three).unwrap();
+                (add, product)
+            };
+            let root = builder.add(add, product).unwrap();
+            builder.build(root).unwrap()
+        }
+
+        let canonical = identity_with_pointwise_expression(ready_order(false));
+        assert_eq!(
+            canonical,
+            identity_with_pointwise_expression(ready_order(true))
+        );
+
+        let association = {
+            let mut builder = PointwiseF32ExpressionBuilder::new();
+            let input = builder.input().unwrap();
+            let two = builder.constant(2.0_f32.to_bits()).unwrap();
+            let three = builder.constant(3.0_f32.to_bits()).unwrap();
+            let inner = builder.add(two, three).unwrap();
+            let root = builder.add(input, inner).unwrap();
+            identity_with_pointwise_expression(builder.build(root).unwrap())
+        };
+        assert_ne!(canonical, association);
+
+        let operand_order = {
+            let mut builder = PointwiseF32ExpressionBuilder::new();
+            let input = builder.input().unwrap();
+            let two = builder.constant(2.0_f32.to_bits()).unwrap();
+            let three = builder.constant(3.0_f32.to_bits()).unwrap();
+            let add = builder.add(two, input.clone()).unwrap();
+            let product = builder.multiply(three, input).unwrap();
+            let root = builder.add(add, product).unwrap();
+            identity_with_pointwise_expression(builder.build(root).unwrap())
+        };
+        assert_ne!(canonical, operand_order);
+
+        let constant_bits = {
+            let mut builder = PointwiseF32ExpressionBuilder::new();
+            let input = builder.input().unwrap();
+            let two = builder.constant((-2.0_f32).to_bits()).unwrap();
+            let three = builder.constant(3.0_f32.to_bits()).unwrap();
+            let add = builder.add(input.clone(), two).unwrap();
+            let product = builder.multiply(input, three).unwrap();
+            let root = builder.add(add, product).unwrap();
+            identity_with_pointwise_expression(builder.build(root).unwrap())
+        };
+        assert_ne!(canonical, constant_bits);
+    }
+
+    #[test]
+    fn pointwise_identity_separates_signed_zero_and_nan_payload_bits() {
+        fn literal_identity(bits: u32) -> Vec<u8> {
+            let mut builder = PointwiseF32ExpressionBuilder::new();
+            let input = builder.input().unwrap();
+            let constant = builder.constant(bits).unwrap();
+            let root = builder.add(input, constant).unwrap();
+            identity_with_pointwise_expression(builder.build(root).unwrap())
+        }
+
+        assert_ne!(
+            literal_identity(0.0_f32.to_bits()),
+            literal_identity((-0.0_f32).to_bits())
+        );
+        assert_ne!(literal_identity(0x7fc0_0001), literal_identity(0x7fc0_0002));
     }
 
     /// Every numerical dimension separates canonical scheduled-region identity.

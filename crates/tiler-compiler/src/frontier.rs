@@ -1703,10 +1703,9 @@ fn resolve_work_items(
         WorkScaling::Fixed(count) => Some(count),
         WorkScaling::PerElementOf(name) => {
             let (_, role) = bindings.iter().find(|(bound, _)| *bound == name)?;
-            let normalized = request.serial_sum();
             match role {
-                TensorRole::Input => Some(normalized.input_elements),
-                TensorRole::Output => Some(normalized.output_elements),
+                TensorRole::Input => Some(request.normalized().input_elements()),
+                TensorRole::Output => Some(request.normalized().output_elements()),
                 TensorRole::Intermediate => None,
             }
         }
@@ -1808,26 +1807,33 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
     fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
         let request = context.request();
         let members = context.subject().semantic_members();
-        let recognized = &request.serial_sum().members;
-        let input_elements = request.serial_sum().input_elements;
-        let output_elements = request.serial_sum().output_elements;
+        let input_elements = request.normalized().input_elements();
+        let output_elements = request.normalized().output_elements();
         // A materialized f32 intermediate costs four bytes per element. The
         // estimate is structural and is never a feasibility input.
         let intermediate_bytes = input_elements.saturating_mul(4);
         let applicability = TargetApplicability::for_targets([TargetProfileKey::governed(
             request.target_profile().key,
         )]);
-        let (region, cost) = if members == recognized.pointwise() {
+        let (region, cost) = if let Some(pointwise) = request.pointwise() {
+            if members != pointwise.members {
+                return Vec::new();
+            }
+            (
+                crate::physical::pointwise_region(request).0,
+                PhysicalCostEstimate::structural(1, output_elements, 0),
+            )
+        } else if members == request.serial_sum().members.pointwise() {
             (
                 crate::physical::pointwise_region(request).0,
                 PhysicalCostEstimate::structural(1, input_elements, intermediate_bytes),
             )
-        } else if members == recognized.reduction() {
+        } else if members == request.serial_sum().members.reduction() {
             (
                 crate::physical::reduction_region(request).0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
             )
-        } else if members == recognized.all() {
+        } else if members == request.serial_sum().members.all() {
             // Whether the whole-program region may be *fused* belongs to the
             // numerical-legality authority and whether it *fits* belongs to this
             // target; neither is a capability question. Every occurrence the

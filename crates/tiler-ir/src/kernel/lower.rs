@@ -17,8 +17,9 @@
 
 use crate::schedule::{
     Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, LogicalAccess, NumericalRealization,
-    OwnershipWitnessId, ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion,
-    TensorRole, VerifiedScheduledRegion, contributor_count,
+    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32Node, ReductionTopology,
+    ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole, VerifiedScheduledRegion,
+    contributor_count,
 };
 use crate::shape::Shape;
 
@@ -273,13 +274,9 @@ fn emit_guarded(
     invocation: KernelValueId,
 ) -> Result<(), KernelBuildError> {
     match plan.scalar {
-        ScalarProgram::MultiplyThenAdd {
-            scale_bits,
-            bias_bits,
-            ..
-        } => {
+        ScalarProgram::PointwiseF32(expression) => {
             let loaded = builder.load(read_buffer, invocation, plan.read_bounds)?;
-            let mapped = emit_scale_bias(builder, loaded, *scale_bits, *bias_bits)?;
+            let mapped = emit_pointwise(builder, expression, loaded)?;
             builder.store(
                 write_buffer,
                 invocation,
@@ -315,6 +312,48 @@ fn emit_guarded(
             Some((*scale_bits, *bias_bits)),
         ),
     }
+}
+
+fn emit_pointwise(
+    builder: &mut KernelBuilder,
+    expression: &PointwiseF32Expression,
+    input: KernelValueId,
+) -> Result<KernelValueId, KernelBuildError> {
+    let mut values = Vec::with_capacity(expression.nodes().len());
+    for node in expression.nodes() {
+        let value = match node {
+            PointwiseF32Node::Input => input,
+            PointwiseF32Node::Constant { bits } => {
+                builder.constant(KernelConstant::F32Bits(*bits))?
+            }
+            PointwiseF32Node::Add { lhs, rhs } => {
+                let lhs = pointwise_value(&values, *lhs)?;
+                let rhs = pointwise_value(&values, *rhs)?;
+                let result = builder.binary(BinaryOp::F32Add, lhs, rhs)?;
+                builder.convert(ConvertOp::CanonicalizeF32Nan, result)?
+            }
+            PointwiseF32Node::Multiply { lhs, rhs } => {
+                let lhs = pointwise_value(&values, *lhs)?;
+                let rhs = pointwise_value(&values, *rhs)?;
+                let result = builder.binary(BinaryOp::F32Multiply, lhs, rhs)?;
+                builder.convert(ConvertOp::CanonicalizeF32Nan, result)?
+            }
+        };
+        values.push(value);
+    }
+    pointwise_value(&values, expression.root())
+}
+
+fn pointwise_value(
+    values: &[KernelValueId],
+    node: crate::schedule::PointwiseF32NodeId,
+) -> Result<KernelValueId, KernelBuildError> {
+    usize::try_from(node.index())
+        .ok()
+        .and_then(|index| values.get(index).copied())
+        .ok_or(KernelBuildError::InvalidHandle {
+            entity: super::error::KernelEntityKind::Value,
+        })
 }
 
 fn emit_scale_bias(

@@ -66,6 +66,14 @@ A single execution binding with no tail is the substance of it: there is one way
 
 *Breadth work has not moved this.* `own-operation-family-support-matrix` is `done`, but it is a `contracts/navigation` ticket that added a maturity-tracking owner; it enumerates recognized-versus-supported state and explicitly records that the first profile is four strict-`f32` operations. Documenting the breadth gap did not widen the implemented surface.
 
+### Re-evaluation after bounded pointwise expressions (inspected source, 2026-07-28 working tree based on `6a7278f`)
+
+**The vocabulary check fired, and neither reconsideration condition did.** `broaden-governed-physical-support-for-reassociated-programs` replaced the fixed `ScalarProgram::MultiplyThenAdd` case with `ScalarProgram::PointwiseF32(PointwiseF32Expression)`. The exhaustive `body_shaping_vocabulary_is_closed` match had to change before the tree compiled, which is the announcement mechanism this ticket installed. Reading the new representation and lowering shows why the gate itself remains correct: a verified expression retains one canonical topological node order, exact constant bits, ordered operands, DAG sharing, and an explicit root; `derive_canonical` walks that exact expression through a total `PointwiseF32Node` match and emits one determined KIR body, including the required NaN canonicalization after every arithmetic node. The representation admits more exact expressions, but no one exact scheduled region admits two legal spellings.
+
+**The same result holds for external production.** `KernelBuilder` remains public, but no consumer has appeared that needs a noncanonical body accepted for the same schedule. A producer can author the body the schedule determines and reach the existing verified product; accepting a second spelling is still neither required nor proved.
+
+**The new nested vocabulary is guarded at both boundaries.** `PointwiseF32Node` is intentionally exhaustive because schedule identity and structured-KIR lowering are total maps over it. `ScalarProgram` remains exhaustive because the compiler recognizes its support out of crate, and `body_shaping_vocabulary_is_closed` separately prevents the same-crate product recognizer's wildcard from absorbing a future body-shaping variant. This refresh therefore records an exercised warning system, not a fired replacement trigger.
+
 ### What landed: the trigger is now a compile error
 
 The risk this ticket carries is not that the gate is wrong today — it is that the profile widens later and nobody connects the resulting `BodyRefinement` rejections to a deliberate bounded decision recorded in a ticket. A deferral whose trigger depends on recall is a deferral that fires late, after someone has debugged a valid kernel being rejected.
@@ -76,4 +84,4 @@ This is a spelling check, not a semantic one, and is documented as such: it cann
 
 ### Status
 
-Left `deferred` rather than `done`. The stated work — replacing derive-and-compare with a normalizer or a checked equivalence relation carrying its own soundness argument — remains undone and correctly so. Reconsider on the compile error above, or when an external producer genuinely needs its own spelling accepted.
+Left `deferred` rather than `done`. The 2026-07-28 pointwise widening exercised the compile-time warning and was re-evaluated without finding either trigger condition. The stated work — replacing derive-and-compare with a normalizer or a checked equivalence relation carrying its own soundness argument — remains undone and correctly so. Reconsider whenever the exhaustive vocabulary check fires, but replace the gate only when inspection finds more than one legal body for one exact scheduled region or an external producer genuinely needs another spelling accepted.

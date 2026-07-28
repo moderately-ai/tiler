@@ -20,8 +20,8 @@ use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
-    SubnormalMode, TailPolicy, TensorRole,
+    OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
@@ -506,13 +506,14 @@ fn pointwise_kernel() -> VerifiedKernel {
             },
         })
         .unwrap();
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression.input().unwrap();
+    let scale = expression.constant(SCALE_BITS).unwrap();
+    let product = expression.multiply(input, scale).unwrap();
+    let bias = expression.constant(BIAS_BITS).unwrap();
+    let root = expression.add(product, bias).unwrap();
     region
-        .scalar_program(ScalarProgram::MultiplyThenAdd {
-            scale_bits: SCALE_BITS,
-            bias_bits: BIAS_BITS,
-            canonical_nan_bits: CANONICAL_NAN,
-            contraction: false,
-        })
+        .scalar_program(ScalarProgram::PointwiseF32(expression.build(root).unwrap()))
         .unwrap();
     region.numerical(strict()).unwrap();
     region

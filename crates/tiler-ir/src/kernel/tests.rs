@@ -13,8 +13,9 @@ use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
-    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
+    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
+    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+    VerifiedScheduledRegion,
 };
 use crate::shape::{Axis, Shape};
 
@@ -53,8 +54,26 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
     }
 }
 
+fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression.input().unwrap();
+    let scale = expression.constant(scale_bits).unwrap();
+    let product = expression.multiply(input, scale).unwrap();
+    let bias = expression.constant(bias_bits).unwrap();
+    let root = expression.add(product, bias).unwrap();
+    expression.build(root).unwrap()
+}
+
 /// A pointwise scale-then-bias region over `shape`.
 fn pointwise_region(id: RegionId, shape: &Shape) -> VerifiedScheduledRegion {
+    pointwise_expression_region(id, shape, scale_bias_expression(SCALE_BITS, BIAS_BITS))
+}
+
+fn pointwise_expression_region(
+    id: RegionId,
+    shape: &Shape,
+    expression: PointwiseF32Expression,
+) -> VerifiedScheduledRegion {
     let elements = crate::schedule::element_count(shape).expect("bounded fixture shape");
     let mut builder = ScheduledRegionBuilder::new(id);
     builder.iteration_shape(shape.clone()).unwrap();
@@ -97,18 +116,104 @@ fn pointwise_region(id: RegionId, shape: &Shape) -> VerifiedScheduledRegion {
         })
         .unwrap();
     builder
-        .scalar_program(ScalarProgram::MultiplyThenAdd {
-            scale_bits: SCALE_BITS,
-            bias_bits: BIAS_BITS,
-            canonical_nan_bits: NAN_BITS,
-            contraction: false,
-        })
+        .scalar_program(ScalarProgram::PointwiseF32(expression))
         .unwrap();
     builder.numerical(numerical()).unwrap();
     builder
         .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
         .unwrap();
     builder.build().unwrap()
+}
+
+#[test]
+fn pointwise_lowering_preserves_left_and_right_operands_and_canonicalizes_each_operation() {
+    let expressions = [
+        {
+            let mut expression = PointwiseF32ExpressionBuilder::new();
+            let input = expression.input().unwrap();
+            let two = expression.constant(2.0_f32.to_bits()).unwrap();
+            let sum = expression.add(input, two).unwrap();
+            let three = expression.constant(3.0_f32.to_bits()).unwrap();
+            let root = expression.multiply(sum, three).unwrap();
+            expression.build(root).unwrap()
+        },
+        {
+            let mut expression = PointwiseF32ExpressionBuilder::new();
+            let input = expression.input().unwrap();
+            let two = expression.constant(2.0_f32.to_bits()).unwrap();
+            let sum = expression.add(two, input).unwrap();
+            let three = expression.constant(3.0_f32.to_bits()).unwrap();
+            let root = expression.multiply(three, sum).unwrap();
+            expression.build(root).unwrap()
+        },
+    ];
+
+    for (position, expression) in expressions.into_iter().enumerate() {
+        let scheduled = pointwise_expression_region(
+            RegionId::new(u32::try_from(position).unwrap()),
+            &Shape::from_dims([4]),
+            expression,
+        );
+        let kernel = lower_scheduled_region(&scheduled).unwrap();
+        let guarded = kernel
+            .body()
+            .operations()
+            .find_map(|operation| match operation.view() {
+                OperationView::Predicated { body, .. } => Some(body),
+                _ => None,
+            })
+            .unwrap();
+        let operations: Vec<_> = guarded.operations().map(OperationRef::view).collect();
+        let binaries: Vec<_> = operations
+            .iter()
+            .filter_map(|operation| match operation {
+                OperationView::Binary { op, lhs, rhs } => Some((*op, *lhs, *rhs)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            binaries.iter().map(|(op, _, _)| *op).collect::<Vec<_>>(),
+            [BinaryOp::F32Add, BinaryOp::F32Multiply]
+        );
+        assert_eq!(
+            operations
+                .iter()
+                .filter(|operation| matches!(
+                    operation,
+                    OperationView::Convert {
+                        op: ConvertOp::CanonicalizeF32Nan,
+                        ..
+                    }
+                ))
+                .count(),
+            2
+        );
+        let (_, add_lhs, add_rhs) = binaries[0];
+        let (_, multiply_lhs, multiply_rhs) = binaries[1];
+        if position == 0 {
+            assert_eq!(kernel.value_constant(add_lhs).unwrap(), None);
+            assert_eq!(
+                kernel.value_constant(add_rhs).unwrap(),
+                Some(KernelConstant::F32Bits(2.0_f32.to_bits()))
+            );
+            assert_eq!(kernel.value_constant(multiply_lhs).unwrap(), None);
+            assert_eq!(
+                kernel.value_constant(multiply_rhs).unwrap(),
+                Some(KernelConstant::F32Bits(3.0_f32.to_bits()))
+            );
+        } else {
+            assert_eq!(
+                kernel.value_constant(add_lhs).unwrap(),
+                Some(KernelConstant::F32Bits(2.0_f32.to_bits()))
+            );
+            assert_eq!(kernel.value_constant(add_rhs).unwrap(), None);
+            assert_eq!(
+                kernel.value_constant(multiply_lhs).unwrap(),
+                Some(KernelConstant::F32Bits(3.0_f32.to_bits()))
+            );
+            assert_eq!(kernel.value_constant(multiply_rhs).unwrap(), None);
+        }
+    }
 }
 
 /// A strict serial sum over `axes` of `input`.
@@ -384,7 +489,7 @@ fn body_shaping_vocabulary_is_closed(
             ReductionTopology::Serial { .. } => "serial",
         },
         match program {
-            ScalarProgram::MultiplyThenAdd { .. } => "multiply-then-add",
+            ScalarProgram::PointwiseF32(_) => "pointwise-f32",
             ScalarProgram::StrictSerialSum { .. } => "strict-serial-sum",
             ScalarProgram::FusedMultiplyAddSerialSum { .. } => "fused-multiply-add-serial-sum",
         },
@@ -415,7 +520,7 @@ fn the_single_spelling_profile_is_still_narrow_enough_for_derive_and_compare() {
             "exact",
             "linear-identity",
             "none",
-            "multiply-then-add",
+            "pointwise-f32",
         )
     );
 }

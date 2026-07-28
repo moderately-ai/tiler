@@ -1312,6 +1312,13 @@ fn region_role(
     request: &crate::request::VerifiedTargetRequest,
     members: &[crate::region::SemanticMemberId],
 ) -> &'static str {
+    if let Some(pointwise) = request.pointwise() {
+        return if members == pointwise.members {
+            "whole-program"
+        } else {
+            "unrecognized"
+        };
+    }
     let recognized = &request.serial_sum().members;
     if members == recognized.pointwise() {
         "pointwise"

@@ -14,6 +14,7 @@ use super::numerics::{
     ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
     SubnormalMode, ValueDomainProvenance,
 };
+use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
 
 /// The role a boundary tensor plays for one scheduled region.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -189,7 +190,7 @@ pub struct OwnershipProof {
 /// use tiler_ir::schedule::{ContributorOrder, ScalarProgram};
 /// fn is_reduction(program: &ScalarProgram) -> bool {
 ///     match program {
-///         ScalarProgram::MultiplyThenAdd { .. } => false,
+///         ScalarProgram::PointwiseF32(_) => false,
 ///         ScalarProgram::StrictSerialSum { .. }
 ///         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => true,
 ///     }
@@ -204,17 +205,8 @@ pub struct OwnershipProof {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ScalarProgram {
-    /// A pointwise scale-then-bias application.
-    MultiplyThenAdd {
-        /// Scale constant bit pattern.
-        scale_bits: u32,
-        /// Bias constant bit pattern.
-        bias_bits: u32,
-        /// Canonical arithmetic NaN bit pattern.
-        canonical_nan_bits: u32,
-        /// Whether contraction is permitted.
-        contraction: bool,
-    },
+    /// An exact physical IEEE-754 binary32 pointwise expression.
+    PointwiseF32(PointwiseF32Expression),
     /// A strict serial reduction sum.
     StrictSerialSum {
         /// Reduced axes in canonical ascending order.
@@ -597,9 +589,9 @@ const TAG_LINEAR_IDENTITY: u8 = 0x01;
 const TAG_REDUCTION_CONTRIBUTOR: u8 = 0x02;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
-const TAG_SCALAR_MUL_ADD: u8 = 0x21;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
 const TAG_SCALAR_FUSED_SUM: u8 = 0x23;
+const TAG_SCALAR_POINTWISE_F32: u8 = 0x24;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 
@@ -721,17 +713,13 @@ fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
 
 fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
     match program {
-        ScalarProgram::MultiplyThenAdd {
-            scale_bits,
-            bias_bits,
-            canonical_nan_bits,
-            contraction,
-        } => {
-            bytes.push(TAG_SCALAR_MUL_ADD);
-            bytes.extend_from_slice(&scale_bits.to_be_bytes());
-            bytes.extend_from_slice(&bias_bits.to_be_bytes());
-            bytes.extend_from_slice(&canonical_nan_bits.to_be_bytes());
-            bytes.push(u8::from(*contraction));
+        ScalarProgram::PointwiseF32(expression) => {
+            bytes.push(TAG_SCALAR_POINTWISE_F32);
+            push_len(bytes, expression.nodes().len());
+            for node in expression.nodes() {
+                push_pointwise_f32_node(bytes, node);
+            }
+            push_slice(bytes, &expression.root().index().to_be_bytes());
         }
         ScalarProgram::StrictSerialSum {
             axes,
@@ -764,6 +752,40 @@ fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
             bytes.push(u8::from(*contraction));
         }
     }
+}
+
+fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
+    const LENGTH_BYTES: usize = size_of::<u64>();
+    const TAG_FIELD_BYTES: usize = LENGTH_BYTES + size_of::<u8>();
+    const U32_FIELD_BYTES: usize = LENGTH_BYTES + size_of::<u32>();
+
+    let encoded_len = match node {
+        PointwiseF32Node::Input => TAG_FIELD_BYTES,
+        PointwiseF32Node::Constant { .. } => TAG_FIELD_BYTES + U32_FIELD_BYTES,
+        PointwiseF32Node::Add { .. } | PointwiseF32Node::Multiply { .. } => {
+            TAG_FIELD_BYTES + 2 * U32_FIELD_BYTES
+        }
+    };
+    push_len(bytes, encoded_len);
+    let start = bytes.len();
+    match node {
+        PointwiseF32Node::Input => push_slice(bytes, &[0x01]),
+        PointwiseF32Node::Constant { bits } => {
+            push_slice(bytes, &[0x02]);
+            push_slice(bytes, &bits.to_be_bytes());
+        }
+        PointwiseF32Node::Add { lhs, rhs } => {
+            push_slice(bytes, &[0x03]);
+            push_slice(bytes, &lhs.index().to_be_bytes());
+            push_slice(bytes, &rhs.index().to_be_bytes());
+        }
+        PointwiseF32Node::Multiply { lhs, rhs } => {
+            push_slice(bytes, &[0x04]);
+            push_slice(bytes, &lhs.index().to_be_bytes());
+            push_slice(bytes, &rhs.index().to_be_bytes());
+        }
+    }
+    debug_assert_eq!(bytes.len() - start, encoded_len);
 }
 
 fn push_access(bytes: &mut Vec<u8>, access: &Access) {

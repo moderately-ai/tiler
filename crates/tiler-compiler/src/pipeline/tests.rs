@@ -108,6 +108,21 @@ fn algebraic_add_chain() -> SemanticProgram {
     builder.build().unwrap()
 }
 
+fn tensor_add_chain() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+        .unwrap();
+    let first = F32Constant::apply(&mut builder, 1.0e20_f32.to_bits()).unwrap();
+    let second = F32Constant::apply(&mut builder, (-1.0e20_f32).to_bits()).unwrap();
+    let left = F32Add::apply(&mut builder, input, first).unwrap();
+    let root = F32Add::apply(&mut builder, left, second).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), root)
+        .unwrap();
+    builder.build().unwrap()
+}
+
 /// Builds the serial-sum program with one constant shared by both operands.
 ///
 /// This is the canonical spelling that `NormalizeSemantics` produces from a
@@ -1900,6 +1915,140 @@ fn live_semantic_portfolio_explains_every_governed_rule_decline_stably() {
         );
     }
     assert!(first.contains("disproved:semantic.no-left-associated-chain"));
+}
+
+#[test]
+fn relaxed_reassociation_reaches_verified_global_physical_selection() {
+    let semantic = tensor_add_chain();
+    let product = compile(CompilationRequest::governed_under(
+        &semantic,
+        StrictF32NumericalContract::governed_relaxed(),
+    ))
+    .unwrap();
+    let target = &product.targets[0];
+
+    assert!(
+        target.portfolio.alternatives.iter().any(|alternative| {
+            alternative.owner_key == "semantic:baseline" && alternative.program.stage_count() == 1
+        }),
+        "the unchanged semantic baseline remains physically available",
+    );
+    let reassociated = target
+        .portfolio
+        .alternatives
+        .iter()
+        .find(|alternative| {
+            alternative
+                .owner_key
+                .contains("ordered-reassociate-add-f32.v1")
+                && alternative.program.stage_count() == 1
+        })
+        .expect("the accepted reassociation reaches a verified program under its own owner");
+    assert_eq!(
+        reassociated.scheduled_regions[0].semantic_members(),
+        [
+            crate::region::SemanticMemberId(0),
+            crate::region::SemanticMemberId(1),
+            crate::region::SemanticMemberId(2),
+            crate::region::SemanticMemberId(3),
+        ],
+    );
+    assert_eq!(reassociated.equivalence.legality().len(), 1);
+    let exploration = explore_algebraic_alternatives_owned(
+        semantic.clone(),
+        crate::request::DeterministicBudgets::governed(),
+        StrictF32NumericalContract::governed_relaxed(),
+        AlgebraicRuleConfiguration::all(),
+    )
+    .unwrap();
+    let rewritten = exploration
+        .alternatives()
+        .iter()
+        .find(|alternative| {
+            alternative.rule() == crate::rewrite::ORDERED_REASSOCIATE_ADD_RULE.unwrap()
+        })
+        .expect("the relaxed contract admits the add reassociation")
+        .candidate();
+    let rewritten_request = verify_request(CompilationRequest::governed_under(
+        rewritten,
+        StrictF32NumericalContract::governed_relaxed(),
+    ))
+    .unwrap();
+    let rewritten_request = rewritten_request
+        .for_target(rewritten_request.target_profiles()[0])
+        .unwrap();
+    let formation = plan_formation(rewritten, &rewritten_request);
+    let lowering = resolve_lowering(rewritten, &rewritten_request, &formation).unwrap();
+    assert_eq!(
+        lowering
+            .occurrences()
+            .iter()
+            .map(crate::lowering::OccurrenceLowering::member)
+            .collect::<Vec<_>>(),
+        [
+            crate::region::SemanticMemberId(0),
+            crate::region::SemanticMemberId(1),
+            crate::region::SemanticMemberId(2),
+            crate::region::SemanticMemberId(3),
+        ],
+        "the rewritten program resolves all four semantic occurrences",
+    );
+    assert!(
+        lowering
+            .occurrences()
+            .iter()
+            .all(|occurrence| matches!(occurrence.evidence(), OccurrenceEvidence::Refined(_))),
+        "each rewritten occurrence carries checked refinement evidence",
+    );
+    assert!(
+        target.portfolio.alternatives.iter().any(|alternative| {
+            alternative.stable_id == target.portfolio.selection.selected_alternative_id
+        }),
+        "global selection names one verified flattened alternative",
+    );
+}
+
+#[test]
+fn pointwise_region_roles_require_the_exact_whole_program_subject() {
+    let semantic = tensor_add_chain();
+    let verified = verify_request(CompilationRequest::governed_under(
+        &semantic,
+        StrictF32NumericalContract::governed_relaxed(),
+    ))
+    .unwrap();
+    let request = verified.for_target(verified.target_profiles()[0]).unwrap();
+    let members = [
+        crate::region::SemanticMemberId(0),
+        crate::region::SemanticMemberId(1),
+        crate::region::SemanticMemberId(2),
+        crate::region::SemanticMemberId(3),
+    ];
+
+    assert_eq!(region_role(&request, &members), "whole-program");
+    for member in members {
+        assert_eq!(region_role(&request, &[member]), "unrecognized");
+    }
+}
+
+#[test]
+fn strict_contract_keeps_the_pointwise_baseline_and_declines_reassociation() {
+    let semantic = tensor_add_chain();
+    let product = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let target = &product.targets[0];
+
+    assert!(
+        target
+            .portfolio
+            .alternatives
+            .iter()
+            .all(|alternative| alternative.owner_key == "semantic:baseline"),
+    );
+    assert!(
+        target
+            .compilation_explain
+            .render()
+            .contains("numerical.reassociation-forbidden"),
+    );
 }
 
 #[test]

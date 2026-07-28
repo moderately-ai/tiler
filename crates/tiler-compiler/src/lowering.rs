@@ -285,7 +285,7 @@ pub(crate) fn resolve_lowering(
     let capabilities = request.capabilities();
     let contract = NumericalContractIdentity::from_key(request.numerical_contract().key);
     let mut occurrences = Vec::new();
-    for member in request.serial_sum().members.all() {
+    for member in request.normalized().all_members() {
         let identity = singleton_occurrence_identity(formation, member)?;
         let occurrence = project_occurrence(semantic, member, &contract, identity)?;
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
@@ -322,7 +322,7 @@ pub(crate) fn resolve_capabilities(
     let capabilities = request.capabilities();
     let contract = NumericalContractIdentity::from_key(request.numerical_contract().key);
     let mut providers = Vec::new();
-    for member in request.serial_sum().members.all() {
+    for member in request.normalized().all_members() {
         // Resolution never reads the semantic-source identity, so re-deriving it
         // here would be an unused cost; the empty source keeps this path
         // independent of region formation.

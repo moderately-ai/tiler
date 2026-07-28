@@ -10,8 +10,8 @@ use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
-    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
+    OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
 };
 use crate::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
@@ -76,6 +76,16 @@ fn output_shape() -> Shape {
     Shape::from_dims([2])
 }
 
+fn scale_bias_expression(scale_bits: u32) -> crate::schedule::PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression.input().expect("input");
+    let scale = expression.constant(scale_bits).expect("scale");
+    let product = expression.multiply(input, scale).expect("product");
+    let bias = expression.constant(BIAS_BITS).expect("bias");
+    let root = expression.add(product, bias).expect("sum");
+    expression.build(root).expect("pointwise expression")
+}
+
 /// Builds the canonical pointwise region: one program input to one temporary.
 fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
     let shape = input_shape();
@@ -128,12 +138,9 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
         })
         .expect("ownership proof");
     builder
-        .scalar_program(ScalarProgram::MultiplyThenAdd {
+        .scalar_program(ScalarProgram::PointwiseF32(scale_bias_expression(
             scale_bits,
-            bias_bits: BIAS_BITS,
-            canonical_nan_bits: CANONICAL_NAN,
-            contraction: false,
-        })
+        )))
         .expect("scalar program");
     builder.numerical(strict()).expect("numerical realization");
     builder
