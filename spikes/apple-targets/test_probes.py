@@ -32,8 +32,16 @@ def valid_record() -> dict[str, str]:
         "probe.source_sha256": digest,
         "probe.harness_sha256": digest,
         "probe.validator_sha256": digest,
-        "probe.project_sha256": digest,
-        "probe.lock_sha256": digest,
+        # No `probe.project_sha256` or `probe.lock_sha256`. They hashed
+        # `pyproject.toml` and `uv.lock` as measurement inputs, and `e197176`
+        # deleted both files along with the rest of the Python tooling, so
+        # `compatibility_probe.sh` no longer writes either key and no record
+        # produced since can carry one. Listing them here made the mutation loop
+        # below demand that the validator reject their absence -- an assertion
+        # that could only be satisfied by requiring a field nothing can supply,
+        # which would reject every future record. The retained
+        # `2026-07-21` record still carries both, correctly: it was measured
+        # while the files existed.
         "probe.input_manifest_file": "input-manifest.tsv",
         "probe.input_manifest_sha256": digest,
         "probe.compiler_flags": VALIDATOR.COMPILER_FLAGS,
