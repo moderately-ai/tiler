@@ -139,3 +139,15 @@ That preserves the record-after-adopting order, keeps `canonical-operation`/`mer
 
 **Blast radius, so it is budgeted rather than discovered:** `RewriteProposal` gains a field, so its constructor and the four test providers in `rewrite.rs` change; `collect_proposals` and `run_rewrite_engine` thread the payload; `CommonSubexpressionRule` captures its merges and implements `RuleExplain`; `NormalizationOutcome` sheds its per-merge records and keeps the stage-level ones. The pin and the readmission tests are unaffected — they compare programs, not records.
 
+## The explain seam landed (2026-07-28)
+
+`rewrite::RuleExplain` and `RewriteProposal::with_explain` / `explain()`, plus `rewrite::record_adopted_alternatives`.
+
+The payload is `Option<Arc<dyn RuleExplain>>`. `Arc` because `RewriteProposal` derives `Clone` and a `Box` would not; `Option` because a rule with nothing rule-specific to report is legitimate — `None` means "this rule adds no records of its own", never "this rewrite went unrecorded", and the stage-level records are emitted regardless.
+
+`record_adopted_alternatives` carries the obligation the type system cannot: **pass only survivors.** A proposal abandoned by the budget or rejected by revalidation must never reach it, because its payload describes a rewrite that did not happen. That is stated at the function rather than left to the caller's memory, and it is why alternatives are threaded through revalidation before they arrive.
+
+**One honest gap, recorded rather than implied.** `record_adopted_alternatives` itself is **untested**: constructing an `ExplainWriter` needs a `VerifiedTargetRequest`, which `rewrite.rs` has no fixture for and should not grow one for. The emission loop belongs to the routing change and is covered there, against a real writer. What is pinned here is what routing depends on — that a rule's payload reaches its own proposal and does not leak to a sibling.
+
+**Remaining, and now genuinely just the wiring:** have `CommonSubexpressionRule` capture its merges and implement `RuleExplain`; move `NormalizationOutcome`'s per-merge records behind it, keeping the stage-level ones; call the engine at `pipeline.rs:420`; readmit; group; record adopted. The census moves in that change.
+

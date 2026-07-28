@@ -27,7 +27,9 @@
 //! alternatives are produced per rule or per traversal — a question the
 //! normalize stage does not answer because it never produces alternatives.
 
+use crate::explain::{ExplainError, ExplainRecordId, ExplainWriter};
 use core::fmt;
+use std::sync::Arc;
 
 /// The governed identity of one rewrite rule.
 ///
@@ -131,6 +133,39 @@ impl fmt::Display for RewriteRuleIdentity {
 pub(crate) const COMMON_SUBEXPRESSION_RULE: Option<RewriteRuleIdentity> =
     RewriteRuleIdentity::new("tiler.normalize", "common-subexpression.v1", 1);
 
+/// A rule's own explain records, emitted only if its proposal is adopted.
+///
+/// # Why the rule supplies a payload instead of recording as it works
+///
+/// A proposal may be abandoned by the budget or rejected by structural
+/// revalidation *after* `propose` returns. A rule that recorded while proposing
+/// would claim a rewrite that never happened, and the abandoned-run case is
+/// where explain output matters most. `normalize_semantics` records after
+/// adopting, and that ordering is load-bearing.
+///
+/// # Why the engine cannot reconstruct these
+///
+/// The facts are rule-specific and describe the *original* program — the
+/// common-subexpression rule reports which graph-local operation was canonical
+/// and which was merged. The engine holds only the candidate, so recovering
+/// them would mean re-running the rule's own detection, a second authority over
+/// what the rule already decided.
+///
+/// The engine threads this opaquely and never interprets it. That is what keeps
+/// rule-specific facts out of a generic type while still letting them reach
+/// explain.
+pub(crate) trait RuleExplain: fmt::Debug + Send + Sync {
+    /// Emits this rule's records, returning the new causal head.
+    ///
+    /// Called **only** for a proposal that survived revalidation and the budget.
+    /// An implementation may assume its rewrite was adopted.
+    fn record(
+        &self,
+        explain: &mut ExplainWriter,
+        cause: ExplainRecordId,
+    ) -> Result<ExplainRecordId, ExplainError>;
+}
+
 /// One rewrite a provider proposes: the rule that proposed it, and the whole
 /// program it would produce.
 ///
@@ -171,6 +206,7 @@ pub(crate) const COMMON_SUBEXPRESSION_RULE: Option<RewriteRuleIdentity> =
 pub(crate) struct RewriteProposal<Program> {
     rule: RewriteRuleIdentity,
     candidate: Program,
+    explain: Option<Arc<dyn RuleExplain>>,
 }
 
 #[allow(
@@ -185,7 +221,31 @@ impl<Program> RewriteProposal<Program> {
     /// `SemanticProgram`; the tests below at a stand-in, which is what lets the
     /// pairing be tested without building a program.
     pub(crate) const fn new(rule: RewriteRuleIdentity, candidate: Program) -> Self {
-        Self { rule, candidate }
+        Self {
+            rule,
+            candidate,
+            explain: None,
+        }
+    }
+
+    /// Attaches the rule's own explain records.
+    ///
+    /// Optional because a rule with nothing rule-specific to report is
+    /// legitimate — the engine emits stage-level records regardless. `None`
+    /// means "this rule adds no records of its own", never "this rewrite was
+    /// not recorded".
+    #[must_use]
+    pub(crate) fn with_explain(mut self, explain: Arc<dyn RuleExplain>) -> Self {
+        self.explain = Some(explain);
+        self
+    }
+
+    /// The rule's own explain records, if it supplied any.
+    ///
+    /// The engine must call this **only** for a proposal it adopted; see
+    /// [`RuleExplain`].
+    pub(crate) fn explain(&self) -> Option<&Arc<dyn RuleExplain>> {
+        self.explain.as_ref()
     }
 
     /// The rule that proposed this rewrite.
@@ -481,6 +541,40 @@ where
         collected.extend(proposals);
     }
     Ok(collected)
+}
+
+/// Emits the rule-supplied explain records of alternatives that were adopted.
+///
+/// Separate from [`collect_proposals`] and from the engine for the same reason
+/// readmission is: this is a *policy* about when records may be written, and it
+/// only holds if the caller passes alternatives it actually adopted.
+///
+/// **The obligation this cannot enforce, stated where a caller will read it:**
+/// pass only survivors. A proposal abandoned by the budget or rejected by
+/// revalidation must never reach here, because its payload describes a rewrite
+/// that did not happen. Nothing in the type system distinguishes an adopted
+/// proposal from a discarded one, so this is a contract on the call site rather
+/// than a check — which is exactly why the alternatives are threaded through
+/// revalidation before they arrive.
+///
+/// Records form one linear causal chain rooted at `cause`, matching how
+/// `NormalizationOutcome::record` chains its own, so a later stage depends on a
+/// single receipt rather than an unbounded cause set.
+#[allow(
+    dead_code,
+    reason = "the explain step, landed with its tests ahead of the routing that will call it"
+)]
+pub(crate) fn record_adopted_alternatives<Program>(
+    adopted: &[RewriteProposal<Program>],
+    explain: &mut ExplainWriter,
+    mut cause: ExplainRecordId,
+) -> Result<ExplainRecordId, ExplainError> {
+    for alternative in adopted {
+        if let Some(records) = alternative.explain() {
+            cause = records.record(explain, cause)?;
+        }
+    }
+    Ok(cause)
 }
 
 #[cfg(test)]
@@ -846,6 +940,44 @@ mod tests {
                 .expect("no defect")
                 .len(),
             1
+        );
+    }
+
+    #[derive(Debug)]
+    struct Silent;
+
+    impl RuleExplain for Silent {
+        fn record(
+            &self,
+            _explain: &mut ExplainWriter,
+            cause: ExplainRecordId,
+        ) -> Result<ExplainRecordId, ExplainError> {
+            Ok(cause)
+        }
+    }
+
+    /// A payload is attached to the proposal that carries it and to no other.
+    ///
+    /// **What this does not cover, said plainly rather than implied:**
+    /// `record_adopted_alternatives` itself is untested. Constructing an
+    /// `ExplainWriter` requires a `VerifiedTargetRequest`, which this module has
+    /// no fixture for and should not grow one for — the emission loop belongs to
+    /// the routing change, and it is covered there against a real writer. What is
+    /// pinned here is the part routing depends on: that a rule's payload reaches
+    /// its own proposal and does not leak to a sibling.
+    #[test]
+    fn a_payload_attaches_to_its_own_proposal_only() {
+        let rule = RewriteRuleIdentity::new("p", "r", 1).expect("named");
+        let silent = RewriteProposal::new(rule, "no-payload");
+        let loud = RewriteProposal::new(rule, "payload").with_explain(Arc::new(Silent));
+
+        assert!(
+            silent.explain().is_none(),
+            "a proposal was given a payload it never attached"
+        );
+        assert!(
+            loud.explain().is_some(),
+            "an attached payload did not reach its proposal"
         );
     }
 }
