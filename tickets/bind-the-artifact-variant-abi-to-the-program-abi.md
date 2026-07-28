@@ -35,3 +35,16 @@ per-binding accessible ranges from its bound `VerifiedKernelProgram`; callers
 cannot construct a disagreement; artifact-owned launch preconditions, deferred
 predicates, and routing rank are unaffected; any changed identity domain is
 bumped with its reason recorded at the site; and `make full` passes.
+
+## Ready to implement 2026-07-27 — shape confirmed, ADR 0075 status named
+
+**Verified, so the next session does not re-derive it:**
+
+- `VariantSpec` is `pub` with `pub applicability_guard: AbiExprId` (`crates/tiler-artifact/src/program/builder.rs:172`), and `EntrySpec`'s launch and per-binding `accessible_bytes` are likewise caller-supplied. Removing those three is a **public API removal**, so ADR 0075 applies: it may be built as a tested concrete draft, but the interface is Tom's to accept. `AGENTS.md` states that split in terms.
+- The divergence is real but latent, exactly as recorded: the two ABIs are each checked against the same third value and never against each other, so under static shapes they coincide at every admissible binding and under dynamic shapes they need not.
+
+**The implementation shape, which the ticket already settles.** `prototypes/serial-sum-compile/src/bundle.rs::assemble` transliterates the program's arena onto the artifact's and resolves each variant use site from the replayed handle map — its variant ABI *is* the program's. That is the convention to make checked: the builder performs the transliteration itself, and the three fields come off `VariantSpec`.
+
+**One thing that got easier while this ticket waited.** `flatten-artifact-expression-identity` landed the shared arena primitives — `canonical_arena_traversal` and `compare_expr_nodes` are `pub` in `tiler_ir::program::abi`, and the artifact identity already numbers its arena from a use-site root list. A transliteration that derives the variant's expressions from the program now has one numbering to agree with rather than two key encodings, so the binding is a smaller change than when this ticket was written.
+
+**Both version bumps are in scope and neither is optional**, per the ticket: `ARTIFACT_DOMAIN` (now `v5`, so `v6`) because a variant that stops carrying its own expressions changes what the identity means, and the `guard_and_routing` component schema for the same reason.
