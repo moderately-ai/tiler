@@ -349,7 +349,7 @@ pub(super) fn record_frontier(
     cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
     let key = format!("region:{role}");
-    record_count_step(
+    let cause = record_count_step(
         explain,
         "frontier.enumeration.v1",
         SubjectKind::Schedule,
@@ -358,6 +358,29 @@ pub(super) fn record_frontier(
         "frontier.locally-feasible",
         "admitted-count",
         frontier.admitted().len(),
+        cause,
+    )?;
+    // Rejections were previously not recorded at all — only the admitted count
+    // was. That was survivable while every rejection was either a reserved
+    // variant or an inapplicable target, both of which a reader could infer from
+    // an empty frontier. It stops being survivable once a proposal can be
+    // refused for a reason specific to *it*: an opaque call refused for a
+    // numerical mismatch and one refused because nothing registered it are
+    // indistinguishable from "no provider proposed", and the fix is different in
+    // each case.
+    //
+    // A count rather than a record per rejection, because the count is what a
+    // reader needs to know something was refused; the typed rejection itself is
+    // on the frontier for anyone who then looks.
+    record_count_step(
+        explain,
+        "frontier.enumeration.v1",
+        SubjectKind::Schedule,
+        &key,
+        ExplainStage::IntrinsicScheduling,
+        "frontier.rejections-recorded",
+        "rejected-count",
+        frontier.rejections().len(),
         cause,
     )
 }

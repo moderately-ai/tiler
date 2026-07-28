@@ -433,5 +433,5 @@ The cause is already a type — `RejectionCause` with `Numerical` and `Capabilit
   What nothing answered is the different question: whether the call's declared numerics match the **request's resolved contract**. A call permitting contraction is perfectly feasible on a device that offers contraction, and still wrong for a program whose contract forbids it. Admission now compares all four against `request.numerical_contract().realization()` and refuses with `numerical-contract-mismatch`.
 
   The test declares a call permitting contraction where the governed contract forbids it and requires that exact reason — so a refusal for any *other* cause fails it. The positive admission test passing unchanged confirms its own numerics do match the governed contract, which is what makes the negative test meaningful rather than vacuous.
-- **Explain records** for the four rejection variants; the census moves there.
+- ~~**Explain records**~~ — done; see above.
 - **`Intermediate` work scaling** still declines, for the reason recorded above.

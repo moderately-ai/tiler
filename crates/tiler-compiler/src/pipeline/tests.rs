@@ -559,7 +559,11 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("cover.enumeration.v1", 1),
             ("fusion.legality.v1", 12),
             ("fusion.strict-f32-equivalence", 1),
-            ("frontier.enumeration.v1", 4),
+            // Two records per region subject: the admitted count and the rejected
+            // count. The second is new — rejections were previously not recorded
+            // at all, which made "refused for a reason specific to this proposal"
+            // indistinguishable from "nobody proposed".
+            ("frontier.enumeration.v1", 8),
             ("selection.complete-plan.v1", 1),
             ("compile.region.verified", 3),
             ("compile.plan.boundary", 2),
