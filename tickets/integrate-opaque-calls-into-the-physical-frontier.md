@@ -77,7 +77,18 @@ There are nine `.verified()` sites, and they fall into three groups rather than 
 
 The accessors return `Option` rather than panicking: a consumer needing a schedule and holding an opaque call has to say what it does about that, and the type is where it is made to.
 
-**Next, in order:** swap `AdmittedImplementation.verified` to hold this, then work the nine `.verified()` sites in the three groups already recorded above — the two that stay answerable, the four that must reject, and the two in `component_cost` that would silently report zero.
+## The field swap is blocked, and the fix improves the design
+
+Attempting it: the two `.verified()` sites I classed as "still answerable for an opaque call" — `semantic_members()` and `target_profile_key()` — are answerable *in principle* and not *in fact*. Both live on `VerifiedScheduledRegion` (`physical.rs:85`, `physical.rs:93`), and `RegisteredCall` holds only `{ identity, declaration }` (`call_registry.rs:121`). There is nowhere for an opaque call's members or target key to come from.
+
+**Two ways out, and the cheaper one is wrong.**
+
+*Add the fields to `RegisteredCall`.* Direct, and it makes registration carry facts that belong to an *admission* rather than to a registration. A call is registered once and admitted per region and per target, so the same `RegisteredCall` would have to hold different members for different admissions — either duplicated per admission, or wrong.
+
+*Move `semantic_members` and `target_profile_key` onto `AdmittedImplementation` itself.* They are properties of the admission: *what* was implemented and *for where*. Both bodies then answer them because neither has to — the container does, once, and `ImplementationBody` holds only what genuinely differs. This also makes the sum smaller and the two "still answerable" sites stop being a special case at all.
+
+**Recommendation: move them up.** It is a larger diff — `VerifiedScheduledRegion` keeps its own copies for its own uses, and `AdmittedImplementation` gains two fields set at admission — but the alternative puts per-admission facts into a per-registration type, which is a category error that gets harder to unwind the more consumers depend on it.
+
+**Then, in order:** swap the field to `ImplementationBody`, and work the remaining seven `.verified()` sites — the four that must reject explicitly and the two in `component_cost` that would silently report zero for a call with no index region, plus `physical.rs:870` where lowering genuinely diverges.
 
 **A caution from doing this slice.** Two edits in a row landed in the wrong place — one inserted a definition between an existing `#[derive]` and its struct, silently reassigning the derive; the other omitted a test import. Both were caught immediately by the compiler, but the first is the shape worth watching in this file: `frontier.rs` is 2000+ lines of adjacent doc-commented items, and anchoring an insertion on a `struct` line rather than on its attributes puts the new item inside the previous one's annotations. Anchor on the doc comment, or check the diff.
-
