@@ -1,17 +1,14 @@
 ---
 id: reduce-transient-allocation-in-the-compile-path
 title: Reduce transient allocation in the compile path
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [remove-the-remaining-duplicate-work-in-the-planner]
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [performance, compiler]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785206953
 ---
 Split from `remove-the-remaining-duplicate-work-in-the-planner`, which closed because its own premise was spent: after the region-graph fix, every named item of duplicated computation measured under 2.5%, and the largest single cost turned out to be a correctness check that must stay. What is left is a different problem and needs its own title, or the same profile gets re-derived under a heading that no longer describes it.
 
@@ -71,3 +68,17 @@ Do not open this without re-profiling first. The parent ticket had to be re-prof
 **Why it was not done here.** `SelectedPlanIdentity` derives `Eq`, `Ord`, `PartialEq`, and `PartialOrd`, and it is used as a map key and a sort key. A cache field must be excluded from every one of those or two identities with equal bytes could compare unequal — an identity defect far worse than 4% of a compile. That exclusion is mechanical but it is exactly the kind of change that should not be made with the profile still warm and the reasoning unwritten, so it is recorded rather than attempted.
 
 **Next step is therefore specific:** cache the digest on `SelectedPlanIdentity` with the cache excluded from `Eq`/`Ord`/`Hash`, add a test that two identities built from equal bytes compare equal and hash equal, and measure on the M3. Expected ceiling is ~4%, which is larger than anything else this ticket has found and is a single contained change rather than a sweep.
+
+## Measured 2026-07-27 — the digest cache lands, and a 4.3% profile share bought 0.3%
+
+**Landed.** `SelectedPlanIdentity` now folds `digest(bytes)` once at construction. `label` and `is_labelled` read it instead of re-hashing, so the digest is computed once per plan rather than twice per alternative.
+
+**Measured on the M3, ten interleaved pairs, min-of-200 per reading.** In the seven rounds that landed in the host's stable clock state, the candidate is faster in six: mean **681.9 µs → 680.0 µs, about −0.3%**.
+
+**That is the finding, not the change.** The profile charged `label` 2.11% and `is_labelled` 2.18% of active self time — 4.3% combined — and removing one of the two digest computations returned **less than a tenth of that**. So a self-time share is not an available saving, and this is the second instance in this ticket: the `push_slice` exact-`reserve` was 9% of self time and bought 0.4%. Both times the share was real and the recoverable part was the small remainder — the byte copy in one case, the formatting, parsing, and comparison in the other.
+
+**Anyone reading the 48/32/19 split above as headroom should read this paragraph first.** Two targeted changes against the two largest identified shares have together bought under 1%. The remaining diffuse allocation is very unlikely to behave differently, and a design that traded structure for it would be paying a real cost against a measured-small return.
+
+**Kept anyway**, on two grounds that are not performance: computing one digest twice over identical bytes held in one struct is work with no purpose, and the change is guarded by a test for the hazard it introduces.
+
+**The hazard, and the guard.** `SelectedPlanIdentity` is a map key and a sort key, so a cached field entering `Eq` or `Ord` would let two identities over equal bytes compare unequal — an identity defect far worse than the microseconds saved. Every comparison is therefore written out over the bytes alone rather than derived over a struct that now has two fields, and `the_cached_digest_stays_out_of_identity_comparison` constructs a deliberately corrupted cache and asserts the two still compare equal and order equal — while asserting their *labels* differ, so the field is proven live rather than dead weight. Verified to bite: letting the digest into `eq` fails it with "equality consulted the cached digest".
