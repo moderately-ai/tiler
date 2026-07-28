@@ -243,3 +243,23 @@ It is generic over the role type, so it does not drag `TensorRole` into `call_ab
 **Remaining:** derive the boundary contract from the declaration (the mapping table is above) and the identity from the `OpaqueCallIdentity`, then admit. After that: lowering rejects an opaque body, numerical guarantees, and explain records for these three rejections.
 
 *The check, reproducible in one line:* `grep -n 'struct BoundaryRequirement' -A 6 crates/tiler-compiler/src/frontier.rs` — keyed by `TensorRole`, with no parameter or slot anywhere in the boundary vocabulary.
+
+## `ParameterSpec.layout` has the wrong type, and I put it there (2026-07-28)
+
+Writing the derivation against the mapping table: `ParameterSpec` carries `layout: LayoutGuarantee`, and that is wrong for half the parameters.
+
+`crate::boundary` deliberately types the two directions differently. `LayoutGuarantee` has one variant, `DenseRowMajor` — the only layout the bounded profile produces. `LayoutRequirement` has two, adding `UnitStrideOnAxis { axis, rank }`, because a consumer can ask for something a producer does not volunteer. That asymmetry is load-bearing and is documented at both types.
+
+An **`In`** parameter *requires* a layout of the tensor bound to it — it can legitimately ask for unit stride on an axis. An **`Out`** parameter *guarantees* the layout it writes. One field of one type cannot carry both, and I gave it the guarantee type, which silently forbids any opaque call from requiring a strided input. That is not a limitation anyone chose; it is a field typed by whichever direction I thought of first.
+
+**The fix, and it should keep the two directions apart rather than widen one.** Either:
+
+- `ParameterSpec.layout: ParameterLayout` with `Required(LayoutRequirement)` / `Guaranteed(LayoutGuarantee)`, validated against the role at `declare` — `In` must be `Required`, `Out` must be `Guaranteed`, `InOut` needs both; or
+- two fields, `requires: Option<LayoutRequirement>` and `guarantees: Option<LayoutGuarantee>`, with the role deciding which must be present.
+
+Prefer the first: an `Option` pair admits all four combinations and three of them are malformed, so the type would be stating a constraint the constructor then has to re-check. `AGENTS.md`'s preference for making unrepresentable states unrepresentable applies directly.
+
+**Encoding and alignment do not have this problem** — `StorageEncoding` and `ByteAlignment` are used unchanged on both sides of the boundary relation, which is why only layout is affected. Worth stating so the fix is not applied to all three by reflex.
+
+*The check, reproducible in one line:* `grep -n 'enum LayoutRequirement' -A 16 crates/tiler-compiler/src/boundary.rs` — two variants against `LayoutGuarantee`'s one.
+
