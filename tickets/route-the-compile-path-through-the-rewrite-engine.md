@@ -215,3 +215,16 @@ The budget tests now assert the *figures*, not just that a stop occurred — `Bu
 - `CommonSubexpressionRule` — verifies its own postconditions, declares its rewrite count, supplies its explain payload.
 
 **The swap itself:** rewrite `normalize_semantics` to build its outcome from `run_rewrite_engine` rather than from the congruence directly. Its signature does not change, so `pipeline.rs` is untouched and the census should not move — if it does, something about the records changed and that is the thing to investigate rather than to accept.
+
+## One fidelity loss in the swap, and it is bounded (2026-07-28)
+
+Routing `normalize_semantics` through the engine means its errors arrive as `ProviderDefect::Failed { rule, reason }`, where `reason` is a `NormalizeError`'s stable reason string. The **class** — `structure`, `rebuild`, `invalid-rewrite` — does not survive the round trip, since `ProviderDefect` has no business knowing this stage's error taxonomy.
+
+I expected that to matter and checked before assuming it. **`NormalizeError::class()` is consumed in exactly one place: `Display`** (`normalize.rs:110`). It reaches no explain record, no typed outcome, and no test assertion. So the loss is confined to diagnostic text — a failure would read `compile.normalize.invalid-rewrite.builder-create` where it previously read `compile.normalize.rebuild.builder-create`. The reason, which is the actionable half, is preserved exactly.
+
+*The check, reproducible in one line:* `grep -n 'fn class\|class()' crates/tiler-compiler/src/normalize.rs` returns the definition and the single `Display` use.
+
+**So the swap does not need the class preserved**, and it should not grow machinery to preserve it. Map every `ProviderDefect::Failed` to `NormalizeError::InvalidRewrite { rule: reason }`, and note in the commit that engine-routed failures report a different class in their message. If a future reader needs the class back, the honest fix is for the rule to encode it in the reason, not for `ProviderDefect` to learn a vocabulary it has no stake in.
+
+**This was the last unknown.** The swap is now: register the rule, match `EngineRun`, build the outcome from the adopted alternatives' payloads and rewrite counts, and map the two failure variants. The census is the differential test — it must not move.
+
