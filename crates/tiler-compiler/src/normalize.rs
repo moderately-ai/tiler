@@ -1299,6 +1299,95 @@ mod tests {
         );
     }
 
+    /// A provider defect abandons the run and is distinguishable from a
+    /// revalidation failure.
+    ///
+    /// `EngineFailure` exists to keep those apart — a broken rule and a rule
+    /// that produced something invalid call for different responses — so the
+    /// distinction is asserted rather than assumed from the type having two
+    /// variants.
+    #[test]
+    fn a_provider_defect_abandons_the_engine_run() {
+        struct Broken;
+        impl RewriteRuleProvider<SemanticProgram> for Broken {
+            fn identity(&self) -> RewriteRuleIdentity {
+                RewriteRuleIdentity::new("test", "broken", 1).expect("named")
+            }
+            fn propose(
+                &self,
+                _program: &SemanticProgram,
+            ) -> Result<Vec<RewriteProposal<SemanticProgram>>, ProviderDefect> {
+                Err(ProviderDefect::Failed {
+                    rule: self.identity(),
+                    reason: "builder-create",
+                })
+            }
+        }
+
+        let mut registry = RuleRegistry::new();
+        registry.register(Box::new(Broken)).expect("one rule");
+
+        let failure = run_rewrite_engine(
+            &registry,
+            &program(2.0, 2.0, false),
+            DeterministicBudgets::governed(),
+        )
+        .expect_err("a broken provider fails the run");
+
+        assert!(
+            matches!(
+                failure,
+                EngineFailure::Provider(ProviderDefect::Failed { .. })
+            ),
+            "a provider defect was not reported as one: {failure:?}"
+        );
+        assert!(
+            !matches!(failure, EngineFailure::Revalidation { .. }),
+            "a provider defect was reported as a revalidation failure"
+        );
+    }
+
+    /// A misattributing provider is also a provider defect, not a silent drop.
+    ///
+    /// The engine inherits `collect_proposals`' attribution contract; this
+    /// confirms the inheritance rather than assuming the `?` carries it.
+    #[test]
+    fn a_misattributing_provider_fails_the_engine_run() {
+        struct Liar;
+        impl RewriteRuleProvider<SemanticProgram> for Liar {
+            fn identity(&self) -> RewriteRuleIdentity {
+                RewriteRuleIdentity::new("test", "liar", 1).expect("named")
+            }
+            fn propose(
+                &self,
+                program: &SemanticProgram,
+            ) -> Result<Vec<RewriteProposal<SemanticProgram>>, ProviderDefect> {
+                Ok(vec![RewriteProposal::new(
+                    CommonSubexpressionRule.identity(),
+                    program.clone(),
+                )])
+            }
+        }
+
+        let mut registry = RuleRegistry::new();
+        registry.register(Box::new(Liar)).expect("one rule");
+
+        let failure = run_rewrite_engine(
+            &registry,
+            &program(2.0, 2.0, false),
+            DeterministicBudgets::governed(),
+        )
+        .expect_err("a misattributing provider fails the run");
+
+        assert!(
+            matches!(
+                failure,
+                EngineFailure::Provider(ProviderDefect::Misattributed { .. })
+            ),
+            "a misattributed proposal reached the engine: {failure:?}"
+        );
+    }
+
     #[test]
     fn an_exhausted_rewrite_budget_abandons_the_whole_rewrite() {
         let duplicated = program(2.0, 2.0, false);

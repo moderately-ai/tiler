@@ -1,7 +1,7 @@
 ---
 id: generalize-the-normalize-transaction-to-alternatives
 title: Generalize the normalize transaction to drive providers and yield alternatives
-status: todo
+status: done
 priority: p1
 dependencies: [implement-transactional-rewrite-engine]
 related: []
@@ -131,6 +131,17 @@ The remaining work is smaller than "write the engine" and has one precise prereq
 
 **The pin holds against the engine.** With only the common-subexpression rule registered, `run_rewrite_engine`'s single alternative has the same canonical `SemanticIdentity` bytes as `normalize_semantics`'s normalized program. The budget test's failure path was verified by returning `Ok(Some(vec![]))` on exhaustion and watching it fail.
 
-## What remains
+## Closing criteria, checked one by one (2026-07-28)
 
-The engine exists and satisfies the pin, but nothing calls it — `normalize_semantics` is still the compile path's rewrite stage. Wiring it in is the remaining step, and it is a **behaviour change** rather than an addition: the pipeline would move from one canonical program to a set of alternatives, which touches plan enumeration and the explain census. Treat it as its own slice, and expect the `pipeline/tests.rs` rule census to move.
+- *Consumes `collect_proposals` and revalidates each candidate through `SemanticProgramBuilder` before adoption* — **met**, via `revalidate_structurally`, and the engine adopts the revalidated program rather than the provider's.
+- *Yields a set of alternatives; the single-canonical contract left in place rather than silently widened* — **met**. `normalize_semantics` is untouched and still produces one program; the engine is a separate entry point.
+- *Termination, budget exhaustion, and rollback keep the all-or-nothing contract* — **met**. A budget stop returns `Ok(None)`, distinct from `Ok(Some(vec![]))`, and both are tested because each would pass an engine that always returned the other.
+- *The alternative set is reproducible across runs* — **met**, through the registry's canonical identity ordering, which its own test pins against two registration orders.
+- *A `ProviderDefect` is reported as a typed, explainable failure distinct from an ordinary rejection, asserted by a test that watches the rejection fire* — **met, and it was the last one outstanding.** Added `a_provider_defect_abandons_the_engine_run` and `a_misattributing_provider_fails_the_engine_run`; the second confirms the engine inherits `collect_proposals`' attribution contract rather than assuming the `?` carries it.
+- *With only the common-subexpression rule registered, the result has the same `SemanticIdentity` as today's `normalize.rs` output* — **met**, compared on canonical bytes.
+
+## Split: routing is a behaviour change
+
+The engine satisfies every criterion above and **nothing calls it**. Routing the compile path through it is `route-the-compile-path-through-the-rewrite-engine`, now live.
+
+That split is not a technicality. Everything here was additive or self-contained — a provider over existing functions, a round-trip, an engine — and none of it changed what the compiler does. Routing moves the pipeline from one canonical program to a set of alternatives, which touches plan enumeration, the explain census, and potentially artifact identity. The child records all three as expectations rather than leaving them to be found as mysterious failures, and states the trap: choosing one alternative before planning is cheaper and likely wrong, because it makes the rewrite decision without the cost model that would justify it.
