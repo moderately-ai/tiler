@@ -24,6 +24,7 @@ mod pipeline;
 mod program;
 mod region;
 mod request;
+mod rewrite;
 mod selection;
 pub mod session;
 #[cfg(test)]

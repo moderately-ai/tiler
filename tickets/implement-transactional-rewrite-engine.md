@@ -55,3 +55,16 @@ So this ticket is not six subsystems. It is two, on top of machinery already pro
 - Traversal order is deterministic and the alternative set is reproducible across runs.
 - **With only the common-subexpression rule registered, the engine's result has the same `SemanticIdentity` as today's `normalize.rs` output**, asserted by a test.
 - A registered provider whose rewrite fails revalidation is rejected with a typed, explainable reason, asserted by a test that watches the rejection fire.
+
+## Started — governed rule identity landed (2026-07-27)
+
+`crates/tiler-compiler/src/rewrite.rs`. `RewriteRuleIdentity` names a rule by provider, rule key, and an **output-affecting** revision — a rule refactored without changing what it produces keeps its revision, one whose output changes must not. `COMMON_SUBEXPRESSION_RULE` names the rule the normalize stage already proves, matching that stage's governed constants so the two cannot drift apart silently.
+
+Identity is first because the ticket's governing constraint depends on it: unknown provider behaviour is never optimizable merely because it is registered, and a rewrite that cannot be attributed to a named, versioned rule cannot be explained, reproduced, or excluded when its provider turns out to be wrong. The engine must not accept a proposal before it can name what proposed it.
+
+The canonical encoding is length-prefixed rather than delimiter-separated, so provider `"a.b"` with rule `"c"` cannot encode identically to provider `"a"` with rule `"b.c"`. A delimiter would let those two collide, and a collision here means two distinct rules sharing one identity. Tested directly, along with an empty name being refused and a revision change being a different rule — each driven against both the accepting and the rejecting case so a predicate that always said yes would fail.
+
+**Deliberately not included:** no proposal trait, no registry, no engine. The proposal type's shape depends on whether alternatives are produced per rule or per traversal, and the normalize stage cannot answer that because it never produces alternatives. Adding the seam now would fix that choice before the evidence exists.
+
+**Next step, unchanged:** generalize the normalize transaction to take rules from a provider and to yield alternatives, with the pin already stated above — CSE alone must reproduce `normalize.rs`'s `SemanticIdentity` exactly.
+
