@@ -23,23 +23,30 @@
 //! its own model key, it is reported, and the retained plan set is bit-for-bit
 //! what it was before this module existed.
 //!
-//! # Why six of the nine components are `Unknown`
+//! # Why five of the nine components are `Unknown`
 //!
 //! The accepted contract keeps `SoundProof`, exhaustive finite evidence,
 //! empirical evidence, and `Unknown` as different classes, and this module
 //! honours that rather than filling gaps with plausible arithmetic.
 //!
-//! Three components are exact sums over values a plan already carries —
-//! allocation, dispatch, and the ordering constraints between dispatches — and
-//! each is derived at its match arm rather than estimated. The other six need
-//! inputs the compiler does not have yet: per-region element traffic, an
-//! occupancy model, a resource-pressure model, artifact sizes that only exist
-//! after encoding. A formula invented to fill one of them would be
-//! unfalsifiable at exactly the moment it mattered. An honest `Unknown` is a
-//! measurement boundary; a fabricated number is a defect that reads as evidence.
+//! Four components are derived from values a plan already carries — allocation,
+//! dispatch, the ordering constraints between dispatches, and per-element
+//! address arithmetic — and each is computed at its match arm rather than
+//! estimated. The other five need inputs the compiler does not have: an
+//! occupancy model, a resource-pressure model, a model of what fusion
+//! recomputes, artifact sizes that only exist after encoding, and compile time,
+//! which is a measurement rather than an analysis. A formula invented to fill
+//! one of them would be unfalsifiable at exactly the moment it mattered. An
+//! honest `Unknown` is a measurement boundary; a fabricated number is a defect
+//! that reads as evidence.
+//!
+//! Two of the five were on that list for the wrong reason and came off it after
+//! the source was re-read rather than the note re-trusted. Treat the remaining
+//! five as unverified in the same way.
 
 use crate::selection::SelectedPlan;
 use core::fmt;
+use tiler_ir::schedule::element_count;
 
 /// The governed key naming this cost model.
 ///
@@ -382,12 +389,33 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                         )
                     }))
                 }
+                // One address computation per logical access per iteration
+                // point. A region's `IndexRegion` states both: `accesses` is the
+                // read/write list the schedule refines, and `iteration_shape` is
+                // the parallel domain each is evaluated over.
+                //
+                // Unlike the three above this can *fail* to have a value: an
+                // iteration shape whose element count overflows `u64` has no
+                // stateable total, and the whole component then reports
+                // `Unknown` rather than a saturated one. A saturated total here
+                // would be a number a calibration pass could compare against and
+                // silently disagree with; `Unknown` is the honest answer and the
+                // one the evidence classes exist to express.
+                CostComponent::Indexing => plan
+                    .selections()
+                    .iter()
+                    .try_fold(0_u64, |total, selection| {
+                        let region = &selection.implementation().verified().region().index;
+                        let points = element_count(&region.iteration_shape).ok()?;
+                        let accesses = u64::try_from(region.accesses.len()).ok()?;
+                        total.checked_add(points.checked_mul(accesses)?)
+                    })
+                    .map_or(CostValue::Unknown, CostValue::Exact),
                 // Not modelled. See this module's header: the inputs do not
                 // exist yet, and inventing them would produce numbers that
                 // cannot be refuted.
                 CostComponent::MemoryTraffic
                 | CostComponent::RedundantWork
-                | CostComponent::Indexing
                 | CostComponent::ResourcePressure
                 | CostComponent::CompileTime
                 | CostComponent::ArtifactSize => CostValue::Unknown,
