@@ -182,3 +182,18 @@ Two consequences worth having recorded:
 - **The merge-contents assertion moved to the rule.** `NormalizationOutcome` could assert exactly which operations merged; it no longer can, because the payloads are opaque to it *by design*. That assertion now runs against `detect_shared_values` directly, which is the level that still owns the vocabulary. This is a real relocation rather than a deletion, and the coverage is the same.
 
 **What remains is now genuinely small:** at `pipeline.rs:420`, build the outcome from `run_rewrite_engine`'s adopted alternatives instead of from the congruence — readmitting through `readmit_alternatives`, grouping through `group_by_resolved_contract`, and taking each alternative's `explain()` as the outcome's `rule_explains`. The census moves in that change, once, when more than one alternative can survive.
+
+## The engine's budget counts the wrong thing — found 2026-07-28
+
+Writing the swap surfaces a defect in `run_rewrite_engine` that would have changed behaviour silently.
+
+**The stage budgets *rewrites*; the engine budgets *proposals*.** `normalize_semantics` compares `congruence.merges.len()` against `DeterministicBudgets::normalization_rewrites` — a program with three redundant subexpressions demands three. `run_rewrite_engine` compares `proposals.len()`, and the common-subexpression rule returns **one** proposal however many merges it committed.
+
+They coincide only where the test happens to sit. `an_exhausted_rewrite_budget_abandons_the_whole_rewrite` uses a budget of 0 against one merge, and both stop. With a budget of 1 against two merges the stage stops and the engine does not — a rewrite committed past a budget that was meant to forbid it, with nothing reporting the difference.
+
+**The unit is rule-specific, which is the same division a fourth time.** "How many rewrites is this proposal?" is a question only the rule can answer: one CSE proposal is N merges, while a rule that rewrites one operation is one. The engine cannot count what it cannot see inside.
+
+**The fix: a proposal declares its rewrite count.** `RewriteProposal` gains it alongside the explain payload — supplied by the rule, summed by the engine, compared against the budget. That also recovers the *demand* figure `NormalizationOutcome::budget_stop` reports as `(limit, demand)`, which the engine currently discards when it returns `Ok(None)` — so the existing budget-stop record cannot be reproduced from engine output today either.
+
+**Do this before the swap.** The swap without it compiles, passes every existing test, and quietly relaxes a budget contract — which is the exact failure profile of the defects this session has been finding by reading rather than by testing.
+
