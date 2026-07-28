@@ -56,7 +56,7 @@ fn target() -> MetalTargetFacts {
     MetalTargetFacts::new(
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
-        MetalDeploymentMinimum::new(13, 0),
+        MetalDeploymentMinimum::new(14, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
         subnormal_facts(APPLE_FLUSH),
         31,
@@ -945,6 +945,7 @@ fn a_unit_with_no_arithmetic_reports_no_unstated_type() {
 #[test]
 fn an_unstated_type_is_reported_before_a_gap() {
     let unit = MetalTranslationUnit::new(
+        target(),
         String::new(),
         Vec::new(),
         Vec::new(),

@@ -128,8 +128,8 @@ use tiler_metal::target::{
 };
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{
-    AppleSdk, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion, NumericalRealization,
-    OptimizationLevel,
+    ApplePlatform, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
+    NumericalRealization, OptimizationLevel,
 };
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
@@ -246,7 +246,7 @@ fn target_facts() -> MetalTargetFacts {
     MetalTargetFacts::new(
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
-        MetalDeploymentMinimum::new(13, 0),
+        MetalDeploymentMinimum::new(14, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
         MetalSubnormalArithmeticFacts::unmeasured()
             .stating(
@@ -1937,10 +1937,11 @@ fn run() -> Result<(), ProofError> {
     let request = CompileRequest::new(
         unit.source(),
         MetalTarget::new(
-            AppleSdk::MacOs,
-            DeploymentMinimum::new(13, 0),
+            ApplePlatform::MacOs,
+            DeploymentMinimum::new(14, 0),
             MslVersion::Metal3_1,
-        ),
+        )
+        .expect("MSL 3.1 is admitted from macOS 14"),
         OptimizationLevel::Default,
         NumericalRealization::strict_baseline(),
     );

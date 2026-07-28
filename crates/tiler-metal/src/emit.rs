@@ -159,6 +159,7 @@ pub fn emit_translation_unit(
 
     let source = assemble(target, &helpers, &gaps, &unstated, &bodies);
     Ok(MetalTranslationUnit::new(
+        *target,
         source,
         entry_points,
         numerical.into_iter().collect(),
@@ -216,7 +217,7 @@ fn assemble(
     emit!(
         source,
         "// Metal Shading Language: {}\n",
-        target.language.std_token()
+        target.language.semantic_name()
     );
     emit!(
         source,

@@ -20,7 +20,7 @@
 //!
 //! `crate::golden_compilation` already asserts that the target the goldens
 //! declare is the target the driver compiles them for. That check is
-//! *pointwise*: it compares one macOS 13.0 MSL 3.1 target in both spellings, and
+//! *pointwise*: it compares one macOS 14.0 MSL 3.1 target in both spellings, and
 //! it stays green if either crate gains a language standard or an artifact
 //! family the other does not have — which is exactly the divergence the two
 //! vocabularies are exposed to. It proves the fixtures are compiled for the
@@ -45,10 +45,12 @@ use tiler_metal_aot::input::{ApplePlatform, DeploymentMinimum, MslVersion};
 use crate::target::{MetalDeploymentMinimum, MetalPlatform, MslLanguageVersion};
 
 /// The number of Apple artifact families each vocabulary names.
-const FAMILY_COUNT: usize = 3;
+const FAMILY_COUNT: usize = MetalPlatform::COUNT;
+const _: [(); FAMILY_COUNT] = [(); ApplePlatform::COUNT];
 
 /// The number of MSL standards each vocabulary names.
-const LANGUAGE_COUNT: usize = 2;
+const LANGUAGE_COUNT: usize = MslLanguageVersion::COUNT;
+const _: [(); LANGUAGE_COUNT] = [(); MslVersion::COUNT];
 
 /// Assigns each emitter family a dense index.
 ///
@@ -60,6 +62,13 @@ const fn emitter_family_index(family: MetalPlatform) -> usize {
         MetalPlatform::MacOs => 0,
         MetalPlatform::IOsDevice => 1,
         MetalPlatform::IOsSimulator => 2,
+        MetalPlatform::MacCatalyst => 3,
+        MetalPlatform::TvOsDevice => 4,
+        MetalPlatform::TvOsSimulator => 5,
+        MetalPlatform::VisionOsDevice => 6,
+        MetalPlatform::VisionOsSimulator => 7,
+        MetalPlatform::WatchOsDevice => 8,
+        MetalPlatform::WatchOsSimulator => 9,
     }
 }
 
@@ -74,6 +83,13 @@ const fn driver_family_index(family: ApplePlatform) -> usize {
         ApplePlatform::MacOs => 0,
         ApplePlatform::IOsDevice => 1,
         ApplePlatform::IOsSimulator => 2,
+        ApplePlatform::MacCatalyst => 3,
+        ApplePlatform::TvOsDevice => 4,
+        ApplePlatform::TvOsSimulator => 5,
+        ApplePlatform::VisionOsDevice => 6,
+        ApplePlatform::VisionOsSimulator => 7,
+        ApplePlatform::WatchOsDevice => 8,
+        ApplePlatform::WatchOsSimulator => 9,
     }
 }
 
@@ -83,8 +99,18 @@ const fn driver_family_index(family: ApplePlatform) -> usize {
 /// same reason [`emitter_family_index`] is.
 const fn emitter_language_index(language: MslLanguageVersion) -> usize {
     match language {
-        MslLanguageVersion::Metal3_0 => 0,
-        MslLanguageVersion::Metal3_1 => 1,
+        MslLanguageVersion::Metal1_0 => 0,
+        MslLanguageVersion::Metal1_1 => 1,
+        MslLanguageVersion::Metal1_2 => 2,
+        MslLanguageVersion::Metal2_0 => 3,
+        MslLanguageVersion::Metal2_1 => 4,
+        MslLanguageVersion::Metal2_2 => 5,
+        MslLanguageVersion::Metal2_3 => 6,
+        MslLanguageVersion::Metal2_4 => 7,
+        MslLanguageVersion::Metal3_0 => 8,
+        MslLanguageVersion::Metal3_1 => 9,
+        MslLanguageVersion::Metal3_2 => 10,
+        MslLanguageVersion::Metal4_0 => 11,
     }
 }
 
@@ -94,8 +120,18 @@ const fn emitter_language_index(language: MslLanguageVersion) -> usize {
 /// reason [`driver_family_index`] is.
 const fn driver_language_index(language: MslVersion) -> usize {
     match language {
-        MslVersion::Metal3_0 => 0,
-        MslVersion::Metal3_1 => 1,
+        MslVersion::Metal1_0 => 0,
+        MslVersion::Metal1_1 => 1,
+        MslVersion::Metal1_2 => 2,
+        MslVersion::Metal2_0 => 3,
+        MslVersion::Metal2_1 => 4,
+        MslVersion::Metal2_2 => 5,
+        MslVersion::Metal2_3 => 6,
+        MslVersion::Metal2_4 => 7,
+        MslVersion::Metal3_0 => 8,
+        MslVersion::Metal3_1 => 9,
+        MslVersion::Metal3_2 => 10,
+        MslVersion::Metal4_0 => 11,
     }
 }
 
@@ -104,12 +140,35 @@ const FAMILIES: [(MetalPlatform, ApplePlatform); FAMILY_COUNT] = [
     (MetalPlatform::MacOs, ApplePlatform::MacOs),
     (MetalPlatform::IOsDevice, ApplePlatform::IOsDevice),
     (MetalPlatform::IOsSimulator, ApplePlatform::IOsSimulator),
+    (MetalPlatform::MacCatalyst, ApplePlatform::MacCatalyst),
+    (MetalPlatform::TvOsDevice, ApplePlatform::TvOsDevice),
+    (MetalPlatform::TvOsSimulator, ApplePlatform::TvOsSimulator),
+    (MetalPlatform::VisionOsDevice, ApplePlatform::VisionOsDevice),
+    (
+        MetalPlatform::VisionOsSimulator,
+        ApplePlatform::VisionOsSimulator,
+    ),
+    (MetalPlatform::WatchOsDevice, ApplePlatform::WatchOsDevice),
+    (
+        MetalPlatform::WatchOsSimulator,
+        ApplePlatform::WatchOsSimulator,
+    ),
 ];
 
 /// Every MSL standard, in both spellings.
 const LANGUAGES: [(MslLanguageVersion, MslVersion); LANGUAGE_COUNT] = [
+    (MslLanguageVersion::Metal1_0, MslVersion::Metal1_0),
+    (MslLanguageVersion::Metal1_1, MslVersion::Metal1_1),
+    (MslLanguageVersion::Metal1_2, MslVersion::Metal1_2),
+    (MslLanguageVersion::Metal2_0, MslVersion::Metal2_0),
+    (MslLanguageVersion::Metal2_1, MslVersion::Metal2_1),
+    (MslLanguageVersion::Metal2_2, MslVersion::Metal2_2),
+    (MslLanguageVersion::Metal2_3, MslVersion::Metal2_3),
+    (MslLanguageVersion::Metal2_4, MslVersion::Metal2_4),
     (MslLanguageVersion::Metal3_0, MslVersion::Metal3_0),
     (MslLanguageVersion::Metal3_1, MslVersion::Metal3_1),
+    (MslLanguageVersion::Metal3_2, MslVersion::Metal3_2),
+    (MslLanguageVersion::Metal4_0, MslVersion::Metal4_0),
 ];
 
 /// Deployment minimums exercised across both vocabularies.
@@ -118,9 +177,9 @@ const LANGUAGES: [(MslLanguageVersion, MslVersion); LANGUAGE_COUNT] = [
 /// there is nothing to enumerate exhaustively. What can diverge is the component
 /// width, the accessors, and the rendering — one side reaches an emitted header,
 /// the other an `air64-apple-*` triple — so those are what the test compares.
-/// The macOS 13.0 row is the governed golden target; the others exercise
+/// The macOS 14.0 row is the governed golden target; the others exercise
 /// nonzero and two-digit minor components across the macOS and iOS ranges.
-const DEPLOYMENT_MINIMUMS: [(u16, u16); 5] = [(13, 0), (14, 2), (16, 0), (17, 4), (26, 10)];
+const DEPLOYMENT_MINIMUMS: [(u16, u16); 5] = [(14, 0), (15, 2), (17, 0), (18, 4), (26, 10)];
 
 /// Neither vocabulary may name an artifact family the other does not.
 ///
@@ -130,6 +189,23 @@ const DEPLOYMENT_MINIMUMS: [(u16, u16); 5] = [(13, 0), (14, 2), (16, 0), (17, 4)
 /// compilation disagree about what it is.
 #[test]
 fn the_family_table_covers_every_variant_of_both_vocabularies_exactly_once() {
+    let mut emitter_seen = [false; FAMILY_COUNT];
+    let mut driver_seen = [false; FAMILY_COUNT];
+    for family in MetalPlatform::ALL {
+        emitter_seen[emitter_family_index(family)] = true;
+    }
+    for family in ApplePlatform::ALL {
+        driver_seen[driver_family_index(family)] = true;
+    }
+    assert!(
+        emitter_seen.into_iter().all(|seen| seen),
+        "MetalPlatform::ALL omits an emitter artifact family"
+    );
+    assert!(
+        driver_seen.into_iter().all(|seen| seen),
+        "ApplePlatform::ALL omits a driver artifact family"
+    );
+
     let mut emitter_seen = [false; FAMILY_COUNT];
     let mut driver_seen = [false; FAMILY_COUNT];
     for (emitter, driver) in FAMILIES {
@@ -190,6 +266,23 @@ fn both_vocabularies_spell_every_artifact_family_identically() {
 fn the_language_table_covers_every_variant_of_both_vocabularies_exactly_once() {
     let mut emitter_seen = [false; LANGUAGE_COUNT];
     let mut driver_seen = [false; LANGUAGE_COUNT];
+    for language in MslLanguageVersion::ALL {
+        emitter_seen[emitter_language_index(language)] = true;
+    }
+    for language in MslVersion::ALL {
+        driver_seen[driver_language_index(language)] = true;
+    }
+    assert!(
+        emitter_seen.into_iter().all(|seen| seen),
+        "MslLanguageVersion::ALL omits an emitter standard"
+    );
+    assert!(
+        driver_seen.into_iter().all(|seen| seen),
+        "MslVersion::ALL omits a driver standard"
+    );
+
+    let mut emitter_seen = [false; LANGUAGE_COUNT];
+    let mut driver_seen = [false; LANGUAGE_COUNT];
     for (emitter, driver) in LANGUAGES {
         let emitter_index = emitter_language_index(emitter);
         let driver_index = driver_language_index(driver);
@@ -200,7 +293,7 @@ fn the_language_table_covers_every_variant_of_both_vocabularies_exactly_once() {
         assert!(
             driver_index < LANGUAGE_COUNT,
             "LANGUAGE_COUNT does not cover the driver standard {}",
-            driver.std_token()
+            driver.semantic_name()
         );
         assert!(
             !emitter_seen[emitter_index],
@@ -209,7 +302,7 @@ fn the_language_table_covers_every_variant_of_both_vocabularies_exactly_once() {
         assert!(
             !driver_seen[driver_index],
             "{} is paired more than once",
-            driver.std_token()
+            driver.semantic_name()
         );
         emitter_seen[emitter_index] = true;
         driver_seen[driver_index] = true;
@@ -224,19 +317,20 @@ fn the_language_table_covers_every_variant_of_both_vocabularies_exactly_once() {
     );
 }
 
-/// Paired standards must produce the same `-std` token.
+/// Paired standards must name the same semantic revision.
 ///
-/// The emitter writes the token into the provenance header and the driver passes
-/// it to `metal` as `-std=<token>`. A divergence would put a standard in the
-/// header that the compilation did not use.
+/// The compiler token is additionally platform-qualified for legacy revisions,
+/// so it is derived later from the validated driver target rather than compared
+/// here as though the language alone determined it.
 #[test]
 fn both_vocabularies_spell_every_language_standard_identically() {
     for (emitter, driver) in LANGUAGES {
         assert_eq!(
-            emitter.std_token(),
-            driver.std_token(),
+            emitter.revision(),
+            driver.revision(),
             "the two vocabularies disagree on {emitter}"
         );
+        assert_eq!(emitter.semantic_name(), driver.semantic_name());
     }
 }
 

@@ -80,7 +80,7 @@
 //!
 //! On an Apple M4 Max under macOS 27.0 (build 26A5388g) with Metal 32023.883
 //! and macOS SDK 26.5 (build 25F70), every fixture in `goldens/` compiles and
-//! links through this driver under `-target air64-apple-macos13.0
+//! links through this driver under `-target air64-apple-macos14.0
 //! -std=metal3.1 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise
 //! -ffp-contract=off`, and the four-entry-point portfolio unit links into one
 //! library carrying all four `tiler_kernel_*` symbols.
@@ -99,8 +99,8 @@ use std::path::Path;
 use tiler_metal_aot::diagnostic::{CompileStage, DriverError};
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{
-    AppleSdk, CompileRequest, DeploymentMinimum, FpContract, MathMode, MetalTarget, MslVersion,
-    NumericalRealization, OptimizationLevel,
+    ApplePlatform, AppleSdk, CompileRequest, DeploymentMinimum, FpContract, MathMode, MetalTarget,
+    MslVersion, NumericalRealization, OptimizationLevel,
 };
 
 use crate::emit::emit_translation_unit;
@@ -148,10 +148,11 @@ const GOLDENS: [(&str, &str); 4] = [
 /// sets in `crate::target_correspondence`.
 fn driver_target() -> MetalTarget {
     MetalTarget::new(
-        AppleSdk::MacOs,
-        DeploymentMinimum::new(13, 0),
+        ApplePlatform::MacOs,
+        DeploymentMinimum::new(14, 0),
         MslVersion::Metal3_1,
     )
+    .expect("MSL 3.1 is admitted from macOS 14")
 }
 
 /// The emitter-side statement of that same target.
@@ -163,7 +164,7 @@ fn emitter_facts() -> MetalTargetFacts {
     MetalTargetFacts::new(
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
-        MetalDeploymentMinimum::new(13, 0),
+        MetalDeploymentMinimum::new(14, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
         MetalSubnormalArithmeticFacts::unmeasured()
             .stating(
@@ -333,26 +334,26 @@ fn every_checked_in_golden_is_compiled_by_this_module() {
 fn every_golden_declares_the_target_the_driver_compiles_it_for() {
     let facts = emitter_facts();
     let target = driver_target();
-    assert_eq!(facts.language.std_token(), target.msl_version.std_token());
+    assert_eq!(facts.language.revision(), target.msl_version().revision());
     assert_eq!(facts.platform.as_str(), target.platform().as_str());
     assert_eq!(
         facts.deployment_minimum.major(),
-        target.deployment_minimum.major()
+        target.deployment_minimum().major()
     );
     assert_eq!(
         facts.deployment_minimum.minor(),
-        target.deployment_minimum.minor()
+        target.deployment_minimum().minor()
     );
-    assert_eq!(target.triple(), "air64-apple-macos13.0");
+    assert_eq!(target.triple(), "air64-apple-macos14.0");
 
     let language = format!(
         "// Metal Shading Language: {}",
-        target.msl_version.std_token()
+        target.msl_version().semantic_name()
     );
     let family = format!(
         "// Artifact family: {} (deployment minimum {})",
         target.platform().as_str(),
-        target.deployment_minimum,
+        target.deployment_minimum(),
     );
     for (name, source) in GOLDENS {
         assert!(source.contains(&language), "{name} must declare {language}");
@@ -414,7 +415,7 @@ fn every_golden_compiles_and_links_when_a_toolchain_resolves() {
                 "{name}: the linked library does not name {symbol}"
             );
         }
-        assert_eq!(artifact.provenance.target_triple, "air64-apple-macos13.0");
+        assert_eq!(artifact.provenance.target_triple, "air64-apple-macos14.0");
         assert_eq!(
             artifact.provenance.numerical,
             NumericalRealization::strict_baseline(),

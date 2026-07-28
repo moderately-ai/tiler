@@ -14,7 +14,11 @@ doc = true
 
 [dependencies]
 tiler-artifact.workspace = true
+tiler-metal.workspace = true
 tiler-metal-aot.workspace = true
+
+[dev-dependencies]
+tiler-ir.workspace = true
 
 [lints]
 workspace = true

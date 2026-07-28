@@ -49,47 +49,13 @@
 use core::fmt;
 
 use crate::identity::{push_len, push_str};
-use crate::input::{ApplePlatform, AppleSdk, DeploymentMinimum, MetalTarget, MslVersion};
+use crate::input::{ApplePlatform, DeploymentMinimum, MetalTarget, MetalTargetError, MslVersion};
 
 /// Versioned domain tag opening the canonical selection bytes.
 ///
 /// ADR 0074 convention 3: bytes produced for one subject can never be mistaken
 /// for another subject's.
 const SELECTION_DOMAIN: &[u8] = b"tiler.metal-aot.artifact-family-selection.v1\0";
-
-/// Every Apple SDK this crate can select a compilation with.
-///
-/// This exists so [`sdk_for`] can resolve a family by *searching* the governed
-/// SDKs for the one that produces it, rather than restating the family-to-SDK
-/// relation as a second table. `AppleSdk::platform` stays the single authority
-/// for that relation, and a family no SDK produces resolves to `None` instead of
-/// to an invented selector.
-///
-/// `every_governed_sdk_is_listed` proves the list is the whole `AppleSdk` set.
-const GOVERNED_SDKS: [AppleSdk; 3] = [
-    AppleSdk::MacOs,
-    AppleSdk::IPhoneOs,
-    AppleSdk::IPhoneSimulator,
-];
-
-/// Returns the SDK that produces one artifact family, or `None` for a family no
-/// governed SDK targets.
-///
-/// Deliberately fallible. A total function would have to invent an `AppleSdk`
-/// for an unproducible family, and the resulting compilation's provenance would
-/// name a family its bytes do not belong to — the exact failure
-/// `prototype-metal-bundle-assembly` names when it forbids a wildcard arm here.
-fn sdk_for(family: ApplePlatform) -> Option<AppleSdk> {
-    let mut index = 0;
-    while index < GOVERNED_SDKS.len() {
-        let sdk = GOVERNED_SDKS[index];
-        if sdk.platform() == family {
-            return Some(sdk);
-        }
-        index += 1;
-    }
-    None
-}
 
 /// One artifact family a request selects, with the target facts it selects it at.
 ///
@@ -118,17 +84,11 @@ impl SelectedFamily {
     ///
     /// # Errors
     ///
-    /// Returns [`FamilySelectionError::UnselectableFamily`] when no governed SDK
-    /// produces this family.
+    /// Returns [`FamilySelectionError::InvalidTarget`] when the selected facts
+    /// do not form a governed target.
     fn compile_target(self) -> Result<MetalTarget, FamilySelectionError> {
-        let sdk = sdk_for(self.family).ok_or(FamilySelectionError::UnselectableFamily {
-            family: self.family,
-        })?;
-        Ok(MetalTarget::new(
-            sdk,
-            self.deployment_minimum,
-            self.msl_version,
-        ))
+        MetalTarget::new(self.family, self.deployment_minimum, self.msl_version)
+            .map_err(|source| FamilySelectionError::InvalidTarget { source })
     }
 
     /// Returns this family's canonical order key.
@@ -219,8 +179,8 @@ impl ArtifactFamilySelection {
     /// Returns [`FamilySelectionError::EmptySelection`] for
     /// `SelectedFamilies` naming no family,
     /// [`FamilySelectionError::DuplicateFamily`] for a repeated family, or
-    /// [`FamilySelectionError::UnselectableFamily`] for a family no governed
-    /// SDK produces.
+    /// [`FamilySelectionError::InvalidTarget`] when one family's platform,
+    /// minimum, and language revision are not a governed target.
     pub(crate) fn new(policy: ArtifactDeliveryPolicy) -> Result<Self, FamilySelectionError> {
         let policy = match policy {
             ArtifactDeliveryPolicy::FallbackOnly => ArtifactDeliveryPolicy::FallbackOnly,
@@ -240,11 +200,7 @@ impl ArtifactFamilySelection {
                     }
                 }
                 for selected in &families {
-                    if sdk_for(selected.family).is_none() {
-                        return Err(FamilySelectionError::UnselectableFamily {
-                            family: selected.family,
-                        });
-                    }
+                    selected.compile_target()?;
                 }
                 ArtifactDeliveryPolicy::SelectedFamilies {
                     families,
@@ -291,10 +247,9 @@ impl ArtifactFamilySelection {
     ///
     /// # Errors
     ///
-    /// Returns [`FamilySelectionError::UnselectableFamily`]. The constructor
-    /// already rejects that case, so this is a propagated impossibility rather
-    /// than a reachable failure; it is propagated instead of asserted so that a
-    /// future family added without an SDK cannot reach a panic.
+    /// Returns [`FamilySelectionError::InvalidTarget`]. The constructor already
+    /// rejects that case, so this is a propagated impossibility rather than a
+    /// reachable failure.
     pub(crate) fn compile_targets(&self) -> Result<Vec<MetalTarget>, FamilySelectionError> {
         self.families()
             .iter()
@@ -341,7 +296,7 @@ impl ArtifactFamilySelection {
                     push_str(&mut bytes, selected.family.as_str());
                     bytes.extend_from_slice(&selected.deployment_minimum.major().to_be_bytes());
                     bytes.extend_from_slice(&selected.deployment_minimum.minor().to_be_bytes());
-                    push_str(&mut bytes, selected.msl_version.std_token());
+                    push_str(&mut bytes, selected.msl_version.semantic_name());
                 }
             }
         }
@@ -364,10 +319,10 @@ pub(crate) enum FamilySelectionError {
         /// The repeated family.
         family: ApplePlatform,
     },
-    /// No governed Apple SDK produces the selected family.
-    UnselectableFamily {
-        /// The family that cannot be compiled for.
-        family: ApplePlatform,
+    /// One selected family does not form a governed compiler target.
+    InvalidTarget {
+        /// The target-level reason.
+        source: MetalTargetError,
     },
 }
 
@@ -384,11 +339,9 @@ impl fmt::Display for FamilySelectionError {
                     family.as_str()
                 )
             }
-            Self::UnselectableFamily { family } => write!(
-                formatter,
-                "no governed Apple SDK produces the {} family",
-                family.as_str(),
-            ),
+            Self::InvalidTarget { source } => {
+                write!(formatter, "invalid selected family: {source}")
+            }
         }
     }
 }
@@ -399,7 +352,7 @@ impl std::error::Error for FamilySelectionError {}
 mod tests {
     use super::{
         ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilyRequirement, FamilySelectionError,
-        GOVERNED_SDKS, SelectedFamily, sdk_for,
+        SelectedFamily,
     };
     use crate::input::{ApplePlatform, AppleSdk, DeploymentMinimum, MslVersion};
 
@@ -419,45 +372,6 @@ mod tests {
         .expect("the selection is valid")
     }
 
-    /// The governed SDK list is the whole `AppleSdk` set.
-    ///
-    /// `sdk_for` searches this list, so a variant missing from it would make its
-    /// family unselectable while every pointwise case below still passed. The
-    /// match is exhaustive over `AppleSdk`, so adding an SDK fails to compile
-    /// here until it is listed.
-    #[test]
-    fn every_governed_sdk_is_listed() {
-        for sdk in [
-            AppleSdk::MacOs,
-            AppleSdk::IPhoneOs,
-            AppleSdk::IPhoneSimulator,
-        ] {
-            let listed = match sdk {
-                AppleSdk::MacOs | AppleSdk::IPhoneOs | AppleSdk::IPhoneSimulator => {
-                    GOVERNED_SDKS.contains(&sdk)
-                }
-            };
-            assert!(listed, "{} is not a governed SDK", sdk.selector());
-        }
-    }
-
-    /// Every governed family resolves to the SDK that produces it.
-    ///
-    /// Asserted through `AppleSdk::platform` rather than against a second
-    /// hand-written table, so this cannot agree with a wrong resolution by
-    /// repeating it.
-    #[test]
-    fn every_governed_family_resolves_to_its_own_sdk() {
-        for family in [
-            ApplePlatform::MacOs,
-            ApplePlatform::IOsDevice,
-            ApplePlatform::IOsSimulator,
-        ] {
-            let sdk = sdk_for(family).expect("a governed family has an SDK");
-            assert_eq!(sdk.platform(), family, "{}", family.as_str());
-        }
-    }
-
     /// Each selected family compiles for its own triple, and for no other's.
     ///
     /// This is the property the ticket names: a nonmatching target must not
@@ -467,8 +381,8 @@ mod tests {
     #[test]
     fn each_selected_family_compiles_for_its_own_target() {
         let selection = selection(vec![
-            selected(ApplePlatform::MacOs, 13, 0),
-            selected(ApplePlatform::IOsDevice, 16, 0),
+            selected(ApplePlatform::MacOs, 14, 0),
+            selected(ApplePlatform::IOsDevice, 17, 0),
             selected(ApplePlatform::IOsSimulator, 17, 0),
         ]);
         let targets = selection.compile_targets().expect("every family resolves");
@@ -479,9 +393,9 @@ mod tests {
         assert_eq!(
             triples,
             [
-                "air64-apple-ios16.0",
+                "air64-apple-ios17.0",
                 "air64-apple-ios17.0-simulator",
-                "air64-apple-macos13.0",
+                "air64-apple-macos14.0",
             ],
         );
 
@@ -498,8 +412,8 @@ mod tests {
     #[test]
     fn a_two_family_selection_produces_two_distinct_compilations() {
         let selection = selection(vec![
-            selected(ApplePlatform::IOsDevice, 16, 0),
-            selected(ApplePlatform::IOsSimulator, 16, 0),
+            selected(ApplePlatform::IOsDevice, 17, 0),
+            selected(ApplePlatform::IOsSimulator, 17, 0),
         ]);
         let targets = selection.compile_targets().expect("every family resolves");
         assert_eq!(targets.len(), 2);
@@ -508,7 +422,7 @@ mod tests {
             targets[1].triple(),
             "the simulator environment must not collapse onto the device triple",
         );
-        assert_ne!(targets[0].sdk.selector(), targets[1].sdk.selector());
+        assert_ne!(targets[0].sdk().selector(), targets[1].sdk().selector());
     }
 
     /// A deployment minimum is per family, not shared across the selection.
@@ -518,8 +432,8 @@ mod tests {
     #[test]
     fn each_family_keeps_its_own_deployment_minimum() {
         let selection = selection(vec![
-            selected(ApplePlatform::MacOs, 13, 0),
-            selected(ApplePlatform::IOsDevice, 16, 2),
+            selected(ApplePlatform::MacOs, 14, 0),
+            selected(ApplePlatform::IOsDevice, 17, 2),
         ]);
         let mut triples: Vec<String> = selection
             .compile_targets()
@@ -528,7 +442,7 @@ mod tests {
             .map(|target| target.triple())
             .collect();
         triples.sort();
-        assert_eq!(triples, ["air64-apple-ios16.2", "air64-apple-macos13.0"]);
+        assert_eq!(triples, ["air64-apple-ios17.2", "air64-apple-macos14.0"]);
     }
 
     /// `FallbackOnly` invokes no backend compiler.
@@ -555,7 +469,7 @@ mod tests {
     /// The negative case above is only meaningful paired with this one.
     #[test]
     fn a_selected_family_invokes_the_backend_compiler() {
-        let selection = selection(vec![selected(ApplePlatform::MacOs, 13, 0)]);
+        let selection = selection(vec![selected(ApplePlatform::MacOs, 14, 0)]);
         assert!(selection.invokes_backend_compiler());
         assert_eq!(selection.compile_targets().expect("it resolves").len(), 1);
     }
@@ -583,8 +497,8 @@ mod tests {
     fn a_repeated_family_is_rejected_rather_than_deduplicated() {
         let error = ArtifactFamilySelection::new(ArtifactDeliveryPolicy::SelectedFamilies {
             families: vec![
-                selected(ApplePlatform::MacOs, 13, 0),
                 selected(ApplePlatform::MacOs, 14, 0),
+                selected(ApplePlatform::MacOs, 15, 0),
             ],
             requirement: FamilyRequirement::RequiredWhenTargetMatches,
         })
@@ -605,12 +519,12 @@ mod tests {
     #[test]
     fn declaration_order_does_not_change_the_canonical_bytes() {
         let forward = selection(vec![
-            selected(ApplePlatform::MacOs, 13, 0),
+            selected(ApplePlatform::MacOs, 14, 0),
             selected(ApplePlatform::IOsSimulator, 17, 0),
         ]);
         let reversed = selection(vec![
             selected(ApplePlatform::IOsSimulator, 17, 0),
-            selected(ApplePlatform::MacOs, 13, 0),
+            selected(ApplePlatform::MacOs, 14, 0),
         ]);
         assert_eq!(forward.canonical_bytes(), reversed.canonical_bytes());
         assert_eq!(forward, reversed);
@@ -622,28 +536,28 @@ mod tests {
     /// identity, which is the failure ADR 0074 convention 3 exists to prevent.
     #[test]
     fn every_selection_facet_reaches_the_canonical_bytes() {
-        let baseline = selection(vec![selected(ApplePlatform::MacOs, 13, 0)]).canonical_bytes();
+        let baseline = selection(vec![selected(ApplePlatform::MacOs, 14, 0)]).canonical_bytes();
 
         let other_family =
-            selection(vec![selected(ApplePlatform::IOsDevice, 13, 0)]).canonical_bytes();
+            selection(vec![selected(ApplePlatform::IOsDevice, 17, 0)]).canonical_bytes();
         assert_ne!(baseline, other_family, "the family must reach identity");
 
-        let other_minor = selection(vec![selected(ApplePlatform::MacOs, 13, 1)]).canonical_bytes();
+        let other_minor = selection(vec![selected(ApplePlatform::MacOs, 14, 1)]).canonical_bytes();
         assert_ne!(baseline, other_minor, "the minor version must reach it");
 
-        let other_major = selection(vec![selected(ApplePlatform::MacOs, 14, 0)]).canonical_bytes();
+        let other_major = selection(vec![selected(ApplePlatform::MacOs, 15, 0)]).canonical_bytes();
         assert_ne!(baseline, other_major, "the major version must reach it");
 
         let other_language = selection(vec![SelectedFamily {
             msl_version: MslVersion::Metal3_0,
-            ..selected(ApplePlatform::MacOs, 13, 0)
+            ..selected(ApplePlatform::MacOs, 14, 0)
         }])
         .canonical_bytes();
         assert_ne!(baseline, other_language, "the standard must reach it");
 
         let two_families = selection(vec![
-            selected(ApplePlatform::MacOs, 13, 0),
-            selected(ApplePlatform::IOsDevice, 16, 0),
+            selected(ApplePlatform::MacOs, 14, 0),
+            selected(ApplePlatform::IOsDevice, 17, 0),
         ])
         .canonical_bytes();
         assert_ne!(baseline, two_families, "the family count must reach it");
@@ -658,7 +572,7 @@ mod tests {
         let fallback = ArtifactFamilySelection::new(ArtifactDeliveryPolicy::FallbackOnly)
             .expect("FallbackOnly is always valid")
             .canonical_bytes();
-        let macos = selection(vec![selected(ApplePlatform::MacOs, 13, 0)]).canonical_bytes();
+        let macos = selection(vec![selected(ApplePlatform::MacOs, 14, 0)]).canonical_bytes();
         assert_ne!(fallback, macos);
         assert!(fallback.starts_with(super::SELECTION_DOMAIN));
         assert!(macos.starts_with(super::SELECTION_DOMAIN));
@@ -677,7 +591,7 @@ mod tests {
     /// reader has to derive from a literal.
     #[test]
     fn the_family_count_carries_the_eight_byte_framing() {
-        let bytes = selection(vec![selected(ApplePlatform::MacOs, 13, 0)]).canonical_bytes();
+        let bytes = selection(vec![selected(ApplePlatform::MacOs, 14, 0)]).canonical_bytes();
         // The policy tag and its requirement mode precede the count.
         let count_at = super::SELECTION_DOMAIN.len() + 2;
         assert_eq!(
@@ -690,7 +604,7 @@ mod tests {
     /// The canonical bytes open with their versioned domain tag.
     #[test]
     fn the_canonical_bytes_are_domain_separated() {
-        let bytes = selection(vec![selected(ApplePlatform::MacOs, 13, 0)]).canonical_bytes();
+        let bytes = selection(vec![selected(ApplePlatform::MacOs, 14, 0)]).canonical_bytes();
         assert!(bytes.starts_with(super::SELECTION_DOMAIN));
         assert!(
             bytes.len() > super::SELECTION_DOMAIN.len(),
@@ -705,12 +619,12 @@ mod tests {
     #[test]
     fn length_prefixes_keep_adjacent_runs_unambiguous() {
         let device_then_simulator = selection(vec![
-            selected(ApplePlatform::IOsDevice, 16, 0),
-            selected(ApplePlatform::IOsSimulator, 16, 0),
+            selected(ApplePlatform::IOsDevice, 17, 0),
+            selected(ApplePlatform::IOsSimulator, 17, 0),
         ])
         .canonical_bytes();
         let simulator_only =
-            selection(vec![selected(ApplePlatform::IOsSimulator, 16, 0)]).canonical_bytes();
+            selection(vec![selected(ApplePlatform::IOsSimulator, 17, 0)]).canonical_bytes();
         assert_ne!(device_then_simulator, simulator_only);
         assert!(
             !device_then_simulator.ends_with(&simulator_only[super::SELECTION_DOMAIN.len()..]),
@@ -718,37 +632,42 @@ mod tests {
         );
     }
 
-    /// Mac Catalyst is not representable, so it cannot be relabelled.
-    ///
-    /// `docs/backends/metal.md`: "Mac Catalyst is a fourth `ios` + `macabi`
-    /// family and is deferred. It is not relabeled as macOS or iOS-device
-    /// compatible." At this layer the guarantee is structural rather than
-    /// checked: `ApplePlatform` has exactly the three measured families, so no
-    /// selection can name Catalyst at all and none can be silently satisfied by
-    /// an iOS-device or macOS compilation. This test states that the
-    /// enumeration is the whole governed set, so adding Catalyst fails to
-    /// compile here and must be decided rather than inherited.
+    /// Every represented family derives its own SDK without conflating SDK and
+    /// artifact identity.
     #[test]
-    fn the_governed_families_are_the_three_measured_ones() {
-        for family in [
-            ApplePlatform::MacOs,
-            ApplePlatform::IOsDevice,
-            ApplePlatform::IOsSimulator,
+    fn every_represented_family_derives_its_sdk() {
+        for (family, sdk) in [
+            (ApplePlatform::MacOs, AppleSdk::MacOs),
+            (ApplePlatform::MacCatalyst, AppleSdk::MacOs),
+            (ApplePlatform::IOsDevice, AppleSdk::IPhoneOs),
+            (ApplePlatform::IOsSimulator, AppleSdk::IPhoneSimulator),
+            (ApplePlatform::TvOsDevice, AppleSdk::AppleTvOs),
+            (ApplePlatform::TvOsSimulator, AppleSdk::AppleTvSimulator),
+            (ApplePlatform::VisionOsDevice, AppleSdk::XrOs),
+            (ApplePlatform::VisionOsSimulator, AppleSdk::XrSimulator),
+            (ApplePlatform::WatchOsDevice, AppleSdk::WatchOs),
+            (ApplePlatform::WatchOsSimulator, AppleSdk::WatchSimulator),
         ] {
-            let identifier = match family {
-                ApplePlatform::MacOs => "macos",
-                ApplePlatform::IOsDevice => "ios-device",
-                ApplePlatform::IOsSimulator => "ios-simulator",
+            let expected = match family {
+                ApplePlatform::MacOs | ApplePlatform::MacCatalyst => AppleSdk::MacOs,
+                ApplePlatform::IOsDevice => AppleSdk::IPhoneOs,
+                ApplePlatform::IOsSimulator => AppleSdk::IPhoneSimulator,
+                ApplePlatform::TvOsDevice => AppleSdk::AppleTvOs,
+                ApplePlatform::TvOsSimulator => AppleSdk::AppleTvSimulator,
+                ApplePlatform::VisionOsDevice => AppleSdk::XrOs,
+                ApplePlatform::VisionOsSimulator => AppleSdk::XrSimulator,
+                ApplePlatform::WatchOsDevice => AppleSdk::WatchOs,
+                ApplePlatform::WatchOsSimulator => AppleSdk::WatchSimulator,
             };
-            assert_eq!(family.as_str(), identifier);
-            assert!(sdk_for(family).is_some(), "{identifier} must be buildable");
+            assert_eq!(sdk, expected, "{}", family.as_str());
+            assert_eq!(family.sdk(), sdk, "{}", family.as_str());
         }
     }
 
     /// The validated policy is readable, and its requirement mode survives.
     #[test]
     fn the_validated_policy_retains_its_requirement_mode() {
-        let selection = selection(vec![selected(ApplePlatform::MacOs, 13, 0)]);
+        let selection = selection(vec![selected(ApplePlatform::MacOs, 14, 0)]);
         match selection.policy() {
             ArtifactDeliveryPolicy::SelectedFamilies {
                 families,

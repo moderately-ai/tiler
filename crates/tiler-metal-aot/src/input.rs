@@ -47,11 +47,11 @@
 
 use core::fmt;
 
-/// One selected Apple SDK and the artifact family it produces.
+/// One selected Apple SDK used to discover the offline Metal tools.
 ///
-/// Mac Catalyst (`ios` + `macabi`) is a deferred fourth family and is not yet
-/// representable here; the Apple artifact-compatibility research keeps it
-/// explicitly deferred rather than relabelling a macOS or iOS artifact.
+/// An SDK is not an artifact-family authority: macOS and Mac Catalyst both use
+/// `macosx` while producing different target triples. [`ApplePlatform`] owns
+/// the artifact family and derives its SDK selector.
 /// # Growth
 ///
 /// `#[non_exhaustive]`, because every out-of-crate use of this type names a
@@ -83,15 +83,58 @@ use core::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AppleSdk {
-    /// The `macosx` SDK: the macOS artifact family.
+    /// The `macosx` SDK used by macOS and Mac Catalyst.
     MacOs,
     /// The `iphoneos` SDK: the iOS device artifact family.
     IPhoneOs,
     /// The `iphonesimulator` SDK: the iOS simulator artifact family.
     IPhoneSimulator,
+    /// The `appletvos` SDK.
+    AppleTvOs,
+    /// The `appletvsimulator` SDK.
+    AppleTvSimulator,
+    /// The `xros` SDK.
+    XrOs,
+    /// The `xrsimulator` SDK.
+    XrSimulator,
+    /// The `watchos` SDK.
+    WatchOs,
+    /// The `watchsimulator` SDK.
+    WatchSimulator,
 }
 
 impl AppleSdk {
+    /// Every SDK selector this toolchain vocabulary currently names.
+    pub const ALL: [Self; 9] = [
+        Self::MacOs,
+        Self::IPhoneOs,
+        Self::IPhoneSimulator,
+        Self::AppleTvOs,
+        Self::AppleTvSimulator,
+        Self::XrOs,
+        Self::XrSimulator,
+        Self::WatchOs,
+        Self::WatchSimulator,
+    ];
+
+    /// How many SDK selectors this toolchain vocabulary currently names.
+    pub const COUNT: usize = Self::ALL.len();
+
+    #[cfg(test)]
+    const fn index(self) -> usize {
+        match self {
+            Self::MacOs => 0,
+            Self::IPhoneOs => 1,
+            Self::IPhoneSimulator => 2,
+            Self::AppleTvOs => 3,
+            Self::AppleTvSimulator => 4,
+            Self::XrOs => 5,
+            Self::XrSimulator => 6,
+            Self::WatchOs => 7,
+            Self::WatchSimulator => 8,
+        }
+    }
+
     /// Returns the canonical `xcrun --sdk` selector for this SDK.
     #[must_use]
     pub const fn selector(self) -> &'static str {
@@ -99,41 +142,21 @@ impl AppleSdk {
             Self::MacOs => "macosx",
             Self::IPhoneOs => "iphoneos",
             Self::IPhoneSimulator => "iphonesimulator",
-        }
-    }
-
-    /// Returns the artifact platform family this SDK targets.
-    #[must_use]
-    pub const fn platform(self) -> ApplePlatform {
-        match self {
-            Self::MacOs => ApplePlatform::MacOs,
-            Self::IPhoneOs => ApplePlatform::IOsDevice,
-            Self::IPhoneSimulator => ApplePlatform::IOsSimulator,
-        }
-    }
-
-    /// Returns the `air64-apple-<os>` operating-system token for the triple.
-    const fn triple_os(self) -> &'static str {
-        match self {
-            Self::MacOs => "macos",
-            Self::IPhoneOs | Self::IPhoneSimulator => "ios",
-        }
-    }
-
-    /// Returns the triple environment suffix; the simulator adds `-simulator`.
-    const fn triple_suffix(self) -> &'static str {
-        match self {
-            Self::MacOs | Self::IPhoneOs => "",
-            Self::IPhoneSimulator => "-simulator",
+            Self::AppleTvOs => "appletvos",
+            Self::AppleTvSimulator => "appletvsimulator",
+            Self::XrOs => "xros",
+            Self::XrSimulator => "xrsimulator",
+            Self::WatchOs => "watchos",
+            Self::WatchSimulator => "watchsimulator",
         }
     }
 }
 
-/// The measured Apple artifact family a compiled `metallib` belongs to.
+/// The Apple artifact family a compiled `metallib` belongs to.
 ///
 /// This is the family a compilation *produces*, and
 /// `tiler_metal::target::MetalPlatform` is the family emitted source
-/// *declares*, with the same three variants and the same stable identifiers.
+/// *declares*, with the same variants and the same stable identifiers.
 /// Adding a family here without adding it there fails `tiler-metal`'s build.
 /// Do not mark this `#[non_exhaustive]`: see this module's documentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -144,9 +167,40 @@ pub enum ApplePlatform {
     IOsDevice,
     /// iOS simulator.
     IOsSimulator,
+    /// Mac Catalyst.
+    MacCatalyst,
+    /// tvOS device.
+    TvOsDevice,
+    /// tvOS simulator.
+    TvOsSimulator,
+    /// visionOS device.
+    VisionOsDevice,
+    /// visionOS simulator.
+    VisionOsSimulator,
+    /// watchOS device.
+    WatchOsDevice,
+    /// watchOS simulator.
+    WatchOsSimulator,
 }
 
 impl ApplePlatform {
+    /// Every artifact family this compiler-target vocabulary names.
+    pub const ALL: [Self; 10] = [
+        Self::MacOs,
+        Self::IOsDevice,
+        Self::IOsSimulator,
+        Self::MacCatalyst,
+        Self::TvOsDevice,
+        Self::TvOsSimulator,
+        Self::VisionOsDevice,
+        Self::VisionOsSimulator,
+        Self::WatchOsDevice,
+        Self::WatchOsSimulator,
+    ];
+
+    /// How many artifact families this compiler-target vocabulary names.
+    pub const COUNT: usize = Self::ALL.len();
+
     /// Returns a stable lowercase identifier for this family.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -154,6 +208,54 @@ impl ApplePlatform {
             Self::MacOs => "macos",
             Self::IOsDevice => "ios-device",
             Self::IOsSimulator => "ios-simulator",
+            Self::MacCatalyst => "mac-catalyst",
+            Self::TvOsDevice => "tvos-device",
+            Self::TvOsSimulator => "tvos-simulator",
+            Self::VisionOsDevice => "visionos-device",
+            Self::VisionOsSimulator => "visionos-simulator",
+            Self::WatchOsDevice => "watchos-device",
+            Self::WatchOsSimulator => "watchos-simulator",
+        }
+    }
+
+    /// Returns the SDK selector used to compile this artifact family.
+    #[must_use]
+    pub const fn sdk(self) -> AppleSdk {
+        match self {
+            Self::MacOs | Self::MacCatalyst => AppleSdk::MacOs,
+            Self::IOsDevice => AppleSdk::IPhoneOs,
+            Self::IOsSimulator => AppleSdk::IPhoneSimulator,
+            Self::TvOsDevice => AppleSdk::AppleTvOs,
+            Self::TvOsSimulator => AppleSdk::AppleTvSimulator,
+            Self::VisionOsDevice => AppleSdk::XrOs,
+            Self::VisionOsSimulator => AppleSdk::XrSimulator,
+            Self::WatchOsDevice => AppleSdk::WatchOs,
+            Self::WatchOsSimulator => AppleSdk::WatchSimulator,
+        }
+    }
+
+    const fn triple_os(self) -> &'static str {
+        match self {
+            Self::MacOs => "macos",
+            Self::MacCatalyst | Self::IOsDevice | Self::IOsSimulator => "ios",
+            Self::TvOsDevice | Self::TvOsSimulator => "tvos",
+            Self::VisionOsDevice | Self::VisionOsSimulator => "xros",
+            Self::WatchOsDevice | Self::WatchOsSimulator => "watchos",
+        }
+    }
+
+    const fn triple_suffix(self) -> &'static str {
+        match self {
+            Self::MacCatalyst => "-macabi",
+            Self::IOsSimulator
+            | Self::TvOsSimulator
+            | Self::VisionOsSimulator
+            | Self::WatchOsSimulator => "-simulator",
+            Self::MacOs
+            | Self::IOsDevice
+            | Self::TvOsDevice
+            | Self::VisionOsDevice
+            | Self::WatchOsDevice => "",
         }
     }
 }
@@ -170,7 +272,7 @@ impl ApplePlatform {
 /// and renders them the same way, but reaches an emitted provenance header
 /// instead. Both spellings are asserted to agree from `tiler-metal`, which is
 /// what makes that header's claim about this compilation true.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeploymentMinimum {
     major: u16,
     minor: u16,
@@ -214,19 +316,87 @@ impl fmt::Display for DeploymentMinimum {
 /// module's documentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MslVersion {
+    /// MSL 1.0.
+    Metal1_0,
+    /// MSL 1.1.
+    Metal1_1,
+    /// MSL 1.2.
+    Metal1_2,
+    /// MSL 2.0.
+    Metal2_0,
+    /// MSL 2.1.
+    Metal2_1,
+    /// MSL 2.2.
+    Metal2_2,
+    /// MSL 2.3.
+    Metal2_3,
+    /// MSL 2.4.
+    Metal2_4,
     /// MSL 3.0, spelled `-std=metal3.0`.
     Metal3_0,
     /// MSL 3.1, spelled `-std=metal3.1`.
     Metal3_1,
+    /// MSL 3.2.
+    Metal3_2,
+    /// MSL 4.0.
+    Metal4_0,
 }
 
 impl MslVersion {
-    /// Returns the `-std` value token for this language version.
+    /// Every semantic MSL revision this toolchain vocabulary names.
+    pub const ALL: [Self; 12] = [
+        Self::Metal1_0,
+        Self::Metal1_1,
+        Self::Metal1_2,
+        Self::Metal2_0,
+        Self::Metal2_1,
+        Self::Metal2_2,
+        Self::Metal2_3,
+        Self::Metal2_4,
+        Self::Metal3_0,
+        Self::Metal3_1,
+        Self::Metal3_2,
+        Self::Metal4_0,
+    ];
+
+    /// How many semantic MSL revisions this toolchain vocabulary names.
+    pub const COUNT: usize = Self::ALL.len();
+
+    /// Returns the platform-independent semantic revision.
     #[must_use]
-    pub const fn std_token(self) -> &'static str {
+    pub const fn revision(self) -> &'static str {
         match self {
+            Self::Metal1_0 => "1.0",
+            Self::Metal1_1 => "1.1",
+            Self::Metal1_2 => "1.2",
+            Self::Metal2_0 => "2.0",
+            Self::Metal2_1 => "2.1",
+            Self::Metal2_2 => "2.2",
+            Self::Metal2_3 => "2.3",
+            Self::Metal2_4 => "2.4",
+            Self::Metal3_0 => "3.0",
+            Self::Metal3_1 => "3.1",
+            Self::Metal3_2 => "3.2",
+            Self::Metal4_0 => "4.0",
+        }
+    }
+
+    /// Returns the stable platform-independent semantic spelling.
+    #[must_use]
+    pub const fn semantic_name(self) -> &'static str {
+        match self {
+            Self::Metal1_0 => "metal1.0",
+            Self::Metal1_1 => "metal1.1",
+            Self::Metal1_2 => "metal1.2",
+            Self::Metal2_0 => "metal2.0",
+            Self::Metal2_1 => "metal2.1",
+            Self::Metal2_2 => "metal2.2",
+            Self::Metal2_3 => "metal2.3",
+            Self::Metal2_4 => "metal2.4",
             Self::Metal3_0 => "metal3.0",
             Self::Metal3_1 => "metal3.1",
+            Self::Metal3_2 => "metal3.2",
+            Self::Metal4_0 => "metal4.0",
         }
     }
 }
@@ -353,6 +523,8 @@ pub enum FpContract {
     On,
     /// `fast`: contract freely across statements.
     Fast,
+    /// `fast-honor-pragmas`: contract freely except where source pragmas forbid it.
+    FastHonorPragmas,
 }
 
 impl FpContract {
@@ -363,6 +535,7 @@ impl FpContract {
             Self::Off => "off",
             Self::On => "on",
             Self::Fast => "fast",
+            Self::FastHonorPragmas => "fast-honor-pragmas",
         }
     }
 
@@ -382,7 +555,7 @@ impl FpContract {
     pub const fn contracts_across_statements(self) -> bool {
         match self {
             Self::Off | Self::On => false,
-            Self::Fast => true,
+            Self::Fast | Self::FastHonorPragmas => true,
         }
     }
 }
@@ -516,53 +689,186 @@ impl NumericalRealization {
     }
 }
 
-/// One fully specified Apple Metal compilation target.
-///
-/// The SDK selects the family and simulator environment, the deployment minimum
-/// supplies the version, and the two together fully determine the normalized
-/// target triple, so no inconsistent SDK/triple pairing is representable.
+/// A platform, language revision, and deployment minimum do not form a valid target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetalTargetError {
+    /// The language revision has no governed spelling for this platform.
+    LanguageUnavailable {
+        /// Requested artifact family.
+        platform: ApplePlatform,
+        /// Requested semantic MSL revision.
+        language: MslVersion,
+    },
+    /// The requested deployment minimum predates the language revision.
+    DeploymentMinimumTooLow {
+        /// Requested artifact family.
+        platform: ApplePlatform,
+        /// Requested semantic MSL revision.
+        language: MslVersion,
+        /// Requested minimum.
+        requested: DeploymentMinimum,
+        /// Earliest permitted minimum.
+        required: DeploymentMinimum,
+    },
+}
+
+impl fmt::Display for MetalTargetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LanguageUnavailable { platform, language } => write!(
+                formatter,
+                "MSL {} is not admitted for {}",
+                language.revision(),
+                platform.as_str()
+            ),
+            Self::DeploymentMinimumTooLow {
+                platform,
+                language,
+                requested,
+                required,
+            } => write!(
+                formatter,
+                "MSL {} on {} requires deployment minimum {required}, got {requested}",
+                language.revision(),
+                platform.as_str()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MetalTargetError {}
+
+/// One validated Apple Metal compilation target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MetalTarget {
-    /// The single selected SDK and artifact family.
-    pub sdk: AppleSdk,
-    /// The requested deployment minimum.
-    pub deployment_minimum: DeploymentMinimum,
-    /// The selected MSL standard.
-    pub msl_version: MslVersion,
+    platform: ApplePlatform,
+    deployment_minimum: DeploymentMinimum,
+    msl_version: MslVersion,
+    std_token: &'static str,
 }
 
 impl MetalTarget {
-    /// Constructs a fully specified target.
-    #[must_use]
-    pub const fn new(
-        sdk: AppleSdk,
+    /// Constructs a target only when the platform, revision, and minimum agree.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed rejection for an unavailable revision/platform pair or a deployment minimum below its governed floor.
+    ///
+    /// The MSL specification supplies the macOS, iOS, tvOS, and visionOS floors. Metal 32023.883 compile-and-link measurements supply the MSL 4.0 floor for Mac Catalyst and watchOS; those rows are compilation evidence, not runtime qualification.
+    pub fn new(
+        platform: ApplePlatform,
         deployment_minimum: DeploymentMinimum,
         msl_version: MslVersion,
-    ) -> Self {
-        Self {
-            sdk,
+    ) -> Result<Self, MetalTargetError> {
+        let Some((required, std_token)) = target_language(platform, msl_version) else {
+            return Err(MetalTargetError::LanguageUnavailable {
+                platform,
+                language: msl_version,
+            });
+        };
+        if deployment_minimum < required {
+            return Err(MetalTargetError::DeploymentMinimumTooLow {
+                platform,
+                language: msl_version,
+                requested: deployment_minimum,
+                required,
+            });
+        }
+        Ok(Self {
+            platform,
             deployment_minimum,
             msl_version,
-        }
+            std_token,
+        })
     }
 
     /// Returns the artifact platform family this target produces.
     #[must_use]
     pub const fn platform(self) -> ApplePlatform {
-        self.sdk.platform()
+        self.platform
+    }
+
+    /// Returns the SDK used to discover this platform's tools.
+    #[must_use]
+    pub const fn sdk(self) -> AppleSdk {
+        self.platform.sdk()
+    }
+
+    /// Returns the requested deployment minimum.
+    #[must_use]
+    pub const fn deployment_minimum(self) -> DeploymentMinimum {
+        self.deployment_minimum
+    }
+
+    /// Returns the semantic MSL revision.
+    #[must_use]
+    pub const fn msl_version(self) -> MslVersion {
+        self.msl_version
+    }
+
+    /// Returns the exact platform-qualified compiler token.
+    #[must_use]
+    pub const fn std_token(self) -> &'static str {
+        self.std_token
     }
 
     /// Returns the normalized `air64-apple-*` target triple, for example
-    /// `air64-apple-macos13.0` or `air64-apple-ios16.0-simulator`.
+    /// `air64-apple-macos14.0` or `air64-apple-ios17.0-simulator`.
     #[must_use]
     pub fn triple(self) -> String {
         format!(
             "air64-apple-{}{}{}",
-            self.sdk.triple_os(),
+            self.platform.triple_os(),
             self.deployment_minimum,
-            self.sdk.triple_suffix(),
+            self.platform.triple_suffix(),
         )
     }
+}
+
+const fn target_language(
+    platform: ApplePlatform,
+    language: MslVersion,
+) -> Option<(DeploymentMinimum, &'static str)> {
+    use ApplePlatform::{
+        IOsDevice, IOsSimulator, MacCatalyst, MacOs, TvOsDevice, TvOsSimulator, VisionOsDevice,
+        VisionOsSimulator, WatchOsDevice, WatchOsSimulator,
+    };
+    use MslVersion::{
+        Metal1_0, Metal1_1, Metal1_2, Metal2_0, Metal2_1, Metal2_2, Metal2_3, Metal2_4, Metal3_0,
+        Metal3_1, Metal3_2, Metal4_0,
+    };
+    let pair = match (platform, language) {
+        (IOsDevice | IOsSimulator, Metal1_0) => (8, 0, "ios-metal1.0"),
+        (IOsDevice | IOsSimulator, Metal1_1) => (9, 0, "ios-metal1.1"),
+        (IOsDevice | IOsSimulator, Metal1_2) => (10, 0, "ios-metal1.2"),
+        (IOsDevice | IOsSimulator, Metal2_0) => (11, 0, "ios-metal2.0"),
+        (IOsDevice | IOsSimulator, Metal2_1) => (12, 0, "ios-metal2.1"),
+        (IOsDevice | IOsSimulator, Metal2_2) => (13, 0, "ios-metal2.2"),
+        (IOsDevice | IOsSimulator, Metal2_3) => (14, 0, "ios-metal2.3"),
+        (IOsDevice | IOsSimulator, Metal2_4) => (15, 0, "ios-metal2.4"),
+        (MacOs, Metal1_1) => (10, 11, "macos-metal1.1"),
+        (MacOs, Metal1_2) => (10, 12, "macos-metal1.2"),
+        (MacOs, Metal2_0) => (10, 13, "macos-metal2.0"),
+        (MacOs, Metal2_1) => (10, 14, "macos-metal2.1"),
+        (MacOs, Metal2_2) => (10, 15, "macos-metal2.2"),
+        (MacOs, Metal2_3) => (11, 0, "macos-metal2.3"),
+        (MacOs, Metal2_4) => (12, 0, "macos-metal2.4"),
+        (MacOs, Metal3_0) => (13, 0, "metal3.0"),
+        (MacOs, Metal3_1) => (14, 0, "metal3.1"),
+        (MacOs, Metal3_2) => (15, 0, "metal3.2"),
+        (IOsDevice | IOsSimulator | TvOsDevice | TvOsSimulator, Metal3_0) => (16, 0, "metal3.0"),
+        (IOsDevice | IOsSimulator | TvOsDevice | TvOsSimulator, Metal3_1) => (17, 0, "metal3.1"),
+        (IOsDevice | IOsSimulator | TvOsDevice | TvOsSimulator, Metal3_2) => (18, 0, "metal3.2"),
+        (VisionOsDevice | VisionOsSimulator, Metal3_1) => (1, 0, "metal3.1"),
+        (VisionOsDevice | VisionOsSimulator, Metal3_2) => (2, 0, "metal3.2"),
+        (
+            MacOs | MacCatalyst | IOsDevice | IOsSimulator | TvOsDevice | TvOsSimulator
+            | VisionOsDevice | VisionOsSimulator | WatchOsDevice | WatchOsSimulator,
+            Metal4_0,
+        ) => (26, 0, "metal4.0"),
+        _ => return None,
+    };
+    Some((DeploymentMinimum::new(pair.0, pair.1), pair.2))
 }
 
 /// A complete offline Metal compilation request.
@@ -609,7 +915,7 @@ impl CompileRequest {
         let mut flags = vec![
             "-target".to_owned(),
             self.target.triple(),
-            format!("-std={}", self.target.msl_version.std_token()),
+            format!("-std={}", self.target.std_token()),
             self.optimization.flag().to_owned(),
         ];
         flags.extend(self.numerical.flags());
@@ -631,13 +937,15 @@ impl CompileRequest {
 mod tests {
     use super::{
         ApplePlatform, AppleSdk, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract,
-        MathMode, MetalTarget, MslVersion, NumericalRealization, OptimizationLevel,
+        MathMode, MetalTarget, MetalTargetError, MslVersion, NumericalRealization,
+        OptimizationLevel,
     };
 
-    fn baseline_request(sdk: AppleSdk, minimum: DeploymentMinimum) -> CompileRequest {
+    fn baseline_request(platform: ApplePlatform, minimum: DeploymentMinimum) -> CompileRequest {
         CompileRequest::new(
             "// source",
-            MetalTarget::new(sdk, minimum, MslVersion::Metal3_1),
+            MetalTarget::new(platform, minimum, MslVersion::Metal3_1)
+                .expect("the fixture target is valid"),
             OptimizationLevel::Default,
             NumericalRealization::strict_baseline(),
         )
@@ -646,65 +954,305 @@ mod tests {
     #[test]
     fn macos_triple_is_normalized() {
         let target = MetalTarget::new(
-            AppleSdk::MacOs,
-            DeploymentMinimum::new(13, 0),
+            ApplePlatform::MacOs,
+            DeploymentMinimum::new(14, 0),
             MslVersion::Metal3_1,
-        );
-        assert_eq!(target.triple(), "air64-apple-macos13.0");
+        )
+        .expect("MSL 3.1 is admitted from macOS 14");
+        assert_eq!(target.triple(), "air64-apple-macos14.0");
         assert_eq!(target.platform(), ApplePlatform::MacOs);
     }
 
     #[test]
     fn ios_device_triple_has_no_environment_suffix() {
         let target = MetalTarget::new(
-            AppleSdk::IPhoneOs,
-            DeploymentMinimum::new(16, 0),
+            ApplePlatform::IOsDevice,
+            DeploymentMinimum::new(17, 0),
             MslVersion::Metal3_1,
-        );
-        assert_eq!(target.triple(), "air64-apple-ios16.0");
+        )
+        .expect("MSL 3.1 is admitted from iOS 17");
+        assert_eq!(target.triple(), "air64-apple-ios17.0");
         assert_eq!(target.platform(), ApplePlatform::IOsDevice);
     }
 
     #[test]
     fn ios_simulator_triple_carries_the_simulator_environment() {
         let target = MetalTarget::new(
-            AppleSdk::IPhoneSimulator,
+            ApplePlatform::IOsSimulator,
             DeploymentMinimum::new(17, 0),
             MslVersion::Metal3_1,
-        );
+        )
+        .expect("MSL 3.1 is admitted from iOS 17");
         assert_eq!(target.triple(), "air64-apple-ios17.0-simulator");
         assert_eq!(target.platform(), ApplePlatform::IOsSimulator);
-        assert_eq!(target.sdk.selector(), "iphonesimulator");
+        assert_eq!(target.sdk().selector(), "iphonesimulator");
     }
 
-    /// Every artifact family names the SDK selector that produces it.
+    /// Every artifact family names its stable identifier, SDK, and triple shape.
     ///
-    /// [`AppleSdk::platform`] is total in one direction: every SDK yields a
-    /// family. The direction that can rot is the other one — a family added to
-    /// [`ApplePlatform`] with no SDK producing it would be recordable in
-    /// provenance and impossible to compile for. The match below is exhaustive
-    /// over [`ApplePlatform`], so a new family fails to compile here until it
-    /// names its selector.
+    /// The match is exhaustive so adding a family cannot silently inherit
+    /// another family's compiler routing.
     #[test]
-    fn every_artifact_family_names_the_sdk_that_selects_it() {
-        for family in [
-            ApplePlatform::MacOs,
-            ApplePlatform::IOsDevice,
-            ApplePlatform::IOsSimulator,
+    fn every_artifact_family_has_complete_compiler_routing() {
+        for (family, name, sdk, selector, triple) in [
+            (
+                ApplePlatform::MacOs,
+                "macos",
+                AppleSdk::MacOs,
+                "macosx",
+                "air64-apple-macos26.0",
+            ),
+            (
+                ApplePlatform::MacCatalyst,
+                "mac-catalyst",
+                AppleSdk::MacOs,
+                "macosx",
+                "air64-apple-ios26.0-macabi",
+            ),
+            (
+                ApplePlatform::IOsDevice,
+                "ios-device",
+                AppleSdk::IPhoneOs,
+                "iphoneos",
+                "air64-apple-ios26.0",
+            ),
+            (
+                ApplePlatform::IOsSimulator,
+                "ios-simulator",
+                AppleSdk::IPhoneSimulator,
+                "iphonesimulator",
+                "air64-apple-ios26.0-simulator",
+            ),
+            (
+                ApplePlatform::TvOsDevice,
+                "tvos-device",
+                AppleSdk::AppleTvOs,
+                "appletvos",
+                "air64-apple-tvos26.0",
+            ),
+            (
+                ApplePlatform::TvOsSimulator,
+                "tvos-simulator",
+                AppleSdk::AppleTvSimulator,
+                "appletvsimulator",
+                "air64-apple-tvos26.0-simulator",
+            ),
+            (
+                ApplePlatform::VisionOsDevice,
+                "visionos-device",
+                AppleSdk::XrOs,
+                "xros",
+                "air64-apple-xros26.0",
+            ),
+            (
+                ApplePlatform::VisionOsSimulator,
+                "visionos-simulator",
+                AppleSdk::XrSimulator,
+                "xrsimulator",
+                "air64-apple-xros26.0-simulator",
+            ),
+            (
+                ApplePlatform::WatchOsDevice,
+                "watchos-device",
+                AppleSdk::WatchOs,
+                "watchos",
+                "air64-apple-watchos26.0",
+            ),
+            (
+                ApplePlatform::WatchOsSimulator,
+                "watchos-simulator",
+                AppleSdk::WatchSimulator,
+                "watchsimulator",
+                "air64-apple-watchos26.0-simulator",
+            ),
         ] {
-            let (sdk, selector) = match family {
-                ApplePlatform::MacOs => (AppleSdk::MacOs, "macosx"),
-                ApplePlatform::IOsDevice => (AppleSdk::IPhoneOs, "iphoneos"),
-                ApplePlatform::IOsSimulator => (AppleSdk::IPhoneSimulator, "iphonesimulator"),
+            let target =
+                MetalTarget::new(family, DeploymentMinimum::new(26, 0), MslVersion::Metal4_0)
+                    .expect("MSL 4.0 is admitted for every represented family");
+            let expected = match family {
+                ApplePlatform::MacOs => ("macos", AppleSdk::MacOs),
+                ApplePlatform::MacCatalyst => ("mac-catalyst", AppleSdk::MacOs),
+                ApplePlatform::IOsDevice => ("ios-device", AppleSdk::IPhoneOs),
+                ApplePlatform::IOsSimulator => ("ios-simulator", AppleSdk::IPhoneSimulator),
+                ApplePlatform::TvOsDevice => ("tvos-device", AppleSdk::AppleTvOs),
+                ApplePlatform::TvOsSimulator => ("tvos-simulator", AppleSdk::AppleTvSimulator),
+                ApplePlatform::VisionOsDevice => ("visionos-device", AppleSdk::XrOs),
+                ApplePlatform::VisionOsSimulator => ("visionos-simulator", AppleSdk::XrSimulator),
+                ApplePlatform::WatchOsDevice => ("watchos-device", AppleSdk::WatchOs),
+                ApplePlatform::WatchOsSimulator => ("watchos-simulator", AppleSdk::WatchSimulator),
             };
-            assert_eq!(sdk.platform(), family, "{}", family.as_str());
-            assert_eq!(sdk.selector(), selector, "{}", family.as_str());
+            assert_eq!((name, sdk), expected);
+            assert_eq!(family.as_str(), name);
+            assert_eq!(target.sdk(), sdk);
+            assert_eq!(target.sdk().selector(), selector);
+            assert_eq!(target.triple(), triple);
+            assert_eq!(target.std_token(), "metal4.0");
         }
     }
 
     #[test]
+    fn every_sdk_selector_appears_once_in_the_canonical_inventory() {
+        let mut seen = [false; AppleSdk::COUNT];
+        for sdk in AppleSdk::ALL {
+            let index = sdk.index();
+            assert!(!seen[index], "{} appears more than once", sdk.selector());
+            seen[index] = true;
+        }
+        assert!(
+            seen.into_iter().all(|present| present),
+            "AppleSdk::ALL omits a selector"
+        );
+    }
+
+    #[test]
+    fn every_semantic_language_revision_has_stable_spellings() {
+        for (language, revision, semantic_name) in [
+            (MslVersion::Metal1_0, "1.0", "metal1.0"),
+            (MslVersion::Metal1_1, "1.1", "metal1.1"),
+            (MslVersion::Metal1_2, "1.2", "metal1.2"),
+            (MslVersion::Metal2_0, "2.0", "metal2.0"),
+            (MslVersion::Metal2_1, "2.1", "metal2.1"),
+            (MslVersion::Metal2_2, "2.2", "metal2.2"),
+            (MslVersion::Metal2_3, "2.3", "metal2.3"),
+            (MslVersion::Metal2_4, "2.4", "metal2.4"),
+            (MslVersion::Metal3_0, "3.0", "metal3.0"),
+            (MslVersion::Metal3_1, "3.1", "metal3.1"),
+            (MslVersion::Metal3_2, "3.2", "metal3.2"),
+            (MslVersion::Metal4_0, "4.0", "metal4.0"),
+        ] {
+            let expected = match language {
+                MslVersion::Metal1_0 => ("1.0", "metal1.0"),
+                MslVersion::Metal1_1 => ("1.1", "metal1.1"),
+                MslVersion::Metal1_2 => ("1.2", "metal1.2"),
+                MslVersion::Metal2_0 => ("2.0", "metal2.0"),
+                MslVersion::Metal2_1 => ("2.1", "metal2.1"),
+                MslVersion::Metal2_2 => ("2.2", "metal2.2"),
+                MslVersion::Metal2_3 => ("2.3", "metal2.3"),
+                MslVersion::Metal2_4 => ("2.4", "metal2.4"),
+                MslVersion::Metal3_0 => ("3.0", "metal3.0"),
+                MslVersion::Metal3_1 => ("3.1", "metal3.1"),
+                MslVersion::Metal3_2 => ("3.2", "metal3.2"),
+                MslVersion::Metal4_0 => ("4.0", "metal4.0"),
+            };
+            assert_eq!((revision, semantic_name), expected);
+            assert_eq!(language.revision(), revision);
+            assert_eq!(language.semantic_name(), semantic_name);
+        }
+    }
+
+    #[test]
+    fn governed_legacy_and_unified_tokens_use_the_specification_floors() {
+        let assert_target = |platform, language, major, minor, token| {
+            let target = MetalTarget::new(platform, DeploymentMinimum::new(major, minor), language)
+                .expect("the exact specification floor is admitted");
+            assert_eq!(target.std_token(), token);
+        };
+
+        for platform in [ApplePlatform::IOsDevice, ApplePlatform::IOsSimulator] {
+            for (language, major, token) in [
+                (MslVersion::Metal1_0, 8, "ios-metal1.0"),
+                (MslVersion::Metal1_1, 9, "ios-metal1.1"),
+                (MslVersion::Metal1_2, 10, "ios-metal1.2"),
+                (MslVersion::Metal2_0, 11, "ios-metal2.0"),
+                (MslVersion::Metal2_1, 12, "ios-metal2.1"),
+                (MslVersion::Metal2_2, 13, "ios-metal2.2"),
+                (MslVersion::Metal2_3, 14, "ios-metal2.3"),
+                (MslVersion::Metal2_4, 15, "ios-metal2.4"),
+                (MslVersion::Metal3_0, 16, "metal3.0"),
+                (MslVersion::Metal3_1, 17, "metal3.1"),
+                (MslVersion::Metal3_2, 18, "metal3.2"),
+                (MslVersion::Metal4_0, 26, "metal4.0"),
+            ] {
+                assert_target(platform, language, major, 0, token);
+            }
+        }
+        for (language, major, minor, token) in [
+            (MslVersion::Metal1_1, 10, 11, "macos-metal1.1"),
+            (MslVersion::Metal1_2, 10, 12, "macos-metal1.2"),
+            (MslVersion::Metal2_0, 10, 13, "macos-metal2.0"),
+            (MslVersion::Metal2_1, 10, 14, "macos-metal2.1"),
+            (MslVersion::Metal2_2, 10, 15, "macos-metal2.2"),
+            (MslVersion::Metal2_3, 11, 0, "macos-metal2.3"),
+            (MslVersion::Metal2_4, 12, 0, "macos-metal2.4"),
+            (MslVersion::Metal3_0, 13, 0, "metal3.0"),
+            (MslVersion::Metal3_1, 14, 0, "metal3.1"),
+            (MslVersion::Metal3_2, 15, 0, "metal3.2"),
+            (MslVersion::Metal4_0, 26, 0, "metal4.0"),
+        ] {
+            assert_target(ApplePlatform::MacOs, language, major, minor, token);
+        }
+        for platform in [ApplePlatform::TvOsDevice, ApplePlatform::TvOsSimulator] {
+            for (language, major) in [
+                (MslVersion::Metal3_0, 16),
+                (MslVersion::Metal3_1, 17),
+                (MslVersion::Metal3_2, 18),
+                (MslVersion::Metal4_0, 26),
+            ] {
+                assert_target(platform, language, major, 0, language.semantic_name());
+            }
+        }
+        for platform in [
+            ApplePlatform::VisionOsDevice,
+            ApplePlatform::VisionOsSimulator,
+        ] {
+            for (language, major) in [
+                (MslVersion::Metal3_1, 1),
+                (MslVersion::Metal3_2, 2),
+                (MslVersion::Metal4_0, 26),
+            ] {
+                assert_target(platform, language, major, 0, language.semantic_name());
+            }
+        }
+    }
+
+    #[test]
+    fn target_construction_rejects_below_specification_floors() {
+        assert_eq!(
+            MetalTarget::new(
+                ApplePlatform::MacOs,
+                DeploymentMinimum::new(13, 0),
+                MslVersion::Metal3_1,
+            ),
+            Err(MetalTargetError::DeploymentMinimumTooLow {
+                platform: ApplePlatform::MacOs,
+                language: MslVersion::Metal3_1,
+                requested: DeploymentMinimum::new(13, 0),
+                required: DeploymentMinimum::new(14, 0),
+            }),
+        );
+        assert_eq!(
+            MetalTarget::new(
+                ApplePlatform::IOsDevice,
+                DeploymentMinimum::new(16, 0),
+                MslVersion::Metal3_1,
+            ),
+            Err(MetalTargetError::DeploymentMinimumTooLow {
+                platform: ApplePlatform::IOsDevice,
+                language: MslVersion::Metal3_1,
+                requested: DeploymentMinimum::new(16, 0),
+                required: DeploymentMinimum::new(17, 0),
+            }),
+        );
+    }
+
+    #[test]
+    fn target_construction_rejects_an_unavailable_language_platform_pair() {
+        assert_eq!(
+            MetalTarget::new(
+                ApplePlatform::MacOs,
+                DeploymentMinimum::new(10, 0),
+                MslVersion::Metal1_0,
+            ),
+            Err(MetalTargetError::LanguageUnavailable {
+                platform: ApplePlatform::MacOs,
+                language: MslVersion::Metal1_0,
+            }),
+        );
+    }
+
+    #[test]
     fn compile_flags_are_exact_and_ordered() {
-        let request = baseline_request(AppleSdk::MacOs, DeploymentMinimum::new(14, 0));
+        let request = baseline_request(ApplePlatform::MacOs, DeploymentMinimum::new(14, 0));
         assert_eq!(
             request.compile_flags(),
             [
@@ -756,6 +1304,8 @@ mod tests {
         assert!(!FpContract::Off.contracts_across_statements());
         assert!(!FpContract::On.contracts_across_statements());
         assert!(FpContract::Fast.contracts_across_statements());
+        assert!(FpContract::FastHonorPragmas.contracts_across_statements());
+        assert_eq!(FpContract::FastHonorPragmas.token(), "fast-honor-pragmas");
     }
 
     /// The strictest selectable realization is still not IEEE-754 binary32.
@@ -789,7 +1339,7 @@ mod tests {
 
     #[test]
     fn link_flags_are_empty_for_the_bounded_driver() {
-        let request = baseline_request(AppleSdk::MacOs, DeploymentMinimum::new(13, 0));
+        let request = baseline_request(ApplePlatform::MacOs, DeploymentMinimum::new(14, 0));
         assert!(request.link_flags().is_empty());
     }
 }

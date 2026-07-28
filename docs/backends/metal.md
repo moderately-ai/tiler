@@ -379,14 +379,15 @@ for each dispatch.
 ## Platform concerns
 
 - The Metal AOT toolchain requires an eligible macOS compilation host.
-- macOS, iOS device, and iOS simulator are distinct measured artifact families.
-  Platform family, requested deployment minimum, SDK identity, MSL standard,
-  compiler/linker identity, and flags are explicit payload/cache dimensions.
+- The typed artifact-family vocabulary is exhaustive over the ten Apple Metal compilation families currently described by Apple's tools: macOS, Mac Catalyst, iOS device and simulator, tvOS device and simulator, visionOS device and simulator, and watchOS device and simulator. These are representable identities, not ten runtime-support claims.
+- The SDK-selector vocabulary contains the nine selectors exposed by the governed Xcode row. The artifact family derives its SDK, target-triple OS, and environment suffix; callers cannot construct a mismatched SDK/family pair. Mac Catalyst consequently shares `macosx` while remaining a distinct `ios` + `macabi` artifact family.
+- The semantic MSL vocabulary contains the twelve SDK language revisions from 1.0 through 4.0. Legacy compiler tokens are platform-derived (`ios-metalX.Y` or `macos-metalX.Y`), while revisions 3.0 through 4.0 use unified `metalX.Y` tokens. MSL 4.1 is retained as future specification evidence but is not representable under the pinned Metal 32023.883 toolchain, which rejects it.
+- Target construction enforces the exact governed platform/language deployment floor and refuses unavailable pairs such as macOS with MSL 1.0. The MSL specification is the authority for macOS, iOS, tvOS, and visionOS; the Catalyst and watchOS MSL 4.0 rows are bounded compile-and-link measurements on Metal 32023.883, not portable specification or runtime-qualification claims. Construction never relies on `metal` silently raising the AIR deployment triple, because doing so would publish compatibility below the compiled object's real floor.
+- Platform family, requested deployment minimum, SDK identity, MSL standard, compiler/linker identity, and flags are explicit payload/cache dimensions.
 - Proc-macro host identity is never treated as the consumer target. A canonical
   `ArtifactFamilySelection` explicitly enables one or several families and
   generated Rust selects only among compatible embedded payloads.
-- Mac Catalyst is a fourth `ios` + `macabi` family and is deferred. It is not
-  relabeled as macOS or iOS-device compatible.
+- Representability, compile/link evidence, runtime library loading, function lookup, pipeline creation, and execution qualification remain separate maturity claims. The retained compatibility measurement covers macOS, iOS device, and iOS simulator only; the other represented families remain deferred until their own evidence rows close.
 - The checked-in probe compiled all measured macOS/iOS-device/simulator tuples
   with Metal 32023.883. Final metallibs differed across platform families and
   were byte-identical across two source directories for the trivial kernel;
@@ -410,6 +411,8 @@ cache/distribution problem with device-family and OS compatibility. Dynamic
 Metal libraries likewise introduce runtime assets and dependencies. Both remain
 deferred until measured startup or size costs justify changing the initial
 self-contained payload contract.
+
+The normative language tables and GPU-family capability chart used to define this vocabulary are vendored in [Apple Metal primary sources](../research/apple-targets/sources/README.md). The chart's Metal and Apple/Mac GPU-family columns remain runtime capability facts and do not become fields of the AOT artifact family.
 
 ## Traceability
 

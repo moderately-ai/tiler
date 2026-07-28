@@ -27,7 +27,7 @@ use core::fmt;
 use tiler_ir::kernel::{BufferParameter, CanonicalKernelIdentity};
 
 use crate::diagnostic::MetalEmitError;
-use crate::target::{MetalFloatArithmeticType, MetalUnstatedSubnormalArithmetic};
+use crate::target::{MetalFloatArithmeticType, MetalTargetFacts, MetalUnstatedSubnormalArithmetic};
 
 /// One numerical compiler flag this emitted source requires to be correct.
 ///
@@ -302,6 +302,7 @@ impl MetalEntryPoint {
 /// One deterministic Metal translation unit emitted from verified kernels.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MetalTranslationUnit {
+    target: MetalTargetFacts,
     source: String,
     entry_points: Vec<MetalEntryPoint>,
     numerical: Vec<MetalNumericalRequirement>,
@@ -311,6 +312,7 @@ pub struct MetalTranslationUnit {
 
 impl MetalTranslationUnit {
     pub(crate) const fn new(
+        target: MetalTargetFacts,
         source: String,
         entry_points: Vec<MetalEntryPoint>,
         numerical: Vec<MetalNumericalRequirement>,
@@ -318,12 +320,19 @@ impl MetalTranslationUnit {
         unstated: Vec<MetalFloatArithmeticType>,
     ) -> Self {
         Self {
+            target,
             source,
             entry_points,
             numerical,
             gaps,
             unstated,
         }
+    }
+
+    /// Returns the exact target facts this translation unit was emitted from.
+    #[must_use]
+    pub const fn target(&self) -> &MetalTargetFacts {
+        &self.target
     }
 
     /// Returns the complete emitted Metal Shading Language source.

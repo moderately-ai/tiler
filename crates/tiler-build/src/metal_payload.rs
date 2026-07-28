@@ -7,13 +7,13 @@ use tiler_artifact::program::{PayloadMetadata, ToolComponent};
 use tiler_metal_aot::driver::PreparedCompilation;
 
 /// Governed representation key of retained Metal source.
-const SOURCE_REPRESENTATION: &str = "metal-source";
+pub(crate) const SOURCE_REPRESENTATION: &str = "metal-source";
 /// Governed Apple offline Metal toolchain identity.
-const TOOLCHAIN: &str = "tiler.toolchain.apple-metal";
+pub(crate) const TOOLCHAIN: &str = "tiler.toolchain.apple-metal";
 /// Canonical role of the compiler component.
-const COMPILER_ROLE: &str = "compiler";
+pub(crate) const COMPILER_ROLE: &str = "compiler";
 /// Canonical role of the linker component.
-const LINKER_ROLE: &str = "linker";
+pub(crate) const LINKER_ROLE: &str = "linker";
 
 /// One compilation fact whose carried payload spelling may disagree.
 ///
@@ -137,7 +137,7 @@ pub fn validate_prepared_metal_payload(
         MetalPayloadFact::Family,
     )?;
     require(
-        actual.language == expected.msl_version.std_token(),
+        actual.language == expected.msl_version.semantic_name(),
         MetalPayloadFact::Language,
     )?;
     require(
@@ -195,8 +195,8 @@ mod tests {
     };
     use tiler_metal_aot::driver::{PreparedCompilation, Toolchain};
     use tiler_metal_aot::input::{
-        AppleSdk, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion, NumericalRealization,
-        OptimizationLevel,
+        ApplePlatform, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
+        NumericalRealization, OptimizationLevel,
     };
 
     use super::{
@@ -248,10 +248,11 @@ mod tests {
         CompileRequest::new(
             SOURCE,
             MetalTarget::new(
-                AppleSdk::MacOs,
-                DeploymentMinimum::new(13, 0),
+                ApplePlatform::MacOs,
+                DeploymentMinimum::new(14, 0),
                 MslVersion::Metal3_1,
-            ),
+            )
+            .expect("the fixture target is valid"),
             OptimizationLevel::Default,
             NumericalRealization::strict_baseline(),
         )
@@ -266,7 +267,7 @@ mod tests {
                 toolchain: TOOLCHAIN.to_owned(),
                 target: provenance.target_triple.clone(),
                 family: provenance.platform.as_str().to_owned(),
-                language: provenance.msl_version.std_token().to_owned(),
+                language: provenance.msl_version.semantic_name().to_owned(),
                 deployment_major: provenance.deployment_minimum.major(),
                 deployment_minor: provenance.deployment_minimum.minor(),
                 components: vec![

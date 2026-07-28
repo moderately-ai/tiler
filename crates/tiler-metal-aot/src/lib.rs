@@ -13,8 +13,8 @@
 //!
 //! Two contracts are load-bearing:
 //!
-//! - **One selected SDK.** A [`input::MetalTarget`] names exactly one Apple SDK
-//!   and family; both the `metal` and `metallib` invocations use it.
+//! - **One selected platform.** A [`input::MetalTarget`] names exactly one
+//!   artifact family and derives the SDK both tool invocations use.
 //! - **No silent defaults.** Every output-affecting choice — target triple,
 //!   language standard, optimization level, and the numerical realization flags
 //!   (`math-mode`, `fp32-functions`, `ffp-contract`) — is an explicit input.
@@ -47,15 +47,15 @@
 //!
 //! ```
 //! use tiler_metal_aot::input::{
-//!     AppleSdk, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
+//!     ApplePlatform, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
 //!     NumericalRealization, OptimizationLevel,
 //! };
 //!
 //! let target = MetalTarget::new(
-//!     AppleSdk::MacOs,
-//!     DeploymentMinimum::new(13, 0),
+//!     ApplePlatform::MacOs,
+//!     DeploymentMinimum::new(14, 0),
 //!     MslVersion::Metal3_1,
-//! );
+//! ).expect("MSL 3.1 is admitted from macOS 14");
 //! let request = CompileRequest::new(
 //!     "// MSL source",
 //!     target,
@@ -63,12 +63,12 @@
 //!     NumericalRealization::strict_baseline(),
 //! );
 //!
-//! assert_eq!(request.target.triple(), "air64-apple-macos13.0");
+//! assert_eq!(request.target.triple(), "air64-apple-macos14.0");
 //! assert_eq!(
 //!     request.compile_flags(),
 //!     [
 //!         "-target",
-//!         "air64-apple-macos13.0",
+//!         "air64-apple-macos14.0",
 //!         "-std=metal3.1",
 //!         "-O2",
 //!         "-fmetal-math-mode=safe",

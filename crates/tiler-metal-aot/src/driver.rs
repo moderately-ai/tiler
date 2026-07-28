@@ -130,7 +130,7 @@ impl Toolchain {
         &self,
         request: &'request CompileRequest,
     ) -> Result<PreparedCompilation<'request>, DriverError> {
-        let resolved = self.resolve(request.target.sdk)?;
+        let resolved = self.resolve(request.target.sdk())?;
         let identity = CompilationIdentity::new(request, &resolved);
         let provenance = prepared_provenance(request, resolved);
         Ok(PreparedCompilation {
@@ -407,8 +407,8 @@ fn prepared_provenance(
     ArtifactProvenance {
         platform: request.target.platform(),
         target_triple: request.target.triple(),
-        deployment_minimum: request.target.deployment_minimum,
-        msl_version: request.target.msl_version,
+        deployment_minimum: request.target.deployment_minimum(),
+        msl_version: request.target.msl_version(),
         optimization: request.optimization,
         numerical: request.numerical,
         sdk: resolved.sdk,
@@ -475,8 +475,8 @@ mod tests {
     use super::Toolchain;
     use crate::diagnostic::{CompileStage, DriverError};
     use crate::input::{
-        AppleSdk, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract, MathMode,
-        MetalTarget, MslVersion, NumericalRealization, OptimizationLevel,
+        ApplePlatform, AppleSdk, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract,
+        MathMode, MetalTarget, MslVersion, NumericalRealization, OptimizationLevel,
     };
     use std::path::PathBuf;
 
@@ -521,10 +521,11 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
         CompileRequest::new(
             source,
             MetalTarget::new(
-                AppleSdk::MacOs,
-                DeploymentMinimum::new(13, 0),
+                ApplePlatform::MacOs,
+                DeploymentMinimum::new(14, 0),
                 MslVersion::Metal3_1,
-            ),
+            )
+            .expect("the fixture target is valid"),
             OptimizationLevel::Default,
             numerical,
         )
@@ -569,7 +570,7 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
             .expect("trivial kernel should compile on a resolved toolchain");
 
         assert_eq!(&artifact.metallib[..4], b"MTLB");
-        assert_eq!(artifact.provenance.target_triple, "air64-apple-macos13.0");
+        assert_eq!(artifact.provenance.target_triple, "air64-apple-macos14.0");
         assert_eq!(
             artifact.provenance.fingerprint.metal_version,
             resolved.metal.version

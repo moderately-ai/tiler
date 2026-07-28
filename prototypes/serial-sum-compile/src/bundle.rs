@@ -14,8 +14,9 @@
 //! applicability guard, every
 //! accessible byte range and launch formula — all are read from
 //! [`tiler_compiler::session`]. The payload's compilation subject is filled by
-//! [`super::payload`] from the emission and the toolchain, and its content digest
-//! is *derived by the artifact layer* from those bytes rather than supplied.
+//! `tiler-build` fills the payload's compilation subject from the emission and
+//! prepared toolchain, and its content digest is *derived by the artifact layer*
+//! from those bytes rather than supplied.
 //!
 //! One value is spelled here rather than handed over, and the reason is that its
 //! owning authority states it in a form that is not an expression. A binding's
@@ -53,25 +54,18 @@
 //! every operand is already minted when its node is reached.
 
 use tiler_artifact::program::{
-    AbiExprId, ArtifactBuildError, ArtifactExecutionPolicy, ArtifactProgramBuilder,
-    ArtifactVerificationError, BackendEntryKey, BackendEntryRef, BackendKey, BindingKind,
-    BindingSpec, CapabilityKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, PayloadContent, RepresentationKey, SchemaVersion,
+    AbiExprId, ArtifactBuildError, ArtifactProgramBuilder, ArtifactVerificationError,
+    BackendEntryKey, BackendEntryRef, BindingKind, BindingSpec, CapabilityKey,
+    CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
     SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
     VariantSpec, VerifiedArtifactProgram,
 };
+use tiler_build::CompiledMetalPayload;
 use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::program::abi::ExprNode;
 use tiler_ir::semantic::SemanticProgram;
 
 use std::fmt;
-
-/// Governed backend family key of the Apple Metal backend.
-const BACKEND_KEY: &str = "tiler.metal";
-/// Governed executable-representation key of a linked Metal library.
-const REPRESENTATION_KEY: &str = "metallib";
-/// Component schema version of the carried payload this producer writes.
-const PAYLOAD_SCHEMA: SchemaVersion = SchemaVersion::new(1, 0);
 
 /// Packages one plan alternative and its compiled payload as an artifact.
 ///
@@ -89,7 +83,7 @@ pub fn assemble(
     semantic: &SemanticProgram,
     compilation: &Compilation,
     plan: PlanAlternative<'_>,
-    payload: PayloadContent,
+    payload: CompiledMetalPayload,
 ) -> Result<VerifiedArtifactProgram, BundleError> {
     let roots = variant_roots(plan.abi());
     assemble_from(semantic, compilation, plan, payload, &roots)
@@ -106,7 +100,7 @@ fn assemble_from(
     semantic: &SemanticProgram,
     compilation: &Compilation,
     plan: PlanAlternative<'_>,
-    payload: PayloadContent,
+    payload: CompiledMetalPayload,
     replay_roots: &[u32],
 ) -> Result<VerifiedArtifactProgram, BundleError> {
     let profile = target_profile(compilation)?;
@@ -132,24 +126,18 @@ fn assemble_from(
     // entries must name backend entry keys this payload actually maps, and
     // proving that needs the mappings after the content is gone.
     let mapped: Vec<BackendEntryKey> = payload
+        .content()
         .metadata
         .entries
         .iter()
         .map(|mapping| mapping.entry_key.clone())
         .collect();
-    let payload_id = builder.push_carried_payload(
-        BackendKey::new(BACKEND_KEY)?,
-        RepresentationKey::new(REPRESENTATION_KEY)?,
-        PAYLOAD_SCHEMA,
+    let payload_id = payload.push_carried(
+        &mut builder,
         // The payload's own compatibility contract. These bytes were compiled
         // for this profile, which is the same one the variant was assessed
         // against; a payload shared across profiles would state a different one.
         profile.clone(),
-        // A `metallib` is loaded directly by `newLibraryWithData:` — see the
-        // runtime proof — so it is a native image rather than something a device
-        // must translate first.
-        ArtifactExecutionPolicy::NativeImage,
-        payload,
     )?;
 
     let abi = plan.abi();
@@ -402,9 +390,9 @@ impl fmt::Display for BundleError {
 #[cfg(test)]
 mod tests {
     use super::{assemble, assemble_from, reachable_from, variant_roots};
-    use crate::{COLUMNS, ROWS, emit_and_compile, payload, serial_sum_program};
+    use crate::{COLUMNS, ROWS, emit_and_compile, serial_sum_program};
     use tiler_artifact::program::{
-        PayloadContent, SectionPurpose, SectionView, StageDependencyReason, decode_artifact,
+        SectionPurpose, SectionView, StageDependencyReason, decode_artifact,
     };
     use tiler_compiler::session::{
         Compilation, NumericalContract, PlanAlternative, compile_governed,
@@ -423,11 +411,10 @@ mod tests {
     }
 
     /// Emits and offline-compiles the payload one plan alternative dispatches.
-    fn payload_for(plan: PlanAlternative<'_>) -> PayloadContent {
+    fn payload_for(plan: PlanAlternative<'_>) -> tiler_build::CompiledMetalPayload {
         let kernels: Vec<_> = plan.kernels().iter().collect();
-        let (unit, compiled) = emit_and_compile(&kernels);
-        payload::carried_payload(&unit, &compiled.provenance, &compiled.metallib)
-            .expect("the payload assembles")
+        let (_unit, payload) = emit_and_compile(&kernels);
+        payload
     }
 
     /// A real compilation and a real `metallib` survive the envelope round trip.
@@ -442,7 +429,10 @@ mod tests {
         let compilation = compilations.first().expect("one governed target");
         let selected = compilation.selected().expect("a selected alternative");
         let payload = payload_for(selected);
-        let expected_digest = payload.identity().expect("the subject has an identity");
+        let expected_digest = payload
+            .content()
+            .identity()
+            .expect("the subject has an identity");
 
         let artifact = assemble(
             &serial_sum_program(ROWS, COLUMNS),

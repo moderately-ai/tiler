@@ -179,7 +179,7 @@
 //! let target = MetalTargetFacts::new(
 //!     MslLanguageVersion::Metal3_1,
 //!     MetalPlatform::MacOs,
-//!     MetalDeploymentMinimum::new(13, 0),
+//!     MetalDeploymentMinimum::new(14, 0),
 //!     LaunchIndexRealization::ThreadPositionInGridUInt,
 //!     // One measured behaviour per arithmetic type: the Apple row flushes in
 //!     // f32 and preserves in f16. A type left out is Unknown, and emitting

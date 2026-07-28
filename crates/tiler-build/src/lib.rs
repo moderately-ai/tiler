@@ -10,6 +10,11 @@
 //! execution. The broader compilation-to-publication pipeline authorized for
 //! this crate remains incremental.
 
+mod metal_assembly;
 mod metal_payload;
 
+pub use metal_assembly::{
+    CompiledMetalPayload, MetalAssemblyError, PreparedMetalPayload, metal_compile_request,
+    prepare_metal_payload,
+};
 pub use metal_payload::{MetalPayloadFact, MetalPayloadMismatch, validate_prepared_metal_payload};

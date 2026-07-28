@@ -2,7 +2,7 @@
 // Deterministic output: do not edit.
 //
 // Metal Shading Language: metal3.1
-// Artifact family: macos (deployment minimum 13.0)
+// Artifact family: macos (deployment minimum 14.0)
 // Launch index: [[thread_position_in_grid]] declared as uint
 // Launch precondition: no invocation index may exceed 4294967295.
 // Arithmetic subnormals, per floating-point type:

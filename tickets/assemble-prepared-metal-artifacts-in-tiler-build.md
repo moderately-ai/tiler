@@ -1,12 +1,12 @@
 ---
 id: assemble-prepared-metal-artifacts-in-tiler-build
 title: Assemble prepared Metal artifacts in tiler-build
-status: todo
+status: done
 priority: p2
 dependencies: [bind-the-cache-subject-to-the-carried-payload-provenance]
-related: [implement-the-expansion-cache-protocol]
-scopes: [implementation/artifact, implementation/metal-aot, implementation/workspace, implementation/build]
-shared_scopes: []
+related: [implement-the-expansion-cache-protocol, restore-replayable-apple-compatibility-evidence]
+scopes: [implementation/artifact, implementation/metal-aot, implementation/workspace, implementation/build, research/apple-targets, implementation/metal, contracts/artifacts, contracts/decisions, contracts/navigation]
+shared_scopes: [project/tickets]
 paths: []
 tags: [build, artifact, correctness]
 ---
@@ -23,6 +23,16 @@ Construct compilation metadata from typed `tiler-metal` and `tiler-metal-aot` fa
 Do not introduce caller-declared ABI facts into `BindingSpec`; the bound program remains the ABI authority. Keep artifact identity at domain v7 and manifest schema 5.0 unless a real encoded-subject change requires the normal versioning procedure.
 
 Every negative assembly check must be fault-injected once. Target `cargo nextest run -p tiler-build` and per-package Clippy while iterating.
+
+## Delivered evidence
+
+`tiler-build` now derives the compiler request from one emitted `MetalTranslationUnit`, rejects an unrealizable unit or typed numerical selection both during request derivation and again at the public prepared-token seam, binds the emitted entry mappings and obligations to the exact prepared source and provenance, validates every carried compilation fact before compiler work, and exposes typestate wrappers for pending and compiled payload publication. The compiled wrapper exposes read-only inspection and checked insertion without releasing mutable owned metadata. The serial-sum producer consumes this path and no longer carries its own target conversion, payload metadata implementation, or backend/representation/schema insertion constants.
+
+The Apple target vocabulary is complete for the pinned toolchain: ten artifact families derive nine SDK selectors and target-triple spellings, twelve semantic MSL revisions derive their platform-specific compiler token, and construction rejects unavailable pairs or deployment minima below their governed floor. The specification supplies the macOS, iOS, tvOS, and visionOS floors; bounded Metal 32023.883 compile-and-link measurements supply the Catalyst and watchOS MSL 4.0 rows without claiming runtime qualification. MSL 4.1 remains vendored future evidence rather than a token accepted by Metal 32023.883.
+
+The source mismatch, request and prepared-token numerical refusals, platform conversion, language conversion, canonical enum inventories, and specification token/floor checks were each perturbed and observed failing before their positive run. The targeted package suite passes 156 tests and production Metal/build Clippy passes with warnings denied.
+
+The primary Apple MSL 4.0 and 4.1 specifications and Metal feature-set chart are vendored under `docs/research/apple-targets/sources/`. The compatibility audit also found that the retained historical compatibility record cannot replay against its named producer digests; `restore-replayable-apple-compatibility-evidence` owns that evidence repair without weakening this ticket's typed target contract.
 
 ## Graph maintenance
 

@@ -2,11 +2,10 @@
 //!
 //! It drives the already-implemented component capabilities — semantic
 //! construction, compilation, MSL emission, and offline Metal compilation —
-//! through one path, and implements no component capability of its own. The one
-//! thing it owns is the orchestration those components cannot own individually:
-//! [`target`], the translation between the emitter's and the driver's target
-//! vocabularies, which exists here because neither backend crate may depend on
-//! the other.
+//! through one path, and implements no component capability of its own.
+//! `tiler-build` owns the checked translation between emitter and driver target
+//! vocabularies and the payload assembly; this prototype supplies the program,
+//! selected plan, and artifact envelope around that shared production path.
 //!
 //! # What this proves and what it does not
 //!
@@ -66,15 +65,14 @@
 //! rename fails on the half that was not updated.
 
 mod bundle;
-mod payload;
 mod sidecar;
-mod target;
 
 use std::fmt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use tiler_artifact::program::{ArtifactCodecFailure, decode_artifact};
+use tiler_build::{MetalAssemblyError, metal_compile_request, prepare_metal_payload};
 use tiler_compiler::session::{CompileFailure, NumericalContract, compile_governed};
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
@@ -88,7 +86,7 @@ use tiler_metal::target::{
     MslLanguageVersion,
 };
 use tiler_metal_aot::driver::Toolchain;
-use tiler_metal_aot::input::{CompileRequest, NumericalRealization, OptimizationLevel};
+use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
 
 /// The buffer argument-table capacity Apple's feature tables state per compute
 /// function for every current family.
@@ -149,7 +147,7 @@ const SIDECAR_SUFFIX: &str = ".proof";
 
 /// The target facts this producer emits for.
 ///
-/// macOS 13.0 under MSL 3.1, declaring the measured Apple subnormal behaviour
+/// macOS 14.0 under MSL 3.1, declaring the measured Apple subnormal behaviour
 /// once per floating-point arithmetic type: `f32` arithmetic flushes subnormal
 /// operands and results to zero on every governed family, and `f16` arithmetic
 /// preserves them on the same hardware in the same math modes. Declaring them is
@@ -161,7 +159,7 @@ fn target_facts() -> MetalTargetFacts {
     MetalTargetFacts::new(
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
-        MetalDeploymentMinimum::new(13, 0),
+        MetalDeploymentMinimum::new(14, 0),
         LaunchIndexRealization::ThreadPositionInGridUInt,
         MetalSubnormalArithmeticFacts::unmeasured()
             .stating(
@@ -221,19 +219,23 @@ fn emit_and_compile(
     kernels: &[&tiler_ir::kernel::VerifiedKernel],
 ) -> (
     tiler_metal::record::MetalTranslationUnit,
-    tiler_metal_aot::record::CompiledArtifact,
+    tiler_build::CompiledMetalPayload,
 ) {
     let unit = emit_translation_unit(kernels, &target_facts()).expect("the kernels emit");
-    let request = CompileRequest::new(
-        unit.source(),
-        target::compile_target(target_facts()),
+    let request = metal_compile_request(
+        &unit,
         OptimizationLevel::Default,
         NumericalRealization::strict_baseline(),
-    );
-    let artifact = Toolchain::system()
-        .compile(&request)
+    )
+    .expect("the emitted target and numerical realization are compilable");
+    let prepared = Toolchain::system()
+        .prepare(&request)
+        .expect("the offline toolchain prepares");
+    let payload = prepare_metal_payload(&unit, prepared)
+        .expect("the emission and prepared compilation agree")
+        .compile()
         .expect("the offline toolchain compiles");
-    (unit, artifact)
+    (unit, payload)
 }
 
 /// Returns the envelope path the invocation names.
@@ -332,33 +334,26 @@ fn publish_member(
     // Emission succeeds even when the target cannot honour the declared
     // numerical contract, so the conformance question is asked explicitly here
     // rather than inferred from a successful emission.
-    unit.require_declared_realization()
-        .map_err(|_| ProducerError::UnrealizableNumerics {
-            gaps: unit
-                .numerical_gaps()
-                .iter()
-                .map(|gap| gap.rule().to_owned())
-                .collect(),
-        })?;
-
-    let request = CompileRequest::new(
-        unit.source(),
-        target::compile_target(facts),
+    let request = metal_compile_request(
+        &unit,
         OptimizationLevel::Default,
         NumericalRealization::strict_baseline(),
-    );
-    let compiled = Toolchain::system()
-        .compile(&request)
-        .map_err(|_| ProducerError::Toolchain)?;
-
-    // Fill the neutral carried payload from what was just emitted and compiled.
-    // The subject is the compilation *inputs*; the object travels beside it.
-    let payload = payload::carried_payload(&unit, &compiled.provenance, &compiled.metallib)
-        .map_err(ProducerError::Payload)?;
+    )
+    .map_err(ProducerError::MetalAssembly)?;
+    let prepared = Toolchain::system()
+        .prepare(&request)
+        .map_err(MetalAssemblyError::from)
+        .map_err(ProducerError::MetalAssembly)?;
+    let payload = prepare_metal_payload(&unit, prepared)
+        .map_err(ProducerError::MetalAssembly)?
+        .compile()
+        .map_err(ProducerError::MetalAssembly)?;
+    let metallib_len = payload.content().code.len();
     // Asked before the payload moves into the builder. A subject with no
     // identity is one nothing downstream could content-address, and finding
     // that out from a later refusal would name the wrong boundary.
     payload
+        .content()
         .identity()
         .map_err(|_| ProducerError::PayloadIdentity)?;
 
@@ -397,7 +392,7 @@ fn publish_member(
         "  {role}: {} entr(y/ies), {} bytes of metallib, {} envelope byte(s), {} sidecar byte(s) \
          -> {}",
         unit.entry_points().len(),
-        compiled.metallib.len(),
+        metallib_len,
         bytes.len(),
         sidecar_bytes.len(),
         envelope_path.display(),
@@ -446,10 +441,8 @@ enum ProducerError {
     NoSelection,
     NoMaterializedAlternative,
     Emit,
-    UnrealizableNumerics { gaps: Vec<String> },
-    Payload(String),
+    MetalAssembly(MetalAssemblyError),
     PayloadIdentity,
-    Toolchain,
     Bundle(bundle::BundleError),
     Encode(ArtifactCodecFailure),
     Decode(ArtifactCodecFailure),
@@ -473,15 +466,9 @@ impl fmt::Display for ProducerError {
                  a fused program against the multi-dispatch program computing the same function",
             ),
             Self::Emit => formatter.write_str("the selected kernels have no Metal realization"),
-            Self::UnrealizableNumerics { gaps } => write!(
-                formatter,
-                "the target cannot honour the kernels' declared numerical contract: {}",
-                gaps.join(", "),
-            ),
-            Self::Toolchain => {
-                formatter.write_str("the offline Metal toolchain did not produce a metallib")
+            Self::MetalAssembly(cause) => {
+                write!(formatter, "the Metal payload did not assemble: {cause}")
             }
-            Self::Payload(cause) => write!(formatter, "the carried payload is malformed: {cause}"),
             Self::PayloadIdentity => {
                 formatter.write_str("the carried payload's compilation subject has no identity")
             }
@@ -499,7 +486,7 @@ impl fmt::Display for ProducerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        COLUMNS, PLAN_ROLES, REDUCTION_CLASSES, ROWS, bundle, payload, serial_sum_program, sidecar,
+        COLUMNS, PLAN_ROLES, REDUCTION_CLASSES, ROWS, bundle, serial_sum_program, sidecar,
         target_facts,
     };
     use crate::{ArtifactCodecFailure, decode_artifact};
@@ -553,9 +540,8 @@ mod tests {
     /// explicitly refuses to promise.
     #[test]
     fn the_payload_identity_follows_its_compilation_subject() {
-        let (unit, artifact) = emit_and_compile();
-        let payload = payload::carried_payload(&unit, &artifact.provenance, &artifact.metallib)
-            .expect("the payload assembles");
+        let (_unit, compiled) = emit_and_compile();
+        let payload = compiled.content().clone();
         let identity = payload.identity().expect("the subject has an identity");
 
         // Same subject, different emitted object: the artifact is unchanged.
@@ -593,9 +579,8 @@ mod tests {
     /// running the same toolchain two different artifact identities.
     #[test]
     fn the_payload_subject_carries_no_local_path() {
-        let (unit, artifact) = emit_and_compile();
-        let payload = payload::carried_payload(&unit, &artifact.provenance, &artifact.metallib)
-            .expect("the payload assembles");
+        let (_unit, compiled) = emit_and_compile();
+        let payload = compiled.content();
         let provenance = &payload.metadata.provenance;
         let mut text = vec![
             provenance.toolchain.clone(),
@@ -635,9 +620,8 @@ mod tests {
     /// The entry mapping names the kernel identity, not the emitted symbol.
     #[test]
     fn the_entry_mapping_keys_on_the_kernel_identity() {
-        let (unit, artifact) = emit_and_compile();
-        let payload = payload::carried_payload(&unit, &artifact.provenance, &artifact.metallib)
-            .expect("the payload assembles");
+        let (unit, compiled) = emit_and_compile();
+        let payload = compiled.content();
         let entry = &payload.metadata.entries[0];
         let emitted = &unit.entry_points()[0];
         assert_eq!(
@@ -854,9 +838,7 @@ mod tests {
         let compilation = compilations.first().expect("one governed target");
         let selected = compilation.selected().expect("a selected alternative");
         let kernels: Vec<_> = selected.kernels().iter().collect();
-        let (unit, compiled) = super::emit_and_compile(&kernels);
-        let payload = payload::carried_payload(&unit, &compiled.provenance, &compiled.metallib)
-            .expect("the payload assembles");
+        let (_unit, payload) = super::emit_and_compile(&kernels);
         let artifact = bundle::assemble(&program, compilation, selected, payload)
             .expect("the artifact assembles");
         let envelope = artifact.encode().expect("the artifact encodes");
@@ -1021,8 +1003,8 @@ mod tests {
         let (_first_unit, first) = super::emit_and_compile(&kernels);
         let (_second_unit, second) = super::emit_and_compile(&kernels);
 
-        let reproducible = first.metallib == second.metallib;
-        let provenance = &first.provenance;
+        let reproducible = first.content().code == second.content().code;
+        let provenance = &first.content().metadata.provenance;
         println!(
             "metallib reproducibility: {} ({} and {} bytes)",
             if reproducible {
@@ -1030,16 +1012,13 @@ mod tests {
             } else {
                 "NOT byte-identical across two links on this host"
             },
-            first.metallib.len(),
-            second.metallib.len(),
+            first.content().code.len(),
+            second.content().code.len(),
         );
-        println!(
-            "  toolchain: metal {:?}, metallib {:?}",
-            provenance.fingerprint.metal_version, provenance.fingerprint.metallib_version,
-        );
+        println!("  toolchain components: {:?}", provenance.components);
         println!(
             "  sdk: {} {} (build {}), target {:?}",
-            provenance.sdk.canonical_name,
+            provenance.sdk.name,
             provenance.sdk.version,
             provenance.sdk.build,
             provenance.compile_flags,
@@ -1049,7 +1028,7 @@ mod tests {
     /// Compiles the proof program once for the payload cases above.
     fn emit_and_compile() -> (
         tiler_metal::record::MetalTranslationUnit,
-        tiler_metal_aot::record::CompiledArtifact,
+        tiler_build::CompiledMetalPayload,
     ) {
         let program = serial_sum_program(ROWS, COLUMNS);
         let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)

@@ -81,7 +81,7 @@
 //! use tiler_metal_aot::driver::Toolchain;
 //! use tiler_metal_aot::identity::{IdentityReuseScope, ToolchainEvidence};
 //! use tiler_metal_aot::input::{
-//!     AppleSdk, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
+//!     ApplePlatform, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
 //!     NumericalRealization, OptimizationLevel,
 //! };
 //!
@@ -89,10 +89,10 @@
 //! let request = CompileRequest::new(
 //!     "kernel void main0() {}",
 //!     MetalTarget::new(
-//!         AppleSdk::MacOs,
-//!         DeploymentMinimum::new(13, 0),
+//!         ApplePlatform::MacOs,
+//!         DeploymentMinimum::new(14, 0),
 //!         MslVersion::Metal3_1,
-//!     ),
+//!     )?,
 //!     OptimizationLevel::Default,
 //!     NumericalRealization::strict_baseline(),
 //! );
@@ -370,7 +370,7 @@ impl CompilationIdentity {
         // The SDK selector is an invocation input that never appears in the
         // compiler flags: it is passed to `xcrun --sdk`, and it is what selects
         // which `metal` binary runs at all.
-        push_str(&mut bytes, target.sdk.selector());
+        push_str(&mut bytes, target.sdk().selector());
         push_str(&mut bytes, target.platform().as_str());
         push_str(&mut bytes, &target.triple());
 
@@ -493,7 +493,7 @@ mod tests {
         ToolchainEvidence,
     };
     use crate::input::{
-        AppleSdk, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract, MathMode,
+        ApplePlatform, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract, MathMode,
         MetalTarget, MslVersion, NumericalRealization, OptimizationLevel,
     };
     use crate::record::{ResolvedTool, ResolvedToolchain, SdkIdentity};
@@ -522,10 +522,11 @@ mod tests {
         CompileRequest::new(
             "kernel void main0() {}",
             MetalTarget::new(
-                AppleSdk::MacOs,
-                DeploymentMinimum::new(13, 0),
+                ApplePlatform::MacOs,
+                DeploymentMinimum::new(14, 0),
                 MslVersion::Metal3_1,
-            ),
+            )
+            .expect("the fixture target is valid"),
             OptimizationLevel::Default,
             NumericalRealization::strict_baseline(),
         )
@@ -585,7 +586,12 @@ mod tests {
         );
 
         let mut other_sdk = request();
-        other_sdk.target.sdk = AppleSdk::IPhoneSimulator;
+        other_sdk.target = MetalTarget::new(
+            ApplePlatform::IOsSimulator,
+            DeploymentMinimum::new(17, 0),
+            MslVersion::Metal3_1,
+        )
+        .expect("the alternate target is valid");
         assert_ne!(
             baseline,
             bytes_of(&other_sdk, &toolchain),
@@ -593,7 +599,12 @@ mod tests {
         );
 
         let mut other_minimum = request();
-        other_minimum.target.deployment_minimum = DeploymentMinimum::new(14, 0);
+        other_minimum.target = MetalTarget::new(
+            ApplePlatform::MacOs,
+            DeploymentMinimum::new(15, 0),
+            MslVersion::Metal3_1,
+        )
+        .expect("the alternate target is valid");
         assert_ne!(
             baseline,
             bytes_of(&other_minimum, &toolchain),
@@ -601,7 +612,12 @@ mod tests {
         );
 
         let mut other_standard = request();
-        other_standard.target.msl_version = MslVersion::Metal3_0;
+        other_standard.target = MetalTarget::new(
+            ApplePlatform::MacOs,
+            DeploymentMinimum::new(14, 0),
+            MslVersion::Metal3_0,
+        )
+        .expect("the alternate target is valid");
         assert_ne!(
             baseline,
             bytes_of(&other_standard, &toolchain),

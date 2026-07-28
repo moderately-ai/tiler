@@ -46,10 +46,10 @@
 //! also carries a launch-index realization, a per-dtype subnormal-arithmetic
 //! record, and a binding capacity, none of which a compiler invocation has any
 //! use for. The
-//! driver's `MetalTarget` carries an `AppleSdk`, which selects `xcrun --sdk` and
-//! builds the `air64-apple-*` triple — tool-discovery knowledge this crate must
-//! never acquire. Neither record subsumes the other; they overlap in exactly the
-//! three facts above.
+//! driver's `MetalTarget` derives an `AppleSdk`, which selects `xcrun --sdk`,
+//! and builds the `air64-apple-*` triple — tool-discovery knowledge this crate
+//! must never acquire. Neither record subsumes the other; they overlap in
+//! exactly the three facts above.
 //!
 //! **What keeps them from drifting.** `crate::target_correspondence` maps each
 //! vocabulary onto the other *totally*, so a language standard or an artifact
@@ -87,43 +87,106 @@ use core::fmt;
 /// design; `cargo check` enumerates them.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MslLanguageVersion {
+    /// MSL 1.0.
+    Metal1_0,
+    /// MSL 1.1.
+    Metal1_1,
+    /// MSL 1.2.
+    Metal1_2,
+    /// MSL 2.0.
+    Metal2_0,
+    /// MSL 2.1.
+    Metal2_1,
+    /// MSL 2.2.
+    Metal2_2,
+    /// MSL 2.3.
+    Metal2_3,
+    /// MSL 2.4.
+    Metal2_4,
     /// MSL 3.0, spelled `-std=metal3.0`.
     Metal3_0,
     /// MSL 3.1, spelled `-std=metal3.1`.
     Metal3_1,
+    /// MSL 3.2.
+    Metal3_2,
+    /// MSL 4.0.
+    Metal4_0,
 }
 
 impl MslLanguageVersion {
-    /// Returns the `-std` value token for this language version.
-    ///
-    /// The token is emitted into the translation unit's provenance header so a
-    /// reader of the source can see the standard it was written against.
+    /// Every semantic MSL revision this emission vocabulary names.
+    pub const ALL: [Self; 12] = [
+        Self::Metal1_0,
+        Self::Metal1_1,
+        Self::Metal1_2,
+        Self::Metal2_0,
+        Self::Metal2_1,
+        Self::Metal2_2,
+        Self::Metal2_3,
+        Self::Metal2_4,
+        Self::Metal3_0,
+        Self::Metal3_1,
+        Self::Metal3_2,
+        Self::Metal4_0,
+    ];
+
+    /// How many semantic MSL revisions this emission vocabulary names.
+    pub const COUNT: usize = Self::ALL.len();
+
+    /// Returns the numeric semantic revision without a compiler-token prefix.
     #[must_use]
-    pub const fn std_token(self) -> &'static str {
+    pub const fn revision(self) -> &'static str {
         match self {
+            Self::Metal1_0 => "1.0",
+            Self::Metal1_1 => "1.1",
+            Self::Metal1_2 => "1.2",
+            Self::Metal2_0 => "2.0",
+            Self::Metal2_1 => "2.1",
+            Self::Metal2_2 => "2.2",
+            Self::Metal2_3 => "2.3",
+            Self::Metal2_4 => "2.4",
+            Self::Metal3_0 => "3.0",
+            Self::Metal3_1 => "3.1",
+            Self::Metal3_2 => "3.2",
+            Self::Metal4_0 => "4.0",
+        }
+    }
+
+    /// Returns the platform-independent semantic spelling.
+    #[must_use]
+    pub const fn semantic_name(self) -> &'static str {
+        match self {
+            Self::Metal1_0 => "metal1.0",
+            Self::Metal1_1 => "metal1.1",
+            Self::Metal1_2 => "metal1.2",
+            Self::Metal2_0 => "metal2.0",
+            Self::Metal2_1 => "metal2.1",
+            Self::Metal2_2 => "metal2.2",
+            Self::Metal2_3 => "metal2.3",
+            Self::Metal2_4 => "metal2.4",
             Self::Metal3_0 => "metal3.0",
             Self::Metal3_1 => "metal3.1",
+            Self::Metal3_2 => "metal3.2",
+            Self::Metal4_0 => "metal4.0",
         }
     }
 }
 
 impl fmt::Display for MslLanguageVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.std_token())
+        f.write_str(self.semantic_name())
     }
 }
 
 /// The Apple artifact family this translation unit is emitted for.
 ///
-/// Family is a compile guarantee, never a live-device fact, and macOS, iOS
-/// device, and iOS simulator remain distinct measured families.
+/// Family is a compile guarantee, never a live-device fact. Device, simulator,
+/// Catalyst, and desktop artifacts remain distinct even where they share an SDK.
 ///
-/// The driver spells the same three families as
+/// The driver spells the same families as
 /// `tiler_metal_aot::input::ApplePlatform`, with the same stable identifiers.
 /// It does *not* spell the SDK that selects one; `AppleSdk` is the driver's
-/// tool-discovery vocabulary and has no counterpart here. Mac Catalyst is a
-/// deferred fourth family in both crates and must be added to both at once —
-/// `crate::target_correspondence` fails the build otherwise.
+/// tool-discovery vocabulary and has no counterpart here.
 ///
 /// The convention 5b classification and the reasoning are the same as
 /// [`MslLanguageVersion`]'s: an out-of-crate wildcard could only invent an
@@ -137,9 +200,40 @@ pub enum MetalPlatform {
     IOsDevice,
     /// iOS simulator.
     IOsSimulator,
+    /// Mac Catalyst.
+    MacCatalyst,
+    /// tvOS device.
+    TvOsDevice,
+    /// tvOS simulator.
+    TvOsSimulator,
+    /// visionOS device.
+    VisionOsDevice,
+    /// visionOS simulator.
+    VisionOsSimulator,
+    /// watchOS device.
+    WatchOsDevice,
+    /// watchOS simulator.
+    WatchOsSimulator,
 }
 
 impl MetalPlatform {
+    /// Every artifact family this emission vocabulary names.
+    pub const ALL: [Self; 10] = [
+        Self::MacOs,
+        Self::IOsDevice,
+        Self::IOsSimulator,
+        Self::MacCatalyst,
+        Self::TvOsDevice,
+        Self::TvOsSimulator,
+        Self::VisionOsDevice,
+        Self::VisionOsSimulator,
+        Self::WatchOsDevice,
+        Self::WatchOsSimulator,
+    ];
+
+    /// How many artifact families this emission vocabulary names.
+    pub const COUNT: usize = Self::ALL.len();
+
     /// Returns a stable lowercase identifier for this family.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -147,6 +241,13 @@ impl MetalPlatform {
             Self::MacOs => "macos",
             Self::IOsDevice => "ios-device",
             Self::IOsSimulator => "ios-simulator",
+            Self::MacCatalyst => "mac-catalyst",
+            Self::TvOsDevice => "tvos-device",
+            Self::TvOsSimulator => "tvos-simulator",
+            Self::VisionOsDevice => "visionos-device",
+            Self::VisionOsSimulator => "visionos-simulator",
+            Self::WatchOsDevice => "watchos-device",
+            Self::WatchOsSimulator => "watchos-simulator",
         }
     }
 }
