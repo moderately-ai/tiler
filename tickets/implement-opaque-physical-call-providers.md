@@ -125,4 +125,14 @@ The tests are built around the distinction the positional form cannot make: the 
 
 **Every contradiction is reported, not the first**, mirroring `boundary::unsatisfied_properties`, so a provider author fixing one does not resubmit to discover the next. The test for that uses a declaration violating both rules and asserts two faults — a `check` returning early passes the two single-fault tests and fails only this one. A fourth test admits a consistent declaration, without which all three rejection tests would pass against a `check` that refused everything.
 
-**Still not included:** the registration seam itself (its shape is already proven by `rewrite::RuleRegistry` — duplicate refusal, canonical iteration order) and the additive coexistence with scheduled kernels.
+## Registration seam landed (2026-07-28)
+
+`crates/tiler-compiler/src/call_registry.rs`. `OpaqueCallIdentity` (provider, call, output-affecting revision) keys an `OpaqueCallRegistry` of checked declarations.
+
+**It is a separate type from `rewrite::RuleRegistry`, deliberately, despite identical shape.** `AGENTS.md` says two types with the same shape are not the same concept and names the construction site as the evidence. The sites differ in what registration *means*: a rewrite provider offers an optional transformation, so an entry that never fires costs nothing; an opaque call provider offers the only implementation of a call a program may already reference, so an entry that never fires is a program that cannot be built. Sharing one type would hide that, and the first person to add a "skip providers that propose nothing" convenience would apply it to both. The *reasoning* about duplicate refusal and canonical ordering is shared by reference rather than restated.
+
+**Registration takes a checked `OpaqueCallDeclaration`, not its parts**, so an incoherent set cannot be registered — the coherence check is not something registration repeats or could skip.
+
+**A revision change registers alongside its predecessor rather than being refused as a duplicate.** Two revisions must coexist: a program pinned to the old behaviour and one built against the new both have to resolve. This is where the opaque-call identity's revision behaves differently from a rewrite rule's, and it is tested, because the obvious duplicate check gets it wrong.
+
+**Still not included:** the additive coexistence with scheduled kernels — the frontier integration that lets an opaque call and a scheduled kernel be alternatives for the same region. That is the remaining piece, and it is the first that must change existing frontier code rather than add beside it.

@@ -7,6 +7,7 @@ mod boundary;
 mod call_abi;
 mod call_declaration;
 mod call_placement;
+mod call_registry;
 pub mod capability;
 mod component_cost;
 mod cover;
