@@ -28,11 +28,11 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::Shape;
 
 use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::program::abi::{AbiArenaTraversal, canonical_arena_traversal, compare_expr_nodes};
 
 use super::MAX_ARTIFACT_IDENTITY_BYTES;
 use super::codec::{
-    ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow, expression_keys,
-    position as node_at,
+    ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow, position as node_at,
 };
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind};
 use super::expr::{
@@ -74,7 +74,24 @@ use super::keys::{
 /// dependency graph. The new rows make the order *readable* by a consumer
 /// holding only bytes; they do not make two orders distinguishable, which they
 /// already were.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v4\0";
+///
+/// # Why this is a `v5` step
+///
+/// `v4` embedded a full copy of an expression's key at every use site, so a
+/// node's encoding contained its whole subtree — quadratic on a chain and
+/// doubling per level on a shared DAG. `v5` writes the arena **once**, in a
+/// canonical numbering, and names every use by its fixed-width canonical
+/// position. The identity is linear in arena size and stays exactly injective:
+/// the arena section is complete and self-delimiting, so a position determines
+/// its node as precisely as a full copy did.
+///
+/// The two expression sets a variant carries — deferred predicates and each
+/// entry's launch preconditions — are ordered by structural comparison rather
+/// than by key bytes, because the numbering is derived from the order they are
+/// written in and an order derived from the numbering would be circular. That
+/// changes their canonical order as well as their spelling, which is the second
+/// reason this is a domain step and not a re-encoding.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v5\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -1546,7 +1563,15 @@ pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
 pub(super) fn encode_identity(
     envelope: &ArtifactEnvelope,
 ) -> Result<CanonicalArtifactProgramIdentity, ArtifactDiagnostic> {
-    let keys = expression_keys(envelope.expressions());
+    let orders: Vec<VariantOrder> = envelope
+        .variants()
+        .iter()
+        .map(|variant| variant_order(envelope.expressions(), variant))
+        .collect();
+    let arena = canonical_arena_traversal(
+        envelope.expressions(),
+        identity_use_sites(envelope, &orders),
+    );
     let mut bytes = Vec::new();
     bytes.extend_from_slice(ARTIFACT_DOMAIN);
     envelope.schema().encode(&mut bytes);
@@ -1579,9 +1604,13 @@ pub(super) fn encode_identity(
         payload_keys.iter().cloned(),
         ArtifactEntityKind::Payload,
     )?;
+    // The arena is written once, here, and every reference below is a canonical
+    // position into it. That is what makes the identity linear in arena size:
+    // the previous encoding embedded a node's whole subtree at every use.
+    arena.encode(envelope.expressions(), &mut bytes);
     push_len(&mut bytes, envelope.variants().len());
-    for variant in envelope.variants() {
-        push_variant(&mut bytes, envelope, &keys, variant, &payload_keys)?;
+    for (variant, order) in envelope.variants().iter().zip(&orders) {
+        push_variant(&mut bytes, envelope, &arena, variant, order, &payload_keys)?;
     }
     if bytes.len() > MAX_ARTIFACT_IDENTITY_BYTES {
         return Err(ArtifactDiagnostic::IdentityLimit {
@@ -1590,6 +1619,124 @@ pub(super) fn encode_identity(
         });
     }
     Ok(CanonicalArtifactProgramIdentity(bytes))
+}
+
+/// The canonical order of one variant's deferred predicates, as positions.
+///
+/// Shared by the identity encoder, the codec that stores them, and the
+/// validator that re-checks the stored order, so the three cannot drift into
+/// three definitions of "canonical".
+///
+/// The expression leads, then the facts that make two predicates over one
+/// expression distinct — a predicate is not determined by its expression alone,
+/// so ordering by that alone would leave ties and the order would depend on the
+/// input permutation.
+pub(super) fn canonical_deferred_order(
+    nodes: &[ExprNode],
+    deferred: &[DeferredPredicateData],
+) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..deferred.len()).collect();
+    order.sort_by(|left, right| {
+        let (left, right) = (&deferred[*left], &deferred[*right]);
+        compare_expr_nodes(nodes, left.predicate, right.predicate)
+            .then_with(|| left.phase.tag().cmp(&right.phase.tag()))
+            .then_with(|| left.authority.namespace().cmp(right.authority.namespace()))
+            .then_with(|| left.authority.name().cmp(right.authority.name()))
+            .then_with(|| left.authority.revision().cmp(&right.authority.revision()))
+    });
+    order
+}
+
+/// The canonical order of one entry's launch preconditions.
+pub(super) fn canonical_precondition_order(nodes: &[ExprNode], preconditions: &[u32]) -> Vec<u32> {
+    let mut ordered = preconditions.to_vec();
+    ordered.sort_by(|left, right| compare_expr_nodes(nodes, *left, *right));
+    ordered
+}
+
+/// A variant's expression-bearing sets, put in content-derived order once.
+///
+/// Neither set is canonicalized when a variant is built — `check_deferred` and
+/// the launch-precondition loop preserve the caller's declaration order and
+/// only reject duplicates — so this is where their order stops depending on
+/// which obligation a producer happened to enumerate first.
+///
+/// **It is computed before the arena is numbered, and that is the point.** The
+/// numbering is a function of the root order, the root order is the order these
+/// sets are written in, and so an order derived from canonical IDs would be
+/// circular. [`compare_expr_nodes`] needs no numbering, which is what breaks
+/// the cycle.
+struct VariantOrder {
+    /// Deferred predicate positions, in canonical order.
+    deferred: Vec<usize>,
+    /// Per entry, its launch-precondition arena nodes in canonical order.
+    preconditions: Vec<Vec<u32>>,
+}
+
+/// Orders one variant's deferred predicates and launch preconditions.
+fn variant_order(nodes: &[ExprNode], variant: &VariantRow) -> VariantOrder {
+    let deferred = canonical_deferred_order(nodes, &variant.deferred);
+    let preconditions = variant
+        .entries
+        .iter()
+        .map(|entry| canonical_precondition_order(nodes, &entry.launch.preconditions))
+        .collect();
+    VariantOrder {
+        deferred,
+        preconditions,
+    }
+}
+
+/// Every arena node the identity names, in the order the identity writes it.
+///
+/// The order is the numbering, so this must stay in step with `push_variant`
+/// and `push_entry`. It is one function rather than a walk beside each writer
+/// because a root list that disagreed with the write order would still produce
+/// a *valid* identity — just not the one a decoder re-deriving it would get.
+fn identity_use_sites(envelope: &ArtifactEnvelope, orders: &[VariantOrder]) -> Vec<u32> {
+    let mut sites = Vec::new();
+    for (variant, order) in envelope.variants().iter().zip(orders) {
+        sites.push(variant.guard);
+        sites.extend(
+            order
+                .deferred
+                .iter()
+                .map(|index| variant.deferred[*index].predicate),
+        );
+        for (entry, preconditions) in variant.entries.iter().zip(&order.preconditions) {
+            sites.extend(
+                entry
+                    .bindings
+                    .iter()
+                    .map(|binding| binding.accessible_bytes),
+            );
+            sites.push(entry.launch.grid_threads);
+            sites.push(entry.launch.threads_per_workgroup);
+            sites.extend(preconditions.iter().copied());
+        }
+    }
+    // Every remaining arena position, in arena order, so the numbering is total.
+    //
+    // **This is not reachable for a valid artifact and is not a fallback that
+    // hides one.** Validation requires every expression to be reached by a use
+    // site, so for anything that decodes these add nothing and the numbering is
+    // exactly the use-site one. They exist because this encoder runs *before*
+    // validation — `an_expression_no_use_site_reaches_is_rejected` and
+    // `an_empty_portfolio_is_rejected` both derive an identity for an envelope
+    // that is about to be refused — and naming an unreached node would
+    // otherwise panic inside the traversal instead of letting the typed
+    // rejection be returned. `tiler-ir` needs no such tail because verification
+    // precedes identity there.
+    sites.extend(0..ordinal(envelope.expressions().len()));
+    sites
+}
+
+/// Names one arena node by its canonical position, at fixed width.
+///
+/// Eight big-endian bytes are self-delimiting, so this replaces a
+/// length-prefixed key without losing framing.
+fn push_abi_reference(bytes: &mut Vec<u8>, arena: &AbiArenaTraversal, node: u32) {
+    bytes.extend_from_slice(&arena.canonical_id(node).to_be_bytes());
 }
 
 fn push_interface(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
@@ -1632,31 +1779,42 @@ fn push_sorted_keys(
 fn push_variant(
     bytes: &mut Vec<u8>,
     envelope: &ArtifactEnvelope,
-    keys: &[Vec<u8>],
+    arena: &AbiArenaTraversal,
     variant: &VariantRow,
+    order: &VariantOrder,
     payload_keys: &[Vec<u8>],
 ) -> Result<(), ArtifactDiagnostic> {
     push_slice(
         bytes,
         &envelope.sections()[node_at(variant.program_section)].bytes,
     );
-    push_slice(bytes, &keys[node_at(variant.guard)]);
+    push_abi_reference(bytes, arena, variant.guard);
     push_slice(bytes, variant.profile.key.as_str().as_bytes());
     push_slice(bytes, variant.profile.descriptor.as_bytes());
     push_slice(bytes, variant.feasibility_rules.key.as_str().as_bytes());
     bytes.extend_from_slice(&variant.feasibility_rules.revision.to_be_bytes());
-    push_sorted_keys(
-        bytes,
-        variant
-            .deferred
-            .iter()
-            .map(|predicate| deferred_key(keys, predicate)),
-        ArtifactEntityKind::Variant,
-    )?;
+    // Already in canonical order, so this writes rather than sorts: the order
+    // was fixed before the arena was numbered, because the numbering depends on
+    // it. Distinctness is still proven, since equal keys would make the order
+    // unrecoverable rather than merely arbitrary.
+    let deferred: Vec<Vec<u8>> = order
+        .deferred
+        .iter()
+        .map(|index| deferred_key(arena, &variant.deferred[*index]))
+        .collect();
+    if deferred.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(ArtifactDiagnostic::AmbiguousCanonicalKey {
+            entity: ArtifactEntityKind::Variant,
+        });
+    }
+    push_len(bytes, deferred.len());
+    for key in &deferred {
+        push_slice(bytes, key);
+    }
     push_len(bytes, variant.entries.len());
-    for entry in &variant.entries {
+    for (entry, preconditions) in variant.entries.iter().zip(&order.preconditions) {
         push_slice(bytes, entry.stage.as_bytes());
-        push_entry(bytes, keys, entry, payload_keys)?;
+        push_entry(bytes, arena, entry, preconditions, payload_keys)?;
     }
     // The order is meaning, so it is folded as stated rather than sorted: two
     // artifacts whose stages run in different orders are different artifacts.
@@ -1681,16 +1839,19 @@ fn push_variant(
 }
 
 /// Derives the canonical content key of one deferred feasibility predicate.
-pub(super) fn deferred_key(keys: &[Vec<u8>], predicate: &DeferredPredicateData) -> Vec<u8> {
+pub(super) fn deferred_key(
+    arena: &AbiArenaTraversal,
+    predicate: &DeferredPredicateData,
+) -> Vec<u8> {
     let exact = DEFERRED_KEY_DOMAIN.len()
-        + framed(keys[node_at(predicate.predicate)].len())
+        + size_of::<u64>()
         + 1
         + framed(predicate.authority.namespace().len())
         + framed(predicate.authority.name().len())
         + size_of::<u32>();
     let mut bytes = Vec::with_capacity(exact);
     bytes.extend_from_slice(DEFERRED_KEY_DOMAIN);
-    push_slice(&mut bytes, &keys[node_at(predicate.predicate)]);
+    push_abi_reference(&mut bytes, arena, predicate.predicate);
     bytes.push(predicate.phase.tag());
     push_slice(&mut bytes, predicate.authority.namespace().as_bytes());
     push_slice(&mut bytes, predicate.authority.name().as_bytes());
@@ -1701,8 +1862,9 @@ pub(super) fn deferred_key(keys: &[Vec<u8>], predicate: &DeferredPredicateData) 
 
 fn push_entry(
     bytes: &mut Vec<u8>,
-    keys: &[Vec<u8>],
+    arena: &AbiArenaTraversal,
     entry: &EntryRow,
+    preconditions: &[u32],
     payload_keys: &[Vec<u8>],
 ) -> Result<(), ArtifactDiagnostic> {
     push_resources(bytes, entry.resources);
@@ -1715,20 +1877,26 @@ fn push_entry(
         bytes.push(buffer_access_tag(binding.access));
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());
         push_binding_target(bytes, &binding.target);
-        push_slice(bytes, &keys[node_at(binding.accessible_bytes)]);
+        push_abi_reference(bytes, arena, binding.accessible_bytes);
     }
-    push_slice(bytes, &keys[node_at(entry.launch.grid_threads)]);
-    push_slice(bytes, &keys[node_at(entry.launch.threads_per_workgroup)]);
+    push_abi_reference(bytes, arena, entry.launch.grid_threads);
+    push_abi_reference(bytes, arena, entry.launch.threads_per_workgroup);
     bytes.push(u8::from(entry.launch.zero_work_skips_dispatch));
-    push_sorted_keys(
-        bytes,
-        entry
-            .launch
-            .preconditions
-            .iter()
-            .map(|node| keys[node_at(*node)].clone()),
-        ArtifactEntityKind::Expression,
-    )?;
+    // Canonically ordered before the numbering, as the deferred set is.
+    // Distinctness is the builder's, which rejects a duplicate precondition, so
+    // two equal canonical IDs here would be a builder defect rather than input.
+    if preconditions
+        .windows(2)
+        .any(|pair| arena.canonical_id(pair[0]) == arena.canonical_id(pair[1]))
+    {
+        return Err(ArtifactDiagnostic::AmbiguousCanonicalKey {
+            entity: ArtifactEntityKind::Expression,
+        });
+    }
+    push_len(bytes, preconditions.len());
+    for node in preconditions {
+        push_abi_reference(bytes, arena, *node);
+    }
     push_slice(bytes, &payload_keys[node_at(entry.payload)]);
     push_slice(bytes, entry.entry_key.as_bytes());
     Ok(())
