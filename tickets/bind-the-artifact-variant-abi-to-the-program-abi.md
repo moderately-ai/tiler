@@ -1,7 +1,7 @@
 ---
 id: bind-the-artifact-variant-abi-to-the-program-abi
 title: Bind the artifact variant ABI to the program ABI
-status: todo
+status: in-progress
 priority: p1
 dependencies: [complete-program-identity-with-abi-guards-and-routing]
 related: [prototype-artifact-program-model]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi, identity]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785207547
 ---
 **Fact — two ABIs now describe one program, and nothing binds them.** `complete-program-identity-with-abi-guards-and-routing` gave `tiler_ir::program::VerifiedKernelProgram` its own ABI expression arena, applicability guard, per-stage launch geometry, and per-access accessible byte range, and folded all four into `tiler.kernel-program.v2` identity. `tiler_artifact::program`'s `VariantSpec` still declares its own guard, its own `LaunchSpec`, and its own per-binding `accessible_bytes`, on its own arena, under the separately versioned `guard_and_routing` schema.
 
@@ -48,3 +51,15 @@ bumped with its reason recorded at the site; and `make full` passes.
 **One thing that got easier while this ticket waited.** `flatten-artifact-expression-identity` landed the shared arena primitives — `canonical_arena_traversal` and `compare_expr_nodes` are `pub` in `tiler_ir::program::abi`, and the artifact identity already numbers its arena from a use-site root list. A transliteration that derives the variant's expressions from the program now has one numbering to agree with rather than two key encodings, so the binding is a smaller change than when this ticket was written.
 
 **Both version bumps are in scope and neither is optional**, per the ticket: `ARTIFACT_DOMAIN` (now `v5`, so `v6`) because a variant that stops carrying its own expressions changes what the identity means, and the `guard_and_routing` component schema for the same reason.
+
+## Progress 2026-07-27 — the replay moved into the artifact layer
+
+**Landed:** `ArtifactProgramBuilder::adopt_abi(arena, roots)` replays a verified program's ABI arena onto the builder's own, returning one slot per source position, `Some` exactly for the positions reached from `roots`. Plus `ArtifactBuildError::ExpressionOutOfRange` for a root or operand naming a position outside the arena.
+
+**This is the mechanism the ticket needs, moved from a producer convention into the layer that should own it.** `prototypes/serial-sum-compile/src/bundle.rs::assemble` was the only consumer doing the right thing, by hand — the ticket says so in terms. Its `replay`/`reachable_from`/`resolve` are now the artifact builder's, so an assembler no longer has to know to transliterate.
+
+**Two tests, one of them the load-bearing one.** `adopting_a_program_abi_replays_every_reached_position` asserts every named position is replayed **and that a second replay of the same arena mints nothing new** — the builder keys by content, so an arena naming one expression from two positions must resolve to one handle, or a variant would carry two spellings of one formula and identity would distinguish them. `adopting_an_abi_with_an_out_of_range_root_is_rejected` proves the bound is a typed rejection rather than a panic, and was verified to bite: deleting the range check makes it fail.
+
+**Not done, and it is the half ADR 0075 reserves.** `VariantSpec.applicability_guard`, `EntrySpec`'s launch, and per-binding `accessible_bytes` are still caller-supplied, so a disagreement is still constructible. Removing them is a **public API removal** — `VariantSpec` is `pub` with `pub` fields — and `AGENTS.md` is explicit that a tested implementation is a concrete draft and not approval of its interface. What remains is wiring, not design: `check_bindings` and `check_launch` derive from `adopt_abi`'s map instead of validating a caller's expression, the three fields come off the specs, and `ARTIFACT_DOMAIN` (now `v5`) plus the `guard_and_routing` component schema both step, because a variant that stops carrying its own expressions changes what the identity means.
+
+**The value of doing this half now** is that it is the part with no interface question, so the remaining step is a mechanical change against a tested primitive rather than a design and an API decision at once.

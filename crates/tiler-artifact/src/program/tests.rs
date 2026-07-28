@@ -1963,3 +1963,58 @@ fn artifact_identity_size_grows_linearly_with_the_abi_arena() {
         );
     }
 }
+
+/// `adopt_abi` replays a program's arena and resolves every reached position.
+///
+/// This is the mechanism that makes "a variant's ABI is its program's ABI"
+/// checkable instead of a producer convention. The dedup assertion is the part
+/// worth having: the builder keys by content, so replaying an arena that names
+/// one expression from two positions must yield one handle, or a variant would
+/// carry two spellings of one formula and the identity would distinguish them.
+#[test]
+fn adopting_a_program_abi_replays_every_reached_position() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+
+    let arena = program.abi_expressions();
+    let roots: Vec<u32> = (0..u32::try_from(arena.len()).unwrap()).collect();
+    let minted = draft.adopt_abi(arena, &roots).expect("the arena replays");
+
+    assert_eq!(minted.len(), arena.len());
+    assert!(
+        minted.iter().all(Option::is_some),
+        "every position was named as a root, so every one must be replayed"
+    );
+
+    // Replaying the same arena again must mint no new handles: the builder
+    // deduplicates by content, so the second pass resolves to the first's.
+    let again = draft
+        .adopt_abi(arena, &roots)
+        .expect("the arena replays twice");
+    assert_eq!(
+        minted, again,
+        "replay is not idempotent, so content dedup failed"
+    );
+}
+
+/// A root outside the arena is a typed rejection, not a panic.
+#[test]
+fn adopting_an_abi_with_an_out_of_range_root_is_rejected() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+
+    let arena = program.abi_expressions();
+    let beyond = u32::try_from(arena.len()).unwrap();
+    assert_eq!(
+        draft.adopt_abi(arena, &[beyond]),
+        Err(ArtifactBuildError::ExpressionOutOfRange { position: beyond }),
+    );
+}
