@@ -22,7 +22,7 @@ Each needs an input the compiler does not have. `Allocation` was computable beca
 | ~~`Dispatch`~~ | **Modelled 2026-07-27.** The duplication question resolved in favour of reporting it: calibration compares a device measurement against this model component by component, so a component absent here cannot be correlated with anything measured, and dispatch overhead is among the first things a device measurement sees. The structural count exists to be *pruned* on and this one to be *calibrated* against; the two uses share no consumer. A `debug_assert_eq!` in `record_analytical_costs` pins the two counts to agree, since a duplicated number that drifted would be worse than none — a calibration pass would attribute the difference to the device. Its failure path was verified by perturbing the analytical sum by one and watching it fire. |
 | `RedundantWork` | a model of what fusion recomputes, which needs the access relations rather than the cover shape |
 | `Indexing` | per-element address arithmetic, derivable from the index region but not currently summarized anywhere |
-| `Synchronization` | the barrier structure, which lives in the kernel program rather than the plan |
+| ~~`Synchronization`~~ | **Modelled 2026-07-27.** The premise was wrong: it does not need the kernel program's barrier structure. Every satisfied cross-region handoff is a producer/consumer edge whose consumer requires `AfterProducingDispatch`, discharged by the producer's `AfterOwnDispatch`, so each (producer, consumer) pair is exactly one ordering constraint and the plan already carries them. Counted per consumer rather than per handoff, since a handoff with three consumers imposes three waits. Stated at the match arm so it can be refuted: if a target ever orders a whole handoff with one barrier, this becomes an upper bound and must be restated as `Bounded` rather than quietly redefined. A `debug_assert!` pins it at or above the materialization count — equality holds only in the single-consumer case — and its failure path was verified by zeroing the sum and watching it fire, which also proved the count is genuinely non-zero rather than vacuously satisfied. |
 | `ResourcePressure` | a register and threadgroup-memory model per target profile; none exists |
 | `CompileTime` | measurement, not analysis — it is the one component whose honest form may be `Bounded` from observed compiles rather than derived |
 | `ArtifactSize` | encoded bytes, which only exist after encoding; the plan precedes it |
@@ -37,7 +37,8 @@ Each needs an input the compiler does not have. `Allocation` was computable beca
 
 ## Progress
 
-- `Dispatch` modelled (see the struck row above). Seven remain `Unknown`.
+- `Dispatch` and `Synchronization` modelled (see the struck rows above). Six remain `Unknown`.
+- Both were exact sums over values the plan already carried. The remaining six are not near that: each needs an input that does not exist, and the header of `component_cost` says which. Do not close them by estimating.
 
 ## Closes when
 

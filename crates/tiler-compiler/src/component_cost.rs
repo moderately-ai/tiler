@@ -23,15 +23,18 @@
 //! its own model key, it is reported, and the retained plan set is bit-for-bit
 //! what it was before this module existed.
 //!
-//! # Why eight of the nine components are `Unknown`
+//! # Why six of the nine components are `Unknown`
 //!
 //! The accepted contract keeps `SoundProof`, exhaustive finite evidence,
 //! empirical evidence, and `Unknown` as different classes, and this module
-//! honours that rather than filling gaps with plausible arithmetic. Allocation
-//! is an exact sum of values the plan already carries. The other eight need
-//! inputs the compiler does not have yet — per-region element traffic, an
+//! honours that rather than filling gaps with plausible arithmetic.
+//!
+//! Three components are exact sums over values a plan already carries —
+//! allocation, dispatch, and the ordering constraints between dispatches — and
+//! each is derived at its match arm rather than estimated. The other six need
+//! inputs the compiler does not have yet: per-region element traffic, an
 //! occupancy model, a resource-pressure model, artifact sizes that only exist
-//! after encoding — and a formula invented to fill one of them would be
+//! after encoding. A formula invented to fill one of them would be
 //! unfalsifiable at exactly the moment it mattered. An honest `Unknown` is a
 //! measurement boundary; a fabricated number is a defect that reads as evidence.
 
@@ -359,13 +362,32 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                         ))
                     }))
                 }
+                // Exactly the ordering constraints the plan requires between
+                // dispatches: one per (producer, consumer) pair across the
+                // satisfied cross-region handoffs. Every consumer of a handoff
+                // requires `AvailabilityRequirement::AfterProducingDispatch`,
+                // discharged by the producer's `AfterOwnDispatch`, so each pair
+                // is one edge that must be ordered.
+                //
+                // Counted per consumer rather than per handoff because a handoff
+                // with three consumers imposes three waits, not one. State that
+                // explicitly so the count can be refuted: if a target ever
+                // orders a whole handoff with a single barrier, this becomes an
+                // upper bound and should be restated as `Bounded` rather than
+                // quietly redefined.
+                CostComponent::Synchronization => {
+                    CostValue::Exact(plan.handoffs().iter().fold(0_u64, |total, handoff| {
+                        total.saturating_add(
+                            u64::try_from(handoff.consumers().len()).unwrap_or(u64::MAX),
+                        )
+                    }))
+                }
                 // Not modelled. See this module's header: the inputs do not
                 // exist yet, and inventing them would produce numbers that
                 // cannot be refuted.
                 CostComponent::MemoryTraffic
                 | CostComponent::RedundantWork
                 | CostComponent::Indexing
-                | CostComponent::Synchronization
                 | CostComponent::ResourcePressure
                 | CostComponent::CompileTime
                 | CostComponent::ArtifactSize => CostValue::Unknown,

@@ -435,6 +435,22 @@ fn record_analytical_costs(
             Some(CostValue::Exact(plan.cost().dispatch_count())),
             "the analytical dispatch count disagrees with the structural one"
         );
+        // Every deliberate cross-region materialization is one handoff edge, and
+        // every edge imposes at least one wait, so the ordering-constraint count
+        // can never fall below the materialization count. It exceeds it exactly
+        // when a produced value has more than one consumer. Asserting the
+        // inequality rather than equality is what keeps this true for the
+        // multi-consumer case instead of pinning the single-consumer one.
+        debug_assert!(
+            analytical
+                .get(CostComponent::Synchronization)
+                .and_then(|cost| match cost.value() {
+                    CostValue::Exact(value) => Some(value),
+                    CostValue::Bounded { .. } | CostValue::Unknown => None,
+                })
+                .is_some_and(|sync| sync >= plan.cost().materialization_count()),
+            "fewer ordering constraints than cross-region materializations"
+        );
         let subject_key = plan.identity().label();
         for component in analytical.components() {
             match component.value() {
