@@ -32,14 +32,17 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::Shape;
 
 use crate::arithmetic::{ExactInteger, MagnitudeExceeded};
+use crate::evaluate::{decode_f32, f32_element};
+use crate::identity::{
+    encode_provider_capability, encode_signature, encoded_bytes_len,
+    reference_provider_identity_len, reference_signature_identity_len,
+};
 use crate::{
     EvaluationError, FloatBitOrder, FrozenReferenceRegistry, MAX_REFERENCE_CAPABILITIES,
     MAX_REFERENCE_REGISTRY_IDENTITY_BYTES, MAX_REFERENCE_TENSOR_ELEMENTS,
     ReferenceCapabilityRevision, ReferenceElement, ReferenceOperationError, ReferenceRegistryError,
     ReferenceRegistryResource, ReferenceSignature, Tensor, TensorPayloadView,
-    canonicalize_arithmetic_f32, decode_f32, encode_provider_capability, encode_signature,
-    encoded_bytes_len, f32_element, reference_provider_identity_len,
-    reference_signature_identity_len,
+    canonicalize_arithmetic_f32,
 };
 
 /// Maximum scalar, reducer-body, and index evaluations in one region evaluation.
