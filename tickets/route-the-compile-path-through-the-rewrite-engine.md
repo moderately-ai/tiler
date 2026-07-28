@@ -1,7 +1,7 @@
 ---
 id: route-the-compile-path-through-the-rewrite-engine
 title: Route the compile path through the rewrite engine
-status: todo
+status: done
 priority: p1
 dependencies: [generalize-the-normalize-transaction-to-alternatives]
 related: []
@@ -227,4 +227,22 @@ I expected that to matter and checked before assuming it. **`NormalizeError::cla
 **So the swap does not need the class preserved**, and it should not grow machinery to preserve it. Map every `ProviderDefect::Failed` to `NormalizeError::InvalidRewrite { rule: reason }`, and note in the commit that engine-routed failures report a different class in their message. If a future reader needs the class back, the honest fix is for the rule to encode it in the reason, not for `ProviderDefect` to learn a vocabulary it has no stake in.
 
 **This was the last unknown.** The swap is now: register the rule, match `EngineRun`, build the outcome from the adopted alternatives' payloads and rewrite counts, and map the two failure variants. The census is the differential test — it must not move.
+
+## Landed 2026-07-28 — the compile path runs through the engine
+
+`normalize_semantics` now registers `CommonSubexpressionRule`, calls `run_rewrite_engine`, and builds its outcome from the adopted alternative. Its signature is unchanged, so `pipeline.rs` was not touched.
+
+**The census did not move, and that is the result rather than a convenience.** Every earlier step in this ticket deliberately left `every_wired_authority_emits_its_typed_explain_records` untouched, so it functioned as a differential test for the swap: a green census after routing is evidence the engine reproduces the stage record-for-record, not merely that nothing crashed. The serial-sum proof matrix and the producer determinism test passed unchanged in the same run.
+
+**And it caught a real bug in the engine immediately.** `run_rewrite_engine` rebuilt each proposal after revalidation to carry the revalidated program, and **dropped the rule's explain payload** doing it. The rewrite still happened; its records silently stopped being emitted. No test of the engine in isolation could see that — the payload is opaque to the engine and every engine test compared programs. It surfaced the moment the compile path started using it, with `the committed merge is explained`.
+
+Closing criteria:
+
+- *The rewrite stage is the engine, with the common-subexpression rule registered* — **met**.
+- *`normalize_semantics` is a thin expression of the engine, no second budget or adoption path* — **met**; the congruence, rebuild, verify, and budget comparison it used to perform are all the engine's or the rule's now.
+- *Explain census updated; every rewrite emits a typed record naming its rule* — **met**, and the census needed no update, which is the stronger outcome.
+- *Serial-sum artifact identity and two-process determinism do not move* — **met**, unchanged in the gating run.
+- *A test drives a plan built from an alternative the engine produced* — **met**; every pipeline test now does, since the whole compile path routes through it.
+
+**Deliberately rejecting rather than guessing:** more than one alternative returns `InvalidRewrite { rule: "multiple-alternatives" }`. `NormalizationOutcome` carries one program, and choosing among alternatives is a cost decision with no cost model in scope at this stage. A second registered rule makes that reachable, and it must be answered then rather than by silently taking the first.
 

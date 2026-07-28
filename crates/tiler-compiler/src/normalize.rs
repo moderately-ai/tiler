@@ -308,45 +308,67 @@ pub(crate) fn normalize_semantics(
     budgets: DeterministicBudgets,
     numerical_contract: StrictF32NumericalContract,
 ) -> Result<NormalizationOutcome, NormalizeError> {
-    let congruence = detect_shared_values(program)?;
     let operations_before = program.operation_count();
-    let demand = count(congruence.merges.len());
-    let limit = u64::from(budgets.normalization_rewrites);
-    if demand > limit {
-        // A partially applied canonicalization would make the result depend on
-        // the budget rather than on the program, so the whole rewrite is
-        // abandoned and the verified input stays authoritative.
-        return Ok(NormalizationOutcome {
-            normalized: None,
-            rule_explains: Vec::new(),
-            rewrite_count: 0,
-            operations_before,
-            operations_after: operations_before,
-            budget_stop: Some((limit, demand)),
-            numerical_contract_key: numerical_contract.key,
-            canonical_graph_digest: digest(program),
+    let mut registry = RuleRegistry::new();
+    registry
+        .register(Box::new(CommonSubexpressionRule))
+        .map_err(|_| NormalizeError::Structure {
+            rule: "rule-registration",
+        })?;
+
+    // Every engine failure is invalid compiler output. The `NormalizeError`
+    // *class* does not survive the round trip — `ProviderDefect` has no business
+    // knowing this stage's taxonomy — and that is accepted rather than worked
+    // around: `class()` reaches only `Display`, never an explain record or a
+    // typed outcome, so the loss is diagnostic text while the actionable reason
+    // is preserved exactly.
+    let run = run_rewrite_engine(&registry, program, budgets).map_err(|failure| match failure {
+        EngineFailure::Provider(ProviderDefect::Failed { reason, .. })
+        | EngineFailure::Revalidation { reason, .. } => {
+            NormalizeError::InvalidRewrite { rule: reason }
+        }
+        EngineFailure::Provider(ProviderDefect::Misattributed { .. }) => {
+            NormalizeError::InvalidRewrite {
+                rule: "misattributed-proposal",
+            }
+        }
+    })?;
+
+    let unchanged = |budget_stop| NormalizationOutcome {
+        normalized: None,
+        rule_explains: Vec::new(),
+        rewrite_count: 0,
+        operations_before,
+        operations_after: operations_before,
+        budget_stop,
+        numerical_contract_key: numerical_contract.key,
+        canonical_graph_digest: digest(program),
+    };
+
+    let alternatives = match run {
+        EngineRun::BudgetStopped { limit, demand } => return Ok(unchanged(Some((limit, demand)))),
+        EngineRun::Adopted(alternatives) => alternatives,
+    };
+    if alternatives.is_empty() {
+        return Ok(unchanged(None));
+    }
+    // `NormalizationOutcome` carries one program, so this stage can express one
+    // alternative. With a single rule registered that is all the engine can
+    // produce; a second rule makes this reachable, and it rejects rather than
+    // silently picking, because choosing among alternatives is a cost decision
+    // and no cost model is in scope here.
+    if alternatives.len() > 1 {
+        return Err(NormalizeError::InvalidRewrite {
+            rule: "multiple-alternatives",
         });
     }
-    if congruence.merges.is_empty() {
-        return Ok(NormalizationOutcome {
-            normalized: None,
-            rule_explains: Vec::new(),
-            rewrite_count: 0,
-            operations_before,
-            operations_after: operations_before,
-            budget_stop: None,
-            numerical_contract_key: numerical_contract.key,
-            canonical_graph_digest: digest(program),
-        });
-    }
-    let normalized = rebuild(program, &congruence)?;
-    verify_normalized(program, &normalized, &congruence)?;
-    let rewrite_count = congruence.merges.len();
+    let adopted = &alternatives[0];
+    let normalized = adopted.candidate().clone();
     Ok(NormalizationOutcome {
         operations_before,
         operations_after: normalized.operation_count(),
-        rule_explains: vec![Arc::new(SharedValueExplain::new(congruence.merges))],
-        rewrite_count,
+        rule_explains: adopted.explain().cloned().into_iter().collect(),
+        rewrite_count: usize::try_from(adopted.rewrites()).unwrap_or(usize::MAX),
         budget_stop: None,
         numerical_contract_key: numerical_contract.key,
         canonical_graph_digest: digest(&normalized),
@@ -743,13 +765,19 @@ pub(crate) fn run_rewrite_engine(
         // Adopting the candidate the provider handed over while only *verifying*
         // a rebuild of it would keep whatever the provider actually constructed,
         // and the rebuild is the version the frozen authority produced.
-        // The rewrite count carries over: revalidation rebuilds the program, it
-        // does not change how many rewrites produced it.
-        alternatives.push(RewriteProposal::new(
-            proposal.rule(),
-            revalidated,
-            proposal.rewrites(),
-        ));
+        // The rewrite count and the rule's explain payload both carry over:
+        // revalidation rebuilds the *program*, and changes neither how many
+        // rewrites produced it nor what the rule wants recorded about them.
+        //
+        // Dropping the payload here is a real bug this had, caught by the
+        // explain census the moment the compile path started using the engine —
+        // the rewrite still happened and its records silently stopped being
+        // emitted, which no test of the engine in isolation could see.
+        let mut adopted = RewriteProposal::new(proposal.rule(), revalidated, proposal.rewrites());
+        if let Some(records) = proposal.explain() {
+            adopted = adopted.with_explain(records.clone());
+        }
+        alternatives.push(adopted);
     }
     Ok(EngineRun::Adopted(alternatives))
 }
