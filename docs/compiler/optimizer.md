@@ -81,11 +81,14 @@ An exhausted *proof* budget is a sixth thing, and it is deliberately not a failu
 ```text
 SemanticTensorGraph
   -> deterministic normalization
-  -> bounded logical exploration
+  -> bounded baseline-preserving logical exploration
+  -> per-alternative request readmission and contract grouping
+  -> independently verified candidate planning
   -> overlapping RegionCandidates
      |-> independent complete-cover enumeration ---------|
      `-> checked schedules + ImplementationFrontier -----|
-  -> compatible complete physical-plan selection
+  -> compatible complete physical-plan selection per semantic candidate
+  -> verified global selection across one contract group
   -> structured KIR refinement
   -> KernelProgram or guarded ProgramPortfolio
 ```
@@ -273,11 +276,27 @@ These rules add alternatives:
 
 Each rule above names the effective numerical permission it consumes, as ADR 0011 requires of every semantic rewrite, and a rule that names none consumes none. Pushing a view through a pointwise expression relocates reads without changing which scalar operations compute a value, and initial floating-point operations are value-only under ADR 0020, so adding or removing an evaluation of one is not observable. This stage's guarantee that it adds only proved contract-preserving forms checks each rule's stated precondition; it does not supply a missing one.
 
+### Implemented first algebraic portfolio
+
+**Fact — rule authority is operation-owned.** The frozen semantic definition for an operation declares whether ordered associativity is part of that operation family's algebraic capabilities. The compiler's named add and multiply reassociation rules consume that declaration; matching Rust type shape or recognizing a familiar operation name is not authority to reassociate an extension.
+
+**Fact — the guards are separate and observable.** Each rule first checks its semantic applicability: the operation declares ordered associativity, the program contains a left-associated three-leaf chain with equal operation keys and attributes, and rebuilding the right-associated form through the frozen registry infers the same result type and shape. It then checks the effective numerical contract's reassociation dimension independently. Per-rule configuration is a third guard, so disabling add does not disable multiply. Semantic, numerical, and configuration declines retain distinct typed assessments and stable reasons rather than collapsing into “no proposal.”
+
+**Fact — exploration is baseline-preserving and bounded.** Canonical normalization still produces one deterministic graph. Algebraic exploration runs afterward and retains that graph as the baseline while each enabled registered rule contributes at most one whole-program proposal. The rule registry's canonical identity order makes the set reproducible, the rewrite engine structurally revalidates every proposal through `SemanticProgramBuilder`, and the governed rewrite budget abandons the algebraic proposal set as a whole while preserving the baseline and recording the exact limit and demand.
+
+**Fact — every surviving semantic candidate re-enters the request boundary.** The baseline and every rewrite proposal are independently verified against the caller's original shape environment, stated numerical preferences, budgets, targets, and frozen capabilities. A readmission refusal is invalid compiler output rather than a candidate that may be silently dropped, because a semantics-preserving rewrite of an admitted program must remain admissible.
+
+**Fact — contract preference precedes cost.** Readmitted candidates are grouped by their resolved numerical contract. The compiler evaluates groups in the caller's stated preference order, plans all candidates in a group, and selects the first group containing any feasible complete plan. Later groups are explicitly preference-pruned without physical planning. Structural cost and dominance are compared only inside the selected contract group; no cheaper plan under a different contract can buy a change in meaning.
+
+**Fact — planning and selection preserve candidate ownership.** Each evaluated semantic candidate runs through region formation, capability resolution, index refinement, cover enumeration, physical frontiers, complete-plan selection, KIR refinement, and program assembly under its own verified target request. The compiler then flattens the feasible programs from the selected contract group, globally selects a nondominated program, and re-derives every alternative identity from the owning rule origin, exact semantic program, exact verified request, and physical plan. A mismatched owner key, missing or extra alternative, forged winner, or identity derived from another candidate is invalid compiler output.
+
+**Implemented semantic support is broader than implemented physical reachability.** The add and multiply rules can match, pass semantic and relaxed-contract numerical guards, rebuild, survive structural revalidation, and enter independent request readmission. The current governed physical profile still recognizes only the four-or-five-operation `strict-serial-sum(add(multiply(input, scale), bias))` shape and its program assembly is specialized to that scale/bias plus reduction structure. A three-leaf add-only or multiply-only reassociation therefore cannot yet complete ordinary physical compilation. That limitation is a checked capability boundary, not evidence that the algebraic portfolio is inactive; [`broaden-governed-physical-support-for-reassociated-programs`](../../tickets/broaden-governed-physical-support-for-reassociated-programs.md) owns the extension.
+
 "Contraction" in the third rule is the tensor sense — summation over indices shared by two or more operands — and its association is a numerical question before it is a search question. A reassociation permission is necessary and is never sufficient. Rewriting `(AB)C` to `A(BC)` forms entirely different rounded products rather than regrouping one reduction's contributors: the two programs' contributor sequences share no value and are indexed by different axes, so neither is a grouping of the other. [Numerical semantics](../numerical-semantics.md#distributivity-is-outside-the-order-contract) therefore classifies the rewrite as consuming distributivity — a third dimension, independent of reassociation and operand permutation, that no permission in that contract grants. [ADR 0080](../decisions/0080-treat-distributivity-as-a-third-numerical-dimension.md) is the accepted decision behind that classification and behind the rejection wording below. The rule fails closed under every contract Tiler can express, and does so as a settled position rather than pending one.
 
 That rejection must name the missing distributivity dimension. Reporting a forbidden reassociation would be inaccurate and would imply that a contract permitting reassociation would admit the rewrite, which is exactly the inference the numerical contract forbids.
 
-`StrictF32NumericalContract::governed_profile` in `crates/tiler-compiler/src/request.rs` returns the exact set of numerical contracts this build registers, and both members of it — `governed` and `governed_flush_to_zero` — set `reassociation` to `NumericalPermission::Forbidden`, so no registrable contract permits reassociation either. That is a property of the registered set rather than of the vocabulary: ADR 0076 item 1 widened `NumericalPermission` to `Forbidden` and `Permitted`, which changed which contracts are expressible and not which the compiler registers. `normalize_serial_sum` in the same file independently rejects any program without exactly one input, so no tensor contraction reaches the compiler at all. Both of those are incidental limits that will lift as the compiler grows. The distributivity gap is the durable reason: the rule would still fail closed on a compiler that accepted contractions under a contract that permitted both reassociation and permutation. The same contract's separate `contraction` field is ADR 0015's fused-multiply-add permission, which governs whether a tensor contraction's own `accumulator + a * b` step may round once; no one of these three permissions implies another.
+`StrictF32NumericalContract::governed_profile` in `crates/tiler-compiler/src/request.rs` returns the exact set of numerical contracts this build registers: strict, flush-to-zero, and relaxed. The relaxed contract permits ordered reassociation for operation families that declare ordered associativity, while the other two forbid it; none registers a distributivity dimension. `normalize_serial_sum` in the same file independently rejects any program without exactly one input, so no tensor contraction reaches the compiler at all. That reachability limit will lift as the compiler grows. The distributivity gap is the durable reason: the rule would still fail closed on a compiler that accepted contractions under a contract that permitted both reassociation and permutation. The same contract's separate `contraction` field is ADR 0015's fused-multiply-add permission, which governs whether a tensor contraction's own `accumulator + a * b` step may round once; no one of these three permissions implies another.
 
 ### Region-candidate formation
 
@@ -582,6 +601,8 @@ unsupported case rather than a licence to copy the vocabulary.
 Canonical trace content is data and the renderer is presentation. Nothing in this
 contract requires an explain trace to be serialized into an artifact envelope,
 and the artifact contract does not carry one.
+
+**Fact — the implemented trace format is v3.** `tiler-explain-v3` adds semantic-selection and numerical-contract-preference events to the typed trace. The top-level semantic-selection ledger embeds each candidate's exact full canonical compilation subject, and `VerifiedCompilationExplain` accepts the composite only when every keyed nested trace carries that same subject. A key-preserving splice of one candidate trace into another is therefore rejected rather than authenticated by a short label or digest. Each nested trace records only the normalization or algebraic payload adopted by that candidate; declined rules and portfolio budget stops remain in the top-level exploration trace.
 
 ### What the public compiler boundary exposes of a trace
 

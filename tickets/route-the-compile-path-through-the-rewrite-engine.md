@@ -260,3 +260,6 @@ A 15-agent audit checked this closed ticket's claims against source, with advers
 
 **`RewriteRuleIdentity` reaches no explain record.** The emitted rule keys are the stage's own governed constants (`normalize.semantics.v1`, `normalize.common-subexpression.v1`), and `rewrite.rs`'s claim that the provider identity and the stage constants "cannot drift apart silently" is false — they are unrelated strings. Recording the provider identity in explain is part of wiring the second-rule seam.
 
+## Superseded seam assessment (2026-07-28)
+
+The assessment above is historical state at this ticket's close, not the current compile path. `implement-first-algebraic-rewrite-portfolio` consumed all four seams: `readmit_alternatives` replaced the inline duplicate, `group_by_resolved_contract` separates contract groups before cost comparison, `record_adopted_alternatives` emits only the baseline or rewrite payload belonging to each independently planned candidate, and algebraic `RewriteRuleIdentity` values now derive provider-attributed typed explain records. The pipeline no longer contains the `multiple-alternatives` refusal; it preserves the canonical baseline plus accepted add and multiply proposals, independently readmits and plans them, then performs verified global selection.

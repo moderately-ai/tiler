@@ -670,6 +670,8 @@ executable program for it and must diagnose or delegate it. Compiler/artifact
 identity must include the registered dialect's semantic and lowering
 fingerprint.
 
+**Implemented algebraic declaration.** `OperationDefinition` carries `OperationAlgebraicCapabilities`, whose first closed declaration is ordered associativity. The declaration is operation-owned semantic authority and participates in the frozen definition's canonical encoding; an optimizer rule may consume it only after matching the exact operation key, attributes, operand/result arity, and registry-inferred reassociated result facts. It is not a global property of `f32`, a capability inferred from a Rust facade, or numerical permission. The effective numerical contract independently decides whether a declared regrouping may be used.
+
 "Conservative" is the *floor* on that diagnosis, not a description of every family's behaviour. The iteration/access lowering entry is the one family the compiler resolves today, and it is stricter: an occurrence for which no installed capability resolves stops the compilation with a typed, occurrence-attributed cause rather than degrading to a narrower result, because a program with an unlowerable occurrence has no valid plan to degrade to. [The optimizer contract](compiler/optimizer.md#resolution-is-unconditional-and-fails-closed) owns that stage.
 
 Semantic graph identity excludes provider revisions. Compilation-request
@@ -781,9 +783,8 @@ are not reported through Rust's causal `Error::source` chain.
 - Reduction semantic nodes constrain the legal evaluation-order or result
   class, while concrete reduction trees, partitioning, and multi-pass topology
   belong to selected physical plans and artifact identity.
-- Reduction contracts distinguish regrouping from operand permutation. Neither
-  permission implies the other, and each requires the corresponding operation
-  capability before a schedule may consume it.
+- Reassociation of any operation holds one same-operation leaf sequence and its order fixed while changing only grouping. The operation definition must declare ordered associativity and the effective numerical contract must permit reassociation; neither fact supplies the other.
+- Reduction contracts apply that general reassociation rule to their canonical contributor sequence and distinguish it from contributor permutation. Neither permission implies the other, and each requires the corresponding operation capability before a schedule may consume it.
 - Determinism guarantees name their stability scope. Canonical contracts do
   not contain an unqualified deterministic boolean.
 - Portable-bitwise arithmetic uses a versioned canonical quiet-NaN result per
@@ -1338,6 +1339,10 @@ Identity is layered:
 4. `KernelProgram` and `ProgramPortfolio` commit to the stage DAG,
    materializations, temporaries, ABI, routing, guards, and referenced
    implementation identities.
+
+The compiler may construct one target product from independently readmitted semantic candidates, but this does not weaken the identity layers above. Each retained `ProgramAlternative` has an owning semantic-candidate key and an identity re-derived from the rule origin, the owner's exact semantic program, the owner's exact verified target request, and the verified physical plan. The global verifier requires the flattened alternative set to equal the union attributed to those owners and refuses an alternative whose owner key or re-derived identity disagrees. Global selection is then re-derived from that verified set.
+
+The composite explain object is a compiler-owned companion rather than executable IR. Its v3 top-level semantic-selection records bind each candidate key to the exact canonical `CompilationSubject`; each nested candidate trace carries its own subject. Composite verification requires exact equality between the two and rejects duplicate subjects, duplicate keys, missing candidates, and key-preserving subject swaps. A rendered qualifier remains diagnostic and cannot substitute for this full-subject binding.
 
 Output-affecting backend/compiler configuration and selected target identity
 also participate in artifact identity. The artifact verifier checks that the
