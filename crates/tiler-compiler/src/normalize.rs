@@ -2,8 +2,12 @@
 //!
 //! Normalization runs after request verification and before region formation.
 //! It produces one canonical semantic graph for a class of programs that differ
-//! only in redundant spelling, and it never produces alternatives: an
-//! alternative-producing rewrite engine is a separate later authority.
+//! only in redundant spelling. Since the routing landed, the stage does that
+//! *by driving the rewrite engine in this module* with the common-subexpression
+//! rule registered: the engine can produce a set of alternatives, and this
+//! stage adopts exactly one, rejecting a multi-alternative run outright because
+//! choosing among alternatives is a cost decision with no cost model in scope
+//! here.
 //!
 //! The first profile proves exactly one rule, common-subexpression elimination
 //! over referentially transparent operations. Breadth is deliberately not the
@@ -126,9 +130,9 @@ pub(crate) struct SharedValueMerge {
 
 /// The common-subexpression rule's own explain records.
 ///
-/// One [`RuleExplain`] implementation with two callers: [`NormalizationOutcome`]
-/// emits it as part of the existing stage, and the rewrite engine emits it for
-/// an adopted proposal. Extracted rather than duplicated because two code paths
+/// One [`RuleExplain`] implementation with one emitter: [`NormalizationOutcome`]
+/// carries it as an opaque payload (handed over by the adopted proposal) and
+/// emits it in `record`. Extracted rather than duplicated because two code paths
 /// writing the same governed records under the same rule key would drift, and
 /// the drift would be invisible — an explain reader cannot tell which path
 /// produced a record.
@@ -322,6 +326,11 @@ pub(crate) fn normalize_semantics(
     // around: `class()` reaches only `Display`, never an explain record or a
     // typed outcome, so the loss is diagnostic text while the actionable reason
     // is preserved exactly.
+    // The mapping drops the failing rule's identity: `NormalizeError` has no
+    // field for it, and with one hard-coded rule there is nothing to exclude.
+    // A second rule makes the identity worth keeping — the whole point of
+    // `EngineFailure::Revalidation` carrying it — so widening this error is
+    // part of wiring the second-rule seam, not an oversight to paper over now.
     let run = run_rewrite_engine(&registry, program, budgets).map_err(|failure| match failure {
         EngineFailure::Provider(ProviderDefect::Failed { reason, .. })
         | EngineFailure::Revalidation { reason, .. } => {
@@ -407,11 +416,11 @@ struct Congruence {
 
 /// The common-subexpression rule, exposed as an external rewrite provider.
 ///
-/// This is the bridge `generalize-the-normalize-transaction-to-alternatives`
-/// is built against. It reuses this stage's own detection and rebuild rather
-/// than reimplementing them, so the engine driving it must produce what
-/// [`normalize_semantics`] produces — which is exactly the pin that ticket
-/// states.
+/// The one rule the stage's engine drives today. It reuses this stage's own
+/// detection and rebuild rather than reimplementing them. The provider-versus-
+/// stage equality is pinned by `the_provider_proposes_exactly_what_this_stage_produces`
+/// — the engine-versus-stage comparison became a tautology when the routing
+/// made the stage *be* the engine, and was removed.
 ///
 /// It performs **no** part of the transaction: no budget, no revalidation, no
 /// adoption. Those stay in `normalize_semantics`, and a proposal returned here
@@ -639,10 +648,6 @@ fn rebuild(
 /// authority. Both abandon the run, and a caller that conflated them could not
 /// tell a broken rule from a rule that produced something invalid.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the engine outcome; lands with the engine, ahead of the pipeline stage that will call it"
-)]
 pub(crate) enum EngineFailure {
     /// A registered provider violated its contract.
     Provider(ProviderDefect),
@@ -667,10 +672,6 @@ pub(crate) enum EngineFailure {
 /// figure is what makes a budget-stop explain record actionable — "stopped" is
 /// not a fact anyone can act on; "stopped at 2, wanted 3" is.
 #[derive(Debug)]
-#[allow(
-    dead_code,
-    reason = "the engine outcome; lands with the engine ahead of the pipeline stage that will read it"
-)]
 pub(crate) enum EngineRun<Program> {
     /// Every proposal fit the budget and survived revalidation.
     Adopted(Vec<RewriteProposal<Program>>),
@@ -683,10 +684,6 @@ pub(crate) enum EngineRun<Program> {
     },
 }
 
-#[allow(
-    dead_code,
-    reason = "test-facing accessor on the engine outcome; the pipeline stage will match on the variants directly"
-)]
 impl<Program> EngineRun<Program> {
     /// The adopted alternatives, panicking if the run was abandoned.
     ///
@@ -729,10 +726,6 @@ impl<Program> EngineRun<Program> {
 /// It does not adopt. Choosing among alternatives is the caller's, and this
 /// returns every candidate that survived rather than a winner — an engine that
 /// picked one would be making a cost decision with no cost model in scope.
-#[allow(
-    dead_code,
-    reason = "the engine; lands with its tests ahead of the pipeline stage that will call it"
-)]
 pub(crate) fn run_rewrite_engine(
     registry: &RuleRegistry<SemanticProgram>,
     program: &SemanticProgram,
@@ -742,14 +735,23 @@ pub(crate) fn run_rewrite_engine(
 
     // Rewrites, not proposals: one proposal can represent many rewrites, and
     // counting proposals would let a rule commit past a budget meant to forbid
-    // it. This is the same resource `normalize_semantics` bounds and must stay
+    // it. This is the same resource the pre-engine stage bounded and must stay
     // the same quantity, or routing through the engine would silently relax it.
+    //
+    // Bounded per alternative, NOT summed across them. The proposals are
+    // mutually exclusive candidates derived from the same input — at most one
+    // is ever adopted — so the rewrites actually committed are one proposal's,
+    // never the total. Summing over-charged: a legal pair of alternatives that
+    // each fit the budget would have been refused together the moment a second
+    // rule registered. The reported demand is the largest offender's, which is
+    // the smallest budget that would have admitted every alternative.
     let limit = u64::from(budgets.normalization_rewrites);
-    let demand: u64 = proposals
+    if let Some(demand) = proposals
         .iter()
         .map(RewriteProposal::rewrites)
-        .fold(0, u64::saturating_add);
-    if demand > limit {
+        .filter(|rewrites| *rewrites > limit)
+        .max()
+    {
         return Ok(EngineRun::BudgetStopped { limit, demand });
     }
 
@@ -810,7 +812,7 @@ pub(crate) fn run_rewrite_engine(
 /// place that should be relaxed, on that evidence and not before.
 #[allow(
     dead_code,
-    reason = "the readmission step, landed with its tests ahead of the routing that drives it"
+    reason = "the second-rule seam: unconsumed until a second rewrite rule registers. The live path readmits inline in pipeline.rs and adopts a single alternative, so per-alternative readmission, contract grouping, and survivor-only emission have nothing to do yet; whoever registers a second rule wires these in and deletes the inline duplicate (see route-the-compile-path ticket, Assessment corrections)"
 )]
 pub(crate) fn readmit_alternatives<Verified>(
     alternatives: Vec<RewriteProposal<SemanticProgram>>,
@@ -855,7 +857,7 @@ pub(crate) fn readmit_alternatives<Verified>(
 /// between groups on the contract, not on cost.
 #[allow(
     dead_code,
-    reason = "the divergence guard, landed with its tests ahead of the routing that consumes it"
+    reason = "the second-rule seam: unconsumed until a second rewrite rule registers. The live path readmits inline in pipeline.rs and adopts a single alternative, so per-alternative readmission, contract grouping, and survivor-only emission have nothing to do yet; whoever registers a second rule wires these in and deletes the inline duplicate (see route-the-compile-path ticket, Assessment corrections)"
 )]
 pub(crate) fn group_by_resolved_contract<Item>(
     alternatives: Vec<Item>,
@@ -899,10 +901,6 @@ pub(crate) fn group_by_resolved_contract<Item>(
 /// home — but adding it there is a public API change on the semantic authority,
 /// which ADR 0075 reserves. It stays private here until a second consumer
 /// justifies the promotion.
-#[allow(
-    dead_code,
-    reason = "the engine half of revalidation, landed with its round-trip tests ahead of the transaction that drives it"
-)]
 pub(crate) fn revalidate_structurally(
     program: &SemanticProgram,
 ) -> Result<SemanticProgram, NormalizeError> {
@@ -1468,20 +1466,21 @@ mod tests {
         registry
     }
 
-    /// **The ticket's pin, now against the engine rather than the provider.**
+    /// The engine adopts exactly one correctly-attributed CSE alternative.
     ///
-    /// With only the common-subexpression rule registered, the engine's single
-    /// alternative must be exactly what `normalize_semantics` produces, compared
-    /// on canonical identity bytes. If this diverges, the engine changed the
-    /// rewrite rather than rehosting it.
+    /// A previous version of this test also compared the alternative's identity
+    /// bytes against `normalize_semantics`'s output. That comparison became a
+    /// tautology when the routing made the stage *be* the engine — both sides
+    /// were the same `run_rewrite_engine(&{CSE}, program, governed())` call and
+    /// the assertion could no longer fail. The identity property is pinned by
+    /// `the_provider_proposes_exactly_what_this_stage_produces`, which compares
+    /// the stage against the *provider* and stays a real comparison, backed by
+    /// the two structural-revalidation tests. What survives here are the
+    /// assertions that were never tautological: count, attribution, and the
+    /// budget admitting the run.
     #[test]
-    fn the_engine_with_only_cse_reproduces_this_stage() {
+    fn the_engine_with_only_cse_adopts_one_attributed_alternative() {
         let duplicated = program(2.0, 2.0, false);
-        let expected = normalize(&duplicated);
-        let expected_program = expected
-            .normalized_program()
-            .expect("the duplicated program normalizes");
-
         let alternatives = run_rewrite_engine(
             &cse_registry(),
             &duplicated,
@@ -1492,14 +1491,9 @@ mod tests {
 
         assert_eq!(alternatives.len(), 1);
         assert_eq!(alternatives[0].rule(), CommonSubexpressionRule.identity());
-        assert_eq!(
-            alternatives[0]
-                .candidate()
-                .semantic_identity()
-                .graph()
-                .as_bytes(),
-            expected_program.semantic_identity().graph().as_bytes(),
-            "the engine's alternative differs from this stage's normalized program"
+        assert!(
+            alternatives[0].explain().is_some(),
+            "the adopted alternative lost its rule explain payload"
         );
     }
 
@@ -1808,6 +1802,63 @@ mod tests {
                 .len(),
             1,
             "a budget exactly meeting the demand refused it"
+        );
+    }
+
+    /// Two alternatives that each fit the budget are both admitted, even when
+    /// their sum would not fit.
+    ///
+    /// The regression this pins: the budget summed rewrite counts across
+    /// proposals, but proposals are mutually exclusive candidates — at most one
+    /// is adopted — so the sum over-charged and a legal pair was refused the
+    /// moment a second rule existed. Each of the two rules below proposes 3
+    /// rewrites under a budget of 4: individually legal, jointly 6 > 4. The
+    /// engine must admit both; a summing budget stops with demand 6.
+    #[test]
+    fn alternatives_are_budgeted_independently_not_summed() {
+        struct Bulk(&'static str);
+        impl RewriteRuleProvider<SemanticProgram> for Bulk {
+            fn identity(&self) -> RewriteRuleIdentity {
+                RewriteRuleIdentity::new("test", self.0, 1).expect("named")
+            }
+            fn propose(
+                &self,
+                program: &SemanticProgram,
+            ) -> Result<Vec<RewriteProposal<SemanticProgram>>, ProviderDefect> {
+                Ok(vec![RewriteProposal::new(
+                    self.identity(),
+                    program.clone(),
+                    3,
+                )])
+            }
+        }
+
+        let mut registry = RuleRegistry::new();
+        registry.register(Box::new(Bulk("a"))).expect("distinct");
+        registry.register(Box::new(Bulk("b"))).expect("distinct");
+        let subject = program(2.0, 2.0, false);
+
+        let mut budgets = DeterministicBudgets::governed();
+        budgets.normalization_rewrites = 4;
+        let EngineRun::Adopted(alternatives) =
+            run_rewrite_engine(&registry, &subject, budgets).expect("no failure")
+        else {
+            panic!("two individually-legal alternatives were refused as a sum");
+        };
+        assert_eq!(alternatives.len(), 2);
+
+        // And a budget below either still stops, reporting the largest
+        // offender's demand — the smallest budget that would admit everything.
+        budgets.normalization_rewrites = 2;
+        assert!(
+            matches!(
+                run_rewrite_engine(&registry, &subject, budgets).expect("no failure"),
+                EngineRun::BudgetStopped {
+                    limit: 2,
+                    demand: 3
+                }
+            ),
+            "an over-budget alternative was admitted, or the demand figure moved"
         );
     }
 
