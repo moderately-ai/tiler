@@ -5,7 +5,7 @@ status: done
 priority: p2
 dependencies: [assemble-prepared-metal-artifacts-in-tiler-build]
 related: [implement-the-expansion-cache-protocol]
-scopes: [implementation/cache, implementation/artifact, implementation/workspace, implementation/build, contracts/decisions]
+scopes: [implementation/cache, implementation/artifact, implementation/workspace, implementation/build, contracts/decisions, implementation/cargo-lock, implementation/metal-aot, project/tickets]
 shared_scopes: []
 paths: []
 tags: [build, cache, correctness]
