@@ -23,7 +23,7 @@
 //! its own model key, it is reported, and the retained plan set is bit-for-bit
 //! what it was before this module existed.
 //!
-//! # Why three of the ten components are `Unknown`
+//! # Why two of the nine components are `Unknown`
 //!
 //! The accepted contract keeps `SoundProof`, exhaustive finite evidence,
 //! empirical evidence, and `Unknown` as different classes, and this module
@@ -37,10 +37,17 @@
 //! `Bounded` component, because the plan does not model cache reuse and a point
 //! estimate would claim a precision nothing here has.
 //!
-//! The other three need inputs the compiler does not have: a resource-pressure
-//! and occupancy model, artifact sizes that only exist after encoding, and
-//! compile time, which is a measurement rather than an analysis and belongs to
-//! `calibrate-device-cost-models`. A formula invented to fill
+//! The other two need inputs the compiler does not have: a resource-pressure and
+//! occupancy model, and compile time, which is a measurement rather than an
+//! analysis and belongs to `calibrate-device-cost-models`.
+//!
+//! Artifact size was **removed** from the vocabulary rather than left `Unknown`.
+//! Costs are reported for every retained plan, and only the *selected* plan is
+//! ever encoded, so artifact size could only ever be stated for the winner and
+//! never for the alternatives this model exists to compare. A component that is
+//! structurally unstateable for every candidate but one cannot inform a choice
+//! between them, and calibrating it would mean calibrating against a single
+//! self-selected sample. Report artifact size where the artifact is produced. A formula invented to fill
 //! one of them would be unfalsifiable at exactly the moment it mattered. An
 //! honest `Unknown` is a measurement boundary; a fabricated number is a defect
 //! that reads as evidence.
@@ -97,14 +104,12 @@ pub(crate) enum CostComponent {
     ThreadgroupMemory,
     /// Compiler time the plan costs to produce.
     CompileTime,
-    /// Encoded artifact bytes the plan yields.
-    ArtifactSize,
 }
 
 /// The canonical component order: the single source of truth for evaluation,
 /// encoding, and reporting order, matching the derived [`CostComponent`]
 /// ordering.
-pub(crate) const CANONICAL_COMPONENTS: [CostComponent; 10] = [
+pub(crate) const CANONICAL_COMPONENTS: [CostComponent; 9] = [
     CostComponent::MemoryTraffic,
     CostComponent::Allocation,
     CostComponent::Dispatch,
@@ -114,7 +119,6 @@ pub(crate) const CANONICAL_COMPONENTS: [CostComponent; 10] = [
     CostComponent::ResourcePressure,
     CostComponent::ThreadgroupMemory,
     CostComponent::CompileTime,
-    CostComponent::ArtifactSize,
 ];
 
 impl CostComponent {
@@ -130,7 +134,6 @@ impl CostComponent {
             Self::ResourcePressure => "cost.resource-pressure",
             Self::ThreadgroupMemory => "cost.threadgroup-memory",
             Self::CompileTime => "cost.compile-time",
-            Self::ArtifactSize => "cost.artifact-size",
         }
     }
 
@@ -141,10 +144,7 @@ impl CostComponent {
     /// is a build error here rather than a value with no stated unit.
     pub(crate) const fn unit(self) -> CostUnit {
         match self {
-            Self::MemoryTraffic
-            | Self::Allocation
-            | Self::ArtifactSize
-            | Self::ThreadgroupMemory => CostUnit::Bytes,
+            Self::MemoryTraffic | Self::Allocation | Self::ThreadgroupMemory => CostUnit::Bytes,
             Self::Dispatch | Self::Synchronization => CostUnit::Count,
             Self::RedundantWork | Self::Indexing => CostUnit::Operations,
             Self::ResourcePressure => CostUnit::Registers,
@@ -562,9 +562,7 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                         .max()
                         .unwrap_or(0),
                 ),
-                CostComponent::ResourcePressure
-                | CostComponent::CompileTime
-                | CostComponent::ArtifactSize => CostValue::Unknown,
+                CostComponent::ResourcePressure | CostComponent::CompileTime => CostValue::Unknown,
             };
             assert!(
                 value.is_well_formed(),
@@ -597,9 +595,9 @@ mod tests {
         );
         assert_eq!(
             CANONICAL_COMPONENTS.len(),
-            10,
-            "nine from the accepted ticket, plus threadgroup memory split out of \
-             resource pressure because it is exact today and measured in bytes"
+            9,
+            "the accepted ticket's nine, less artifact size which no plan can state, \
+             plus threadgroup memory split out of resource pressure"
         );
     }
 
