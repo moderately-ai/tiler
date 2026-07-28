@@ -1,7 +1,7 @@
 ---
 id: integrate-opaque-calls-into-the-physical-frontier
 title: Integrate opaque calls into the physical frontier as alternatives
-status: todo
+status: done
 priority: p1
 dependencies: [implement-opaque-physical-call-providers]
 related: []
@@ -439,3 +439,18 @@ The cause is already a type — `RejectionCause` with `Numerical` and `Capabilit
   **The assumption is stated at the site because it will expire.** A cover materializing a reduced or tiled intermediate has a different count, and this would then be silently wrong rather than visibly unsupported — the worse failure. `implement-general-dag-partitioning` is where covers stop being two, and this must be revisited there rather than inherited.
 
   Clippy flagged the `Input` and `Intermediate` arms as identical and wanted them merged. Refused with a `reason`: they are equal by that profile assumption rather than by definition, and merging them erases the seam where the assumption lives — which is precisely the line a later reader needs to find.
+
+## Closing criteria, checked one by one (2026-07-28)
+
+- *An opaque call and a scheduled kernel can be alternatives for one region, and the frontier admits both without either being preferred by construction* — **met**, and asserted directly: both are admitted, both kinds appear, and exactly one carries a schedule. A frontier admitting only one, or ordering them by kind, passes every other test in this file and fails that one.
+- *A registered call's declarations are verified against the region and target profile at admission, with a typed rejection naming which declaration failed* — **met**. Four rejections separate four distinct failures: unregistered identity, malformed binding, and `CallNotAdmissible` with a stable reason for contract-underivable, work-unresolvable, numerical-mismatch, and target-infeasible.
+- *An unknown or absent numerical realization rejects rather than inheriting the region's* — **met**. The declaration's four numerical dimensions are compared against the request's resolved contract, and a mismatch refuses. Nothing inherits.
+- *Every rejection emits a typed explain record; the census updated in the same change* — **met**, and the gap was wider than this ticket: no frontier rejection had ever been recorded, including the three predating it. The census moved 4 → 8.
+- *Unknown pressure estimates still cannot establish hard feasibility* — **met**. `crate::estimate` still has no conversion into `ResourceRequirements`; the admission reads the declaration's **proven** resources, and that absence was what forced the declaration to carry them in the first place.
+
+## What this ticket did not do, stated rather than implied
+
+- **Lowering an opaque call is not implemented.** A plan containing one is refused with `unlowerable-opaque-body` rather than lowered. The frontier admits them; nothing yet executes one. That is the honest boundary — this ticket was the *physical frontier* integration.
+- **No caller-supplied provider or registry.** `pipeline/planning.rs:170` still hardcodes one governed provider, so in the compile path the registry is empty and nothing proposes an opaque call. The seam is exercised by tests, not by a caller. Opening providers is separate work, recorded above.
+- **`Intermediate` work scaling rests on a profile assumption** that expires when covers stop being two, stated at the site.
+

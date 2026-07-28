@@ -2697,6 +2697,60 @@ mod tests {
         }
     }
 
+    /// **The ticket's core claim:** a scheduled kernel and an opaque call are
+    /// alternatives for one region, and the frontier admits both.
+    ///
+    /// Neither is preferred by construction — both enter the admitted set and
+    /// the choice between them is left to cost, which is what "additive
+    /// coexistence" has to mean. A frontier that admitted only one, or that
+    /// ordered them by kind, would pass every other test in this file.
+    #[test]
+    fn a_scheduled_kernel_and_an_opaque_call_coexist_as_alternatives() {
+        use crate::call_registry::OpaqueCallIdentity;
+
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let subject = fused_subject(&request);
+        let identity = OpaqueCallIdentity::new("test", "both", 1).expect("named");
+        let bindings = vec![("x", TensorRole::Input), ("y", TensorRole::Output)];
+
+        let mut registry = OpaqueCallRegistry::new();
+        registry
+            .register(identity, call_declaration(strict_call_resources()))
+            .expect("one call");
+
+        let scheduled = GovernedPhysicalProvider;
+        let opaque = CallProvider(identity, bindings);
+        let providers: [&dyn PhysicalImplementationProvider; 2] = [&scheduled, &opaque];
+        let frontier = enumerate_frontier(&request, &subject, &providers, &registry).unwrap();
+
+        assert_eq!(
+            frontier.rejections().len(),
+            0,
+            "one of the two was rejected: {:?}",
+            frontier.rejections()
+        );
+        assert_eq!(frontier.admitted().len(), 2, "both were not admitted");
+
+        let kinds: Vec<PhysicalProposalKind> = frontier
+            .admitted()
+            .iter()
+            .map(|admitted| admitted.provenance().kind())
+            .collect();
+        assert!(kinds.contains(&PhysicalProposalKind::ScheduledKernel));
+        assert!(kinds.contains(&PhysicalProposalKind::OpaqueCall));
+
+        // Exactly one carries a schedule, which is what makes them genuinely
+        // different implementations rather than two spellings of one.
+        assert_eq!(
+            frontier
+                .admitted()
+                .iter()
+                .filter(|admitted| admitted.scheduled().is_some())
+                .count(),
+            1
+        );
+    }
+
     /// A call whose declared numerics differ from the request's contract is
     /// refused, even though the target could honour them.
     ///
