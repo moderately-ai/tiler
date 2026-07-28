@@ -662,11 +662,135 @@ pub fn expr_key(node: &ExprNode, keys: &[Vec<u8>]) -> Vec<u8> {
 /// happens to sit in the builder's arena. Two programs that mean the same thing
 /// therefore number their nodes the same way even when they were assembled in
 /// different orders.
-pub(crate) struct AbiArenaTraversal {
+pub struct AbiArenaTraversal {
     /// Canonical position of each arena node, or `None` for an unreached one.
     canonical_ids: Vec<Option<u64>>,
     /// Arena positions in canonical order; index into this *is* the canonical ID.
     order: Vec<u32>,
+}
+
+/// Orders two arena nodes by the structure of the expressions they name.
+///
+/// This is a **total, content-derived order that needs no numbering**, which is
+/// what makes it usable where a canonical ID cannot be: an encoder that sorts a
+/// set of expressions and then numbers the arena from the sorted result would
+/// otherwise be circular, because the numbering would depend on the order and
+/// the order on the numbering.
+///
+/// # Why a comparator rather than a key
+///
+/// Materializing a key per node embeds that node's whole subtree, which is
+/// quadratic on a chain and doubles per level on a shared DAG. A comparison
+/// walks both subtrees and stops at the first difference, so it never
+/// materializes one. It is also exactly injective — two nodes compare equal
+/// only when their expressions are structurally identical — so no collision
+/// case and no tie-break rule arises.
+///
+/// # Order
+///
+/// Constructor first, in declaration order (`Root`, `Unary`, `Binary`,
+/// `Select`), then the operation tag where there is one, then operands left to
+/// right. Two `Root`s compare by their encoded bytes, which is exact because a
+/// root is a leaf and its encoding is self-delimiting.
+///
+/// # Panics
+///
+/// Panics when an operand position is outside `nodes`. A verified arena cannot
+/// contain one, so reaching this means an unverified arena was ordered.
+#[must_use]
+pub fn compare_expr_nodes(nodes: &[ExprNode], left: u32, right: u32) -> core::cmp::Ordering {
+    use core::cmp::Ordering;
+
+    const fn constructor(node: &ExprNode) -> u8 {
+        match node {
+            ExprNode::Root(_) => 0,
+            ExprNode::Unary { .. } => 1,
+            ExprNode::Binary { .. } => 2,
+            ExprNode::Select { .. } => 3,
+        }
+    }
+
+    // An explicit stack rather than recursion: an arena is bounded but a chain
+    // inside it can be deep enough that a recursive comparison would be bounded
+    // by the host stack instead of by the governed arena limit.
+    let mut work = vec![(left, right)];
+    while let Some((a, b)) = work.pop() {
+        if a == b {
+            // The same arena node: structurally identical by construction, and
+            // skipping it is what keeps a shared DAG from being re-walked.
+            continue;
+        }
+        let (left_node, right_node) = (&nodes[position(a)], &nodes[position(b)]);
+        match constructor(left_node).cmp(&constructor(right_node)) {
+            Ordering::Equal => {}
+            other => return other,
+        }
+        match (left_node, right_node) {
+            (ExprNode::Root(left_root), ExprNode::Root(right_root)) => {
+                let (mut left_bytes, mut right_bytes) = (Vec::new(), Vec::new());
+                left_root.encode(&mut left_bytes);
+                right_root.encode(&mut right_bytes);
+                match left_bytes.cmp(&right_bytes) {
+                    Ordering::Equal => {}
+                    other => return other,
+                }
+            }
+            (
+                ExprNode::Unary {
+                    op: left_op,
+                    operand: left_operand,
+                },
+                ExprNode::Unary {
+                    op: right_op,
+                    operand: right_operand,
+                },
+            ) => {
+                match left_op.tag().cmp(&right_op.tag()) {
+                    Ordering::Equal => {}
+                    other => return other,
+                }
+                work.push((*left_operand, *right_operand));
+            }
+            (
+                ExprNode::Binary {
+                    op: left_op,
+                    left: ll,
+                    right: lr,
+                },
+                ExprNode::Binary {
+                    op: right_op,
+                    left: rl,
+                    right: rr,
+                },
+            ) => {
+                match left_op.tag().cmp(&right_op.tag()) {
+                    Ordering::Equal => {}
+                    other => return other,
+                }
+                // Pushed in reverse so the left operand is compared first.
+                work.push((*lr, *rr));
+                work.push((*ll, *rl));
+            }
+            (
+                ExprNode::Select {
+                    condition: lc,
+                    if_true: lt,
+                    if_false: lf,
+                },
+                ExprNode::Select {
+                    condition: rc,
+                    if_true: rt,
+                    if_false: rf,
+                },
+            ) => {
+                work.push((*lf, *rf));
+                work.push((*lt, *rt));
+                work.push((*lc, *rc));
+            }
+            _ => unreachable!("constructors were compared equal above"),
+        }
+    }
+    Ordering::Equal
 }
 
 /// Numbers every node reachable from `roots`, operands before the nodes naming
@@ -677,7 +801,13 @@ pub(crate) struct AbiArenaTraversal {
 /// A root list that is not canonical yields a numbering that is not canonical;
 /// it does not yield an ambiguous one, because [`AbiArenaTraversal::encode`]
 /// writes the arena in that same numbering rather than assuming an agreed one.
-pub(crate) fn canonical_arena_traversal(
+///
+/// # Panics
+///
+/// Panics when a root or an operand position is outside `nodes`. A verified
+/// arena cannot contain one, so reaching this means an unverified arena was
+/// numbered rather than that a caller passed a bad value.
+pub fn canonical_arena_traversal(
     nodes: &[ExprNode],
     roots: impl IntoIterator<Item = u32>,
 ) -> AbiArenaTraversal {
@@ -747,18 +877,21 @@ impl AbiArenaTraversal {
     /// reachable from the use sites before identity is encoded, so an unreached
     /// node here means an unverified program was encoded rather than a bad
     /// value — which is why it is not a returned error.
-    pub(crate) fn canonical_id(&self, node: u32) -> u64 {
+    #[must_use]
+    pub fn canonical_id(&self, node: u32) -> u64 {
         self.canonical_ids[position(node)]
             .expect("verification proves every use site's expression is reached")
     }
 
     /// Returns how many nodes the traversal reached.
-    pub(crate) fn reached(&self) -> usize {
+    #[must_use]
+    pub fn reached(&self) -> usize {
         self.order.len()
     }
 
     /// Returns the exact byte count [`Self::encode`] appends.
-    pub(crate) fn encoded_len(&self, nodes: &[ExprNode]) -> usize {
+    #[must_use]
+    pub fn encoded_len(&self, nodes: &[ExprNode]) -> usize {
         self.order
             .iter()
             .map(|node| node_encoded_len(&nodes[position(*node)]))
@@ -780,7 +913,7 @@ impl AbiArenaTraversal {
     /// payload. Operands are canonical IDs of nodes already written, so the DAG
     /// itself is recovered too, sharing and all. Two arenas that differ in any
     /// node, operand, or shape of sharing therefore differ in these bytes.
-    pub(crate) fn encode(&self, nodes: &[ExprNode], bytes: &mut Vec<u8>) {
+    pub fn encode(&self, nodes: &[ExprNode], bytes: &mut Vec<u8>) {
         let expected = self.encoded_len(nodes);
         bytes.reserve(expected);
         let start = bytes.len();
