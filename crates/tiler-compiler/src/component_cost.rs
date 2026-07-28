@@ -23,29 +23,32 @@
 //! its own model key, it is reported, and the retained plan set is bit-for-bit
 //! what it was before this module existed.
 //!
-//! # Why five of the nine components are `Unknown`
+//! # Why four of the nine components are `Unknown`
 //!
 //! The accepted contract keeps `SoundProof`, exhaustive finite evidence,
 //! empirical evidence, and `Unknown` as different classes, and this module
 //! honours that rather than filling gaps with plausible arithmetic.
 //!
-//! Four components are derived from values a plan already carries — allocation,
-//! dispatch, the ordering constraints between dispatches, and per-element
-//! address arithmetic — and each is computed at its match arm rather than
-//! estimated. The other five need inputs the compiler does not have: an
-//! occupancy model, a resource-pressure model, a model of what fusion
-//! recomputes, artifact sizes that only exist after encoding, and compile time,
-//! which is a measurement rather than an analysis. A formula invented to fill
+//! Five components are derived from values a plan already carries —
+//! allocation, dispatch, the ordering constraints between dispatches,
+//! per-element address arithmetic, and the work a fused cover repeats — and
+//! each is computed at its match arm rather than estimated. The other four need
+//! inputs the compiler does not have: a resource-pressure and occupancy model,
+//! the element width that would turn element traffic into bytes, artifact sizes
+//! that only exist after encoding, and compile time, which is a measurement
+//! rather than an analysis. A formula invented to fill
 //! one of them would be unfalsifiable at exactly the moment it mattered. An
 //! honest `Unknown` is a measurement boundary; a fabricated number is a defect
 //! that reads as evidence.
 //!
-//! Two of the five were on that list for the wrong reason and came off it after
-//! the source was re-read rather than the note re-trusted. Treat the remaining
-//! five as unverified in the same way.
+//! Three of these came off the unreachable list after the source was re-read
+//! rather than the note re-trusted, and each time the data was closer to hand
+//! than the note claimed. Treat the remaining four the same way.
 
+use crate::region::SemanticMemberId;
 use crate::selection::SelectedPlan;
 use core::fmt;
+use std::collections::BTreeSet;
 use tiler_ir::schedule::element_count;
 
 /// The governed key naming this cost model.
@@ -414,8 +417,56 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // Not modelled. See this module's header: the inputs do not
                 // exist yet, and inventing them would produce numbers that
                 // cannot be refuted.
+                // Work a fused cover performs more than once: a semantic member
+                // appearing in more than one region of the cover is computed in
+                // each of them.
+                //
+                // **The weighting is a definitional choice, not a derivation, so
+                // it is stated here to be refuted.** A member's *first* region in
+                // canonical order is treated as the original and contributes
+                // nothing; every later region containing it contributes that
+                // region's own iteration points. The alternative — counting bare
+                // occurrences, unweighted — is equally exact and gives a
+                // different number, but it would not be comparable with
+                // `Indexing`, which is element-weighted. Regions are visited in
+                // the plan's canonical selection order, so "first" is
+                // deterministic rather than dependent on enumeration.
+                //
+                // Reports `Unknown` on an overflowing element count, for the same
+                // reason `Indexing` does.
+                //
+                // **Measured: this is `Exact(0)` on every input in the suite.**
+                // The bounded profile's covers partition their members rather
+                // than overlapping, so nothing is computed twice, and `Exact(0)`
+                // is the correct answer rather than a missing one — it is a real
+                // claim that a plan repeats no work, which `Unknown` would not
+                // be. Verified by asserting the value is zero across the whole
+                // suite and watching that assertion never fire.
+                //
+                // The consequence is that **the non-zero path is unexercised**: a
+                // fault in the `seen` set or the weighting would still produce
+                // zero here and no test would notice. Do not read a green suite
+                // as evidence this counts correctly. The first cover whose
+                // regions overlap is what exercises it, and whoever adds one
+                // should check this value moves.
+                CostComponent::RedundantWork => {
+                    let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
+                    plan.selections()
+                        .iter()
+                        .try_fold(0_u64, |total, selection| {
+                            let verified = selection.implementation().verified();
+                            let points =
+                                element_count(&verified.region().index.iteration_shape).ok()?;
+                            let repeated = verified
+                                .semantic_members()
+                                .iter()
+                                .filter(|member| !seen.insert(**member))
+                                .count();
+                            total.checked_add(points.checked_mul(u64::try_from(repeated).ok()?)?)
+                        })
+                        .map_or(CostValue::Unknown, CostValue::Exact)
+                }
                 CostComponent::MemoryTraffic
-                | CostComponent::RedundantWork
                 | CostComponent::ResourcePressure
                 | CostComponent::CompileTime
                 | CostComponent::ArtifactSize => CostValue::Unknown,
