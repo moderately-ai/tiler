@@ -228,6 +228,18 @@ An opaque call's ABI names parameters; the boundary vocabulary names tensor role
 
 The test covers the accepting case (without which the three rejections would pass against a check that refused everything) and confirms the same two parameters on *different* roles are judged separately — one answer per role, not one answer overall.
 
-It is generic over the role type, so it does not drag `TensorRole` into `call_abi`; the admission supplies it. What remains for the derivation is threading the binding onto `ProposalBody::OpaqueCall` and calling this at admission.
+It is generic over the role type, so it does not drag `TensorRole` into `call_abi`; the admission supplies it.
+
+## The binding is threaded and checked at admission (2026-07-28)
+
+`ProposalBody::OpaqueCall` now carries an `OpaqueCallProposal { call, bindings }`, and `enumerate_frontier` validates both halves of the provider's claim in order:
+
+1. **Unregistered identity** → `UnregisteredCall`. The registry is the authority on which calls exist.
+2. **Registered but ill-bound** → `MalformedBinding`, carrying the ABI's own typed fault so the rejection says *which* parameter and *how* — not merely that something was wrong.
+3. **Registered and well-bound** → still `UnsupportedVariant`, because admitting one needs the boundary contract and identity derived from the declaration. That is now the only thing left.
+
+**`MalformedBinding` is deliberately not `UnregisteredCall`.** The call exists and the provider described how to bind it wrongly; conflating them would send someone to register a call that is already registered. Three rejections now separate three distinct provider mistakes, and each names the thing that was wrong.
+
+**Remaining:** derive the boundary contract from the declaration (the mapping table is above) and the identity from the `OpaqueCallIdentity`, then admit. After that: lowering rejects an opaque body, numerical guarantees, and explain records for these three rejections.
 
 *The check, reproducible in one line:* `grep -n 'struct BoundaryRequirement' -A 6 crates/tiler-compiler/src/frontier.rs` — keyed by `TensorRole`, with no parameter or slot anywhere in the boundary vocabulary.

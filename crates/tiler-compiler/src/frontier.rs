@@ -65,7 +65,9 @@ use crate::boundary::{
     LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
     RequiredProperty, StorageEncoding, VisibilityGuarantee, VisibilityRequirement,
 };
-use crate::call_registry::{OpaqueCallIdentity, OpaqueCallRegistry, RegisteredCall};
+use crate::call_registry::{
+    OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall,
+};
 use crate::feasibility::ProvenEvidence;
 use crate::honourability::UnhonouredDimension;
 use crate::physical::{PhysicalError, VerifiedScheduledRegion, verify_schedule_with_feasibility};
@@ -180,7 +182,7 @@ pub(crate) enum ProposalBody {
     /// admitting it needs feasibility, boundary, and cost derived from the
     /// declaration rather than from a scheduled region — but an unregistered
     /// identity is now a distinct, earlier rejection.
-    OpaqueCall(OpaqueCallIdentity),
+    OpaqueCall(Box<OpaqueCallProposal>),
     /// A metadata-only view. Reserved; the P0 frontier rejects it.
     View(ReservedProposalSeam),
 }
@@ -1016,6 +1018,19 @@ pub(crate) enum FrontierRejection {
         /// alternative, and declaring profile.
         cause: UnhonouredDimension,
     },
+    /// The proposal's parameter bindings do not match the call's own ABI.
+    ///
+    /// Distinct from an unregistered call: the call exists, and the provider
+    /// described how to bind it wrongly. Carries the ABI's own typed fault so
+    /// the rejection says which parameter and how.
+    MalformedBinding {
+        /// The provider whose proposal was rejected.
+        provider: ProviderIdentity,
+        /// The call whose bindings did not match.
+        call: OpaqueCallIdentity,
+        /// What the ABI said was wrong.
+        fault: crate::call_abi::BindingError,
+    },
     /// The proposal names an opaque call no registry entry claims.
     ///
     /// Distinct from [`Self::UnsupportedVariant`] because it says something
@@ -1077,6 +1092,16 @@ impl FrontierRejection {
                     None => output.push(0),
                 }
                 push_slice(output, cause.profile().key().as_bytes());
+            }
+            Self::MalformedBinding {
+                provider,
+                call,
+                fault,
+            } => {
+                output.push(6);
+                encode_provider(output, provider);
+                push_slice(output, call.call().as_bytes());
+                push_slice(output, format!("{fault}").as_bytes());
             }
             Self::UnregisteredCall { provider, call } => {
                 output.push(5);
@@ -1329,16 +1354,37 @@ pub(crate) fn enumerate_frontier(
             }
             let region = match proposal.body {
                 ProposalBody::ScheduledKernel(region) => *region,
-                ProposalBody::OpaqueCall(call) if calls.get(call).is_none() => {
-                    rejections.push(FrontierRejection::UnregisteredCall {
+                ProposalBody::OpaqueCall(ref proposed) => {
+                    let Some(registered) = calls.get(proposed.call()) else {
+                        rejections.push(FrontierRejection::UnregisteredCall {
+                            provider: provenance.provider().clone(),
+                            call: proposed.call(),
+                        });
+                        continue;
+                    };
+                    // The provider's binding claim, checked against the call's
+                    // own ABI before anything downstream trusts it.
+                    if let Err(fault) = crate::call_abi::check_bindings(
+                        registered.declaration().abi(),
+                        proposed.bindings(),
+                    ) {
+                        rejections.push(FrontierRejection::MalformedBinding {
+                            provider: provenance.provider().clone(),
+                            call: proposed.call(),
+                            fault,
+                        });
+                        continue;
+                    }
+                    // Admitting a registered, well-bound call still needs its
+                    // boundary contract and identity derived from the
+                    // declaration; until then it is an unsupported variant.
+                    rejections.push(FrontierRejection::UnsupportedVariant {
                         provider: provenance.provider().clone(),
-                        call,
+                        kind,
                     });
                     continue;
                 }
-                ProposalBody::KernelSubprogram(_)
-                | ProposalBody::OpaqueCall(_)
-                | ProposalBody::View(_) => {
+                ProposalBody::KernelSubprogram(_) | ProposalBody::View(_) => {
                     rejections.push(FrontierRejection::UnsupportedVariant {
                         provider: provenance.provider().clone(),
                         kind,
@@ -1600,7 +1646,7 @@ mod tests {
         BoundaryProperty, GuaranteedProperty, LayoutRequirement, MaterializationForm,
         MemoryDomainClass, RequiredProperties, RequiredProperty,
     };
-    use crate::call_registry::{OpaqueCallIdentity, OpaqueCallRegistry};
+    use crate::call_registry::{OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry};
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
     use crate::request::{
         CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_request,
@@ -1907,9 +1953,10 @@ mod tests {
             fn propose(&self, _: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
                 vec![
                     ImplementationProposal::new(
-                        ProposalBody::OpaqueCall(
+                        ProposalBody::OpaqueCall(Box::new(OpaqueCallProposal::new(
                             OpaqueCallIdentity::new("test", "mystery", 1).expect("named"),
-                        ),
+                            Vec::new(),
+                        ))),
                         governed_applicability(),
                         PhysicalCostEstimate::structural(1, 2, 0),
                     ),

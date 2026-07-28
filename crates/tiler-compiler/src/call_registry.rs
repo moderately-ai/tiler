@@ -23,6 +23,7 @@
 
 use crate::call_declaration::OpaqueCallDeclaration;
 use core::fmt;
+use tiler_ir::schedule::TensorRole;
 
 /// The governed identity of one opaque call.
 ///
@@ -196,6 +197,53 @@ impl OpaqueCallRegistry {
     /// The call registered under this identity.
     pub(crate) fn get(&self, identity: OpaqueCallIdentity) -> Option<&RegisteredCall> {
         self.calls.iter().find(|entry| entry.identity == identity)
+    }
+}
+
+/// What a provider proposes when it offers an opaque call for a region.
+///
+/// The identity names *which* registered call, and the bindings say which of the
+/// region's tensor roles each of the call's parameters is bound to. Both are the
+/// provider's claim, and both are validated at admission — the identity against
+/// the registry, the bindings against the call's own ABI.
+///
+/// The bindings cannot be inferred. A boundary contract is keyed by tensor role
+/// and an ABI names parameters, and a parameter's `ParameterRole` says whether it
+/// is read or written, never *which* tensor it reads. Inferring would reintroduce
+/// exactly what `crate::call_abi`'s named parameters exist to prevent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the opaque proposal payload; lands with the frontier check that validates it"
+)]
+pub(crate) struct OpaqueCallProposal {
+    call: OpaqueCallIdentity,
+    bindings: Vec<(&'static str, TensorRole)>,
+}
+
+#[allow(
+    dead_code,
+    reason = "see the type's own allow: accessors read by the frontier admission"
+)]
+impl OpaqueCallProposal {
+    /// Builds a proposal. Validation happens at admission, not here: a provider
+    /// may construct a proposal the registry will reject, and the rejection is
+    /// what the caller needs to see.
+    pub(crate) const fn new(
+        call: OpaqueCallIdentity,
+        bindings: Vec<(&'static str, TensorRole)>,
+    ) -> Self {
+        Self { call, bindings }
+    }
+
+    /// The registered call this proposal names.
+    pub(crate) const fn call(&self) -> OpaqueCallIdentity {
+        self.call
+    }
+
+    /// Which tensor role each parameter binds.
+    pub(crate) fn bindings(&self) -> &[(&'static str, TensorRole)] {
+        &self.bindings
     }
 }
 

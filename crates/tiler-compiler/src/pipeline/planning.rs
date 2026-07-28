@@ -271,6 +271,7 @@ pub(super) fn enumerate_complete_plans(
                         // that does not exist, which is the provider's fault
                         // rather than this target's limitation.
                         crate::frontier::FrontierRejection::UnregisteredCall { .. }
+                        | crate::frontier::FrontierRejection::MalformedBinding { .. }
                         | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
                         | crate::frontier::FrontierRejection::NotApplicable { .. } => None,
                     };
