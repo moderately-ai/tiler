@@ -1900,3 +1900,66 @@ fn program_with_unused_provider(revision: u32) -> SemanticProgram {
         .unwrap();
     build_graph(SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap())
 }
+
+/// Artifact identity grows linearly with the ABI arena, on a chain and on a
+/// shared DAG.
+///
+/// This is the instrument the flattening exists for, mirroring `tiler-ir`'s
+/// `abi_identity_size_grows_linearly_with_the_arena`. Under the `v4` encoding a
+/// node's key embedded its whole subtree, so the chain was quadratic and the
+/// shared DAG **doubled per level** — a 16-level DAG reached megabytes. A
+/// constant increment per level is the property that says the arena is written
+/// once and referenced by position.
+#[test]
+fn artifact_identity_size_grows_linearly_with_the_abi_arena() {
+    /// Enough levels that a quadratic or exponential curve is unmistakable, and
+    /// few enough that a `v4` re-run would still finish.
+    const LEVELS: std::ops::Range<usize> = 0..17;
+
+    for shared in [false, true] {
+        let mut sizes = Vec::new();
+        for levels in LEVELS {
+            let semantic = semantic_program();
+            let program = fused_program(&semantic, SCALE_BITS);
+            let provider = lowering_provider(1);
+            let environment =
+                CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+            let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+            draft.select_provider(selection(provider)).unwrap();
+            let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+            let formulas = formulas(&mut draft);
+
+            // Grow the guard, which is a use site, so every added node is
+            // reached and verification admits the artifact.
+            let mut guard = formulas.always;
+            for _ in 0..levels {
+                guard = if shared {
+                    draft.push_binary(AbiBinaryOp::And, guard, guard).unwrap()
+                } else {
+                    let filler = draft.push_root(AbiRoot::BooleanLiteral(false)).unwrap();
+                    draft.push_binary(AbiBinaryOp::Or, guard, filler).unwrap()
+                };
+            }
+            let mut spec = variant(&formulas, descriptor, b"fused");
+            spec.applicability_guard = guard;
+            draft.push_variant(&program, spec).unwrap();
+            let artifact = draft.build().unwrap();
+
+            let nodes = artifact.expressions().len();
+            let bytes = artifact.canonical_identity().as_bytes().len();
+            let shape = if shared { "SharedDag" } else { "Chain" };
+            println!("MEASURE {shape} {levels:>2} levels: {nodes:>3} nodes, {bytes} bytes");
+            sizes.push((nodes, bytes));
+        }
+
+        let increments: Vec<usize> = sizes
+            .windows(2)
+            .skip(1)
+            .map(|pair| pair[1].1 - pair[0].1)
+            .collect();
+        assert!(
+            increments.windows(2).all(|pair| pair[0] == pair[1]),
+            "identity size must grow by a constant per level, measured {increments:?}"
+        );
+    }
+}

@@ -47,7 +47,7 @@ use super::super::expr::{
     node_type,
 };
 use super::super::facts::AbiFactBinder;
-use super::super::model::{BindingTargetData, deferred_key};
+use super::super::model::{BindingTargetData, canonical_deferred_order, deferred_key};
 use super::error::{ArtifactCodecError, OrderedSubject};
 use super::model::{
     ArtifactEnvelope, EntryRow, VariantRow, expression_keys, node_operands, position,
@@ -429,14 +429,17 @@ fn check_variant(
         AvailabilityPhase::LiveDevicePreflight,
         false,
     )?;
-    check_ordered(
-        &variant
-            .deferred
-            .iter()
-            .map(|predicate| deferred_key(keys, predicate))
-            .collect::<Vec<_>>(),
-        OrderedSubject::DeferredPredicate,
-    )?;
+    // The stored order must be the canonical one, checked against the shared
+    // definition rather than against a locally re-derived key: a key sort here
+    // and a comparator sort in the encoder would be two definitions of
+    // canonical that only happen to agree.
+    if canonical_deferred_order(envelope.expressions(), &variant.deferred)
+        != (0..variant.deferred.len()).collect::<Vec<_>>()
+    {
+        return Err(ArtifactCodecError::NonCanonicalOrder {
+            subject: OrderedSubject::DeferredPredicate,
+        });
+    }
     for predicate in &variant.deferred {
         if predicate.phase < AvailabilityPhase::LiveDevicePreflight {
             return Err(rule(ArtifactBuildError::NonDeferredPredicatePhase {

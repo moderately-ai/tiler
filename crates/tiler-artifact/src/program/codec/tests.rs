@@ -925,10 +925,14 @@ fn a_non_canonical_deferred_predicate_order_is_rejected() {
         let mut second = envelope.variants[0].deferred[0].clone();
         second.predicate = boolean_literal(envelope);
         envelope.variants[0].deferred.push(second);
-        let keys = super::model::expression_keys(&envelope.expressions);
-        let ordered = super::super::model::deferred_key(&keys, &envelope.variants[0].deferred[0])
-            < super::super::model::deferred_key(&keys, &envelope.variants[0].deferred[1]);
-        if ordered {
+        // Put them out of canonical order, whichever way round they came out:
+        // the check is that the *stored* order is the canonical one, so the
+        // forgery has to be the other one.
+        let canonical = super::super::model::canonical_deferred_order(
+            &envelope.expressions,
+            &envelope.variants[0].deferred,
+        );
+        if canonical == [0, 1] {
             envelope.variants[0].deferred.swap(0, 1);
         }
     });

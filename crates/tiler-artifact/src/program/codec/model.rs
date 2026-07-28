@@ -37,7 +37,7 @@ use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, LaunchData,
     RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
-    VariantData, deferred_key, encode_identity, stage_key,
+    VariantData, canonical_deferred_order, deferred_key, encode_identity, stage_key,
 };
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::payload::{PayloadContent, encode_metadata};
@@ -467,7 +467,14 @@ impl ArtifactEnvelope {
                     authority: predicate.authority.clone(),
                 })
                 .collect();
-            deferred.sort_unstable_by_key(|predicate| deferred_key(&keys, predicate));
+            // The shared canonical order, not a key sort: the stored order is
+            // what the identity's numbering is derived from, so the two must be
+            // one definition rather than two that happen to agree.
+            let order = canonical_deferred_order(&expressions, &deferred);
+            deferred = order
+                .into_iter()
+                .map(|index| deferred[index].clone())
+                .collect();
 
             let stage_keys: Vec<Vec<u8>> = variant.program.stages().map(stage_key).collect();
             if stage_keys.len() != variant.entries.len() {

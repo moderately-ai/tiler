@@ -1,17 +1,14 @@
 ---
 id: flatten-artifact-expression-identity-across-its-four-key-derivations
 title: Flatten artifact expression identity across its four key derivations
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
 scopes: [implementation/artifact]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [performance]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785205343
 ---
 
 Split from `encode-artifact-abi-identity-in-linear-space`, whose builder half landed; read that ticket's Outcome section first.
@@ -103,3 +100,33 @@ Why it is better on every axis that matters here:
 6. Add the linearity instrument, mirroring `abi_identity_size_grows_linearly_with_the_arena` in `tiler-ir`'s `program/tests.rs`, over chain and shared-DAG growth.
 
 **The builder's `expr_key` dedup is still unanswered** and blocks step 6's "delete `expr_key`". It keys `node -> position` at build time where no canonical numbering exists. Structural equality is what it wants and `compare_expr_nodes` now supplies it, but converting the dedup is its own change and was not attempted.
+
+## Outcome — flattened, `v5`, measured against the `v4` it replaces (2026-07-27)
+
+**Measurement, and it is the whole point.** The instrument is `artifact_identity_size_grows_linearly_with_the_abi_arena` in `crates/tiler-artifact/src/program/tests.rs`, mirroring `tiler-ir`'s. The `v4` column was produced by grafting the same instrument onto a clean detached worktree at `origin/main`, so both columns come from one measurement rather than from a remembered figure.
+
+| ABI arena | `v4` identity | `v5` identity |
+| --- | --- | --- |
+| 16-level shared DAG (24 nodes) | **5,971,457 bytes** | **7,669 bytes** |
+| 16-level chain (25 nodes) | 9,228 bytes | 7,687 bytes |
+| growth per level | doubling on a shared DAG | **constant, 18 bytes** |
+
+The `v4` shared-DAG column doubles exactly as the ticket said: 100,865 → 194,049 → 380,417 → 753,153 → 1,498,625 → 2,989,569 → 5,971,457. `v5` adds 18 bytes per level on both shapes, and the test asserts the increment is constant rather than merely smaller — a quadratic curve would still shrink the number while failing the property.
+
+**All four sites moved together**, plus two the ticket did not name:
+
+- `program/model.rs::encode_identity` — the arena is written once by `arena.encode`, and every use site is a fixed-width canonical position via `push_abi_reference`.
+- `codec/model.rs` — stores the deferred set in the shared canonical order.
+- `codec/validate.rs` — checks the stored order *against that same shared definition* rather than re-deriving a key sort, so the two cannot drift into two definitions of "canonical" that only happen to agree.
+- `codec/decode.rs` — unchanged in the end: it re-derives through the same helpers.
+- **Not named by the ticket:** `deferred_key` now takes the traversal instead of a key table, and `a_non_canonical_deferred_predicate_order_is_rejected` was rewritten to forge against the canonical order rather than against a key comparison.
+
+**The sorted-set cycle was resolved with the structural comparator**, per the correction above: the two expression sets are ordered by `compare_expr_nodes` before the arena is numbered, so nothing circular arises, and the order is exactly injective with no tie-break rule.
+
+**One thing the `tiler-ir` model got wrong for this crate, found by a failing test rather than by reading.** `tiler-ir` asserts every arena node is reached by a use site, because verification precedes identity there. In `tiler-artifact` it does not: `an_expression_no_use_site_reaches_is_rejected` and `an_empty_portfolio_is_rejected` both derive an identity for an envelope that is *about to be refused*, and a `debug_assert` copied from `tiler-ir` fired on both. The root list therefore ends with every remaining arena position, so the numbering is total and a malformed envelope gets its typed rejection instead of a panic inside the traversal. For a valid artifact the tail adds nothing and the numbering is exactly the use-site one — which is why the measurements above are unaffected by it.
+
+**`ARTIFACT_DOMAIN` is `v5`**, with both reasons recorded at the constant: the encoding change, and the fact that the two sets' canonical *order* changed as well as their spelling. No golden moved, because nothing in the repository pins an artifact identity byte string or restates the domain — verified by searching for `artifact-program.v4` across `docs/`, `tickets/`, `crates/`, and `prototypes/`, which returns nothing. The serial-sum proof derives its identities rather than pinning them, so it re-derives under `v5` and the 30-case hardware matrix passes unchanged.
+
+`make full` green: 1,023 workspace tests and 297 release-profile tests.
+
+**Left open, as flagged:** `expr_key` still exists because the builder uses it for *deduplication*, not identity, and a canonical numbering is not available at build time. `compare_expr_nodes` now supplies the structural equality that dedup actually wants, so converting it is a contained follow-up — but it is a separate change and was not attempted here.
