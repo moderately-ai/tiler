@@ -65,7 +65,7 @@ use crate::boundary::{
     LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
     RequiredProperty, StorageEncoding, VisibilityGuarantee, VisibilityRequirement,
 };
-use crate::call_registry::RegisteredCall;
+use crate::call_registry::{OpaqueCallIdentity, OpaqueCallRegistry, RegisteredCall};
 use crate::feasibility::ProvenEvidence;
 use crate::honourability::UnhonouredDimension;
 use crate::physical::{PhysicalError, VerifiedScheduledRegion, verify_schedule_with_feasibility};
@@ -172,8 +172,15 @@ pub(crate) enum ProposalBody {
     ScheduledKernel(Box<ScheduledRegion>),
     /// A nested kernel subprogram. Reserved; the P0 frontier rejects it.
     KernelSubprogram(ReservedProposalSeam),
-    /// An opaque physical call. Reserved; the P0 frontier rejects it.
-    OpaqueCall(ReservedProposalSeam),
+    /// An opaque physical call, named by its registered identity.
+    ///
+    /// The provider proposes an *identity* rather than the call itself, so
+    /// registration is the authority on which calls exist: a provider cannot
+    /// propose one it never registered. Still rejected by the P0 frontier —
+    /// admitting it needs feasibility, boundary, and cost derived from the
+    /// declaration rather than from a scheduled region — but an unregistered
+    /// identity is now a distinct, earlier rejection.
+    OpaqueCall(OpaqueCallIdentity),
     /// A metadata-only view. Reserved; the P0 frontier rejects it.
     View(ReservedProposalSeam),
 }
@@ -1009,6 +1016,20 @@ pub(crate) enum FrontierRejection {
         /// alternative, and declaring profile.
         cause: UnhonouredDimension,
     },
+    /// The proposal names an opaque call no registry entry claims.
+    ///
+    /// Distinct from [`Self::UnsupportedVariant`] because it says something
+    /// different and is actionable in a different way: an unsupported variant is
+    /// this compiler's limitation, while an unregistered identity is the
+    /// provider naming something that does not exist. Reporting the second as
+    /// the first would tell a caller to wait for a feature when the fix is to
+    /// register the call.
+    UnregisteredCall {
+        /// The provider whose proposal named it.
+        provider: ProviderIdentity,
+        /// The identity no entry claims.
+        call: OpaqueCallIdentity,
+    },
     /// The proposal body is a reserved variant the P0 frontier does not implement.
     UnsupportedVariant {
         /// The provider whose proposal was rejected.
@@ -1056,6 +1077,13 @@ impl FrontierRejection {
                     None => output.push(0),
                 }
                 push_slice(output, cause.profile().key().as_bytes());
+            }
+            Self::UnregisteredCall { provider, call } => {
+                output.push(5);
+                encode_provider(output, provider);
+                push_slice(output, call.provider().as_bytes());
+                push_slice(output, call.call().as_bytes());
+                output.extend_from_slice(&call.revision().to_be_bytes());
             }
             Self::UnsupportedVariant { provider, kind } => {
                 output.push(2);
@@ -1269,6 +1297,7 @@ pub(crate) fn enumerate_frontier(
     request: &VerifiedTargetRequest,
     subject: &FrontierRegionSubject,
     providers: &[&dyn PhysicalImplementationProvider],
+    calls: &OpaqueCallRegistry,
 ) -> Result<ImplementationFrontier, FrontierError> {
     #[cfg(test)]
     crate::workcount::FRONTIER_ENUMERATIONS.record();
@@ -1300,6 +1329,13 @@ pub(crate) fn enumerate_frontier(
             }
             let region = match proposal.body {
                 ProposalBody::ScheduledKernel(region) => *region,
+                ProposalBody::OpaqueCall(call) if calls.get(call).is_none() => {
+                    rejections.push(FrontierRejection::UnregisteredCall {
+                        provider: provenance.provider().clone(),
+                        call,
+                    });
+                    continue;
+                }
                 ProposalBody::KernelSubprogram(_)
                 | ProposalBody::OpaqueCall(_)
                 | ProposalBody::View(_) => {
@@ -1564,6 +1600,7 @@ mod tests {
         BoundaryProperty, GuaranteedProperty, LayoutRequirement, MaterializationForm,
         MemoryDomainClass, RequiredProperties, RequiredProperty,
     };
+    use crate::call_registry::{OpaqueCallIdentity, OpaqueCallRegistry};
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
     use crate::request::{
         CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_request,
@@ -1660,7 +1697,8 @@ mod tests {
             cost: PhysicalCostEstimate::structural(1, 2, 0),
         };
         let providers: [&dyn PhysicalImplementationProvider; 2] = [&first, &second];
-        let frontier = enumerate_frontier(&request, &subject, &providers).unwrap();
+        let frontier =
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
 
         assert_eq!(frontier.admitted().len(), 2);
         assert!(frontier.rejections().is_empty());
@@ -1687,7 +1725,8 @@ mod tests {
             cost: PhysicalCostEstimate::structural(1, 2, 0),
         };
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let frontier = enumerate_frontier(&request, &subject, &providers).unwrap();
+        let frontier =
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
 
         let admitted = &frontier.admitted()[0];
         assert_eq!(
@@ -1839,8 +1878,10 @@ mod tests {
 
         let forward: [&dyn PhysicalImplementationProvider; 2] = [&alpha, &beta];
         let reverse: [&dyn PhysicalImplementationProvider; 2] = [&beta, &alpha];
-        let first = enumerate_frontier(&request, &subject, &forward).unwrap();
-        let second = enumerate_frontier(&request, &subject, &reverse).unwrap();
+        let first =
+            enumerate_frontier(&request, &subject, &forward, &OpaqueCallRegistry::new()).unwrap();
+        let second =
+            enumerate_frontier(&request, &subject, &reverse, &OpaqueCallRegistry::new()).unwrap();
 
         let identities = |frontier: &super::ImplementationFrontier| -> Vec<Vec<u8>> {
             frontier
@@ -1866,7 +1907,9 @@ mod tests {
             fn propose(&self, _: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
                 vec![
                     ImplementationProposal::new(
-                        ProposalBody::OpaqueCall(ReservedProposalSeam::new("intrinsic.mystery")),
+                        ProposalBody::OpaqueCall(
+                            OpaqueCallIdentity::new("test", "mystery", 1).expect("named"),
+                        ),
                         governed_applicability(),
                         PhysicalCostEstimate::structural(1, 2, 0),
                     ),
@@ -1892,7 +1935,8 @@ mod tests {
         };
         let opaque = OpaqueProvider;
         let providers: [&dyn PhysicalImplementationProvider; 2] = [&scheduled, &opaque];
-        let frontier = enumerate_frontier(&request, &subject, &providers).unwrap();
+        let frontier =
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
 
         assert_eq!(frontier.admitted().len(), 1);
         assert_eq!(
@@ -1907,9 +1951,27 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(rejected_kinds.contains(&PhysicalProposalKind::OpaqueCall));
         assert!(rejected_kinds.contains(&PhysicalProposalKind::KernelSubprogram));
         assert!(rejected_kinds.contains(&PhysicalProposalKind::View));
+
+        // The opaque proposal names an identity no entry claims, so it is
+        // rejected *earlier* and differently: `UnregisteredCall`, not
+        // `UnsupportedVariant`. The two say different things — one is the
+        // provider naming something that does not exist, the other this
+        // compiler's limitation — and reporting the second would tell a caller
+        // to wait for a feature when the fix is to register the call.
+        assert!(
+            !rejected_kinds.contains(&PhysicalProposalKind::OpaqueCall),
+            "an unregistered call was reported as an unsupported variant"
+        );
+        assert!(
+            frontier.rejections().iter().any(|rejection| matches!(
+                rejection,
+                FrontierRejection::UnregisteredCall { call, .. }
+                    if call.call() == "mystery"
+            )),
+            "the unregistered opaque call was not reported by name"
+        );
     }
 
     #[test]
@@ -1938,7 +2000,13 @@ mod tests {
         let infeasible_subject = pointwise_subject(&large);
         let infeasible = InfeasibleProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&infeasible];
-        let frontier = enumerate_frontier(&large, &infeasible_subject, &providers).unwrap();
+        let frontier = enumerate_frontier(
+            &large,
+            &infeasible_subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+        )
+        .unwrap();
         assert!(
             frontier.is_empty(),
             "an infeasible frontier is a valid empty result"
@@ -1965,7 +2033,13 @@ mod tests {
             cost: PhysicalCostEstimate::structural(u32::MAX, u64::MAX, u64::MAX),
         };
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&expensive];
-        let frontier = enumerate_frontier(&small, &feasible_subject, &providers).unwrap();
+        let frontier = enumerate_frontier(
+            &small,
+            &feasible_subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+        )
+        .unwrap();
         assert_eq!(
             frontier.admitted().len(),
             1,
@@ -1999,7 +2073,8 @@ mod tests {
         let subject = fused_subject(&request);
         let malformed = MalformedProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&malformed];
-        let error = enumerate_frontier(&request, &subject, &providers).unwrap_err();
+        let error = enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
+            .unwrap_err();
         assert!(matches!(error, FrontierError::MalformedProposal { .. }));
     }
 
@@ -2023,7 +2098,8 @@ mod tests {
         let subject = fused_subject(&request);
         let provider = WrongCostModelProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let error = enumerate_frontier(&request, &subject, &providers).unwrap_err();
+        let error = enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
+            .unwrap_err();
         assert!(matches!(
             error,
             FrontierError::MalformedCostProvenance {
@@ -2064,7 +2140,8 @@ mod tests {
         let subject = fused_subject(&request);
         let provider = AnalyticalCostProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let error = enumerate_frontier(&request, &subject, &providers).unwrap_err();
+        let error = enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
+            .unwrap_err();
         assert!(
             matches!(
                 error,
@@ -2121,7 +2198,8 @@ mod tests {
         let subject = fused_subject(&request);
         let provider = ForeignTargetProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let frontier = enumerate_frontier(&request, &subject, &providers).unwrap();
+        let frontier =
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
         assert!(frontier.admitted().is_empty());
         assert_eq!(frontier.rejections().len(), 1);
         assert!(matches!(
@@ -2152,12 +2230,14 @@ mod tests {
                 provider: provider_identity("fused", 1),
                 cost: PhysicalCostEstimate::structural(1, 2, 0),
             } as &dyn PhysicalImplementationProvider],
+            &OpaqueCallRegistry::new(),
         )
         .unwrap();
         let pointwise = enumerate_frontier(
             &request,
             &pointwise_subject(&request),
             &[&GovernedPhysicalProvider as &dyn PhysicalImplementationProvider],
+            &OpaqueCallRegistry::new(),
         )
         .unwrap();
 
@@ -2196,7 +2276,8 @@ mod tests {
             cost: PhysicalCostEstimate::structural(2, 1, 0),
         };
         let providers: [&dyn PhysicalImplementationProvider; 3] = [&cheap, &dominated, &trade_off];
-        let frontier = enumerate_frontier(&request, &subject, &providers).unwrap();
+        let frontier =
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
 
         assert_eq!(frontier.admitted().len(), 3, "feasibility admits all three");
         let non_dominated: Vec<&ProviderIdentity> = frontier
@@ -2215,7 +2296,8 @@ mod tests {
         let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let providers: [&dyn PhysicalImplementationProvider; 0] = [];
-        let frontier = enumerate_frontier(&request, &subject, &providers).unwrap();
+        let frontier =
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
         assert!(frontier.is_empty());
         assert!(frontier.rejections().is_empty());
         assert_eq!(frontier.region_role(), "fused");

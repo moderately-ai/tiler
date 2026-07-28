@@ -152,3 +152,17 @@ The coherence check gained a rule the new part makes possible: **buffer bindings
 
 **Do not put the registry on `CompilationRequest`.** A request describes a program to compile; the set of available opaque implementations is a property of the *compiler's configuration*, exactly as lowering capabilities are. Putting it on the request would make two callers compiling the same program with different registries look like two different requests, which would poison request identity and the caching built on it.
 
+## The registry is threaded and the identity is the payload (2026-07-28)
+
+`enumerate_frontier` takes an `&OpaqueCallRegistry`, and `ProposalBody::OpaqueCall` carries an `OpaqueCallIdentity` rather than a `ReservedProposalSeam` placeholder.
+
+**A provider proposes an identity, not a call.** Registration is therefore the authority on which calls exist — a provider cannot propose one it never registered. That was the choice recorded last change; it is now enforced rather than intended.
+
+**`FrontierRejection::UnregisteredCall` is deliberately not `UnsupportedVariant`.** They say different things and are actionable differently: an unsupported variant is *this compiler's* limitation, while an unregistered identity is a provider naming something that does not exist. Reporting the second as the first would tell a caller to wait for a feature when the fix is to register the call. It carries the identity, so the rejection names what was missing.
+
+The existing seam test now asserts the distinction — an unregistered opaque proposal must **not** appear among the unsupported-variant kinds, and must appear by name among the unregistered ones. It previously asserted the opposite, correctly for the behaviour that existed.
+
+**Still rejected, and that is not yet a defect:** a *registered* identity still falls through to `UnsupportedVariant`, because admitting one needs feasibility, a boundary contract, and a cost derived from the declaration rather than from a scheduled region. That is the next step and the last structural one.
+
+**The registry currently reaches the frontier as an empty one** constructed at `pipeline/planning.rs:224`. Threading a caller-supplied registry through the compile path is the remaining plumbing, and `crate::capability` is the pattern to copy — see the note above on why it must not travel on `CompilationRequest`.
+

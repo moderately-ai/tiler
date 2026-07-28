@@ -1829,7 +1829,13 @@ mod tests {
             region: pointwise_raw(request),
         };
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&host];
-        let frontier = enumerate_frontier(request, &subject, &providers).unwrap();
+        let frontier = enumerate_frontier(
+            request,
+            &subject,
+            &providers,
+            &crate::call_registry::OpaqueCallRegistry::new(),
+        )
+        .unwrap();
         RegionFrontier::new(subject, frontier)
     }
 
@@ -1848,7 +1854,13 @@ mod tests {
             region: reduction_raw(request),
         };
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&host];
-        let frontier = enumerate_frontier(request, &subject, &providers).unwrap();
+        let frontier = enumerate_frontier(
+            request,
+            &subject,
+            &providers,
+            &crate::call_registry::OpaqueCallRegistry::new(),
+        )
+        .unwrap();
         RegionFrontier::new(subject, frontier)
     }
 
@@ -1857,7 +1869,13 @@ mod tests {
         request: &VerifiedTargetRequest,
     ) -> RegionFrontier {
         let providers: [&dyn PhysicalImplementationProvider; 0] = [];
-        let frontier = enumerate_frontier(request, &subject, &providers).unwrap();
+        let frontier = enumerate_frontier(
+            request,
+            &subject,
+            &providers,
+            &crate::call_registry::OpaqueCallRegistry::new(),
+        )
+        .unwrap();
         RegionFrontier::new(subject, frontier)
     }
 
@@ -1878,7 +1896,13 @@ mod tests {
             .iter()
             .map(|host| host as &dyn PhysicalImplementationProvider)
             .collect();
-        let frontier = enumerate_frontier(request, &subject, &refs).unwrap();
+        let frontier = enumerate_frontier(
+            request,
+            &subject,
+            &refs,
+            &crate::call_registry::OpaqueCallRegistry::new(),
+        )
+        .unwrap();
         RegionFrontier::new(subject, frontier)
     }
 

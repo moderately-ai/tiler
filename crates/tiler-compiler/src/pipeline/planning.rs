@@ -220,14 +220,19 @@ pub(super) fn enumerate_complete_plans(
             {
                 enumerated.clone()
             } else {
-                let enumerated =
-                    enumerate_frontier(verified, &subject, &providers).map_err(|source| {
-                        failure_at_source(
-                            source.into(),
-                            ExplainStage::IntrinsicScheduling,
-                            record_cause(numerical_cause),
-                        )
-                    })?;
+                let enumerated = enumerate_frontier(
+                    verified,
+                    &subject,
+                    &providers,
+                    &crate::call_registry::OpaqueCallRegistry::new(),
+                )
+                .map_err(|source| {
+                    failure_at_source(
+                        source.into(),
+                        ExplainStage::IntrinsicScheduling,
+                        record_cause(numerical_cause),
+                    )
+                })?;
                 frontiers_by_subject.push((subject.clone(), enumerated.clone()));
                 enumerated
             };
@@ -259,10 +264,14 @@ pub(super) fn enumerate_complete_plans(
                                 cause: *cause,
                             })
                         }
-                        // A reserved body variant and an inapplicable proposal
-                        // are not target verdicts and carry no rejection to
-                        // attribute to this region.
-                        crate::frontier::FrontierRejection::UnsupportedVariant { .. }
+                        // A reserved body variant, an unregistered opaque call,
+                        // and an inapplicable proposal are not target verdicts
+                        // and carry no rejection to attribute to this region.
+                        // An unregistered call is a provider naming something
+                        // that does not exist, which is the provider's fault
+                        // rather than this target's limitation.
+                        crate::frontier::FrontierRejection::UnregisteredCall { .. }
+                        | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
                         | crate::frontier::FrontierRejection::NotApplicable { .. } => None,
                     };
                     if let Some(error) = error {
