@@ -69,3 +69,15 @@ There are nine `.verified()` sites, and they fall into three groups rather than 
 
 *The check that establishes this list, reproducible in one line:* `grep -rn '\.verified()' crates/tiler-compiler/src/` returns nine sites; `grep -n 'struct AdmittedImplementation' -A 12 crates/tiler-compiler/src/frontier.rs` shows the field is concrete.
 
+## Started: the body sum (2026-07-28)
+
+`frontier::ImplementationBody` — `Scheduled(VerifiedScheduledRegion)` or `Opaque(RegisteredCall)`. This is what `AdmittedImplementation.verified` must become; the field itself is unchanged so far.
+
+**A sum rather than a trait, deliberately.** A trait would let both bodies answer one interface, and that interface would have to be the *intersection* of what they can say — which is small, and which hides that the difference matters. Lowering a scheduled region and invoking an opaque call are not two implementations of one operation; the second is a call into code this compiler did not produce. A sum makes every consumer state which it handles, and `AGENTS.md`'s requirement that unsupported cases reject explicitly rather than silently approximating is exactly what a trait's shared default would erode.
+
+The accessors return `Option` rather than panicking: a consumer needing a schedule and holding an opaque call has to say what it does about that, and the type is where it is made to.
+
+**Next, in order:** swap `AdmittedImplementation.verified` to hold this, then work the nine `.verified()` sites in the three groups already recorded above — the two that stay answerable, the four that must reject, and the two in `component_cost` that would silently report zero.
+
+**A caution from doing this slice.** Two edits in a row landed in the wrong place — one inserted a definition between an existing `#[derive]` and its struct, silently reassigning the derive; the other omitted a test import. Both were caught immediately by the compiler, but the first is the shape worth watching in this file: `frontier.rs` is 2000+ lines of adjacent doc-commented items, and anchoring an insertion on a `struct` line rather than on its attributes puts the new item inside the previous one's annotations. Anchor on the doc comment, or check the diff.
+

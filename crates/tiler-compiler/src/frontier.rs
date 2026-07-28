@@ -65,6 +65,7 @@ use crate::boundary::{
     LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
     RequiredProperty, StorageEncoding, VisibilityGuarantee, VisibilityRequirement,
 };
+use crate::call_registry::RegisteredCall;
 use crate::feasibility::ProvenEvidence;
 use crate::honourability::UnhonouredDimension;
 use crate::physical::{PhysicalError, VerifiedScheduledRegion, verify_schedule_with_feasibility};
@@ -796,6 +797,77 @@ impl ImplementationProposalIdentity {
 /// verified region, the exact feasibility resources, the resolved feasibility
 /// predicates, the derived boundary contract, the retained cost estimate, and the
 /// provider provenance.
+/// What an admitted implementation actually is.
+///
+/// `AdmittedImplementation` currently holds a `VerifiedScheduledRegion`
+/// directly, which is why `ProposalBody::OpaqueCall` is rejected: an opaque
+/// call has no schedule, no index region, and no iteration domain, so there is
+/// nothing to put in that field.
+///
+/// # Why a sum rather than a trait
+///
+/// A trait would let both bodies answer one interface, and the interface would
+/// have to be the *intersection* of what they can say — which is small, and
+/// which hides that the difference matters. Lowering a scheduled region and
+/// invoking an opaque call are not two implementations of one operation; the
+/// second is a call into code this compiler did not produce. A sum makes every
+/// consumer state which it handles, and `AGENTS.md`'s requirement that
+/// unsupported cases reject explicitly rather than silently approximating is
+/// exactly what a trait's shared default would erode.
+///
+/// # What both can answer, and what only one can
+///
+/// Both carry semantic members and a target profile key — those identify *what*
+/// was implemented and *for where*, which an opaque call has as much as a
+/// scheduled region does. Neither an iteration domain nor an access list has
+/// any meaning for a call whose body is not modelled, so a consumer that needs
+/// one must handle its absence rather than receive a substitute.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the sum AdmittedImplementation's body will become; landed with its tests ahead of the field change and the nine call sites that follow it"
+)]
+pub(crate) enum ImplementationBody {
+    /// A region this compiler scheduled and will lower itself.
+    Scheduled(Box<VerifiedScheduledRegion>),
+    /// A call into code this compiler did not produce.
+    Opaque(Box<RegisteredCall>),
+}
+
+#[allow(
+    dead_code,
+    reason = "see the type's own allow: accessors land with the sum, ahead of the consumers that will match on it"
+)]
+impl ImplementationBody {
+    /// The scheduled region, when this is one.
+    ///
+    /// `Option` rather than a panicking accessor: a consumer that needs a
+    /// schedule and receives an opaque call has to say what it does about that,
+    /// and the type is where it is made to.
+    pub(crate) fn scheduled(&self) -> Option<&VerifiedScheduledRegion> {
+        match self {
+            Self::Scheduled(region) => Some(region),
+            Self::Opaque(_) => None,
+        }
+    }
+
+    /// The registered call, when this is one.
+    pub(crate) fn opaque(&self) -> Option<&RegisteredCall> {
+        match self {
+            Self::Opaque(call) => Some(call),
+            Self::Scheduled(_) => None,
+        }
+    }
+
+    /// The stable code naming which kind this is, for typed rejections.
+    pub(crate) const fn kind(&self) -> &'static str {
+        match self {
+            Self::Scheduled(_) => "scheduled-region",
+            Self::Opaque(_) => "opaque-call",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AdmittedImplementation {
     provenance: ImplementationProvenance,
@@ -1439,10 +1511,10 @@ fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
 mod tests {
     use super::{
         AdmittedImplementation, BoundaryOwnership, FrontierError, FrontierRegionSubject,
-        FrontierRejection, GovernedPhysicalProvider, ImplementationContext, ImplementationProposal,
-        PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProposalKind,
-        PhysicalProviderProvenance, ProposalBody, ReservedProposalSeam, TargetApplicability,
-        bounded_guarantees, bounded_requirements, enumerate_frontier,
+        FrontierRejection, GovernedPhysicalProvider, ImplementationBody, ImplementationContext,
+        ImplementationProposal, PhysicalCostEstimate, PhysicalImplementationProvider,
+        PhysicalProposalKind, PhysicalProviderProvenance, ProposalBody, ReservedProposalSeam,
+        TargetApplicability, bounded_guarantees, bounded_requirements, enumerate_frontier,
     };
     use crate::boundary::{
         BoundaryProperty, GuaranteedProperty, LayoutRequirement, MaterializationForm,
@@ -1959,6 +2031,28 @@ mod tests {
             ),
             "an analytical key reached the structural frontier: {error:?}"
         );
+    }
+
+    /// Each body answers for itself and declines the other's question.
+    ///
+    /// The `Option` accessors are the point: a consumer needing a schedule and
+    /// holding an opaque call must handle the absence rather than receive a
+    /// substitute. Both directions are asserted, so an accessor returning
+    /// `Some` unconditionally fails on one of them.
+    #[test]
+    fn an_implementation_body_answers_only_for_its_own_kind() {
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let scheduled = ImplementationBody::Scheduled(Box::new(
+            crate::physical::build_fused_scheduled_region(&request)
+                .expect("the fused region builds"),
+        ));
+
+        assert!(scheduled.scheduled().is_some());
+        assert!(
+            scheduled.opaque().is_none(),
+            "a scheduled region answered as an opaque call"
+        );
+        assert_eq!(scheduled.kind(), "scheduled-region");
     }
 
     #[test]
