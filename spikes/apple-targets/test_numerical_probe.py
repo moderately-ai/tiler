@@ -369,9 +369,28 @@ def test_every_kernel_names_its_dtype_exactly_when_it_is_not_the_default() -> No
     assert not set(PROBE.F16_KERNELS) & set(PROBE.BF16_KERNELS)
     # The two narrow dtypes must ask the same questions, or a difference between
     # them would be a difference in coverage rather than in the hardware.
-    assert [name.removesuffix("_f16") for name in PROBE.F16_KERNELS] == [
-        name.removesuffix("_bf16") for name in PROBE.BF16_KERNELS
-    ], "the narrow dtypes' kernel sets diverged, so their results are not comparable"
+    #
+    # One question is not askable at `bfloat`, and the exclusion is named here
+    # rather than tolerated as a gap: MSL provides no `bfloat` overload of `fma`,
+    # so `fused_pair_bf16` cannot be compiled at all -- `metal` rejects
+    # `bfloat v6 = fma(v3, v4, v5)` because the call promotes to `float`. That is
+    # a fact about the language rather than about coverage, and spelling it
+    # `bfloat(fma(...))` would measure a fusion at `f32` precision narrowed
+    # afterwards, which is a different operation. Naming the exclusion keeps this
+    # assertion able to say no: a second divergence, or this one in the other
+    # direction, still fails.
+    askable_at_bf16_except = {"fused_pair"}
+    f16_questions = [name.removesuffix("_f16") for name in PROBE.F16_KERNELS]
+    bf16_questions = [name.removesuffix("_bf16") for name in PROBE.BF16_KERNELS]
+    assert (
+        set(f16_questions) - set(bf16_questions) == askable_at_bf16_except
+    ), "the narrow dtypes' kernel sets diverged beyond the question MSL cannot express at bfloat"
+    assert not set(bf16_questions) - set(
+        f16_questions
+    ), "bf16 asks a question f16 does not, which no exclusion covers"
+    assert [
+        name for name in f16_questions if name not in askable_at_bf16_except
+    ] == bf16_questions, "the narrow dtypes' shared questions fell out of order"
     assert set(PROBE.NARROW_KERNELS) == {PROBE.F16.name, PROBE.BF16.name}
 
 

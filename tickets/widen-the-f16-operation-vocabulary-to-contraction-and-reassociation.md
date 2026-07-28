@@ -1,7 +1,7 @@
 ---
 id: widen-the-f16-operation-vocabulary-to-contraction-and-reassociation
 title: Widen the f16 operation vocabulary to contraction and reassociation
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [widen-the-apple-numerical-probe-to-a-second-dtype, broaden-the-apple-numerical-probe-matrix]
@@ -9,9 +9,6 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, metal, measurement, dtypes]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785199695
 ---
 The `f16` kernels added by `widen-the-apple-numerical-probe-to-a-second-dtype` cover exactly what its question needed: materialization, the multiply in both flush directions, a bare add taking a subnormal straight from the buffer, a surviving `fdiv` in both directions, the identity multiply, and the trap. Contraction, a source-level `fma`, and reassociation have no `f16` counterpart, so findings 6, 16, and 17 of [the record](../docs/research/apple-targets/numerical-behaviour.md) are `f32`-only.
 
@@ -60,3 +57,31 @@ All three **reproduce the `f32` conclusion**, at operand `0x3555` unless noted:
 ### Fixtures
 
 `results/2026-07-27-numerics-{covering,exhaustive}-xcode26.6-metal32023.883/` are generated and the three citations in `test_numerical_probe.py`, `spikes/apple-targets/README.md`, and the record are repointed at them. They must be regenerated once the `bf16` twins land, because the kernel set changes again.
+
+## Outcome — done; findings 28, 29, and 30 (2026-07-27)
+
+**All three questions now have narrow-dtype answers and all three reproduce the `f32` conclusion.** The `f16` boundary is removed rather than reworded, and `bf16` came along because the harness requires it.
+
+- **Finding 28, contraction.** `contraction_pair_f16` at `3555` → `3e00` under `off` and `on`, `3e01` under `fast`; `contraction_pair_bf16` at `3eab` → `3fc0` and `3fbf`. `-ffp-contract=off` is the defence at both narrow widths. One per-dtype difference, in the strictest cell: under `safe` with `contract-fast`, `f16` fuses and `bf16` does not.
+- **Finding 29, source-level `fma`.** `fused_pair_f16` → `3e01` at every contraction setting including `off`. Not unfusable at `f16` either. There is no `bf16` counterpart and there cannot be — `metal` rejects `bfloat v6 = fma(...)` because the call promotes to `float`, met here as a compile failure rather than as an IR inspection.
+- **Finding 30, and this one is new rather than a twin.** The runtime compiler contracts under `relaxed` and `fast` at **all three widths**, whatever the offline `-ffp-contract` selection says: `f32` `3fc58f9d`, `f16` `3e01`, `bf16` `3fbf`, against the separately rounded value under `safe`.
+
+### The kernel this ticket describes would have measured nothing
+
+`x * 1.5 + 1.0` respelled at either narrow width **cannot discriminate fused from unfused for any operand in either vector** — checked exhaustively, with 1,876 of 32,768 finite non-negative `f16` patterns able to discriminate and none of them in the vector. That kernel returns byte-identical bytes under every contraction setting, and would have been reported as "contraction does not occur at the narrow widths".
+
+The guard does not catch this, which is the part worth carrying forward: the arithmetic *does* execute and the witness *does* report `executed`. What is absent is not evidence that arithmetic ran but evidence that the two roundings differ — a second species of the finding-7 trap that the existing witness layer is not built to see. The scales are `0x3E02` and `0x3FBE`, each one ulp from 1.5 and each the nearest value that discriminates at its vector's ordinary normal, with `1.0` left contraction-independent at both. Every constant was derived at the target format, not by hand.
+
+### Finding 30 came from a failing test, and was not worked around
+
+`test_the_two_compilation_paths_agree_case_by_case` failed with the narrow contraction kernels diverging from their offline candidates, and its message says the divergence is load-bearing and to report before changing anything. The cause was that contraction had only ever been compiled under `safe`, so `contraction_pair` had no `relaxed` or `fast` runtime partner and the question had never been asked — while `NARROW_KERNELS` sweeps the narrow dtypes in every mode, which is why adding them surfaced it. Adding the `f32` relaxed and fast contraction cases turned "`f16` diverges" into "the runtime compiler contracts under the relaxed modes at every width". The fix was to ask the question at `f32` too, not to silence the comparison.
+
+**It bears on ADR 0076.** Finding 9 records the two paths agreeing bit for bit while stating that this "does not make the offline build's declared realization *transferable* to a runtime-compiled kernel". This is a case where they do not coincide, and the offline flag has no runtime counterpart in which the difference could be seen. A profile declaring contraction honourability from an offline `-ffp-contract=off` compilation would be wrong about every runtime-compiled kernel under `relaxed` or `fast`.
+
+### `bf16` parity, and a check kept able to say no
+
+The harness holds the two narrow dtypes to identical kernel sets so a difference between them is a difference in the format. `fused_pair_bf16` cannot exist, so the assertion now names that one exclusion explicitly instead of being relaxed to a subset test. Verified reachable: setting the exclusion set empty fails it with the new message, and it was restored.
+
+### Evidence
+
+Fixtures regenerated at `results/2026-07-27-numerics-{covering,exhaustive}-xcode26.6-metal32023.883/`, with the three citations repointed. `uv run --with pytest pytest spikes/apple-targets` reports **81 passed, 1 failed**; the failure is `test_probes.py::test_compatibility_evidence_mutations`, verified pre-existing on a clean detached worktree at `origin/main` and filed as `fix-the-red-compatibility-evidence-mutation-test`.
