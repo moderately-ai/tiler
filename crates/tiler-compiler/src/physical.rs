@@ -652,34 +652,81 @@ fn reduction_access_matches(
 /// proposal — signals that the checked contract drifted from the prototype
 /// limits and fails closed as an intrinsic error rather than admitting an
 /// unproven plan. Cost never enters this decision.
+/// Why a resource assessment did not prove feasibility, **unattributed**.
+///
+/// The verdict without the blame. `assess_region` attributes it to a
+/// `RegionId`; an opaque physical call attributes the same verdict to the call
+/// that proposed it. One feasibility decision, two attributions — which is what
+/// ADR 0043's single decision requires, since the *verdict* is what must be
+/// shared and only the subject differs.
+///
+/// Carrying a `RegionId` in here instead would force any caller that is not a
+/// region to invent one, and a feasibility rejection attributed to a region that
+/// does not exist is worse than no attribution at all: a reader chasing it finds
+/// nothing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the unattributed verdict; its second caller is the opaque-call admission being built"
+)]
+pub(crate) enum ResourceVerdict {
+    /// The target profile or the proposal itself was malformed.
+    Intrinsic(FeasibilityError),
+    /// The target refused the proposal, with the representative cause.
+    Rejected(RejectionCause),
+    /// The assessment neither proved nor refused.
+    Unresolved,
+}
+
+/// Assesses exact resource requirements against a target, attributing nothing.
+///
+/// The shared half of the feasibility decision. Every caller runs this; each
+/// then maps a [`ResourceVerdict`] onto its own error vocabulary.
+#[allow(
+    dead_code,
+    reason = "the shared feasibility core; the opaque-call admission is its second caller"
+)]
+pub(crate) fn assess_resources(
+    requirements: ResourceRequirements,
+    work_items: u64,
+    target: &PrototypeTargetProfile,
+) -> Result<ProvenEvidence, ResourceVerdict> {
+    let profile = checked_target_profile(target).map_err(ResourceVerdict::Intrinsic)?;
+    let proposal = region_proposal(requirements, work_items).map_err(ResourceVerdict::Intrinsic)?;
+    match profile.assess(&proposal, AvailabilityPhase::CompileProfile) {
+        FeasibilityOutcome::Proven(evidence) => Ok(evidence),
+        FeasibilityOutcome::Rejected(rejection) => {
+            Err(ResourceVerdict::Rejected(rejection.representative()))
+        }
+        FeasibilityOutcome::Deferred(_) | FeasibilityOutcome::Unknown(_) => {
+            Err(ResourceVerdict::Unresolved)
+        }
+    }
+}
+
+/// Assesses one region's resources, attributing any verdict to that region.
 pub(crate) fn assess_region(
     region: RegionId,
     requirements: ResourceRequirements,
     work_items: u64,
     target: &PrototypeTargetProfile,
 ) -> Result<ProvenEvidence, PhysicalError> {
-    let profile =
-        checked_target_profile(target).map_err(|error| feasibility_intrinsic(error, region))?;
-    let proposal = region_proposal(requirements, work_items)
-        .map_err(|error| feasibility_intrinsic(error, region))?;
-    match profile.assess(&proposal, AvailabilityPhase::CompileProfile) {
-        FeasibilityOutcome::Proven(evidence) => Ok(evidence),
-        FeasibilityOutcome::Rejected(rejection) => Err(match rejection.representative() {
-            RejectionCause::Numerical(cause) => PhysicalError::Numerical { region, cause },
-            RejectionCause::Capability(predicate) => PhysicalError::Target {
-                rule: predicate.axis().key(),
-                region,
-                required: predicate.required().value(),
-                available: predicate.available().value(),
-            },
-        }),
-        FeasibilityOutcome::Deferred(_) | FeasibilityOutcome::Unknown(_) => {
-            Err(PhysicalError::Intrinsic {
-                rule: "target-assessment-unresolved",
-                region,
-            })
+    assess_resources(requirements, work_items, target).map_err(|verdict| match verdict {
+        ResourceVerdict::Intrinsic(error) => feasibility_intrinsic(error, region),
+        ResourceVerdict::Rejected(RejectionCause::Numerical(cause)) => {
+            PhysicalError::Numerical { region, cause }
         }
-    }
+        ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => PhysicalError::Target {
+            rule: predicate.axis().key(),
+            region,
+            required: predicate.required().value(),
+            available: predicate.available().value(),
+        },
+        ResourceVerdict::Unresolved => PhysicalError::Intrinsic {
+            rule: "target-assessment-unresolved",
+            region,
+        },
+    })
 }
 
 /// Assesses one numerical contract alone against a target's declaration.

@@ -410,3 +410,21 @@ fn assess_resources(requirements, work_items, target)
 The cause is already a type — `RejectionCause` with `Numerical` and `Capability` variants, matched on in the body today — so the core's error type exists and does not need inventing. `checked_target_profile` and `region_proposal` also fail, and their errors currently go through `feasibility_intrinsic`; the core should return those unattributed too.
 
 *The check, reproducible in one line:* `grep -n 'region' crates/tiler-compiler/src/physical.rs | sed -n '/fn assess_region/,/^$/p'` — or read `physical.rs:655` through its closing brace and count the uses: five, all attribution.
+
+## Opaque calls are admitted (2026-07-28)
+
+`enumerate_frontier` now admits a registered, well-bound, feasible opaque call: it derives the boundary contract from the declaration, resolves the work count through the bindings, proves feasibility with `physical::assess_resources`, encodes the identity over the call *and its bindings*, and pushes an `AdmittedImplementation` carrying `ImplementationBody::Opaque`.
+
+**The feasibility split landed first and made this possible.** `assess_resources` returns `ProvenEvidence` or an unattributed `ResourceVerdict`; `assess_region` is now a thin wrapper attributing that verdict to a `RegionId`, and the opaque path attributes the same verdict to the call. One decision, two attributions — and the split was behaviour-preserving, which the existing feasibility tests confirmed without needing a change.
+
+**`CallNotAdmissible` covers the three per-target failures** — contract underivable, work unresolvable, target infeasible — each with a stable reason. They are deliberately one variant separate from `MalformedBinding`: a malformed binding is wrong *everywhere*, while these three are this proposal on *this* target.
+
+**The admission test is the payoff and checks more than "it was admitted".** It asserts no rejections, the `OpaqueCall` kind, that `scheduled()` is `None`, and that the boundary and work count match what the same derivation functions produce independently — so an admission that wired something up wrongly fails rather than passing on shape alone.
+
+## What remains
+
+- **Lowering must reject an opaque body** with a typed reason. `physical::lower_scheduled_region` is reached through `plan_region_order`, which filters opaque bodies out today; the refusal belongs at the stage that lowers, not in the ordering helper.
+- **Numerical guarantees** — an opaque call's realization stated and checked against the region's contract. Nothing yet touches numerics, and `assess_resources` does compare the four numerical dimensions in `ResourceRequirements`, so check what it already covers before adding.
+- **Explain records** for the four rejection variants; the census moves there.
+- **`Intermediate` work scaling** still declines, for the reason recorded above.
+

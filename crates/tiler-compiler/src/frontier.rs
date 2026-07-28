@@ -1017,6 +1017,22 @@ pub(crate) enum FrontierRejection {
         /// alternative, and declaring profile.
         cause: UnhonouredDimension,
     },
+    /// A registered, well-bound call could not be admitted for this target.
+    ///
+    /// Covers both halves of what can go wrong after the bindings check: the
+    /// declaration could not produce a boundary contract, its work scaling could
+    /// not be resolved, or the target refused its resources. Each carries a
+    /// stable reason so the rejection says which — and all three are *this
+    /// proposal on this target*, which is what distinguishes them from a
+    /// malformed binding, which is wrong everywhere.
+    CallNotAdmissible {
+        /// The provider whose proposal was rejected.
+        provider: ProviderIdentity,
+        /// The call that could not be admitted.
+        call: OpaqueCallIdentity,
+        /// A stable reason code.
+        reason: &'static str,
+    },
     /// The proposal's parameter bindings do not match the call's own ABI.
     ///
     /// Distinct from an unregistered call: the call exists, and the provider
@@ -1091,6 +1107,16 @@ impl FrontierRejection {
                     None => output.push(0),
                 }
                 push_slice(output, cause.profile().key().as_bytes());
+            }
+            Self::CallNotAdmissible {
+                provider,
+                call,
+                reason,
+            } => {
+                output.push(7);
+                encode_provider(output, provider);
+                push_slice(output, call.call().as_bytes());
+                push_slice(output, reason.as_bytes());
             }
             Self::MalformedBinding {
                 provider,
@@ -1374,20 +1400,58 @@ pub(crate) fn enumerate_frontier(
                         });
                         continue;
                     }
-                    // Admitting needs feasibility evidence, and the only
-                    // producer is `verify_schedule_with_feasibility`, which
-                    // bundles it with verifying a schedule an opaque call does
-                    // not have. Until a resource-only feasibility check exists,
-                    // a well-bound registered call is still unsupported — and
-                    // fabricating `ProvenEvidence` here would tell feasibility a
-                    // call was proven when nothing proved it.
-                    let _ = derive_call_boundary_contract(
+                    let mut refuse = |reason| {
+                        rejections.push(FrontierRejection::CallNotAdmissible {
+                            provider: provenance.provider().clone(),
+                            call: proposed.call(),
+                            reason,
+                        });
+                    };
+                    let Ok(boundary) = derive_call_boundary_contract(
                         registered.declaration(),
                         proposed.bindings(),
-                    );
-                    rejections.push(FrontierRejection::UnsupportedVariant {
-                        provider: provenance.provider().clone(),
+                    ) else {
+                        refuse("contract-underivable");
+                        continue;
+                    };
+                    let Some(work_items) = resolve_work_items(
+                        registered.declaration().work(),
+                        proposed.bindings(),
+                        request,
+                    ) else {
+                        refuse("work-unresolvable");
+                        continue;
+                    };
+                    // The same feasibility verdict a scheduled region gets,
+                    // attributed to this call rather than to a region it does
+                    // not have.
+                    let Ok(feasibility) = crate::physical::assess_resources(
+                        *registered.declaration().resources(),
+                        work_items,
+                        &request.target_profile(),
+                    ) else {
+                        refuse("target-infeasible");
+                        continue;
+                    };
+                    let identity = encode_proposal_identity(
+                        &encode_call_subject(proposed),
+                        provenance.provider(),
                         kind,
+                        &proposal.applicability,
+                        &boundary,
+                    );
+                    admitted.push(AdmittedImplementation {
+                        provenance: ImplementationProvenance {
+                            provider: provenance.provider().clone(),
+                            kind,
+                        },
+                        semantic_members: subject.semantic_members.clone(),
+                        target_profile_key,
+                        body: ImplementationBody::Opaque(Box::new(registered.clone())),
+                        feasibility,
+                        boundary,
+                        cost: proposal.declared_cost,
+                        identity,
                     });
                     continue;
                 }
@@ -2521,6 +2585,123 @@ mod tests {
             resolve_work_items(WorkScaling::PerElementOf("z"), &bindings, &request),
             None,
             "an intermediate binding produced a count the request cannot state"
+        );
+    }
+
+    struct CallProvider(
+        crate::call_registry::OpaqueCallIdentity,
+        Vec<(&'static str, TensorRole)>,
+    );
+
+    impl PhysicalImplementationProvider for CallProvider {
+        fn provenance(&self) -> PhysicalProviderProvenance {
+            PhysicalProviderProvenance::new(provider_identity("opaque", 1))
+        }
+        fn propose(&self, _context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+            vec![ImplementationProposal::new(
+                ProposalBody::OpaqueCall(Box::new(OpaqueCallProposal::new(self.0, self.1.clone()))),
+                governed_applicability(),
+                PhysicalCostEstimate::structural(1, 2, 0),
+            )]
+        }
+    }
+
+    /// A registered, well-bound, feasible opaque call is admitted.
+    ///
+    /// The payoff for the whole seam: an implementation this compiler did not
+    /// produce enters the frontier beside a scheduled kernel, carrying a
+    /// boundary contract derived from its declaration and feasibility proved by
+    /// the same authority a region uses.
+    #[test]
+    fn a_registered_well_bound_opaque_call_is_admitted() {
+        use super::{derive_call_boundary_contract, resolve_work_items};
+        use crate::boundary::{
+            AdmittedMemoryDomains, ExecutionAffinity, LayoutGuarantee, LayoutRequirement,
+            MemoryDomainClass, StorageEncoding,
+        };
+        use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
+        use crate::call_declaration::{OpaqueCallDeclaration, WorkScaling};
+        use crate::call_placement::CallPlacement;
+        use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
+        use tiler_ir::schedule::{NumericalPermission, ResourceRequirements, SubnormalMode};
+
+        let spec = |name, role| ParameterSpec {
+            name,
+            role,
+            layout: match role {
+                ParameterRole::In => ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
+                _ => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
+            },
+            encoding: StorageEncoding::Unpacked,
+            alignment: crate::boundary::ByteAlignment::F32_NATURAL,
+        };
+        let declaration = OpaqueCallDeclaration::check(
+            CallAbi::declare([spec("x", ParameterRole::In), spec("y", ParameterRole::Out)])
+                .expect("well formed"),
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
+            CallPlacement::declare(
+                ExecutionAffinity::PRIMARY,
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).expect("non-empty"),
+                &[MemoryDomainClass::Device],
+            )
+            .expect("supported"),
+            ResourceRequirements {
+                buffer_bindings: 2,
+                threads_per_workgroup: 1,
+                local_memory_bytes: 0,
+                barriers: 0,
+                requires_device_memory: true,
+                input_subnormals: SubnormalMode::Preserve,
+                result_subnormals: SubnormalMode::Preserve,
+                contraction: NumericalPermission::Forbidden,
+                reassociation: NumericalPermission::Forbidden,
+            },
+            WorkScaling::PerElementOf("x"),
+        )
+        .expect("coherent");
+
+        let identity = OpaqueCallIdentity::new("test", "sum", 1).expect("named");
+        let bindings = vec![("x", TensorRole::Input), ("y", TensorRole::Output)];
+        let mut registry = OpaqueCallRegistry::new();
+        registry
+            .register(identity, declaration.clone())
+            .expect("one call");
+
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let subject = fused_subject(&request);
+        let provider = CallProvider(identity, bindings.clone());
+        let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
+        let frontier = enumerate_frontier(&request, &subject, &providers, &registry).unwrap();
+
+        assert_eq!(
+            frontier.rejections().len(),
+            0,
+            "a well-formed opaque call was rejected: {:?}",
+            frontier.rejections()
+        );
+        assert_eq!(frontier.admitted().len(), 1);
+        let admitted = &frontier.admitted()[0];
+        assert_eq!(
+            admitted.provenance().kind(),
+            PhysicalProposalKind::OpaqueCall
+        );
+        assert!(
+            admitted.scheduled().is_none(),
+            "an opaque admission reported a scheduled region"
+        );
+        assert_eq!(admitted.body().kind(), "opaque-call");
+
+        // The contract is the one the declaration derives, and the work count is
+        // the one the binding resolves — asserted against the same functions the
+        // admission used, so a wired-up-but-wrong admission fails here.
+        let expected = derive_call_boundary_contract(&declaration, &bindings).expect("derivable");
+        assert_eq!(
+            admitted.boundary().requirements().len(),
+            expected.requirements().len()
+        );
+        assert_eq!(
+            resolve_work_items(WorkScaling::PerElementOf("x"), &bindings, &request),
+            Some(request.serial_sum().input_elements)
         );
     }
 

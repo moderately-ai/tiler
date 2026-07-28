@@ -272,6 +272,11 @@ pub(super) fn enumerate_complete_plans(
                         // rather than this target's limitation.
                         crate::frontier::FrontierRejection::UnregisteredCall { .. }
                         | crate::frontier::FrontierRejection::MalformedBinding { .. }
+                        // A call this target cannot admit is a per-target
+                        // verdict, but its subject is the call rather than a
+                        // region, so it carries no rejection to attribute to
+                        // this region — the frontier's own record names it.
+                        | crate::frontier::FrontierRejection::CallNotAdmissible { .. }
                         | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
                         | crate::frontier::FrontierRejection::NotApplicable { .. } => None,
                     };
