@@ -5,6 +5,7 @@
 
 mod boundary;
 mod call_abi;
+mod call_declaration;
 mod call_placement;
 pub mod capability;
 mod component_cost;

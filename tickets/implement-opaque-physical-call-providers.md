@@ -110,4 +110,19 @@ The tests are built around the distinction the positional form cannot make: the 
 - A `NoAdmittedDomain` error variant could never fire — `AdmittedMemoryDomains` already refuses an empty set at construction. An unreachable error variant reads as a check while being none, which is worse than its absence, so it was removed and the reason recorded where it was.
 - A test doc-comment claimed both halves of `reaches` were covered. Only the domain half is: the bounded profile has one symbolic affinity, so no test can supply a second to fail the affinity half against, and a `reaches` ignoring its affinity argument entirely would still pass. Both the method and the test now say so, so a green run is not read as verifying the conjunction.
 
-**Still not included:** provider registration and applicability resolution, and the additive coexistence with scheduled kernels.
+## Cross-declaration coherence landed (2026-07-28)
+
+`crates/tiler-compiler/src/call_declaration.rs`. The ABI, effects, and placement each validate on their own; this checks the thing none of them can see — whether they **agree**.
+
+**Applicability resolution is deliberately not here.** `frontier::TargetApplicability` already answers which providers apply to a target profile, over governed `TargetProfileKey`s with canonical deduplicated ordering. An opaque-call provider uses it rather than a second predicate over the same question — the same reuse decision the placement contract made for memory domains, and for the same reason.
+
+**Two contradictions checked, each derived rather than invented:**
+
+- *An `InOut` parameter beside `Aliasing::Distinct`.* An in-place parameter **is** a result occupying an input's storage, so `Distinct` beside one is not a stricter promise but a false one, and a caller trusting it would reuse storage the call overwrote.
+- *A written parameter beside `Elimination::Removable`.* A call that writes storage the caller handed it is observable through that storage whether or not anything reads a returned value, so declaring it removable would let dead-result elimination discard a write the caller relies on.
+
+**A contradiction is a defect, not a rejection.** A provider whose declarations disagree has not described a call this compiler cannot run — it has described no call at all, since no single behaviour is consistent with what it said. Same distinction `rewrite::ProviderDefect` draws; conflating them would let a caller counting infeasible candidates count broken providers among them.
+
+**Every contradiction is reported, not the first**, mirroring `boundary::unsatisfied_properties`, so a provider author fixing one does not resubmit to discover the next. The test for that uses a declaration violating both rules and asserts two faults — a `check` returning early passes the two single-fault tests and fails only this one. A fourth test admits a consistent declaration, without which all three rejection tests would pass against a `check` that refused everything.
+
+**Still not included:** the registration seam itself (its shape is already proven by `rewrite::RuleRegistry` — duplicate refusal, canonical iteration order) and the additive coexistence with scheduled kernels.
