@@ -1,7 +1,7 @@
 ---
 id: accept-the-delivered-realization-artifact-surface
 title: Accept the delivered-realization artifact surface
-status: todo
+status: awaiting-decision
 priority: p1
 dependencies: []
 related: [record-delivered-numerical-realization, accept-adr-0076-numerical-realizations]
@@ -38,3 +38,9 @@ owner questions in this ticket.
 ## The question this record does *not* reopen, and its trigger
 
 Whether `tiler-artifact` should also expose a **typed view** of the means — a recognizer over a key it still does not mint — rather than opaque bytes alone. It is not asked now because no consumer branches on the means: comparison, identity, and rendering the key as text are all the opaque form supports and all anything needs today. It becomes forced the moment a consumer must *reason over* the means rather than compare it, and ADR 0076 item 4 names the likely one — the means "changes what a reference comparison should expect from a dimension honoured by emulation rather than natively." A comparator that can only compare bytes would hard-code `b"supported-with-exact-emulation"`, which is the second authority ADR 0076 line 58 forbids, arriving by copy instead of by declaration. **Trigger:** the first consumer that must branch on the means. The right response then is a recognizer whose unknown case is a real `None`, not a relocation of the vocabulary.
+
+## Parked 2026-07-27 — awaiting Tom
+
+**The question:** should `DeliveredNumericalRealization` become public, and in exactly what shape — a constructor on `ArtifactProgramBuilder` plus readers on the verified and decoded artifact?
+
+The implementation exists, is tested, and is staged `pub(crate)` under ADR 0074 convention 7. ADR 0075 reserves this surface, and `AGENTS.md` states the same rule: a tested implementation is a concrete draft, not implicit approval of its public interface. Nothing further can be done without the decision — the draft cannot be reached from outside the crate by design.

@@ -1,7 +1,7 @@
 ---
 id: admit-a-caller-declared-target-profile
 title: Admit a caller-declared target profile
-status: todo
+status: awaiting-decision
 priority: p1
 dependencies: []
 related: [express-metal-honourability-in-the-shared-form, prototype-public-compiler-api]
@@ -59,3 +59,9 @@ The byte pin the previous survey asked for **landed** (`6e7121f`): `the_governed
 Step 2 is what makes step 3 tractable; attempted together they are one 57-error commit.
 
 Note for step 4: `distinguish-the-five-compile-failure-classes` landed on 2026-07-27 and split `CompileFailureClass::Unsupported` into `InvalidRequest` and `UnsupportedCapability`. `InvalidRequest` is currently **unreachable from the public surface** precisely because `compile` builds the request structure itself — an empty target set and a duplicate profile are two of its five sources. This ticket is what makes it reachable, so step 4 adds construction paths rather than also having to widen the failure vocabulary.
+
+## Parked 2026-07-27 — awaiting Tom
+
+**The question:** should `NumericalDimension`, `DimensionBehaviour`, and `HonouringMeans` become public so a caller can declare honourability, and under what spelling?
+
+All three are `pub(crate)` in the private `honourability` module. `DimensionBehaviour` wraps `SubnormalMode` and `NumericalPermission`, which are already public in `tiler-ir`, so the decision is about the wrapper vocabulary rather than about exposing new concepts. ADR 0076 item 2's public spelling was explicitly left to Tom when `compose-numerical-honourability-and-retire-the-strict-boolean` landed, and this ticket cannot proceed past that point.

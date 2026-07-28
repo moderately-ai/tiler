@@ -1,7 +1,7 @@
 ---
 id: promote-the-symbolic-index-profile-to-a-public-boundary
 title: Promote the sourced-extent index profile to a reviewed public boundary
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: [implement-shapeenv-index-bindings, implement-shapeenv-core]
@@ -33,3 +33,14 @@ passes.
 **Approved: promote.** ADR 0075 reserves public-surface promotions to the owner; this one is granted.
 
 Covers all three ShapeEnv drafts — `shape::env`, `env::constraint`, and `index::sourced`. The authority, its constraint environment, and its first consumer are complete and tested, and were unreachable outside `tiler-ir`. Note the fragment boundary is still being widened by `bind-shapeenv-sources-into-tensor-boundaries-and-coefficients`, so promote the surface that is settled and say plainly which parts are still moving.
+
+## Parked 2026-07-27 — awaiting Tom
+
+**The question is four questions, and each is an ADR 0075 always-ask once public:**
+
+1. Does `with_shape_environment` stay a consuming builder step or become a `new`-time argument?
+2. Does `SymbolicExtentError` stay a separate error type or fold into `IndexBuildError`?
+3. Is `DomainDimensionRef::sourced_extent` the right additive view, or a narrower `symbol()` accessor?
+4. Is `ShapeEnv` exported from `tiler_ir::shape`, or does it get its own module?
+
+Three implemented, tested `pub(crate)` drafts exist and none is reachable outside `tiler-ir`. Each shape above was chosen to be cheap to revise *while private*, so promoting without deciding them would spend that option for nothing.
