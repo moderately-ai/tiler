@@ -198,7 +198,12 @@ The implementation graph now maps these contracts to bounded coding tickets:
 ### Q-ART-008 — Ergonomic artifact-family profiles
 
 - Owner/track: [Frontend integration](integration/frontends.md),
-  [`prototype-artifact-family-delivery`](../tickets/prototype-artifact-family-delivery.md).
+  [`generate-cfg-gated-artifact-family-delivery`](../tickets/generate-cfg-gated-artifact-family-delivery.md).
+  Retargeted 2026-07-28: the previous owner
+  [`prototype-artifact-family-delivery`](../tickets/prototype-artifact-family-delivery.md)
+  closed `done` with this close condition unmet, which left the question owned
+  by a terminal ticket — unowned in fact. The blocked successor had asked for
+  this retarget and nobody performed it.
 - Close: named profiles expand to canonical `ArtifactFamilySelection` with
   generated `cfg` compile-pass/fail tests.
 
