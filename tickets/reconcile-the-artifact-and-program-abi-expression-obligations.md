@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-artifact-and-program-abi-expression-obligations
 title: Reconcile the artifact and program ABI expression obligations
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [bind-the-artifact-variant-abi-to-the-program-abi]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/ir]
 shared_scopes: []
 paths: []
 tags: [artifact, abi, correctness]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785208681
 ---
 Split from `bind-the-artifact-variant-abi-to-the-program-abi`, which cannot proceed until this is answered. Read that ticket's two 2026-07-27 measurements first; this exists because the second one refuted the assumption the first was built on.
 
@@ -54,3 +57,21 @@ If `ForeignHandle` accounts for the bulk of the 266, the whole inference collaps
 Only the second class supports the question below. **It is possible there is no second class**, in which case this ticket closes as "the layers agree and the binding is mechanical after all", and `bind-the-artifact-variant-abi-to-the-program-abi` reverts to its original estimate.
 
 **Why this correction is here rather than quietly fixed.** The inference was recorded confidently on two tickets and used to justify a dependency edge and a split. A reader who took it at face value would design a contract reconciliation for a problem that may be a bug in one afternoon's branch.
+
+## Narrowed 2026-07-27 — `adopt_abi` is sound; the earlier failures were wiring
+
+**Measured, isolated from the build path so a wiring fault cannot be mistaken for a layer disagreement.** `probe_whether_a_program_expression_satisfies_the_artifact_obligations` in `crates/tiler-artifact/src/program/tests.rs` adopts a verified program's ABI arena onto a fresh artifact builder and inspects the result:
+
+```text
+PROBE grid handle AbiExprId { owner: ArtifactBuilderId(1), index: 0 }
+PROBE workgroup handle AbiExprId { owner: ArtifactBuilderId(1), index: 1 }
+PROBE program arena 5 nodes
+```
+
+The replayed handles are the **artifact builder's own**, minted at its own indices, and the two distinct launch expressions stay distinct. So the replay boundary is sound and `ForeignHandle` in the abandoned attempt was a fault in how that attempt threaded handles through `&self` methods — it adopted in a `&mut self` context and used the map from immutable ones — and not evidence about either layer's obligations.
+
+**What is now known and what is not.** Known: `adopt_abi` produces valid, distinct, owner-correct handles from a program arena, and at least that part of the derive route is not the obstacle. Not known: whether `check_use`'s availability-phase and interface-root obligations accept a program-owned expression, because `check_use` is private and the probe cannot reach it without changing the build path — which is exactly what conflated the two signals last time.
+
+**Next step, and it is now small.** Re-attempt the derive with the adoption performed once in `push_variant` and the resulting handles passed by value into `check_launch` and `check_bindings` — never re-resolved — then classify whatever remains. The `ForeignHandle` class should be gone; anything left is the evidence this ticket wants. If nothing is left, this closes and `bind-the-artifact-variant-abi-to-the-program-abi` reverts to its measured 13-deletion estimate.
+
+The probe test is retained, because it is the thing that distinguishes the two signals and it cost one test to have.
