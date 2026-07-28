@@ -428,6 +428,10 @@ The cause is already a type — `RejectionCause` with `Numerical` and `Capabilit
   It now returns `Option` and declines, with the caller turning that into a typed `unlowerable-opaque-body` refusal at the lowering stage. `pipeline/verify.rs` treats `None` as a schedule-binding failure, which is what it is — an alternative could not have been built from a plan it cannot order.
 
   **This is the cost of the previous change, paid one turn later.** Admitting opaque calls made a filter that had been correct into a silent omission, and nothing failed when it did.
-- **Numerical guarantees** — an opaque call's realization stated and checked against the region's contract. Nothing yet touches numerics, and `assess_resources` does compare the four numerical dimensions in `ResourceRequirements`, so check what it already covers before adding.
+- ~~**Numerical guarantees**~~ — **done 2026-07-28**, and checking what was already covered was the right first move. `assess_resources` compares the four numerical dimensions carried in `ResourceRequirements` against the **target profile**, so "can this device honour it" was already answered.
+
+  What nothing answered is the different question: whether the call's declared numerics match the **request's resolved contract**. A call permitting contraction is perfectly feasible on a device that offers contraction, and still wrong for a program whose contract forbids it. Admission now compares all four against `request.numerical_contract().realization()` and refuses with `numerical-contract-mismatch`.
+
+  The test declares a call permitting contraction where the governed contract forbids it and requires that exact reason — so a refusal for any *other* cause fails it. The positive admission test passing unchanged confirms its own numerics do match the governed contract, which is what makes the negative test meaningful rather than vacuous.
 - **Explain records** for the four rejection variants; the census moves there.
 - **`Intermediate` work scaling** still declines, for the reason recorded above.

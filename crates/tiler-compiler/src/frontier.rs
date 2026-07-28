@@ -1414,6 +1414,25 @@ pub(crate) fn enumerate_frontier(
                         refuse("contract-underivable");
                         continue;
                     };
+                    // The call's declared numerics must match the request's
+                    // resolved contract, not merely be feasible on the target.
+                    // `assess_resources` below checks the four dimensions
+                    // against the *target profile*, which is a different
+                    // question: a call permitting contraction can be feasible on
+                    // a device that offers it while still violating a program
+                    // whose contract forbids it. Nothing else compares these, so
+                    // omitting it would admit a call that computes something the
+                    // caller ruled out.
+                    let declared = registered.declaration().resources();
+                    let contract = request.numerical_contract().realization();
+                    if declared.input_subnormals != contract.input_subnormals
+                        || declared.result_subnormals != contract.result_subnormals
+                        || declared.contraction != contract.contraction
+                        || declared.reassociation != contract.reassociation
+                    {
+                        refuse("numerical-contract-mismatch");
+                        continue;
+                    }
                     let Some(work_items) = resolve_work_items(
                         registered.declaration().work(),
                         proposed.bindings(),
@@ -2588,6 +2607,59 @@ mod tests {
         );
     }
 
+    fn strict_call_resources() -> tiler_ir::schedule::ResourceRequirements {
+        let contract = crate::request::StrictF32NumericalContract::governed().realization();
+        tiler_ir::schedule::ResourceRequirements {
+            buffer_bindings: 2,
+            threads_per_workgroup: 1,
+            local_memory_bytes: 0,
+            barriers: 0,
+            requires_device_memory: true,
+            input_subnormals: contract.input_subnormals,
+            result_subnormals: contract.result_subnormals,
+            contraction: contract.contraction,
+            reassociation: contract.reassociation,
+        }
+    }
+
+    fn call_declaration(
+        resources: tiler_ir::schedule::ResourceRequirements,
+    ) -> crate::call_declaration::OpaqueCallDeclaration {
+        use crate::boundary::{
+            AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
+            LayoutRequirement, MemoryDomainClass, StorageEncoding,
+        };
+        use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
+        use crate::call_declaration::{OpaqueCallDeclaration, WorkScaling};
+        use crate::call_placement::CallPlacement;
+        use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
+
+        let spec = |name, role| ParameterSpec {
+            name,
+            role,
+            layout: match role {
+                ParameterRole::In => ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
+                _ => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
+            },
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::F32_NATURAL,
+        };
+        OpaqueCallDeclaration::check(
+            CallAbi::declare([spec("x", ParameterRole::In), spec("y", ParameterRole::Out)])
+                .expect("well formed"),
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
+            CallPlacement::declare(
+                ExecutionAffinity::PRIMARY,
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).expect("non-empty"),
+                &[MemoryDomainClass::Device],
+            )
+            .expect("supported"),
+            resources,
+            WorkScaling::PerElementOf("x"),
+        )
+        .expect("coherent")
+    }
+
     struct CallProvider(
         crate::call_registry::OpaqueCallIdentity,
         Vec<(&'static str, TensorRole)>,
@@ -2604,6 +2676,47 @@ mod tests {
                 PhysicalCostEstimate::structural(1, 2, 0),
             )]
         }
+    }
+
+    /// A call whose declared numerics differ from the request's contract is
+    /// refused, even though the target could honour them.
+    ///
+    /// The two questions are different: `assess_resources` asks whether the
+    /// *device* offers the behaviour, and this asks whether the *program* asked
+    /// for it. A call permitting contraction is feasible on a device that offers
+    /// it and still wrong for a program whose contract forbids it.
+    #[test]
+    fn a_call_whose_numerics_differ_from_the_contract_is_refused() {
+        use crate::call_registry::OpaqueCallIdentity;
+        use tiler_ir::schedule::NumericalPermission;
+
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let subject = fused_subject(&request);
+        let identity = OpaqueCallIdentity::new("test", "loose", 1).expect("named");
+        let bindings = vec![("x", TensorRole::Input), ("y", TensorRole::Output)];
+
+        // Permitting contraction where the governed contract forbids it.
+        let mut resources = strict_call_resources();
+        resources.contraction = NumericalPermission::Permitted;
+        let declaration = call_declaration(resources);
+
+        let mut registry = OpaqueCallRegistry::new();
+        registry.register(identity, declaration).expect("one call");
+
+        let provider = CallProvider(identity, bindings);
+        let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
+        let frontier = enumerate_frontier(&request, &subject, &providers, &registry).unwrap();
+
+        assert!(frontier.admitted().is_empty(), "a loose call was admitted");
+        assert!(
+            frontier.rejections().iter().any(|rejection| matches!(
+                rejection,
+                FrontierRejection::CallNotAdmissible { reason, .. }
+                    if *reason == "numerical-contract-mismatch"
+            )),
+            "the refusal did not name the numerical mismatch: {:?}",
+            frontier.rejections()
+        );
     }
 
     /// A registered, well-bound, feasible opaque call is admitted.
