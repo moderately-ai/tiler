@@ -1,7 +1,7 @@
 ---
 id: pair-verified-buffer-handles-with-signature-ordinals
 title: Let a KIR consumer map a VerifiedBufferId to its signature ordinal
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: []
 related: [prototype-structured-kir-slice, prototype-metal-kir-lowering]
@@ -10,7 +10,7 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, backend-contract]
 ---
-## Decision needed (2026-07-28)
+## Decision outcome (2026-07-28)
 
 **The question is now narrower than the one this ticket was parked on.** The gap is closed in the tree: `VerifiedKernel::declared_buffers` is public at `crates/tiler-ir/src/kernel/model.rs:581`, yields `(VerifiedBufferId, BufferParameter)` in declaration order, and `tiler-metal` builds its argument table from it at `crates/tiler-metal/src/emit.rs:407`. So the decision is not *whether* to publish a pairing; it is whether to keep the shape that shipped.
 
@@ -24,6 +24,8 @@ tags: [implementation, ir, backend-contract]
 Both are additive to `buffers()`, which is the fact that matters for blast radius: **neither shape requires touching it.** `grep -rn '\.buffers()' $(find crates prototypes -name '*.rs') | wc -l` reports 19 call sites across 10 files today, up from the eight this ticket recorded, so the elimination below is stronger than when it was written, not weaker.
 
 **Recommendation: approve as shipped.** `declared_buffers` is in the tree, tested, and consumed; the reasons the resolution preferred `buffer_id` were composition and blast radius, and the shipped shape pays neither cost — it broke nothing and it is the shape the one real consumer wanted. The counterpoint is that this ratifies a surface chosen inside another ticket's slice rather than at this one's review, which is the thing ADR 0075 reserves; if the shape is wrong, the moment to say so is before a second backend consumes it.
+
+**Approved as shipped.** Tom ratified `VerifiedKernel::declared_buffers() -> impl ExactSizeIterator<Item = (VerifiedBufferId, BufferParameter)> + '_` on 2026-07-28. The pairing iterator remains the public signature-order authority; no positional `buffer_id` accessor is added.
 
 ## Supersession — what shipped, and how
 
@@ -68,4 +70,8 @@ The one substantive argument for the pairing iterator is that it makes the corre
 
 **Take the additive `buffer_id` accessor; do not change `buffers()`.** Auto-resolved on maintainability: changing `buffers()` churns its call sites to deliver what an added accessor delivers at none, and a signature change to a widely-used reader is the kind of edit whose blast radius is discovered rather than planned.
 
-The promotion itself still needs the owner's approval under ADR 0075 and is not covered by the four promotions approved that day. The ticket remains `awaiting-decision` until that approval is recorded — and the decision now in front of the owner is the narrowed one at the top of this file, because the surface shipped before the approval did.
+At that point the promotion still needed the owner's approval under ADR 0075 and was not covered by the four promotions approved that day. The narrowed decision at the top records the later ratification rather than rewriting the state in which the earlier resolution was made.
+
+## Graph maintenance
+
+The public-boundary hold is discharged. `retire-the-metal-first-use-buffer-binding-workaround`, `prototype-metal-kir-lowering`, and the empty-domain reduction record already describe the landed consumer and require no implementation change. Any future backend obtains signature ordinals by enumerating `declared_buffers`; it must not sort opaque handles or reconstruct order from first use.
