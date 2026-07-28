@@ -1,12 +1,12 @@
 ---
 id: classify-the-schedule-growth-seams-for-additive-compatibility
 title: Classify the schedule growth seams for additive compatibility
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: []
 scopes: [implementation/ir]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [api]
 ---
@@ -32,3 +32,25 @@ Pair every negative case with a positive one proving construction and field read
 ## Closes when
 
 Each of the six seams is classified from its current call sites with the consumer named, compatible seams are `#[non_exhaustive]`, total maps and recognizers remain exhaustive, negative and positive compile coverage protects both directions, and `make full` passes.
+
+## Outcome — nine types classified from call sites, seven marked (2026-07-27)
+
+The seam list was never enumerated anywhere, so rather than guess which six the parent's search seed meant, **every unmarked public enum in `tiler_ir::schedule::model` was classified** — nine types, a superset that cannot miss them.
+
+**The verdict came from the compiler, not from reading.** All nine were marked `#[non_exhaustive]` at once and the workspace compiled; the failures name exactly the types with an out-of-crate exhaustive match. That is a measurement of current call sites, which is what the parent ticket's method asks for.
+
+| verdict | types | evidence |
+| --- | --- | --- |
+| **stays exhaustive** | `TensorRole`, `ScalarProgram` | `TensorRole` breaks 2 out-of-crate matches (`tiler-compiler`'s `frontier.rs`, `physical.rs`); `ScalarProgram` breaks 1 (`physical.rs`) |
+| **`#[non_exhaustive]`** | `ContributorOrder`, `LogicalAccess`, `BoundsProofKind`, `OwnershipProofKind`, `ExecutionBinding`, `TailPolicy`, `ReductionTopology` | every out-of-crate consumer constructs a variant or reads a field; none broke |
+
+**"It compiled" was not accepted as sufficient.** `#[non_exhaustive]` does not constrain an `as` cast, and ADR 0074's amendment counts a discriminant cast as a total map when choosing a clause — so a type mapped by cast would compile cleanly and still be a 5b type. All seven were checked for an out-of-crate cast or `*_tag` function and none has one. The check was run against `AccessMode` first as a control, where it correctly found `access_mode_tag`.
+
+**Both directions have compiling coverage**, per the ticket's method: a `compile_fail,E0004` doctest proving an out-of-crate exhaustive match on `TailPolicy` is an error, a positive doctest proving construction and a wildcard match still compile, and a positive doctest on `ScalarProgram` proving the out-of-crate exhaustive match it must keep supporting still does.
+
+**Two process notes, because both were caught the hard way.**
+
+- The negative doctest was verified to bite: removing `#[non_exhaustive]` from `TailPolicy` makes it **fail**, because the match then compiles. Without that check it would have been indistinguishable from a doctest that passes for the wrong reason.
+- Naming `E0004` earned its keep immediately. A first attempt used a `TailPolicy::Masked` variant that does not exist; it failed with `E0599`, and a bare `compile_fail` would have recorded that as coverage. That is the exact failure the ticket warned about, reproduced.
+
+**One search nearly produced a false result.** The first consumer sweep used `grep -r --include=*.rs`, which zsh silently matched to nothing, and reported that *none* of the nine had any out-of-crate consumer. A control against a type known to have them exposed it. Every count above comes from the re-run.
