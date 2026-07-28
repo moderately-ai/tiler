@@ -132,10 +132,23 @@ The coherence check gained a rule the new part makes possible: **buffer bindings
 
 ## What remains
 
-- **Admit `ProposalBody::OpaqueCall`** in `enumerate_frontier`, constructing `ImplementationBody::Opaque` instead of pushing `FrontierRejection::UnsupportedVariant`. This is the change that makes the sum's second variant reachable.
+- **Admit `ProposalBody::OpaqueCall`** in `enumerate_frontier`. Larger than it looks, and the shape is settled below.
 - **Lowering must reject an opaque body** with a typed reason, at the stage that lowers.
 - **Numerical guarantees** — an opaque call's realization stated and checked against the region's contract; nothing yet touches numerics.
 - **Explain records** for the typed rejections; the census will move there and only there.
 
 **Expect the boundary-enforcers trigger to fire** once `OpaqueCall` is admitted — `MaterializationForm::OpaqueRuntimeValue` becomes reachable, and `frontier::tests::the_bounded_profile_admits_no_undischarged_boundary` is designed to fail at exactly that moment. Do not repair it by widening the bounded property sets; its firing is the signal that `implement-boundary-property-enforcers` has become startable.
+
+## Admitting the variant needs the registry threaded, and there is a precedent (2026-07-28)
+
+`ProposalBody::OpaqueCall(ReservedProposalSeam)` carries a **placeholder**, not a payload — every reserved variant does. So admitting it means deciding what a provider actually proposes, and the two candidates differ in whether registration means anything:
+
+- **Propose a whole `RegisteredCall`.** No registry parameter needed, and it makes registration decorative: a provider could propose a call it never registered, and the registry would stop being the authority on what calls exist.
+- **Propose an `OpaqueCallIdentity`, resolved against the registry.** Registration becomes the gate it was built to be — an unregistered identity is a typed rejection rather than an admitted call.
+
+**The second, and it requires `enumerate_frontier` to take a registry.** That is 21 call sites (16 in `frontier.rs`'s own tests, 4 in `selection.rs`, and one real caller at `pipeline/planning.rs:224`), plus deciding where the registry enters the compile path.
+
+**The precedent answers that last part rather than leaving it open.** `crate::capability` already solves the same problem: `LoweringCapabilityRegistryBuilder` with `install_governed_scalar_lowering` / `install_governed_index_access`, built by the caller and threaded in. An opaque-call registry should follow it — same shape, same lifetime, same reason. Read how the capability registry reaches the frontier and thread the call registry the same way rather than inventing a second mechanism; `capability.rs` is `pub mod` and the serial-sum prototype builds one, so the pattern is exercised end to end.
+
+**Do not put the registry on `CompilationRequest`.** A request describes a program to compile; the set of available opaque implementations is a property of the *compiler's configuration*, exactly as lowering capabilities are. Putting it on the request would make two callers compiling the same program with different registries look like two different requests, which would poison request identity and the caching built on it.
 
