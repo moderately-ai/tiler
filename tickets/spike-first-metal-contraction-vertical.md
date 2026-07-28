@@ -43,3 +43,13 @@ At least one bounded contraction path is shown feasible or every tested path is
 rejected with reproducible reasons; the architecture and measurement boundary
 are recorded; and the surviving work is represented by scoped vertical
 tickets with explicit user-visible outcomes.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L3** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** L2 lists the contraction shapes **and** milestone 6 settles whether a contraction is one keyed family or a set of per-shape keys.
+
+**Rests on:** L2, plus the milestone 6 open question.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
