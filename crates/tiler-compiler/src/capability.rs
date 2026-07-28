@@ -2144,6 +2144,56 @@ mod tests {
         }
     }
 
+    /// Two revisions of one provider are an ambiguity, not a version choice.
+    ///
+    /// `LoweringCapabilityKey` carries the whole `ProviderIdentity`, and that
+    /// identity is `{namespace, name, revision}` — so two registrations differing
+    /// only in revision are two *distinct* keys and both insert.
+    /// `DuplicateCapability` fires on an exact key repeat and never here. Both
+    /// then match one selector, because `resolve` filters on family, operation,
+    /// and signature and not on provider, so the result is an ambiguity listing
+    /// both.
+    ///
+    /// **The registry has no newer-wins rule and no supersession**, and this test
+    /// is what says so. Sibling coverage does not, which was measured rather than
+    /// assumed: simulating newer-wins inside `resolve` leaves
+    /// `contradictory_providers_resolve_to_a_deterministic_ambiguity` and
+    /// `duplicate_registration_of_one_provider_is_a_collision` both green and
+    /// fails only this test. One registers two provider *names* at a single
+    /// revision; the other re-registers an identical key.
+    #[test]
+    fn two_revisions_of_one_provider_resolve_to_an_ambiguity() {
+        let expected = vec![provider("aardvark", 1), provider("aardvark", 2)];
+        // Both registration orders, so a newer-wins rule cannot hide behind the
+        // order the revisions happened to arrive in.
+        for order in [[1, 2], [2, 1]] {
+            let mut builder = empty_builder();
+            for revision_number in order {
+                builder
+                    .register_scalar_lowering(
+                        provider("aardvark", revision_number),
+                        multiply_f32_op(),
+                        binary_signature(),
+                        &[scalar_key("multiply")],
+                        revision(),
+                        Arc::new(ScalarMultiplyLowering),
+                    )
+                    .expect("a second revision of one provider is a distinct key, so it inserts");
+            }
+            let error = builder
+                .freeze()
+                .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
+                .unwrap_err();
+            let LoweringResolveError::AmbiguousCapability { candidates, .. } = error else {
+                panic!("expected an ambiguity diagnostic, not a resolution");
+            };
+            assert_eq!(
+                candidates, expected,
+                "candidates must be both identities in canonical ascending order"
+            );
+        }
+    }
+
     #[test]
     fn a_missing_capability_resolves_to_a_typed_diagnostic() {
         let frozen = empty_builder().freeze();
