@@ -637,6 +637,51 @@ pub(crate) enum EngineFailure {
     },
 }
 
+/// What one rewrite-engine run produced.
+///
+/// A dedicated outcome rather than an `Option`, because an abandoned run has
+/// something to say: [`NormalizationOutcome::budget_stop`] reports the limit and
+/// the demand that exceeded it, and a bare `None` cannot carry the second. That
+/// figure is what makes a budget-stop explain record actionable — "stopped" is
+/// not a fact anyone can act on; "stopped at 2, wanted 3" is.
+#[derive(Debug)]
+#[allow(
+    dead_code,
+    reason = "the engine outcome; lands with the engine ahead of the pipeline stage that will read it"
+)]
+pub(crate) enum EngineRun<Program> {
+    /// Every proposal fit the budget and survived revalidation.
+    Adopted(Vec<RewriteProposal<Program>>),
+    /// The run was abandoned whole; no rewrite was applied.
+    BudgetStopped {
+        /// The declared budget.
+        limit: u64,
+        /// Rewrites demanded, which exceeded it.
+        demand: u64,
+    },
+}
+
+#[allow(
+    dead_code,
+    reason = "test-facing accessor on the engine outcome; the pipeline stage will match on the variants directly"
+)]
+impl<Program> EngineRun<Program> {
+    /// The adopted alternatives, panicking if the run was abandoned.
+    ///
+    /// For tests that have already established the budget admits the run.
+    /// Production code matches on the variants, because a budget stop is an
+    /// outcome to report rather than one to unwrap past.
+    #[cfg(test)]
+    pub(crate) fn expect(self, message: &str) -> Vec<RewriteProposal<Program>> {
+        match self {
+            Self::Adopted(alternatives) => alternatives,
+            Self::BudgetStopped { limit, demand } => {
+                panic!("{message} (budget {limit}, demand {demand})")
+            }
+        }
+    }
+}
+
 /// One rewrite-engine run: every registered rule proposes, every candidate is
 /// revalidated, and the survivors are returned as alternatives.
 ///
@@ -670,7 +715,7 @@ pub(crate) fn run_rewrite_engine(
     registry: &RuleRegistry<SemanticProgram>,
     program: &SemanticProgram,
     budgets: DeterministicBudgets,
-) -> Result<Option<Vec<RewriteProposal<SemanticProgram>>>, EngineFailure> {
+) -> Result<EngineRun<SemanticProgram>, EngineFailure> {
     let proposals = collect_proposals(registry, program).map_err(EngineFailure::Provider)?;
 
     // Rewrites, not proposals: one proposal can represent many rewrites, and
@@ -683,7 +728,7 @@ pub(crate) fn run_rewrite_engine(
         .map(RewriteProposal::rewrites)
         .fold(0, u64::saturating_add);
     if demand > limit {
-        return Ok(None);
+        return Ok(EngineRun::BudgetStopped { limit, demand });
     }
 
     let mut alternatives = Vec::with_capacity(proposals.len());
@@ -706,7 +751,7 @@ pub(crate) fn run_rewrite_engine(
             proposal.rewrites(),
         ));
     }
-    Ok(Some(alternatives))
+    Ok(EngineRun::Adopted(alternatives))
 }
 
 /// Readmits every alternative through the request boundary, pairing each with
@@ -1443,10 +1488,14 @@ mod tests {
         budgets.normalization_rewrites = 0;
 
         assert!(
-            run_rewrite_engine(&cse_registry(), &duplicated, budgets)
-                .expect("no failure")
-                .is_none(),
-            "an exhausted budget returned alternatives instead of abandoning"
+            matches!(
+                run_rewrite_engine(&cse_registry(), &duplicated, budgets).expect("no failure"),
+                EngineRun::BudgetStopped {
+                    limit: 0,
+                    demand: 1
+                }
+            ),
+            "an exhausted budget returned alternatives, or lost the demand figure"
         );
     }
 
@@ -1458,10 +1507,12 @@ mod tests {
     #[test]
     fn a_program_with_no_rewrite_yields_no_alternatives() {
         let distinct = program(2.0, 3.0, false);
-        let alternatives =
+        let EngineRun::Adopted(alternatives) =
             run_rewrite_engine(&cse_registry(), &distinct, DeterministicBudgets::governed())
                 .expect("no failure")
-                .expect("the run was not abandoned");
+        else {
+            panic!("the run was abandoned");
+        };
         assert!(
             alternatives.is_empty(),
             "a program with nothing to rewrite produced an alternative"
@@ -1709,9 +1760,13 @@ mod tests {
         let mut under = DeterministicBudgets::governed();
         under.normalization_rewrites = 2;
         assert!(
-            run_rewrite_engine(&registry, &subject, under)
-                .expect("no failure")
-                .is_none(),
+            matches!(
+                run_rewrite_engine(&registry, &subject, under).expect("no failure"),
+                EngineRun::BudgetStopped {
+                    limit: 2,
+                    demand: 3
+                }
+            ),
             "three rewrites were admitted under a budget of two, so the budget \
              counted proposals rather than rewrites"
         );

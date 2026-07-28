@@ -201,4 +201,17 @@ They coincide only where the test happens to sit. `an_exhausted_rewrite_budget_a
 
 The regression test drives one rule returning one proposal worth three rewrites: a budget of two must stop it, and a budget of three must admit it. The second half matters — without it a budget that refused everything would pass.
 
-**Still not recovered:** the *demand* figure. `NormalizationOutcome::budget_stop` reports `(limit, demand)`, and `run_rewrite_engine` returns a bare `Ok(None)`. The demand is now computable — it is the sum that exceeded the limit — but the engine discards it. Return it with the stop, or the existing budget-stop explain record cannot be reproduced from engine output.
+**Demand recovered 2026-07-28.** `run_rewrite_engine` returns `EngineRun<Program>` — `Adopted(alternatives)` or `BudgetStopped { limit, demand }` — rather than an `Option`. An abandoned run has something to say, and a bare `None` could not carry it: "stopped" is not a fact anyone can act on, while "stopped at 2, wanted 3" is, and it is exactly what `NormalizationOutcome::budget_stop` reports as `(limit, demand)`.
+
+The budget tests now assert the *figures*, not just that a stop occurred — `BudgetStopped { limit: 2, demand: 3 }` — so an engine that stopped for the right reason with the wrong numbers fails.
+
+## Everything the swap needs now exists
+
+- `run_rewrite_engine` → `EngineRun`, carrying limit and demand on a stop.
+- `readmit_alternatives` — per-alternative readmission, fault on refusal.
+- `group_by_resolved_contract` — keeps diverging contracts out of one comparison.
+- `record_adopted_alternatives` — emits rule payloads for survivors only.
+- `NormalizationOutcome` — holds opaque `rule_explains` and a `rewrite_count`, so an engine-produced one is constructible.
+- `CommonSubexpressionRule` — verifies its own postconditions, declares its rewrite count, supplies its explain payload.
+
+**The swap itself:** rewrite `normalize_semantics` to build its outcome from `run_rewrite_engine` rather than from the congruence directly. Its signature does not change, so `pipeline.rs` is untouched and the census should not move — if it does, something about the records changed and that is the thing to investigate rather than to accept.
