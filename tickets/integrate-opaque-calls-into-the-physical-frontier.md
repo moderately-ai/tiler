@@ -178,8 +178,33 @@ let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProv
 
 **Revised remaining work, in order:**
 
-1. Admit a *registered* identity: derive feasibility, boundary contract, and cost from the declaration rather than from a scheduled region. This is the last structural step and needs no caller-supplied anything — a test can register a call and propose it.
+1. **Admit a registered identity.** The shape is settled below; it needs no caller-supplied anything, since a test can register a call and propose it.
 2. Lowering rejects an opaque body with a typed reason.
 3. Numerical guarantees for an opaque call, checked against the region's contract.
 4. Explain records for the typed rejections.
 5. *Separately, and probably its own ticket:* caller-supplied physical providers, after which the call registry becomes reachable and worth threading.
+
+## What admitting a registered identity actually requires (2026-07-28)
+
+`admit_verified` (`frontier.rs:1418`) is the model, and reading it shows which of its four derivations are region-specific and which the declaration already answers.
+
+Its own doc states the invariant to preserve: *"The provider supplies only the applicability predicate and the cost estimate; the contract and the identity are derived here from the verified region, so a provider can neither declare a boundary it does not honour nor forge an identity."* An opaque admission must keep that — the provider supplies applicability and cost, and everything else is derived.
+
+| What `admit_verified` derives | For an opaque call |
+| --- | --- |
+| `boundary` via `derive_boundary_contract(&verified)` | **derivable from the declaration**, and this is what the declaration's four parts were built for — see below |
+| `identity` via `verified.canonical_identity()` | must come from the `OpaqueCallIdentity`; a call has no region to be canonical over |
+| `feasibility` (passed in) | the same predicate check, against `declaration.resources()` rather than a region's requirements |
+| `cost` (passed in) | unchanged — the provider supplies it, as for a scheduled region |
+
+**The boundary mapping, which is the part that looks hard and is not.** Every property the contract must state has exactly one authority in the declaration, and that correspondence is why those four parts exist:
+
+- `StorageLayout`, `StorageEncoding`, `Alignment` — the ABI. A parameter's role does not give these; they must be *declared*, which means the ABI is one field short and this is where that shows up.
+- `Materialization` — the effects' `Aliasing`. `MayAliasInputs` is what makes a result a view rather than a buffer.
+- `ExecutionAffinity`, `MemoryDomain` — the placement, directly.
+- `Availability`, `Visibility` — the effects' `Motion`. An `Ordered` call's result is available after its own dispatch; a `Free` one's ordering is unconstrained.
+
+**So one gap remains and it is small:** the ABI declares roles but not layout, encoding, or alignment, and a boundary contract must state all three. Either the ABI gains them per parameter — the honest place, since they are properties of *that binding* — or the declaration gains a fifth part. Prefer the ABI: a call with two parameters may want different layouts for each, and a single declaration-level answer could not say so.
+
+*The check, reproducible in one line:* read `admit_verified` and `derive_boundary_contract` in `frontier.rs`, and `CANONICAL_PROPERTIES` in `boundary.rs`, against `OpaqueCallDeclaration`'s four parts.
+
