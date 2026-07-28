@@ -115,4 +115,22 @@ The remaining work is smaller than "write the engine" and has one precise prereq
 
 *Two tests, and the second exists because the first is not enough.* Round-tripping preserves canonical identity bytes on two fixtures; but a `revalidate_structurally` that returned its input would pass that. The second drives it against the program the **rewrite** produced — built by a different path than the fixture — and checks operation and value counts survive re-inference, and asserts the rewritten program is genuinely smaller than its input so the test cannot be silently running on the unrewritten fixture.
 
-**What remains is only the engine loop**, and it is now short: `collect_proposals`, `revalidate_structurally` each candidate, apply the budget all-or-nothing, return the survivors as alternatives. The pin above must still hold with only the common-subexpression rule registered.
+## The engine landed, and the pin holds against it (2026-07-28)
+
+`normalize::run_rewrite_engine(registry, program, budgets) -> Result<Option<Vec<RewriteProposal<SemanticProgram>>>, EngineFailure>`.
+
+**`Option` rather than an empty vector for an abandoned run.** `Ok(None)` says the run was abandoned; `Ok(Some(vec![]))` says nothing applied. A caller receiving an empty vector for a budget stop would record "no rewrite available" for a program that had one. Both cases are tested, and each would pass an engine that always returned the other — which is why both exist.
+
+**The budget counts proposals, not accepted alternatives**, and counts them *before* revalidation. Otherwise a rule could buy extra budget by proposing candidates that fail. Same resource `normalize_semantics` bounds.
+
+**A budget stop or a revalidation failure abandons the whole run.** Returning the alternatives collected so far is a partial result that reads like a complete one — a caller cannot tell a run that found two from one that found five and lost three.
+
+**`EngineFailure` separates a provider defect from a revalidation failure**, and the revalidation case carries the rule. Without it a caller would know a rewrite was invalid and not which rule to exclude.
+
+**The engine adopts the *revalidated* program, not the provider's.** Verifying a rebuild while keeping the original would retain whatever the provider actually constructed; the rebuild is the version the frozen authority produced, and that is the one that should survive.
+
+**The pin holds against the engine.** With only the common-subexpression rule registered, `run_rewrite_engine`'s single alternative has the same canonical `SemanticIdentity` bytes as `normalize_semantics`'s normalized program. The budget test's failure path was verified by returning `Ok(Some(vec![]))` on exhaustion and watching it fail.
+
+## What remains
+
+The engine exists and satisfies the pin, but nothing calls it — `normalize_semantics` is still the compile path's rewrite stage. Wiring it in is the remaining step, and it is a **behaviour change** rather than an addition: the pipeline would move from one canonical program to a set of alternatives, which touches plan enumeration and the explain census. Treat it as its own slice, and expect the `pipeline/tests.rs` rule census to move.

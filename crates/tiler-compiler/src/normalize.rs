@@ -57,7 +57,7 @@ use crate::explain::{
 use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 use crate::rewrite::{
     COMMON_SUBEXPRESSION_RULE, ProviderDefect, RewriteProposal, RewriteRuleIdentity,
-    RewriteRuleProvider,
+    RewriteRuleProvider, RuleRegistry, collect_proposals,
 };
 
 /// Stable identity of the normalization stage rule.
@@ -548,6 +548,92 @@ fn rebuild(
     builder.build().map_err(|_| NormalizeError::Rebuild {
         rule: "semantic-verification",
     })
+}
+
+/// Why a rewrite-engine run produced nothing usable.
+///
+/// The two cases are kept apart because they say different things about who is
+/// at fault. A provider defect is a registered rule violating its contract; a
+/// revalidation failure is a candidate that did not survive the frozen
+/// authority. Both abandon the run, and a caller that conflated them could not
+/// tell a broken rule from a rule that produced something invalid.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the engine outcome; lands with the engine, ahead of the pipeline stage that will call it"
+)]
+pub(crate) enum EngineFailure {
+    /// A registered provider violated its contract.
+    Provider(ProviderDefect),
+    /// A proposed candidate did not survive structural revalidation.
+    ///
+    /// Carries the rule so the failure names which provider produced the
+    /// candidate; without it a caller would know a rewrite was invalid and not
+    /// which rule to exclude.
+    Revalidation {
+        /// The rule whose candidate failed.
+        rule: RewriteRuleIdentity,
+        /// The `NormalizeError`'s stable reason.
+        reason: &'static str,
+    },
+}
+
+/// One rewrite-engine run: every registered rule proposes, every candidate is
+/// revalidated, and the survivors are returned as alternatives.
+///
+/// # The all-or-nothing contract, preserved
+///
+/// A budget stop or a revalidation failure abandons the **whole run** and
+/// returns nothing, exactly as [`normalize_semantics`] abandons a rewrite rather
+/// than committing part of one. Returning the alternatives collected so far
+/// would be a partial result that reads like a complete one — the caller cannot
+/// tell a run that found two alternatives from one that found five and lost
+/// three.
+///
+/// # What the budget counts
+///
+/// Proposals, against `normalization_rewrites`. That is the same resource
+/// [`normalize_semantics`] bounds, and counting proposals rather than accepted
+/// alternatives is what keeps the bound meaningful: revalidation happens *after*
+/// the count, so a rule cannot buy extra budget by proposing candidates that
+/// fail.
+///
+/// # What this does not do
+///
+/// It does not adopt. Choosing among alternatives is the caller's, and this
+/// returns every candidate that survived rather than a winner — an engine that
+/// picked one would be making a cost decision with no cost model in scope.
+#[allow(
+    dead_code,
+    reason = "the engine; lands with its tests ahead of the pipeline stage that will call it"
+)]
+pub(crate) fn run_rewrite_engine(
+    registry: &RuleRegistry<SemanticProgram>,
+    program: &SemanticProgram,
+    budgets: DeterministicBudgets,
+) -> Result<Option<Vec<RewriteProposal<SemanticProgram>>>, EngineFailure> {
+    let proposals = collect_proposals(registry, program).map_err(EngineFailure::Provider)?;
+
+    let limit = u64::from(budgets.normalization_rewrites);
+    if count(proposals.len()) > limit {
+        return Ok(None);
+    }
+
+    let mut alternatives = Vec::with_capacity(proposals.len());
+    for proposal in proposals {
+        let revalidated = revalidate_structurally(proposal.candidate()).map_err(|error| {
+            EngineFailure::Revalidation {
+                rule: proposal.rule(),
+                reason: error.reason(),
+            }
+        })?;
+        // The revalidated program replaces the provider's, not merely checks it.
+        // Adopting the candidate the provider handed over while only *verifying*
+        // a rebuild of it would keep whatever the provider actually constructed,
+        // and the rebuild is the version the frozen authority produced.
+        alternatives.push(RewriteProposal::new(proposal.rule(), revalidated));
+    }
+    Ok(Some(alternatives))
 }
 
 /// Rebuilds a program through the checked semantic builder, changing nothing.
@@ -1130,6 +1216,87 @@ mod tests {
         // The rewritten program is genuinely smaller than its input, so this
         // test is not silently running on the unrewritten fixture.
         assert!(rewritten.operation_count() < duplicated.operation_count());
+    }
+
+    fn cse_registry() -> RuleRegistry<SemanticProgram> {
+        let mut registry = RuleRegistry::new();
+        registry
+            .register(Box::new(CommonSubexpressionRule))
+            .expect("one rule");
+        registry
+    }
+
+    /// **The ticket's pin, now against the engine rather than the provider.**
+    ///
+    /// With only the common-subexpression rule registered, the engine's single
+    /// alternative must be exactly what `normalize_semantics` produces, compared
+    /// on canonical identity bytes. If this diverges, the engine changed the
+    /// rewrite rather than rehosting it.
+    #[test]
+    fn the_engine_with_only_cse_reproduces_this_stage() {
+        let duplicated = program(2.0, 2.0, false);
+        let expected = normalize(&duplicated);
+        let expected_program = expected
+            .normalized_program()
+            .expect("the duplicated program normalizes");
+
+        let alternatives = run_rewrite_engine(
+            &cse_registry(),
+            &duplicated,
+            DeterministicBudgets::governed(),
+        )
+        .expect("no failure")
+        .expect("the budget admits one proposal");
+
+        assert_eq!(alternatives.len(), 1);
+        assert_eq!(alternatives[0].rule(), CommonSubexpressionRule.identity());
+        assert_eq!(
+            alternatives[0]
+                .candidate()
+                .semantic_identity()
+                .graph()
+                .as_bytes(),
+            expected_program.semantic_identity().graph().as_bytes(),
+            "the engine's alternative differs from this stage's normalized program"
+        );
+    }
+
+    /// An exhausted budget abandons the whole run rather than truncating it.
+    ///
+    /// `Ok(None)` and `Ok(Some(vec![]))` are different answers: the first says
+    /// the run was abandoned, the second that nothing applied. A caller that
+    /// received an empty vector for a budget stop would record "no rewrite
+    /// available" for a program that had one.
+    #[test]
+    fn an_exhausted_budget_abandons_the_engine_run() {
+        let duplicated = program(2.0, 2.0, false);
+        let mut budgets = DeterministicBudgets::governed();
+        budgets.normalization_rewrites = 0;
+
+        assert!(
+            run_rewrite_engine(&cse_registry(), &duplicated, budgets)
+                .expect("no failure")
+                .is_none(),
+            "an exhausted budget returned alternatives instead of abandoning"
+        );
+    }
+
+    /// A program with nothing to rewrite yields an empty alternative set, not an
+    /// abandoned run.
+    ///
+    /// The other half of the distinction above. Without this, an engine that
+    /// always returned `None` would pass the budget test.
+    #[test]
+    fn a_program_with_no_rewrite_yields_no_alternatives() {
+        let distinct = program(2.0, 3.0, false);
+        let alternatives =
+            run_rewrite_engine(&cse_registry(), &distinct, DeterministicBudgets::governed())
+                .expect("no failure")
+                .expect("the run was not abandoned");
+        assert!(
+            alternatives.is_empty(),
+            "a program with nothing to rewrite produced an alternative"
+        );
     }
 
     #[test]
