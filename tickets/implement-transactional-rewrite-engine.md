@@ -64,7 +64,12 @@ Identity is first because the ticket's governing constraint depends on it: unkno
 
 The canonical encoding is length-prefixed rather than delimiter-separated, so provider `"a.b"` with rule `"c"` cannot encode identically to provider `"a"` with rule `"b.c"`. A delimiter would let those two collide, and a collision here means two distinct rules sharing one identity. Tested directly, along with an empty name being refused and a revision change being a different rule — each driven against both the accepting and the rejecting case so a predicate that always said yes would fail.
 
-**Deliberately not included:** no proposal trait, no registry, no engine. The proposal type's shape depends on whether alternatives are produced per rule or per traversal, and the normalize stage cannot answer that because it never produces alternatives. Adding the seam now would fix that choice before the evidence exists.
+**The proposal shape is now settled, by reading rather than by choosing.** I had deferred the trait because it was unclear whether alternatives are produced per rule or per traversal. `normalize.rs:329` answers it: `detect_shared_values(program: &SemanticProgram) -> Result<Congruence, NormalizeError>` inspects the **whole program** and returns the complete set of congruence classes at once. Detection is not per-site or incremental.
+
+So a rule's natural signature is whole-program in, proposals out — `propose(&SemanticProgram) -> Vec<Proposal>` in shape — and alternatives compose *across* rules rather than being enumerated along a traversal. That is what the existing implementation already does for its one rule, which means the generalization is a widening rather than a restructuring, and the CSE pin stays cheap to satisfy.
+
+Per-traversal alternatives are eliminated independently: the alternative set would be exponential in the number of applicable sites, and the ticket's budget contract counts *rewrites*, so a rewrite-count budget could not bound it. A budget that cannot bound the thing it governs is not a termination contract.
+
+**Still not included:** the trait itself, a registry, and the engine. The shape above is a reading of one function, not a tested design, and the next worker should confirm `Congruence` can carry a proposal set from an external provider before the trait is written around it.
 
 **Next step, unchanged:** generalize the normalize transaction to take rules from a provider and to yield alternatives, with the pin already stated above — CSE alone must reproduce `normalize.rs`'s `SemanticIdentity` exactly.
-
