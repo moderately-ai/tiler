@@ -1442,11 +1442,11 @@ mod tests {
         FrontierRejection, GovernedPhysicalProvider, ImplementationContext, ImplementationProposal,
         PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProposalKind,
         PhysicalProviderProvenance, ProposalBody, ReservedProposalSeam, TargetApplicability,
-        enumerate_frontier,
+        bounded_guarantees, bounded_requirements, enumerate_frontier,
     };
     use crate::boundary::{
-        BoundaryProperty, GuaranteedProperty, MaterializationForm, MemoryDomainClass,
-        RequiredProperty,
+        BoundaryProperty, GuaranteedProperty, LayoutRequirement, MaterializationForm,
+        MemoryDomainClass, RequiredProperties, RequiredProperty,
     };
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
     use crate::request::{
@@ -1629,6 +1629,82 @@ mod tests {
             offered.get(BoundaryProperty::MemoryDomain),
             Some(&GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device)),
             "the domain is read from the region's own resource requirements"
+        );
+    }
+
+    /// The bounded profile's two property sets discharge each other on every
+    /// governed dimension, so no boundary in it is ever undischarged.
+    ///
+    /// This is a *trigger*, not a guarantee anyone wants to keep. Both sets are
+    /// compile-time constants with no per-region variation, so
+    /// [`crate::boundary::unsatisfied_properties`] cannot return a non-empty
+    /// result anywhere on the production path and
+    /// `BoundaryDisagreement::UndischargedHandoff` is unreachable. That is what
+    /// makes `implement-boundary-property-enforcers` unstartable: an enforcer
+    /// reconciles a mismatch, and the bounded profile admits none, so the six
+    /// enforcer kinds the ticket names would all be exercised only by synthetic
+    /// property sets a test wrote for them.
+    ///
+    /// **When this test fails, that ticket becomes startable**, and the mismatch
+    /// that failed it is the enforcer's first real case. Do not repair the test
+    /// by widening the sets back into agreement.
+    #[test]
+    fn the_bounded_profile_admits_no_undischarged_boundary() {
+        let needed = bounded_requirements();
+        let offered = bounded_guarantees();
+
+        // Every dimension is spoken to on both sides. A dimension missing from
+        // either set would make the check below vacuous on it rather than false,
+        // which is the failure mode this pair of assertions exists to catch.
+        for property in crate::boundary::CANONICAL_PROPERTIES {
+            assert!(
+                needed.get(property).is_some(),
+                "{property} is not required, so satisfaction says nothing about it"
+            );
+            assert!(
+                offered.get(property).is_some(),
+                "{property} is not guaranteed, so satisfaction says nothing about it"
+            );
+        }
+
+        let unsatisfied = crate::boundary::unsatisfied_properties(&needed, &offered);
+        assert!(
+            unsatisfied.is_empty(),
+            "the bounded profile now admits an undischarged boundary, which makes \
+             implement-boundary-property-enforcers startable on: {unsatisfied:?}"
+        );
+    }
+
+    /// The check above can say no.
+    ///
+    /// A test that only ever asserts an empty list would pass just as happily if
+    /// `unsatisfied_properties` returned nothing at all, so this drives the same
+    /// relation with a requirement the bounded guarantee genuinely fails and
+    /// confirms it reports the failure. `UnitStrideOnAxis` on a non-last axis is
+    /// the one well-formed mismatch the current vocabulary admits against
+    /// `DenseRowMajor`, which is why it is the case chosen here.
+    #[test]
+    fn an_unsatisfiable_requirement_is_reported_rather_than_passed() {
+        let offered = bounded_guarantees();
+        let needed = RequiredProperties::new([RequiredProperty::StorageLayout(
+            LayoutRequirement::UnitStrideOnAxis {
+                axis: Axis::new(0),
+                rank: 2,
+            },
+        )])
+        .expect("unit stride on axis 0 of a rank-2 value is well formed");
+
+        let unsatisfied = crate::boundary::unsatisfied_properties(&needed, &offered);
+        assert_eq!(
+            unsatisfied.len(),
+            1,
+            "a dense row-major guarantee does not give unit stride on axis 0 of a \
+             rank-2 value, so this must be reported"
+        );
+        assert_eq!(
+            unsatisfied[0].property(),
+            BoundaryProperty::StorageLayout,
+            "the reported dimension must be the one that failed"
         );
     }
 

@@ -1,7 +1,7 @@
 ---
 id: implement-boundary-property-enforcers
 title: Implement executable boundary-property enforcers
-status: todo
+status: deferred
 priority: p1
 dependencies: [implement-boundary-property-model, transfer-synchronization-and-resource-lifetime-contract]
 related: [device-placement-and-memory-domain-contract]
@@ -19,8 +19,32 @@ delivery, but never semantic dtype or tensor value.
 
 Any consequential public or cross-crate crate, module, trait, type, or call-site boundary remains a draft until Tom reviews and accepts the exact implementation commit. This ticket does not preselect that interface.
 
-## Not startable as written — no stated outcome (2026-07-27)
 
-**This ticket has no `## Closes when` and no sections.** "Executable boundary-property enforcers" names a mechanism without naming which properties, at which boundaries, or what an enforcer refuses.
+## Deferred — the bounded profile admits no mismatch to enforce (2026-07-27)
 
-**What it needs before it is claimable.** The list of properties to enforce and, for each, what currently checks it and what would instead. `implement-boundary-property-model` created the `AccessMode` total-map site recorded under ADR 0074 convention 5b, so the model exists; this ticket is the enforcement half and should name which of the model's properties are unenforced today.
+**Finding.** An enforcer reconciles a producer guarantee with a consumer requirement that it does not discharge. The bounded profile contains no such pair, so there is nothing for one to reconcile.
+
+Every boundary contract in the compiler is built at exactly two sites, `frontier.rs:557` and `frontier.rs:563`, from two **compile-time constants** — `bounded_guarantees()` and `bounded_requirements()`. There is no per-region variation: every region requires the same eight values and guarantees the same eight, and each guarantee discharges its requirement. `boundary::unsatisfied_properties` therefore cannot return a non-empty result anywhere on the production path, and `BoundaryDisagreement::UndischargedHandoff` — the rejection at `selection.rs:1472` this ticket would replace with an inserted step — is unreachable.
+
+**Why it is not merely unreachable but unwritable.** Checking each of the eight dimensions for a mismatch the *vocabulary* could express, every one is closed off by a value the model marks `Reserved`:
+
+| Dimension | Enforcer named by the model | Why no mismatch arises |
+| --- | --- | --- |
+| `StorageLayout` | layout conversion | the only guarantee is `DenseRowMajor`; the only requirement raised is `DenseRowMajor` |
+| `StorageEncoding` | encoding repacking | `BitPacked` reserved — strict `f32` produces no packed value |
+| `Alignment` | materialization into an aligned allocation | both sides are `F32_NATURAL`; 4 divides 4 |
+| `Materialization` | materialization | `AliasView`/`OpaqueRuntimeValue` reserved — the frontier rejects both proposal bodies |
+| `ExecutionAffinity` | placement transfer | one symbolic affinity, so equality always holds |
+| `MemoryDomain` | placement transfer | four of five classes reserved; only `Device` is allocated and admitted |
+| `Availability` | synchronization | `AfterObservedHostCompletion` reserved — ADR 0033 makes host observation a separate boundary |
+| `Visibility` | coherence action | `RequiresExplicitCoherenceAction` reserved, and its own doc says it exists in order *not* to be satisfiable |
+
+Writing the six enforcer kinds now would produce six subsystems no input can reach, exercised only by property sets a test invented for them. That is not a bounded first slice; it is untestable code with an unfalsifiable correctness argument.
+
+**A second constraint, already recorded in the model and easy to lose in a rewrite.** `UnsatisfiedReason` (`boundary.rs:1453`) distinguishes `NotSatisfied` from `NotGuaranteed` precisely because *only the first is enforceable*: "a producer that guarantees the wrong value on a dimension may be reconciled by an enforcer that supplies the right one, while a producer silent on the dimension has made no claim an enforcer can start from." An enforcer must never discharge `NotGuaranteed`. Half the failure surface is out of scope by construction.
+
+**The trigger, and it is checked rather than written down.** `frontier.rs::the_bounded_profile_admits_no_undischarged_boundary` asserts the two constant sets discharge each other on every canonical dimension. **When it fails, this ticket becomes startable, and the mismatch that failed it is the enforcer's first real case** — the test prints it. Its failure path was verified by perturbing the required alignment to 16 bytes and observing it report `Alignment, required 16, guaranteed 4, NotSatisfied`, so it is a check that can say no rather than one that has only ever been seen to pass. A companion test drives the relation with a genuinely unsatisfiable requirement, so an `unsatisfied_properties` that silently stopped reporting would fail too.
+
+**What would fire it.** Any region that varies a boundary property from the profile constants: a vectorized reduction requiring `UnitStrideOnAxis` on a non-last axis (the one well-formed mismatch the current vocabulary admits against `DenseRowMajor`), a widened dtype vocabulary reaching `BitPacked` or a non-`F32_NATURAL` alignment, a second execution affinity, or a memory domain that owes a flush. Each arrives with its own ticket, and each brings the enforcer it needs — which is the right granularity for this work rather than six at once.
+
+Do not repair that test by widening the sets back into agreement.
