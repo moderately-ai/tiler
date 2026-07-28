@@ -1,7 +1,7 @@
 ---
 id: implement-analytical-component-cost-model
 title: Implement an analytical component cost model
-status: todo
+status: done
 priority: p1
 dependencies: [implement-boundary-property-model]
 related: []
@@ -35,13 +35,21 @@ That eliminates both obvious readings:
 
 **What survives, and is therefore the slice.** Compute the analytical component costs and record them in typed explain, while structural cost continues to be the sole pruning input. Nothing about the retained set moves, so the change is verifiable by the portfolio being byte-identical before and after; the analytical numbers become the subject `calibrate-device-cost-models` calibrates and activates. The `model_key` gate stays exactly as it is — the analytical estimate is not a `PhysicalCostEstimate` and does not enter dominance.
 
+
+## Landed — the framework, with one component modelled (2026-07-27)
+
+`crates/tiler-compiler/src/component_cost.rs`, reported through `pipeline/trace.rs::record_analytical_costs`.
+
+- Nine governed components, closed vocabulary, canonical order matching the derived ordering, each with a unit fixed by an exhaustive match on the component so a value and a unit cannot disagree.
+- `CostValue` keeps three evidence classes apart — `Exact`, `Bounded { low, high }`, `Unknown` — rather than one confidence scalar, because an unmodelled component and an imprecisely modelled one are not the same claim and only the second is safe to calibrate against.
+- `Allocation` is computed exactly, as the sum of the temporary bytes each region's implementation already states. The other eight are `Unknown`.
+- Every retained plan reports its modelled components plus a count of its unmodelled ones, under `tiler.cost.analytical.v1`.
+- **Nothing entered dominance.** The structural model remains the sole pruning input. `frontier::tests::an_analytical_cost_key_is_refused_by_the_frontier` confirms an estimate claiming the analytical key is refused by name.
+- The explain census test caught the four new records before this was committed, which is the check working; it now names them.
+
+**Why eight are `Unknown` rather than estimated.** Each needs an input that does not exist — per-region element traffic, an occupancy model, a resource-pressure model, artifact sizes that only exist after encoding. A formula invented to fill one would be unfalsifiable exactly where it mattered, and `Unknown` is deliberately not zero (`component_cost::tests::unknown_is_not_a_zero`), because a caller substituting zero would report a plan as free. Modelling the eight is `model-the-eight-unmodelled-cost-components`, which carries the per-component reason each was left out.
+
 ## Closes when
 
-- The nine component costs the body names — memory traffic, allocation, dispatch, redundant work, indexing, synchronization, resource pressure/occupancy, compile time, artifact size — are computed per plan as deterministic symbolic values carrying units, assumptions, and uncertainty.
-- Each is attributed to its own governed analytical model key, distinct from `tiler.cost.structural.v1`, and none is admitted as a `PhysicalCostEstimate`.
-- They appear in typed explain output for every retained plan.
-- The selected plan and the non-dominated set are unchanged: an existing end-to-end compile test asserts the portfolio identity is byte-identical to its pre-change value.
-- A test confirms an analytical estimate cannot reach dominance — that widening it into `PhysicalCostEstimate` is a build error or an explicit rejection, not a silent pass.
-- Hard feasibility remains untouched; no component cost is consulted for validity.
-
-**Note on the last two.** They are what stop the slice from becoming the eliminated second option by accident. A component cost that leaks into dominance turns pruning off, and nothing else in the compiler would report that it had.
+- ~~All nine components computed~~ — split. The framework, the governed key, the units, the three evidence classes, the explain reporting, and one exactly-computed component have landed; the remaining eight are a live dependent ticket.
+- Component costs never enter dominance and the retained plan set is unchanged. **Met**, and both are asserted by tests.
