@@ -1,7 +1,7 @@
 ---
 id: exercise-opaque-admissions-downstream-of-the-frontier
 title: Exercise opaque admissions downstream of the frontier
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [integrate-opaque-calls-into-the-physical-frontier, implement-boundary-property-enforcers]
@@ -38,3 +38,9 @@ Do not fabricate a production provider to make paths reachable in the compile pa
 - **When each bullet lands**: update the tested-at-which-level table in `integrate-opaque-calls-into-the-physical-frontier`'s closing corrections in the same commit — that table is the honest boundary this ticket exists to move.
 - **If a downstream layer turns out to mishandle an opaque body** (wrong result rather than typed refusal): that is a p1 fix ticket, filed immediately with the failing test attached, not a note here.
 - **Keep the compile-path boundary honest**: test-level providers only. If you need a production provider to reach a path, the path is out of this ticket's scope — it belongs to the caller-supplied-providers work, and forcing it here would hide that boundary.
+
+## Implemented outcome
+
+Test-level opaque providers now reach every named downstream authority without changing the production provider set. Selection retains scheduled and opaque alternatives for the same fused region and their plan identities differ because the selected implementation identity is folded. A `MayAliasInputs` opaque producer is refused when the scheduled consumer requires `MaterializedBuffer`, with the disagreement naming `Materialization`. The three schedule-dependent analytical components return `Unknown`. Lowering returns `unlowerable-opaque-body`, and verification independently returns `portfolio-schedule-binding` from the absent scheduled body.
+
+Each new check was fault-injected once: omitting the implementation identity collapsed the two plans; substituting `Exact(0)` failed the cost assertion; changing the aliasing declaration to `Distinct` admitted the handoff; and restoring schedule filtering failed both lowering and verification checks.

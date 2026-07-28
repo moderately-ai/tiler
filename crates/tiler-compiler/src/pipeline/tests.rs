@@ -1640,6 +1640,72 @@ fn plan_portfolio(
     )
 }
 
+/// A retained opaque plan reaches the lowering boundary and is refused there,
+/// rather than having its absent schedule filtered out.
+#[test]
+fn lowering_refuses_an_opaque_plan_before_program_assembly() {
+    let semantic = semantic(false);
+    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = request.for_target(request.target_profiles()[0]).unwrap();
+    let formation = plan_formation(&semantic, &request);
+    let mut explain = ExplainWriter::new(&request).unwrap();
+    let root = test_root(&mut explain);
+    let complete =
+        enumerate_complete_plans(&semantic, &request, &formation, &mut explain, root, None)
+            .expect("the governed compile enumerates its support evidence");
+    let opaque = crate::selection::opaque_fused_portfolio_fixture(&semantic);
+    let plan = opaque
+        .plans()
+        .iter()
+        .find(|plan| plan_region_order(plan).is_none())
+        .expect("one opaque plan");
+
+    let error = build_alternative(
+        &semantic,
+        &request,
+        plan,
+        ProgramAlternativeKind::Fused,
+        &complete,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(error.context.stage, ExplainStage::ProgramVerification);
+    assert_eq!(
+        error.context.reason.as_str(),
+        "structure-unlowerable-opaque-body"
+    );
+}
+
+/// Verification independently re-derives the schedule binding and refuses a
+/// receipt whose selected plan contains an opaque body.
+#[test]
+fn verification_refuses_an_alternative_with_an_opaque_plan() {
+    let semantic = semantic(false);
+    let request = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = request.for_target(request.target_profiles()[0]).unwrap();
+    let formation = plan_formation(&semantic, &request);
+    let compiled = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let mut forged = alternative(&compiled, ProgramAlternativeKind::Fused).clone();
+    let opaque = crate::selection::opaque_fused_portfolio_fixture(&semantic);
+    let plan = opaque
+        .plans()
+        .iter()
+        .find(|plan| plan_region_order(plan).is_none())
+        .expect("one opaque plan")
+        .clone();
+    forged.stable_id = plan.identity().label();
+    forged.structural_cost = plan.cost();
+    forged.plan = plan;
+
+    let error = super::verify::verify_alternative(&semantic, &request, &formation, &forged, None)
+        .unwrap_err();
+    assert_eq!(error.context.stage, ExplainStage::ProgramVerification);
+    assert_eq!(
+        error.context.reason.as_str(),
+        "structure-portfolio-schedule-binding"
+    );
+}
+
 #[test]
 fn intrinsic_physical_failures_are_invalid_output_not_empty_frontiers() {
     let error = CompileError::from(PhysicalError::Intrinsic {

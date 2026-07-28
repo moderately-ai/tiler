@@ -59,3 +59,8 @@ The deferral above rests on the claim that every boundary contract is built at e
 
 Also corrected: the integrate ticket's twice-made prediction that the constant trigger would fire during that work was wrong in both directions — the test could not fire from that path, and the variant it named (`OpaqueRuntimeValue`) is still unconstructed while the one that did become constructible is `AliasView`.
 
+## Trigger re-evaluation after downstream opaque selection evidence (2026-07-28)
+
+The mismatch is now reachable through the real selection authority with a test-level provider. `selection::tests::an_opaque_alias_view_is_refused_by_a_materialized_consumer` admits an opaque pointwise producer declaring `MayAliasInputs`, composes it against the scheduled reduction's `MaterializedBuffer` requirement, and observes `BoundaryDisagreement::UndischargedHandoff` naming `BoundaryProperty::Materialization`. Replacing the declaration with `Aliasing::Distinct` admits the plan and makes the test fail, so the fixture distinguishes the mismatch rather than passing on an empty frontier.
+
+The ticket remains deferred after re-evaluation. The production compile path still has no caller-supplied physical provider or opaque-call registry, so no user compilation can reach this mismatch and no executable enforcer can yet be selected. The startable condition remains the first compile-path provider that produces such a refused handoff; the new test proves the selection and property layers are ready to identify that first case exactly.

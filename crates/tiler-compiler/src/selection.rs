@@ -1701,6 +1701,12 @@ fn digest(bytes: &[u8]) -> u64 {
 }
 
 #[cfg(test)]
+/// Builds the mixed scheduled/opaque portfolio shared by downstream tests.
+pub(crate) fn opaque_fused_portfolio_fixture(program: &SemanticProgram) -> SelectedPortfolio {
+    tests::opaque_fused_portfolio(program)
+}
+
+#[cfg(test)]
 mod tests {
 
     /// The formation these cases run under, derived once per call site.
@@ -1781,6 +1787,133 @@ mod tests {
         provider: ProviderIdentity,
         cost: PhysicalCostEstimate,
         region: ScheduledRegion,
+    }
+
+    struct FixedCallProvider {
+        identity: crate::call_registry::OpaqueCallIdentity,
+        bindings: Vec<(&'static str, TensorRole)>,
+        cost: PhysicalCostEstimate,
+    }
+
+    impl PhysicalImplementationProvider for FixedCallProvider {
+        fn provenance(&self) -> PhysicalProviderProvenance {
+            PhysicalProviderProvenance::new(provider_identity("opaque", 1))
+        }
+
+        fn propose(&self, _: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+            vec![ImplementationProposal::new(
+                ProposalBody::OpaqueCall(Box::new(crate::call_registry::OpaqueCallProposal::new(
+                    self.identity,
+                    self.bindings.clone(),
+                ))),
+                governed_applicability(),
+                self.cost,
+            )]
+        }
+    }
+
+    fn opaque_declaration(
+        aliasing: crate::effects::Aliasing,
+    ) -> crate::call_declaration::OpaqueCallDeclaration {
+        use crate::boundary::{
+            AdmittedMemoryDomains, ExecutionAffinity, LayoutGuarantee, LayoutRequirement,
+            MemoryDomainClass,
+        };
+        use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
+        use crate::call_declaration::{OpaqueCallDeclaration, WorkScaling};
+        use crate::call_placement::CallPlacement;
+        use crate::effects::{CallEffects, Elimination, Motion};
+
+        let spec = |name, role| ParameterSpec {
+            name,
+            role,
+            layout: match role {
+                ParameterRole::In => ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
+                ParameterRole::Out => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
+                ParameterRole::InOut => unreachable!("the fixture has separate input and output"),
+            },
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::F32_NATURAL,
+        };
+        let realization = StrictF32NumericalContract::governed().realization();
+        OpaqueCallDeclaration::check(
+            CallAbi::declare([spec("x", ParameterRole::In), spec("y", ParameterRole::Out)])
+                .expect("well-formed fixture ABI"),
+            CallEffects::declared(Elimination::Required, Motion::Ordered, aliasing),
+            CallPlacement::declare(
+                ExecutionAffinity::PRIMARY,
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).expect("one domain"),
+                &[MemoryDomainClass::Device],
+            )
+            .expect("coherent placement"),
+            tiler_ir::schedule::ResourceRequirements {
+                buffer_bindings: 2,
+                threads_per_workgroup: 1,
+                local_memory_bytes: 0,
+                barriers: 0,
+                requires_device_memory: true,
+                input_subnormals: realization.input_subnormals,
+                result_subnormals: realization.result_subnormals,
+                contraction: realization.contraction,
+                reassociation: realization.reassociation,
+            },
+            WorkScaling::Fixed(2),
+        )
+        .expect("coherent opaque-call declaration")
+    }
+
+    fn frontier_with_opaque(
+        request: &VerifiedTargetRequest,
+        subject: FrontierRegionSubject,
+        call_name: &'static str,
+        output: TensorRole,
+        aliasing: crate::effects::Aliasing,
+        scheduled: Option<ScheduledRegion>,
+    ) -> RegionFrontier {
+        let identity =
+            crate::call_registry::OpaqueCallIdentity::new("test", call_name, 1).expect("named");
+        let mut registry = crate::call_registry::OpaqueCallRegistry::new();
+        registry
+            .register(identity, opaque_declaration(aliasing))
+            .expect("one call");
+        let opaque = FixedCallProvider {
+            identity,
+            bindings: vec![("x", TensorRole::Input), ("y", output)],
+            cost: PhysicalCostEstimate::structural(1, 2, 0),
+        };
+        let scheduled = scheduled.map(|region| FixedRegionProvider {
+            provider: provider_identity("scheduled", 1),
+            cost: PhysicalCostEstimate::structural(1, 2, 0),
+            region,
+        });
+        let mut providers: Vec<&dyn PhysicalImplementationProvider> = Vec::new();
+        if let Some(host) = &scheduled {
+            providers.push(host);
+        }
+        providers.push(&opaque);
+        let frontier = enumerate_frontier(request, &subject, &providers, &registry).unwrap();
+        RegionFrontier::new(subject, frontier)
+    }
+
+    /// Builds the one-region portfolio used to exercise consumers below the
+    /// frontier. Its two plans differ only in choosing a scheduled or opaque
+    /// implementation for the same cover region.
+    pub(super) fn opaque_fused_portfolio(program: &SemanticProgram) -> super::SelectedPortfolio {
+        let request = request_for(program);
+        let cover = cover_with_partitions(program, &[vec![0, 1, 2, 3, 4]]);
+        let subject = FrontierRegionSubject::new("fused", request.serial_sum().members.all());
+        let source = CoverFrontiers::new(
+            &cover,
+            vec![frontier_with_opaque(
+                &request,
+                subject,
+                "fused",
+                TensorRole::Output,
+                crate::effects::Aliasing::Distinct,
+                Some(fused_raw(&request)),
+            )],
+        );
+        select_physical_plans(program, budgets(), &formation_of(program), &[source]).unwrap()
     }
 
     impl PhysicalImplementationProvider for FixedRegionProvider {
@@ -1974,6 +2107,121 @@ mod tests {
 
         verify_selected_plan(&program, &formation_of(&program), plan).unwrap();
         verify_selected_portfolio(&program, &formation_of(&program), &portfolio).unwrap();
+    }
+
+    /// Selection retains a scheduled implementation and an opaque call as two
+    /// genuinely distinct complete plans for the same cover.
+    #[test]
+    fn a_scheduled_and_opaque_admission_are_distinct_plan_alternatives() {
+        let program = serial_sum_program();
+        let portfolio = opaque_fused_portfolio(&program);
+
+        assert_eq!(portfolio.plans().len(), 2);
+        assert_eq!(
+            portfolio
+                .plans()
+                .iter()
+                .filter(|plan| plan.selections()[0].implementation().scheduled().is_some())
+                .count(),
+            1
+        );
+        assert_eq!(
+            portfolio
+                .plans()
+                .iter()
+                .filter(|plan| {
+                    plan.selections()[0]
+                        .implementation()
+                        .body()
+                        .opaque()
+                        .is_some()
+                })
+                .count(),
+            1
+        );
+        assert_ne!(
+            portfolio.plans()[0].identity().as_bytes(),
+            portfolio.plans()[1].identity().as_bytes(),
+            "the body choice was absent from plan identity"
+        );
+    }
+
+    /// Analytical components that require a scheduled region decline an opaque
+    /// plan instead of treating the missing schedule as zero work.
+    #[test]
+    fn opaque_plan_costs_are_unknown_where_a_schedule_is_required() {
+        use crate::component_cost::{CostComponent, CostValue, analytical_plan_cost};
+
+        let program = serial_sum_program();
+        let portfolio = opaque_fused_portfolio(&program);
+        let plan = portfolio
+            .plans()
+            .iter()
+            .find(|plan| {
+                plan.selections()[0]
+                    .implementation()
+                    .body()
+                    .opaque()
+                    .is_some()
+            })
+            .expect("one opaque plan");
+        let cost = analytical_plan_cost(plan);
+        for component in [
+            CostComponent::Indexing,
+            CostComponent::RedundantWork,
+            CostComponent::MemoryTraffic,
+        ] {
+            assert_eq!(
+                cost.get(component).expect("every component").value(),
+                CostValue::Unknown,
+                "{component} treated an absent schedule as a numeric cost"
+            );
+        }
+    }
+
+    /// A call that may return an alias view cannot feed the bounded scheduled
+    /// consumer, which requires a materialized buffer.
+    #[test]
+    fn an_opaque_alias_view_is_refused_by_a_materialized_consumer() {
+        let program = serial_sum_program();
+        let request = request_for(&program);
+        let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
+        let pointwise_subject = FrontierRegionSubject::new(
+            "pointwise",
+            request.serial_sum().members.pointwise().to_vec(),
+        );
+        let source = CoverFrontiers::new(
+            &cover,
+            vec![
+                frontier_with_opaque(
+                    &request,
+                    pointwise_subject,
+                    "aliasing-producer",
+                    TensorRole::Intermediate,
+                    crate::effects::Aliasing::MayAliasInputs,
+                    None,
+                ),
+                reduction_frontier(
+                    &request,
+                    "materialized-consumer",
+                    PhysicalCostEstimate::structural(1, 2, 0),
+                ),
+            ],
+        );
+        let portfolio =
+            select_physical_plans(&program, budgets(), &formation_of(&program), &[source]).unwrap();
+
+        assert!(portfolio.plans().is_empty());
+        assert!(portfolio.rejections().iter().any(|rejection| matches!(
+            rejection,
+            PlanRejection::BoundaryDisagreement {
+                disagreement: BoundaryDisagreement::UndischargedHandoff {
+                    unsatisfied,
+                    ..
+                },
+                ..
+            } if unsatisfied.property() == BoundaryProperty::Materialization
+        )));
     }
 
     /// A cover region with no admitted implementation is a valid no-plan result,
