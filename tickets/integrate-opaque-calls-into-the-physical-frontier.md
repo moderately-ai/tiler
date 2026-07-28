@@ -268,3 +268,21 @@ Prefer the first: an `Option` pair admits all four combinations and three of the
 Two tests. The first drives all three roles accepting *and* both wrong-direction rejections, so a check that refused everything — or that only understood `In` — fails. The second pins that an input may require `UnitStrideOnAxis`: that is exactly what the single guarantee-typed field silently forbade, so it is asserted rather than left implied by the enum's existence.
 
 **Encoding and alignment were left alone**, as noted above — they are used unchanged on both sides of the boundary relation, and applying the fix to all three by reflex would have added two enums that state nothing.
+
+## The last asymmetry in the mapping: memory domain (2026-07-28)
+
+Working the mapping table through to code, one property does not transfer symmetrically and it is the same asymmetry `crate::boundary` documents at the type.
+
+A **requirement** names `AdmittedMemoryDomains` — a *set*, because a consumer that can read from either shared or device storage says so. A **guarantee** names one `MemoryDomainClass`, because an allocation is in exactly one. `CallPlacement` carries the set, which serves the requirement side directly and does **not** answer the guarantee side when the set has more than one member.
+
+So the derivation needs a rule, and there are only two honest ones:
+
+- **Exactly one admitted domain is required to derive a guarantee.** A call that writes must say which domain it writes into; a call admitting two and guaranteeing neither has not described where its output lives. This is a coherence check in the same family as `FewerBindingsThanParameters` — the placement and the ABI's write roles disagree, and neither can see the other.
+- **A second placement field**, naming the write domain separately from the admitted read set. More expressive, and it lets a call read from either while writing to one.
+
+Prefer the **first** until a call needs otherwise: it adds no field, it makes the common case exact, and the failure it produces is a legible rejection rather than a wrong guarantee. The second is what to reach for when a real call wants asymmetric read and write domains, and the check makes that case announce itself rather than being silently mis-derived.
+
+Every other property transfers directly: layout and encoding and alignment from the parameter spec now that each states its own direction, materialization and availability and visibility from the effects, affinity from the placement.
+
+*The check, reproducible in one line:* `grep -n 'struct AdmittedMemoryDomains' -B 8 crates/tiler-compiler/src/boundary.rs` — the doc there states the set-versus-one asymmetry and why it is deliberate.
+
