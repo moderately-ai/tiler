@@ -43,11 +43,12 @@ ticket: "bind-the-cache-subject-to-the-carried-payload-provenance"
 
 ## Consequences
 
-- The workspace carries nine reusable libraries. The implemented initial edge is `tiler-build -> [tiler-artifact, tiler-metal-aot]`; compiler, backend, and cache edges arrive only with the slices that consume them.
+- The workspace carries nine reusable libraries. The implemented checked-plan path has the downstream closure `tiler-build -> [tiler-artifact, tiler-cache, tiler-compiler, tiler-ir, tiler-metal, tiler-metal-aot]`: the compiler and shared-IR edges carry the owner-linked plan and semantic graph, while the backend, AOT, artifact, and cache edges carry the authorities the orchestrator sequences.
 - `tiler-metal-aot` retains its empty dependency closure. The downstream orchestrator consumes its public facts, so the driver does not acquire artifact, cache, backend, or compiler knowledge.
 - `tiler-cache` remains a storage and validation protocol rather than an interpreter for foreign subject encodings.
 - A cache hit cannot be accepted solely because its outer bundle, subject digest, and artifact envelope are internally valid. The orchestrator also proves the carried payload agrees with the prepared producer facts.
-- Tom separately accepted the initial exact Rust facade on 2026-07-28: borrowed `PreparedCompilation::{request, provenance}` accessors, `validate_prepared_metal_payload`, the exhaustive `MetalPayloadFact` classification, and opaque `MetalPayloadMismatch`. Later orchestration facades remain subject to their own exact-boundary review under ADR 0075.
+- Tom separately accepted the initial exact Rust facade on 2026-07-28: borrowed `PreparedCompilation::{request, provenance}` accessors, `validate_prepared_metal_payload`, the exhaustive `MetalPayloadFact` classification, and opaque `MetalPayloadMismatch`. At that point, later orchestration facades still required their own exact-boundary review under ADR 0075.
+- Tom accepted the checked-plan facade on 2026-07-28: `PlanAlternative` retains its owning `Compilation`; `Compilation::offered_providers` exposes the complete compiler-minted environment; and `accept_or_publish_metal_plan` returns an opaque `AcceptedMetalPlanArtifact` only after the producer-side verified artifact and accepted decoded envelope agree.
 
 ## Alternatives considered
 

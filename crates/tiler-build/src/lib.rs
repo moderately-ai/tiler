@@ -6,15 +6,16 @@
 //! encoding.
 //!
 //! The implemented Metal slice validates that carried metadata describes the
-//! exact prepared compilation, derives the complete cache subject from the
-//! prepared compilation and pending artifact identities, compiles only inside
-//! the cache's miss closure, and re-proves correspondence before accepting
-//! either a publication or a hit. Broader compiler-plan orchestration remains
-//! incremental.
+//! exact prepared compilation. Its checked-plan facade carries an owner-linked
+//! compiler alternative through Metal emission, AOT preparation, neutral
+//! artifact assembly, complete cache-subject construction, miss-only
+//! compilation, and correspondence validation before either publication or hit
+//! acceptance.
 
 mod metal_assembly;
 mod metal_cache;
 mod metal_payload;
+mod metal_plan;
 
 pub use metal_assembly::{
     CompiledMetalPayload, MetalAssemblyError, PreparedMetalPayload, metal_compile_request,
@@ -25,3 +26,6 @@ pub use metal_cache::{
     accept_or_publish_single_payload_metal_artifact,
 };
 pub use metal_payload::{MetalPayloadFact, MetalPayloadMismatch, validate_prepared_metal_payload};
+pub use metal_plan::{
+    AcceptedMetalPlanArtifact, MetalPlanBuildError, accept_or_publish_metal_plan,
+};

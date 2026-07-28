@@ -171,6 +171,10 @@ impl<'request> PreparedMetalPayload<'request> {
 }
 
 impl CompiledMetalPayload {
+    pub(crate) const fn from_content(content: PayloadContent) -> Self {
+        Self { content }
+    }
+
     pub(crate) fn compile_prepared(
         prepared: PreparedCompilation<'_>,
         metadata: PayloadMetadata,

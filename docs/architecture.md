@@ -350,9 +350,9 @@ tiler-metal     -> [tiler-ir, tiler-artifact]  + development [tiler-metal-aot]
 tiler-metal-aot -> []
 tiler-runtime   -> [tiler-artifact]
 tiler-cache     -> [tiler-artifact]
-tiler-build     -> [tiler-artifact, tiler-metal-aot]
+tiler-build     -> [tiler-artifact, tiler-cache, tiler-compiler, tiler-ir, tiler-metal, tiler-metal-aot]
 
-tiler-prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal, tiler-metal-aot]
+tiler-prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-build, tiler-cache, tiler-compiler, tiler-metal, tiler-metal-aot]
 tiler-prototype-run     -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal, tiler-metal-aot, tiler-runtime] + metal
 ```
 
@@ -368,7 +368,7 @@ The `tiler-metal` → `tiler-metal-aot` edge is a development dependency only, a
 
 `tiler-runtime` is the device-free artifact loader. It decodes artifact bytes, classifies the declared target profile against a host's stated execution environment, binds a loaded artifact to the program a caller expects by canonical identity, resolves the carried object, and commits routing one way; it creates no device object, no pipeline state, and no command encoder. Its single-edge closure is a decided property in the same sense as the driver's empty one: a loader that acquired `tiler-compiler` could rebuild a plan instead of validating one, and a loader that acquired a platform binding would stop being decidable without hardware. The device half of a runtime stays outside it, in `prototypes/serial-sum-run` today and in a backend runner later.
 
-`tiler-build` is the downstream build-time orchestrator admitted by [ADR 0085](decisions/0085-admit-tiler-build-as-the-build-time-orchestrator.md). Its complete responsibility is the sequence from a checked compiler plan through backend emission, prepared AOT compilation, artifact assembly, cache-subject composition, provenance correspondence, publication, and hit acceptance. Its initial two edges expose only the first implemented correspondence slice; later edges to compiler, backend, and cache authorities arrive with the slices that use them. The crate consumes their typed facts without becoming another identity, digest, or subject-encoding authority, and its existence does not spend `tiler-metal-aot`'s empty closure.
+`tiler-build` is the downstream build-time orchestrator admitted by [ADR 0085](decisions/0085-admit-tiler-build-as-the-build-time-orchestrator.md). Its implemented checked-plan path consumes an owner-linked compiler alternative and the compiler's complete offered-provider environment, emits one Metal translation unit, prepares one AOT operation, assembles the descriptor-only and carried forms of one target-neutral artifact through one recipe, composes the cache subject, compiles only on a miss, and re-proves correspondence before publication or hit acceptance. The initial support profile is deliberately singular: one checked plan, one Metal payload, no deferred predicates, and no launch-time preconditions; the artifact authority rejects a plan that exceeds those claims. The crate consumes typed facts without becoming another identity, digest, or subject-encoding authority, and its existence does not spend `tiler-metal-aot`'s empty closure.
 
 This is an unstable prototype packaging profile, not the final published crate set. It deliberately omits frontend, proc-macro, Candle, and reusable Metal-*runtime* crates until the proof reaches those boundaries. `tiler-runtime` is not one of those: ADR 0077 states the test that clause applies — a component that "never touches a live device, an `MTLDevice`, or a pipeline state" is not the reusable Metal-runtime crate the clause withholds — and the loader meets it, so it is admitted on the clause's own terms rather than as an exception to it. The withheld crate remains withheld; what is admitted is the backend-independent half, which is not Metal-specific at all.
 

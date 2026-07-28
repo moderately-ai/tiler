@@ -3,17 +3,17 @@
 //! It drives the already-implemented component capabilities — semantic
 //! construction, compilation, MSL emission, and offline Metal compilation —
 //! through one path, and implements no component capability of its own.
-//! `tiler-build` owns the checked translation between emitter and driver target
-//! vocabularies and the payload assembly; this prototype supplies the program,
-//! selected plan, and artifact envelope around that shared production path.
+//! `tiler-build` owns checked-plan consumption, Metal emission and AOT
+//! preparation, artifact assembly, and cache acceptance; this prototype
+//! supplies proof policy, target facts, output names, and sidecars.
 //!
 //! # What this proves and what it does not
 //!
 //! Running it proves the offline path composes end to end: a semantic program
-//! reaches a verified kernel through the public compiler boundary, that kernel
-//! emits deterministic MSL, `xcrun` turns that MSL into a real `metallib` on this
-//! host, and [`bundle`] carries both in a neutral artifact envelope that survives
-//! an encode, a decode, and a byte-identical re-encode.
+//! reaches a verified kernel through the public compiler boundary, `tiler-build`
+//! carries that checked plan through deterministic MSL emission and `xcrun`,
+//! and the accepted neutral artifact survives an encode, a decode, and a
+//! byte-identical re-encode.
 //!
 //! It proves nothing about execution — no device is created, no kernel is
 //! dispatched, and no output bits are compared. An artifact that assembles,
@@ -64,21 +64,26 @@
 //! crates now pin [`SIDECAR_SUFFIX`] in a test that names the other side, so a
 //! rename fails on the half that was not updated.
 
-mod bundle;
 mod sidecar;
 
 use std::fmt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use tiler_artifact::program::{ArtifactCodecFailure, decode_artifact};
-use tiler_build::{MetalAssemblyError, metal_compile_request, prepare_metal_payload};
+use tiler_artifact::program::ArtifactCodecFailure;
+#[cfg(test)]
+use tiler_artifact::program::decode_artifact;
+use tiler_build::{MetalPlanBuildError, accept_or_publish_metal_plan};
+#[cfg(test)]
+use tiler_build::{metal_compile_request, prepare_metal_payload};
+use tiler_cache::expansion::{ExpansionCache, Resolution};
 use tiler_compiler::session::{CompileFailure, NumericalContract, compile_governed};
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
+#[cfg(test)]
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::target::{
     LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
@@ -266,6 +271,12 @@ fn main() -> ExitCode {
     }
 }
 
+struct Publication<'a> {
+    base: &'a std::path::Path,
+    cache: &'a ExpansionCache,
+    toolchain: &'a Toolchain,
+}
+
 /// One offline pass: publish every member of the proof matrix.
 ///
 /// Six members — three reduction classes times two plan roles — because the
@@ -276,6 +287,17 @@ fn main() -> ExitCode {
 /// run time, which is what lets the runner treat each as a separate proof run.
 fn run() -> Result<(), ProducerError> {
     let base = output_path()?;
+    let cache_root = std::env::temp_dir().join(format!(
+        "tiler-prototype-compile-cache-{}",
+        std::process::id(),
+    ));
+    let cache = ExpansionCache::open(&cache_root);
+    let toolchain = Toolchain::system();
+    let publication = Publication {
+        base: &base,
+        cache: &cache,
+        toolchain: &toolchain,
+    };
     let mut published = 0_usize;
     for (class, columns) in REDUCTION_CLASSES {
         let program = serial_sum_program(ROWS, columns);
@@ -302,7 +324,7 @@ fn run() -> Result<(), ProducerError> {
                     .find(|alternative| !alternative.is_fused())
                     .ok_or(ProducerError::NoMaterializedAlternative)?,
             };
-            publish_member(&base, class, role, columns, &program, compilation, plan)?;
+            publish_member(&publication, class, role, columns, &program, plan)?;
             published += 1;
         }
     }
@@ -310,6 +332,7 @@ fn run() -> Result<(), ProducerError> {
         "published {published} proof member(s) under {}",
         base.display()
     );
+    let _ = std::fs::remove_dir_all(cache_root);
     Ok(())
 }
 
@@ -320,58 +343,43 @@ fn run() -> Result<(), ProducerError> {
 /// artifact layer refuses stops the publication instead of leaving an envelope
 /// on disk that no consumer would accept.
 fn publish_member(
-    base: &std::path::Path,
+    publication: &Publication<'_>,
     class: &str,
     role: &str,
     columns: u64,
     program: &SemanticProgram,
-    compilation: &tiler_compiler::session::Compilation,
     plan: tiler_compiler::session::PlanAlternative<'_>,
 ) -> Result<(), ProducerError> {
     let facts = target_facts();
-    let kernels: Vec<_> = plan.kernels().iter().collect();
-    let unit = emit_translation_unit(&kernels, &facts).map_err(|_| ProducerError::Emit)?;
-    // Emission succeeds even when the target cannot honour the declared
-    // numerical contract, so the conformance question is asked explicitly here
-    // rather than inferred from a successful emission.
-    let request = metal_compile_request(
-        &unit,
+    let entry_count = plan.kernels().len();
+    let accepted = accept_or_publish_metal_plan(
+        publication.cache,
+        publication.toolchain,
+        program,
+        plan,
+        &facts,
         OptimizationLevel::Default,
         NumericalRealization::strict_baseline(),
     )
-    .map_err(ProducerError::MetalAssembly)?;
-    let prepared = Toolchain::system()
-        .prepare(&request)
-        .map_err(MetalAssemblyError::from)
-        .map_err(ProducerError::MetalAssembly)?;
-    let payload = prepare_metal_payload(&unit, prepared)
-        .map_err(ProducerError::MetalAssembly)?
-        .compile()
-        .map_err(ProducerError::MetalAssembly)?;
-    let metallib_len = payload.content().code.len();
-    // Asked before the payload moves into the builder. A subject with no
-    // identity is one nothing downstream could content-address, and finding
-    // that out from a later refusal would name the wrong boundary.
-    payload
-        .content()
-        .identity()
-        .map_err(|_| ProducerError::PayloadIdentity)?;
+    .map_err(ProducerError::Plan)?;
+    let artifact = accepted.artifact();
+    let (bytes, decoded) = match accepted.resolution() {
+        Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => {
+            (entry.envelope_bytes().to_vec(), entry.artifact())
+        }
+        Resolution::Uncached {
+            envelope, artifact, ..
+        } => (envelope.clone(), artifact),
+    };
+    let metallib_len = decoded
+        .payload_object(0)
+        .expect("the accepted singular Metal artifact carries its checked object")
+        .len();
 
-    // Carry it in the neutral envelope, then read the bytes back. A payload
-    // that assembles but does not survive a round trip is not carried.
-    //
-    // A successful decode is itself the identity proof: `decode_artifact`
-    // re-derives the identity from the decoded content and refuses when it does
-    // not equal the one the manifest carries. The byte-identical re-encode is
-    // the complement -- a field the decoder silently dropped could not be
-    // written back -- and, because the encoder *derives* the identity rather
-    // than copying it, byte equality also pins the manifest's stored identity
-    // to that re-derivation.
-    let artifact =
-        bundle::assemble(program, compilation, plan, payload).map_err(ProducerError::Bundle)?;
-    let bytes = artifact.encode().map_err(ProducerError::Encode)?;
-    let decoded = decode_artifact(&bytes).map_err(ProducerError::Decode)?;
-    if decoded.re_encode().map_err(ProducerError::Encode)? != bytes {
+    // The cache route has already decoded and validated these bytes. Re-encoding
+    // the producer-side verified view proves that no field was lost while the
+    // hit/publication path crossed the decoded representation.
+    if artifact.encode().map_err(ProducerError::Encode)? != bytes {
         return Err(ProducerError::UnstableEncoding);
     }
 
@@ -379,9 +387,9 @@ fn publish_member(
     // refuses stops the publication instead of leaving an envelope on disk with
     // no record describing it.
     let sidecar_bytes =
-        sidecar::encoded(&artifact, program, ROWS, columns).map_err(ProducerError::Sidecar)?;
+        sidecar::encoded(artifact, program, ROWS, columns).map_err(ProducerError::Sidecar)?;
 
-    let envelope_path = proof_member(base, class, role);
+    let envelope_path = proof_member(publication.base, class, role);
     let sidecar_path = proof_sidecar(&envelope_path);
     std::fs::write(&envelope_path, &bytes)
         .map_err(|cause| ProducerError::Write(envelope_path.display().to_string(), cause))?;
@@ -391,7 +399,7 @@ fn publish_member(
     println!(
         "  {role}: {} entr(y/ies), {} bytes of metallib, {} envelope byte(s), {} sidecar byte(s) \
          -> {}",
-        unit.entry_points().len(),
+        entry_count,
         metallib_len,
         bytes.len(),
         sidecar_bytes.len(),
@@ -440,12 +448,8 @@ enum ProducerError {
     NoTarget,
     NoSelection,
     NoMaterializedAlternative,
-    Emit,
-    MetalAssembly(MetalAssemblyError),
-    PayloadIdentity,
-    Bundle(bundle::BundleError),
+    Plan(MetalPlanBuildError),
     Encode(ArtifactCodecFailure),
-    Decode(ArtifactCodecFailure),
     UnstableEncoding,
     Sidecar(sidecar::SidecarError),
 }
@@ -465,16 +469,8 @@ impl fmt::Display for ProducerError {
                 "the portfolio retained no materialized alternative, so the proof cannot compare \
                  a fused program against the multi-dispatch program computing the same function",
             ),
-            Self::Emit => formatter.write_str("the selected kernels have no Metal realization"),
-            Self::MetalAssembly(cause) => {
-                write!(formatter, "the Metal payload did not assemble: {cause}")
-            }
-            Self::PayloadIdentity => {
-                formatter.write_str("the carried payload's compilation subject has no identity")
-            }
-            Self::Bundle(cause) => write!(formatter, "the artifact did not assemble: {cause}"),
+            Self::Plan(cause) => write!(formatter, "the checked Metal plan failed: {cause}"),
             Self::Encode(cause) => write!(formatter, "the envelope did not encode: {cause}"),
-            Self::Decode(cause) => write!(formatter, "the envelope did not decode: {cause}"),
             Self::UnstableEncoding => {
                 formatter.write_str("re-encoding the decoded envelope did not reproduce its bytes")
             }
@@ -485,20 +481,12 @@ impl fmt::Display for ProducerError {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-
     use super::{
-        COLUMNS, PLAN_ROLES, REDUCTION_CLASSES, ROWS, bundle, serial_sum_program, sidecar,
-        target_facts,
+        COLUMNS, PLAN_ROLES, REDUCTION_CLASSES, ROWS, serial_sum_program, sidecar, target_facts,
     };
     use crate::{ArtifactCodecFailure, decode_artifact};
     use tiler_artifact::proof::decode_proof_sidecar;
-    use tiler_build::{
-        MetalArtifactProtocolError, MetalCacheError, MetalPayloadFact,
-        accept_or_publish_single_payload_metal_artifact, metal_compile_request,
-        prepare_metal_payload,
-    };
-    use tiler_cache::expansion::{CacheKey, ExpansionCache, Resolution};
+    use tiler_cache::expansion::{ExpansionCache, Resolution};
     use tiler_compiler::capability::{
         LoweringCapabilityRegistryBuilder, install_governed_index_access,
     };
@@ -509,347 +497,8 @@ mod tests {
     use tiler_ir::index::FrozenScalarRegistry;
     use tiler_ir::semantic::multiply_f32_op;
     use tiler_metal::emit::emit_translation_unit;
-    use tiler_metal::target::MetalDeploymentMinimum;
     use tiler_metal_aot::driver::Toolchain;
     use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
-
-    fn scratch(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "tiler-prototype-cache-{label}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id(),
-        ));
-        std::fs::create_dir_all(&path).expect("the scratch directory is creatable");
-        path
-    }
-
-    fn write_executable(path: &Path, body: &str) {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        std::fs::write(path, body).expect("the fake tool is writable");
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-            .expect("the fake tool is executable");
-    }
-
-    fn system_tool(name: &str) -> String {
-        let output = std::process::Command::new("/usr/bin/xcrun")
-            .args(["--sdk", "macosx", "--find", name])
-            .output()
-            .expect("xcrun resolves the system Metal toolchain");
-        assert!(output.status.success(), "xcrun did not resolve {name}");
-        String::from_utf8(output.stdout)
-            .expect("xcrun returns a UTF-8 path")
-            .trim()
-            .to_owned()
-    }
-
-    fn counted_toolchain(directory: &Path, alter_object: bool) -> (Toolchain, PathBuf) {
-        let counter = directory.join("compiler-invocations");
-        let metal = directory.join("metal");
-        let metallib = directory.join("metallib");
-        let launcher = directory.join("xcrun");
-        let system_metal = system_tool("metal");
-        let system_metallib = system_tool("metallib");
-        write_executable(
-            &metal,
-            &format!(
-                "#!/bin/sh\n\
-                 if [ \"$1\" = \"--version\" ]; then exec '{}' \"$@\"; fi\n\
-                 printf 'metal\\n' >> '{}'\n\
-                 exec '{}' \"$@\"\n",
-                system_metal,
-                counter.display(),
-                system_metal,
-            ),
-        );
-        write_executable(
-            &metallib,
-            &format!(
-                "#!/bin/sh\n\
-                 if [ \"$1\" = \"--version\" ]; then exec '{}' \"$@\"; fi\n\
-                 printf 'metallib\\n' >> '{}'\n\
-                 output=''\n\
-                 previous=''\n\
-                 for argument in \"$@\"; do\n\
-                   if [ \"$previous\" = \"-o\" ]; then output=\"$argument\"; fi\n\
-                   previous=\"$argument\"\n\
-                 done\n\
-                 '{}' \"$@\" || exit $?\n\
-                 if [ '{}' = 'yes' ]; then printf '\\001' >> \"$output\"; fi\n",
-                system_metallib,
-                counter.display(),
-                system_metallib,
-                if alter_object { "yes" } else { "no" },
-            ),
-        );
-        write_executable(
-            &launcher,
-            &format!(
-                "#!/bin/sh\n\
-                 if [ \"$3\" = \"--find\" ]; then\n\
-                   if [ \"$4\" = \"metal\" ]; then echo '{}'; else echo '{}'; fi\n\
-                 else\n\
-                   exec /usr/bin/xcrun \"$@\"\n\
-                 fi\n",
-                metal.display(),
-                metallib.display(),
-            ),
-        );
-        (Toolchain::with_launcher(launcher), counter)
-    }
-
-    #[test]
-    fn a_second_real_artifact_resolution_is_a_hit_without_compiling() {
-        let directory = scratch("positive-hit");
-        let cache = ExpansionCache::open(directory.join("expansion"));
-        let (toolchain, counter) = counted_toolchain(&directory, false);
-        let program = serial_sum_program(ROWS, COLUMNS);
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target");
-        let plan = compilation.selected().expect("a selected alternative");
-        let kernels: Vec<_> = plan.kernels().iter().collect();
-        let mut outcomes = Vec::new();
-
-        for _ in 0..2 {
-            let unit = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
-            let request = metal_compile_request(
-                &unit,
-                OptimizationLevel::Default,
-                NumericalRealization::strict_baseline(),
-            )
-            .expect("the emitted target is compilable");
-            let prepared = toolchain
-                .prepare(&request)
-                .expect("the fake toolchain prepares");
-            let payload = prepare_metal_payload(&unit, prepared)
-                .expect("the emitted and prepared facts agree");
-            let pending = bundle::assemble_pending(&program, compilation, plan, &payload)
-                .expect("the pending artifact assembles");
-            let accepted = accept_or_publish_single_payload_metal_artifact(
-                &cache,
-                &pending,
-                payload,
-                |compiled| bundle::assemble(&program, compilation, plan, compiled),
-            )
-            .expect("the cache returns a corresponding artifact");
-            outcomes.push(match accepted.resolution() {
-                Resolution::Published { .. } => "published",
-                Resolution::Hit { .. } => "hit",
-                Resolution::Uncached { .. } => "uncached",
-            });
-        }
-
-        assert_eq!(outcomes, ["published", "hit"]);
-        let invocations = std::fs::read_to_string(&counter)
-            .expect("one compilation wrote its counter")
-            .lines()
-            .count();
-        assert_eq!(
-            invocations, 2,
-            "one metal and one metallib invocation prove the hit skipped compilation",
-        );
-        let _ = std::fs::remove_dir_all(directory);
-    }
-
-    #[test]
-    fn an_internally_valid_mismatched_payload_is_a_protocol_failure() {
-        let directory = scratch("correspondence");
-        let cache = ExpansionCache::open(directory.join("expansion"));
-        let (toolchain, counter) = counted_toolchain(&directory, false);
-        let program = serial_sum_program(ROWS, COLUMNS);
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target");
-        let plan = compilation.selected().expect("a selected alternative");
-        let kernels: Vec<_> = plan.kernels().iter().collect();
-
-        let unit = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
-        let request = metal_compile_request(
-            &unit,
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
-        )
-        .expect("the emitted target is compilable");
-        let prepared = toolchain
-            .prepare(&request)
-            .expect("the fake toolchain prepares");
-        let payload =
-            prepare_metal_payload(&unit, prepared).expect("the prepared subject is exact");
-        let pending = bundle::assemble_pending(&program, compilation, plan, &payload)
-            .expect("the pending artifact assembles");
-
-        let mut other_facts = target_facts();
-        other_facts.deployment_minimum = MetalDeploymentMinimum::new(15, 0);
-        let other_unit =
-            emit_translation_unit(&kernels, &other_facts).expect("the other target emits");
-        let other_request = metal_compile_request(
-            &other_unit,
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
-        )
-        .expect("the other emitted target is compilable");
-        let other_prepared = toolchain
-            .prepare(&other_request)
-            .expect("the other target prepares");
-        let other_payload = prepare_metal_payload(&other_unit, other_prepared)
-            .expect("the other prepared subject is internally exact")
-            .compile()
-            .expect("the other payload compiles");
-        let other_artifact = bundle::assemble(&program, compilation, plan, other_payload)
-            .expect("the mismatched artifact is internally valid");
-        let other_envelope = other_artifact
-            .encode()
-            .expect("the mismatched artifact encodes");
-        decode_artifact(&other_envelope).expect("the mismatched outer artifact validates");
-
-        let outcome = accept_or_publish_single_payload_metal_artifact(
-            &cache,
-            &pending,
-            payload,
-            |_compiled| Ok::<_, bundle::BundleError>(other_artifact.clone()),
-        );
-        let Err(error) = outcome else {
-            panic!("a valid artifact for another prepared target was accepted");
-        };
-        assert!(
-            matches!(
-                error,
-                MetalCacheError::Protocol(MetalArtifactProtocolError::ArtifactIdentity)
-            ),
-            "unexpected refusal: {error:?}"
-        );
-
-        let prepared = toolchain
-            .prepare(&request)
-            .expect("the current subject prepares again");
-        let payload =
-            prepare_metal_payload(&unit, prepared).expect("the current subject stays exact");
-        let pending = bundle::assemble_pending(&program, compilation, plan, &payload)
-            .expect("the current pending artifact assembles");
-        let accepted = accept_or_publish_single_payload_metal_artifact(
-            &cache,
-            &pending,
-            payload,
-            |compiled| bundle::assemble(&program, compilation, plan, compiled),
-        )
-        .expect("the current artifact publishes");
-        let subject = accepted.cache_subject().clone();
-        let key = CacheKey::derive(&subject);
-        cache.evict(&key).expect("the current entry is removable");
-        let seeded = cache
-            .get_or_publish(&subject, || {
-                Ok::<_, std::convert::Infallible>(other_envelope)
-            })
-            .expect("the cache accepts the internally valid outer artifact");
-        assert!(matches!(seeded, Resolution::Published { .. }));
-        let before_hit = std::fs::read(&counter)
-            .expect("the prior compilations wrote their counter")
-            .len();
-
-        let prepared = toolchain
-            .prepare(&request)
-            .expect("the current subject prepares for the hit");
-        let payload =
-            prepare_metal_payload(&unit, prepared).expect("the current hit subject is exact");
-        let pending = bundle::assemble_pending(&program, compilation, plan, &payload)
-            .expect("the current hit artifact assembles");
-        let hit = accept_or_publish_single_payload_metal_artifact(
-            &cache,
-            &pending,
-            payload,
-            |_compiled| -> Result<_, bundle::BundleError> {
-                panic!("a mismatched hit must not become compiler work")
-            },
-        );
-        assert!(matches!(
-            hit,
-            Err(MetalCacheError::Protocol(
-                MetalArtifactProtocolError::Correspondence(mismatch)
-            )) if mismatch.fact() == MetalPayloadFact::Source
-        ));
-        assert_eq!(
-            std::fs::read(&counter)
-                .expect("the compiler counter remains readable")
-                .len(),
-            before_hit,
-            "a mismatched hit is a hard protocol failure, never a rebuild",
-        );
-        let _ = std::fs::remove_dir_all(directory);
-    }
-
-    #[test]
-    fn assembly_cannot_replace_the_exact_object_compiled_on_the_miss() {
-        let directory = scratch("object-substitution");
-        let cache = ExpansionCache::open(directory.join("expansion"));
-        let clean_tools = directory.join("clean-tools");
-        let altered_tools = directory.join("altered-tools");
-        std::fs::create_dir_all(&clean_tools).expect("the clean tool directory is creatable");
-        std::fs::create_dir_all(&altered_tools).expect("the altered tool directory is creatable");
-        let (toolchain, _counter) = counted_toolchain(&clean_tools, false);
-        let (altered_toolchain, _altered_counter) = counted_toolchain(&altered_tools, true);
-        let program = serial_sum_program(ROWS, COLUMNS);
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target");
-        let plan = compilation.selected().expect("a selected alternative");
-        let kernels: Vec<_> = plan.kernels().iter().collect();
-        let unit = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
-        let request = metal_compile_request(
-            &unit,
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
-        )
-        .expect("the emitted target is compilable");
-
-        let prepared = toolchain
-            .prepare(&request)
-            .expect("the exact toolchain prepares");
-        let payload =
-            prepare_metal_payload(&unit, prepared).expect("the prepared subject is exact");
-        let pending = bundle::assemble_pending(&program, compilation, plan, &payload)
-            .expect("the pending artifact assembles");
-
-        let altered_prepared = altered_toolchain
-            .prepare(&request)
-            .expect("the altered-output wrapper prepares with the same facts");
-        let altered_payload = prepare_metal_payload(&unit, altered_prepared)
-            .expect("the altered-output wrapper has the same compilation subject")
-            .compile()
-            .expect("the alternate object compiles");
-
-        let outcome = accept_or_publish_single_payload_metal_artifact(
-            &cache,
-            &pending,
-            payload,
-            |_compiled| bundle::assemble(&program, compilation, plan, altered_payload),
-        );
-        assert!(matches!(
-            outcome,
-            Err(MetalCacheError::Protocol(
-                MetalArtifactProtocolError::PayloadObject
-            ))
-        ));
-        let prepared = toolchain
-            .prepare(&request)
-            .expect("the genuine subject prepares after the refusal");
-        let payload =
-            prepare_metal_payload(&unit, prepared).expect("the genuine subject remains exact");
-        let pending = bundle::assemble_pending(&program, compilation, plan, &payload)
-            .expect("the genuine pending artifact assembles");
-        let accepted = accept_or_publish_single_payload_metal_artifact(
-            &cache,
-            &pending,
-            payload,
-            |compiled| bundle::assemble(&program, compilation, plan, compiled),
-        )
-        .expect("the genuine object resolves after the refusal");
-        assert!(
-            matches!(accepted.resolution(), Resolution::Published { .. }),
-            "the refused substitute was never published",
-        );
-        let _ = std::fs::remove_dir_all(directory);
-    }
 
     /// The offline path composes as far as deterministic MSL, without a
     /// toolchain.
@@ -1181,18 +830,36 @@ mod tests {
         Vec<u8>,
         Vec<u8>,
     ) {
+        let directory = std::env::temp_dir().join(format!(
+            "tiler-prototype-published-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        let cache = ExpansionCache::open(directory.join("cache"));
         let program = serial_sum_program(ROWS, COLUMNS);
         let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target");
-        let selected = compilation.selected().expect("a selected alternative");
-        let kernels: Vec<_> = selected.kernels().iter().collect();
-        let (_unit, payload) = super::emit_and_compile(&kernels);
-        let artifact = bundle::assemble(&program, compilation, selected, payload)
-            .expect("the artifact assembles");
-        let envelope = artifact.encode().expect("the artifact encodes");
+        let selected = compilations[0].selected().expect("a selected alternative");
+        let accepted = tiler_build::accept_or_publish_metal_plan(
+            &cache,
+            &Toolchain::system(),
+            &program,
+            selected,
+            &target_facts(),
+            OptimizationLevel::Default,
+            NumericalRealization::strict_baseline(),
+        )
+        .expect("the checked plan resolves");
+        let artifact = accepted.artifact().clone();
+        let envelope = match accepted.resolution() {
+            Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => {
+                entry.envelope_bytes().to_vec()
+            }
+            Resolution::Uncached { envelope, .. } => envelope.clone(),
+        };
         let sidecar_bytes =
             sidecar::encoded(&artifact, &program, ROWS, COLUMNS).expect("the sidecar builds");
+        let _ = std::fs::remove_dir_all(directory);
         (artifact, envelope, sidecar_bytes)
     }
 

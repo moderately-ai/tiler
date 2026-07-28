@@ -212,6 +212,7 @@ impl fmt::Debug for CompileFailure {
 pub struct Compilation {
     stated_contracts: Vec<StrictF32NumericalContract>,
     resolved_contract: StrictF32NumericalContract,
+    offered_providers: Vec<ProviderIdentity>,
     target_profile_key: &'static str,
     target_profile_descriptor: Vec<u8>,
     feasibility_rule_set: FeasibilityRuleSetIdentity,
@@ -248,6 +249,18 @@ impl Compilation {
     #[must_use]
     pub const fn resolved_numerical_contract_key(&self) -> &'static str {
         self.resolved_contract.key
+    }
+
+    /// Returns the complete frozen provider set offered to this compilation.
+    ///
+    /// This is compilation-environment evidence rather than program identity:
+    /// an artifact records only the providers its retained plan selected, but
+    /// its builder must prove each selection belonged to the authority the
+    /// compiler actually offered. Returning the compiler-minted set prevents an
+    /// assembler from reconstructing that environment from the selected subset.
+    #[must_use]
+    pub fn offered_providers(&self) -> &[ProviderIdentity] {
+        &self.offered_providers
     }
 
     /// Returns the governed key of the target profile this result is for.
@@ -308,7 +321,10 @@ impl Compilation {
     /// Returns every retained plan alternative, in the order the policy ranked.
     #[must_use]
     pub fn alternatives(&self) -> impl ExactSizeIterator<Item = PlanAlternative<'_>> {
-        self.alternatives.iter().map(PlanAlternative)
+        self.alternatives.iter().map(|alternative| PlanAlternative {
+            compilation: self,
+            alternative,
+        })
     }
 
     /// Returns the alternative the selection policy chose.
@@ -322,7 +338,10 @@ impl Compilation {
         self.alternatives
             .iter()
             .find(|alternative| alternative.stable_id == self.selected_alternative_id)
-            .map(PlanAlternative)
+            .map(|alternative| PlanAlternative {
+                compilation: self,
+                alternative,
+            })
     }
 
     /// Returns the compilation's typed explain trace.
@@ -338,19 +357,33 @@ impl Compilation {
 /// public field set while the compiler's internal plan representation is still
 /// moving.
 #[derive(Clone, Copy, Debug)]
-pub struct PlanAlternative<'a>(&'a ProgramAlternative);
+pub struct PlanAlternative<'a> {
+    compilation: &'a Compilation,
+    alternative: &'a ProgramAlternative,
+}
 
-impl PlanAlternative<'_> {
+impl<'a> PlanAlternative<'a> {
+    /// Returns the compilation that owns this retained plan.
+    ///
+    /// The owner link is load-bearing for downstream orchestration: accepting a
+    /// free `(Compilation, PlanAlternative)` pair would let a caller combine a
+    /// program from one compilation with the target profile, feasibility rules,
+    /// and offered-provider environment of another.
+    #[must_use]
+    pub const fn compilation(self) -> &'a Compilation {
+        self.compilation
+    }
+
     /// Returns the alternative's stable identifier within its portfolio.
     #[must_use]
     pub fn stable_id(&self) -> &str {
-        &self.0.stable_id
+        &self.alternative.stable_id
     }
 
     /// Returns whether one region covers the whole program.
     #[must_use]
     pub fn is_fused(&self) -> bool {
-        self.0.kind == ProgramAlternativeKind::Fused
+        self.alternative.kind == ProgramAlternativeKind::Fused
     }
 
     /// Returns the verified kernels this alternative dispatches.
@@ -360,7 +393,7 @@ impl PlanAlternative<'_> {
     /// no new guarantee of its own.
     #[must_use]
     pub fn kernels(&self) -> &[VerifiedKernel] {
-        &self.0.kernels
+        &self.alternative.kernels
     }
 
     /// Returns the lowering capabilities this alternative resolved.
@@ -369,7 +402,7 @@ impl PlanAlternative<'_> {
     /// ADR 0072 folds them into complete program identity, so this is evidence
     /// rather than description.
     pub fn selected_capabilities(&self) -> impl ExactSizeIterator<Item = SelectedCapability<'_>> {
-        self.0
+        self.alternative
             .artifact_plan
             .lowering_providers()
             .iter()
@@ -383,7 +416,7 @@ impl PlanAlternative<'_> {
     /// rather than as scalars.
     #[must_use]
     pub fn abi(&self) -> AbiConstruction<'_> {
-        AbiConstruction(self.0.artifact_plan.verified_program())
+        AbiConstruction(self.alternative.artifact_plan.verified_program())
     }
 }
 
@@ -427,13 +460,12 @@ impl<'a> SelectedCapability<'a> {
 /// two derivations of one fact is exactly the drift this boundary exists to
 /// prevent.
 ///
-/// # Why the assembler still has to replay them
+/// # Why an assembler does not replay them
 ///
-/// `tiler-artifact`'s builder owns its own arena and mints owner-bound handles
-/// into it, so these nodes are transliterated onto that arena rather than moved.
-/// That replay is mechanical and position-preserving — it introduces no second
-/// derivation, because the *decision* about what each expression says was made
-/// upstream of here.
+/// `tiler-artifact` adopts the verified program's reachable ABI subgraph when a
+/// variant is inserted and derives the artifact-owned handles itself. An
+/// assembler may inspect these positions, but replaying them first would be a
+/// duplicate traversal whose handles no variant uses.
 ///
 /// # Where the decision is actually made
 ///
@@ -878,10 +910,11 @@ pub fn compile(request: CompileRequest<'_>) -> Result<Vec<Compilation>, CompileF
         .collect();
     let preference = NumericalContractPreference::ordered(stated)
         .map_err(|error| CompileFailure::from(CompileError::InvalidRequest(error)))?;
+    let offered_providers = capabilities.0.lowering().providers();
     let mut internal = CompilationRequest::governed_preferring(program, preference);
     internal.capabilities = capabilities.0;
     let product = compile_internal(internal)?;
-    Ok(into_compilations(product))
+    Ok(into_compilations(product, &offered_providers))
 }
 
 /// Compiles one semantic program under a stated numerical contract.
@@ -904,13 +937,17 @@ pub fn compile_governed(
     compile(CompileRequest::new(program, contract))
 }
 
-fn into_compilations(product: CompilationProduct) -> Vec<Compilation> {
+fn into_compilations(
+    product: CompilationProduct,
+    offered_providers: &[ProviderIdentity],
+) -> Vec<Compilation> {
     product
         .targets
         .into_iter()
         .map(|target| Compilation {
             stated_contracts: target.stated_contracts,
             resolved_contract: target.resolved_contract,
+            offered_providers: offered_providers.to_vec(),
             target_profile_key: target.target_profile_key,
             target_profile_descriptor: target.target_profile_descriptor,
             feasibility_rule_set: target.feasibility_rule_set,
@@ -984,10 +1021,22 @@ mod tests {
         );
         for plan in &alternatives {
             assert!(
+                std::ptr::eq(plan.compilation(), compilation),
+                "every alternative retains the exact compilation that owns it",
+            );
+            assert!(
                 !plan.kernels().is_empty(),
                 "{} dispatches at least one kernel",
                 plan.stable_id(),
             );
+            for selected in plan.selected_capabilities() {
+                assert!(
+                    compilation
+                        .offered_providers()
+                        .contains(selected.provider()),
+                    "a selected provider must belong to the complete offered environment",
+                );
+            }
         }
     }
 
