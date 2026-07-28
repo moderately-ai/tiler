@@ -357,7 +357,22 @@ Ownership is `TotalRaceFreeWrite`: a call that writes a tensor owns that write c
 
 The test drives both accepting forms plus the rejection, so a check refusing everything fails it.
 
-**What this leaves for admission:** evaluate the scaling at admission — `Fixed` directly, `PerElementOf` from the element count of the tensor bound to that parameter, which the region subject supplies — then call `assess_region` and construct the `AdmittedImplementation` with `ImplementationBody::Opaque`. Every argument now has a source.
+**Two arguments still have no source at this seam, and I was wrong to say every one did.**
+
+*`PerElementOf` cannot be evaluated where the proposal is admitted.* `FrontierRegionSubject` carries a role and `semantic_members` — identifiers, not shapes. Evaluating a per-element scaling needs the element count of the tensor bound to that parameter, and the frontier does not hold tensor shapes. A `Fixed` scaling evaluates trivially; a shape-dependent one does not.
+
+*`assess_region` wants a `RegionId` for error attribution*, and an opaque call has none — it is not a region, which is the whole reason `ImplementationBody` exists.
+
+**Neither should be papered over.** Passing a synthesized `RegionId` makes a feasibility error attribute to a region that does not exist; substituting any work count for an unevaluable scaling is the confidently-wrong verdict `WorkScaling` was designed to prevent.
+
+**Two honest ways forward, and they differ in scope:**
+
+- **Admit `Fixed` scalings now, reject `PerElementOf` with a typed rejection** naming shapes-unavailable-at-this-seam. Small, lands real admission, and leaves shape-dependent calls — most real ones — refused for a stated reason rather than mis-admitted.
+- **Give the frontier the shapes.** `enumerate_frontier` takes a `VerifiedTargetRequest`, which holds the program; whether a subject's members can be resolved to tensor shapes there is the question to answer first. If they can, both scalings work and this is the better answer.
+
+The `RegionId` is separable from that choice: `assess_region`'s first argument is used only to attribute errors, so it should become something both callers can supply — a subject identifier rather than a region one. That is a small change to one signature with two callers.
+
+*The check, reproducible in one line:* `grep -n 'struct FrontierRegionSubject' -A 5 crates/tiler-compiler/src/frontier.rs` — a role and members, no shapes.
 
 *The check, reproducible in one line:* `grep -n 'fn assess_region' -A 6 crates/tiler-compiler/src/physical.rs` — four arguments, of which only `work_items` has no source in an `OpaqueCallDeclaration`.
 
