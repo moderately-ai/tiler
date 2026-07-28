@@ -137,7 +137,7 @@ pub struct NumericalRealization {
     pub result_subnormals: SubnormalMode,
     /// Whether contraction (e.g. fused multiply-add) is permitted.
     pub contraction: NumericalPermission,
-    /// Whether reduction reassociation is permitted.
+    /// Whether ordered reassociation of one same-operation operand sequence is permitted.
     pub reassociation: NumericalPermission,
     /// Whether reduction contributors may be permuted.
     pub permutation: NumericalPermission,
@@ -188,7 +188,7 @@ impl NumericalRealization {
         permits(self.contraction)
     }
 
-    /// Returns whether reduction reassociation is permitted by this realization.
+    /// Returns whether ordered reassociation is permitted by this realization.
     #[must_use]
     pub const fn permits_reassociation(self) -> bool {
         permits(self.reassociation)

@@ -1722,14 +1722,12 @@ enum SelectionBinding {
 }
 
 impl VerifiedCompilationExplain {
-    /// Adapts the current one-semantic-candidate pipeline without weakening the
-    /// future portfolio boundary.
+    /// Adapts one already-sealed singleton trace to the composite boundary.
     ///
-    /// The one sealed trace is shared rather than cloned: today it contains
-    /// both the target's selection and the sole semantic candidate's complete
-    /// planning evidence. Once semantic alternatives are wired, the general
-    /// constructor supplies a distinct top-level trace and one trace per
-    /// readmitted candidate.
+    /// The trace is shared rather than cloned because it serves as both the
+    /// selection trace and the sole candidate trace. The live algebraic
+    /// portfolio uses [`Self::from_traces`] with a distinct top-level selection
+    /// trace and one trace per independently readmitted candidate.
     pub(crate) fn one_candidate(trace: VerifiedExplainTrace) -> Self {
         let trace = std::sync::Arc::new(trace);
         let key = selected_candidate_key(&trace)

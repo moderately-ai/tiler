@@ -49,16 +49,16 @@ use crate::target::{MetalFloatArithmeticType, MetalTargetFacts, MetalUnstatedSub
 pub enum MetalNumericalRequirement {
     /// `-fmetal-math-mode=safe`.
     ///
-    /// Required whenever a realization forbids reduction reassociation,
+    /// Required whenever a realization forbids ordered reassociation,
     /// contributor permutation, or signed-zero elimination, and whenever NaN
     /// or infinity may occur. A caller-declared but unvalidated absence is
     /// deliberately insufficient. `relaxed` and `fast` both apply LLVM's
     /// `reassoc`, `nsz`, `arcp`, and `afn` licences to every emitted `f32`
     /// operation, and `fast` adds `nnan` and `ninf`. `nsz` makes signed zero
-    /// unreliable; `reassoc` licenses reordering a serial reduction; and `nnan`
-    /// or `ninf` makes arithmetic on the corresponding exceptional value
-    /// undefined, so there is no defined value left for later operations to
-    /// preserve or canonicalize.
+    /// unreliable; `reassoc` licenses regrouping same-operation arithmetic,
+    /// including reordering a serial reduction; and `nnan` or `ninf` makes
+    /// arithmetic on the corresponding exceptional value undefined, so there
+    /// is no defined value left for later operations to preserve or canonicalize.
     ///
     /// No emitted operation can discharge any of those, which is why this is a
     /// requirement rather than something the source carries.

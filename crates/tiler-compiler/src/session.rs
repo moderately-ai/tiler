@@ -744,9 +744,9 @@ pub enum NumericalContract {
     /// thereby accept reassociated sums.
     FlushSubnormalsToZeroF32,
     /// Subnormals preserved, and the reshaping freedoms this build can express
-    /// authorized: fused-multiply-add contraction, reduction reassociation,
-    /// reciprocal replacement of division, and approximate elementary functions
-    /// within a named accuracy envelope.
+    /// authorized: fused-multiply-add contraction, ordered reassociation of one
+    /// same-operation operand sequence, reciprocal replacement of division, and
+    /// approximate elementary functions within a named accuracy envelope.
     ///
     /// Operand permutation, signed-zero elimination, and assuming NaNs or
     /// infinities absent are deliberately *not* authorized. Each is a freedom an

@@ -623,7 +623,9 @@ fn a_length_prefix_that_disagrees_with_its_payload_is_rejected() {
     let length_at = HEADER_BYTES + MANIFEST_DOMAIN.len() + 4 + 16 + 1 + 8;
     let declared = u64::from_be_bytes(bytes[length_at..length_at + 8].try_into().unwrap());
     assert!(declared > 0, "the fixture carries a semantic graph subject");
-    bytes[length_at..length_at + 8].copy_from_slice(&(declared + 4_096).to_be_bytes());
+    let beyond_manifest =
+        u64::try_from(bytes.len()).expect("the supported envelope length fits u64");
+    bytes[length_at..length_at + 8].copy_from_slice(&beyond_manifest.to_be_bytes());
     reseal(&mut bytes);
     assert!(matches!(
         decode(&bytes),

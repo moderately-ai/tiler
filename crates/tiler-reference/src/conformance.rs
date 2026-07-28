@@ -52,10 +52,11 @@ pub enum UnsupportedReferenceContract {
     /// A contract permitting contraction admits both the separately rounded and
     /// the fused result, so no single value is *the* reference result.
     ContractionPermitted,
-    /// The realization permits reduction reassociation.
+    /// The realization permits ordered reassociation.
     ///
     /// A contract permitting reassociation admits every legal regrouping of the
-    /// contributor sequence, which is a result set rather than one value.
+    /// same-operation operand sequence, which is a result set rather than one
+    /// value.
     ReassociationPermitted,
     /// The realization permits reduction contributor permutation.
     PermutationPermitted,

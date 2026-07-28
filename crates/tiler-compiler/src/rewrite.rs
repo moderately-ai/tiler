@@ -1,17 +1,15 @@
 //! The external rewrite-rule provider seam: identity, proposal, provider
 //! trait, attribution, registry, and collection.
 //!
-//! Built for `implement-transactional-rewrite-engine`. The engine itself — the
-//! transaction that revalidates, budgets, and adopts — lives in
-//! [`crate::normalize`] and drives this seam on the compile path.
+//! The engine itself — the transaction that revalidates, budgets, and adopts —
+//! lives in [`crate::normalize`] and drives this seam on the compile path.
 //!
-//! # Why identity comes before the engine
+//! # Why identity precedes adoption
 //!
-//! Six of the properties that ticket names are already implemented in
-//! [`crate::normalize`] — termination, budgets, rollback, semantic
-//! revalidation, deterministic traversal, and typed explain — for exactly one
-//! hard-coded rule. What is absent is that rules may come from *outside* and
-//! that the result may be a set of alternatives rather than one canonical graph.
+//! This seam was introduced when [`crate::normalize`] had one hard-coded
+//! common-subexpression rule. The live algebraic portfolio now drives
+//! separately named addition and multiplication reassociation rules through
+//! the same seam and returns independently readmitted alternatives.
 //!
 //! Identity is the half that has to exist first, and not for tidiness. The
 //! ticket's governing constraint is that unknown provider behaviour is never
@@ -20,14 +18,14 @@
 //! reproduced, and cannot be excluded when a provider turns out to be wrong. So
 //! the engine may not accept a proposal before it can name what proposed it.
 //!
-//! # What is deliberately not here
+//! # What remains elsewhere
 //!
 //! The transaction (budget, structural revalidation, adoption) — that is
 //! [`crate::normalize::run_rewrite_engine`]'s, so one authority owns the
-//! all-or-nothing contract. Also not yet here: a route from
-//! [`RewriteRuleIdentity`] into explain output. The stage's records use its own
-//! governed rule constants, and the full provider/rule/revision identity is
-//! retained in the live semantic-portfolio explanation.
+//! all-or-nothing contract. Explain has two live routes: portfolio assessments
+//! retain the provider, rule, and revision from [`RewriteRuleIdentity`], while
+//! adopted proposals emit their opaque [`RuleExplain`] payload only after
+//! survival through [`record_adopted_alternatives`].
 
 use crate::explain::{ExplainError, ExplainRecordId, ExplainWriter};
 use core::fmt;
@@ -144,10 +142,11 @@ pub(crate) enum RewriteAssessmentClass {
 
 /// Stable accepted or declined assessment for one registered rewrite rule.
 ///
-/// This is the internal composite-explain payload for the algebraic exploration.
-/// It deliberately carries the full rule identity and keeps semantic,
-/// numerical, and configuration outcomes separate. The live explain surface is
-/// not widened until the exploration is wired into the pipeline.
+/// This is the internal composite-explain payload for the algebraic
+/// exploration. The live portfolio records each assessment in the top-level
+/// selection trace, retaining the full rule identity and keeping semantic,
+/// numerical, and configuration outcomes separate for both accepted and
+/// declined rules.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RewriteAssessment {
     rule: RewriteRuleIdentity,
@@ -493,7 +492,7 @@ impl<Program> RuleRegistry<Program> {
     /// The registered rules, in canonical order.
     #[allow(
         dead_code,
-        reason = "test-facing inventory; the engine iterates providers() directly and nothing else asks which rules are registered until a second rule makes the question interesting"
+        reason = "test-facing canonical inventory; production iterates providers() directly and no compile-path consumer needs a second projection of their identities"
     )]
     pub(crate) fn rules(&self) -> Vec<RewriteRuleIdentity> {
         self.providers
@@ -605,6 +604,10 @@ where
 /// Separate from [`collect_proposals`] and from the engine for the same reason
 /// readmission is: this is a *policy* about when records may be written, and it
 /// only holds if the caller passes alternatives it actually adopted.
+///
+/// The live compile route calls this after exploration and readmission have
+/// produced a semantic candidate. It passes no proposal for the baseline and
+/// only the surviving rewrite candidate's proposal otherwise.
 ///
 /// **The obligation this cannot enforce, stated where a caller will read it:**
 /// pass only survivors. A proposal abandoned by the budget or rejected by
@@ -1029,13 +1032,11 @@ mod tests {
 
     /// A payload is attached to the proposal that carries it and to no other.
     ///
-    /// **What this does not cover, said plainly rather than implied:**
-    /// `record_adopted_alternatives` itself is untested. Constructing an
-    /// `ExplainWriter` requires a `VerifiedTargetRequest`, which this module has
-    /// no fixture for and should not grow one for — the emission loop belongs to
-    /// the routing change, and it is covered there against a real writer. What is
-    /// pinned here is the part routing depends on: that a rule's payload reaches
-    /// its own proposal and does not leak to a sibling.
+    /// **What this does not cover, said plainly rather than implied:** this unit
+    /// test does not invoke `record_adopted_alternatives`. The live compile-route
+    /// coverage owns the real-writer emission path. What is pinned here is the
+    /// part routing depends on: that a rule's payload reaches its own proposal
+    /// and does not leak to a sibling.
     #[test]
     fn a_payload_attaches_to_its_own_proposal_only() {
         let rule = RewriteRuleIdentity::new("p", "r", 1).expect("named");

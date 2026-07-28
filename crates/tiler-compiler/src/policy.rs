@@ -441,9 +441,10 @@ pub(crate) enum NumericalPolicyPreset {
     /// authorized.
     ///
     /// The claim: this program's results may differ from the strict reading by
-    /// fused multiply-add contraction, by regrouping a reduction's contributor
-    /// sequence, by replacing a division with a reciprocal multiplication, and by
-    /// an approximate elementary function within
+    /// fused multiply-add contraction, by ordered regrouping of one
+    /// same-operation operand sequence (including a reduction's contributor
+    /// sequence), by replacing a division with a reciprocal multiplication, and
+    /// by an approximate elementary function within
     /// [`RELAXED_APPROXIMATION_ENVELOPE`].
     ///
     /// **What it deliberately does not authorize.** Operand permutation,

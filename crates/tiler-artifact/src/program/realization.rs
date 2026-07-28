@@ -168,7 +168,7 @@ pub(crate) enum NumericalDimension {
     ResultSubnormals,
     /// Whether fused-multiply-add contraction is permitted.
     Contraction,
-    /// Whether reduction reassociation is permitted.
+    /// Whether ordered reassociation of one same-operation operand sequence is permitted.
     Reassociation,
 }
 
