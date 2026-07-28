@@ -1,7 +1,7 @@
 ---
 id: promote-the-metal-aot-compilation-identity
 title: Promote the tiler-metal-aot compilation identity
-status: in-progress
+status: todo
 priority: p1
 dependencies: [bind-recorded-metal-toolchain-to-the-tools-that-execute]
 related: [derive-the-pre-compilation-artifact-program-subject, accept-the-tiler-cache-public-boundary, prototype-expansion-content-cache]

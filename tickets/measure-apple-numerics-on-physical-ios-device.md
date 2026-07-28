@@ -1,6 +1,6 @@
 ---
 id: measure-apple-numerics-on-physical-ios-device
-title: Measure Apple f32 numerics on a physical iOS device
+title: Measure Apple numerics on a physical iOS device
 status: deferred
 priority: p3
 dependencies: []

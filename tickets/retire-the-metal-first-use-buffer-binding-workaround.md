@@ -1,7 +1,7 @@
 ---
 id: retire-the-metal-first-use-buffer-binding-workaround
 title: Retire the Metal first-use buffer binding workaround
-status: todo
+status: done
 priority: p2
 dependencies: [pair-verified-buffer-handles-with-signature-ordinals]
 related: [pair-verified-buffer-handles-with-signature-ordinals]

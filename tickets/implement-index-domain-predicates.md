@@ -1,7 +1,7 @@
 ---
 id: implement-index-domain-predicates
 title: Implement typed index-domain predicates and proof exchange
-status: todo
+status: awaiting-decision
 priority: p1
 dependencies: [implement-shapeenv-index-bindings]
 related: [prototype-canonical-index-region-slice]

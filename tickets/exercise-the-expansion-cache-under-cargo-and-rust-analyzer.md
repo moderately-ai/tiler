@@ -1,7 +1,7 @@
 ---
 id: exercise-the-expansion-cache-under-cargo-and-rust-analyzer
 title: Exercise the expansion cache under Cargo and rust-analyzer
-status: in-progress
+status: blocked
 priority: p2
 dependencies: [port-the-cache-harness-to-the-production-bundle, prototype-inline-proc-macro-frontend]
 related: [implement-the-expansion-cache-protocol]

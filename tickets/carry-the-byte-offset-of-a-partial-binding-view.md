@@ -1,7 +1,7 @@
 ---
 id: carry-the-byte-offset-of-a-partial-binding-view
 title: Carry a binding's byte offset so a partial view is packageable
-status: in-progress
+status: todo
 priority: p2
 dependencies: []
 related: [expose-the-dispatch-record-on-a-decoded-artifact, carry-reconstructable-kernel-programs-in-the-neutral-envelope]

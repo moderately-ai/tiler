@@ -41,15 +41,9 @@ Each item can be rejected on its own; accepting the ticket without naming an exc
 
 Both were argued to a conclusion here and need ratification rather than deliberation, which is why they sit in this list and not in the split block below.
 
-## To be split (2026-07-28)
+## Split performed (2026-07-28)
 
-Three questions on this surface are shape decisions in their own right, each with a different blast radius, and bundling them into one accept/reject verdict would force Tom to reject the whole surface to change one signature. They are written out here so no content is lost, and splitting them into three `awaiting-decision` tickets is a mechanical follow-up.
-
-- **`decide-the-composed-subject-backend-compilations-shape` — is `backend_compilations: &[&[u8]]` the right thing to ask a caller for?** *Enables (keep it):* the cache never parses a producer encoding, and a caller that already holds compiled bytes passes them without a conversion. *Prevents (keep it):* a caller holding one compilation still constructs a slice of slices, and the type says nothing about ordering or cardinality that the composition then enforces at runtime rather than in the signature.
-- **`decide-where-an-unfillable-subject-facet-is-refused` — refuse at composition time, or admit and reject at `lookup`?** *Enables (refuse at composition):* a `ComposedSubject` that exists is complete, so no later stage has to re-ask. *Prevents (refuse at composition):* a caller assembling facets incrementally cannot hold a partial subject, and `SubjectRefusal` fires further from the site that knows why the facet is missing.
-- **`decide-the-lookup-argument-type` — `&ComposedSubject` or `CacheKey`?** They take a `&ComposedSubject` today so a caller never handles a key it did not derive from one. *Enables (subject):* a raw byte run cannot name an entry, which is the property `CacheKey::derive`'s narrowing established. *Prevents (subject):* the subject is re-digested on each call, so a caller doing a lookup and then a publish under the same key pays the digest twice and has no way to say it already has the key.
-
-**Deviation recorded.** This pass was scoped to editing existing ticket files, so the three tickets were not created. The questions, their options, and their stated costs are above; creating the three files and moving each block onto its own ticket is the remaining step, and nothing is lost if it is delayed.
+The three shape questions were split into their own `awaiting-decision` tickets, each carrying its options and stated costs so one signature can be reshaped without rejecting this whole surface: `decide-the-composed-subject-backend-compilations-shape`, `decide-where-an-unfillable-subject-facet-is-refused`, `decide-the-lookup-argument-type`. This ticket keeps the ratification checklist and the derivations; a decision on any split applies here.
 
 ## Excluded decision
 

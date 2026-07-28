@@ -12,6 +12,9 @@ tags: [implementation, shapes, indexing, api]
 ---
 ## Decision needed (2026-07-28)
 
+**Split performed 2026-07-28:** the four decisions below were split into atomic `awaiting-decision` tickets — `decide-shapeenv-builder-attachment`, `decide-symbolic-extent-error-siting`, `decide-domain-dimension-symbolic-view`, `decide-shapeenv-module-path` — each carrying its full options/recommendation/counterpoint shape. They remain recorded here as the promotion's context; answer them on the splits.
+
+
 **Promotion is approved in principle and blocked in practice.** Tom approved the promotion on 2026-07-25 (recorded below). It has not happened, and it cannot happen as a mechanical visibility change, because four of the shapes inside the boundary are ADR 0075 always-ask categories the moment they are `pub`. Each is stated below as its own decision with its own options; **this ticket closes when all four are answered and the accepted subset is `pub`.**
 
 The four are independent — answering one does not constrain the others — so they can be answered in any order or in one pass. Each names which of the three drafts it touches, so the blast radius of each answer is visible before it is given.
