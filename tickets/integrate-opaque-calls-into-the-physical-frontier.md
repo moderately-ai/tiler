@@ -164,5 +164,22 @@ The existing seam test now asserts the distinction — an unregistered opaque pr
 
 **Still rejected, and that is not yet a defect:** a *registered* identity still falls through to `UnsupportedVariant`, because admitting one needs feasibility, a boundary contract, and a cost derived from the declaration rather than from a scheduled region. That is the next step and the last structural one.
 
-**The registry currently reaches the frontier as an empty one** constructed at `pipeline/planning.rs:224`. Threading a caller-supplied registry through the compile path is the remaining plumbing, and `crate::capability` is the pattern to copy — see the note above on why it must not travel on `CompilationRequest`.
+**The empty registry at `pipeline/planning.rs:224` is correct for now, not a placeholder to hurry past.** Threading a caller-supplied one is premature, and the reason is one line up the file:
 
+```rust
+let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
+```
+
+`pipeline/planning.rs:170`. **The frontier's providers are a hardcoded array of Tiler's own governed provider.** There is no caller-supplied provider on this path at all — so there is no provider that could propose an opaque call, and a caller-supplied *registry* would be a set of callable things nothing can name. The registry would be threaded, correct, and unreachable.
+
+**So the ordering is the other way round from what the earlier note implied.** Caller-supplied *providers* come first; a caller-supplied call registry is only meaningful once something outside this crate can propose. That is a larger and separate piece of work — it is the extension point `crate::capability` provides for lowering, and the physical-provider path simply does not have one yet.
+
+*The check, reproducible in one line:* `grep -n 'providers' crates/tiler-compiler/src/pipeline/planning.rs` — four hits, and the definition at 170 is a fixed one-element array.
+
+**Revised remaining work, in order:**
+
+1. Admit a *registered* identity: derive feasibility, boundary contract, and cost from the declaration rather than from a scheduled region. This is the last structural step and needs no caller-supplied anything — a test can register a call and propose it.
+2. Lowering rejects an opaque body with a typed reason.
+3. Numerical guarantees for an opaque call, checked against the region's contract.
+4. Explain records for the typed rejections.
+5. *Separately, and probably its own ticket:* caller-supplied physical providers, after which the call registry becomes reachable and worth threading.
