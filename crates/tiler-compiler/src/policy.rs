@@ -82,6 +82,7 @@ use tiler_ir::schedule::{
 
 use crate::honourability::{DimensionBehaviour, NumericalDimension, NumericalRequirement};
 use crate::request::StrictF32NumericalContract;
+use tiler_ir::semantic::OpKey;
 
 /// The accuracy envelope the relaxed preset authorizes.
 ///
@@ -192,6 +193,7 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         NumericalDimension::InputSubnormals,
         NumericalDimension::ResultSubnormals,
         NumericalDimension::Contraction,
+        NumericalDimension::Reassociation,
         NumericalDimension::SignedZero,
         NumericalDimension::NanAssumptions,
         NumericalDimension::InfinityAssumptions,
@@ -232,6 +234,18 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
             consumes: REDUCTION,
         },
     ]
+}
+
+/// Returns the numerical capabilities declared for one governed operation.
+///
+/// The table's spellings are already checked in both directions against the
+/// governed typed keys by `the_capability_table_names_exactly_the_admitted_operations`.
+pub(crate) fn operation_capability(key: &OpKey) -> Option<OperationNumericalCapability> {
+    let key = key.to_string();
+    operation_capabilities()
+        .iter()
+        .copied()
+        .find(|capability| capability.key == key)
 }
 
 /// Whether any admitted operation can consume `dimension`.
@@ -495,7 +509,7 @@ pub(crate) const fn strict_contract(
 mod tests {
     use super::{
         NumericalPolicyPreset, REALIZED_DIMENSIONS, dimension_requirements, is_consumable,
-        operation_capabilities, unrepresentable_dimension,
+        operation_capabilities, operation_capability, unrepresentable_dimension,
     };
     use crate::honourability::{CANONICAL_DIMENSIONS, DimensionBehaviour, NumericalDimension};
     use crate::request::StrictF32NumericalContract;
@@ -503,7 +517,7 @@ mod tests {
         ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance,
     };
     use tiler_ir::semantic::{
-        add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+        FrozenSemanticRegistry, add_f32_op, constant_f32_op, multiply_f32_op,
     };
 
     /// Every registered preset states a contract this build can actually realize.
@@ -544,17 +558,15 @@ mod tests {
     /// second list.
     #[test]
     fn the_capability_table_names_exactly_the_admitted_operations() {
-        let admitted = [
-            constant_f32_op(),
-            multiply_f32_op(),
-            add_f32_op(),
-            strict_serial_sum_f32_op(),
-        ];
         let mut declared: Vec<_> = operation_capabilities()
             .iter()
             .map(|capability| capability.key().to_owned())
             .collect();
-        let mut expected: Vec<_> = admitted.iter().map(ToString::to_string).collect();
+        let registry = FrozenSemanticRegistry::standard().expect("the governed registry composes");
+        let mut expected: Vec<_> = registry
+            .operation_definitions()
+            .map(|definition| definition.key().to_string())
+            .collect();
         declared.sort();
         expected.sort();
         assert_eq!(declared, expected);
@@ -667,7 +679,8 @@ mod tests {
             constant.effective(NumericalDimension::Reassociation, &ceiling),
             None
         );
-        // The reduction consumes reassociation and takes the ceiling's value.
+        // Ordered same-operation regrouping consumes reassociation and takes
+        // the ceiling's value for both pointwise arithmetic and reductions.
         assert_eq!(
             sum.effective(NumericalDimension::Reassociation, &ceiling),
             Some(DimensionBehaviour::Transform(
@@ -677,6 +690,35 @@ mod tests {
         // It cannot consume contraction: there is no product in its combine step.
         assert_eq!(
             sum.effective(NumericalDimension::Contraction, &ceiling),
+            None
+        );
+    }
+
+    /// Pointwise arithmetic owns the ordered-reassociation decision.
+    #[test]
+    fn pointwise_arithmetic_reassociation_is_capability_gated_and_contract_resolved() {
+        let strict = NumericalPolicyPreset::Strict.contract();
+        let relaxed = NumericalPolicyPreset::Relaxed.contract();
+        for operation in [add_f32_op(), multiply_f32_op()] {
+            let capability =
+                operation_capability(&operation).expect("pointwise arithmetic is admitted");
+            assert_eq!(
+                capability.effective(NumericalDimension::Reassociation, &strict),
+                Some(DimensionBehaviour::Transform(
+                    NumericalPermission::Forbidden
+                ))
+            );
+            assert_eq!(
+                capability.effective(NumericalDimension::Reassociation, &relaxed),
+                Some(DimensionBehaviour::Transform(
+                    NumericalPermission::Permitted
+                ))
+            );
+        }
+        assert_eq!(
+            operation_capability(&constant_f32_op())
+                .expect("constant is admitted")
+                .effective(NumericalDimension::Reassociation, &relaxed),
             None
         );
     }

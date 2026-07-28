@@ -128,6 +128,109 @@ impl fmt::Display for RewriteRuleIdentity {
 pub(crate) const COMMON_SUBEXPRESSION_RULE: Option<RewriteRuleIdentity> =
     RewriteRuleIdentity::new("tiler.normalize", "common-subexpression.v1", 1);
 
+/// Ordered reassociation of the governed binary `f32` addition operation.
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+pub(crate) const ORDERED_REASSOCIATE_ADD_RULE: Option<RewriteRuleIdentity> =
+    RewriteRuleIdentity::new("tiler.algebraic", "ordered-reassociate-add-f32.v1", 1);
+
+/// Ordered reassociation of the governed binary `f32` multiplication operation.
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+pub(crate) const ORDERED_REASSOCIATE_MULTIPLY_RULE: Option<RewriteRuleIdentity> =
+    RewriteRuleIdentity::new("tiler.algebraic", "ordered-reassociate-multiply-f32.v1", 1);
+
+/// Which independently checked guard produced one rule assessment.
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RewriteAssessmentClass {
+    /// Whether the graph and operation definition admit the transformation.
+    Semantic,
+    /// Whether the resolved numerical contract authorizes the transformation.
+    Numerical,
+    /// Whether the rule was enabled for this exploration.
+    Configuration,
+}
+
+/// Stable accepted or declined assessment for one registered rewrite rule.
+///
+/// This is the internal composite-explain payload for the algebraic exploration.
+/// It deliberately carries the full rule identity and keeps semantic,
+/// numerical, and configuration outcomes separate. The live explain surface is
+/// not widened until the exploration is wired into the pipeline.
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RewriteAssessment {
+    rule: RewriteRuleIdentity,
+    class: RewriteAssessmentClass,
+    accepted: bool,
+    reason: &'static str,
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+impl RewriteAssessment {
+    /// Records one successful guard.
+    pub(crate) const fn accepted(
+        rule: RewriteRuleIdentity,
+        class: RewriteAssessmentClass,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            rule,
+            class,
+            accepted: true,
+            reason,
+        }
+    }
+
+    /// Records one declined guard.
+    pub(crate) const fn declined(
+        rule: RewriteRuleIdentity,
+        class: RewriteAssessmentClass,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            rule,
+            class,
+            accepted: false,
+            reason,
+        }
+    }
+
+    /// The assessed rule.
+    pub(crate) const fn rule(self) -> RewriteRuleIdentity {
+        self.rule
+    }
+
+    /// The independent guard class.
+    pub(crate) const fn class(self) -> RewriteAssessmentClass {
+        self.class
+    }
+
+    /// Whether the guard was accepted.
+    pub(crate) const fn is_accepted(self) -> bool {
+        self.accepted
+    }
+
+    /// Stable reason key.
+    pub(crate) const fn reason(self) -> &'static str {
+        self.reason
+    }
+}
+
 /// A rule's own explain records, emitted only if its proposal is adopted.
 ///
 /// # Why the rule supplies a payload instead of recording as it works
@@ -575,6 +678,22 @@ mod tests {
         assert!(
             RewriteRuleIdentity::new("p", "", 0).is_none(),
             "an unnamed rule would render identically to another"
+        );
+    }
+
+    /// Portfolio members have independent stable identities and revisions.
+    #[test]
+    fn ordered_reassociation_rules_are_distinct_and_revisioned() {
+        let add = ORDERED_REASSOCIATE_ADD_RULE.expect("add rule is named");
+        let multiply = ORDERED_REASSOCIATE_MULTIPLY_RULE.expect("multiply rule is named");
+        assert_ne!(add, multiply);
+        assert_eq!(
+            add.to_string(),
+            "tiler.algebraic/ordered-reassociate-add-f32.v1@1"
+        );
+        assert_eq!(
+            multiply.to_string(),
+            "tiler.algebraic/ordered-reassociate-multiply-f32.v1@1"
         );
     }
 

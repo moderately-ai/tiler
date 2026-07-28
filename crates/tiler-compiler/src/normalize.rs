@@ -47,9 +47,10 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{
-    OpKey, OperationAttributes, OperationEffect, ResolvedValueType, SemanticProgram,
-    SemanticProgramBuilder, ValueId,
+    Definition, OpKey, OperationAttributes, OperationEffect, OperationId, ResolvedValueType,
+    SemanticProgram, SemanticProgramBuilder, ValueFact, ValueId, add_f32_op, multiply_f32_op,
 };
 use tiler_ir::shape::Shape;
 
@@ -60,9 +61,11 @@ use crate::explain::{
 };
 use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 use crate::rewrite::{
-    COMMON_SUBEXPRESSION_RULE, ProviderDefect, RewriteProposal, RewriteRuleIdentity,
-    RewriteRuleProvider, RuleExplain, RuleRegistry, collect_proposals,
+    COMMON_SUBEXPRESSION_RULE, ORDERED_REASSOCIATE_ADD_RULE, ORDERED_REASSOCIATE_MULTIPLY_RULE,
+    ProviderDefect, RewriteAssessment, RewriteAssessmentClass, RewriteProposal,
+    RewriteRuleIdentity, RewriteRuleProvider, RuleExplain, RuleRegistry, collect_proposals,
 };
+use crate::{honourability::DimensionBehaviour, policy::operation_capability};
 use std::sync::Arc;
 
 /// Stable identity of the normalization stage rule.
@@ -480,6 +483,625 @@ impl RewriteRuleProvider<SemanticProgram> for CommonSubexpressionRule {
                 .with_explain(Arc::new(SharedValueExplain::new(congruence.merges))),
         ])
     }
+}
+
+/// Which governed ordered-reassociation rules one exploration evaluates.
+///
+/// Configuration is explicit per rule rather than one portfolio switch. A
+/// disabled member still receives a stable configuration assessment, so its
+/// absence cannot be confused with a provider that was never considered.
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AlgebraicRuleConfiguration {
+    add: bool,
+    multiply: bool,
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+impl AlgebraicRuleConfiguration {
+    /// Enables the complete governed algebraic portfolio.
+    pub(crate) const fn all() -> Self {
+        Self {
+            add: true,
+            multiply: true,
+        }
+    }
+
+    /// Enables or disables one governed member.
+    #[must_use]
+    pub(crate) fn with(mut self, rule: RewriteRuleIdentity, enabled: bool) -> Self {
+        if let Some(add) = ORDERED_REASSOCIATE_ADD_RULE
+            && rule == add
+        {
+            self.add = enabled;
+        }
+        if let Some(multiply) = ORDERED_REASSOCIATE_MULTIPLY_RULE
+            && rule == multiply
+        {
+            self.multiply = enabled;
+        }
+        self
+    }
+
+    fn enabled(self, rule: RewriteRuleIdentity) -> bool {
+        if let Some(add) = ORDERED_REASSOCIATE_ADD_RULE
+            && rule == add
+        {
+            return self.add;
+        }
+        if let Some(multiply) = ORDERED_REASSOCIATE_MULTIPLY_RULE
+            && rule == multiply
+        {
+            return self.multiply;
+        }
+        false
+    }
+}
+
+/// Baseline-preserving result of one bounded algebraic exploration.
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+#[derive(Debug)]
+pub(crate) struct AlgebraicExplorationOutcome {
+    baseline: SemanticProgram,
+    alternatives: Vec<RewriteProposal<SemanticProgram>>,
+    assessments: Vec<RewriteAssessment>,
+    budget_stop: Option<(u64, u64)>,
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+impl AlgebraicExplorationOutcome {
+    /// The unchanged input candidate, retained regardless of all rule outcomes.
+    pub(crate) const fn baseline(&self) -> &SemanticProgram {
+        &self.baseline
+    }
+
+    /// Structurally revalidated algebraic alternatives in canonical rule order.
+    pub(crate) fn alternatives(&self) -> &[RewriteProposal<SemanticProgram>] {
+        &self.alternatives
+    }
+
+    /// Stable semantic, numerical, and configuration assessments.
+    pub(crate) fn assessments(&self) -> &[RewriteAssessment] {
+        &self.assessments
+    }
+
+    /// The existing transaction's typed budget stop, if it abandoned the run.
+    pub(crate) const fn budget_stop(&self) -> Option<(u64, u64)> {
+        self.budget_stop
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+#[derive(Clone, Copy, Debug)]
+struct OrderedReassociationRule {
+    identity: RewriteRuleIdentity,
+    operation: fn() -> OpKey,
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+impl OrderedReassociationRule {
+    fn add() -> Self {
+        Self {
+            identity: ORDERED_REASSOCIATE_ADD_RULE.expect("the add rule is named"),
+            operation: add_f32_op,
+        }
+    }
+
+    fn multiply() -> Self {
+        Self {
+            identity: ORDERED_REASSOCIATE_MULTIPLY_RULE.expect("the multiply rule is named"),
+            operation: multiply_f32_op,
+        }
+    }
+
+    fn evaluate(
+        self,
+        program: &SemanticProgram,
+        contract: &StrictF32NumericalContract,
+    ) -> Result<PreparedAlgebraicRule, NormalizeError> {
+        let operation = (self.operation)();
+        let definition = program
+            .semantic_registry()
+            .operation_definition(&operation)
+            .ok_or(NormalizeError::Structure {
+                rule: "algebraic-operation-definition",
+            })?;
+        if !definition
+            .algebraic_capabilities()
+            .declares_ordered_associativity()
+        {
+            return Ok(PreparedAlgebraicRule::declined(
+                operation,
+                RewriteAssessment::declined(
+                    self.identity,
+                    RewriteAssessmentClass::Semantic,
+                    "semantic.ordered-associativity-undeclared",
+                ),
+            ));
+        }
+        let Some(capability) = operation_capability(&operation) else {
+            return Ok(PreparedAlgebraicRule::declined(
+                operation,
+                RewriteAssessment::declined(
+                    self.identity,
+                    RewriteAssessmentClass::Semantic,
+                    "semantic.reassociation-not-consumable",
+                ),
+            ));
+        };
+        let Some(_site) = find_ordered_reassociation(program, &operation)? else {
+            return Ok(PreparedAlgebraicRule::declined(
+                operation,
+                RewriteAssessment::declined(
+                    self.identity,
+                    RewriteAssessmentClass::Semantic,
+                    "semantic.no-left-associated-chain",
+                ),
+            ));
+        };
+        let semantic = RewriteAssessment::accepted(
+            self.identity,
+            RewriteAssessmentClass::Semantic,
+            "semantic.ordered-chain-preserved",
+        );
+        if capability.effective(
+            crate::honourability::NumericalDimension::Reassociation,
+            contract,
+        ) != Some(DimensionBehaviour::Transform(
+            NumericalPermission::Permitted,
+        )) {
+            return Ok(PreparedAlgebraicRule {
+                operation,
+                assessments: vec![
+                    semantic,
+                    RewriteAssessment::declined(
+                        self.identity,
+                        RewriteAssessmentClass::Numerical,
+                        "numerical.reassociation-forbidden",
+                    ),
+                ],
+            });
+        }
+        let numerical = RewriteAssessment::accepted(
+            self.identity,
+            RewriteAssessmentClass::Numerical,
+            "numerical.reassociation-permitted",
+        );
+        let assessments = vec![semantic, numerical];
+        Ok(PreparedAlgebraicRule {
+            assessments,
+            operation,
+        })
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+#[derive(Clone, Debug)]
+struct PreparedAlgebraicRule {
+    assessments: Vec<RewriteAssessment>,
+    operation: OpKey,
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+impl PreparedAlgebraicRule {
+    fn declined(operation: OpKey, assessment: RewriteAssessment) -> Self {
+        Self {
+            operation,
+            assessments: vec![assessment],
+        }
+    }
+}
+
+impl RewriteRuleProvider<SemanticProgram> for PreparedAlgebraicRule {
+    fn identity(&self) -> RewriteRuleIdentity {
+        self.assessments[0].rule()
+    }
+
+    fn propose(
+        &self,
+        program: &SemanticProgram,
+    ) -> Result<Vec<RewriteProposal<SemanticProgram>>, ProviderDefect> {
+        if !self
+            .assessments
+            .iter()
+            .all(|assessment| assessment.is_accepted())
+        {
+            return Ok(Vec::new());
+        }
+        let definition = program
+            .semantic_registry()
+            .operation_definition(&self.operation);
+        if !definition.is_some_and(|definition| {
+            definition
+                .algebraic_capabilities()
+                .declares_ordered_associativity()
+        }) {
+            return Ok(Vec::new());
+        }
+        let Some(site) = find_ordered_reassociation(program, &self.operation).map_err(|error| {
+            ProviderDefect::Failed {
+                rule: self.identity(),
+                reason: error.reason(),
+            }
+        })?
+        else {
+            return Ok(Vec::new());
+        };
+        let candidate = rebuild_ordered_reassociation(program, &site).map_err(|error| {
+            ProviderDefect::Failed {
+                rule: self.identity(),
+                reason: error.reason(),
+            }
+        })?;
+        Ok(vec![
+            RewriteProposal::new(self.identity(), candidate, 1).with_explain(Arc::new(
+                AlgebraicRuleExplain {
+                    assessments: self.assessments.clone(),
+                },
+            )),
+        ])
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+#[derive(Debug)]
+struct AlgebraicRuleExplain {
+    assessments: Vec<RewriteAssessment>,
+}
+
+impl RuleExplain for AlgebraicRuleExplain {
+    fn record(
+        &self,
+        _explain: &mut ExplainWriter,
+        cause: ExplainRecordId,
+    ) -> Result<ExplainRecordId, ExplainError> {
+        debug_assert!(
+            self.assessments
+                .iter()
+                .all(|assessment| assessment.is_accepted()),
+            "only an accepted algebraic proposal may carry an adopted payload"
+        );
+        Ok(cause)
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+#[derive(Clone, Debug)]
+struct OrderedReassociationSite {
+    root: OperationId,
+    operation: OpKey,
+    attributes: OperationAttributes,
+    ordered_leaves: [ValueId; 3],
+    original_result: ValueId,
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+fn find_ordered_reassociation(
+    program: &SemanticProgram,
+    operation: &OpKey,
+) -> Result<Option<OrderedReassociationSite>, NormalizeError> {
+    for root in program
+        .operations()
+        .filter(|candidate| candidate.key() == operation)
+    {
+        let root_operands: Vec<_> = root.operands().collect();
+        let root_results: Vec<_> = root.results().collect();
+        let ([left_result, right], [original_result]) =
+            (root_operands.as_slice(), root_results.as_slice())
+        else {
+            continue;
+        };
+        let Definition::OperationResult {
+            operation: left_operation,
+            ..
+        } = program
+            .value(*left_result)
+            .map_err(|_| NormalizeError::Structure {
+                rule: "algebraic-left-result",
+            })?
+            .definition()
+        else {
+            continue;
+        };
+        let left = program
+            .operation(left_operation)
+            .map_err(|_| NormalizeError::Structure {
+                rule: "algebraic-left-operation",
+            })?;
+        if left.key() != operation || left.attributes() != root.attributes() {
+            continue;
+        }
+        let left_operands: Vec<_> = left.operands().collect();
+        let left_results: Vec<_> = left.results().collect();
+        let ([first, second], [produced_left]) =
+            (left_operands.as_slice(), left_results.as_slice())
+        else {
+            continue;
+        };
+        if produced_left != left_result {
+            continue;
+        }
+        let ordered_leaves = [*first, *second, *right];
+        if !reassociated_signature_is_valid(
+            program,
+            operation,
+            root.attributes(),
+            ordered_leaves,
+            *original_result,
+        )? {
+            continue;
+        }
+        return Ok(Some(OrderedReassociationSite {
+            root: root.id(),
+            operation: operation.clone(),
+            attributes: root.attributes().clone(),
+            ordered_leaves,
+            original_result: *original_result,
+        }));
+    }
+    Ok(None)
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+fn value_fact(program: &SemanticProgram, value: ValueId) -> Result<ValueFact, NormalizeError> {
+    let value = program
+        .value(value)
+        .map_err(|_| NormalizeError::Structure {
+            rule: "algebraic-value",
+        })?;
+    Ok(ValueFact::new(
+        value.resolved_type().clone(),
+        value.shape().clone(),
+    ))
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+fn reassociated_signature_is_valid(
+    program: &SemanticProgram,
+    operation: &OpKey,
+    attributes: &OperationAttributes,
+    [first, second, third]: [ValueId; 3],
+    original_result: ValueId,
+) -> Result<bool, NormalizeError> {
+    let second = value_fact(program, second)?;
+    let third = value_fact(program, third)?;
+    let Ok(right_results) =
+        program
+            .semantic_registry()
+            .infer_operation(operation, &[second, third], attributes)
+    else {
+        return Ok(false);
+    };
+    let [right] = right_results.as_slice() else {
+        return Ok(false);
+    };
+    let first = value_fact(program, first)?;
+    let Ok(outer_results) =
+        program
+            .semantic_registry()
+            .infer_operation(operation, &[first, right.clone()], attributes)
+    else {
+        return Ok(false);
+    };
+    let [outer] = outer_results.as_slice() else {
+        return Ok(false);
+    };
+    let original = value_fact(program, original_result)?;
+    Ok(outer.resolved_type() == original.resolved_type() && outer.shape() == original.shape())
+}
+
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+fn rebuild_ordered_reassociation(
+    program: &SemanticProgram,
+    site: &OrderedReassociationSite,
+) -> Result<SemanticProgram, NormalizeError> {
+    let ordinals: HashMap<ValueId, usize> = program
+        .values()
+        .enumerate()
+        .map(|(ordinal, value)| (value.id(), ordinal))
+        .collect();
+    let mut builder = SemanticProgramBuilder::try_new(program.semantic_registry().clone())
+        .map_err(|_| NormalizeError::Rebuild {
+            rule: "algebraic-builder-create",
+        })?;
+    let mut mapped = vec![None; program.value_count()];
+    for input in program.inputs() {
+        let value = program
+            .value(input.value())
+            .map_err(|_| NormalizeError::Structure {
+                rule: "algebraic-input-value",
+            })?;
+        let rebuilt = builder
+            .input_resolved(
+                input.key().clone(),
+                value.shape().clone(),
+                value.resolved_type().clone(),
+            )
+            .map_err(|_| NormalizeError::Rebuild {
+                rule: "algebraic-input",
+            })?;
+        mapped[ordinal(&ordinals, input.value())?] = Some(rebuilt);
+    }
+    let lookup = |value: ValueId, mapped: &[Option<ValueId>]| {
+        mapped
+            .get(ordinal(&ordinals, value)?)
+            .copied()
+            .flatten()
+            .ok_or(NormalizeError::InvalidRewrite {
+                rule: "algebraic-unmapped-value",
+            })
+    };
+    for operation in program.operations() {
+        if operation.id() == site.root {
+            let [first, second, third] = site.ordered_leaves;
+            let right = builder
+                .apply(
+                    site.operation.clone(),
+                    site.attributes.clone(),
+                    &[lookup(second, &mapped)?, lookup(third, &mapped)?],
+                )
+                .map_err(|_| NormalizeError::Rebuild {
+                    rule: "algebraic-right-operation",
+                })?;
+            let [right] = right.as_slice() else {
+                return Err(NormalizeError::InvalidRewrite {
+                    rule: "algebraic-right-result-arity",
+                });
+            };
+            let outer = builder
+                .apply(
+                    site.operation.clone(),
+                    site.attributes.clone(),
+                    &[lookup(first, &mapped)?, *right],
+                )
+                .map_err(|_| NormalizeError::Rebuild {
+                    rule: "algebraic-outer-operation",
+                })?;
+            let [outer] = outer.as_slice() else {
+                return Err(NormalizeError::InvalidRewrite {
+                    rule: "algebraic-outer-result-arity",
+                });
+            };
+            mapped[ordinal(&ordinals, site.original_result)?] = Some(*outer);
+            continue;
+        }
+        let operands = operation
+            .operands()
+            .map(|operand| lookup(operand, &mapped))
+            .collect::<Result<Vec<_>, _>>()?;
+        let rebuilt = builder
+            .apply(
+                operation.key().clone(),
+                operation.attributes().clone(),
+                &operands,
+            )
+            .map_err(|_| NormalizeError::Rebuild {
+                rule: "algebraic-original-operation",
+            })?;
+        let original_results: Vec<_> = operation.results().collect();
+        if rebuilt.len() != original_results.len() {
+            return Err(NormalizeError::InvalidRewrite {
+                rule: "algebraic-result-arity",
+            });
+        }
+        for (original, rebuilt) in original_results.into_iter().zip(rebuilt) {
+            mapped[ordinal(&ordinals, original)?] = Some(rebuilt);
+        }
+    }
+    for output in program.outputs() {
+        builder
+            .output_resolved(output.key().clone(), lookup(output.value(), &mapped)?)
+            .map_err(|_| NormalizeError::Rebuild {
+                rule: "algebraic-output",
+            })?;
+    }
+    builder.build().map_err(|_| NormalizeError::Rebuild {
+        rule: "algebraic-semantic-verification",
+    })
+}
+
+/// Explores the governed algebraic portfolio without choosing or routing it.
+///
+/// Every enabled rule contributes at most one whole-program proposal, so the
+/// alternative count is bounded by the registered rule count rather than by
+/// program size. The unchanged baseline is always retained. All proposals pass
+/// through [`run_rewrite_engine`], which remains the sole revalidation and
+/// budget authority.
+#[allow(
+    dead_code,
+    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
+)]
+pub(crate) fn explore_algebraic_alternatives(
+    program: &SemanticProgram,
+    budgets: DeterministicBudgets,
+    contract: StrictF32NumericalContract,
+    configuration: AlgebraicRuleConfiguration,
+) -> Result<AlgebraicExplorationOutcome, NormalizeError> {
+    let mut registry = RuleRegistry::new();
+    let mut assessments = Vec::new();
+    for rule in [
+        OrderedReassociationRule::add(),
+        OrderedReassociationRule::multiply(),
+    ] {
+        if !configuration.enabled(rule.identity) {
+            assessments.push(RewriteAssessment::declined(
+                rule.identity,
+                RewriteAssessmentClass::Configuration,
+                "configuration.rule-disabled",
+            ));
+            continue;
+        }
+        let prepared = rule.evaluate(program, &contract)?;
+        assessments.extend_from_slice(&prepared.assessments);
+        registry
+            .register(Box::new(prepared))
+            .map_err(|_| NormalizeError::Structure {
+                rule: "algebraic-rule-registration",
+            })?;
+    }
+    let (alternatives, budget_stop) = match run_rewrite_engine(&registry, program, budgets)
+        .map_err(|failure| match failure {
+            EngineFailure::Provider(ProviderDefect::Failed { reason, .. })
+            | EngineFailure::Revalidation { reason, .. } => {
+                NormalizeError::InvalidRewrite { rule: reason }
+            }
+            EngineFailure::Provider(ProviderDefect::Misattributed { .. }) => {
+                NormalizeError::InvalidRewrite {
+                    rule: "algebraic-misattributed-proposal",
+                }
+            }
+        })? {
+        EngineRun::Adopted(alternatives) => (alternatives, None),
+        EngineRun::BudgetStopped { limit, demand } => (Vec::new(), Some((limit, demand))),
+    };
+    Ok(AlgebraicExplorationOutcome {
+        baseline: program.clone(),
+        alternatives,
+        assessments,
+        budget_stop,
+    })
 }
 
 fn detect_shared_values(program: &SemanticProgram) -> Result<Congruence, NormalizeError> {
@@ -1092,8 +1714,8 @@ mod tests {
     use super::*;
     use crate::request::{CompilationRequest, verify_request};
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
-        StrictSerialF32Sum,
+        CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply,
+        InputKey, OutputKey, SemanticProgramBuilder, StrictSerialF32Sum, Value,
     };
     use tiler_ir::shape::{Axis, Shape};
     use tiler_reference::{
@@ -1188,6 +1810,454 @@ mod tests {
                 .collect(),
             _ => panic!("expected a dense f32 reference output"),
         }
+    }
+
+    fn algebraic_chain(operation: &OpKey, leaves: &[f32]) -> SemanticProgram {
+        assert!((3..=6).contains(&leaves.len()));
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let values: Vec<_> = leaves
+            .iter()
+            .map(|value| F32Constant::apply(&mut builder, value.to_bits()).unwrap())
+            .collect();
+        let mut values = values.into_iter();
+        let first = values.next().unwrap();
+        let second = values.next().unwrap();
+        let mut accumulated = apply_binary(operation, &mut builder, first, second);
+        for value in values {
+            accumulated = apply_binary(operation, &mut builder, accumulated, value);
+        }
+        builder
+            .output(OutputKey::new("result").unwrap(), accumulated)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn portfolio_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let [
+            add_first,
+            add_second,
+            add_third,
+            multiply_first,
+            multiply_second,
+            multiply_third,
+        ] = [
+            1.0e20_f32,
+            -1.0e20,
+            1.0,
+            2.0_f32.powi(100),
+            2.0_f32.powi(50),
+            2.0_f32.powi(-50),
+        ]
+        .map(|value| F32Constant::apply(&mut builder, value.to_bits()).unwrap());
+        let add_left = F32Add::apply(&mut builder, add_first, add_second).unwrap();
+        let add = F32Add::apply(&mut builder, add_left, add_third).unwrap();
+        let multiply_left =
+            F32Multiply::apply(&mut builder, multiply_first, multiply_second).unwrap();
+        let multiply = F32Multiply::apply(&mut builder, multiply_left, multiply_third).unwrap();
+        builder.output(OutputKey::new("add").unwrap(), add).unwrap();
+        builder
+            .output(OutputKey::new("multiply").unwrap(), multiply)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn apply_binary(
+        operation: &OpKey,
+        builder: &mut SemanticProgramBuilder,
+        left: Value<F32>,
+        right: Value<F32>,
+    ) -> Value<F32> {
+        if operation == &add_f32_op() {
+            F32Add::apply(builder, left, right).unwrap()
+        } else if operation == &multiply_f32_op() {
+            F32Multiply::apply(builder, left, right).unwrap()
+        } else {
+            panic!("fixture asked for an unsupported binary operation")
+        }
+    }
+
+    fn output_value(program: &SemanticProgram, key: &str) -> ValueId {
+        program
+            .outputs()
+            .find(|output| output.key().as_str() == key)
+            .expect("named output")
+            .value()
+    }
+
+    fn ordered_constant_leaves(
+        program: &SemanticProgram,
+        operation: &OpKey,
+        value: ValueId,
+    ) -> Vec<u32> {
+        let Definition::OperationResult {
+            operation: producer,
+            ..
+        } = program.value(value).unwrap().definition()
+        else {
+            panic!("an algebraic output must be operation-produced")
+        };
+        let producer = program.operation(producer).unwrap();
+        if producer.key() == operation {
+            return producer
+                .operands()
+                .flat_map(|operand| ordered_constant_leaves(program, operation, operand))
+                .collect();
+        }
+        assert_eq!(producer.key(), &tiler_ir::semantic::constant_f32_op());
+        let Some(CanonicalValueView::FloatBits(bits)) = producer
+            .attributes()
+            .get(F32_CONSTANT_BITS_ATTRIBUTE)
+            .map(tiler_ir::semantic::CanonicalValue::view)
+        else {
+            panic!("fixture leaf must be an f32 constant")
+        };
+        vec![u32::from_be_bytes(
+            <[u8; 4]>::try_from(bits.bits()).unwrap(),
+        )]
+    }
+
+    #[derive(Clone, Debug)]
+    enum Grouping {
+        Leaf(usize),
+        Pair(Box<Self>, Box<Self>),
+    }
+
+    fn all_ordered_groupings(start: usize, end: usize) -> Vec<Grouping> {
+        if end - start == 1 {
+            return vec![Grouping::Leaf(start)];
+        }
+        let mut groupings = Vec::new();
+        for split in (start + 1)..end {
+            for left in all_ordered_groupings(start, split) {
+                for right in all_ordered_groupings(split, end) {
+                    groupings.push(Grouping::Pair(Box::new(left.clone()), Box::new(right)));
+                }
+            }
+        }
+        groupings
+    }
+
+    fn build_grouping(
+        grouping: &Grouping,
+        operation: &OpKey,
+        builder: &mut SemanticProgramBuilder,
+        leaves: &[Value<F32>],
+    ) -> Value<F32> {
+        match grouping {
+            Grouping::Leaf(index) => leaves[*index],
+            Grouping::Pair(left, right) => {
+                let left = build_grouping(left, operation, builder, leaves);
+                let right = build_grouping(right, operation, builder, leaves);
+                apply_binary(operation, builder, left, right)
+            }
+        }
+    }
+
+    fn exact_ordered_result_set(operation: &OpKey, leaves: &[u32]) -> Vec<u32> {
+        assert!(
+            (3..=6).contains(&leaves.len()),
+            "the exhaustive result-set oracle is deliberately bounded"
+        );
+        let evaluator = ReferenceEvaluator::standard().unwrap();
+        let mut results = Vec::new();
+        for grouping in all_ordered_groupings(0, leaves.len()) {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let values: Vec<_> = leaves
+                .iter()
+                .map(|bits| F32Constant::apply(&mut builder, *bits).unwrap())
+                .collect();
+            let result = build_grouping(&grouping, operation, &mut builder, &values);
+            builder
+                .output(OutputKey::new("result").unwrap(), result)
+                .unwrap();
+            let program = builder.build().unwrap();
+            let evaluated = evaluator.evaluate(&program, &[]).unwrap();
+            let TensorPayloadView::Dense(elements) = evaluated[0].payload() else {
+                panic!("f32 output is dense")
+            };
+            results.push(u32::from_be_bytes(
+                <[u8; 4]>::try_from(elements[0].as_bytes()).unwrap(),
+            ));
+        }
+        results.sort_unstable();
+        results.dedup();
+        results
+    }
+
+    fn evaluate_scalar_output(program: &SemanticProgram, key: &str) -> u32 {
+        let evaluator = ReferenceEvaluator::standard().unwrap();
+        let outputs = evaluator.evaluate(program, &[]).unwrap();
+        let index = program
+            .outputs()
+            .position(|output| output.key().as_str() == key)
+            .unwrap();
+        let TensorPayloadView::Dense(elements) = outputs[index].payload() else {
+            panic!("f32 output is dense")
+        };
+        u32::from_be_bytes(<[u8; 4]>::try_from(elements[0].as_bytes()).unwrap())
+    }
+
+    #[test]
+    fn algebraic_rules_are_separate_baseline_preserving_alternatives() {
+        let program = portfolio_program();
+        let outcome = explore_algebraic_alternatives(
+            &program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed_relaxed(),
+            AlgebraicRuleConfiguration::all(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome.baseline().semantic_identity(),
+            program.semantic_identity(),
+            "exploration changed or dropped the unchanged baseline"
+        );
+        assert_eq!(outcome.alternatives().len(), 2);
+        assert_eq!(
+            outcome
+                .alternatives()
+                .iter()
+                .map(RewriteProposal::rule)
+                .collect::<Vec<_>>(),
+            [
+                ORDERED_REASSOCIATE_ADD_RULE.unwrap(),
+                ORDERED_REASSOCIATE_MULTIPLY_RULE.unwrap(),
+            ],
+            "the two algebraic alternatives lost separate canonical identities"
+        );
+        assert!(
+            outcome
+                .alternatives()
+                .iter()
+                .all(|alternative| alternative.candidate().operation_count()
+                    == program.operation_count()),
+            "reassociation retained its replaced left child as dead work"
+        );
+        assert!(
+            outcome
+                .alternatives()
+                .iter()
+                .all(|alternative| alternative.explain().is_some()),
+            "an accepted algebraic alternative lost its composite explain payload"
+        );
+    }
+
+    #[test]
+    fn strict_and_flush_contracts_decline_numerically_after_semantic_acceptance() {
+        let program = algebraic_chain(&add_f32_op(), &[1.0e20, -1.0e20, 1.0]);
+        for contract in [
+            StrictF32NumericalContract::governed(),
+            StrictF32NumericalContract::governed_flush_to_zero(),
+        ] {
+            let outcome = explore_algebraic_alternatives(
+                &program,
+                DeterministicBudgets::governed(),
+                contract,
+                AlgebraicRuleConfiguration::all(),
+            )
+            .unwrap();
+            assert!(outcome.alternatives().is_empty());
+            let add: Vec<_> = outcome
+                .assessments()
+                .iter()
+                .copied()
+                .filter(|assessment| assessment.rule() == ORDERED_REASSOCIATE_ADD_RULE.unwrap())
+                .collect();
+            assert_eq!(add.len(), 2);
+            assert_eq!(add[0].class(), RewriteAssessmentClass::Semantic);
+            assert!(add[0].is_accepted());
+            assert_eq!(add[1].class(), RewriteAssessmentClass::Numerical);
+            assert!(!add[1].is_accepted());
+            assert_eq!(add[1].reason(), "numerical.reassociation-forbidden");
+        }
+    }
+
+    #[test]
+    fn a_nonmatching_program_declines_semantically_without_a_numerical_claim() {
+        let program = algebraic_chain(&add_f32_op(), &[1.0, 2.0, 3.0]);
+        let outcome = explore_algebraic_alternatives(
+            &program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed_relaxed(),
+            AlgebraicRuleConfiguration::all().with(ORDERED_REASSOCIATE_ADD_RULE.unwrap(), false),
+        )
+        .unwrap();
+        let multiply: Vec<_> = outcome
+            .assessments()
+            .iter()
+            .copied()
+            .filter(|assessment| assessment.rule() == ORDERED_REASSOCIATE_MULTIPLY_RULE.unwrap())
+            .collect();
+        assert_eq!(multiply.len(), 1);
+        assert_eq!(multiply[0].class(), RewriteAssessmentClass::Semantic);
+        assert_eq!(multiply[0].reason(), "semantic.no-left-associated-chain");
+        assert!(!multiply[0].is_accepted());
+    }
+
+    #[test]
+    fn a_prepared_provider_rebuilds_only_from_the_program_it_is_given() {
+        let evaluated = algebraic_chain(&add_f32_op(), &[1.0e20, -1.0e20, 1.0]);
+        let provider = OrderedReassociationRule::add()
+            .evaluate(&evaluated, &StrictF32NumericalContract::governed_relaxed())
+            .unwrap();
+
+        let nonmatching = algebraic_chain(&multiply_f32_op(), &[2.0, 3.0, 4.0]);
+        assert!(
+            provider.propose(&nonmatching).unwrap().is_empty(),
+            "the provider returned the candidate cached from its evaluation program"
+        );
+
+        let supplied = algebraic_chain(&add_f32_op(), &[4.0, 5.0, 6.0]);
+        let proposals = provider.propose(&supplied).unwrap();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(
+            ordered_constant_leaves(
+                proposals[0].candidate(),
+                &add_f32_op(),
+                output_value(proposals[0].candidate(), "result")
+            ),
+            [4.0_f32.to_bits(), 5.0_f32.to_bits(), 6.0_f32.to_bits()],
+            "the candidate did not derive from the program supplied to propose"
+        );
+    }
+
+    #[test]
+    fn disabling_add_leaves_multiply_enabled_and_explained() {
+        let program = portfolio_program();
+        let configuration =
+            AlgebraicRuleConfiguration::all().with(ORDERED_REASSOCIATE_ADD_RULE.unwrap(), false);
+        let outcome = explore_algebraic_alternatives(
+            &program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed_relaxed(),
+            configuration,
+        )
+        .unwrap();
+        assert_eq!(outcome.alternatives().len(), 1);
+        assert_eq!(
+            outcome.alternatives()[0].rule(),
+            ORDERED_REASSOCIATE_MULTIPLY_RULE.unwrap()
+        );
+        assert!(outcome.assessments().iter().any(|assessment| {
+            assessment.rule() == ORDERED_REASSOCIATE_ADD_RULE.unwrap()
+                && assessment.class() == RewriteAssessmentClass::Configuration
+                && assessment.reason() == "configuration.rule-disabled"
+                && !assessment.is_accepted()
+        }));
+    }
+
+    #[test]
+    fn algebraic_search_uses_the_existing_observable_budget_stop() {
+        let program = portfolio_program();
+        let mut budgets = DeterministicBudgets::governed();
+        budgets.normalization_rewrites = 0;
+        let outcome = explore_algebraic_alternatives(
+            &program,
+            budgets,
+            StrictF32NumericalContract::governed_relaxed(),
+            AlgebraicRuleConfiguration::all(),
+        )
+        .unwrap();
+        assert_eq!(outcome.budget_stop(), Some((0, 1)));
+        assert!(outcome.alternatives().is_empty());
+        assert_eq!(
+            outcome.baseline().semantic_identity(),
+            program.semantic_identity()
+        );
+    }
+
+    #[test]
+    fn a_shared_left_child_is_retained_for_its_other_observer() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let first = F32Constant::apply(&mut builder, 1.0e20_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, (-1.0e20_f32).to_bits()).unwrap();
+        let third = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let left = F32Add::apply(&mut builder, first, second).unwrap();
+        let root = F32Add::apply(&mut builder, left, third).unwrap();
+        builder
+            .output(OutputKey::new("left").unwrap(), left)
+            .unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let program = builder.build().unwrap();
+
+        let outcome = explore_algebraic_alternatives(
+            &program,
+            DeterministicBudgets::governed(),
+            StrictF32NumericalContract::governed_relaxed(),
+            AlgebraicRuleConfiguration::all(),
+        )
+        .unwrap();
+        let rewritten = outcome
+            .alternatives()
+            .iter()
+            .find(|alternative| alternative.rule() == ORDERED_REASSOCIATE_ADD_RULE.unwrap())
+            .unwrap()
+            .candidate();
+
+        assert_eq!(
+            rewritten.operation_count(),
+            program.operation_count() + 1,
+            "the observed left child was dropped instead of retained"
+        );
+        assert_eq!(
+            evaluate_scalar_output(rewritten, "left"),
+            evaluate_scalar_output(&program, "left")
+        );
+    }
+
+    #[test]
+    fn reassociated_outputs_are_exact_members_of_the_ordered_result_set() {
+        for (operation, leaves) in [
+            (add_f32_op(), vec![1.0e20_f32, -1.0e20, 1.0]),
+            (
+                multiply_f32_op(),
+                vec![2.0_f32.powi(100), 2.0_f32.powi(50), 2.0_f32.powi(-50)],
+            ),
+        ] {
+            let original = algebraic_chain(&operation, &leaves);
+            let original_order =
+                ordered_constant_leaves(&original, &operation, output_value(&original, "result"));
+            let outcome = explore_algebraic_alternatives(
+                &original,
+                DeterministicBudgets::governed(),
+                StrictF32NumericalContract::governed_relaxed(),
+                AlgebraicRuleConfiguration::all(),
+            )
+            .unwrap();
+            let rule = if operation == add_f32_op() {
+                ORDERED_REASSOCIATE_ADD_RULE.unwrap()
+            } else {
+                ORDERED_REASSOCIATE_MULTIPLY_RULE.unwrap()
+            };
+            let rewritten = outcome
+                .alternatives()
+                .iter()
+                .find(|alternative| alternative.rule() == rule)
+                .unwrap()
+                .candidate();
+            let rewritten_order =
+                ordered_constant_leaves(rewritten, &operation, output_value(rewritten, "result"));
+            assert_eq!(
+                rewritten_order, original_order,
+                "reassociation changed the ordered leaf sequence"
+            );
+            let result_set = exact_ordered_result_set(&operation, &original_order);
+            let actual = evaluate_scalar_output(rewritten, "result");
+            assert!(
+                result_set.contains(&actual),
+                "rewritten bits {actual:#010x} are not in the exact ordered result set {result_set:#010x?}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "the exhaustive result-set oracle is deliberately bounded")]
+    fn exact_result_set_oracle_refuses_an_unreviewed_leaf_count() {
+        exact_ordered_result_set(&add_f32_op(), &[0; 7]);
     }
 
     #[test]
