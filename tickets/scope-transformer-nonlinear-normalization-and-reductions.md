@@ -42,3 +42,13 @@ Every nonlinear, normalization, mask, and reduction requirement of the selected
 workload has a precise contract or a named unresolved decision; Metal
 feasibility boundaries are recorded; and all justified delivery work has
 dependency-ordered tickets.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L3′** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** L2 lists the non-linearities, normalization, and reductions the workload needs.
+
+**Rests on:** L2.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.

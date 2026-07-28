@@ -49,3 +49,13 @@ One bounded workload profile and its success envelope are durably recorded;
 the selection evidence and rejected candidates are reproducible; and every
 newly exposed subsystem requirement is either linked to an existing owner,
 filed as a scoped ticket, or explicitly deferred with a trigger.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L1** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** `scope-optimized-metal-lm-inference` is accepted.
+
+**Rests on:** nothing — it is the ladder's first rung.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.

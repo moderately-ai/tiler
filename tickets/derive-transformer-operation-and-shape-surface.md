@@ -42,3 +42,13 @@ The selected workload has a complete, reproducible capability inventory; every
 requirement maps to implemented support, an existing ticket, a newly filed
 vertical, or an explicit deferral; and the operation-family matrix and ticket
 graph agree.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L2** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** L1 names a workload with exact shapes and dtypes.
+
+**Rests on:** L1.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.

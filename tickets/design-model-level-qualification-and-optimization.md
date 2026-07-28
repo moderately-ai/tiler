@@ -43,3 +43,13 @@ The complete-model vertical has a reproducible correctness and performance
 qualification plan; every metric names an environment and procedure; baseline
 and quantized paths can be compared without conflating claims; and justified
 follow-up work is represented by scoped tickets.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L8** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** L1 and L6 both deliver.
+
+**Rests on:** L1 and L6.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.

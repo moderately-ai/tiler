@@ -42,3 +42,13 @@ One supported model can be described end to end without an unowned boundary;
 the frontend/runtime dependency direction remains consumer-independent; every
 unsupported case has an explicit behavior; and the complete-model vertical is
 represented by scoped, dependency-ordered tickets.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L6** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** L2 and L5 both deliver.
+
+**Rests on:** L2 and L5.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.

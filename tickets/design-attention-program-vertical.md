@@ -45,3 +45,13 @@ success is a complete attention result compared with the normative reference.
 The complete attention program and its correctness boundaries are durably
 specified; at least one realizable program decomposition survives; all missing
 capabilities have scoped tickets; and unsupported workload cases fail closed.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L4** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** both L3 and L3′ deliver.
+
+**Rests on:** L3 and L3′.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.

@@ -45,3 +45,13 @@ One bounded profile is selected from reproducible evidence or every candidate
 is rejected with explicit reasons; the generic quantized-value reservation is
 connected to a model-visible execution path; and all surviving work has
 dependency-ordered tickets.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L7** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** L1 and L3 deliver **and** milestone 2Q supplies the quantized-value vertical proof.
+
+**Rests on:** L1, L3, and milestone 2Q.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.

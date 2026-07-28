@@ -362,6 +362,50 @@ Two questions in this framing are genuine product and architecture choices where
 
 The proposed Rust/Metal integration does not require runtime source JIT.
 
+## Optimized Metal language-model inference
+
+The durable capability map from the current bounded Metal proof to a compiled, optimized language-model inference pipeline. **This section authorizes nothing.** Like the support matrix below it, it is a visibility artefact: a rung listed here is a claim about what evidence exists today, and every step is separately scheduled work gated on the evidence beneath it.
+
+**The goal is inference, not training**, and that is a scope position rather than an omission. Training needs a gradient program, an optimizer state, and a mutation model that none of the contracts here admit; nothing below reserves a seam for it. Reconsider only if Tom explicitly broadens the product goal.
+
+### The ladder
+
+Each rung presupposes the one below it. The maturity column uses the same four `AGENTS.md` claims the support matrix uses, so a reader can compare the two without translating.
+
+| Step | Capability | Owning ticket | Activation trigger | Maturity today |
+| --- | --- | --- | --- | --- |
+| L1 | A representative workload is named, with its exact model, shapes, and dtypes | [`define-first-metal-lm-workload`](../tickets/define-first-metal-lm-workload.md) | this map is accepted | none |
+| L2 | The tensor operation and shape surface that workload requires is derived | [`derive-transformer-operation-and-shape-surface`](../tickets/derive-transformer-operation-and-shape-surface.md) | L1 names a workload | none |
+| L3 | One contraction runs end to end on Metal | [`spike-first-metal-contraction-vertical`](../tickets/spike-first-metal-contraction-vertical.md) | L2 lists the contraction shapes, and milestone 6 settles the keyed-family question below | none |
+| L3′ | Transformer non-linearities, normalization, and reductions are scoped | [`scope-transformer-nonlinear-normalization-and-reductions`](../tickets/scope-transformer-nonlinear-normalization-and-reductions.md) | L2 lists them; runs beside L3 | none |
+| L4 | A complete attention program and transformer block | [`design-attention-program-vertical`](../tickets/design-attention-program-vertical.md) | L3 and L3′ both deliver | none |
+| L5 | Stateful prefill and token decoding | [`design-autoregressive-state-and-kv-cache`](../tickets/design-autoregressive-state-and-kv-cache.md) | L4 delivers a block | none |
+| L6 | Complete supported-model execution, including ingestion | [`design-model-ingestion-and-complete-execution`](../tickets/design-model-ingestion-and-complete-execution.md) | L2 and L5 deliver | none |
+| L7 | A selected quantized model profile | [`scope-first-quantized-lm-profile`](../tickets/scope-first-quantized-lm-profile.md) | L1 and L3 deliver; milestone 2Q supplies the quantized-value proof | none |
+| L8 | Model-level correctness and performance qualification | [`design-model-level-qualification-and-optimization`](../tickets/design-model-level-qualification-and-optimization.md) | L1 and L6 deliver | none |
+
+**Every rung is at "none" today, and that is the honest state.** The support matrix records four strict-`f32` operations as the supported profile; a transformer needs contraction, softmax, layer normalization, and a residual add, none of which is above R2. Nothing in this ladder is partially built.
+
+### What the ladder rests on that is already scheduled elsewhere
+
+These are prerequisites, not duplicates, and the ladder does not restate them:
+
+- **Contraction as a keyed family.** Milestone 6 owns the open question of whether a contraction is one keyed family carrying an index-structure attribute or a set of fixed-arity keys per shape class. L3 cannot be specified until it is settled, because the answer decides how many governed keys an attention einsum needs.
+- **The dtype universe.** [`enumerate-the-mature-tensor-dtype-taxonomy`](../tickets/enumerate-the-mature-tensor-dtype-taxonomy.md) and the [mature dtype taxonomy](research/numerics/mature-dtype-taxonomy.md) own it. L7 depends on it and does not re-derive it.
+- **Quantized values.** Milestone 2Q owns the quantized-value vertical proof that L7 needs.
+- **Numerical contracts per family.** [Numerical semantics](numerical-semantics.md) and the [operation conformance matrix](research/numerics/operation-conformance-matrix.md) own what each family's contract must answer.
+
+### Explicitly deferred, with reconsideration triggers
+
+Recorded so that absence is a tracked position rather than an oversight. None has a reserved seam; each would be new architectural work.
+
+| Deferred capability | Why | Reconsideration trigger |
+| --- | --- | --- |
+| Training | Needs a gradient program, optimizer state, and a mutation model no contract here admits | Tom broadens the product goal beyond inference |
+| Distributed execution | The physical contracts model one device's placement, memory domains, and transfers; multi-device is a different feasibility problem | A workload at L1 does not fit one device's memory |
+| Speculative decoding | Needs two models and a divergence policy; L5 assumes one autoregressive state | L5 delivers and measured decode latency is the binding constraint |
+| Unconstrained dynamic shapes | The sourced-extent profile bounds symbolic extents deliberately; unconstrained shapes reopen bounds proofs and index-domain feasibility | A workload at L1 requires an extent no `ShapeEnv` bound can express |
+
 ## Operation-family support matrix
 
 Wide operation support is a durable project goal, and the first supported profile is four strict-`f32` operations. This section exists so that the narrowness is a tracked position rather than an accidental one. It is a visibility artefact: listing a family authorizes nothing, and a rung recorded here is a claim about evidence that exists today rather than about intent. Widening any row is separate, explicitly scheduled work.

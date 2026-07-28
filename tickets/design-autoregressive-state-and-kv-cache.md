@@ -40,3 +40,13 @@ Ownership and correctness invariants are explicit at every layer; the design
 can reject invalid state before program work; prefill and decode have bounded
 user-visible outcomes; and the necessary delivery tickets are linked and
 dependency ordered.
+
+## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
+
+**Rung L5** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
+
+**Active when:** L4 delivers a complete transformer block.
+
+**Rests on:** L4.
+
+Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
