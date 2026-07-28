@@ -33,7 +33,8 @@
 //! second predicate over the same question.
 
 use crate::boundary::{
-    AvailabilityRequirement, MaterializationForm, RequiredProperties, RequiredProperty,
+    AvailabilityGuarantee, AvailabilityRequirement, GuaranteedProperties, GuaranteedProperty,
+    MaterializationForm, RequiredProperties, RequiredProperty, VisibilityGuarantee,
     VisibilityRequirement,
 };
 use crate::call_abi::{CallAbi, CallParameter, ParameterLayout, ParameterRole};
@@ -255,6 +256,76 @@ pub(crate) fn required_properties_for(
     .ok()
 }
 
+/// Why a guarantee could not be derived for a parameter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the guarantee-derivation outcome; lands with the derivation ahead of the admission"
+)]
+pub(crate) enum GuaranteeError {
+    /// The parameter is read-only, so there is nothing it guarantees.
+    NotAWrite,
+    /// The placement admits more than one memory domain, so the call has not
+    /// said which one it writes into.
+    ///
+    /// A requirement names an admitted *set* and a guarantee names the one
+    /// domain an allocation is in — `crate::boundary` documents that asymmetry
+    /// deliberately. A call admitting two and guaranteeing neither has not
+    /// described where its output lives, and picking one would be inventing the
+    /// answer.
+    AmbiguousWriteDomain,
+}
+
+/// The typed properties a call guarantees of the tensor bound to one write
+/// parameter.
+///
+/// The mirror of [`required_properties_for`], and the differences are the ones
+/// the boundary vocabulary makes deliberately:
+///
+/// - the layout is the spec's *guaranteed* side;
+/// - availability is `AfterOwnDispatch` and visibility `CoherentOnProducingAffinity`,
+///   which is what producing a value means;
+/// - the memory domain is one class, not a set — see [`GuaranteeError::AmbiguousWriteDomain`];
+/// - **materialization comes from the effects here**, and only here. `Aliasing`
+///   is a statement about *results*, so `MayAliasInputs` makes this an
+///   `AliasView` and `Distinct` makes it a `MaterializedBuffer`. The requirement
+///   side does not consult it, because it says nothing about incoming values.
+#[allow(
+    dead_code,
+    reason = "the guarantee half of the boundary derivation; lands with its tests ahead of the admission"
+)]
+pub(crate) fn guaranteed_properties_for(
+    parameter: &CallParameter,
+    effects: CallEffects,
+    placement: &CallPlacement,
+) -> Result<GuaranteedProperties, GuaranteeError> {
+    let layout = match parameter.spec().layout {
+        ParameterLayout::Guaranteed(layout)
+        | ParameterLayout::Both {
+            guarantees: layout, ..
+        } => layout,
+        ParameterLayout::Required(_) => return Err(GuaranteeError::NotAWrite),
+    };
+    let [domain] = placement.domains().classes() else {
+        return Err(GuaranteeError::AmbiguousWriteDomain);
+    };
+    let materialization = match effects.aliasing() {
+        Aliasing::Distinct => MaterializationForm::MaterializedBuffer,
+        Aliasing::MayAliasInputs => MaterializationForm::AliasView,
+    };
+    GuaranteedProperties::new([
+        GuaranteedProperty::StorageLayout(layout),
+        GuaranteedProperty::StorageEncoding(parameter.spec().encoding),
+        GuaranteedProperty::Alignment(parameter.spec().alignment),
+        GuaranteedProperty::Materialization(materialization),
+        GuaranteedProperty::ExecutionAffinity(placement.affinity()),
+        GuaranteedProperty::MemoryDomain(*domain),
+        GuaranteedProperty::Availability(AvailabilityGuarantee::AfterOwnDispatch),
+        GuaranteedProperty::Visibility(VisibilityGuarantee::CoherentOnProducingAffinity),
+    ])
+    .map_err(|_| GuaranteeError::NotAWrite)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +534,99 @@ mod tests {
         assert!(
             required_properties_for(parameter, &placement()).is_none(),
             "an output parameter produced a requirement"
+        );
+    }
+
+    /// A write parameter guarantees every governed property.
+    #[test]
+    fn a_parameter_guarantee_states_every_governed_property() {
+        let abi = abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]);
+        let parameter = abi.parameter("output").expect("declared");
+        let effects =
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct);
+        let properties = guaranteed_properties_for(parameter, effects, &placement())
+            .expect("a write parameter guarantees");
+
+        assert_eq!(
+            properties.properties().len(),
+            crate::boundary::CANONICAL_PROPERTIES.len(),
+            "the derivation omitted a governed property"
+        );
+        assert_eq!(
+            properties.get(crate::boundary::BoundaryProperty::Availability),
+            Some(&GuaranteedProperty::Availability(
+                AvailabilityGuarantee::AfterOwnDispatch
+            ))
+        );
+    }
+
+    /// Aliasing decides materialization on the guarantee side, and only there.
+    ///
+    /// `MayAliasInputs` means a result occupies an input's storage, which is an
+    /// alias view rather than a buffer. The requirement side must not move with
+    /// it — a call that returns views does not thereby accept them.
+    #[test]
+    fn aliasing_decides_the_guaranteed_materialization_only() {
+        let abi = abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]);
+        let output = abi.parameter("output").expect("declared");
+        let input = abi.parameter("input").expect("declared");
+
+        for (aliasing, expected) in [
+            (Aliasing::Distinct, MaterializationForm::MaterializedBuffer),
+            (Aliasing::MayAliasInputs, MaterializationForm::AliasView),
+        ] {
+            let effects = CallEffects::declared(Elimination::Required, Motion::Ordered, aliasing);
+            let guaranteed = guaranteed_properties_for(output, effects, &placement())
+                .expect("a write parameter");
+            assert_eq!(
+                guaranteed.get(crate::boundary::BoundaryProperty::Materialization),
+                Some(&GuaranteedProperty::Materialization(expected)),
+                "aliasing did not decide the guaranteed materialization"
+            );
+
+            let required = required_properties_for(input, &placement()).expect("a read parameter");
+            assert_eq!(
+                required.get(crate::boundary::BoundaryProperty::Materialization),
+                Some(&RequiredProperty::Materialization(
+                    MaterializationForm::MaterializedBuffer
+                )),
+                "aliasing moved the required materialization, which it must not"
+            );
+        }
+    }
+
+    /// A read-only parameter guarantees nothing, and an ambiguous write domain
+    /// is refused rather than resolved.
+    #[test]
+    fn a_read_parameter_and_an_ambiguous_domain_are_refused() {
+        let abi = abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]);
+        let effects =
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct);
+
+        assert_eq!(
+            guaranteed_properties_for(
+                abi.parameter("input").expect("declared"),
+                effects,
+                &placement()
+            ),
+            Err(GuaranteeError::NotAWrite)
+        );
+
+        let two_domains = CallPlacement::declare(
+            ExecutionAffinity::PRIMARY,
+            AdmittedMemoryDomains::new([MemoryDomainClass::Device, MemoryDomainClass::Shared])
+                .expect("non-empty"),
+            &[MemoryDomainClass::Device, MemoryDomainClass::Shared],
+        )
+        .expect("supported");
+        assert_eq!(
+            guaranteed_properties_for(
+                abi.parameter("output").expect("declared"),
+                effects,
+                &two_domains
+            ),
+            Err(GuaranteeError::AmbiguousWriteDomain),
+            "a call admitting two domains guaranteed one anyway"
         );
     }
 }

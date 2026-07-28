@@ -294,4 +294,14 @@ Every other property transfers directly: layout and encoding and alignment from 
 
 **A write-only parameter returns `None`**: its layout is a guarantee, so there is nothing to require, and manufacturing one would put a made-up layout into a contract. Tested, alongside a count assertion against `CANONICAL_PROPERTIES` — that one catches a derivation that silently omits a dimension, which matters because a requirement no guarantee speaks to fails *closed*, so an omission would make the boundary compose only by accident.
 
-**Remaining for the derivation:** the guarantee half — same shape, taking the layout's `Guaranteed` side, `AfterOwnDispatch` and `CoherentOnProducingAffinity`, and the single memory-domain class subject to the rule recorded above. Then assemble both into a `BoundaryContract` keyed by tensor role, encode the identity from the `OpaqueCallIdentity`, and admit.
+## The guarantee half landed too (2026-07-28)
+
+`guaranteed_properties_for(parameter, effects, placement)`. The mirror of the requirement half, with the differences the boundary vocabulary makes deliberately: the layout's guaranteed side, `AfterOwnDispatch`, `CoherentOnProducingAffinity`, and one memory-domain class rather than a set.
+
+**Materialization comes from the effects here, and only here.** `Aliasing` is a statement about *results*: `MayAliasInputs` makes the guarantee an `AliasView`, `Distinct` a `MaterializedBuffer`. The requirement side does not consult it, and a test asserts both at once — that aliasing moves the guaranteed materialization *and* leaves the required one alone. A call that returns views does not thereby accept them, and one field driving both would have said it did.
+
+**`AmbiguousWriteDomain` implements the rule recorded above** rather than picking a domain. Tested with a two-domain placement, so the refusal is exercised rather than assumed.
+
+**Note for whoever admits these:** `MaterializationForm::AliasView` is now constructible, and it is one of the eight `Reserved` values holding `implement-boundary-property-enforcers` closed. An opaque call declaring `MayAliasInputs` will reach it.
+
+**Remaining:** assemble both halves into a `BoundaryContract` keyed by tensor role — grouping the bindings by role, which is where `check_bindings`' storage-agreement rule pays off, since parameters sharing a role now provably agree — encode the identity from the `OpaqueCallIdentity`, and admit.
