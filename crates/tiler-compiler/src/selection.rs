@@ -2395,14 +2395,7 @@ mod tests {
         let pointwise_index = swapped
             .selections
             .iter()
-            .position(|selection| {
-                selection
-                    .implementation()
-                    .verified()
-                    .semantic_members()
-                    .len()
-                    == 4
-            })
+            .position(|selection| selection.implementation().semantic_members().len() == 4)
             .expect("the pointwise region covers four members");
         swapped.selections[pointwise_index].implementation = foreign_impl;
         let error = verify_selected_plan(&program, &formation_of(&program), &swapped).unwrap_err();

@@ -885,7 +885,7 @@ pub(crate) struct AdmittedImplementation {
     /// Here for the same reason as the members: *for where*, which both bodies
     /// have and neither owns.
     target_profile_key: &'static str,
-    verified: VerifiedScheduledRegion,
+    body: ImplementationBody,
     feasibility: ProvenEvidence,
     boundary: BoundaryContract,
     cost: PhysicalCostEstimate,
@@ -913,13 +913,31 @@ impl AdmittedImplementation {
         self.target_profile_key
     }
 
-    pub(crate) const fn verified(&self) -> &VerifiedScheduledRegion {
-        &self.verified
+    /// The scheduled region this admission lowers, when it is one.
+    ///
+    /// `Option` because an admission may be an opaque call, which has no
+    /// schedule. A consumer that needs one must say what it does about the
+    /// absence rather than receive a substitute.
+    pub(crate) fn scheduled(&self) -> Option<&VerifiedScheduledRegion> {
+        self.body.scheduled()
+    }
+
+    /// What this admission is.
+    pub(crate) const fn body(&self) -> &ImplementationBody {
+        &self.body
     }
 
     /// Returns the exact resource requirements used for the feasibility decision.
     pub(crate) fn resources(&self) -> ResourceRequirements {
-        self.verified.requirements()
+        // Both bodies answer, from different authorities: a scheduled region
+        // derives its requirements, and an opaque call declares them as proven
+        // — which is why the declaration carries `ResourceRequirements` and not
+        // the uncertain estimate class. Neither is defaulted; feasibility must
+        // never be told a call needs nothing because nobody said.
+        match &self.body {
+            ImplementationBody::Scheduled(region) => region.requirements(),
+            ImplementationBody::Opaque(call) => *call.declaration().resources(),
+        }
     }
 
     /// Returns the feasibility evidence admitting this implementation: the
@@ -1389,7 +1407,7 @@ fn admit_verified(
         },
         semantic_members: verified.semantic_members().to_vec(),
         target_profile_key: verified.target_profile_key(),
-        verified,
+        body: ImplementationBody::Scheduled(Box::new(verified)),
         feasibility,
         boundary,
         cost,
@@ -2230,7 +2248,10 @@ mod tests {
     #[test]
     fn admitted_exposes_its_verified_region() {
         fn _uses_admitted(admitted: &AdmittedImplementation) {
-            let _ = admitted.verified().region();
+            let _ = admitted
+                .scheduled()
+                .expect("a scheduled admission")
+                .region();
             let _ = admitted.cost();
         }
     }

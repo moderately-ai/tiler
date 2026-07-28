@@ -426,11 +426,15 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // would be a number a calibration pass could compare against and
                 // silently disagree with; `Unknown` is the honest answer and the
                 // one the evidence classes exist to express.
+                // An opaque call has no index region — no iteration domain and
+                // no access list — so a plan containing one reports `Unknown`.
+                // **Not zero**: a plan whose indexing cost silently became zero
+                // would be ranked as free.
                 CostComponent::Indexing => plan
                     .selections()
                     .iter()
                     .try_fold(0_u64, |total, selection| {
-                        let region = &selection.implementation().verified().region().index;
+                        let region = &selection.implementation().scheduled()?.region().index;
                         let points = element_count(&region.iteration_shape).ok()?;
                         let accesses = u64::try_from(region.accesses.len()).ok()?;
                         total.checked_add(points.checked_mul(accesses)?)
@@ -476,7 +480,7 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                     plan.selections()
                         .iter()
                         .try_fold(0_u64, |total, selection| {
-                            let verified = selection.implementation().verified();
+                            let verified = selection.implementation().scheduled()?;
                             let points =
                                 element_count(&verified.region().index.iteration_shape).ok()?;
                             let repeated = verified
@@ -510,7 +514,7 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                     let bounds = plan.selections().iter().try_fold(
                         (0_u64, 0_u64),
                         |(low, high), selection| {
-                            let region = &selection.implementation().verified().region().index;
+                            let region = &selection.implementation().scheduled()?.region().index;
                             let width = match region.numerical.profile_key {
                                 crate::request::NUMERICAL_CONTRACT_KEY
                                 | crate::request::FLUSH_CONTRACT_KEY => 4_u64,

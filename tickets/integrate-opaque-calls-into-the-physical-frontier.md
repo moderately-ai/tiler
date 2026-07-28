@@ -118,3 +118,24 @@ The coherence check gained a rule the new part makes possible: **buffer bindings
 `resources()` on the declaration is what `AdmittedImplementation::resources()` will read for the opaque arm — the missing answer that reverted the swap.
 
 *The check, reproducible in one line:* apply the swap and run `cargo check -p tiler-compiler --all-targets`; the seven sites are listed, and `frontier.rs:932` is the one with no mechanical answer.
+
+## The field swap landed (2026-07-28)
+
+`AdmittedImplementation` holds `body: ImplementationBody` instead of a bare `VerifiedScheduledRegion`. All seven consumers dispositioned:
+
+- **`resources()`** — matches, and both arms answer from their own authority: a scheduled region derives its requirements, an opaque call declares them as proven. Neither is defaulted; feasibility is never told a call needs nothing because nobody said.
+- **`component_cost` `Indexing`, `RedundantWork`, `MemoryTraffic`** — `scheduled()?` inside the fold, so a plan containing an opaque call reports `CostValue::Unknown`. **Not zero**, which would rank such a plan as free. `MemoryTraffic` already had a wildcard for an unrecognized dtype and now has this too.
+- **`plan_region_order`** — filters rather than rejects. It is an ordering helper, not an admission check; the stage that must *lower* a plan is where an unlowerable body refuses, and doing it in both places would put the refusal where it has less to say.
+- **Two test sites** — one now reads the admission's members directly, the other asserts a scheduled admission explicitly.
+
+`semantic_members()` and `target_profile_key()` are unaffected: they moved onto the admission last change, which is why the swap did not have to answer them per-body. That sequencing was the point.
+
+## What remains
+
+- **Admit `ProposalBody::OpaqueCall`** in `enumerate_frontier`, constructing `ImplementationBody::Opaque` instead of pushing `FrontierRejection::UnsupportedVariant`. This is the change that makes the sum's second variant reachable.
+- **Lowering must reject an opaque body** with a typed reason, at the stage that lowers.
+- **Numerical guarantees** — an opaque call's realization stated and checked against the region's contract; nothing yet touches numerics.
+- **Explain records** for the typed rejections; the census will move there and only there.
+
+**Expect the boundary-enforcers trigger to fire** once `OpaqueCall` is admitted — `MaterializationForm::OpaqueRuntimeValue` becomes reachable, and `frontier::tests::the_bounded_profile_admits_no_undischarged_boundary` is designed to fail at exactly that moment. Do not repair it by widening the bounded property sets; its firing is the signal that `implement-boundary-property-enforcers` has become startable.
+

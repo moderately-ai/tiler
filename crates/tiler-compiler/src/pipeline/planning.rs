@@ -506,7 +506,12 @@ pub(super) fn plan_region_order(plan: &SelectedPlan) -> Vec<&VerifiedScheduledRe
     let mut regions: Vec<&VerifiedScheduledRegion> = plan
         .selections()
         .iter()
-        .map(|selection| selection.implementation().verified())
+        // An opaque call contributes no scheduled region. Filtered rather than
+        // rejected here because this is an ordering helper, not an admission
+        // check — the stage that must *lower* a plan is where an unlowerable
+        // body rejects, and doing it twice would put the refusal in the place
+        // with less to say about it.
+        .filter_map(|selection| selection.implementation().scheduled())
         .collect();
     regions.sort_by_key(|region| region.region().index.id.get());
     regions
