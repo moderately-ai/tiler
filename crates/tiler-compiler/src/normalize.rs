@@ -684,6 +684,48 @@ pub(crate) fn readmit_alternatives<Verified>(
     Ok(readmitted)
 }
 
+/// Groups readmitted alternatives by the numerical contract each resolved to.
+///
+/// # Why alternatives must not be compared across groups
+///
+/// Readmission re-resolves the numerical contract from the caller's stated
+/// preference, so two alternatives of one program can resolve differently. A
+/// cheaper alternative under a weaker contract is not a better alternative —
+/// it is a different answer to a different question, and ranking the two
+/// together would let a rewrite buy speed by quietly relaxing what the caller
+/// asked for.
+///
+/// This is the same rule `PlanStructuralCost::dominates` already applies when it
+/// returns `false` across differing cost-model keys: incomparable things must
+/// not be ordered, and the way to enforce that is to keep them out of one
+/// another's comparison rather than to remember not to compare them.
+///
+/// Groups are returned in first-appearance order over an input that is already
+/// in canonical rule order, so the result is deterministic without imposing an
+/// order on contract keys — which have none, being an open vocabulary.
+///
+/// A single group is the ordinary case and carries no special meaning; more
+/// than one means the caller must choose *within* a group and then choose
+/// between groups on the contract, not on cost.
+#[allow(
+    dead_code,
+    reason = "the divergence guard, landed with its tests ahead of the routing that consumes it"
+)]
+pub(crate) fn group_by_resolved_contract<Item>(
+    alternatives: Vec<Item>,
+    contract_key: impl Fn(&Item) -> &'static str,
+) -> Vec<(&'static str, Vec<Item>)> {
+    let mut groups: Vec<(&'static str, Vec<Item>)> = Vec::new();
+    for alternative in alternatives {
+        let key = contract_key(&alternative);
+        match groups.iter_mut().find(|(existing, _)| *existing == key) {
+            Some((_, members)) => members.push(alternative),
+            None => groups.push((key, vec![alternative])),
+        }
+    }
+    groups
+}
+
 /// Rebuilds a program through the checked semantic builder, changing nothing.
 ///
 /// The engine's half of revalidation. Every operation is re-applied through the
@@ -1493,6 +1535,60 @@ mod tests {
                 rule: "request-readmission",
             }),
             "a refused readmission was filtered instead of reported"
+        );
+    }
+
+    /// Alternatives resolving to one contract stay in one group.
+    #[test]
+    fn one_resolved_contract_yields_one_group() {
+        let groups =
+            group_by_resolved_contract(vec![("a", "strict"), ("b", "strict")], |item| item.1);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0, "strict");
+        assert_eq!(groups[0].1.len(), 2);
+    }
+
+    /// Alternatives resolving to different contracts are kept apart.
+    ///
+    /// Without the grouping these would be ranked together, and a cheaper
+    /// alternative under a weaker contract would win — a rewrite buying speed
+    /// by relaxing what the caller asked for.
+    #[test]
+    fn diverging_contracts_are_not_placed_in_one_group() {
+        let groups = group_by_resolved_contract(
+            vec![("a", "strict"), ("b", "flush"), ("c", "strict")],
+            |item| item.1,
+        );
+        assert_eq!(groups.len(), 2, "diverging contracts were merged");
+        assert_eq!(groups[0].0, "strict");
+        assert_eq!(
+            groups[0].1.len(),
+            2,
+            "same-contract alternatives were split"
+        );
+        assert_eq!(groups[1].0, "flush");
+        assert_eq!(groups[1].1.len(), 1);
+    }
+
+    /// Grouping preserves input order within and across groups.
+    ///
+    /// The input arrives in canonical rule order, so first-appearance grouping
+    /// is deterministic without imposing an order on contract keys — which have
+    /// none, being an open vocabulary. A grouping that sorted by key would be
+    /// inventing one.
+    #[test]
+    fn grouping_is_deterministic_without_ordering_contract_keys() {
+        let forward =
+            group_by_resolved_contract(vec![("a", "z"), ("b", "y"), ("c", "z")], |item| item.1);
+        assert_eq!(
+            forward.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+            ["z", "y"],
+            "grouping imposed an order on the contract keys"
+        );
+        assert_eq!(
+            forward[0].1.iter().map(|item| item.0).collect::<Vec<_>>(),
+            ["a", "c"],
+            "members lost their input order"
         );
     }
 

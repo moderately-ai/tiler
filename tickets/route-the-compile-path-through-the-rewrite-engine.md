@@ -73,5 +73,16 @@ It takes the readmission as a closure rather than calling `verify_request` direc
 - *Every alternative carries its own readmission.* The stub returns a distinct value per call, so a readmission that verified once and reused the answer fails here. That is the whole reason each is readmitted separately — two alternatives can resolve to different numerical contracts.
 - *A refused readmission is a fault, not a dropped alternative.* Replacing the `?` with a `continue` — the exact regression this guards, and the one that looks like a tidy improvement — makes it fail with "a refused readmission was filtered instead of reported". Verified by making that change and watching it fire.
 
-**What remains for this ticket:** call the engine at `pipeline.rs:420` in place of `normalize_semantics`, readmit through this, and carry the resulting alternatives into planning. The contract-divergence consequence is still open — alternatives resolving to different numerical contracts are not comparable on cost alone, and nothing yet expresses that.
+## Contract divergence guarded (2026-07-28)
 
+`normalize::group_by_resolved_contract(alternatives, contract_key)` keeps alternatives that resolved to different numerical contracts out of one another's comparison.
+
+**Why grouping rather than a rule to remember.** A cheaper alternative under a weaker contract is not a better alternative — it is a different answer to a different question, and ranking the two together lets a rewrite buy speed by quietly relaxing what the caller asked for. `PlanStructuralCost::dominates` already applies exactly this rule by returning `false` across differing cost-model keys: incomparable things are kept apart structurally rather than by remembering not to compare them.
+
+**Groups are in first-appearance order over canonically-ordered input**, so the result is deterministic *without* imposing an order on contract keys — which have none, being an open vocabulary. A test pins that: a grouping that sorted by key would be inventing an order, and it fails.
+
+More than one group means the caller chooses *within* a group on cost and *between* groups on the contract. A single group is the ordinary case and means nothing special.
+
+## What remains for this ticket
+
+Call the engine at `pipeline.rs:420` in place of `normalize_semantics`, readmit through `readmit_alternatives`, group through `group_by_resolved_contract`, and carry the result into planning. Every piece that step needs now exists and is tested; what is left is the wiring and the behaviour change it causes — the explain census, and whether the serial-sum artifact identity moves.
