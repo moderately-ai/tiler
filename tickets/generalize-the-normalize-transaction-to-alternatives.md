@@ -95,4 +95,18 @@ That splits revalidation in two, and both halves are needed:
 
 **Applied immediately:** `CommonSubexpressionRule::propose` now calls `verify_normalized` before returning, which it did not when it landed earlier today. Without it the provider returned an unverified candidate where `normalize_semantics` verifies before adopting — a real weakening of the existing contract, introduced by moving the rule out of the stage and not visible in any test, since the pin compares against a program that happens to be correct.
 
-**What remains is the engine's half.** Drive `collect_proposals`, revalidate each candidate structurally, respect the budget with the existing all-or-nothing contract, and yield alternatives rather than one canonical program — with the pin above still satisfied when only this rule is registered.
+## The engine's half needs a function that does not exist (2026-07-28)
+
+The remaining work is smaller than "write the engine" and has one precise prerequisite.
+
+**Structural revalidation has no generic entry point.** `SemanticProgramBuilder` offers `try_new(registry)` (`semantic/program.rs:421`) and `build()` (line 684), with operations added in between. There is no `SemanticProgram` → builder → `SemanticProgram` round-trip: nothing walks an arbitrary program's operations and re-adds them through the checked builder.
+
+*The check, reproducible in one line:* `grep -rn 'fn revalidate\|fn rebuild_program\|fn from_program\|fn reconstruct' crates/tiler-ir/src/semantic/` returns nothing.
+
+`normalize::rebuild` does exactly this walk, but it is CSE-shaped — it consults the `Congruence` to decide which operations survive and how values are remapped. The engine needs the same walk with no congruence: re-add everything, remap nothing, and let the frozen semantic authority re-infer and re-validate.
+
+**So the order is:** write the generic round-trip first, then the engine is short — `collect_proposals`, round-trip each candidate, apply the budget all-or-nothing, return the survivors as alternatives.
+
+**Where the round-trip belongs is worth a moment's thought rather than a default.** It is a `tiler-ir` capability (it uses only that crate's builder and program), but adding it there is a public API change on the semantic authority, which ADR 0075 reserves. Writing it privately in `tiler-compiler` avoids that and duplicates a walk `tiler-ir` is better placed to keep correct as the operation vocabulary grows. Prefer the private version for this ticket, and record the duplication rather than pre-emptively promoting an interface — the second consumer is what should justify the promotion.
+
+**Then the engine, and the pin above must still hold** with only the common-subexpression rule registered.
