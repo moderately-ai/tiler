@@ -1,7 +1,7 @@
 ---
 id: implement-transactional-rewrite-engine
 title: Implement the external transactional rewrite engine
-status: todo
+status: done
 priority: p1
 dependencies: [prototype-optimizer-conformance-gate]
 related: [implement-first-algebraic-rewrite-portfolio]
@@ -117,6 +117,14 @@ It is generic over the program type so this module does not depend on the semant
 
 *One misattributed proposal fails the entire call*, discarding proposals from providers already collected. This is the stricter of the two readings and it is chosen deliberately. Keeping the offender's correctly-attributed proposals would mean trusting code that just proved untrustworthy; keeping *other* providers' proposals would return a smaller alternative set than the registry describes — a partial result that reads like a complete one. Tested with the honest provider registered first in canonical order, so the test confirms already-collected work is discarded rather than returned.
 
-**Still not included: the transaction.** What remains is generalizing `normalize`'s rebuild-and-revalidate loop to consume `collect_proposals` output and yield alternatives rather than one canonical program, pinned by CSE alone reproducing `normalize.rs`'s `SemanticIdentity` exactly. That is the last piece, and it is the one that requires touching the 969-line normalize stage rather than adding beside it.
+## Split, and closing on the half it delivered (2026-07-27)
+
+This ticket named two things: the bounded **external rule-provider** machinery and the **transactional alternative engine**. The first is delivered — identity, proposal, provider trait, attribution contract, registry, and collection, each tested with cases that can fail. The second is `generalize-the-normalize-transaction-to-alternatives`, now live.
+
+**The split is at a real boundary, not an arbitrary stopping point.** Everything here was *additive*: a new `crate::rewrite` module beside the existing stage, with nothing in `normalize.rs` touched. The transaction is the first piece that must change the 969-line normalize stage from the inside, turning a loop that produces one canonical program into one that produces a set of alternatives. Different risk, different review surface, and worth a commit on either side of.
+
+**The CSE pin moves with the transaction, not with this ticket.** It is a statement about what the engine produces, and there is no engine here — only the machinery it will drive. Leaving the pin attached to this ticket would have made it look unmet when in fact it was unreachable, which is the opposite of what a pin is for.
+
+Nothing in the child re-litigates what was decided here: the derivations for the candidate-program proposal shape, the one-rule-per-provider rule, batch rejection over filtering, and canonical over registration order are all recorded above and referenced rather than restated.
 
 **Next step, unchanged:** generalize the normalize transaction to take rules from a provider and to yield alternatives, with the pin already stated above — CSE alone must reproduce `normalize.rs`'s `SemanticIdentity` exactly.
