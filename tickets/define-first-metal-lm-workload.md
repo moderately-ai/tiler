@@ -10,6 +10,25 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [research, planning, language-model, workload, metal, inference]
 ---
+## Decision needed (2026-07-28)
+
+**The question, atomic:** which model family is the first workload — a GPT-2-class model or a small Llama-class model? Both survivors are small decoder-only transformers executed in `f32`, batch 1, on one Apple GPU; they differ only in operation surface. The elimination run below removed every other candidate, so this is what remains.
+
+| | Option A — GPT-2-class (LayerNorm, GELU, learned absolute positions, multi-head attention) | Option B — small Llama-class (RMSNorm, SwiGLU, rotary positions, grouped-query attention) |
+| --- | --- | --- |
+| **Enables** | The smallest operation surface that still reaches every rung, so L2 derives the fewest families and L3–L6 are proven against the minimum. | Proving the ladder against the architecture actually deployed today, so L2's derived surface is the one that will still be wanted at L6 and L7. |
+| **Prevents** | Nothing architecturally, but it proves the ladder against an architecture largely superseded in practice, so a later move to a current model reopens L2 for RoPE, RMSNorm, and gated feed-forward. | Nothing, but it adds rotary embedding, a gated feed-forward, and grouped-query attention to L2's surface before the unbatched contraction of L3 is proven. |
+
+**Recommendation: Option B**, on the ground that L2's derived surface is inherited by every rung above it and re-deriving it later is the expensive mistake, whereas carrying three extra operation families through L2 is a one-time cost paid in a research ticket. The counterpoint is real and should be weighed: Option A makes L3 and L4 strictly easier to specify and to attribute failures in, and the ladder's purpose is to prove the *architecture* rather than to ship a model.
+
+**This is a product choice, not a correctness one** — both options are executable and neither is blocked by evidence. It is put to Tom rather than decided here for that reason.
+
+**The activation trigger has fired.** `scope-optimized-metal-lm-inference` is `done`, so the "do not start this before its trigger" instruction recorded below is satisfied and no longer a stop sign; this ticket is waiting on the answer above and on nothing else.
+
+**One thing the decision does not settle, whichever way it goes.** The exact checkpoint's configuration — layer count, head count, head dimension, context length, vocabulary — must be read from the actual model config before L2 derives shapes from it. Nothing here asserts those numbers, and they should not be taken from memory.
+
+## Scope
+
 Select and bound the first language-model inference workload that will drive
 Tiler's capability growth. Do not use an unspecified "transformer" or
 "LLM-compatible" claim as a substitute for an executable workload.
@@ -54,7 +73,7 @@ filed as a scoped ticket, or explicitly deferred with a trigger.
 
 **Rung L1** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
 
-**Active when:** `scope-optimized-metal-lm-inference` is accepted.
+**Active when:** `scope-optimized-metal-lm-inference` is accepted. **Fired:** that ticket is `done` as of 2026-07-28, so this gate is open and the instruction below is history rather than a hold.
 
 **Rests on:** nothing — it is the ladder's first rung.
 
@@ -92,14 +111,4 @@ A **small decoder-only transformer, executed in `f32`, single sequence, on one A
 
 ### The one genuine choice, which is Tom's
 
-Two model families survive the elimination and they encode different valid priorities. Both are small decoder-only transformers in `f32`; they differ in operation surface.
-
-**Option A — a GPT-2-class model** (LayerNorm, GELU, learned absolute positions, multi-head attention). *Enables:* the smallest operation surface that still reaches every rung, so L2 derives the fewest families and L3–L6 are proven against the minimum. *Prevents:* nothing architecturally, but it proves the ladder against an architecture largely superseded in practice, so a later move to a current model reopens L2 for RoPE, RMSNorm, and gated feed-forward.
-
-**Option B — a small Llama-class model** (RMSNorm, SwiGLU, rotary positions, grouped-query attention). *Enables:* proving the ladder against the architecture actually deployed today, so L2's derived surface is the one that will still be wanted at L6 and L7. *Prevents:* nothing, but it adds rotary embedding, a gated feed-forward, and grouped-query attention to L2's surface before the unbatched contraction of L3 is proven.
-
-**Recommendation: Option B**, on the ground that L2's derived surface is inherited by every rung above it and re-deriving it later is the expensive mistake, whereas carrying three extra operation families through L2 is a one-time cost paid in a research ticket. The counterpoint is real and should be weighed: Option A makes L3 and L4 strictly easier to specify and to attribute failures in, and the ladder's purpose is to prove the *architecture* rather than to ship a model.
-
-**This is a product choice, not a correctness one** — both options are executable and neither is blocked by evidence. It is put to Tom rather than decided here for that reason.
-
-**One thing the decision does not settle, whichever way it goes.** The exact checkpoint's configuration — layer count, head count, head dimension, context length, vocabulary — must be read from the actual model config before L2 derives shapes from it. Nothing above asserts those numbers, and they should not be taken from memory.
+Two model families survive the elimination and they encode different valid priorities. Both are small decoder-only transformers in `f32`; they differ in operation surface. The choice, its enables and prevents, the recommendation, and the counterpoint are stated at the top of this file under **Decision needed**.

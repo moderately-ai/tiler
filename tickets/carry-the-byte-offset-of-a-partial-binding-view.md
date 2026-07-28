@@ -14,7 +14,7 @@ Split from `expose-the-dispatch-record-on-a-decoded-artifact`, which encoded *wh
 
 **Fact — what the record carries today.** A binding row carries `BindingTarget` (a program input's `InputKey`, the `OutputKey` set publishing an output value, or `Internal`) and `accessible_bytes`, an ABI expression the builder proves equals `access.view().window().length`. The window's `offset` is not carried anywhere.
 
-**Fact — an arbitrary window is representable one layer down.** `tiler_ir::program::KernelProgramBuilder::push_view` takes a `ByteWindow { offset, length }` and admits any window inside the value (`crates/tiler-ir/src/program/builder.rs:224-247`). `push_whole_view` is a convenience over it, not the only constructor.
+**Fact — an arbitrary window is representable one layer down.** `tiler_ir::program::KernelProgramBuilder::push_view` takes a `ByteWindow { offset, length }` and admits any window inside the value (`crates/tiler-ir/src/program/builder.rs:410`; find it with `grep -n "fn push_view" crates/tiler-ir/src/program/builder.rs`). `push_whole_view` (`:458`) is a convenience over it, not the only constructor.
 
 **Fact — the artifact layer refuses the gap rather than approximating it.** `ArtifactBuildError::PartialBindingView` rejects a binding whose access does not address the whole of its value. That was the fail-closed choice: with a target and an extent but no offset, a loader binds the right buffer at the wrong place, which is a silently wrong result rather than a refusal.
 
@@ -39,3 +39,15 @@ make partial offsets packageable and should not expand this ticket's outcome.
 A binding may address a partial window, its offset is carried and proven against
 the packaged program, `PartialBindingView` is gone, identity/schema versions
 state the change, and `make full` passes.
+
+## Work in flight — recorded 2026-07-28
+
+**Fact — the work exists and has not landed.** It is uncommitted in the harness worktree `.claude/worktrees/agent-a0eb91e9c8f485c11`, on branch `tkt/carry-the-byte-offset-of-a-partial-binding-view` at HEAD `06af0c6`. That HEAD is **319 commits behind `main`** as of this record (`git rev-list --count HEAD..main`), so the branch base predates the audit-fix and Makefile-gate commits and the diff will not apply cleanly as-is. `git status --short` reports **17 modified files, 913 insertions / 111 deletions**, plus one untracked ticket.
+
+**Fact — what the diff touches.** Six codec files, not four: `codec/decode.rs`, `codec/encode.rs`, `codec/model.rs`, `codec/tests.rs`, `codec/validate.rs`, `codec/view.rs`. Alongside them, `program/builder.rs`, `program/error.rs`, `program/mod.rs`, `program/model.rs`, `program/tests.rs`, `program/verify.rs`, `proof/mod.rs`, `docs/artifact-abi.md`, `prototypes/serial-sum-compile/src/bundle.rs`, `prototypes/serial-sum-run/src/main.rs`, and this ticket's own copy.
+
+**Fact — the worktree carries a stale copy of this ticket.** Its version of `tickets/carry-the-byte-offset-of-a-partial-binding-view.md` was edited against that 319-commit-stale base and states an Outcome citing `MANIFEST_SCHEMA` at `3.0`/`v2`. The current ticket text contains no such citation, so **the worker's ticket edit will not merge cleanly onto this file** and must be reconciled by hand rather than taken from either side — the version numbers in particular have to be recomputed on the merged tree rather than picked from a branch.
+
+**Fact — a well-specified follow-up exists and is untracked.** `tickets/carry-the-binding-offset-through-the-runtime-route.md` in the same worktree. Its substantive finding, which is the part worth keeping whatever happens to the rest: `RoutedBinding` (`crates/tiler-runtime/src/load/route.rs:102-107` on `main` today — the follow-up cites `:100-107`, which is off by two) publishes `binding`, `transport`, and `accessible_bytes` and no offset, and `place_bindings` evaluates only the extent, so `DecodedBinding::accessible_offset` exists and nothing reads it. A host given a `RoutedBinding` binds storage at byte zero whatever the artifact says. That is unreachable today only because `decode_artifact` refuses a multi-stage envelope through `tiler.artifact.feature.multi-stage-program` — a refusal owned by another layer — so on the day `carry-the-stage-execution-order-in-the-envelope` lifts it, this loader becomes silently wrong. The follow-up's `## Closes when` cites the retired Python gate (`uv run --locked python scripts/check_repository.py`) and needs updating to `make full` before it is filed.
+
+**Status.** Frontmatter is not this record's to change; the ticket remains `in-progress` and the request to move it to `done` is left for the coordinator, which is correct in any case while the diff is unlanded and 319 commits stale.

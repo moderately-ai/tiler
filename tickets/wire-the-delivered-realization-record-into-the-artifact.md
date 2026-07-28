@@ -32,6 +32,16 @@ Blocked on `accept-the-delivered-realization-artifact-surface`: every step below
   `UnrecordedRealization` state for every caller to rediscover.
 - **Update the fixtures and the module doctest.** Every fixture in `crates/tiler-artifact` gains a record. The `program` module doctest must not teach a caller to mint a means key by hand — that is precisely the reconstruction ADR 0076 item 4 forbids — so it should say in the surrounding prose that `tiler-compiler`'s `HonouringMeans::key` is what mints one and that the literal stands in for a value the producer received.
 
+## Closes when
+
+1. Every executable artifact carries a validated, versioned record: the builder refuses to produce one without it and the decoder refuses to accept one without it, with decoded bytes given no optional path of their own.
+2. The record's profile is checked against the artifact's single `TargetProfileRef` and a mismatch is a typed rejection, so the record's copy of the profile is evidence rather than a second statement.
+3. `canonical_bytes` is folded into `encode_identity`, two artifacts delivering one contract by different means have different identities, and every pinned or golden identity is **recomputed on the merged tree** rather than taken from either branch.
+4. The record crosses the codec under the envelope's existing compatibility rules, with explicit budgets and validation on decode.
+5. `VerifiedArtifactProgram` and `DecodedArtifact` both return the record directly — total readers, with no `UnrecordedRealization` state surviving a successful decode for callers to rediscover.
+6. Every `tiler-artifact` fixture carries a record, and the `program` module doctest does not teach a caller to mint a means key by hand: its prose says `tiler-compiler`'s `HonouringMeans::key` mints one and that the literal stands in for a value the producer received.
+7. The convention-7 file allow at `crates/tiler-artifact/src/program/realization.rs:1-4` is removed or narrowed to whatever remains genuinely unreached, and `make full` passes.
+
 ## What this does not close
 
 No producer supplies a means key. `tiler-compiler` composes honourability today (`crates/tiler-compiler/src/honourability.rs`, `feasibility.rs`) and mints the key with `HonouringMeans::key`, but nothing calls the artifact builder. Wiring the compiler to it needs `implementation/compiler` and is a separate slice; until it lands, the record is supplied only by this crate's own fixtures.

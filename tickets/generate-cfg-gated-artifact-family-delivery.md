@@ -60,3 +60,11 @@ Do not let a nonmatching target receive another family's bytes, and do not rely 
 **It matches what already exists:** `push_carried_payload` takes a per-payload `compatibility: TargetProfileRef`, which exists precisely so payloads within one artifact can target different profiles.
 
 **Accepted cost:** a consumer needing one family carries bytes for all of them. That is a delivery-time filtering concern, not an identity one, and may be addressed later without moving any artifact identity.
+
+## Status re-verified against HEAD (2026-07-28)
+
+**The Q-ART-008 retarget asked for at the end of "The work" has been performed, and this ticket is now its owner.** `docs/open-questions.md:198-207` names `generate-cfg-gated-artifact-family-delivery` on the Owner/track line and records why: the previous owner `prototype-artifact-family-delivery` closed `done` with the close condition unmet, which left the question owned by a terminal ticket and therefore unowned in fact. Reproduce with `sed -n '198,208p' docs/open-questions.md`. The close condition is unchanged — "named profiles expand to canonical `ArtifactFamilySelection` with generated `cfg` compile-pass/fail tests" — so the third bullet of "The work" is now this ticket's obligation outright rather than a retarget request, and it is not met.
+
+**Both blocking Facts still hold, checked rather than assumed.** `ls crates/` returns eight crates — `tiler-artifact`, `tiler-cache`, `tiler-compiler`, `tiler-ir`, `tiler-metal`, `tiler-metal-aot`, `tiler-reference`, `tiler-runtime` — and neither `crates/tiler-macros/**` nor `crates/tiler-frontend-*/**`, the two paths `ticketsplease.toml:121` maps `implementation/frontend` to, exists. `prototype-inline-proc-macro-frontend` remains `status: awaiting-decision`, so the review gate the second Fact describes is still shut. `status: blocked` is therefore still the correct state and is unchanged by this record.
+
+**The 2026-07-25 decision's supporting fact still holds.** `push_carried_payload` (`crates/tiler-artifact/src/program/builder.rs:368-374`) still takes a per-payload `compatibility: TargetProfileRef`, so the one-envelope-N-payloads shape remains expressible in the artifact builder exactly as the decision claimed.

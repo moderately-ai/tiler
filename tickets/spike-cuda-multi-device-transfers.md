@@ -30,6 +30,10 @@ Run only when the multi-device scope gate needs CUDA evidence and at least two
 identified CUDA devices are available. A single-device host or simulated result
 cannot mark the ticket done; record partial topology coverage explicitly.
 
+**Precondition the hardware gate does not state, and it comes first.** `AGENTS.md` records the platform policy as "Tiler develops on macOS only; other platforms are unsupported rather than maintained as untested branches", and `deps.sh` provisions the Apple Metal toolchain and nothing else. CUDA is therefore outside the supported platform set today, and no arrangement of hardware changes that: two CUDA devices on a Linux host would satisfy the gate above and still leave this ticket unrunnable under the policy. **Widening the platform policy is Tom's decision and it is not a condition that arrives by waiting** — nothing in the work graph produces it, so this ticket does not become ready on its own. Treat it as gated on that decision first and on hardware second; if the decision is made, record it and the ticket's own gate applies unchanged from there.
+
+A second reading is worth stating so it is not mistaken for the first: this ticket can also serve as *design* evidence for the placement/transfer contract without CUDA ever being supported, by naming the realizations a non-Metal backend would have to express. That use needs no policy change and no hardware, but it also cannot mark the ticket done — the exit criteria below require measurements from two real devices.
+
 ## Exit criteria
 
 Produce a reproducible experiment and versioned report that separates hard

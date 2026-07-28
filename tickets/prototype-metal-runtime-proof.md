@@ -88,6 +88,8 @@ Done, with one class of the matrix explicitly split out. The multi-stage path ex
 
 ## The empty domain is absent, and that is a measured gap
 
+**Superseded 2026-07-28 — the gap is closed and the qualification below no longer applies.** `emit-an-empty-domain-reduction-to-metal` (`done`, commit `97ab545`) removed the `unreferenced-buffer-parameter` rule rather than weakening it — what it guarded against became unrepresentable once the argument table was derived from `VerifiedKernel::declared_buffers` in declaration order — so the matrix is now six members and **30 cases, all bit-identical to the published reference on Apple M4 Max**, and `REDUCTION_CLASSES` carries `("empty-domain", 0)` in both prototypes rather than a reserved comment. The section below is retained as the measurement that identified the gap; its `emit.rs:410` citation refers to the pre-`declared_buffers` emitter.
+
 **Fact.** A reduction over extent 0 compiles and retains both alternatives, but `emit_translation_unit` refuses **both** with `MalformedKernel { rule: "unreferenced-buffer-parameter" }`. Extents 1, 2, and 3 emit and pass `require_declared_realization`.
 
 **Fact — the cause, read at `crates/tiler-metal/src/emit.rs:410`.** The emitter derives its binding table from what the kernel body reads and refuses when that count differs from the declared parameters, because emitting a signature that silently dropped one would change the ABI. An empty reduction reads its input never.
