@@ -61,3 +61,17 @@ There is a real question underneath, and it should be settled by evidence rather
 *The check, reproducible in one line:* `grep -rn 'normalize_semantics(' crates/tiler-compiler/src/pipeline*` returns exactly one call site; read the 25 lines after it.
 
 **Revised sizing.** The engine call itself is a few lines. The work is readmission-per-alternative, the contract-divergence consequence for comparison, and the ordinary-versus-fault distinction on readmission failure. Budget accordingly, and do the failure distinction first — it is the one with a wrong answer that still compiles.
+
+## Readmission landed (2026-07-28)
+
+`normalize::readmit_alternatives(alternatives, readmit)` pairs each alternative with its own verification and preserves the fault semantics settled above.
+
+It takes the readmission as a closure rather than calling `verify_request` directly. That is not only for testability: the request context — shape environment, stated numerical preferences, budgets, target profiles, capabilities — lives in `pipeline.rs`, and threading it into `normalize` would move the request boundary into the rewrite stage. The caller supplies the readmission; this owns only the *policy* of what a refusal means.
+
+**Two tests, and each exists because the other cannot catch its failure:**
+
+- *Every alternative carries its own readmission.* The stub returns a distinct value per call, so a readmission that verified once and reused the answer fails here. That is the whole reason each is readmitted separately — two alternatives can resolve to different numerical contracts.
+- *A refused readmission is a fault, not a dropped alternative.* Replacing the `?` with a `continue` — the exact regression this guards, and the one that looks like a tidy improvement — makes it fail with "a refused readmission was filtered instead of reported". Verified by making that change and watching it fire.
+
+**What remains for this ticket:** call the engine at `pipeline.rs:420` in place of `normalize_semantics`, readmit through this, and carry the resulting alternatives into planning. The contract-divergence consequence is still open — alternatives resolving to different numerical contracts are not comparable on cost alone, and nothing yet expresses that.
+
