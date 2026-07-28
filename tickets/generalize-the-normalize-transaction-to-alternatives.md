@@ -62,5 +62,8 @@ That is the same class of bug as `Unknown` reported as zero, and it is worse her
 
 **The fix, and its blast radius.** `propose` should return `Result<Vec<RewriteProposal<Program>>, ProviderDefect>` — reusing the existing defect type, since a rule that cannot run is a contract violation of the same kind as one that misattributes. `collect_proposals` already returns `Result<_, ProviderDefect>` and already fails the whole batch, so its body absorbs this with one `?`; what changes is the trait signature and the four test providers in `rewrite.rs` that implement it.
 
-Do this before writing the CSE provider, not after. Writing the provider first means writing the swallow, and a swallowed compiler fault is exactly the thing that does not resurface later.
+**Fixed 2026-07-28, before writing the provider.** `propose` now returns `Result<Vec<RewriteProposal<Program>>, ProviderDefect>`, with a new `ProviderDefect::Failed { rule, reason }` carrying a stable reason code from the rule's own error vocabulary. `Ok(vec![])` means "nothing to do here"; `Err` means the rule could not run.
 
+`collect_proposals` absorbed it with one `?` and keeps its all-or-nothing behaviour, so a rule that cannot run discards the batch exactly as a misattributed proposal does. The test registers the failing provider *second* in canonical order, so it also confirms the first provider's proposals are discarded rather than returned as a partial result, and it asserts the same registry *without* the broken provider succeeds — otherwise the failure assertion would pass for the wrong reason.
+
+The four test providers in `rewrite.rs` were updated with it. This ticket's first slice is now unobstructed: write the CSE provider over `detect_shared_values` and `rebuild`, returning `Err(ProviderDefect::Failed { .. })` on a `NormalizeError` rather than an empty vector.

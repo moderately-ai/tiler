@@ -240,7 +240,12 @@ pub(crate) trait RewriteRuleProvider<Program> {
     /// Every returned proposal must carry [`Self::identity`]. That is not
     /// enforceable by the type, so the engine must check it with
     /// [`misattributed`] before adopting anything.
-    fn propose(&self, program: &Program) -> Vec<RewriteProposal<Program>>;
+    ///
+    /// Fallible, and deliberately: `Ok(vec![])` means "nothing to do here",
+    /// while `Err` means the rule could not run. Collapsing those into one
+    /// empty vector would hide a compiler fault behind the most common ordinary
+    /// outcome — see [`ProviderDefect::Failed`].
+    fn propose(&self, program: &Program) -> Result<Vec<RewriteProposal<Program>>, ProviderDefect>;
 }
 
 /// Returns the proposals that do not carry `expected`, in the order given.
@@ -385,6 +390,20 @@ impl<Program> RuleRegistry<Program> {
     reason = "the provider-contract failure the engine reports; landed with the collection step that detects it"
 )]
 pub(crate) enum ProviderDefect {
+    /// The rule could not run at all.
+    ///
+    /// Distinct from proposing nothing, and the distinction is the reason
+    /// `propose` is fallible. An empty proposal set is the *normal* result for
+    /// most rules on most programs, so a rule that failed and a rule with
+    /// nothing to say would be indistinguishable if both returned an empty
+    /// vector — and the failure would be invisible by construction rather than
+    /// merely unreported.
+    Failed {
+        /// The rule that could not run.
+        rule: RewriteRuleIdentity,
+        /// A stable reason code from the rule's own error vocabulary.
+        reason: &'static str,
+    },
     /// The provider returned a proposal attributed to another rule.
     Misattributed {
         /// The identity the provider declares.
@@ -397,6 +416,12 @@ pub(crate) enum ProviderDefect {
 impl fmt::Display for ProviderDefect {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Failed { rule, reason } => {
+                write!(
+                    formatter,
+                    "rewrite.rule-failed: {rule} could not run ({reason})"
+                )
+            }
             Self::Misattributed { declared, found } => write!(
                 formatter,
                 "rewrite.misattributed-proposal: {declared} proposed work attributed to {found}"
@@ -446,7 +471,7 @@ where
     let mut collected = Vec::new();
     for provider in registry.providers() {
         let declared = provider.identity();
-        let proposals = provider.propose(program);
+        let proposals = provider.propose(program)?;
         if let Some(offender) = misattributed(declared, &proposals).first() {
             return Err(ProviderDefect::Misattributed {
                 declared,
@@ -604,13 +629,16 @@ mod tests {
             fn identity(&self) -> RewriteRuleIdentity {
                 COMMON_SUBEXPRESSION_RULE.expect("the normalize rule is named")
             }
-            fn propose(&self, _program: &&'static str) -> Vec<RewriteProposal<&'static str>> {
-                vec![RewriteProposal::new(self.identity(), "candidate")]
+            fn propose(
+                &self,
+                _program: &&'static str,
+            ) -> Result<Vec<RewriteProposal<&'static str>>, ProviderDefect> {
+                Ok(vec![RewriteProposal::new(self.identity(), "candidate")])
             }
         }
 
         let provider = Cse;
-        let proposals = provider.propose(&"program");
+        let proposals = provider.propose(&"program").expect("no defect");
         assert_eq!(proposals.len(), 1);
         assert!(
             misattributed(provider.identity(), &proposals).is_empty(),
@@ -623,8 +651,11 @@ mod tests {
         fn identity(&self) -> RewriteRuleIdentity {
             self.0
         }
-        fn propose(&self, _program: &&'static str) -> Vec<RewriteProposal<&'static str>> {
-            Vec::new()
+        fn propose(
+            &self,
+            _program: &&'static str,
+        ) -> Result<Vec<RewriteProposal<&'static str>>, ProviderDefect> {
+            Ok(Vec::new())
         }
     }
 
@@ -692,8 +723,11 @@ mod tests {
         fn identity(&self) -> RewriteRuleIdentity {
             self.0
         }
-        fn propose(&self, _program: &&'static str) -> Vec<RewriteProposal<&'static str>> {
-            vec![RewriteProposal::new(self.1, "candidate")]
+        fn propose(
+            &self,
+            _program: &&'static str,
+        ) -> Result<Vec<RewriteProposal<&'static str>>, ProviderDefect> {
+            Ok(vec![RewriteProposal::new(self.1, "candidate")])
         }
     }
 
@@ -754,5 +788,64 @@ mod tests {
         let registry: RuleRegistry<&'static str> = RuleRegistry::new();
         let collected = collect_proposals(&registry, &"program").expect("empty is not a defect");
         assert!(collected.is_empty());
+    }
+
+    /// A rule that cannot run is reported, not read as having nothing to say.
+    ///
+    /// This is the distinction the fallible signature exists for. The failing
+    /// provider is registered *second* in canonical order, so the test also
+    /// confirms the first provider's proposals are discarded rather than
+    /// returned as a partial result — the same all-or-nothing rule
+    /// misattribution follows.
+    #[test]
+    fn a_rule_that_cannot_run_is_not_read_as_proposing_nothing() {
+        struct Broken(RewriteRuleIdentity);
+        impl RewriteRuleProvider<&'static str> for Broken {
+            fn identity(&self) -> RewriteRuleIdentity {
+                self.0
+            }
+            fn propose(
+                &self,
+                _program: &&'static str,
+            ) -> Result<Vec<RewriteProposal<&'static str>>, ProviderDefect> {
+                Err(ProviderDefect::Failed {
+                    rule: self.0,
+                    reason: "builder-create",
+                })
+            }
+        }
+
+        let working = RewriteRuleIdentity::new("p", "a", 1).expect("named");
+        let broken = RewriteRuleIdentity::new("p", "b", 1).expect("named");
+
+        let mut registry = RuleRegistry::new();
+        registry
+            .register(Box::new(Proposing(working, working)))
+            .expect("distinct");
+        registry
+            .register(Box::new(Broken(broken)))
+            .expect("distinct");
+
+        assert_eq!(
+            collect_proposals(&registry, &"program").err(),
+            Some(ProviderDefect::Failed {
+                rule: broken,
+                reason: "builder-create",
+            }),
+            "a rule that could not run was read as having nothing to propose"
+        );
+
+        // The same registry without the broken provider must succeed, or the
+        // assertion above would pass for the wrong reason.
+        let mut healthy = RuleRegistry::new();
+        healthy
+            .register(Box::new(Proposing(working, working)))
+            .expect("distinct");
+        assert_eq!(
+            collect_proposals(&healthy, &"program")
+                .expect("no defect")
+                .len(),
+            1
+        );
     }
 }
