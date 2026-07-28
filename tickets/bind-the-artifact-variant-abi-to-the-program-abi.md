@@ -1,7 +1,7 @@
 ---
 id: bind-the-artifact-variant-abi-to-the-program-abi
 title: Bind the artifact variant ABI to the program ABI
-status: todo
+status: in-progress
 priority: p1
 dependencies: [complete-program-identity-with-abi-guards-and-routing]
 related: [prototype-artifact-program-model]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi, identity]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785207846
 ---
 **Fact — two ABIs now describe one program, and nothing binds them.** `complete-program-identity-with-abi-guards-and-routing` gave `tiler_ir::program::VerifiedKernelProgram` its own ABI expression arena, applicability guard, per-stage launch geometry, and per-access accessible byte range, and folded all four into `tiler.kernel-program.v2` identity. `tiler_artifact::program`'s `VariantSpec` still declares its own guard, its own `LaunchSpec`, and its own per-binding `accessible_bytes`, on its own arena, under the separately versioned `guard_and_routing` schema.
 
@@ -60,3 +63,15 @@ bumped with its reason recorded at the site; and `make full` passes.
 **Not done, and it is the half ADR 0075 reserves.** `VariantSpec.applicability_guard`, `EntrySpec`'s launch, and per-binding `accessible_bytes` are still caller-supplied, so a disagreement is still constructible. Removing them is a **public API removal** — `VariantSpec` is `pub` with `pub` fields — and `AGENTS.md` is explicit that a tested implementation is a concrete draft and not approval of its interface. What remains is wiring, not design: `check_bindings` and `check_launch` derive from `adopt_abi`'s map instead of validating a caller's expression, the three fields come off the specs, and `ARTIFACT_DOMAIN` (now `v5`) plus the `guard_and_routing` component schema both step, because a variant that stops carrying its own expressions changes what the identity means.
 
 **The value of doing this half now** is that it is the part with no interface question, so the remaining step is a mechanical change against a tested primitive rather than a design and an API decision at once.
+
+### Measurement 2026-07-27 — the disagreement is not hypothetical; it is what every fixture does
+
+**Attempted and reverted:** requiring each variant expression to be structurally the program's own, via `compare_expr_nodes` over the map `adopt_abi` returns. It compiles and is a small, contained change — and turning it on fails **262 of `tiler-artifact`'s tests**, every one with `VariantAbiDisagreesWithProgram { use_site: LaunchThreads }` or an equivalent.
+
+**That is the ticket's premise measured rather than argued.** The two ABIs really are checked against the same third value and never against each other, and the consequence is that *the entire fixture corpus declares its own launch and accessible-range expressions* rather than the program's. Only `prototypes/serial-sum-compile` does it the right way, exactly as this ticket says.
+
+**So the cost is not the check — it is the corpus.** Whichever route is taken, deriving the expressions or requiring agreement, every fixture that builds a variant has to stop restating the program's formulas. That is mechanical but it is 262 call sites, and it is the reason this ticket is larger than its description suggests. Anyone estimating it from the "two functions to change" reading will be wrong by two orders of magnitude.
+
+**What that implies for the route.** Deriving is now *cheaper* than checking, not more expensive: if the builder takes the expressions from the program, the fixtures simply stop supplying them and the churn is deletion. If it checks, every fixture has to be rewritten to supply the right thing. That inverts the ordering I recorded above, and it is worth stating plainly — the public API removal is the smaller change, not the larger one.
+
+The check itself is reverted; `adopt_abi` and its tests remain, because they are the primitive either route needs.
