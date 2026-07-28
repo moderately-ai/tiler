@@ -103,6 +103,9 @@ fn definition(
 }
 
 fn scalar_registry(provider_revision: u32) -> FrozenScalarRegistry {
+    // Ad-hoc: `provider_revision` is a parameter, because the subject is that a
+    // provider revision change moves the registry identity. The standard profile
+    // is a single frozen revision and cannot vary.
     let mut builder = ScalarRegistryBuilder::new(FrozenSemanticRegistry::standard().unwrap());
     let provider = ProviderIdentity::new("example", "f32-scalars", provider_revision).unwrap();
     let constant_schema = ScalarAttributeSchema::new([ScalarAttributeField::required(
