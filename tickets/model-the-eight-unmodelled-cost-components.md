@@ -47,3 +47,28 @@ Each needs an input the compiler does not have. `Allocation` was computable beca
 - The explain census in `pipeline/tests.rs` is updated in the same change, since its count of `tiler.cost.analytical.v1` records grows as components become modelled. That test is what catches an unreported component.
 - The retained plan set and the selected plan are unchanged, asserted as they were for the parent.
 - No component consulted for feasibility.
+
+
+## The five remaining, re-derived against the source (2026-07-27)
+
+Acting on the instruction above rather than trusting the original table. Each now has a named blocker and a trigger, so a later reader can refute the blocker instead of only the conclusion.
+
+**`MemoryTraffic` — blocked on one missing scalar, and the rest is already computable.** Elements touched per region is exactly `accesses.len() × element_count(iteration_shape)`, which the `Indexing` arm now computes. The only missing factor is the *width of one element*, and `ScheduledRegion` carries no resolved element type of its own — the same gap already documented at `ByteAlignment::F32_NATURAL`, whose comment says a widened dtype vocabulary "must derive this from the boundary value's element type rather than from the profile, and that derivation needs a field the scheduled-region IR does not have today."
+
+Hardcoding 4 bytes would work today and is refused: it silently repeats an assumption that a widened dtype breaks, in a number a calibration pass would treat as derived. When the width arrives, the honest shape is `Bounded`, not `Exact` — a low bound of writes-only (no reuse eliminates a store) and a high bound of every access (no reuse at all), since the plan does not model cache reuse. `Access.mode` already distinguishes the two.
+
+*Trigger: the scheduled-region IR carries a resolved element type.*
+
+**`ResourcePressure` — no model exists to compute from.** Registers per thread and occupancy are target-profile properties, and no target profile declares them. This is not a missing summary; it is a missing model.
+
+*Trigger: a target profile declares register and threadgroup-memory axes.*
+
+**`ArtifactSize` — an ordering problem, not a data problem.** Encoded bytes exist only after encoding, and this cost is computed during planning, which precedes it. Nothing in the plan can be summed to get it.
+
+*Trigger: either this component moves to a post-encode reporting point, or the artifact program model gains a size estimate derivable before encoding.*
+
+**`CompileTime` — arguably in the wrong ticket.** It is a measurement rather than an analysis; the only honest form is `Bounded` from observed compiles, and `calibrate-device-cost-models` owns measurement and activation. Modelling it here would mean inventing a compile-time formula, which is the failure this ticket exists to avoid.
+
+*Trigger: none here. Consider reassigning it to `calibrate-device-cost-models` rather than leaving it as work this ticket cannot honestly do.*
+
+**`RedundantWork` — not re-derived.** I ran out of room to check this one against the source, and the original note said it "needs a model of what fusion recomputes, which needs the access relations rather than the cover shape". **That note is unverified and two of its siblings turned out to be wrong.** Do not treat it as settled; check `LogicalAccess` and the fusion legality machinery before accepting it.
