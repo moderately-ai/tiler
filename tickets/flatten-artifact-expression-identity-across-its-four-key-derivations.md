@@ -64,3 +64,20 @@ Artifact expression identity is linear in arena size; deep-chain and shared-DAG 
 **Nothing was changed.** The four sites move together or not at all, and starting the conversion before this is settled would produce exactly the partially-converted state the ticket warns about. The traversal in `tiler-ir` is still the right thing to reuse and still needs promoting from `pub(crate)` to `pub` as step one.
 
 **Also confirmed while reading, and it enlarges the change beyond the four named sites:** `tiler-artifact`'s builder uses `expr_key` for *deduplication* (`crates/tiler-artifact/src/program/builder.rs` inserts `node -> expression_keys.len()` keyed by the node's key), not only for identity. A canonical numbering is not available at build time — it is a function of the finished use-site set — so the dedup needs its own answer, and "delete `expr_key` if `tiler-artifact` stops calling it" cannot be satisfied until that answer exists.
+
+### Correction to the finding above — a structural comparator beats the ordering digest
+
+**Verified first, because the whole cycle depends on it:** neither set is canonicalized at build time. `check_deferred` and the launch-precondition loop in `crates/tiler-artifact/src/program/builder.rs` both preserve the caller's declaration order and only reject duplicates. So the sort in `encode_identity` is the *only* thing making those orders content-derived, and rooting the numbering in declaration order would genuinely lose canonicity, as stated.
+
+**But option 3 is not the best resolution, and the better one needs no digest.** Sort the two sets with a **structural comparator over the expression DAG** — compare two nodes by constructor tag, then by their operands recursively — rather than by any materialized key.
+
+Why it is better on every axis that matters here:
+
+- **It breaks the cycle completely.** The comparator needs no numbering, so there is no root order to depend on. Sort first, then number from the sorted roots, then encode. No circularity to design around.
+- **It is exactly injective**, so the digest-collision question never arises and no tie-break rule is needed. That removes the one place where the ordering digest asked a reader to accept "a collision would only make an order ambiguous".
+- **It keeps the complexity win.** The materialization this ticket exists to delete is quadratic on a chain and doubling per level on a shared DAG *because every node's key embeds its whole subtree*. A comparator walks two subtrees and stops at the first difference; it never materializes one. Sorting `n` members costs `n log n` comparisons bounded by subtree size, against the current cost of building `n` keys each of which may be exponential in depth.
+- **It is the smaller change.** Nothing new is governed: no ordering domain, no digest constant, no algorithm tag.
+
+**So the shape is:** sort the deferred predicates and launch preconditions by structural comparison; take the root list in the order `encode_identity` writes them, which is now well-defined because the sorted order no longer depends on the numbering; number once with `canonical_arena_traversal`; encode the arena once; replace every `keys[node_at(x)]` with the fixed-width canonical ID. `canonical_expression_order`'s sort then goes, because the numbering *is* the order — which is what the ticket asked to decide explicitly.
+
+**The builder's dedup still needs its own answer** and is unaffected by this correction: it keys `node -> position` at build time, where no canonical numbering exists yet. Structural equality is what it actually wants, and it is available at build time — but confirming that is work this ticket has not done.
