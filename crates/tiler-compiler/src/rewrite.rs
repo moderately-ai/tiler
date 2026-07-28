@@ -373,6 +373,91 @@ impl<Program> RuleRegistry<Program> {
     }
 }
 
+/// A provider misbehaved in a way that makes its whole batch untrustworthy.
+///
+/// Separate from a rewrite being *rejected*: a rejected candidate is an ordinary
+/// outcome of revalidation, while this says the provider itself violated the
+/// registration contract. The two must not share a type, or a caller counting
+/// rejections would count defects among them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the provider-contract failure the engine reports; landed with the collection step that detects it"
+)]
+pub(crate) enum ProviderDefect {
+    /// The provider returned a proposal attributed to another rule.
+    Misattributed {
+        /// The identity the provider declares.
+        declared: RewriteRuleIdentity,
+        /// The identity it stamped on a proposal.
+        found: RewriteRuleIdentity,
+    },
+}
+
+impl fmt::Display for ProviderDefect {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Misattributed { declared, found } => write!(
+                formatter,
+                "rewrite.misattributed-proposal: {declared} proposed work attributed to {found}"
+            ),
+        }
+    }
+}
+
+/// Collects every registered provider's proposals for `program`.
+///
+/// This is the engine's front half: it drives the registry, enforces the
+/// attribution contract, and hands back the candidates that revalidation will
+/// then judge. It deliberately does **not** revalidate, adopt, or budget —
+/// those belong to the transaction, which is [`crate::normalize`]'s to
+/// generalize.
+///
+/// # Order
+///
+/// Providers are visited in the registry's canonical identity order and each
+/// provider's proposals are kept in the order it returned them, so the result
+/// is reproducible across runs. A provider that returns its proposals in a
+/// varying order makes only its own block vary, which is its defect to fix and
+/// not something this function can detect.
+///
+/// # Failing the whole batch
+///
+/// One misattributed proposal fails the entire call, including proposals from
+/// providers already collected. That is deliberate and it is the stricter of
+/// the two available readings. A provider that misattributes has demonstrated
+/// it does not know what it is; keeping its correctly-attributed proposals
+/// would mean trusting the same code that just proved untrustworthy, and
+/// keeping *other* providers' proposals would silently produce a smaller
+/// alternative set than the registry describes — a partial result that reads
+/// like a complete one. The same reasoning makes a cache key/subject mismatch a
+/// protocol defect rather than an ordinary miss.
+#[allow(
+    dead_code,
+    reason = "the engine's collection step; landed ahead of the transaction that consumes it"
+)]
+pub(crate) fn collect_proposals<Program>(
+    registry: &RuleRegistry<Program>,
+    program: &Program,
+) -> Result<Vec<RewriteProposal<Program>>, ProviderDefect>
+where
+    Program: Clone,
+{
+    let mut collected = Vec::new();
+    for provider in registry.providers() {
+        let declared = provider.identity();
+        let proposals = provider.propose(program);
+        if let Some(offender) = misattributed(declared, &proposals).first() {
+            return Err(ProviderDefect::Misattributed {
+                declared,
+                found: offender.rule(),
+            });
+        }
+        collected.extend(proposals);
+    }
+    Ok(collected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,5 +685,74 @@ mod tests {
         let registry: RuleRegistry<&'static str> = RuleRegistry::new();
         assert!(registry.rules().is_empty());
         assert!(registry.providers().is_empty());
+    }
+
+    struct Proposing(RewriteRuleIdentity, RewriteRuleIdentity);
+    impl RewriteRuleProvider<&'static str> for Proposing {
+        fn identity(&self) -> RewriteRuleIdentity {
+            self.0
+        }
+        fn propose(&self, _program: &&'static str) -> Vec<RewriteProposal<&'static str>> {
+            vec![RewriteProposal::new(self.1, "candidate")]
+        }
+    }
+
+    /// Well-behaved providers' proposals are collected in canonical order.
+    #[test]
+    fn proposals_are_collected_in_canonical_rule_order() {
+        let mut registry = RuleRegistry::new();
+        for rule in ["c", "a", "b"] {
+            let identity = RewriteRuleIdentity::new("p", rule, 1).expect("named");
+            registry
+                .register(Box::new(Proposing(identity, identity)))
+                .expect("distinct");
+        }
+        let collected = collect_proposals(&registry, &"program").expect("no defect");
+        let rules: Vec<&'static str> = collected
+            .iter()
+            .map(|proposal| proposal.rule().rule())
+            .collect();
+        assert_eq!(
+            rules,
+            ["a", "b", "c"],
+            "collection order followed registration rather than identity"
+        );
+    }
+
+    /// One misattributed proposal fails the whole batch, not just its provider.
+    ///
+    /// The honest provider is registered *first* in canonical order, so this
+    /// also confirms already-collected proposals are discarded rather than
+    /// returned as a partial result that would read like a complete one.
+    #[test]
+    fn one_misattributed_proposal_fails_the_whole_batch() {
+        let honest = RewriteRuleIdentity::new("p", "a", 1).expect("named");
+        let liar = RewriteRuleIdentity::new("p", "b", 1).expect("named");
+
+        let mut registry = RuleRegistry::new();
+        registry
+            .register(Box::new(Proposing(honest, honest)))
+            .expect("distinct");
+        registry
+            .register(Box::new(Proposing(liar, honest)))
+            .expect("distinct");
+
+        let outcome = collect_proposals(&registry, &"program");
+        assert_eq!(
+            outcome.err(),
+            Some(ProviderDefect::Misattributed {
+                declared: liar,
+                found: honest,
+            }),
+            "a provider stamping another rule's identity was accepted"
+        );
+    }
+
+    /// An empty registry collects nothing and is not a defect.
+    #[test]
+    fn an_empty_registry_collects_no_proposals() {
+        let registry: RuleRegistry<&'static str> = RuleRegistry::new();
+        let collected = collect_proposals(&registry, &"program").expect("empty is not a defect");
+        assert!(collected.is_empty());
     }
 }

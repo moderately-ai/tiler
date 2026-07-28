@@ -111,6 +111,12 @@ It is generic over the program type so this module does not depend on the semant
 
 *An empty registry is legitimate*, not a misconfiguration: a run with no rules proposes and adopts nothing, which is correct behaviour rather than an error.
 
-**Still not included: the engine itself.** Identity, proposal, the provider seam, and the registry are all settled and tested. What remains is the one large piece — generalizing the normalize transaction to drive registered providers and yield alternatives, pinned by CSE alone reproducing `normalize.rs`'s `SemanticIdentity` exactly. Every input that piece needs now exists.
+**Collection step landed 2026-07-27.** `collect_proposals(registry, program)` is the engine's front half: it drives the registry in canonical identity order, enforces the attribution contract, and returns the candidates revalidation will judge. It deliberately does not revalidate, adopt, or budget — those are the transaction's, and the transaction is `normalize`'s to generalize.
+
+*`ProviderDefect` is a separate type from a rewrite being rejected*, and that separation is the point: a rejected candidate is an ordinary outcome of revalidation, while a defect says the provider violated its registration contract. Sharing one type would let a caller counting rejections count defects among them.
+
+*One misattributed proposal fails the entire call*, discarding proposals from providers already collected. This is the stricter of the two readings and it is chosen deliberately. Keeping the offender's correctly-attributed proposals would mean trusting code that just proved untrustworthy; keeping *other* providers' proposals would return a smaller alternative set than the registry describes — a partial result that reads like a complete one. Tested with the honest provider registered first in canonical order, so the test confirms already-collected work is discarded rather than returned.
+
+**Still not included: the transaction.** What remains is generalizing `normalize`'s rebuild-and-revalidate loop to consume `collect_proposals` output and yield alternatives rather than one canonical program, pinned by CSE alone reproducing `normalize.rs`'s `SemanticIdentity` exactly. That is the last piece, and it is the one that requires touching the 969-line normalize stage rather than adding beside it.
 
 **Next step, unchanged:** generalize the normalize transaction to take rules from a provider and to yield alternatives, with the pin already stated above — CSE alone must reproduce `normalize.rs`'s `SemanticIdentity` exactly.
