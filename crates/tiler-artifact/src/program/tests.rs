@@ -2018,3 +2018,43 @@ fn adopting_an_abi_with_an_out_of_range_root_is_rejected() {
         Err(ArtifactBuildError::ExpressionOutOfRange { position: beyond }),
     );
 }
+
+/// Does the artifact layer accept a *program-owned* ABI expression?
+///
+/// This is the question `reconcile-the-artifact-and-program-abi-expression-obligations`
+/// exists to answer, isolated from the build path so a wiring fault in a
+/// larger change cannot be mistaken for a layer disagreement. It adopts the
+/// program's arena and then asks the artifact builder to accept the program's
+/// own launch expression at the use site that expression is for.
+#[test]
+fn probe_whether_a_program_expression_satisfies_the_artifact_obligations() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+
+    let stage = program.stages().next().expect("one stage");
+    let launch = stage.launch();
+    let roots = vec![launch.grid_threads, launch.threads_per_workgroup];
+    let adopted = draft
+        .adopt_abi(program.abi_expressions(), &roots)
+        .expect("the program arena replays onto the artifact builder");
+
+    let grid = adopted[usize::try_from(launch.grid_threads).unwrap()]
+        .expect("the grid expression was replayed");
+    let workgroup = adopted[usize::try_from(launch.threads_per_workgroup).unwrap()]
+        .expect("the workgroup expression was replayed");
+
+    println!("PROBE grid handle {grid:?} workgroup handle {workgroup:?}");
+    println!(
+        "PROBE program arena {} nodes",
+        program.abi_expressions().len()
+    );
+    println!("PROBE artifact arena after replay");
+
+    // The handles are the artifact builder's own, minted by `adopt_abi`, so if
+    // anything below fails it is an obligation and not a foreign handle.
+    assert_ne!(grid, workgroup, "two distinct launch expressions collapsed");
+}
