@@ -47,14 +47,30 @@ pub enum AccessMode {
 }
 
 /// Canonical order in which reduction contributors combine.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a new contributor order lands additively. Verified by
+/// marking it and compiling the workspace — no consumer broke. Total maps
+/// *inside* `tiler-ir` are unaffected, because the attribute has no effect
+/// within the defining crate, which is what keeps them breaking.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
 pub enum ContributorOrder {
     /// Contributors combine in ascending original-axis lexicographic order.
     OriginalAxisLexicographic,
 }
 
 /// The logical coordinate map a scheduled access realizes.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a new coordinate map lands additively. Verified by
+/// marking it and compiling the workspace — no consumer broke. Total maps
+/// *inside* `tiler-ir` are unaffected, because the attribute has no effect
+/// within the defining crate, which is what keeps them breaking.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum LogicalAccess {
     /// One iteration coordinate maps to one linear element position.
     LinearIdentity,
@@ -87,7 +103,15 @@ pub struct Access {
 }
 
 /// The structure a bounds proof establishes for an access domain.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a new bounds-proof structure lands additively. Verified by
+/// marking it and compiling the workspace — no consumer broke. Total maps
+/// *inside* `tiler-ir` are unaffected, because the attribute has no effect
+/// within the defining crate, which is what keeps them breaking.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BoundsProofKind {
     /// A contiguous linear range of `element_count` positions.
     LinearRange {
@@ -119,7 +143,15 @@ pub struct BoundsProof {
 }
 
 /// The structure a write-ownership proof establishes.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a new ownership-proof structure lands additively. Verified by
+/// marking it and compiling the workspace — no consumer broke. Total maps
+/// *inside* `tiler-ir` are unaffected, because the attribute has no effect
+/// within the defining crate, which is what keeps them breaking.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum OwnershipProofKind {
     /// Exactly one global invocation writes each of `output_count` positions.
     OneGlobalInvocationPerOutput {
@@ -140,6 +172,33 @@ pub struct OwnershipProof {
 }
 
 /// The scalar program a region evaluates per output.
+///
+/// This type is deliberately **not** `#[non_exhaustive]`.
+///
+/// `tiler-compiler`'s `physical.rs` maps it totally from outside this crate, so
+/// marking it would force a wildcard arm there and a variant added later would
+/// be silently mis-handled instead of failing the build. Verified by marking it
+/// and watching that consumer fail to compile.
+///
+/// An out-of-crate exhaustive match therefore compiles, and must keep doing so:
+///
+/// ```
+/// use tiler_ir::schedule::{ContributorOrder, ScalarProgram};
+/// fn is_reduction(program: &ScalarProgram) -> bool {
+///     match program {
+///         ScalarProgram::MultiplyThenAdd { .. } => false,
+///         ScalarProgram::StrictSerialSum { .. }
+///         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => true,
+///     }
+/// }
+/// let program = ScalarProgram::StrictSerialSum {
+///     axes: Vec::new(),
+///     order: ContributorOrder::OriginalAxisLexicographic,
+///     canonical_nan_bits: 0x7FC0_0000,
+///     empty_identity_bits: 0,
+/// };
+/// assert!(is_reduction(&program));
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ScalarProgram {
     /// A pointwise scale-then-bias application.
@@ -208,21 +267,75 @@ pub struct IndexRegion {
 }
 
 /// How a region binds execution coordinates to iteration coordinates.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a new execution binding lands additively. Verified by
+/// marking it and compiling the workspace — no consumer broke. Total maps
+/// *inside* `tiler-ir` are unaffected, because the attribute has no effect
+/// within the defining crate, which is what keeps them breaking.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ExecutionBinding {
     /// One global linear invocation per iteration coordinate.
     GlobalLinearInvocation,
 }
 
 /// How iteration-domain tail elements are handled.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a new tail policy lands additively. Verified by
+/// marking it and compiling the workspace — no consumer broke. Total maps
+/// *inside* `tiler-ir` are unaffected, because the attribute has no effect
+/// within the defining crate, which is what keeps them breaking.
+///
+/// # Additive growth, proven in both directions
+///
+/// An out-of-crate exhaustive match is a compile error, which is what makes the
+/// seam additive rather than merely documented. The error code is named, because
+/// a bare `compile_fail` passes on *any* failure: a first attempt at this
+/// doctest failed with `E0599` on a variant that does not exist, and a bare
+/// `compile_fail` would have recorded that as coverage.
+///
+/// ```compile_fail,E0004
+/// use tiler_ir::schedule::TailPolicy;
+/// fn classify(policy: TailPolicy) -> u8 {
+///     match policy {
+///         TailPolicy::Exact => 0,
+///     }
+/// }
+/// ```
+///
+/// Construction and a wildcard match still compile, so the attribute cannot be
+/// over-applied without this noticing:
+///
+/// ```
+/// use tiler_ir::schedule::TailPolicy;
+/// let policy = TailPolicy::Exact;
+/// let named = match policy {
+///     TailPolicy::Exact => "exact",
+///     _ => "other",
+/// };
+/// assert_eq!(named, "exact");
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum TailPolicy {
     /// The launch geometry covers the domain exactly with no tail.
     Exact,
 }
 
 /// The reduction topology and combination legality of a schedule.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a new reduction topology lands additively. Verified by
+/// marking it and compiling the workspace — no consumer broke. Total maps
+/// *inside* `tiler-ir` are unaffected, because the attribute has no effect
+/// within the defining crate, which is what keeps them breaking.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ReductionTopology {
     /// The region performs no reduction.
     None,
