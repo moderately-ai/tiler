@@ -177,10 +177,10 @@ pub(crate) enum ProposalBody {
     ///
     /// The provider proposes an *identity* rather than the call itself, so
     /// registration is the authority on which calls exist: a provider cannot
-    /// propose one it never registered. Still rejected by the P0 frontier —
-    /// admitting it needs feasibility, boundary, and cost derived from the
-    /// declaration rather than from a scheduled region — but an unregistered
-    /// identity is now a distinct, earlier rejection.
+    /// propose one it never registered. A registered, well-bound call whose
+    /// contract derives, whose work resolves, and whose resources the target
+    /// proves is **admitted**; each failure on that path is a distinct typed
+    /// rejection naming what was wrong.
     OpaqueCall(Box<OpaqueCallProposal>),
     /// A metadata-only view. Reserved; the P0 frontier rejects it.
     View(ReservedProposalSeam),
@@ -1560,10 +1560,6 @@ pub(crate) fn enumerate_frontier(
 ///
 /// Propagates [`GuaranteeError`] when a written role cannot be given a
 /// guarantee — an ambiguous write domain, in practice.
-#[allow(
-    dead_code,
-    reason = "the opaque contract assembly; lands with its tests ahead of the admission that calls it"
-)]
 fn derive_call_boundary_contract(
     declaration: &OpaqueCallDeclaration,
     bindings: &[(&'static str, TensorRole)],
@@ -1641,10 +1637,6 @@ fn derive_call_boundary_contract(
 /// a provider that emits them in a varying order gets varying identities, which
 /// is its own defect to fix and not something a canonical form can paper over
 /// without deciding that binding order carries no meaning.
-#[allow(
-    dead_code,
-    reason = "the opaque proposal's canonical bytes; lands with the contract derivation, ahead of the admission that will pair them"
-)]
 fn encode_call_subject(proposed: &OpaqueCallProposal) -> Vec<u8> {
     let mut bytes = Vec::new();
     let call = proposed.call();
@@ -1692,10 +1684,6 @@ fn encode_call_subject(proposed: &OpaqueCallProposal) -> Vec<u8> {
 /// shape-dependent call bound to an intermediate is refused rather than
 /// mis-sized. Resolving it correctly needs the cover edge's actual value
 /// shape, which arrives with the cover, not the subject.
-#[allow(
-    dead_code,
-    reason = "the work-count resolution; lands with its tests ahead of the admission that consumes it"
-)]
 fn resolve_work_items(
     work: WorkScaling,
     bindings: &[(&'static str, TensorRole)],
@@ -2824,6 +2812,100 @@ mod tests {
             "the in-out parameter's write guarantee was dropped"
         );
         assert_eq!(contract.guarantees[0].tensor(), TensorRole::Input);
+    }
+
+    /// The opaque derivation can produce a guarantee the bounded profile's own
+    /// requirements refuse — so the enforcers deferral trigger is no longer
+    /// sufficient on its own.
+    ///
+    /// `the_bounded_profile_admits_no_undischarged_boundary` compares the two
+    /// compile-time constant property sets, and boundary contracts are now
+    /// *also* built from provider declarations (`derive_call_boundary_contract`
+    /// via `call_declaration`). This pins that the new path genuinely reaches a
+    /// mismatch the constant test structurally cannot see: a call declaring
+    /// `MayAliasInputs` guarantees `AliasView`, which no `MaterializedBuffer`
+    /// requirement accepts. Green today because no compile-path provider
+    /// proposes such a call; the enforcers ticket's startable-condition is
+    /// therefore "a compile-path provider proposes one", not "the constant
+    /// test fails".
+    #[test]
+    fn an_opaque_declaration_can_produce_a_guarantee_the_bounded_profile_refuses() {
+        use crate::boundary::{
+            AdmittedMemoryDomains, BoundaryProperty, ExecutionAffinity, MemoryDomainClass,
+            unsatisfied_properties,
+        };
+        use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
+        use crate::call_declaration::{
+            OpaqueCallDeclaration, WorkScaling, guaranteed_properties_for,
+        };
+        use crate::call_placement::CallPlacement;
+        use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
+        use tiler_ir::schedule::{NumericalPermission, ResourceRequirements, SubnormalMode};
+
+        let declaration = OpaqueCallDeclaration::check(
+            CallAbi::declare([
+                ParameterSpec {
+                    name: "x",
+                    role: ParameterRole::In,
+                    layout: ParameterLayout::Required(
+                        crate::boundary::LayoutRequirement::DenseRowMajor,
+                    ),
+                    encoding: crate::boundary::StorageEncoding::Unpacked,
+                    alignment: crate::boundary::ByteAlignment::F32_NATURAL,
+                },
+                ParameterSpec {
+                    name: "y",
+                    role: ParameterRole::Out,
+                    layout: ParameterLayout::Guaranteed(
+                        crate::boundary::LayoutGuarantee::DenseRowMajor,
+                    ),
+                    encoding: crate::boundary::StorageEncoding::Unpacked,
+                    alignment: crate::boundary::ByteAlignment::F32_NATURAL,
+                },
+            ])
+            .expect("well formed"),
+            CallEffects::declared(
+                Elimination::Required,
+                Motion::Ordered,
+                Aliasing::MayAliasInputs,
+            ),
+            CallPlacement::declare(
+                ExecutionAffinity::PRIMARY,
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).expect("non-empty"),
+                &[MemoryDomainClass::Device],
+            )
+            .expect("supported"),
+            ResourceRequirements {
+                buffer_bindings: 2,
+                threads_per_workgroup: 1,
+                local_memory_bytes: 0,
+                barriers: 0,
+                requires_device_memory: true,
+                input_subnormals: SubnormalMode::Preserve,
+                result_subnormals: SubnormalMode::Preserve,
+                contraction: NumericalPermission::Forbidden,
+                reassociation: NumericalPermission::Forbidden,
+            },
+            WorkScaling::Fixed(1),
+        )
+        .expect("coherent");
+
+        let guaranteed = guaranteed_properties_for(
+            declaration.abi().parameter("y").expect("declared"),
+            declaration.effects(),
+            declaration.placement(),
+        )
+        .expect("a write parameter guarantees");
+
+        let unsatisfied = unsatisfied_properties(&bounded_requirements(), &guaranteed);
+        assert!(
+            unsatisfied
+                .iter()
+                .any(|u| u.property() == BoundaryProperty::Materialization),
+            "an AliasView guarantee satisfied a MaterializedBuffer requirement, \
+             so the mismatch the enforcers ticket waits for is not producible \
+             and its deferral note is wrong the other way"
+        );
     }
 
     /// A call whose declared numerics differ from the request's contract is
