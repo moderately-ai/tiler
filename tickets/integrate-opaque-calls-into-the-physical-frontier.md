@@ -338,7 +338,20 @@ Ownership is `TotalRaceFreeWrite`: a call that writes a tensor owns that write c
 
 **Fabricating it is the failure this whole ticket has been avoiding.** `ProvenEvidence` for a call nothing proved would tell hard feasibility a call was admissible on no evidence — the same substitution `resources()` refused when it declined to default the opaque arm, and the same one the absent `ResourceEstimate` → `ResourceRequirements` conversion exists to prevent. The admission block was written and then **reverted** rather than landed with a fabricated proof; the contract derivation is wired and its result discarded, so the code path is exercised and nothing is claimed.
 
-**So the next step is: split a resource-only feasibility check out of `verify_schedule_with_feasibility`.** It already proves resources against a target profile; what an opaque call needs is that half, without the schedule verification. Both callers then get evidence from one authority, which is what keeps a single hard-feasibility decision (ADR 0043) actually single.
+**Correction: the split already exists.** `physical::assess_region(region, requirements, work_items, target) -> Result<ProvenEvidence, PhysicalError>` (`physical.rs:655`) *is* the resource-only feasibility check, and `verify_schedule_with_feasibility` calls it after verifying the schedule. Nothing needs splitting; the single hard-feasibility decision is already one function.
+
+**What an opaque call cannot supply is `work_items`.** The scheduled path passes `verified.region().schedule.work_items`. A declaration states `ResourceRequirements` — which includes `threads_per_workgroup` — but not how many work items a dispatch of the call performs, and the two are different quantities: threads per group is a shape, work items is a count.
+
+`region: RegionId` is the other argument, used only for error attribution, and an opaque admission has a region subject to attribute to.
+
+**So the remaining gap is one number, and it needs a decision about where it comes from.** Two candidates:
+
+- **A fifth declaration field.** A call declares the work items a dispatch performs. Honest and static, and wrong if the count depends on the bound tensors' shapes — which for most real calls it does.
+- **Derived from the bound tensors at admission.** The frontier knows the region subject, so it could compute the count the way the scheduled path does. Correct for shape-dependent calls, and it requires the call to say *how* it scales — which is a declaration field of a different kind, closer to the launch geometry a scheduled region carries.
+
+The second is likely right and is the larger change. **Do not default the count**: `assess_region` proves resources against a profile, and a wrong work-item count produces a feasibility verdict that is confidently incorrect in either direction.
+
+*The check, reproducible in one line:* `grep -n 'fn assess_region' -A 6 crates/tiler-compiler/src/physical.rs` — four arguments, of which only `work_items` has no source in an `OpaqueCallDeclaration`.
 
 *The check, reproducible in one line:* `grep -n 'ProvenEvidence' crates/tiler-compiler/src/frontier.rs` — it is a field and an accessor here, produced only by that one call.
 
