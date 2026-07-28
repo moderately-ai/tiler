@@ -379,6 +379,7 @@ pub(super) fn record_plan_selection(
         portfolio.plans().len(),
         cause,
     )?;
+    cause = record_analytical_costs(explain, portfolio, cause)?;
     for stop in portfolio.budget_stops() {
         cause = explain_step(
             (|| -> Result<_, CompileError> {
@@ -399,6 +400,75 @@ pub(super) fn record_plan_selection(
             SubjectKind::KernelProgram,
             "portfolio",
             record_cause(cause),
+        )?;
+    }
+    Ok(cause)
+}
+
+/// Reports each retained plan's analytical component costs.
+///
+/// These are reported and never pruned on. A [`ComponentCost`] is not a
+/// `PhysicalCostEstimate`, carries its own governed model key, and never enters
+/// a dominance comparison — see `crate::component_cost` for why admitting a
+/// second key into dominance would silently turn Pareto pruning off.
+///
+/// An `Unknown` component is deliberately *not* emitted as a zero. It is counted
+/// instead, so a reader can tell how much of the model is unmodelled rather than
+/// reading an unmodelled component as a free one.
+fn record_analytical_costs(
+    explain: &mut ExplainWriter,
+    portfolio: &SelectedPortfolio,
+    mut cause: ExplainRecordId,
+) -> Result<ExplainRecordId, TargetFailure> {
+    for plan in portfolio.plans() {
+        let analytical = analytical_plan_cost(plan);
+        let subject_key = plan.identity().label();
+        for component in analytical.components() {
+            match component.value() {
+                CostValue::Exact(value) => {
+                    cause = record_count_step(
+                        explain,
+                        ANALYTICAL_MODEL_KEY,
+                        SubjectKind::KernelProgram,
+                        &subject_key,
+                        ExplainStage::CandidateEnumeration,
+                        component.component().key(),
+                        component.unit().key(),
+                        usize::try_from(value).unwrap_or(usize::MAX),
+                        cause,
+                    )?;
+                }
+                // Both ends are reported rather than a midpoint: a bound is the
+                // claim, and a midpoint would present a modelled range as a
+                // point estimate nobody derived.
+                CostValue::Bounded { low, high } => {
+                    for (suffix, value) in [("low", low), ("high", high)] {
+                        cause = record_count_step(
+                            explain,
+                            ANALYTICAL_MODEL_KEY,
+                            SubjectKind::KernelProgram,
+                            &subject_key,
+                            ExplainStage::CandidateEnumeration,
+                            &format!("{}.{suffix}", component.component().key()),
+                            component.unit().key(),
+                            usize::try_from(value).unwrap_or(usize::MAX),
+                            cause,
+                        )?;
+                    }
+                }
+                CostValue::Unknown => {}
+            }
+        }
+        cause = record_count_step(
+            explain,
+            ANALYTICAL_MODEL_KEY,
+            SubjectKind::KernelProgram,
+            &subject_key,
+            ExplainStage::CandidateEnumeration,
+            "cost.unmodelled-components",
+            "count",
+            CANONICAL_COMPONENTS.len() - analytical.known_count(),
+            cause,
         )?;
     }
     Ok(cause)

@@ -582,6 +582,12 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("target.numerics.reassociation", 3),
             ("target.numerics.result-subnormals", 3),
             ("target.threads-per-workgroup", 3),
+            // Two retained plans, each reporting its one modelled analytical
+            // component (allocation) plus its count of unmodelled ones. The
+            // eight `Unknown` components are deliberately not emitted as zeros,
+            // so this number grows as components become modelled rather than
+            // staying at nine from the start.
+            ("tiler.cost.analytical.v1", 4),
             ("tiler.cost.structural.v1", 2),
             ("tiler.selection.structural-pareto.v1", 2),
         ])

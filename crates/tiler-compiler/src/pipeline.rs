@@ -1193,6 +1193,10 @@ fn optional_cause(cause: Option<ExplainRecordId>) -> Vec<ExplainRecordId> {
     cause.into_iter().collect()
 }
 
+use crate::component_cost::{
+    ANALYTICAL_MODEL_KEY, CANONICAL_COMPONENTS, CostValue, analytical_plan_cost,
+};
+
 mod planning;
 mod trace;
 mod verify;

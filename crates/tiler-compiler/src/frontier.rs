@@ -1917,6 +1917,50 @@ mod tests {
         ));
     }
 
+    /// An analytical component cost cannot be admitted as a structural estimate.
+    ///
+    /// `crate::component_cost` reports costs under its own governed key and must
+    /// never reach dominance: plans carrying different model keys do not dominate
+    /// each other, so admitting a second key here would make the non-dominated
+    /// set the whole set and turn Pareto pruning off with nothing reporting it.
+    ///
+    /// The type system already separates them — a `ComponentCost` is not a
+    /// `PhysicalCostEstimate` and has no conversion — so this test guards the
+    /// remaining route, which is someone constructing an estimate that *claims*
+    /// the analytical key. The frontier must refuse it by name.
+    #[test]
+    fn an_analytical_cost_key_is_refused_by_the_frontier() {
+        struct AnalyticalCostProvider;
+        impl PhysicalImplementationProvider for AnalyticalCostProvider {
+            fn provenance(&self) -> PhysicalProviderProvenance {
+                PhysicalProviderProvenance::new(provider_identity("analytical", 1))
+            }
+            fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+                vec![ImplementationProposal::new(
+                    ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
+                    governed_applicability(),
+                    PhysicalCostEstimate::new(crate::component_cost::ANALYTICAL_MODEL_KEY, 1, 2, 0),
+                )]
+            }
+        }
+
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let subject = fused_subject(&request);
+        let provider = AnalyticalCostProvider;
+        let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
+        let error = enumerate_frontier(&request, &subject, &providers).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                FrontierError::MalformedCostProvenance {
+                    declared_model_key: "tiler.cost.analytical.v1",
+                    ..
+                }
+            ),
+            "an analytical key reached the structural frontier: {error:?}"
+        );
+    }
+
     #[test]
     fn a_proposal_for_another_target_is_not_applicable() {
         struct ForeignTargetProvider;

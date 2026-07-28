@@ -1,0 +1,442 @@
+//! Deterministic analytical component costs, reported and never pruned on.
+//!
+//! This is the framework half of `implement-analytical-component-cost-model`.
+//! It computes symbolic per-component costs for a complete plan, attributes them
+//! to a governed analytical model key, and reports them. It is **explicitly
+//! analytical and uncalibrated**; `calibrate-device-cost-models` owns device
+//! measurement and activation.
+//!
+//! # Why these never reach dominance
+//!
+//! [`crate::selection::PlanStructuralCost`] is the sole pruning input, and it
+//! stays that way. Three places enforce a single governed cost-model key — the
+//! frontier rejects a proposal whose estimate is not
+//! `tiler.cost.structural.v1`, `aggregate_cost` refuses a plan whose regions
+//! mix keys, and `dominates` returns `false` across differing keys. That last
+//! one is why a second key cannot simply be admitted alongside the first: plans
+//! carrying different keys never dominate each other, so the non-dominated set
+//! would silently become the whole set and Pareto pruning would go dark with
+//! nothing reporting that it had.
+//!
+//! So a [`ComponentCost`] is deliberately **not** a
+//! [`crate::frontier::PhysicalCostEstimate`] and has no `dominates`. It carries
+//! its own model key, it is reported, and the retained plan set is bit-for-bit
+//! what it was before this module existed.
+//!
+//! # Why eight of the nine components are `Unknown`
+//!
+//! The accepted contract keeps `SoundProof`, exhaustive finite evidence,
+//! empirical evidence, and `Unknown` as different classes, and this module
+//! honours that rather than filling gaps with plausible arithmetic. Allocation
+//! is an exact sum of values the plan already carries. The other eight need
+//! inputs the compiler does not have yet — per-region element traffic, an
+//! occupancy model, a resource-pressure model, artifact sizes that only exist
+//! after encoding — and a formula invented to fill one of them would be
+//! unfalsifiable at exactly the moment it mattered. An honest `Unknown` is a
+//! measurement boundary; a fabricated number is a defect that reads as evidence.
+
+use crate::selection::SelectedPlan;
+use core::fmt;
+
+/// The governed key naming this cost model.
+///
+/// Distinct from `tiler.cost.structural.v1` by construction: nothing attributed
+/// to this key may enter a structural dominance comparison.
+pub(crate) const ANALYTICAL_MODEL_KEY: &str = "tiler.cost.analytical.v1";
+
+/// One governed dimension of analytical plan cost.
+///
+/// The vocabulary is bounded and closed, for the same reason the boundary
+/// property axes are: a free-form cost bag cannot be compared, explained, or
+/// calibrated. These are exactly the nine the accepted ticket names.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum CostComponent {
+    /// Bytes moved between the device and its memory.
+    MemoryTraffic,
+    /// Bytes of temporary storage the plan allocates.
+    Allocation,
+    /// Dispatches the plan issues.
+    Dispatch,
+    /// Work performed more than once across fused regions.
+    RedundantWork,
+    /// Address arithmetic performed per element.
+    Indexing,
+    /// Synchronization the plan requires between dispatches.
+    Synchronization,
+    /// Register and threadgroup-memory pressure, and the occupancy it implies.
+    ResourcePressure,
+    /// Compiler time the plan costs to produce.
+    CompileTime,
+    /// Encoded artifact bytes the plan yields.
+    ArtifactSize,
+}
+
+/// The canonical component order: the single source of truth for evaluation,
+/// encoding, and reporting order, matching the derived [`CostComponent`]
+/// ordering.
+pub(crate) const CANONICAL_COMPONENTS: [CostComponent; 9] = [
+    CostComponent::MemoryTraffic,
+    CostComponent::Allocation,
+    CostComponent::Dispatch,
+    CostComponent::RedundantWork,
+    CostComponent::Indexing,
+    CostComponent::Synchronization,
+    CostComponent::ResourcePressure,
+    CostComponent::CompileTime,
+    CostComponent::ArtifactSize,
+];
+
+impl CostComponent {
+    /// The governed canonical key naming this component in explain output.
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::MemoryTraffic => "cost.memory-traffic",
+            Self::Allocation => "cost.allocation",
+            Self::Dispatch => "cost.dispatch",
+            Self::RedundantWork => "cost.redundant-work",
+            Self::Indexing => "cost.indexing",
+            Self::Synchronization => "cost.synchronization",
+            Self::ResourcePressure => "cost.resource-pressure",
+            Self::CompileTime => "cost.compile-time",
+            Self::ArtifactSize => "cost.artifact-size",
+        }
+    }
+
+    /// The unit this component is always expressed in.
+    ///
+    /// Fixed per component rather than carried per value, so a component and a
+    /// unit cannot disagree. Written as an exhaustive match so a tenth component
+    /// is a build error here rather than a value with no stated unit.
+    pub(crate) const fn unit(self) -> CostUnit {
+        match self {
+            Self::MemoryTraffic | Self::Allocation | Self::ArtifactSize => CostUnit::Bytes,
+            Self::Dispatch | Self::Synchronization => CostUnit::Count,
+            Self::RedundantWork | Self::Indexing => CostUnit::Operations,
+            Self::ResourcePressure => CostUnit::Registers,
+            Self::CompileTime => CostUnit::Nanoseconds,
+        }
+    }
+}
+
+impl fmt::Display for CostComponent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.key())
+    }
+}
+
+/// The unit an analytical component cost is expressed in.
+///
+/// Units are part of the contract, not documentation: an uncalibrated model
+/// whose numbers have no stated unit cannot be calibrated later, because nothing
+/// says what the device measurement should be compared against.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CostUnit {
+    /// Bytes.
+    Bytes,
+    /// A dimensionless count of discrete events.
+    Count,
+    /// Abstract scalar operations.
+    Operations,
+    /// Registers per thread.
+    Registers,
+    /// Nanoseconds.
+    Nanoseconds,
+}
+
+impl CostUnit {
+    /// The governed canonical key naming this unit.
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::Bytes => "bytes",
+            Self::Count => "count",
+            Self::Operations => "operations",
+            Self::Registers => "registers",
+            Self::Nanoseconds => "nanoseconds",
+        }
+    }
+}
+
+impl fmt::Display for CostUnit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.key())
+    }
+}
+
+/// What is known about a component's value.
+///
+/// The three cases are kept apart because they are different evidence classes,
+/// not three confidences on one scale. Collapsing them into a number with an
+/// error bar would make an unmodelled component indistinguishable from one
+/// modelled imprecisely, and only the second is safe to calibrate against.
+#[allow(
+    dead_code,
+    reason = "reviewed draft accessor exercised by this module's own tests; the compile path reports what its explain records need. `Bounded` is the shape the first modelled component will carry and is asserted well-formed here before one exists to produce it"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CostValue {
+    /// An exact count derived from values the plan already carries.
+    Exact(u64),
+    /// A modelled estimate, sound within the stated inclusive bounds.
+    Bounded {
+        /// The lowest value the model admits.
+        low: u64,
+        /// The highest value the model admits.
+        high: u64,
+    },
+    /// The compiler does not model this component yet.
+    ///
+    /// This is a measurement boundary, not a zero and not an infinity. A caller
+    /// must not substitute either.
+    Unknown,
+}
+
+#[allow(
+    dead_code,
+    reason = "reviewed draft accessor exercised by this module's own tests; the compile path reports what its explain records need. `Bounded` is the shape the first modelled component will carry and is asserted well-formed here before one exists to produce it"
+)]
+impl CostValue {
+    /// The stable code naming this evidence class.
+    pub(crate) const fn class(self) -> &'static str {
+        match self {
+            Self::Exact(_) => "exact",
+            Self::Bounded { .. } => "bounded",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Whether this value is modelled at all.
+    pub(crate) const fn is_known(self) -> bool {
+        match self {
+            Self::Exact(_) | Self::Bounded { .. } => true,
+            Self::Unknown => false,
+        }
+    }
+
+    /// Whether this value is well formed.
+    ///
+    /// A bounded value whose low exceeds its high states an empty range, which
+    /// no measurement could ever fall in; that is a malformed model rather than
+    /// a wide one.
+    const fn is_well_formed(self) -> bool {
+        match self {
+            Self::Exact(_) | Self::Unknown => true,
+            Self::Bounded { low, high } => low <= high,
+        }
+    }
+}
+
+impl fmt::Display for CostValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Exact(value) => write!(formatter, "{value}"),
+            Self::Bounded { low, high } => write!(formatter, "{low}..={high}"),
+            Self::Unknown => formatter.write_str("unknown"),
+        }
+    }
+}
+
+/// One component's analytical cost, with its unit and evidence class.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ComponentCost {
+    component: CostComponent,
+    value: CostValue,
+}
+
+impl ComponentCost {
+    /// The component this cost is for.
+    pub(crate) const fn component(&self) -> CostComponent {
+        self.component
+    }
+
+    /// The value, and what class of evidence stands behind it.
+    pub(crate) const fn value(&self) -> CostValue {
+        self.value
+    }
+
+    /// The unit, read from the component rather than stored.
+    pub(crate) const fn unit(&self) -> CostUnit {
+        self.component.unit()
+    }
+}
+
+impl fmt::Display for ComponentCost {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}: {} {}",
+            self.component,
+            self.value,
+            self.unit()
+        )
+    }
+}
+
+/// The complete analytical cost of one plan: every governed component, in
+/// canonical order, each with its evidence class.
+///
+/// Every component is always present. A component the compiler does not model
+/// appears as [`CostValue::Unknown`] rather than being omitted, because an
+/// absent entry and an unmodelled one are indistinguishable to a reader, and a
+/// later calibration pass needs to know which of the nine it is still missing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AnalyticalPlanCost {
+    components: Vec<ComponentCost>,
+}
+
+#[allow(
+    dead_code,
+    reason = "reviewed draft accessor exercised by this module's own tests; the compile path reports what its explain records need. `Bounded` is the shape the first modelled component will carry and is asserted well-formed here before one exists to produce it"
+)]
+impl AnalyticalPlanCost {
+    /// The components, in canonical order.
+    pub(crate) fn components(&self) -> &[ComponentCost] {
+        &self.components
+    }
+
+    /// The cost recorded for one component.
+    ///
+    /// Never `None` for a governed component: the constructor emits all nine.
+    pub(crate) fn get(&self, component: CostComponent) -> Option<&ComponentCost> {
+        self.components
+            .iter()
+            .find(|cost| cost.component == component)
+    }
+
+    /// How many components are modelled rather than `Unknown`.
+    ///
+    /// This is the number `calibrate-device-cost-models` needs in order to say
+    /// what it has left to do, and the number the test below pins so a component
+    /// cannot quietly start returning a fabricated value.
+    pub(crate) fn known_count(&self) -> usize {
+        self.components
+            .iter()
+            .filter(|cost| cost.value.is_known())
+            .count()
+    }
+}
+
+/// Computes the analytical component costs of one complete plan.
+///
+/// Deterministic and total: it reads only values the plan already carries, in
+/// canonical component order, and allocates one vector.
+///
+/// # Panics
+///
+/// Panics only if a component produced a malformed value — a bounded range whose
+/// low exceeds its high. No arithmetic here can produce one, so this is an
+/// assertion about this function rather than a reachable input condition.
+pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
+    let components = CANONICAL_COMPONENTS
+        .into_iter()
+        .map(|component| {
+            let value = match component {
+                // The one component the plan already carries exactly: every
+                // region's implementation states the temporary bytes it needs,
+                // and the plan's allocation is their sum. Saturating rather than
+                // checked because this is a report, not a feasibility input — a
+                // saturated total is visibly wrong at u64::MAX, whereas a
+                // rejected compile would let a reporting path fail a build.
+                CostComponent::Allocation => {
+                    CostValue::Exact(plan.selections().iter().fold(0_u64, |total, selection| {
+                        total.saturating_add(selection.implementation().cost().temporary_bytes())
+                    }))
+                }
+                // Not modelled. See this module's header: the inputs do not
+                // exist yet, and inventing them would produce numbers that
+                // cannot be refuted.
+                CostComponent::MemoryTraffic
+                | CostComponent::Dispatch
+                | CostComponent::RedundantWork
+                | CostComponent::Indexing
+                | CostComponent::Synchronization
+                | CostComponent::ResourcePressure
+                | CostComponent::CompileTime
+                | CostComponent::ArtifactSize => CostValue::Unknown,
+            };
+            assert!(
+                value.is_well_formed(),
+                "{component} produced a malformed value"
+            );
+            ComponentCost { component, value }
+        })
+        .collect();
+    AnalyticalPlanCost { components }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every governed component is emitted, in canonical order, with a unit.
+    ///
+    /// The order assertion is what makes explain output stable across runs, and
+    /// the completeness assertion is what stops a component being silently
+    /// dropped rather than reported `Unknown`.
+    #[test]
+    fn every_governed_component_is_emitted_in_canonical_order() {
+        let emitted: Vec<CostComponent> = CANONICAL_COMPONENTS.into_iter().collect();
+        let mut sorted = emitted.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            emitted, sorted,
+            "the canonical list is not in the derived ordering, so encoding and \
+             reporting order disagree with it"
+        );
+        assert_eq!(
+            CANONICAL_COMPONENTS.len(),
+            9,
+            "the accepted ticket names nine components"
+        );
+    }
+
+    /// Keys and units are distinct and total.
+    ///
+    /// A duplicated key would make two components indistinguishable in explain
+    /// output, which is the failure a reader cannot see.
+    #[test]
+    fn component_keys_are_distinct() {
+        let mut keys: Vec<&str> = CANONICAL_COMPONENTS
+            .into_iter()
+            .map(CostComponent::key)
+            .collect();
+        keys.sort_unstable();
+        let before = keys.len();
+        keys.dedup();
+        assert_eq!(before, keys.len(), "two components share a key");
+        for component in CANONICAL_COMPONENTS {
+            assert!(
+                !component.unit().key().is_empty(),
+                "{component} has no stated unit"
+            );
+        }
+    }
+
+    /// `Unknown` is neither zero nor known.
+    ///
+    /// This is the substitution the module exists to prevent, so it is asserted
+    /// rather than left to the reader: a caller that treated `Unknown` as `0`
+    /// would report a plan as free.
+    #[test]
+    fn unknown_is_not_a_zero() {
+        assert!(!CostValue::Unknown.is_known());
+        assert!(CostValue::Exact(0).is_known());
+        assert_ne!(CostValue::Unknown, CostValue::Exact(0));
+        assert_eq!(CostValue::Unknown.class(), "unknown");
+        assert_eq!(CostValue::Exact(0).class(), "exact");
+    }
+
+    /// The well-formedness check can say no.
+    ///
+    /// An inverted bounded range must be rejected; a test that only ever built
+    /// well-formed values would pass against a predicate that returned `true`
+    /// unconditionally.
+    #[test]
+    fn an_inverted_bounded_range_is_malformed() {
+        assert!(CostValue::Bounded { low: 2, high: 9 }.is_well_formed());
+        assert!(CostValue::Bounded { low: 4, high: 4 }.is_well_formed());
+        assert!(
+            !CostValue::Bounded { low: 9, high: 2 }.is_well_formed(),
+            "an empty range no measurement can fall in must be malformed"
+        );
+    }
+}
