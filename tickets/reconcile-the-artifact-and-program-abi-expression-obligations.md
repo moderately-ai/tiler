@@ -37,3 +37,20 @@ Do not settle this by relaxing whichever check is in the way. Each of the three 
 ## Closes when
 
 The failing obligations are enumerated by class with a named example of each; it is decided and recorded which layer's contract changes and why; the decision is expressed in the two builders rather than in prose alone; and `make full` passes. `bind-the-artifact-variant-abi-to-the-program-abi` then becomes the mechanical change it was originally estimated to be.
+
+## Correction 2026-07-27 — the inference above is weaker than it was stated
+
+**The "two layers require differently shaped expressions" conclusion is not established by the run it was drawn from, and it should not be carried forward as fact.**
+
+Re-reading the captured failure output classifies the error heads as `ExpressionType`, `RootPhaseEscape`, `NonInterfaceRoot`, and **`ForeignHandle`**. That last one is the problem: `ForeignHandle` means a handle was resolved against a builder that does not own it. That is a *wiring* fault in the attempted change — the `AbiExprId`s returned by `adopt_abi` being used somewhere they had not been re-resolved — not evidence that the artifact's obligations reject a program-owned expression.
+
+If `ForeignHandle` accounts for the bulk of the 266, the whole inference collapses: the failures would say the attempt was wired wrongly, not that the layers disagree. The 126 `ArtifactVerificationError`s cannot be classified from the captured output at all, because that error's `Debug` dumps the entire builder and the cause is past the truncation.
+
+**So the first deliverable of this ticket is unchanged but its premise is now open:** re-run the derive change, capture the *tail* of each failure rather than its head, and separate
+
+- failures caused by the attempt's own handle plumbing, which are bugs to fix and prove nothing, from
+- failures where a correctly-plumbed program expression is genuinely refused by `check_use`'s phase or interface-root obligation, which are the evidence this ticket needs.
+
+Only the second class supports the question below. **It is possible there is no second class**, in which case this ticket closes as "the layers agree and the binding is mechanical after all", and `bind-the-artifact-variant-abi-to-the-program-abi` reverts to its original estimate.
+
+**Why this correction is here rather than quietly fixed.** The inference was recorded confidently on two tickets and used to justify a dependency edge and a split. A reader who took it at face value would design a contract reconciliation for a problem that may be a bug in one afternoon's branch.
