@@ -57,7 +57,22 @@ Acting on the instruction above rather than trusting the original table. Each no
 
 Hardcoding 4 bytes would work today and is refused: it silently repeats an assumption that a widened dtype breaks, in a number a calibration pass would treat as derived. When the width arrives, the honest shape is `Bounded`, not `Exact` — a low bound of writes-only (no reuse eliminates a store) and a high bound of every access (no reuse at all), since the plan does not model cache reuse. `Access.mode` already distinguishes the two.
 
-*Trigger: the scheduled-region IR carries a resolved element type.*
+**Correction 2026-07-27, second pass: this is implementable now, fail-closed.** The "wait for an element type" trigger above was too pessimistic. `IndexRegion` carries `numerical: NumericalRealization`, whose `profile_key: &'static str` names the governing numerical contract. That is not a dtype — and deliberately do **not** infer one from `canonical_arithmetic_nan_bits: u32` being 32 bits wide, which is reading meaning out of a field's type, the error this repository's research standards call out by name.
+
+But a *recognized* profile key does imply a width, and an unrecognized one can decline to answer. So:
+
+```text
+match realization.profile_key {
+    STRICT_F32_KEY => 4 bytes per element,
+    _              => CostValue::Unknown,
+}
+```
+
+This never returns a wrong number: a widened dtype vocabulary arrives with a new profile key, falls to the wildcard, and the component reports `Unknown` rather than silently continuing to multiply by four. That is the difference between this and the hardcode rejected above — the hardcode had no way to notice it had become wrong.
+
+The rest is already computed: elements touched per region is `accesses.len() × element_count(iteration_shape)`, which the `Indexing` arm derives today. The honest shape remains `Bounded`, not `Exact` — low bound writes-only, since no reuse eliminates a store; high bound every access, since the plan does not model cache reuse. `Access.mode` distinguishes them.
+
+*No trigger. Startable, and the largest remaining piece of this ticket.*
 
 **`ResourcePressure` — no model exists to compute from.** Registers per thread and occupancy are target-profile properties, and no target profile declares them. This is not a missing summary; it is a missing model.
 
@@ -67,9 +82,9 @@ Hardcoding 4 bytes would work today and is refused: it silently repeats an assum
 
 *Trigger: either this component moves to a post-encode reporting point, or the artifact program model gains a size estimate derivable before encoding.*
 
-**`CompileTime` — arguably in the wrong ticket.** It is a measurement rather than an analysis; the only honest form is `Bounded` from observed compiles, and `calibrate-device-cost-models` owns measurement and activation. Modelling it here would mean inventing a compile-time formula, which is the failure this ticket exists to avoid.
+**`CompileTime` — belongs to `calibrate-device-cost-models`, not here.** It is a measurement rather than an analysis. The only honest form is `Bounded` from observed compiles, and this ticket's parent states in its own body that `calibrate-device-cost-models` "owns later device measurements and activation". Modelling it here would mean inventing a compile-time formula, which is the failure this ticket exists to avoid.
 
-*Trigger: none here. Consider reassigning it to `calibrate-device-cost-models` rather than leaving it as work this ticket cannot honestly do.*
+*Treat it as out of scope for this ticket. It stays `Unknown` here and is closed by the calibration ticket, which is the only one holding measurements to bound it with.*
 
 **`RedundantWork` — the note was wrong again; what remains is a definitional choice, not a missing input.** The original said it "needs a model of what fusion recomputes, which needs the access relations rather than the cover shape". The access relations turn out not to be where the signal is. `LogicalAccess` has exactly two variants — `LinearIdentity`, one coordinate to one element, and `ReductionContributor`, a fan-in that *is* the reduction's real work rather than redundancy. Neither expresses recomputation.
 
