@@ -316,13 +316,56 @@ impl RegionSelection {
 /// the satisfied handoffs, the aggregate guards, and the aggregate structural cost
 /// over content-derived canonical coordinates. Transient ordinals and enumeration
 /// order are deliberately absent.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct SelectedPlanIdentity(Vec<u8>);
+#[derive(Clone, Debug)]
+pub(crate) struct SelectedPlanIdentity {
+    /// The canonical bytes, which are the identity.
+    bytes: Vec<u8>,
+    /// `digest(bytes)`, folded once at construction.
+    ///
+    /// The label and the label check both need it, and a profile charged 4.3%
+    /// of a compile to computing it twice per alternative — once to build a
+    /// plan's `stable_id` and once to verify that id against the same bytes.
+    ///
+    /// **Caching does not weaken that verification.** Its power is that
+    /// `stable_id` is a `String` a caller could have tampered with, compared
+    /// against a value derived from `bytes`; a digest folded at construction is
+    /// still derived from `bytes`, so a forged id is still refused. It is not
+    /// `verify_portfolio`'s situation, which re-derives a plan and must never be
+    /// handed the plan it is checking — this re-hashes bytes it already holds.
+    digest: u64,
+}
+
+/// Every comparison is over the bytes alone, never the cached digest.
+///
+/// The digest is a function of the bytes, so including it could only ever
+/// agree — and excluding it makes that impossible to get wrong. This type is a
+/// map key and a sort key, so two identities with equal bytes comparing unequal
+/// would be an identity defect, which is why these are written out rather than
+/// derived over a struct that now has a second field.
+impl PartialEq for SelectedPlanIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl Eq for SelectedPlanIdentity {}
+
+impl PartialOrd for SelectedPlanIdentity {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SelectedPlanIdentity {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.bytes.cmp(&other.bytes)
+    }
+}
 
 impl SelectedPlanIdentity {
     /// Returns the canonical identity bytes.
     pub(crate) fn as_bytes(&self) -> &[u8] {
-        &self.0
+        &self.bytes
     }
 
     /// Returns a bounded explain label for this plan.
@@ -330,7 +373,7 @@ impl SelectedPlanIdentity {
     /// The label is a digest of the canonical bytes and is presentation only.
     /// Equality decisions always use [`Self::as_bytes`].
     pub(crate) fn label(&self) -> String {
-        format!("selected-plan:{:016x}", digest(&self.0))
+        format!("selected-plan:{:016x}", self.digest)
     }
 
     /// Whether `label` is exactly what [`Self::label`] would produce, without
@@ -339,7 +382,8 @@ impl SelectedPlanIdentity {
     /// The verification pass compares a stored `stable_id` against a freshly
     /// formatted label once per alternative, and a sampling profile charged
     /// 2.14% of the compile's active self time to `label`. Only the comparison
-    /// is avoidable — the `stable_id` a plan carries still has to be built.
+    /// is avoidable — the `stable_id` a plan carries still has to be built. The
+    /// digest itself is folded once at construction; see [`Self::digest`].
     ///
     /// **Exactly equivalent to `label == self.label()`, not a looser test.**
     /// `{:016x}` over a `u64` emits exactly sixteen lowercase hex digits, so
@@ -357,7 +401,7 @@ impl SelectedPlanIdentity {
             && hex
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            && u64::from_str_radix(hex, 16).is_ok_and(|value| value == digest(&self.0))
+            && u64::from_str_radix(hex, 16).is_ok_and(|value| value == self.digest)
     }
 }
 
@@ -1579,7 +1623,10 @@ fn encode_plan_identity(
         encode_honoured(&mut bytes, *entry);
     }
     cost.encode(&mut bytes);
-    SelectedPlanIdentity(bytes)
+    SelectedPlanIdentity {
+        digest: digest(&bytes),
+        bytes,
+    }
 }
 
 fn encode_portfolio_identity(plans: &[SelectedPlan]) -> SelectedPortfolioIdentity {
@@ -2202,6 +2249,47 @@ mod tests {
         };
         assert_eq!(ids(&first), ids(&second));
         assert!(!first.identity().label().is_empty());
+    }
+
+    /// Equal bytes are equal identities, and the cached digest cannot change that.
+    ///
+    /// `SelectedPlanIdentity` is a map key and a sort key, so two identities
+    /// over equal bytes comparing unequal would be an identity defect — far
+    /// worse than the compile time the cache saves. The comparisons are written
+    /// out rather than derived precisely so the second field cannot enter them,
+    /// and this is what says so.
+    #[test]
+    fn the_cached_digest_stays_out_of_identity_comparison() {
+        let bytes = b"selected-plan-identity-bytes".to_vec();
+        use super::{SelectedPlanIdentity, digest};
+        let honest = SelectedPlanIdentity {
+            digest: digest(&bytes),
+            bytes: bytes.clone(),
+        };
+        // A deliberately wrong cache. Nothing can construct this outside the
+        // module, which is the point: if a comparison ever consulted the digest,
+        // this pair would stop being equal and the assertions below would fail.
+        let corrupted = SelectedPlanIdentity {
+            digest: honest.digest ^ 0xFFFF_FFFF_FFFF_FFFF,
+            bytes,
+        };
+
+        assert_eq!(honest, corrupted, "equality consulted the cached digest");
+        assert_eq!(
+            honest.cmp(&corrupted),
+            core::cmp::Ordering::Equal,
+            "ordering consulted the cached digest"
+        );
+        assert_eq!(honest.as_bytes(), corrupted.as_bytes());
+
+        // And the label *does* consult it, which is what makes the cache worth
+        // having — so the two labels differ, proving the field is live rather
+        // than dead weight the compiler folded away.
+        assert_ne!(
+            honest.label(),
+            corrupted.label(),
+            "the label must read the cached digest, or caching bought nothing"
+        );
     }
 
     /// `is_labelled` admits exactly the string `label` produces, and rejects the
