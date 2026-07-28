@@ -208,6 +208,72 @@ impl<Program> RewriteProposal<Program> {
     }
 }
 
+/// An external authority that proposes rewrites of a whole program.
+///
+/// Generic over the program type for the same reason [`RewriteProposal`] is:
+/// the engine instantiates it at the semantic IR, and this module stays
+/// independent of that IR until the engine exists.
+///
+/// A provider owns exactly one rule. Bundling several under one provider would
+/// make [`Self::identity`] ambiguous, and the whole point of the identity is
+/// that a rewrite can be attributed, reproduced, and *excluded* — excluding a
+/// bundle would take out rules that were never implicated.
+#[allow(
+    dead_code,
+    reason = "the seam the engine will call; landed with its attribution invariant before the engine that drives it"
+)]
+pub(crate) trait RewriteRuleProvider<Program> {
+    /// The governed identity of the rule this provider implements.
+    ///
+    /// Must be stable across calls. The engine relies on it to attribute
+    /// proposals, so a provider that returned a different identity per call
+    /// would make its own rewrites unreproducible.
+    fn identity(&self) -> RewriteRuleIdentity;
+
+    /// Proposes zero or more rewrites of `program`.
+    ///
+    /// Whole-program in, proposals out, because detection in this codebase is
+    /// whole-program: `normalize::detect_shared_values` takes the entire
+    /// program and returns its complete result rather than walking sites. An
+    /// empty result means "nothing to do here", never a failure.
+    ///
+    /// Every returned proposal must carry [`Self::identity`]. That is not
+    /// enforceable by the type, so the engine must check it with
+    /// [`misattributed`] before adopting anything.
+    fn propose(&self, program: &Program) -> Vec<RewriteProposal<Program>>;
+}
+
+/// Returns the proposals that do not carry `expected`, in the order given.
+///
+/// # Why this check exists
+///
+/// A provider constructs its own [`RewriteProposal`]s, so nothing stops one
+/// from stamping another rule's identity on its work — by mistake when a
+/// provider is copied from another, or deliberately. Either way the consequence
+/// is the same and it is not a cosmetic one: attribution is what lets a rule be
+/// *excluded* when it turns out to be wrong, so a misattributed proposal
+/// survives the exclusion of the rule that actually produced it, and the
+/// exclusion of an innocent one takes its place.
+///
+/// The engine must treat a non-empty result as a typed provider defect and
+/// reject the whole batch, not filter it. A provider that misattributes one
+/// proposal has demonstrated it does not know what it is, and its other
+/// proposals are not thereby trustworthy — which is the same reasoning that
+/// makes a cache-key mismatch a protocol defect rather than a miss.
+#[allow(
+    dead_code,
+    reason = "the invariant the engine enforces; landed with the trait that makes it necessary"
+)]
+pub(crate) fn misattributed<Program>(
+    expected: RewriteRuleIdentity,
+    proposals: &[RewriteProposal<Program>],
+) -> Vec<&RewriteProposal<Program>> {
+    proposals
+        .iter()
+        .filter(|proposal| proposal.rule() != expected)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +379,58 @@ mod tests {
             left.rule(),
             right.rule(),
             "two providers' proposals collapsed into one"
+        );
+    }
+
+    /// A provider that stamps another rule's identity on its work is caught.
+    ///
+    /// Driven against a clean batch *and* a tainted one, so a checker that
+    /// returned an empty list unconditionally fails here rather than passing.
+    /// This is the check that keeps rule exclusion meaningful: without it, a
+    /// misattributed proposal survives the exclusion of the rule that made it.
+    #[test]
+    fn a_misattributed_proposal_is_reported() {
+        let mine = RewriteRuleIdentity::new("p", "mine", 1).expect("named");
+        let theirs = RewriteRuleIdentity::new("p", "theirs", 1).expect("named");
+
+        let honest = [
+            RewriteProposal::new(mine, "a"),
+            RewriteProposal::new(mine, "b"),
+        ];
+        assert!(
+            misattributed(mine, &honest).is_empty(),
+            "a provider's own proposals were reported as misattributed"
+        );
+
+        let tainted = [
+            RewriteProposal::new(mine, "a"),
+            RewriteProposal::new(theirs, "b"),
+        ];
+        let caught = misattributed(mine, &tainted);
+        assert_eq!(caught.len(), 1, "the foreign proposal was not caught");
+        assert_eq!(caught[0].rule(), theirs);
+    }
+
+    /// A trait implementation's identity is what its proposals are checked
+    /// against, not a value passed alongside.
+    #[test]
+    fn a_provider_is_checked_against_its_own_declared_identity() {
+        struct Cse;
+        impl RewriteRuleProvider<&'static str> for Cse {
+            fn identity(&self) -> RewriteRuleIdentity {
+                COMMON_SUBEXPRESSION_RULE.expect("the normalize rule is named")
+            }
+            fn propose(&self, _program: &&'static str) -> Vec<RewriteProposal<&'static str>> {
+                vec![RewriteProposal::new(self.identity(), "candidate")]
+            }
+        }
+
+        let provider = Cse;
+        let proposals = provider.propose(&"program");
+        assert_eq!(proposals.len(), 1);
+        assert!(
+            misattributed(provider.identity(), &proposals).is_empty(),
+            "a provider proposing under its own identity was rejected"
         );
     }
 }

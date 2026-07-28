@@ -95,6 +95,14 @@ This changes the size of the next slice materially, which is why it is recorded 
 
 It is generic over the program type so this module does not depend on the semantic IR before the engine does; the engine instantiates it at `SemanticProgram`. Tests cover that a proposal always names its rule, and that two rules proposing an identical candidate stay distinct — if the rule were dropped or defaulted, excluding one provider that turned out to be wrong would silently exclude another's work.
 
-**Still not included:** the provider trait, a registry, and the engine. With identity and proposal settled, the trait is now the small piece; the engine's transaction generalization is the large one.
+**Provider trait landed 2026-07-27.** `RewriteRuleProvider<Program>` declares an `identity()` and a `propose(&Program) -> Vec<RewriteProposal<Program>>`. Whole-program in, proposals out, because detection here is whole-program — `detect_shared_values` takes the entire program and returns its complete result rather than walking sites. An empty result means "nothing to do", never a failure.
+
+**One provider owns exactly one rule.** Bundling several would make `identity()` ambiguous, and the point of the identity is that a rewrite can be attributed, reproduced, and *excluded* — excluding a bundle would take out rules that were never implicated.
+
+**The attribution invariant, and why it needs a runtime check.** A provider constructs its own proposals, so nothing in the type system stops one stamping another rule's identity on its work — by mistake when a provider is copied, or deliberately. The consequence is not cosmetic: attribution is what makes exclusion work, so a misattributed proposal *survives* the exclusion of the rule that actually produced it, and the exclusion of an innocent rule takes its place. `misattributed(expected, proposals)` returns the offenders.
+
+**The engine must reject the whole batch, not filter it.** A provider that misattributes one proposal has demonstrated it does not know what it is, and its remaining proposals are not thereby trustworthy — the same reasoning that makes a cache key/subject mismatch a protocol defect rather than an ordinary miss. Tested against a clean batch and a tainted one, so a checker that always returned empty fails rather than passes.
+
+**Still not included:** a registry, and the engine itself. Identity, proposal, and the provider seam are settled; what remains is generalizing the normalize transaction to drive providers and yield alternatives, pinned by CSE alone reproducing `normalize.rs`'s `SemanticIdentity`. That is the large piece and it is now unblocked.
 
 **Next step, unchanged:** generalize the normalize transaction to take rules from a provider and to yield alternatives, with the pin already stated above — CSE alone must reproduce `normalize.rs`'s `SemanticIdentity` exactly.
