@@ -317,3 +317,15 @@ Every other property transfers directly: layout and encoding and alignment from 
 Then encode the identity from the `OpaqueCallIdentity` and admit.
 
 *The check, reproducible in one line:* `grep -n 'impl BoundaryRequirement' -A 6 crates/tiler-compiler/src/frontier.rs` — accessors only, no constructor.
+
+## The contract assembly landed (2026-07-28)
+
+`frontier::derive_call_boundary_contract(declaration, bindings)` — the opaque twin of `derive_boundary_contract`, beside it for the reason recorded above.
+
+It groups bindings by tensor role and, for each role, derives a requirement from a bound parameter that reads and a guarantee from one that writes. Picking "a" parameter per role is well defined because `check_bindings` already refuses a binding whose same-role parameters disagree about storage — without that rule this would be picking arbitrarily and calling it a derivation.
+
+Ownership is `TotalRaceFreeWrite`: a call that writes a tensor owns that write completely, and a partial or racing write is not something this vocabulary can express, so admitting one would claim more than the declaration says.
+
+**The test binds the same two parameters to swapped roles** and requires the contract to move with them. That is what confirms the derivation reads the *binding* rather than the parameter's position or its own role name — the distinction the whole named-parameter design exists to preserve, checked at the point it finally matters.
+
+**Remaining:** encode the identity from the `OpaqueCallIdentity` and admit — construct the `AdmittedImplementation` with `ImplementationBody::Opaque`, replacing the `UnsupportedVariant` fallthrough in `enumerate_frontier`. Then lowering rejection, numerical guarantees, and explain records for the three rejections.

@@ -65,6 +65,7 @@ use crate::boundary::{
     LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
     RequiredProperty, StorageEncoding, VisibilityGuarantee, VisibilityRequirement,
 };
+use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration};
 use crate::call_registry::{
     OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall,
 };
@@ -1449,6 +1450,89 @@ pub(crate) fn enumerate_frontier(
     })
 }
 
+/// Assembles an opaque call's boundary contract from its declaration and the
+/// provider's parameter bindings.
+///
+/// The opaque twin of [`derive_boundary_contract`]: the same operation over
+/// different evidence, which is why it lives here rather than beside the two
+/// halves it calls. `BoundaryRequirement` and `BoundaryGuarantee` are built with
+/// struct literals private to this module, and giving them constructors to move
+/// this out would widen a type's surface to serve one caller.
+///
+/// # Why picking "any" bound parameter per role is well defined
+///
+/// A contract states one answer per tensor role, and several parameters may bind
+/// one role. `call_abi::check_bindings` already refuses a binding whose
+/// same-role parameters disagree about layout, encoding, or alignment, so by the
+/// time this runs they provably agree and the first is as good as any. Without
+/// that rule this would be picking arbitrarily and calling it a derivation.
+///
+/// # Errors
+///
+/// Propagates [`GuaranteeError`] when a written role cannot be given a
+/// guarantee — an ambiguous write domain, in practice.
+#[allow(
+    dead_code,
+    reason = "the opaque contract assembly; lands with its tests ahead of the admission that calls it"
+)]
+fn derive_call_boundary_contract(
+    declaration: &OpaqueCallDeclaration,
+    bindings: &[(&'static str, TensorRole)],
+) -> Result<BoundaryContract, GuaranteeError> {
+    let mut requirements = Vec::new();
+    let mut guarantees = Vec::new();
+    let mut seen: Vec<TensorRole> = Vec::new();
+
+    for (_, role) in bindings {
+        if seen.contains(role) {
+            continue;
+        }
+        seen.push(*role);
+
+        let bound = |wants_write: bool| {
+            bindings
+                .iter()
+                .filter(|(_, bound_role)| bound_role == role)
+                .find_map(|(name, _)| {
+                    let parameter = declaration.abi().parameter(name)?;
+                    (parameter.role().writes() == wants_write).then_some(parameter)
+                })
+        };
+
+        if let Some(parameter) = bound(false)
+            && let Some(properties) =
+                crate::call_declaration::required_properties_for(parameter, declaration.placement())
+        {
+            requirements.push(BoundaryRequirement {
+                tensor: *role,
+                access: AccessMode::Read,
+                properties,
+            });
+        }
+        if let Some(parameter) = bound(true) {
+            let properties = crate::call_declaration::guaranteed_properties_for(
+                parameter,
+                declaration.effects(),
+                declaration.placement(),
+            )?;
+            guarantees.push(BoundaryGuarantee {
+                tensor: *role,
+                // A call that writes a tensor owns that write completely; a
+                // partial or racing write is not something this vocabulary can
+                // express, so admitting one would be claiming more than the
+                // declaration says.
+                ownership: BoundaryOwnership::TotalRaceFreeWrite,
+                properties,
+            });
+        }
+    }
+
+    Ok(BoundaryContract {
+        requirements,
+        guarantees,
+    })
+}
+
 /// Turns one region that passed checked verification into an admitted
 /// implementation, deriving its boundary contract and its canonical identity.
 ///
@@ -2221,6 +2305,80 @@ mod tests {
             "a scheduled region answered as an opaque call"
         );
         assert_eq!(scheduled.kind(), "scheduled-region");
+    }
+
+    /// A read binding yields a requirement and a write binding a guarantee, each
+    /// keyed by the tensor role the provider bound it to.
+    ///
+    /// The roles are what a contract is keyed by, so this also confirms the
+    /// derivation follows the *binding* rather than the parameter's position or
+    /// its own role name.
+    #[test]
+    fn an_opaque_contract_follows_the_provider_bindings() {
+        use super::derive_call_boundary_contract;
+        use crate::boundary::{AdmittedMemoryDomains, ExecutionAffinity, MemoryDomainClass};
+        use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
+        use crate::call_declaration::OpaqueCallDeclaration;
+        use crate::call_placement::CallPlacement;
+        use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
+        use tiler_ir::schedule::{NumericalPermission, ResourceRequirements, SubnormalMode};
+
+        let spec = |name, role| ParameterSpec {
+            name,
+            role,
+            layout: match role {
+                ParameterRole::In => {
+                    ParameterLayout::Required(crate::boundary::LayoutRequirement::DenseRowMajor)
+                }
+                _ => ParameterLayout::Guaranteed(crate::boundary::LayoutGuarantee::DenseRowMajor),
+            },
+            encoding: crate::boundary::StorageEncoding::Unpacked,
+            alignment: crate::boundary::ByteAlignment::F32_NATURAL,
+        };
+        let declaration = OpaqueCallDeclaration::check(
+            CallAbi::declare([spec("x", ParameterRole::In), spec("y", ParameterRole::Out)])
+                .expect("well formed"),
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
+            CallPlacement::declare(
+                ExecutionAffinity::PRIMARY,
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).expect("non-empty"),
+                &[MemoryDomainClass::Device],
+            )
+            .expect("supported"),
+            ResourceRequirements {
+                buffer_bindings: 4,
+                threads_per_workgroup: 1,
+                local_memory_bytes: 0,
+                barriers: 0,
+                requires_device_memory: true,
+                input_subnormals: SubnormalMode::Preserve,
+                result_subnormals: SubnormalMode::Preserve,
+                contraction: NumericalPermission::Forbidden,
+                reassociation: NumericalPermission::Forbidden,
+            },
+        )
+        .expect("coherent");
+
+        let contract = derive_call_boundary_contract(
+            &declaration,
+            &[("x", TensorRole::Input), ("y", TensorRole::Output)],
+        )
+        .expect("a single admitted domain gives a guarantee");
+
+        assert_eq!(contract.requirements.len(), 1);
+        assert_eq!(contract.requirements[0].tensor(), TensorRole::Input);
+        assert_eq!(contract.guarantees.len(), 1);
+        assert_eq!(contract.guarantees[0].tensor(), TensorRole::Output);
+
+        // Binding the *same* parameters to swapped roles moves the contract with
+        // them: the derivation reads the binding, not the parameter order.
+        let swapped = derive_call_boundary_contract(
+            &declaration,
+            &[("x", TensorRole::Output), ("y", TensorRole::Input)],
+        )
+        .expect("still one domain");
+        assert_eq!(swapped.requirements[0].tensor(), TensorRole::Output);
+        assert_eq!(swapped.guarantees[0].tensor(), TensorRole::Input);
     }
 
     #[test]
