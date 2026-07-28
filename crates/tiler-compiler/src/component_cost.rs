@@ -56,7 +56,9 @@
 //! the note re-trusted, and each time the data was closer to hand than the note
 //! claimed. Treat the remaining three the same way.
 //!
-//! The vocabulary is ten rather than the accepted nine: threadgroup memory was
+//! The vocabulary is nine, differing from the accepted nine in two deliberate,
+//! recorded moves — artifact size was removed (only the selected plan is ever
+//! encoded, so no candidate could state it) and threadgroup memory was
 //! split out of `ResourcePressure`, which keeps `Unknown` until registers and an
 //! occupancy model exist. Folding bytes into a component whose unit is
 //! `Registers` would have been a unit lie, and units here are contract.
@@ -77,7 +79,9 @@ pub(crate) const ANALYTICAL_MODEL_KEY: &str = "tiler.cost.analytical.v1";
 ///
 /// The vocabulary is bounded and closed, for the same reason the boundary
 /// property axes are: a free-form cost bag cannot be compared, explained, or
-/// calibrated. These are exactly the nine the accepted ticket names.
+/// calibrated. Nine components: the accepted ticket's nine, less artifact size
+/// (removed — unstateable for every candidate but the winner), plus threadgroup
+/// memory (split out of resource pressure; bytes, not registers).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CostComponent {
     /// Bytes moved between the device and its memory.
@@ -203,10 +207,6 @@ impl fmt::Display for CostUnit {
 /// not three confidences on one scale. Collapsing them into a number with an
 /// error bar would make an unmodelled component indistinguishable from one
 /// modelled imprecisely, and only the second is safe to calibrate against.
-#[allow(
-    dead_code,
-    reason = "reviewed draft accessor exercised by this module's own tests; the compile path reports what its explain records need. `Bounded` is the shape the first modelled component will carry and is asserted well-formed here before one exists to produce it"
-)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CostValue {
     /// An exact count derived from values the plan already carries.
@@ -225,12 +225,12 @@ pub(crate) enum CostValue {
     Unknown,
 }
 
-#[allow(
-    dead_code,
-    reason = "reviewed draft accessor exercised by this module's own tests; the compile path reports what its explain records need. `Bounded` is the shape the first modelled component will carry and is asserted well-formed here before one exists to produce it"
-)]
 impl CostValue {
     /// The stable code naming this evidence class.
+    #[allow(
+        dead_code,
+        reason = "unconsumed until the typed cost-vocabulary work emits evidence classes into explain (emit-analytical-costs-through-the-typed-cost-vocabulary); the class strings are the governed names that work will report"
+    )]
     pub(crate) const fn class(self) -> &'static str {
         match self {
             Self::Exact(_) => "exact",
@@ -318,10 +318,6 @@ pub(crate) struct AnalyticalPlanCost {
     components: Vec<ComponentCost>,
 }
 
-#[allow(
-    dead_code,
-    reason = "reviewed draft accessor exercised by this module's own tests; the compile path reports what its explain records need. `Bounded` is the shape the first modelled component will carry and is asserted well-formed here before one exists to produce it"
-)]
 impl AnalyticalPlanCost {
     /// The components, in canonical order.
     pub(crate) fn components(&self) -> &[ComponentCost] {
@@ -461,20 +457,18 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // Reports `Unknown` on an overflowing element count, for the same
                 // reason `Indexing` does.
                 //
-                // **Measured: this is `Exact(0)` on every input in the suite.**
-                // The bounded profile's covers partition their members rather
-                // than overlapping, so nothing is computed twice, and `Exact(0)`
-                // is the correct answer rather than a missing one — it is a real
-                // claim that a plan repeats no work, which `Unknown` would not
-                // be. Verified by asserting the value is zero across the whole
-                // suite and watching that assertion never fire.
-                //
-                // The consequence is that **the non-zero path is unexercised**: a
-                // fault in the `seen` set or the weighting would still produce
-                // zero here and no test would notice. Do not read a green suite
-                // as evidence this counts correctly. The first cover whose
-                // regions overlap is what exercises it, and whoever adds one
-                // should check this value moves.
+                // **`Exact(0)` is forced by the cover authority, not observed on
+                // the suite's inputs.** `verify_cover` counts coverage per
+                // operation over the re-derived candidates and rejects >1 as
+                // `CoverError::IllegalDuplication`, unconditionally, for every
+                // cover behind every retained plan — and the enumerator cannot
+                // build an overlapping cover in the first place. So the
+                // `seen`-set arithmetic below runs on every compile and its
+                // non-zero outcome is unreachable until the cover *contract*
+                // changes: the reserved `CoverDuplication` seam, i.e. relaxing
+                // `IllegalDuplication` under an explicit duplication policy.
+                // The trigger is a contract change, not a new input program —
+                // whoever relaxes it should check this value moves.
                 CostComponent::RedundantWork => {
                     let mut seen: BTreeSet<SemanticMemberId> = BTreeSet::new();
                     plan.selections()
@@ -510,6 +504,10 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // `canonical_arithmetic_nan_bits` being 32 bits wide, which would
                 // read meaning out of a field's type and happen to be right for
                 // the wrong reason.
+                // `low <= high` by construction: writes are a subset of all
+                // accesses and both multiply the same non-negative byte count,
+                // so the pair is always a well-formed bound. Recorded so the
+                // derivation is not re-litigated.
                 CostComponent::MemoryTraffic => {
                     let bounds = plan.selections().iter().try_fold(
                         (0_u64, 0_u64),
@@ -551,14 +549,14 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // why `target.local-memory-bytes` is assessed per region rather
                 // than against a total.
                 //
-                // **Measured: `Exact(0)` on every input in the suite** — the
-                // bounded profile stages no local memory. Verified by asserting
-                // the value is zero across the suite and watching that assertion
-                // never fire. So the peak-versus-sum choice above is *correct but
-                // untested*: with every region at zero, `max` and a sum are
-                // indistinguishable, and a fault here would still report zero
-                // with a green suite. The first region that stages threadgroup
-                // memory is what exercises it.
+                // **`Exact(0)` everywhere, and by derivation rather than by
+                // input**: the bounded profile's only requirements derivation
+                // states zero local memory unconditionally, so this is a
+                // property of the derivation, not something the suite's inputs
+                // happen to avoid. The peak-versus-sum choice is therefore
+                // *correct but untested* — with every region at zero, `max` and
+                // a sum are indistinguishable — and the first requirements
+                // derivation that states local memory is what exercises it.
                 CostComponent::ThreadgroupMemory => CostValue::Exact(
                     plan.selections()
                         .iter()

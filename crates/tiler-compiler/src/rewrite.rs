@@ -1,8 +1,9 @@
-//! Governed identity for external rewrite rule providers.
+//! The external rewrite-rule provider seam: identity, proposal, provider
+//! trait, attribution, registry, and collection.
 //!
-//! This is the first slice of `implement-transactional-rewrite-engine`. It
-//! defines *who* may propose a rewrite and how that authority is named; it does
-//! not yet run one.
+//! Built for `implement-transactional-rewrite-engine`. The engine itself — the
+//! transaction that revalidates, budgets, and adopts — lives in
+//! [`crate::normalize`] and drives this seam on the compile path.
 //!
 //! # Why identity comes before the engine
 //!
@@ -21,11 +22,13 @@
 //!
 //! # What is deliberately not here
 //!
-//! No trait for proposing rewrites, no registry, and no engine. Adding them
-//! before the transaction is generalized would create a seam with nothing on
-//! the other side of it, and the shape of the proposal type depends on whether
-//! alternatives are produced per rule or per traversal — a question the
-//! normalize stage does not answer because it never produces alternatives.
+//! The transaction (budget, structural revalidation, adoption) — that is
+//! [`crate::normalize::run_rewrite_engine`]'s, so one authority owns the
+//! all-or-nothing contract. Also not yet here: a route from
+//! [`RewriteRuleIdentity`] into explain output. The stage's records use its own
+//! governed rule constants, and the provider identity reaches no record today;
+//! wiring it is part of the second-rule seam, since with one hard-coded rule
+//! there is nothing to distinguish.
 
 use crate::explain::{ExplainError, ExplainRecordId, ExplainWriter};
 use core::fmt;
@@ -44,10 +47,6 @@ use std::sync::Arc;
 /// [`tiler_ir::semantic::ProviderIdentity`], which separates provider
 /// provenance from semantic meaning for the same reason (ADR 0072).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[allow(
-    dead_code,
-    reason = "the first slice of implement-transactional-rewrite-engine: identity exists before the engine that consumes it, and is exercised by this module's own tests"
-)]
 pub(crate) struct RewriteRuleIdentity {
     provider: &'static str,
     rule: &'static str,
@@ -56,7 +55,7 @@ pub(crate) struct RewriteRuleIdentity {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: accessors for a reviewed draft identity whose consumer is the not-yet-written engine"
+    reason = "read only by tests today: the compile path attributes through RewriteProposal::rule and the identity reaches no explain record yet — wiring it into explain is part of the second-rule seam, and `encode` is the canonical-bytes half of that same wiring"
 )]
 impl RewriteRuleIdentity {
     /// Builds a rule identity.
@@ -126,10 +125,6 @@ impl fmt::Display for RewriteRuleIdentity {
 /// it must then produce exactly what [`crate::normalize`] produces today,
 /// compared on `SemanticIdentity`. The keys match that stage's existing governed
 /// constants so the two cannot drift apart silently.
-#[allow(
-    dead_code,
-    reason = "the pin the engine will be built against; consumed once the engine exists"
-)]
 pub(crate) const COMMON_SUBEXPRESSION_RULE: Option<RewriteRuleIdentity> =
     RewriteRuleIdentity::new("tiler.normalize", "common-subexpression.v1", 1);
 
@@ -199,10 +194,6 @@ pub(crate) trait RuleExplain: fmt::Debug + Send + Sync {
 ///
 /// [`SemanticProgramBuilder`]: tiler_ir::semantic::SemanticProgramBuilder
 #[derive(Clone, Debug)]
-#[allow(
-    dead_code,
-    reason = "the proposal shape the engine will consume; landed with its derivation before the engine that reads it"
-)]
 pub(crate) struct RewriteProposal<Program> {
     rule: RewriteRuleIdentity,
     candidate: Program,
@@ -210,10 +201,6 @@ pub(crate) struct RewriteProposal<Program> {
     explain: Option<Arc<dyn RuleExplain>>,
 }
 
-#[allow(
-    dead_code,
-    reason = "see the type's own allow: accessors for a reviewed draft proposal whose consumer is the not-yet-written engine"
-)]
 impl<Program> RewriteProposal<Program> {
     /// Pairs a candidate program with the rule that proposed it.
     ///
@@ -294,10 +281,6 @@ impl<Program> RewriteProposal<Program> {
 /// make [`Self::identity`] ambiguous, and the whole point of the identity is
 /// that a rewrite can be attributed, reproduced, and *excluded* — excluding a
 /// bundle would take out rules that were never implicated.
-#[allow(
-    dead_code,
-    reason = "the seam the engine will call; landed with its attribution invariant before the engine that drives it"
-)]
 pub(crate) trait RewriteRuleProvider<Program> {
     /// The governed identity of the rule this provider implements.
     ///
@@ -341,10 +324,6 @@ pub(crate) trait RewriteRuleProvider<Program> {
 /// proposal has demonstrated it does not know what it is, and its other
 /// proposals are not thereby trustworthy — which is the same reasoning that
 /// makes a cache-key mismatch a protocol defect rather than a miss.
-#[allow(
-    dead_code,
-    reason = "the invariant the engine enforces; landed with the trait that makes it necessary"
-)]
 pub(crate) fn misattributed<Program>(
     expected: RewriteRuleIdentity,
     proposals: &[RewriteProposal<Program>],
@@ -357,10 +336,6 @@ pub(crate) fn misattributed<Program>(
 
 /// Why a provider could not be registered.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "registration outcome for the seam the engine will build on"
-)]
 pub(crate) enum RegistrationError {
     /// Another provider already claims this rule identity.
     DuplicateRule(RewriteRuleIdentity),
@@ -396,18 +371,10 @@ impl fmt::Display for RegistrationError {
 /// Sorting by identity makes the order a property of *which* rules are present
 /// rather than of how they arrived. This is the same reason
 /// `enumerate_frontier`'s identity is independent of provider order.
-#[allow(
-    dead_code,
-    reason = "the registry the engine will drive; landed with its invariants before the engine exists"
-)]
 pub(crate) struct RuleRegistry<Program> {
     providers: Vec<Box<dyn RewriteRuleProvider<Program>>>,
 }
 
-#[allow(
-    dead_code,
-    reason = "see the type's own allow: reviewed draft registry whose consumer is the not-yet-written engine"
-)]
 impl<Program> RuleRegistry<Program> {
     /// An empty registry.
     ///
@@ -446,6 +413,10 @@ impl<Program> RuleRegistry<Program> {
     }
 
     /// The registered rules, in canonical order.
+    #[allow(
+        dead_code,
+        reason = "test-facing inventory; the engine iterates providers() directly and nothing else asks which rules are registered until a second rule makes the question interesting"
+    )]
     pub(crate) fn rules(&self) -> Vec<RewriteRuleIdentity> {
         self.providers
             .iter()
@@ -461,10 +432,6 @@ impl<Program> RuleRegistry<Program> {
 /// registration contract. The two must not share a type, or a caller counting
 /// rejections would count defects among them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "the provider-contract failure the engine reports; landed with the collection step that detects it"
-)]
 pub(crate) enum ProviderDefect {
     /// The rule could not run at all.
     ///
@@ -533,10 +500,6 @@ impl fmt::Display for ProviderDefect {
 /// alternative set than the registry describes — a partial result that reads
 /// like a complete one. The same reasoning makes a cache key/subject mismatch a
 /// protocol defect rather than an ordinary miss.
-#[allow(
-    dead_code,
-    reason = "the engine's collection step; landed ahead of the transaction that consumes it"
-)]
 pub(crate) fn collect_proposals<Program>(
     registry: &RuleRegistry<Program>,
     program: &Program,
@@ -578,7 +541,7 @@ where
 /// single receipt rather than an unbounded cause set.
 #[allow(
     dead_code,
-    reason = "the explain step, landed with its tests ahead of the routing that will call it"
+    reason = "the second-rule seam: unconsumed until a second rewrite rule registers. The live path readmits inline in pipeline.rs and adopts a single alternative, so per-alternative readmission, contract grouping, and survivor-only emission have nothing to do yet; whoever registers a second rule wires these in and deletes the inline duplicate (see route-the-compile-path ticket, Assessment corrections)"
 )]
 pub(crate) fn record_adopted_alternatives<Program>(
     adopted: &[RewriteProposal<Program>],

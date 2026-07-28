@@ -42,7 +42,7 @@ use core::fmt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "first slice of implement-opaque-physical-call-providers: the estimate vocabulary lands before the providers that carry it"
+    reason = "unconsumed: the vocabulary for opaque-call pressure reporting. The admission landed without consuming it — its consumer is the run-path work that reports pressure for an admitted call (tracked by exercise-opaque-admissions-downstream-of-the-frontier), and until then the no-conversion-into-ResourceRequirements invariant holds vacuously"
 )]
 pub(crate) enum EstimateProvenance {
     /// The provider asserted it, and nothing here checked it.
@@ -62,7 +62,7 @@ pub(crate) enum EstimateProvenance {
 
 #[allow(
     dead_code,
-    reason = "see the module header: governed keys land with the vocabulary they name, ahead of the explain records that will report them"
+    reason = "see the first allow in this file: wholly unconsumed until the run path reports pressure"
 )]
 impl EstimateProvenance {
     /// The governed canonical key naming this provenance.
@@ -91,7 +91,7 @@ impl fmt::Display for EstimateProvenance {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[allow(
     dead_code,
-    reason = "see the module header: the dimensions land with the estimate type that carries them"
+    reason = "see the first allow in this file: wholly unconsumed until the run path reports pressure"
 )]
 pub(crate) enum PressureDimension {
     /// Registers per thread.
@@ -104,7 +104,7 @@ pub(crate) enum PressureDimension {
 
 #[allow(
     dead_code,
-    reason = "see the module header: governed keys land with the vocabulary they name, ahead of the explain records that will report them"
+    reason = "see the first allow in this file: wholly unconsumed until the run path reports pressure"
 )]
 impl PressureDimension {
     /// The governed canonical key naming this dimension.
@@ -146,7 +146,7 @@ impl fmt::Display for PressureDimension {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "see the module header: accessors land with the type, ahead of the providers that produce it"
+    reason = "see the first allow in this file: wholly unconsumed until the run path reports pressure"
 )]
 pub(crate) struct ResourceEstimate {
     dimension: PressureDimension,
@@ -156,7 +156,7 @@ pub(crate) struct ResourceEstimate {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written provider seam"
+    reason = "see the first allow in this file: wholly unconsumed until the run path reports pressure"
 )]
 impl ResourceEstimate {
     /// An estimate carrying a value.

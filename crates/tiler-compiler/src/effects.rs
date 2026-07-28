@@ -23,11 +23,11 @@
 use core::fmt;
 
 /// Whether a call may be removed when its results are unused.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "slice of implement-opaque-physical-call-providers: the effect vocabulary lands before the call sites that declare it"
+    reason = "constructed only by opaque-call providers, and no production provider exists yet: the declaration path consumes these live (matching and reading them at admission), but nothing outside tests builds a CallEffects. The compile-path constructor arrives with caller-supplied physical providers"
 )]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Elimination {
     /// Removing the call when its results are unused is observationally
     /// equivalent.
@@ -41,11 +41,11 @@ pub(crate) enum Elimination {
 }
 
 /// Whether a call may be executed more than once, or moved across other work.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "see the module header: lands with the effect vocabulary it belongs to"
+    reason = "constructed only by opaque-call providers, and no production provider exists yet: the declaration path consumes these live (matching and reading them at admission), but nothing outside tests builds a CallEffects. The compile-path constructor arrives with caller-supplied physical providers"
 )]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Motion {
     /// The call is a pure function of its inputs: reordering it against
     /// anything it does not data-depend on, or evaluating it twice, is
@@ -65,11 +65,11 @@ pub(crate) enum Motion {
 /// pure call can still return a view onto an input, and an ordered call can
 /// return storage that aliases nothing. Collapsing them would make one
 /// declaration answer a question it was never asked.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
-    reason = "see the module header: lands with the effect vocabulary it belongs to"
+    reason = "constructed only by opaque-call providers, and no production provider exists yet: the declaration path consumes these live (matching and reading them at admission), but nothing outside tests builds a CallEffects. The compile-path constructor arrives with caller-supplied physical providers"
 )]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Aliasing {
     /// Results occupy storage distinct from every input.
     Distinct,
@@ -88,10 +88,6 @@ pub(crate) enum Aliasing {
 /// call's "ordinary case" must be written down rather than received by
 /// omission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "see the module header: the declaration lands ahead of the provider seam that carries it"
-)]
 pub(crate) struct CallEffects {
     elimination: Elimination,
     motion: Motion,
@@ -100,7 +96,7 @@ pub(crate) struct CallEffects {
 
 #[allow(
     dead_code,
-    reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written opaque-call seam"
+    reason = "constructed only by opaque-call providers, and no production provider exists yet: the declaration path consumes these live (matching and reading them at admission), but nothing outside tests builds a CallEffects. The compile-path constructor arrives with caller-supplied physical providers"
 )]
 impl CallEffects {
     /// The declaration for a call nothing is known about.
@@ -147,7 +143,7 @@ impl CallEffects {
     /// Whether this declaration permits *any* optimization the conservative
     /// one would not.
     ///
-    /// The engine uses this to decide whether a declaration is worth carrying
+    /// Lets a caller decide whether a declaration is worth carrying
     /// at all; a declaration equal to [`Self::unknown`] enables nothing and a
     /// provider stating it has said only that it does not know.
     pub(crate) fn permits_more_than_unknown(self) -> bool {

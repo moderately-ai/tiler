@@ -369,9 +369,14 @@ pub(super) fn record_frontier(
     // indistinguishable from "no provider proposed", and the fix is different in
     // each case.
     //
-    // A count rather than a record per rejection, because the count is what a
-    // reader needs to know something was refused; the typed rejection itself is
-    // on the frontier for anyone who then looks.
+    // A count rather than a record per rejection. What the count delivers is
+    // "something was refused here"; what it does NOT deliver is *why* — the
+    // typed rejection and its stable reason code live only on the in-memory
+    // `ImplementationFrontier` and never reach explain output, so the
+    // unregistered-versus-mismatch distinction above is recoverable from the
+    // frontier object, not from the trace. Carrying the reasons into typed
+    // records is part of the explain cost-vocabulary work
+    // (`emit-analytical-costs-through-the-typed-cost-vocabulary`).
     record_count_step(
         explain,
         "frontier.enumeration.v1",
@@ -464,16 +469,20 @@ fn record_analytical_costs(
         // when a produced value has more than one consumer. Asserting the
         // inequality rather than equality is what keeps this true for the
         // multi-consumer case instead of pinning the single-consumer one.
-        debug_assert!(
-            analytical
-                .get(CostComponent::Synchronization)
-                .and_then(|cost| match cost.value() {
-                    CostValue::Exact(value) => Some(value),
-                    CostValue::Bounded { .. } | CostValue::Unknown => None,
-                })
-                .is_some_and(|sync| sync >= plan.cost().materialization_count()),
-            "fewer ordering constraints than cross-region materializations"
-        );
+        // Guarded on the value being `Exact` so the assertion states what it
+        // checks: if `Synchronization` ever stopped being exact, the old form
+        // (`is_some_and` over the extraction) would have fired with a message
+        // blaming the ordering-constraint count for what was actually an
+        // evidence-class change — a misattributed failure. A non-exact value
+        // here simply skips the cross-check rather than lying about why.
+        if let Some(cost) = analytical.get(CostComponent::Synchronization)
+            && let CostValue::Exact(sync) = cost.value()
+        {
+            debug_assert!(
+                sync >= plan.cost().materialization_count(),
+                "fewer ordering constraints than cross-region materializations"
+            );
+        }
         let subject_key = plan.identity().label();
         for component in analytical.components() {
             match component.value() {

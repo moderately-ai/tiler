@@ -33,7 +33,7 @@ use core::fmt;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[allow(
     dead_code,
-    reason = "slice of implement-opaque-physical-call-providers: the failure vocabulary lands before the call sites that report it"
+    reason = "unconsumed: the opaque-call admission landed without reporting failure stages. The consumer is lowering/dispatch of an admitted call, which does not exist yet; the vocabulary is kept because the fallback boundary it encodes is an AGENTS.md correctness rule, not an implementation detail"
 )]
 pub(crate) enum CallFailureStage {
     /// The provider declined the target before any work was done.
@@ -61,13 +61,13 @@ pub(crate) enum CallFailureStage {
 /// definition and moving it is one edit that every check follows.
 #[allow(
     dead_code,
-    reason = "the named boundary the exhaustive match is checked against; the consumer that reads it is the not-yet-written opaque-call seam"
+    reason = "unconsumed: the opaque-call admission landed without reporting failure stages. The consumer is lowering/dispatch of an admitted call, which does not exist yet; the vocabulary is kept because the fallback boundary it encodes is an AGENTS.md correctness rule, not an implementation detail"
 )]
 const LAST_FALLBACK_STAGE: CallFailureStage = CallFailureStage::Validation;
 
 #[allow(
     dead_code,
-    reason = "see the module header: accessors land with the vocabulary, ahead of the call seam that reports through them"
+    reason = "unconsumed: the opaque-call admission landed without reporting failure stages. The consumer is lowering/dispatch of an admitted call, which does not exist yet; the vocabulary is kept because the fallback boundary it encodes is an AGENTS.md correctness rule, not an implementation detail"
 )]
 impl CallFailureStage {
     /// The governed canonical key naming this stage.
