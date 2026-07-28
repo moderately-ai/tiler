@@ -2361,7 +2361,7 @@ mod tests {
         use super::derive_call_boundary_contract;
         use crate::boundary::{AdmittedMemoryDomains, ExecutionAffinity, MemoryDomainClass};
         use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
-        use crate::call_declaration::OpaqueCallDeclaration;
+        use crate::call_declaration::{OpaqueCallDeclaration, WorkScaling};
         use crate::call_placement::CallPlacement;
         use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
         use tiler_ir::schedule::{NumericalPermission, ResourceRequirements, SubnormalMode};
@@ -2399,6 +2399,7 @@ mod tests {
                 contraction: NumericalPermission::Forbidden,
                 reassociation: NumericalPermission::Forbidden,
             },
+            WorkScaling::Fixed(1),
         )
         .expect("coherent");
 

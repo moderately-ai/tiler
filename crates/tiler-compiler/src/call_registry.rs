@@ -250,6 +250,7 @@ impl OpaqueCallProposal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::call_declaration::WorkScaling;
     use tiler_ir::schedule::{NumericalPermission, ResourceRequirements, SubnormalMode};
 
     /// Resources ample enough that only the fault under test can fire.
@@ -309,6 +310,7 @@ mod tests {
             )
             .expect("supported"),
             resources(8),
+            WorkScaling::Fixed(1),
         )
         .expect("coherent")
     }

@@ -43,6 +43,39 @@ use crate::effects::{Aliasing, CallEffects, Elimination};
 use core::fmt;
 use tiler_ir::schedule::ResourceRequirements;
 
+/// How many work items a dispatch of the call performs.
+///
+/// `physical::assess_region` proves resources against a target profile and needs
+/// this count. A scheduled region reads it from its schedule; an opaque call has
+/// none, so it declares how its work scales.
+///
+/// # Why not a plain number
+///
+/// A fixed count is honest for a call that does the same work whatever it is
+/// given, and wrong for most real ones — a call over a tensor usually does work
+/// proportional to that tensor. Declaring a bare number would force
+/// shape-dependent calls to either lie or refuse to be declared, and a lie here
+/// is a feasibility verdict that is confidently incorrect: too small admits a
+/// call the target cannot run, too large rejects one it can.
+///
+/// # Why per-parameter rather than per-call
+///
+/// The count follows a *particular* tensor. A call reducing a large input to a
+/// small output does work proportional to the input, not the output, and only
+/// the call knows which. Naming the parameter says so; naming nothing would
+/// leave the frontier to guess.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the work-scaling declaration; lands with its validation ahead of the admission that reads it"
+)]
+pub(crate) enum WorkScaling {
+    /// One work item per element of the tensor bound to this parameter.
+    PerElementOf(&'static str),
+    /// A fixed count, whatever the call is given.
+    Fixed(u64),
+}
+
 /// A way two of a call's declarations contradict each other.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
@@ -57,6 +90,12 @@ pub(crate) enum IncoherentDeclaration {
     /// `Aliasing::Distinct` beside one is not a stricter promise — it is a false
     /// one, and a caller trusting it would reuse storage the call overwrote.
     InPlaceParameterDeclaredDistinct,
+    /// The work scaling names a parameter the ABI does not declare.
+    ///
+    /// A scaling that follows a parameter nobody declared cannot be evaluated,
+    /// and the resulting work count would have to be invented — which is a
+    /// feasibility verdict nothing supports.
+    WorkScalingNamesUnknownParameter(&'static str),
     /// The call declares fewer buffer bindings than it has parameters.
     ///
     /// Every parameter must be bound, so a binding count below the parameter
@@ -90,6 +129,9 @@ impl IncoherentDeclaration {
             Self::FewerBindingsThanParameters { .. } => {
                 "declaration.fewer-bindings-than-parameters"
             }
+            Self::WorkScalingNamesUnknownParameter(_) => {
+                "declaration.work-scaling-unknown-parameter"
+            }
             Self::InPlaceParameterDeclaredDistinct => "declaration.inplace-declared-distinct",
             Self::WritesThroughParameterButDeclaredRemovable => "declaration.writes-but-removable",
         }
@@ -117,6 +159,8 @@ pub(crate) struct OpaqueCallDeclaration {
     abi: CallAbi,
     effects: CallEffects,
     placement: CallPlacement,
+    /// How many work items a dispatch performs; see [`WorkScaling`].
+    work: WorkScaling,
     /// Exact or proven-upper-bound requirements, used for hard feasibility.
     ///
     /// The first of the ticket's three evidence classes, and the only one
@@ -144,8 +188,17 @@ impl OpaqueCallDeclaration {
         effects: CallEffects,
         placement: CallPlacement,
         resources: ResourceRequirements,
+        work: WorkScaling,
     ) -> Result<Self, Vec<IncoherentDeclaration>> {
         let mut faults = Vec::new();
+
+        if let WorkScaling::PerElementOf(name) = work
+            && abi.parameter(name).is_none()
+        {
+            faults.push(IncoherentDeclaration::WorkScalingNamesUnknownParameter(
+                name,
+            ));
+        }
 
         if (resources.buffer_bindings as usize) < abi.parameters().len() {
             faults.push(IncoherentDeclaration::FewerBindingsThanParameters {
@@ -175,6 +228,7 @@ impl OpaqueCallDeclaration {
                 abi,
                 effects,
                 placement,
+                work,
                 resources,
             })
         } else {
@@ -195,6 +249,11 @@ impl OpaqueCallDeclaration {
     /// The checked placement.
     pub(crate) const fn placement(&self) -> &CallPlacement {
         &self.placement
+    }
+
+    /// How many work items a dispatch performs.
+    pub(crate) const fn work(&self) -> WorkScaling {
+        self.work
     }
 
     /// The proven resource requirements hard feasibility consults.
@@ -396,6 +455,7 @@ mod tests {
             CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
             placement(),
             resources(8),
+            WorkScaling::Fixed(1),
         );
         assert!(
             declaration.is_ok(),
@@ -411,6 +471,7 @@ mod tests {
             CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
             placement(),
             resources(8),
+            WorkScaling::Fixed(1),
         )
         .expect_err("an in-place parameter with distinct results is incoherent");
         assert!(faults.contains(&IncoherentDeclaration::InPlaceParameterDeclaredDistinct));
@@ -424,6 +485,7 @@ mod tests {
             CallEffects::declared(Elimination::Removable, Motion::Ordered, Aliasing::Distinct),
             placement(),
             resources(8),
+            WorkScaling::Fixed(1),
         )
         .expect_err("a call writing a parameter cannot be removable");
         assert!(
@@ -442,14 +504,25 @@ mod tests {
             CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct);
 
         assert!(
-            OpaqueCallDeclaration::check(two_parameters(), effects, placement(), resources(2),)
-                .is_ok(),
+            OpaqueCallDeclaration::check(
+                two_parameters(),
+                effects,
+                placement(),
+                resources(2),
+                WorkScaling::Fixed(1),
+            )
+            .is_ok(),
             "exactly enough bindings was refused"
         );
 
-        let faults =
-            OpaqueCallDeclaration::check(two_parameters(), effects, placement(), resources(1))
-                .expect_err("one binding cannot serve two parameters");
+        let faults = OpaqueCallDeclaration::check(
+            two_parameters(),
+            effects,
+            placement(),
+            resources(1),
+            WorkScaling::Fixed(1),
+        )
+        .expect_err("one binding cannot serve two parameters");
         assert!(
             faults.contains(&IncoherentDeclaration::FewerBindingsThanParameters {
                 bindings: 1,
@@ -470,6 +543,7 @@ mod tests {
             CallEffects::declared(Elimination::Removable, Motion::Ordered, Aliasing::Distinct),
             placement(),
             resources(8),
+            WorkScaling::Fixed(1),
         )
         .expect_err("two contradictions");
         assert_eq!(
@@ -627,6 +701,41 @@ mod tests {
             ),
             Err(GuaranteeError::AmbiguousWriteDomain),
             "a call admitting two domains guaranteed one anyway"
+        );
+    }
+
+    /// Work scaling must name a parameter the ABI declares.
+    ///
+    /// A scaling following a parameter nobody declared cannot be evaluated, and
+    /// the work count would have to be invented — which is a feasibility verdict
+    /// nothing supports. Both accepting forms are driven, so a check refusing
+    /// everything fails here.
+    #[test]
+    fn work_scaling_must_name_a_declared_parameter() {
+        let two = || abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]);
+        let effects =
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct);
+
+        for work in [WorkScaling::Fixed(64), WorkScaling::PerElementOf("input")] {
+            assert!(
+                OpaqueCallDeclaration::check(two(), effects, placement(), resources(8), work,)
+                    .is_ok(),
+                "a well-formed scaling was refused: {work:?}"
+            );
+        }
+
+        let faults = OpaqueCallDeclaration::check(
+            two(),
+            effects,
+            placement(),
+            resources(8),
+            WorkScaling::PerElementOf("absent"),
+        )
+        .expect_err("a scaling naming an undeclared parameter is incoherent");
+        assert!(
+            faults.contains(&IncoherentDeclaration::WorkScalingNamesUnknownParameter(
+                "absent"
+            ))
         );
     }
 }

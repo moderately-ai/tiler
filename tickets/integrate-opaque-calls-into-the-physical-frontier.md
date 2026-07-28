@@ -349,7 +349,15 @@ Ownership is `TotalRaceFreeWrite`: a call that writes a tensor owns that write c
 - **A fifth declaration field.** A call declares the work items a dispatch performs. Honest and static, and wrong if the count depends on the bound tensors' shapes — which for most real calls it does.
 - **Derived from the bound tensors at admission.** The frontier knows the region subject, so it could compute the count the way the scheduled path does. Correct for shape-dependent calls, and it requires the call to say *how* it scales — which is a declaration field of a different kind, closer to the launch geometry a scheduled region carries.
 
-The second is likely right and is the larger change. **Do not default the count**: `assess_region` proves resources against a profile, and a wrong work-item count produces a feasibility verdict that is confidently incorrect in either direction.
+**Decided and landed 2026-07-28: the call declares how its work scales.** `WorkScaling` is `PerElementOf(parameter)` or `Fixed(count)`, a sixth part of the declaration, validated in `check` — a scaling naming a parameter the ABI does not declare is `WorkScalingNamesUnknownParameter`.
+
+*Why not a plain number.* A fixed count is honest for a call that does the same work whatever it is given and wrong for most real ones. Forcing shape-dependent calls to state one would make them lie, and a lie here is a feasibility verdict that is confidently incorrect: too small admits a call the target cannot run, too large rejects one it can.
+
+*Why per-parameter rather than per-call.* The count follows a *particular* tensor. A call reducing a large input to a small output does work proportional to the input, and only the call knows which — naming the parameter says so, where naming nothing would leave the frontier to guess.
+
+The test drives both accepting forms plus the rejection, so a check refusing everything fails it.
+
+**What this leaves for admission:** evaluate the scaling at admission — `Fixed` directly, `PerElementOf` from the element count of the tensor bound to that parameter, which the region subject supplies — then call `assess_region` and construct the `AdmittedImplementation` with `ImplementationBody::Opaque`. Every argument now has a source.
 
 *The check, reproducible in one line:* `grep -n 'fn assess_region' -A 6 crates/tiler-compiler/src/physical.rs` — four arguments, of which only `work_items` has no source in an `OpaqueCallDeclaration`.
 
