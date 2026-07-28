@@ -3,7 +3,7 @@ id: bind-the-artifact-variant-abi-to-the-program-abi
 title: Bind the artifact variant ABI to the program ABI
 status: todo
 priority: p1
-dependencies: [complete-program-identity-with-abi-guards-and-routing, reconcile-the-artifact-and-program-abi-expression-obligations]
+dependencies: [complete-program-identity-with-abi-guards-and-routing]
 related: [prototype-artifact-program-model]
 scopes: [implementation/artifact, implementation/metal-aot]
 shared_scopes: [project/tickets]
@@ -99,3 +99,14 @@ Once that lands, what remains here is what the original estimate described: remo
 The 266-test wall was read as "the two layers require differently shaped expressions". That is not established: the captured failures include `ForeignHandle`, which is a handle resolved against the wrong builder — a wiring fault in the attempt, not a layer disagreement — and the 126 `ArtifactVerificationError`s could not be classified because their `Debug` dumps the builder and the cause is past the truncation.
 
 The dependency on [`reconcile-the-artifact-and-program-abi-expression-obligations`](reconcile-the-artifact-and-program-abi-expression-obligations.md) stands, because that ticket's first job is now to separate the attempt's own bugs from genuine obligation failures. If there are none of the latter, it closes and this ticket reverts to the mechanical change its original estimate described.
+
+### Correction 2026-07-27 (final) — there is no obligation conflict; the cause was `UnusedExpression`
+
+The 266-test wall was `UnusedExpression`, unanimously: adopting the program's ABI while the fixtures still mint their own through `formulas(&mut draft)` leaves those unreachable from any use site, and the artifact correctly refuses an arena carrying nodes nothing uses. The artifact layer accepts program-owned expressions without complaint.
+
+`reconcile-the-artifact-and-program-abi-expression-obligations` is closed as obsolete and the dependency is removed. This ticket is the mechanical change its original estimate described, with one addition now known:
+
+1. Remove `VariantSpec::applicability_guard`, `LaunchSpec::{grid_threads, threads_per_workgroup}`, `BindingSpec::accessible_bytes` — 13 sites, all deletions.
+2. Adopt once in `push_variant` via `adopt_abi`; resolve each use site from the map.
+3. **Stop the fixtures minting what they no longer supply.** `formulas()` mints `rows`, `input_bytes`, `output_bytes`, `one`, and `always`; once the variant derives them, only what deferred predicates and launch preconditions still reference should be minted. This is the step the earlier attempts missed and it is deletion in one helper.
+4. Step `ARTIFACT_DOMAIN` (`v5` → `v6`) and the `guard_and_routing` schema, with the reason at the site.

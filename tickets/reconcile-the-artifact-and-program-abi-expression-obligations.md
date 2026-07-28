@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-artifact-and-program-abi-expression-obligations
 title: Reconcile the artifact and program ABI expression obligations
-status: in-progress
+status: closed
 priority: p1
 dependencies: []
 related: [bind-the-artifact-variant-abi-to-the-program-abi]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/ir]
 shared_scopes: []
 paths: []
 tags: [artifact, abi, correctness]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785208681
 ---
 Split from `bind-the-artifact-variant-abi-to-the-program-abi`, which cannot proceed until this is answered. Read that ticket's two 2026-07-27 measurements first; this exists because the second one refuted the assumption the first was built on.
 
@@ -75,3 +72,21 @@ The replayed handles are the **artifact builder's own**, minted at its own indic
 **Next step, and it is now small.** Re-attempt the derive with the adoption performed once in `push_variant` and the resulting handles passed by value into `check_launch` and `check_bindings` — never re-resolved — then classify whatever remains. The `ForeignHandle` class should be gone; anything left is the evidence this ticket wants. If nothing is left, this closes and `bind-the-artifact-variant-abi-to-the-program-abi` reverts to its measured 13-deletion estimate.
 
 The probe test is retained, because it is the thing that distinguishes the two signals and it cost one test to have.
+
+## Closed 2026-07-27 — the premise was wrong three times over, and there is nothing to reconcile
+
+**The failures were `UnusedExpression`. All of them.** Classifying the diagnostic set rather than the error's outer type gives 125 blocks and every one contains exactly `UnusedExpression` — "an expression node is not reachable from any declared use site" (`crates/tiler-artifact/src/program/error.rs:512`).
+
+**That is not an obligation failure, not a layer disagreement, and not a wiring bug.** It is the direct consequence of adopting the program's whole ABI arena while the fixtures still mint their own expressions through `formulas(&mut draft)`. Once a variant stops referencing those, they are unreachable from any use site, and the artifact correctly refuses an arena carrying nodes nothing uses.
+
+**So the artifact layer accepts program-owned expressions fine.** Nothing here contradicts anything. This ticket exists because I read an error's outer type instead of its diagnostics and inferred a contract conflict from it.
+
+**Three successive readings of one run, each wrong:**
+
+1. "The two layers require differently shaped expressions" — inferred from `ArtifactVerificationError` without opening it.
+2. "It was a `ForeignHandle` wiring fault" — inferred from error heads that were incidental; a probe then showed the replay boundary is sound, which was true but did not explain the failures either.
+3. The actual cause, found only by extracting the `diagnostics` list: the fixtures mint expressions the derived variant no longer uses.
+
+**Closed as obsolete rather than done**, because it asks a question that does not arise. `bind-the-artifact-variant-abi-to-the-program-abi` loses its dependency and reverts to the mechanical change its original estimate described — with one addition now known: the fixtures must also stop minting the expressions they no longer supply, which is deletion in the same helper.
+
+**Retained:** `adopt_abi`, its two tests, and the replay probe, all on `main`. They are correct and either route needs them.
