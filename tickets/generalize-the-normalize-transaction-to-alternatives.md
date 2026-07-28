@@ -82,5 +82,17 @@ Three outcomes kept distinct, which is what the fallible signature bought:
 
 **The pin is live and verified to fail.** `the_provider_proposes_exactly_what_this_stage_produces` compares the **canonical bytes** of the candidate's `SemanticIdentity` against `normalize_semantics`'s normalized program — the bytes rather than a digest, so a collision cannot make two different programs compare equal, and the identity rather than a merge count, since two different programs can share one. Replacing the rebuild with a clone of the input makes it fail with "the provider's candidate differs from this stage's normalized program", so it is a check that can say no.
 
-**What remains is the transaction itself.** The engine must drive `collect_proposals`, revalidate each candidate through `SemanticProgramBuilder`, respect the budget with the existing all-or-nothing contract, and yield alternatives rather than one canonical program — and with only this rule registered, its result must still satisfy the pin above.
+## Where revalidation splits, found by trying to write the engine (2026-07-28)
 
+Attempting the transaction surfaced the division the earlier notes had not made, and it changes the design rather than just the schedule.
+
+**`verify_normalized(original, normalized, congruence)` cannot move into the engine.** Its postconditions are stated in terms of the `Congruence` — an operation count of exactly `original - merges` — and a generic engine holds no congruence for an arbitrary rule. A rule that rewrites without merging anything has no meaningful value to put there. So this check is the **rule's**, not the engine's.
+
+That splits revalidation in two, and both halves are needed:
+
+- **The rule's postconditions**, checked inside `propose` before a candidate is returned. This is the concrete form of "unknown provider behaviour is never optimizable merely because it is registered" — a rule that proposes a candidate it has not checked is asking the engine to trust it.
+- **The engine's structural revalidation**, rebuilding through the checked `SemanticProgramBuilder` so the frozen semantic authority re-infers and re-validates every operation. Rule-agnostic, and a different question from whether the rule did what it claims.
+
+**Applied immediately:** `CommonSubexpressionRule::propose` now calls `verify_normalized` before returning, which it did not when it landed earlier today. Without it the provider returned an unverified candidate where `normalize_semantics` verifies before adopting — a real weakening of the existing contract, introduced by moving the rule out of the stage and not visible in any test, since the pin compares against a program that happens to be correct.
+
+**What remains is the engine's half.** Drive `collect_proposals`, revalidate each candidate structurally, respect the budget with the existing all-or-nothing contract, and yield alternatives rather than one canonical program — with the pin above still satisfied when only this rule is registered.

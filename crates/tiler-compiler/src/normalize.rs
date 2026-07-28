@@ -376,6 +376,18 @@ impl RewriteRuleProvider<SemanticProgram> for CommonSubexpressionRule {
             return Ok(Vec::new());
         }
         let candidate = rebuild(program, &congruence).map_err(failed)?;
+        // The rule's own postconditions, checked here rather than by the
+        // engine, because they are stated in terms of the `Congruence` — an
+        // operation count of exactly `original - merges` means nothing to a
+        // rule that does not merge. A generic engine has no congruence and
+        // could not ask.
+        //
+        // This is what stops a rule from proposing a candidate it has not
+        // checked, which is the concrete form of "unknown provider behaviour is
+        // never optimizable merely because it is registered". The engine still
+        // revalidates structurally; that is a different question from whether
+        // the rule did what it claims.
+        verify_normalized(program, &candidate, &congruence).map_err(failed)?;
         Ok(vec![RewriteProposal::new(self.identity(), candidate)])
     }
 }
