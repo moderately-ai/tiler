@@ -31,15 +31,16 @@ static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// One compilation bound to a request and one resolved toolchain observation.
 ///
 /// [`Toolchain::prepare`] is the only constructor. The token immutably borrows
-/// the request, privately owns the resolved toolchain and derived identity, and
-/// is consumed by [`Self::compile`]. A caller may therefore use
-/// [`Self::identity`] for cache lookup before deciding whether to compile, but
-/// cannot change the request or substitute a second toolchain between the key
-/// and the bytes produced on a miss.
+/// the request, privately owns the resolved compilation provenance and derived
+/// identity, and is consumed by [`Self::compile`]. A caller may therefore use
+/// [`Self::identity`] for cache lookup and [`Self::provenance`] to validate a
+/// carried payload before deciding whether to compile, but cannot change the
+/// request or substitute a second toolchain between the key and the bytes
+/// produced on a miss.
 #[derive(Debug)]
 pub struct PreparedCompilation<'request> {
     request: &'request CompileRequest,
-    resolved: ResolvedToolchain,
+    provenance: ArtifactProvenance,
     identity: CompilationIdentity,
 }
 
@@ -131,9 +132,10 @@ impl Toolchain {
     ) -> Result<PreparedCompilation<'request>, DriverError> {
         let resolved = self.resolve(request.target.sdk)?;
         let identity = CompilationIdentity::new(request, &resolved);
+        let provenance = prepared_provenance(request, resolved);
         Ok(PreparedCompilation {
             request,
-            resolved,
+            provenance,
             identity,
         })
     }
@@ -299,6 +301,16 @@ impl Toolchain {
 }
 
 impl PreparedCompilation<'_> {
+    /// Returns the immutable request this token is bound to.
+    ///
+    /// Reading it through the token lets an orchestrator compare a carried
+    /// payload against the same request that a cache miss will compile, rather
+    /// than accepting a separately supplied request that could disagree.
+    #[must_use]
+    pub const fn request(&self) -> &CompileRequest {
+        self.request
+    }
+
     /// Returns the canonical identity of the compilation this token will execute.
     ///
     /// The returned value is the backend-compilation facet supplied to the
@@ -307,6 +319,18 @@ impl PreparedCompilation<'_> {
     #[must_use]
     pub const fn identity(&self) -> &CompilationIdentity {
         &self.identity
+    }
+
+    /// Returns the complete provenance the compiled artifact will carry.
+    ///
+    /// Provenance is derived during preparation from the same resolved
+    /// toolchain observation as [`Self::identity`]. The returned borrow is
+    /// available before compilation so an orchestrator can validate a cache hit
+    /// without running the compiler, and [`Self::compile`] moves this exact
+    /// record into its result rather than deriving it again.
+    #[must_use]
+    pub const fn provenance(&self) -> &ArtifactProvenance {
+        &self.provenance
     }
 
     /// Compiles through the resolved paths whose reported versions reach [`Self::identity`].
@@ -323,7 +347,7 @@ impl PreparedCompilation<'_> {
     pub fn compile(self) -> Result<CompiledArtifact, DriverError> {
         let Self {
             request,
-            resolved,
+            provenance,
             identity: _,
         } = self;
         let scratch = Scratch::create()?;
@@ -335,21 +359,23 @@ impl PreparedCompilation<'_> {
             detail: format!("could not write MSL source: {error}"),
         })?;
 
-        let compile_flags = request.compile_flags();
-        let link_flags = request.link_flags();
-
-        let mut metal_args: Vec<OsString> = compile_flags.iter().map(OsString::from).collect();
+        let mut metal_args: Vec<OsString> = provenance
+            .compile_flags
+            .iter()
+            .map(OsString::from)
+            .collect();
         metal_args.push(OsString::from("-c"));
         metal_args.push(source_path.clone().into_os_string());
         metal_args.push(OsString::from("-o"));
         metal_args.push(air_path.clone().into_os_string());
-        Toolchain::run_stage(&resolved.metal, CompileStage::Metal, &metal_args)?;
+        Toolchain::run_stage(&provenance.metal, CompileStage::Metal, &metal_args)?;
 
-        let mut link_args: Vec<OsString> = link_flags.iter().map(OsString::from).collect();
+        let mut link_args: Vec<OsString> =
+            provenance.link_flags.iter().map(OsString::from).collect();
         link_args.push(air_path.clone().into_os_string());
         link_args.push(OsString::from("-o"));
         link_args.push(metallib_path.clone().into_os_string());
-        Toolchain::run_stage(&resolved.metallib, CompileStage::Metallib, &link_args)?;
+        Toolchain::run_stage(&provenance.metallib, CompileStage::Metallib, &link_args)?;
 
         let metallib = fs::read(&metallib_path).map_err(|error| DriverError::Host {
             detail: format!("could not read metallib output: {error}"),
@@ -365,26 +391,32 @@ impl PreparedCompilation<'_> {
             });
         }
 
-        let fingerprint = resolved.fingerprint();
-        let provenance = ArtifactProvenance {
-            platform: request.target.platform(),
-            target_triple: request.target.triple(),
-            deployment_minimum: request.target.deployment_minimum,
-            msl_version: request.target.msl_version,
-            optimization: request.optimization,
-            numerical: request.numerical,
-            sdk: resolved.sdk,
-            metal: resolved.metal,
-            metallib: resolved.metallib,
-            fingerprint,
-            compile_flags,
-            link_flags,
-        };
-
         Ok(CompiledArtifact {
             metallib,
             provenance,
         })
+    }
+}
+
+/// Builds the one provenance record shared by cache-hit validation and output.
+fn prepared_provenance(
+    request: &CompileRequest,
+    resolved: ResolvedToolchain,
+) -> ArtifactProvenance {
+    let fingerprint = resolved.fingerprint();
+    ArtifactProvenance {
+        platform: request.target.platform(),
+        target_triple: request.target.triple(),
+        deployment_minimum: request.target.deployment_minimum,
+        msl_version: request.target.msl_version,
+        optimization: request.optimization,
+        numerical: request.numerical,
+        sdk: resolved.sdk,
+        metal: resolved.metal,
+        metallib: resolved.metallib,
+        fingerprint,
+        compile_flags: request.compile_flags(),
+        link_flags: request.link_flags(),
     }
 }
 
@@ -707,6 +739,8 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
             .prepare(&request)
             .expect("the fake toolchain resolves");
         let identity = prepared.identity().clone();
+        let expected_provenance = prepared.provenance().clone();
+        assert_eq!(prepared.request(), &request);
         assert!(!identity.as_bytes().is_empty());
         std::fs::remove_file(&launcher).expect("the launcher is removable after preparation");
 
@@ -722,6 +756,7 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
             artifact.provenance.fingerprint.metallib_version,
             "metallib prepared-v1"
         );
+        assert_eq!(artifact.provenance, expected_provenance);
         let _ = std::fs::remove_dir_all(&scratch);
     }
 

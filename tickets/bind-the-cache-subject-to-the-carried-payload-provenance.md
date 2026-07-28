@@ -1,36 +1,34 @@
 ---
 id: bind-the-cache-subject-to-the-carried-payload-provenance
 title: Bind the cache subject to the carried payload provenance
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [compose-the-complete-expansion-cache-subject]
 related: [implement-the-expansion-cache-protocol]
-scopes: [implementation/cache, implementation/artifact, implementation/frontend]
-shared_scopes: []
+scopes: [implementation/cache, implementation/artifact, implementation/frontend, implementation/metal-aot, implementation/workspace, contracts/decisions, contracts/foundation, contracts/navigation, implementation/build]
+shared_scopes: [implementation/cargo-lock, project/tickets]
 paths: []
 tags: [cache, identity, correctness]
 ---
-## Decision needed (2026-07-28)
+## Decision outcome (2026-07-28)
 
-**Where does the component that validates the correspondence between the producer's compilation facts and the artifact's `PayloadMetadata` live?**
+Tom authorized a new `tiler-build` crate and chose the complete build-time publication and acceptance path over a crate scoped to this check alone. ADR 0085 records the durable boundary: `tiler-build` is downstream of compiler, backend, artifact, AOT-driver, and cache authorities; it sequences them without reimplementing any identity or private subject encoding.
 
-The ticket is well specified; what it needs is a component that may read both sides, and that component has no home.
+The crate initially depends only on `tiler-artifact` and `tiler-metal-aot`, because those are the authorities the implemented correspondence slice consumes. Later compiler, backend, and cache edges land only with the corresponding executable slices.
 
-**What the cross-check compares, exactly.** The producer's compilation facts against `PayloadMetadata` (`crates/tiler-artifact/src/program/codec/payload.rs:203-214`), whose `provenance: PayloadProvenance` (`payload.rs:144-169`) carries `toolchain`, `target`, `family`, `language`, the deployment major and minor, the ordered `components`, the `sdk` identity, and the exact ordered `compile_flags` and `link_flags` — where the ordering is meaning rather than presentation, since a compiler resolves repeated or conflicting flags positionally. That is the record a mismatched producer would contradict, and naming it is what makes the check specifiable before its home is chosen.
+The alternatives were eliminated before the decision. `tiler-cache` would have to parse a producer vocabulary it does not own, becoming a second authority. `tiler-compiler` would acquire a downstream cache and packaging concern, inverting the dependency direction. A one-function crate would leave the actual sequencing ownerless and require another public boundary later.
 
-**Measured state of the dependency graph, re-verified 2026-07-28.** `tiler-cache` depends on `tiler-artifact`, so both inputs are already reachable from one crate. **Nothing depends on `tiler-cache`** — `grep -rl tiler-cache crates/*/Cargo.toml prototypes/*/Cargo.toml` returns only `crates/tiler-cache/Cargo.toml`; it has no consumer at all. `crates/tiler-compiler/src/session.rs` is the compiler's public boundary and says in its own header that it is scoped to *reaching* execution, with "bundle assembly, execution" named as downstream of it. So the orchestrator is downstream of everything that exists, and nothing would call it today.
+## Implemented outcome
 
-Three candidates, and each is eliminated or reserved rather than merely weighed:
+`Toolchain::prepare` now derives `ArtifactProvenance` from the same single resolved toolchain observation as `CompilationIdentity`. `PreparedCompilation` owns both records, lends the bound request and provenance for pre-compilation validation, and moves that exact provenance into `CompiledArtifact` when consumed. Cache-hit validation and miss execution therefore cannot silently select or derive two toolchains.
 
-| Candidate | Enables | Prevents |
-| --- | --- | --- |
-| **In `tiler-cache`.** | Mechanically possible — it already depends on `tiler-artifact`, so no new edge and no new crate. | **Eliminated** by this ticket's own accepted text: the cache must not become a second authority over the producer's subject encoding. Worth stating explicitly because it is the cheapest option and it *compiles*, which is what makes it tempting. |
-| **In `tiler-compiler`,** behind `session.rs`. | Puts the check behind a boundary that already exists and already has a public shape. | Would make the compiler depend on `tiler-cache`, inverting the direction — the compiler produces artifacts and would then also consume the cache that stores them. It also puts a publication/acceptance protocol inside the crate whose public boundary is a reviewed draft explicitly scoped *not* to be the finished API. |
-| **A new crate that owns publication and acceptance.** | The right dependency direction: it depends on the compiler, the artifact, and the cache, and none of them depends on it. | **This is what makes the question yours** — `AGENTS.md` reserves crate scaffolding: "Do not scaffold crates, stabilize APIs, or begin production kernel implementation unless Tom explicitly moves the project into that phase." |
+`tiler_build::validate_prepared_metal_payload` compares all eleven compilation facts the carried payload records: source representation, exact source, toolchain family, target, artifact family, language, deployment minimum, ordered tool components, SDK identity, ordered compiler flags, and ordered linker flags. Entry mappings and target obligations remain emission facts. The check allocates nothing, returns a typed producer/protocol mismatch in stable contract order, and was fault-injected by disabling one fact comparison; its exhaustive mismatch test failed before the comparison was restored.
 
-**Recommendation: the new crate**, because it is the only candidate whose dependency direction is correct, and because the mismatch this ticket catches is a *publication-time* and *acceptance-time* check — both of which are that component's job rather than the cache's or the compiler's. The counterpoint is real: it is the first crate scaffolded for something other than a compiler stage, and it will accrete the rest of the run path, so it is a larger commitment than one cross-check warrants on its own.
+Tom accepted the exact public facade on 2026-07-28: the borrowed `PreparedCompilation::{request, provenance}` accessors, `validate_prepared_metal_payload`, exhaustive `MetalPayloadFact`, and opaque `MetalPayloadMismatch`.
 
-**What a decision must cover:** whether to scaffold now, and if so whether its scope is this cross-check alone or the whole publication/acceptance path. The typed mismatch being a producer/protocol defect rather than a cache miss is settled by the ticket and is not part of the question.
+## Graph maintenance
+
+The full path is the admitted responsibility, not an assertion that all of it landed in this slice. Dependency-ordered follow-ups now own artifact assembly around the checked correspondence (`assemble-prepared-metal-artifacts-in-tiler-build`), cache publication and hit acceptance (`accept-and-publish-validated-artifacts-through-the-expansion-cache`), and the upstream compiler/backend handoff (`drive-the-build-orchestrator-from-a-checked-compiler-plan`). Each names the exact first missing call site and preserves this ticket's rule that correspondence runs both before publication and before accepting a hit. This ticket closes once its gate is green; the split is what releases the next slice.
 
 ## Why the check is needed
 

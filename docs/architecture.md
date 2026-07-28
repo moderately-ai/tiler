@@ -276,9 +276,7 @@ proofs.
 
 ## Component ownership
 
-ADR 0070 accepts these dependency and verifier-ownership boundaries. They are
-not necessarily the final published-crate layout, and individual field sets
-remain experimental until their dedicated implementation tickets land. The `tiler-metal-aot`, `tiler-runtime`, and `tiler-cache` rows postdate ADR 0070 and each carries its own accepted admission — ADR 0077, ADR 0081, and ADR 0082 respectively — rather than being covered by 0070's block; the packaging profile below states what each of those records decides.
+ADR 0070 accepts these dependency and verifier-ownership boundaries. They are not necessarily the final published-crate layout, and individual field sets remain experimental until their dedicated implementation tickets land. The `tiler-metal-aot`, `tiler-runtime`, `tiler-cache`, and `tiler-build` rows postdate ADR 0070 and each carries its own accepted admission — ADR 0077, ADR 0081, ADR 0082, and ADR 0085 respectively — rather than being covered by 0070's block; the packaging profile below states what each of those records decides.
 
 The `tiler-metal-aot` row previously read "Expansion-time Apple tool invocation, cross-process content cache, atomic publication, byte embedding, …" beside forbidden dependencies of "Every workspace and third-party dependency". [ADR 0082](decisions/0082-admit-tiler-cache-as-the-expansion-cache-owner.md) is the accepted record that those two halves could not both stand: ADR 0050 requires every cache hit to be validated against the governed digest `tiler.digest.sha-256.v1`, so the assigned owner could not implement what it was assigned without spending the closure the same cell decided. Tom decided on 2026-07-25 that the cache is a dedicated crate and the driver keeps its closure. Byte embedding moves with it to the frontend proc-macro row, which already emits the artifact tokens.
 
@@ -291,6 +289,7 @@ The `tiler-metal-aot` row previously read "Expansion-time Apple tool invocation,
 | `tiler-metal` | Pure structured-kernel-to-MSL translation, and the target facts emitted source declares: language standard, artifact family, deployment minimum, launch-index realization, subnormal arithmetic, and buffer binding capacity | Candle, Metal device APIs, and Apple tool discovery in its normal dependency graph |
 | `tiler-metal-aot` | Expansion-time Apple tool invocation, the canonical compilation-key subject its own inputs determine, and the target facts a compiler invocation selects: Apple SDK, language standard, artifact family, and deployment minimum | Every workspace and third-party dependency, Candle included: its empty closure is decided, not incidental |
 | `tiler-cache` | The cross-process expansion cache: content-addressed namespace, per-key advisory locking, immutable self-validating bundles, complete validation on every hit, atomic publication, corruption replacement, and typed miss and refusal reporting | Optimizer, semantic IR construction, backend internals, Apple tool discovery, every platform device API, and any second content-digest authority |
+| `tiler-build` | Build-time sequencing from checked compiler plan through backend emission, prepared AOT compilation, artifact assembly, cache-subject composition, provenance correspondence, publication, and hit acceptance | Runtime device APIs, frontend syntax, consumer runtime objects, and reimplementations of identities or subject encodings owned by its dependencies |
 | `tiler-runtime` | Device-free artifact decoding, declared-target-profile compatibility classification, program binding by canonical identity, carried-object resolution, and the one-way routing commit | Optimizer, semantic IR construction, backend internals, every platform device API, and any dependency that would make a load undecidable without hardware |
 | Frontend core | Translate source syntax into semantic IR and map diagnostics back to users | Backend-specific scheduling |
 | Frontend proc-macro crate | Invoke frontend/compiler/AOT pipeline and emit artifact plus runtime/fallback tokens | Candle runtime internals beyond its public adapter |
@@ -340,7 +339,7 @@ Two qualifications keep that from over-claiming, and both belong here because th
 
 ## Accepted prototype packaging profile
 
-ADR 0065 refines ADR 0056 after the evaluator implementation exposed a real consumer boundary. The workspace carries eight reusable libraries and two non-published proof executables, whose intra-workspace edges — normal, plus development where marked — are:
+ADR 0065 refines ADR 0056 after the evaluator implementation exposed a real consumer boundary. The workspace carries nine reusable libraries and two non-published proof executables, whose intra-workspace edges — normal, plus development where marked — are:
 
 ```text
 tiler-ir        -> []
@@ -351,6 +350,7 @@ tiler-metal     -> [tiler-ir, tiler-artifact]  + development [tiler-metal-aot]
 tiler-metal-aot -> []
 tiler-runtime   -> [tiler-artifact]
 tiler-cache     -> [tiler-artifact]
+tiler-build     -> [tiler-artifact, tiler-metal-aot]
 
 tiler-prototype-compile -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal, tiler-metal-aot]
 tiler-prototype-run     -> [tiler-ir, tiler-reference, tiler-artifact, tiler-compiler, tiler-metal, tiler-metal-aot, tiler-runtime] + metal
@@ -367,6 +367,8 @@ The `tiler-metal` → `tiler-metal-aot` edge is a development dependency only, a
 `tiler-cache` is the cross-process expansion cache. Its single edge is a decided property in the same sense as the driver's empty closure and the loader's single edge: it reaches `tiler-artifact` for exactly the two things a storage protocol cannot supply itself and ADR 0050 requires on every hit — the governed digest `tiler.digest.sha-256.v1`, which validates a stored bundle's section digests, and `decode_artifact`, which re-proves the carried envelope's manifest, section digests, and canonical identity. Anything wider would let a cache decide something about a program; a *local* hash function, the alternative that needed no edge at all, would make it a second identity authority over one subject. `crates/tiler-cache/src/expansion.rs` records the five correctness properties it implements and, separately, the two it does not test in-crate.
 
 `tiler-runtime` is the device-free artifact loader. It decodes artifact bytes, classifies the declared target profile against a host's stated execution environment, binds a loaded artifact to the program a caller expects by canonical identity, resolves the carried object, and commits routing one way; it creates no device object, no pipeline state, and no command encoder. Its single-edge closure is a decided property in the same sense as the driver's empty one: a loader that acquired `tiler-compiler` could rebuild a plan instead of validating one, and a loader that acquired a platform binding would stop being decidable without hardware. The device half of a runtime stays outside it, in `prototypes/serial-sum-run` today and in a backend runner later.
+
+`tiler-build` is the downstream build-time orchestrator admitted by [ADR 0085](decisions/0085-admit-tiler-build-as-the-build-time-orchestrator.md). Its complete responsibility is the sequence from a checked compiler plan through backend emission, prepared AOT compilation, artifact assembly, cache-subject composition, provenance correspondence, publication, and hit acceptance. Its initial two edges expose only the first implemented correspondence slice; later edges to compiler, backend, and cache authorities arrive with the slices that use them. The crate consumes their typed facts without becoming another identity, digest, or subject-encoding authority, and its existence does not spend `tiler-metal-aot`'s empty closure.
 
 This is an unstable prototype packaging profile, not the final published crate set. It deliberately omits frontend, proc-macro, Candle, and reusable Metal-*runtime* crates until the proof reaches those boundaries. `tiler-runtime` is not one of those: ADR 0077 states the test that clause applies — a component that "never touches a live device, an `MTLDevice`, or a pipeline state" is not the reusable Metal-runtime crate the clause withholds — and the loader meets it, so it is admitted on the clause's own terms rather than as an exception to it. The withheld crate remains withheld; what is admitted is the backend-independent half, which is not Metal-specific at all.
 
@@ -432,12 +434,7 @@ be read here as a dependency claim in either direction: the `tiler-metal` →
 states, and the eventual `tiler-metal-aot` → `tiler-metal` production direction
 is reserved and unbuilt.
 
-What this section does constrain is which components may know about which,
-including roles that no workspace crate has yet. The runtime adapter must not
-link the optimizer merely to execute a compiled artifact. Backend emitters do not
-own frontend syntax or runtime storage objects. Target AOT tooling owns external
-compiler invocation and caching. The compiler core must not know about Candle
-storage objects, einops syntax, or a particular artifact-delivery workflow.
+What this section does constrain is which components may know about which, including roles that no workspace crate has yet. The runtime adapter must not link the optimizer merely to execute a compiled artifact. Backend emitters do not own frontend syntax or runtime storage objects. Target AOT tooling owns external compiler invocation. The build-time orchestrator owns the sequence that assembles the artifact and accepts or publishes it through the expansion cache. The compiler core must not know about Candle storage objects, einops syntax, or a particular artifact-delivery workflow.
 
 ## Proposed initial Rust/Metal integration composition
 
@@ -470,7 +467,7 @@ measured optimization, not a correctness dependency.
 
 ## Expansion-time composition
 
-The proc macro synchronously performs:
+The proc macro synchronously invokes the build-time orchestrator, which performs:
 
 ```text
 inline tokens

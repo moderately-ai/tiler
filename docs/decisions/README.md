@@ -100,6 +100,7 @@ accepted. Unresolved questions are collected in
 
 ### Artifacts, build, and toolchains
 
+- [0085: Admit tiler-build as the build-time orchestrator](0085-admit-tiler-build-as-the-build-time-orchestrator.md) — accepted; contracts: [System architecture](../architecture.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Metal AOT backend](../backends/metal.md); evidence: [Expansion cache crash and race protocol](../research/cache/crash-and-race-protocol.md), [Target-neutral artifact and backend payload envelope](../research/artifacts/target-neutral-artifact-envelope.md), [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md)
 - [0082: Admit tiler-cache as the expansion cache owner](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) — accepted; contracts: [System architecture](../architecture.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Metal AOT backend](../backends/metal.md); evidence: [Expansion cache crash and race protocol](../research/cache/crash-and-race-protocol.md), [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md)
 - [0083: Keep process-crash as the default cache durability](0083-keep-process-crash-as-the-default-cache-durability.md) — accepted; contracts: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); evidence: [Expansion cache crash and race protocol](../research/cache/crash-and-race-protocol.md)
 - [0053: Gate artifact delivery and failures by consumer family](0053-gate-artifact-delivery-by-consumer-family.md) — accepted; contracts: [Frontend and proc-macro integration](../integration/frontends.md), [Metal AOT backend](../backends/metal.md); evidence: [Proc-macro build environment and freshness](../research/macro-environment/proc-macro-build-environment.md), [Apple Metal artifact compatibility](../research/apple-targets/artifact-compatibility.md)
@@ -209,6 +210,7 @@ accepted. Unresolved questions are collected in
 - [0082: Admit tiler-cache as the expansion cache owner](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) — accepted
 - [0083: Keep process-crash as the default cache durability](0083-keep-process-crash-as-the-default-cache-durability.md) — accepted
 - [0084: Reference canonical index expressions from domain predicates](0084-reference-canonical-index-expressions-from-domain-predicates.md) — accepted
+- [0085: Admit tiler-build as the build-time orchestrator](0085-admit-tiler-build-as-the-build-time-orchestrator.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template

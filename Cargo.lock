@@ -367,6 +367,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiler-build"
+version = "0.0.0"
+dependencies = [
+ "tiler-artifact",
+ "tiler-metal-aot",
+]
+
+[[package]]
 name = "tiler-cache"
 version = "0.0.0"
 dependencies = [

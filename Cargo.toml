@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/tiler-artifact",
+    "crates/tiler-build",
     "crates/tiler-cache",
     "crates/tiler-compiler",
     "crates/tiler-ir",
@@ -38,6 +39,7 @@ num-traits = "0.2.19"
 # unsafe code. Bytes are identical by specification and pinned by test.
 sha2 = "0.11.0"
 tiler-artifact = { path = "crates/tiler-artifact" }
+tiler-build = { path = "crates/tiler-build" }
 tiler-cache = { path = "crates/tiler-cache" }
 tiler-compiler = { path = "crates/tiler-compiler" }
 tiler-ir = { path = "crates/tiler-ir" }
