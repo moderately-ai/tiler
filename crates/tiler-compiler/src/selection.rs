@@ -2260,8 +2260,9 @@ mod tests {
     /// and this is what says so.
     #[test]
     fn the_cached_digest_stays_out_of_identity_comparison() {
-        let bytes = b"selected-plan-identity-bytes".to_vec();
         use super::{SelectedPlanIdentity, digest};
+
+        let bytes = b"selected-plan-identity-bytes".to_vec();
         let honest = SelectedPlanIdentity {
             digest: digest(&bytes),
             bytes: bytes.clone(),
