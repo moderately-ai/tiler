@@ -202,6 +202,23 @@ impl OpaqueCallRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tiler_ir::schedule::{NumericalPermission, ResourceRequirements, SubnormalMode};
+
+    /// Resources ample enough that only the fault under test can fire.
+    fn resources(bindings: u32) -> ResourceRequirements {
+        ResourceRequirements {
+            buffer_bindings: bindings,
+            threads_per_workgroup: 1,
+            local_memory_bytes: 0,
+            barriers: 0,
+            requires_device_memory: true,
+            input_subnormals: SubnormalMode::Preserve,
+            result_subnormals: SubnormalMode::Preserve,
+            contraction: NumericalPermission::Forbidden,
+            reassociation: NumericalPermission::Forbidden,
+        }
+    }
+
     use crate::boundary::{AdmittedMemoryDomains, ExecutionAffinity, MemoryDomainClass};
     use crate::call_abi::{CallAbi, ParameterRole};
     use crate::call_placement::CallPlacement;
@@ -218,6 +235,7 @@ mod tests {
                 &[MemoryDomainClass::Device],
             )
             .expect("supported"),
+            resources(8),
         )
         .expect("coherent")
     }

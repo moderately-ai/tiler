@@ -111,7 +111,10 @@ Three ways out, and two are the failure this ticket exists to prevent:
 - **Return the estimate instead.** `crate::estimate` deliberately has *no* conversion into `ResourceRequirements`, and that absence is the enforcement — see its module header. Routing around it here would defeat the type-level guarantee built for exactly this moment.
 - **Make `resources()` return `Option`, and give `RegisteredCall` a declared `ResourceRequirements`.** A provider that wants its call admitted must state requirements it can *prove*; that is what the first evidence class is for, and an opaque call with none is one feasibility cannot admit. This is the surviving option.
 
-**So the swap is blocked on `RegisteredCall` gaining a proven `ResourceRequirements`** — a fourth thing the declaration must carry, alongside the ABI, effects, and placement, and validated by the same coherence check. The field swap was reverted rather than landed with a defaulted arm; the tree is unchanged.
+**Unblocked 2026-07-28.** `OpaqueCallDeclaration` now carries a proven `ResourceRequirements` as its fourth part. A provider that wants its call admitted must state requirements it can prove; a call with none is one feasibility cannot admit, which is what the first evidence class is for.
+
+The coherence check gained a rule the new part makes possible: **buffer bindings below the parameter count is incoherent.** Every parameter must be bound, so a call declaring one binding for two parameters cannot be invoked. The two numbers come from different declarations and neither can see the other, which is exactly what this check is for. Tested against a sufficient count as well, so a comparison the wrong way round fails rather than passes.
+
+`resources()` on the declaration is what `AdmittedImplementation::resources()` will read for the opaque arm — the missing answer that reverted the swap.
 
 *The check, reproducible in one line:* apply the swap and run `cargo check -p tiler-compiler --all-targets`; the seven sites are listed, and `frontier.rs:932` is the one with no mechanical answer.
-

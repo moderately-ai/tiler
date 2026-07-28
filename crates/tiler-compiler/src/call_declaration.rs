@@ -36,6 +36,7 @@ use crate::call_abi::{CallAbi, ParameterRole};
 use crate::call_placement::CallPlacement;
 use crate::effects::{Aliasing, CallEffects, Elimination};
 use core::fmt;
+use tiler_ir::schedule::ResourceRequirements;
 
 /// A way two of a call's declarations contradict each other.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,6 +52,18 @@ pub(crate) enum IncoherentDeclaration {
     /// `Aliasing::Distinct` beside one is not a stricter promise — it is a false
     /// one, and a caller trusting it would reuse storage the call overwrote.
     InPlaceParameterDeclaredDistinct,
+    /// The call declares fewer buffer bindings than it has parameters.
+    ///
+    /// Every parameter must be bound, so a binding count below the parameter
+    /// count describes a call that cannot be invoked. Caught here rather than at
+    /// dispatch because the two numbers come from different declarations and
+    /// neither can see the other.
+    FewerBindingsThanParameters {
+        /// Buffer bindings the resources declare.
+        bindings: u32,
+        /// Parameters the ABI declares.
+        parameters: usize,
+    },
     /// The effects claim the call is removable while the ABI declares a
     /// parameter it writes that is not among its results.
     ///
@@ -69,6 +82,9 @@ impl IncoherentDeclaration {
     /// The stable code naming this contradiction.
     pub(crate) const fn code(self) -> &'static str {
         match self {
+            Self::FewerBindingsThanParameters { .. } => {
+                "declaration.fewer-bindings-than-parameters"
+            }
             Self::InPlaceParameterDeclaredDistinct => "declaration.inplace-declared-distinct",
             Self::WritesThroughParameterButDeclaredRemovable => "declaration.writes-but-removable",
         }
@@ -96,6 +112,15 @@ pub(crate) struct OpaqueCallDeclaration {
     abi: CallAbi,
     effects: CallEffects,
     placement: CallPlacement,
+    /// Exact or proven-upper-bound requirements, used for hard feasibility.
+    ///
+    /// The first of the ticket's three evidence classes, and the only one
+    /// feasibility may consult. A provider that wants its call admitted must
+    /// state requirements it can **prove** — an uncertain
+    /// [`crate::estimate::ResourceEstimate`] deliberately has no conversion into
+    /// this, and that absence is what stops an unproven number deciding whether
+    /// a plan is legal.
+    resources: ResourceRequirements,
 }
 
 #[allow(
@@ -113,8 +138,16 @@ impl OpaqueCallDeclaration {
         abi: CallAbi,
         effects: CallEffects,
         placement: CallPlacement,
+        resources: ResourceRequirements,
     ) -> Result<Self, Vec<IncoherentDeclaration>> {
         let mut faults = Vec::new();
+
+        if (resources.buffer_bindings as usize) < abi.parameters().len() {
+            faults.push(IncoherentDeclaration::FewerBindingsThanParameters {
+                bindings: resources.buffer_bindings,
+                parameters: abi.parameters().len(),
+            });
+        }
 
         let has_in_place = abi
             .parameters()
@@ -137,6 +170,7 @@ impl OpaqueCallDeclaration {
                 abi,
                 effects,
                 placement,
+                resources,
             })
         } else {
             Err(faults)
@@ -157,11 +191,33 @@ impl OpaqueCallDeclaration {
     pub(crate) const fn placement(&self) -> &CallPlacement {
         &self.placement
     }
+
+    /// The proven resource requirements hard feasibility consults.
+    pub(crate) const fn resources(&self) -> &ResourceRequirements {
+        &self.resources
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tiler_ir::schedule::{NumericalPermission, SubnormalMode};
+
+    /// Resources ample enough that only the fault under test can fire.
+    fn resources(bindings: u32) -> ResourceRequirements {
+        ResourceRequirements {
+            buffer_bindings: bindings,
+            threads_per_workgroup: 1,
+            local_memory_bytes: 0,
+            barriers: 0,
+            requires_device_memory: true,
+            input_subnormals: SubnormalMode::Preserve,
+            result_subnormals: SubnormalMode::Preserve,
+            contraction: NumericalPermission::Forbidden,
+            reassociation: NumericalPermission::Forbidden,
+        }
+    }
+
     use crate::boundary::{AdmittedMemoryDomains, ExecutionAffinity, MemoryDomainClass};
     use crate::effects::Motion;
 
@@ -188,6 +244,7 @@ mod tests {
             abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]),
             CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
             placement(),
+            resources(8),
         );
         assert!(
             declaration.is_ok(),
@@ -202,6 +259,7 @@ mod tests {
             abi([("buffer", ParameterRole::InOut)]),
             CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct),
             placement(),
+            resources(8),
         )
         .expect_err("an in-place parameter with distinct results is incoherent");
         assert!(faults.contains(&IncoherentDeclaration::InPlaceParameterDeclaredDistinct));
@@ -214,10 +272,38 @@ mod tests {
             abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]),
             CallEffects::declared(Elimination::Removable, Motion::Ordered, Aliasing::Distinct),
             placement(),
+            resources(8),
         )
         .expect_err("a call writing a parameter cannot be removable");
         assert!(
             faults.contains(&IncoherentDeclaration::WritesThroughParameterButDeclaredRemovable)
+        );
+    }
+
+    /// A call binding fewer buffers than it has parameters cannot be invoked.
+    ///
+    /// Driven against a sufficient count too, so a check comparing the wrong way
+    /// round — or refusing everything — fails here rather than passing.
+    #[test]
+    fn fewer_bindings_than_parameters_is_incoherent() {
+        let two_parameters = || abi([("input", ParameterRole::In), ("output", ParameterRole::Out)]);
+        let effects =
+            CallEffects::declared(Elimination::Required, Motion::Ordered, Aliasing::Distinct);
+
+        assert!(
+            OpaqueCallDeclaration::check(two_parameters(), effects, placement(), resources(2),)
+                .is_ok(),
+            "exactly enough bindings was refused"
+        );
+
+        let faults =
+            OpaqueCallDeclaration::check(two_parameters(), effects, placement(), resources(1))
+                .expect_err("one binding cannot serve two parameters");
+        assert!(
+            faults.contains(&IncoherentDeclaration::FewerBindingsThanParameters {
+                bindings: 1,
+                parameters: 2,
+            })
         );
     }
 
@@ -232,6 +318,7 @@ mod tests {
             abi([("buffer", ParameterRole::InOut)]),
             CallEffects::declared(Elimination::Removable, Motion::Ordered, Aliasing::Distinct),
             placement(),
+            resources(8),
         )
         .expect_err("two contradictions");
         assert_eq!(
