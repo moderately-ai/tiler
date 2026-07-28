@@ -37,7 +37,8 @@ Each needs an input the compiler does not have. `Allocation` was computable beca
 
 ## Progress
 
-- `Dispatch`, `Synchronization`, `Indexing`, and `RedundantWork` modelled (see the struck rows above). Four remain `Unknown`: `MemoryTraffic` (needs the element width), `ResourcePressure` (needs a model), `ArtifactSize` (an ordering problem), `CompileTime` (a measurement, likely belonging to `calibrate-device-cost-models`).
+- Six of nine modelled: `Allocation`, `Dispatch`, `Synchronization`, `Indexing`, `RedundantWork`, `MemoryTraffic`. Three remain — `ResourcePressure` (needs a register/occupancy model that does not exist), `ArtifactSize` (encoded bytes exist only after an encoding that planning precedes), and `CompileTime` (scoped out to `calibrate-device-cost-models`, which owns measurement).
+- **Five of the original nine "unreachable" notes were wrong**, each overturned by one read of the source. They were written in a single sitting describing what the data model was expected to look like, and it was simpler and closer to hand every time. The two genuine blockers left were written the same way; treat them as claims.
 - **Two of the three came off the list because the source contradicted this table, not because anything changed.** `Synchronization` was recorded as needing the kernel program's barrier structure; it needed the plan's handoff edges, which it already had. `Indexing` was recorded as not summarized anywhere; `IndexRegion` states it directly. Both notes were written from the same reading, in one sitting, with the same confidence as the five that remain. **Treat those five as unverified**: re-derive each against the source before accepting that it cannot be modelled. That is the cheapest work left on this ticket and it has now paid twice.
 - What the checks do and do not cover: the explain census pins *reachability* — a component silently reverting to `Unknown` drops the record count and fails, verified by forcing `Indexing` to `Unknown` and watching the count fall from 10 to 8. It does **not** pin the *values*. `Synchronization` has a value cross-check (at or above the materialization count); `Allocation`, `Dispatch`, and `Indexing` do not, and a wrong-but-non-zero value in those three would pass today.
 
@@ -72,7 +73,9 @@ This never returns a wrong number: a widened dtype vocabulary arrives with a new
 
 The rest is already computed: elements touched per region is `accesses.len() × element_count(iteration_shape)`, which the `Indexing` arm derives today. The honest shape remains `Bounded`, not `Exact` — low bound writes-only, since no reuse eliminates a store; high bound every access, since the plan does not model cache reuse. `Access.mode` distinguishes them.
 
-*No trigger. Startable, and the largest remaining piece of this ticket.*
+**Modelled 2026-07-27.** Implemented exactly as described: `Bounded`, low bound owning-writes-only, high bound every access, element width matched fail-closed against the two recognized f32 contract keys. Writes are identified by `Access::ownership` being present, which that field documents as holding "only for owning writes" — read from the witness rather than inferred from a mode.
+
+**The fail-closed path is verified, not asserted.** Replacing the recognized keys with an unrecognized one drops the explain record count from 16 to 12 — the two `Bounded` records per plan disappear — confirming it reports `Unknown` rather than continuing to multiply by four. This is the first component to construct `CostValue::Bounded`, which until now was well-formedness-checked but never built.
 
 **`ResourcePressure` — no model exists to compute from.** Registers per thread and occupancy are target-profile properties, and no target profile declares them. This is not a missing summary; it is a missing model.
 

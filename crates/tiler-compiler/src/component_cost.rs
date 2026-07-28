@@ -23,27 +23,30 @@
 //! its own model key, it is reported, and the retained plan set is bit-for-bit
 //! what it was before this module existed.
 //!
-//! # Why four of the nine components are `Unknown`
+//! # Why three of the nine components are `Unknown`
 //!
 //! The accepted contract keeps `SoundProof`, exhaustive finite evidence,
 //! empirical evidence, and `Unknown` as different classes, and this module
 //! honours that rather than filling gaps with plausible arithmetic.
 //!
-//! Five components are derived from values a plan already carries —
-//! allocation, dispatch, the ordering constraints between dispatches,
-//! per-element address arithmetic, and the work a fused cover repeats — and
-//! each is computed at its match arm rather than estimated. The other four need
-//! inputs the compiler does not have: a resource-pressure and occupancy model,
-//! the element width that would turn element traffic into bytes, artifact sizes
-//! that only exist after encoding, and compile time, which is a measurement
-//! rather than an analysis. A formula invented to fill
+//! Six components are derived from values a plan already carries — allocation,
+//! dispatch, the ordering constraints between dispatches, per-element address
+//! arithmetic, the work a fused cover repeats, and memory traffic — and each is
+//! computed at its match arm rather than estimated. Memory traffic is the one
+//! `Bounded` component, because the plan does not model cache reuse and a point
+//! estimate would claim a precision nothing here has.
+//!
+//! The other three need inputs the compiler does not have: a resource-pressure
+//! and occupancy model, artifact sizes that only exist after encoding, and
+//! compile time, which is a measurement rather than an analysis and belongs to
+//! `calibrate-device-cost-models`. A formula invented to fill
 //! one of them would be unfalsifiable at exactly the moment it mattered. An
 //! honest `Unknown` is a measurement boundary; a fabricated number is a defect
 //! that reads as evidence.
 //!
-//! Three of these came off the unreachable list after the source was re-read
-//! rather than the note re-trusted, and each time the data was closer to hand
-//! than the note claimed. Treat the remaining four the same way.
+//! Five came off the unreachable list after the source was re-read rather than
+//! the note re-trusted, and each time the data was closer to hand than the note
+//! claimed. Treat the remaining three the same way.
 
 use crate::region::SemanticMemberId;
 use crate::selection::SelectedPlan;
@@ -466,8 +469,57 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                         })
                         .map_or(CostValue::Unknown, CostValue::Exact)
                 }
-                CostComponent::MemoryTraffic
-                | CostComponent::ResourcePressure
+                // Bytes moved, bounded rather than exact because the plan does
+                // not model cache reuse. The low bound counts only owning
+                // writes, since no amount of reuse eliminates a store; the high
+                // bound counts every access, which is the no-reuse-at-all case.
+                // A write is identified by `Access::ownership` being present,
+                // which that field documents as holding "only for owning
+                // writes" — read from the witness rather than inferred.
+                //
+                // **The element width is derived fail-closed.** `IndexRegion`
+                // carries no dtype; it carries `numerical.profile_key`, naming
+                // the governing contract. A recognized f32 contract implies four
+                // bytes and anything else declines to answer, so a widened dtype
+                // vocabulary arrives with a new key, falls to the wildcard, and
+                // reports `Unknown` instead of silently continuing to multiply by
+                // four. Deliberately *not* inferred from
+                // `canonical_arithmetic_nan_bits` being 32 bits wide, which would
+                // read meaning out of a field's type and happen to be right for
+                // the wrong reason.
+                CostComponent::MemoryTraffic => {
+                    let bounds = plan.selections().iter().try_fold(
+                        (0_u64, 0_u64),
+                        |(low, high), selection| {
+                            let region = &selection.implementation().verified().region().index;
+                            let width = match region.numerical.profile_key {
+                                crate::request::NUMERICAL_CONTRACT_KEY
+                                | crate::request::FLUSH_CONTRACT_KEY => 4_u64,
+                                _ => return None,
+                            };
+                            let points = element_count(&region.iteration_shape).ok()?;
+                            let bytes = points.checked_mul(width)?;
+                            let writes = u64::try_from(
+                                region
+                                    .accesses
+                                    .iter()
+                                    .filter(|access| access.ownership.is_some())
+                                    .count(),
+                            )
+                            .ok()?;
+                            let all = u64::try_from(region.accesses.len()).ok()?;
+                            Some((
+                                low.checked_add(bytes.checked_mul(writes)?)?,
+                                high.checked_add(bytes.checked_mul(all)?)?,
+                            ))
+                        },
+                    );
+                    bounds.map_or(CostValue::Unknown, |(low, high)| CostValue::Bounded {
+                        low,
+                        high,
+                    })
+                }
+                CostComponent::ResourcePressure
                 | CostComponent::CompileTime
                 | CostComponent::ArtifactSize => CostValue::Unknown,
             };

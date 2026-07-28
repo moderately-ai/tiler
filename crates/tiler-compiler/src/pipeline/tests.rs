@@ -582,12 +582,14 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("target.numerics.reassociation", 3),
             ("target.numerics.result-subnormals", 3),
             ("target.threads-per-workgroup", 3),
-            // Two retained plans, each reporting its five modelled analytical
-            // components (allocation, dispatch, synchronization, indexing,
-            // redundant work) plus its count of unmodelled ones. The four
-            // `Unknown` components are deliberately not emitted as zeros, so this number grows as components become
+            // Two retained plans. Each reports four exact components
+            // (allocation, dispatch, synchronization, indexing, redundant work
+            // — five, of which redundant work is exactly zero), memory traffic
+            // as a `Bounded` pair contributing *two* records rather than one,
+            // and its count of unmodelled ones. The three `Unknown` components
+            // are deliberately not emitted as zeros, so this number grows as components become
             // modelled rather than staying at nine from the start.
-            ("tiler.cost.analytical.v1", 12),
+            ("tiler.cost.analytical.v1", 16),
             ("tiler.cost.structural.v1", 2),
             ("tiler.selection.structural-pareto.v1", 2),
         ])

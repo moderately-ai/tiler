@@ -26,13 +26,13 @@ use crate::honourability::{
 use crate::region::SemanticMemberId;
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
-const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
+pub(crate) const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
 /// Versioned key of the governed contract that accepts sign-preserving flushing.
 ///
 /// A distinct key rather than a flag on the strict one: the two contracts give
 /// the same program different observable results, so they must give it
 /// different canonical identities, artifacts, and cache entries.
-const FLUSH_CONTRACT_KEY: &str = "tiler.flush-f32.v1";
+pub(crate) const FLUSH_CONTRACT_KEY: &str = "tiler.flush-f32.v1";
 const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
 
 /// Maximum byte length of one target-profile key.
