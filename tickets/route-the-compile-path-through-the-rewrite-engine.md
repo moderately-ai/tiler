@@ -105,5 +105,22 @@ So the outcome is not a result the pipeline consumes and discards. It is the hea
 
 *The check, reproducible in one line:* `grep -n 'normalization' crates/tiler-compiler/src/pipeline.rs` returns the eleven sites above; read line 797 and the causal wiring at 815–825.
 
-**Suggested order, revised.** Generalize `NormalizationOutcome` first — give it the rule identity and let it hold zero or more alternatives, keeping its `record` method as the explain head. Then the swap at `420` is small, and the census moves once, in that change, for a reason that is written down. Attempting the swap first means discovering this with a half-migrated pipeline.
+**And generalizing the outcome is itself not what it sounds like.** Reading `NormalizationOutcome::record`, its records are **rule-specific**: a `normalize.shared-value-identity` assessment per merge, carrying `canonical-operation` and `merged-operation` facts drawn straight from `SharedValueMerge`. An outcome holding alternatives from arbitrary rules cannot emit those — a rule that does not merge has no canonical or merged operation to report.
 
+So explain emission belongs to the **rule**, exactly as postcondition verification turned out to. `RewriteRuleProvider` needs a way to emit its own records, or a proposal must carry a rule-specific explain payload the engine threads without interpreting.
+
+## The shape of the remaining design, stated once
+
+Three attempts to generalize this stage have each found the same division, and naming it should stop the fourth from rediscovering it:
+
+| Per **rule** | Per **engine** |
+| --- | --- |
+| postcondition verification (`verify_normalized` needs the `Congruence`) | the transaction and its all-or-nothing contract |
+| explain emission and the facts reported (`canonical-operation`, `merged-operation`) | the budget, counted in proposals |
+| what counts as an applicable program | structural revalidation (`revalidate_structurally`) |
+| | attribution and provider-defect reporting |
+| | readmission policy and contract grouping |
+
+The engine's column is built and tested. The rule's column is what `normalize.rs` currently does inline for its one rule, and generalizing the stage means moving those three things behind the provider trait — not widening a struct.
+
+**Revised order:** give `RewriteRuleProvider` an explain-emitting method and move `NormalizationOutcome`'s per-merge records behind it, keeping the stage-level records (budget stop, summary) with the engine. Then the outcome type generalizes to a thin carrier, and the swap at `420` is small. The census moves once, in that change.
